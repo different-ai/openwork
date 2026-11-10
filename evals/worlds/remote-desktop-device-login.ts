@@ -18,7 +18,6 @@ function desktopShell(app: App, den: Den, binary: string) {
   if (!profile?.startsWith("/tmp/openwork-device-proof-")) throw new Error("The proof requires its own disposable /tmp desktop profile.");
   const directory = join(profile, "device-login-proof");
   const discovery = join(profile, "electron-userdata", "openwork-ui-control.json");
-  const cli = join(dirname(binary), "resources", "app.asar", "server", "dist", "cli.js");
   const sandbox = app.handle.sandboxId;
   async function node(source: string) {
     if (sandbox) {
@@ -48,9 +47,9 @@ function desktopShell(app: App, den: Den, binary: string) {
         const fs = require("node:fs"), cp = require("node:child_process");
         const dir = ${JSON.stringify(directory)}; fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
         const out = fs.openSync(dir + "/output", "w", 0o600);
-        const child = cp.spawn(${JSON.stringify(binary)}, [${JSON.stringify(cli)}, "device-login", "--base-url", ${JSON.stringify(den.ref.webUrl)}, "--api-base-url", ${JSON.stringify(den.ref.apiUrl)}], {
+        const child = cp.spawn(${JSON.stringify(binary)}, ["login", "--base-url", ${JSON.stringify(den.ref.webUrl)}, "--api-base-url", ${JSON.stringify(den.ref.apiUrl)}], {
           cwd: ${JSON.stringify(profile)}, stdio: ["ignore", out, out],
-          env: { PATH: process.env.PATH, HOME: ${JSON.stringify(join(profile, "home"))}, ELECTRON_RUN_AS_NODE: "1", OPENWORK_DEV_MODE: "0", OPENWORK_UI_CONTROL_DISCOVERY: ${JSON.stringify(discovery)} } });
+          env: { PATH: process.env.PATH, HOME: ${JSON.stringify(join(profile, "home"))}, OPENWORK_DEV_MODE: "0", OPENWORK_UI_CONTROL_DISCOVERY: ${JSON.stringify(discovery)} } });
         fs.writeFileSync(dir + "/pid", String(child.pid), { mode: 0o600 });
         child.once("exit", code => fs.writeFileSync(dir + "/exit", String(code), { mode: 0o600 }));
         child.once("error", () => { fs.writeFileSync(dir + "/exit", "127", { mode: 0o600 }); });
@@ -133,9 +132,8 @@ export async function remoteDesktopDeviceLogin(seed: Seed) {
   if (!second.response.ok) throw new Error(`Create second workspace: HTTP ${second.response.status}`);
   const orgB = record(record(second.body).organization);
   const organizations = rows(record((await seed.api(den.admin, "/v1/me/orgs")).body).orgs);
-  const orgBIndex = organizations.findIndex(org => org.id === orgB.id);
   const orgA = organizations.find(org => org.id !== orgB.id);
-  if (!orgA || orgBIndex < 0) throw new Error("The approving user needs two organizations.");
+  if (!orgA || !organizations.some(org => org.id === orgB.id)) throw new Error("The approving user needs two organizations.");
   const active = await seed.api(den.admin, "/v1/me/active-organization", { method: "POST", body: JSON.stringify({ organizationId: text(orgA.id) }) });
   if (!active.response.ok) throw new Error("Cannot arrange the browser's active workspace A.");
   const targetsA = await targetsReader(seed, den, text(orgA.id));
@@ -167,7 +165,7 @@ export async function remoteDesktopDeviceLogin(seed: Seed) {
   return {
     den, app, web, shell, proxy, defaultEnabled,
     orgA: { id: text(orgA.id), name: text(orgA.name) }, orgB: { id: text(orgB.id), name: text(orgB.name) },
-    email: den.admin.email, orgBIndex, baselineA, baselineB, baselineSessionCount, sessionCount,
+    email: den.admin.email, baselineA, baselineB, baselineSessionCount, sessionCount,
     async exchangeExistingHandoff() {
       // Existing production grant helper + unchanged documented control action.
       // The grant and response remain in this closure, never in evidence args.

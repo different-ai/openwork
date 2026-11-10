@@ -1,4 +1,4 @@
-# Remote desktop device sign-in (TASK-387)
+# Remote desktop device sign-in
 
 - **Flag:** `remoteDesktopDeviceLogin`
 - **Deployments:** cloud and self-hosted; **default off**
@@ -25,53 +25,83 @@ A self-host operator may instead set the generated Helm value
 (`DEN_FEATURE_REMOTE_DESKTOP_DEVICE_LOGIN=true`). Kill switches take precedence.
 Decision and redemption also require the approving member/organization's flag.
 
-On the remote computer, start/activate the OpenWork desktop. The desktop bundles
-its server CLI, but does **not** install `openwork-server` on PATH. Use the bundled
-Electron executable in Node mode for this command only (not for the running app).
-No separate Node installation or launcher is required.
+On the remote computer, start/activate the OpenWork desktop, then run its normal
+packaged executable with `login`. No separate Node installation, PATH setup or
+launcher is required. The command contacts the already-running desktop; it does
+not open another app window, take its single-instance lock, or open a local
+browser. Approval always happens in a browser on another device.
 
-### macOS: installed public app
+### macOS: installed app
 
-For the normal `/Applications/OpenWork.app` installation:
+For an installation in `/Applications`, use the command for your flavor:
+
+```sh
+# Public
+"/Applications/OpenWork.app/Contents/MacOS/OpenWork" login
+
+# Cloud
+"/Applications/OpenWork Cloud.app/Contents/MacOS/OpenWork Cloud" login
+
+# Enterprise
+"/Applications/OpenWork Enterprise.app/Contents/MacOS/OpenWork Enterprise" login
+```
+
+If you installed it elsewhere, change `/Applications` accordingly.
+
+### Linux: extracted installation
+
+For the public app extracted to `$HOME/Applications/OpenWork`:
+
+```sh
+"$HOME/Applications/OpenWork/openwork" login
+```
+
+For the other flavors, use the matching executable in your extracted directory:
+
+```sh
+"$HOME/Applications/OpenWork Cloud/openwork-cloud" login
+"$HOME/Applications/OpenWork Enterprise/openwork-enterprise" login
+```
+
+These directory names are examples; use your actual extraction directory. The
+executable names are `openwork`, `openwork-cloud` and `openwork-enterprise`.
+For an AppImage, extract it with `./OpenWork.AppImage --appimage-extract` (using
+the actual downloaded filename), then run `./squashfs-root/openwork login`
+(or its flavor's executable); do not guess its temporary mount path. The short
+command uses a headless temporary parent on Linux, so an SSH shell does not need
+`DISPLAY`. The already-running desktop still needs its normal graphical session.
+
+Append `--force` to deliberately replace an existing desktop sign-in. Append
+`--base-url https://den.example.test --api-base-url https://api.example.test`
+when selecting an explicit Den destination. If you separately installed the
+server CLI, the equivalent entry point is `openwork-server login`.
+
+The executable delegates to its bundled `server/dist/cli.js` in Electron Node
+mode and preserves the real HOME and discovery-file selection. Its temporary
+Electron parent profile is isolated from the running desktop and removed when
+the command finishes. It forwards interrupts once and waits for the CLI's cleanup;
+it does not pass Den credentials in arguments or introduce another IPC service.
+
+#### Advanced: invoke the bundled CLI directly
+
+Only for troubleshooting, the public macOS equivalent is:
 
 ```sh
 ELECTRON_RUN_AS_NODE=1 \
   "/Applications/OpenWork.app/Contents/MacOS/OpenWork" \
   "/Applications/OpenWork.app/Contents/Resources/app.asar/server/dist/cli.js" \
-  device-login
+  login
 ```
 
-If you installed it elsewhere, change `/Applications` accordingly. For the Cloud
-or Enterprise flavor, substitute **both** the bundle and executable names:
-
-| Flavor | Bundle | Executable inside `Contents/MacOS/` |
-| --- | --- | --- |
-| Public | `OpenWork.app` | `OpenWork` |
-| Cloud | `OpenWork Cloud.app` | `OpenWork Cloud` |
-| Enterprise | `OpenWork Enterprise.app` | `OpenWork Enterprise` |
-
-The CLI remains `Contents/Resources/app.asar/server/dist/cli.js` in each flavor.
-
-### Linux: extracted installation
-
-For an installation extracted to `$HOME/Applications/OpenWork`:
+On Linux, set `APP` to the extraction directory:
 
 ```sh
-APP="$HOME/Applications/OpenWork"
 ELECTRON_RUN_AS_NODE=1 "$APP/openwork" \
-  "$APP/resources/app.asar/server/dist/cli.js" device-login
+  "$APP/resources/app.asar/server/dist/cli.js" login
 ```
 
-Set `APP` to your actual extracted directory. The Cloud executable is
-`openwork-cloud`; Enterprise is `openwork-enterprise`. The relative CLI path is
-the same. For an AppImage, extract it with `./OpenWork.AppImage --appimage-extract`
-(using the actual downloaded filename), then use `APP="$PWD/squashfs-root"` and
-the same command; do not guess its temporary mount path.
-
-Append `--force` to deliberately replace an existing desktop sign-in. Append
-`--base-url https://den.example.test --api-base-url https://api.example.test`
-when selecting an explicit Den destination. If you separately installed the npm
-server CLI, the equivalent entry point is `openwork-server device-login`.
+Substitute both bundle/executable names for other flavors; the relative CLI path
+stays the same. Do not set Node mode when starting the GUI.
 
 Open the printed verification URL on the other computer. Sign in, compare the
 code, select the organization and approve only if you started the request.
@@ -89,9 +119,8 @@ implicit development-profile fallback. The command checks POSIX ownership and
 permissions, refuses symlinks/untrusted directories/non-loopback destinations,
 and never prints raw bridge receipts. POSIX discovery files are written with mode `0600`, including when replacing an
 older permissive file. The shell command intentionally fails closed on Windows
-with “Use the sign-in link instead.” POSIX-only shell support is accepted for
-TASK-387; verifying owner-only Windows ACLs is a separate follow-up. No named
-pipe or Windows custody implementation is included.
+with “Use the sign-in link instead.” Verifying owner-only Windows ACLs is a
+separate follow-up. No named pipe or Windows custody implementation is included.
 
 Only the user code, verification link, public status and final account/org cross
 the shell boundary. The private device code and Den bearer remain in the app's
@@ -150,6 +179,7 @@ bearers. An approved organization is the initial active org, **not an org-locked
 credential**. This is a new general Den session, not OAuth access/refresh tokens,
 DPoP, VM attestation or an independently named/revocable device.
 
-Follow-ups remain separate: OAuth device authorization, DPoP-bound audience/org
-claims, rotating refresh tokens with reuse detection, Devices/revoke UI, and the
-Better Auth security upgrade. No schema migration is part of this feature.
+Follow-ups remain separate: terminal `logout` and `status` commands, OAuth device
+authorization, DPoP-bound audience/org claims, rotating refresh tokens with reuse
+detection, Devices/revoke UI, and the Better Auth security upgrade. No schema
+migration is part of this feature.

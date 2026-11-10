@@ -47,9 +47,15 @@ import { readInstalledOpencodeVersion, setInstalledOpencodeVersion } from "./rou
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
-if (process.argv[2] === "device-login") {
+if (process.argv[2] === "login") {
   const { runDesktopDeviceLogin } = await import("./desktop-device-login.js");
   process.exit(await runDesktopDeviceLogin(process.argv.slice(3)));
+}
+
+const command = process.argv[2];
+if (command && !command.startsWith("-") && command !== "web") {
+  console.error("Unknown command. Use --help.");
+  process.exit(1);
 }
 
 const args = parseCliArgs(process.argv.slice(2));

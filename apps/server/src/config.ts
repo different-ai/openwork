@@ -203,7 +203,7 @@ export function printHelp(): void {
     "openwork-server [web] [options]",
     "",
     "Commands:",
-    "  device-login             Sign the running desktop in by approving a code on Den.",
+    "  login                    Sign the running desktop in by approving a code on Den.",
     "    --force                Replace an existing desktop sign-in",
     "    --base-url <URL>       Den web origin (optional)",
     "    --api-base-url <URL>   Den API origin (optional)",

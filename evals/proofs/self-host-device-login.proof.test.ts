@@ -21,7 +21,8 @@ test("an owner approves a separate device session on an operator-installed priva
   });
   await step("the owner compares the code and approves the private workspace", async () => {
     await browser.see({ text: world.userCode.replace(/^([^-]{4})([^-]{4})$/, "$1-$2") });
-    await browser.see({ testId: "device-desktop-consent-line" }, { text: new RegExp(world.organizationName) });
+    await browser.see({ text: world.organizationName });
+    await browser.notSee({ role: "button", label: "Organization" });
     await browser.click({ role: "button", label: "Approve" });
     await browser.see({ text: "Return to the OpenWork app on that computer." }, { timeoutMs: 30_000 });
     const visible = await probe.on(world.web).text();
