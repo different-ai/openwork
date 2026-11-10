@@ -169,14 +169,54 @@ test("people joining at the same moment cannot take more seats than the sandbox 
   assert.equal(listed.find((entry) => entry.id === field(sandbox, "id"))?.memberCount, 3)
 })
 
-test("sandboxes make people who join admins by default", async () => {
+test("new sandboxes make people who join super admins by default", async () => {
   const created = await den.request(admin.token, "POST", "/v1/admin/sandbox-orgs", { body: { name: "Default role sandbox", connectorBaseUrl: null, days: 7, memberLimit: 5, allowedEmailDomains: [] } })
   const sandbox = field(created.body, "sandbox")
-  assert.equal(field(sandbox, "joinRole"), "admin", summary(created))
+  assert.equal(field(sandbox, "joinRole"), "super-admin", summary(created))
   const orgId = text(field(sandbox, "organizationId"), "organization id")
-  const person = await den.signUp("Default Admin Joiner")
+  assert.equal(field((await den.request(null, "GET", `/v1/sandbox-join/preview?token=${tokenOf(sandbox)}`)).body, "joinRole"), "super-admin")
+  const person = await den.signUp("Default Super Admin Joiner")
+  assert.equal((await join(person.token, tokenOf(sandbox))).status, 200)
+  const context = await den.request(person.token, "GET", "/v1/org", { orgId })
+  assert.equal(field(context.body, "currentMember", "role"), "super-admin", summary(context))
+  const permissions = field(context.body, "currentMember", "permissions")
+  assert.ok(Array.isArray(permissions) && permissions.includes("organization.update"), "super admins hold owner-only permissions such as editing organization settings")
+  assert.equal(field(context.body, "organization", "owner", "userId"), admin.userId, "the platform admin who created it stays the owner")
+})
+
+test("sandboxes created before super admins became the default still make people who join admins", async () => {
+  const sandbox = field((await create({ joinRole: "admin" })).body, "sandbox")
+  const orgId = text(field(sandbox, "organizationId"), "organization id")
+  /** ARRANGE ONLY: an older sandbox, whose organization metadata never named a join role. */
+  await client.execute("UPDATE organization SET metadata = JSON_REMOVE(metadata, '$.sandboxJoinRole') WHERE id = ?", [orgId])
+  const listed = list(field((await den.request(admin.token, "GET", "/v1/admin/sandbox-orgs")).body, "sandboxes"))
+  assert.equal(listed.find((entry) => entry.id === field(sandbox, "id"))?.joinRole, "admin")
+  const person = await den.signUp("Older Sandbox Joiner")
   assert.equal((await join(person.token, tokenOf(sandbox))).status, 200)
   assert.equal(field((await den.request(person.token, "GET", "/v1/org", { orgId })).body, "currentMember", "role"), "admin")
+})
+
+test("switching a sandbox to super admins promotes members and admins who already joined, never the owner", async () => {
+  const sandbox = field((await create({ memberLimit: 10 })).body, "sandbox")
+  const id = text(field(sandbox, "id"), "sandbox id"), orgId = text(field(sandbox, "organizationId"), "organization id")
+  const joinToken = tokenOf(sandbox)
+  const early = await den.signUp("Early Member Before Super")
+  assert.equal((await join(early.token, joinToken)).status, 200)
+  assert.equal((await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/join-role`, { body: { joinRole: "admin" } })).status, 200)
+  const middle = await den.signUp("Middle Admin Before Super")
+  assert.equal((await join(middle.token, joinToken)).status, 200)
+  assert.equal(field((await den.request(middle.token, "GET", "/v1/org", { orgId })).body, "currentMember", "role"), "admin")
+
+  const raised = await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/join-role`, { body: { joinRole: "super-admin" } })
+  assert.equal(field(raised.body, "sandbox", "joinRole"), "super-admin", summary(raised))
+  for (const person of [early, middle]) {
+    assert.equal(field((await den.request(person.token, "GET", "/v1/org", { orgId })).body, "currentMember", "role"), "super-admin", "people who already joined become super admins")
+  }
+  assert.equal(field((await den.request(admin.token, "GET", "/v1/org", { orgId })).body, "currentMember", "role"), "owner", "the owner stays the owner")
+
+  const lowered = await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/join-role`, { body: { joinRole: "member" } })
+  assert.equal(field(lowered.body, "sandbox", "joinRole"), "member", summary(lowered))
+  assert.equal(field((await den.request(early.token, "GET", "/v1/org", { orgId })).body, "currentMember", "role"), "super-admin", "choosing members demotes nobody")
 })
 
 test("switching a sandbox to admins promotes everyone who already joined; switching back to members demotes nobody", async () => {
