@@ -219,7 +219,7 @@ export async function exchangeHandoffAndSignIn(
   return commitDenEnrollment({ attempt, destination, storedSettings, exchange, options });
 }
 
-/** App-owned durable enrollment, shared with device sign-in. Never pass its credential over IPC. */
+/** App-owned durable enrollment, shared with device sign-in. Never expose credentials to control callers. */
 export async function commitDenEnrollment(input: {
   attempt: DenEnrollmentAttempt;
   destination: Awaited<ReturnType<typeof resolveDenBaseUrlsForDestination>>;

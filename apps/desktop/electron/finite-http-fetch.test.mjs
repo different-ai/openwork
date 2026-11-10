@@ -114,6 +114,61 @@ test("main cancellation admission matches only permission reply POSTs and the ex
   assert.equal(signals.at(-1), undefined);
 });
 
+test("main admits cancellation only for the new desktop device client, and forwards redirect refusal", async () => {
+  const observed = [];
+  const registry = createDesktopTransferRegistry();
+  const handler = await mainFetchHandler(registry, async (_url, init) => {
+    observed.push(init);
+    return Response.json(true);
+  });
+  const owner = { sender: Object.assign(new EventEmitter(), { id: 1 }) };
+  for (const endpoint of ["code", "token"]) {
+    await handler(owner, `https://den.example.test/api/auth/device/${endpoint}`, {
+      method: "POST", body: JSON.stringify({ client_id: "openwork-desktop-device" }), transferId: endpoint, redirect: "error",
+    });
+    assert.ok(observed.at(-1).signal instanceof AbortSignal);
+    assert.equal(observed.at(-1).redirect, "error");
+  }
+  for (const body of ['{"client_id":"openwork-cli"}', '{"client_id":"openwork-opencode-plugin"}', '{}', 'invalid']) {
+    await handler(owner, "https://den.example.test/api/auth/device/token", { method: "POST", body, transferId: "legacy" });
+    assert.equal(observed.at(-1).signal, undefined);
+    assert.equal(observed.at(-1).redirect, undefined);
+  }
+  await handler(owner, "https://den.example.test/api/auth/device/token/extra", {
+    method: "POST", body: '{"client_id":"openwork-desktop-device"}', transferId: "other", redirect: "follow",
+  });
+  assert.equal(observed.at(-1).signal, undefined);
+  assert.equal(observed.at(-1).redirect, undefined);
+});
+
+test("main cancellation closes a held device poll without replay or leaking its private code", { timeout: 5_000 }, async () => {
+  const arrived = Promise.withResolvers();
+  const closed = Promise.withResolvers();
+  let calls = 0;
+  const server = await listen((_request, response) => {
+    calls++;
+    response.once("close", closed.resolve);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.write("{");
+    arrived.resolve();
+  });
+  const registry = createDesktopTransferRegistry();
+  const owner = { sender: Object.assign(new EventEmitter(), { id: 1 }) };
+  const handler = await mainFetchHandler(registry);
+  try {
+    const pending = handler(owner, `${server.url}/api/auth/device/token`, {
+      method: "POST", body: '{"client_id":"openwork-desktop-device","device_code":"private-fixture-only"}', transferId: "device",
+    });
+    const rejected = assert.rejects(pending, { name: "AbortError" });
+    await arrived.promise;
+    assert.equal(registry.cancel(owner, "device"), true);
+    await rejected;
+    await closed.promise;
+    assert.equal(calls, 1);
+    assert.equal(registry.cancel(owner, "device"), false);
+  } finally { registry.cancel(owner, "device"); await server.close(); }
+});
+
 for (const phase of ["headers", "body"]) {
   test(`main permission cancellation closes the upstream POST during held ${phase} without retry`, { timeout: 5_000 }, async () => {
     let arrived;

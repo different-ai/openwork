@@ -138,6 +138,23 @@ for (const { terminal, code } of [
   });
 }
 
+test("Windows fails closed with the sign-in link, before discovery or network access", async () => {
+  const moduleUrl = new URL("../src/desktop-device-login.ts", import.meta.url).href;
+  const source = `import { runDesktopDeviceLogin } from ${JSON.stringify(moduleUrl)};
+    Object.defineProperty(process, "platform", { value: "win32" });
+    globalThis.fetch = () => { throw new Error("Windows must not contact a bridge or Den"); };
+    process.exitCode = await runDesktopDeviceLogin([]);`;
+  const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", source], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (value) => { stdout += value; });
+  child.stderr.on("data", (value) => { stderr += value; });
+  const code = await new Promise<number | null>((resolve, reject) => { child.on("error", reject); child.on("close", resolve); });
+  assert.equal(code, 4);
+  assert.equal(stdout, "");
+  assert.match(stderr, /not available on Windows\. Use the sign-in link instead\./);
+});
+
 for (const options of [{ unsafe: true }, { nonlocal: true }]) {
   test(`shell refuses ${options.unsafe ? "unsafe profile custody" : "a non-loopback destination"} before dispatch`, async () => {
     await using world = await fixture(options);

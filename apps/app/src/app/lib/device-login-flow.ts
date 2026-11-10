@@ -1,8 +1,9 @@
-/** RFC 8628 desktop adapter. Private codes/tokens never leave this renderer-owned flow. */
+/** RFC 8628 desktop adapter. Private codes/tokens stay in the app-owned flow and transport. */
 export const DESKTOP_DEVICE_CLIENT_ID = "openwork-desktop-device";
 export const DEVICE_LOGIN_UNSUPPORTED = "This OpenWork server doesn't support device sign-in yet. Use the sign-in link instead.";
 const FAILED = "Device sign-in failed. Try again or use the sign-in link.";
 const MAX_LIFETIME_MS = 15 * 60_000;
+const SERVER_DEVICE_UNAVAILABLE = "Device sign-in is not available on this server. Use the sign-in link instead.";
 
 type Destination = { baseUrl: string; apiBaseUrl: string };
 type Attempt = { activate(): boolean; isCurrent(): boolean; cancel(): void };
@@ -28,12 +29,18 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function deviceUnavailable(value: unknown): boolean {
+  return record(value) && (value.error === "access_denied" || value.code === "FORBIDDEN")
+    && (value.error_description === SERVER_DEVICE_UNAVAILABLE || value.message === SERVER_DEVICE_UNAVAILABLE);
+}
+
 export function deviceRetryAfterMs(value: string | null, now: number): number {
   if (!value) return 0;
   const trimmed = value.trim();
   if (/^\d+$/.test(trimmed)) {
-    const ms = Number(trimmed) * 1000;
-    return Number.isFinite(ms) ? ms : 0;
+    // Even an overflowing delta-seconds value means wait past this flow's
+    // deadline, not retry immediately.
+    return Math.min(MAX_LIFETIME_MS, Number(trimmed) * 1000);
   }
   if (!/^(?:[A-Za-z]{3}, |[A-Za-z]+, \d{2}-|[A-Za-z]{3} [A-Za-z]{3} )/.test(trimmed)) return 0;
   const date = Date.parse(/^[A-Za-z]{3} [A-Za-z]{3} /.test(trimmed) ? `${trimmed} GMT` : trimmed);
@@ -104,7 +111,7 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
       const started = await request(destination, "/api/auth/device/code", { client_id: DESKTOP_DEVICE_CLIENT_ID }, startDeadline);
       if (!live()) throw new Error("superseded");
       const body = started.payload;
-      if (started.response.status === 404 || (record(body) && body.error === "invalid_client")) {
+      if (started.response.status === 404 || (record(body) && body.error === "invalid_client") || deviceUnavailable(body)) {
         finish("unsupported", DEVICE_LOGIN_UNSUPPORTED);
         return { state: "unsupported", message: DEVICE_LOGIN_UNSUPPORTED };
       }
@@ -143,7 +150,7 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
             if (now() >= deadline) { finish("expired"); return; }
             const payload = polled.payload;
             const error = record(payload) ? payload.error : null;
-            if (error === "invalid_client" || polled.response.status === 404) { finish("unsupported", DEVICE_LOGIN_UNSUPPORTED); return; }
+            if (error === "invalid_client" || polled.response.status === 404 || deviceUnavailable(payload)) { finish("unsupported", DEVICE_LOGIN_UNSUPPORTED); return; }
             if (error === "access_denied") { finish("denied"); return; }
             if (error === "expired_token") { finish("expired"); return; }
             if (polled.response.ok && record(payload) && typeof payload.access_token === "string" && payload.access_token) {
