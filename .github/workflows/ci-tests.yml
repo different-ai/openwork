@@ -102,8 +102,8 @@ jobs:
         run: pnpm --filter @openwork/app exec bun test --isolate ./tests/starting-thread-follow-ups.test.ts
       - name: Test dismissing an agent question
         run: pnpm --filter @openwork/app exec bun test --isolate ./tests/question-panel.test.tsx
-      - name: Test settling finished sessions
-        run: pnpm --filter @openwork/app exec bun test --isolate ./tests/session-settle.test.ts
+      - name: Test session activity times and the archive shortcut
+        run: pnpm --filter @openwork/app exec bun test --isolate ./tests/session-activity.test.ts
       - name: Test the sidebar Feed view
         run: pnpm --filter @openwork/app exec bun test --isolate ./tests/session-feed.test.ts
       - name: Test the OpenCode v2 session lifecycle mapping

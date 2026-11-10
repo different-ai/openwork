@@ -77,10 +77,10 @@ export const gatewayApiKeySchema = z.object({
   name: z.string(),
   /** The first characters of the key, to tell keys apart. */
   prefix: z.string(),
-  createdAt: z.string(),
-  lastUsedAt: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  lastUsedAt: z.string().datetime().nullable(),
   /** When the key stops working; null never expires. A past time means the key has expired. */
-  expiresAt: z.string().nullable(),
+  expiresAt: z.string().datetime().nullable(),
 });
 
 export type GatewayApiKey = z.infer<typeof gatewayApiKeySchema>;
