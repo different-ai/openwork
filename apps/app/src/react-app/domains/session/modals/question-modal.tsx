@@ -153,7 +153,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
       <div className="border-b border-dls-border px-4 py-3">
         <div className="flex items-start gap-2.5">
           <div className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border border-blue-7/30 bg-blue-3/20 text-blue-11">
-            <HelpCircle size={12} />
+            <HelpCircle size={12} aria-hidden="true" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
