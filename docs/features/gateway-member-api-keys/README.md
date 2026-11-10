@@ -14,7 +14,7 @@ provider-less endpoints: `GET /api/v1/models`, `POST /api/v1/chat/completions`,
 
 1. **The feature** (this flag, in `/admin`) decides whether the setting, the
    Library section and the admin tab exist at all.
-2. **The organization setting** in Settings › General › AI Gateway, **Allow 3rd
+2. **The organization setting** at the top of AI Gateway › API Keys, **Allow 3rd
    party tools & harnesses** (`organization.metadata.aiGateway.memberApiKeys`,
    off by default, needs Edit organization settings) decides whether members may
    create and use keys.
@@ -22,7 +22,7 @@ provider-less endpoints: `GET /api/v1/models`, `POST /api/v1/chat/completions`,
 A key works only while both are on. The Gateway checks both on every request
 (cached up to 15 seconds per organization).
 
-![Settings › General › AI Gateway](./settings.png)
+![AI Gateway › API Keys with the setting on and no keys yet](./settings.png)
 
 ## What people see
 
@@ -38,12 +38,20 @@ menu, a **How to use** docs link, and the OpenAI and Anthropic base URLs.
 
 ![The key, shown once](./create-key.png)
 
-**Admins** get an **API Keys** tab in AI Gateway after Users & Teams, listing
-every key that isn't revoked with its member, created, expiry and last used
-times. Expired keys show in red. Listing needs
-View Gateway providers; revoking someone else's key needs Manage Gateway
-providers and a recent sign-in. When the setting is off, the tab says so and
-links to Settings.
+**Admins** get an **API Keys** tab in AI Gateway after Users & Teams. The setting
+sits at the top. Below it:
+
+- **Keys exist:** every key that isn't revoked with its member, created, expiry
+  and last used times (expired keys in red). While the setting is off, a notice
+  above the table says the keys are currently not valid.
+- **No keys, setting on:** a panel explaining that members create keys for
+  themselves, with **Create your own key now**, which opens Library › Models
+  with the create dialog already open (`?show=models&create-key=1`).
+- **No keys, setting off:** the same panel, asking to turn the setting on.
+
+Listing needs View Gateway providers; revoking someone else's key needs Manage
+Gateway providers and a recent sign-in; the setting needs Edit organization
+settings.
 
 ![AI Gateway › API Keys, with 3rd party tools turned off](./admin-api-keys.png)
 

@@ -21,7 +21,6 @@ import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 import { OrgWebOriginsSection } from "./org-web-origins-section";
 import { OrgDefaultModelSection } from "./default-model-section";
 import { OrgAutomationSettingsSection } from "./org-automation-settings-section";
-import { OrgAiGatewaySettingsSection } from "./org-ai-gateway-settings-section";
 import { DenSwitch } from "../../_components/ui/switch";
 import { SsoRequirementFields, ssoRequirementDescription } from "./sso-requirement-fields";
 import { ssoSettingsChanges, type SsoSettings } from "../../_lib/sso-settings";
@@ -682,10 +681,6 @@ export function OrgSettingsScreen() {
         )}
 
         <OrgAutomationSettingsSection canManage={canManageSettings} />
-
-        {orgFeatureEnabled(orgContext, "gatewayMemberApiKeys") ? (
-          <OrgAiGatewaySettingsSection canManage={canManageSettings} />
-        ) : null}
 
         <DenCard size="spacious" className="grid gap-6">
           <div className="grid gap-2">

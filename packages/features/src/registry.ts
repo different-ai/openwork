@@ -183,7 +183,7 @@ export const FEATURES = defineFeatures({
   },
   gatewayMemberApiKeys: {
     label: "AI Gateway: API keys for 3rd party tools",
-    description: "Admins allow members, in Settings, to create their own AI Gateway API keys and use the Gateway's models from 3rd party tools and harnesses. Members manage their keys in Library › Models; admins see and revoke every key in AI Gateway › API Keys.",
+    description: "Admins allow members, in AI Gateway › API Keys, to create their own AI Gateway API keys and use the Gateway's models from 3rd party tools and harnesses. Members manage their keys in Library › Models; admins see and revoke every key on the same tab.",
     category: "models",
     added: "2026-11-09",
     since: "2026-11",

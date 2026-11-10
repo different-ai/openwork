@@ -9,13 +9,15 @@ import {
   type CreatedGatewayApiKey,
 } from "@openwork/types/den/gateway-api-keys";
 import { Check, Copy, KeyRound, Lock, Plus } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState, type FormEvent } from "react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
 import { ItemMenu } from "./item-list";
 import { LibraryCompactSurface } from "./library-compact";
 import {
+  CREATE_GATEWAY_API_KEY_PARAM,
   expiryChoiceLabel,
   expiryFromDays,
   formatCreated,
@@ -36,6 +38,21 @@ export function MemberGatewayApiKeysSection() {
   const keys = useMyGatewayApiKeys(true);
   const revoke = useRevokeGatewayApiKey("mine");
   const [creating, setCreating] = useState(false);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const createRequested = searchParams.get(CREATE_GATEWAY_API_KEY_PARAM) === "1";
+  const allowed = keys.data?.enabled === true;
+
+  // "Create your own key now" (AI Gateway › API Keys) lands here with ?create-key=1: open the dialog once,
+  // then drop the parameter so a reload or Back does not open it again.
+  useEffect(() => {
+    if (!createRequested || !keys.data) return;
+    if (allowed) setCreating(true);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete(CREATE_GATEWAY_API_KEY_PARAM);
+    const query = params.toString();
+    router.replace(query ? `?${query}` : "?", { scroll: false });
+  }, [createRequested, keys.data, allowed, searchParams, router]);
 
   if (!keys.data) return null;
   const { enabled, baseUrl, apiKeys } = keys.data;

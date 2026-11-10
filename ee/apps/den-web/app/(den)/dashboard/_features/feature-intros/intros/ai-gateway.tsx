@@ -7,7 +7,6 @@ import {
   getNewAiGatewayLimitRoute,
   getNewAiGatewayProviderRoute,
   getNewAiGatewaySmartRouterRoute,
-  getOrgSettingsRoute,
   permissionLockReason,
 } from "../../../../_lib/den-org";
 import { defineFeatureIntro, type FeatureIntroContext } from "../types";
@@ -230,15 +229,15 @@ export const aiGatewayIntros = [
   defineFeatureIntro<AiGatewayFacts>({
     key: "ai-gateway.api-keys",
     parent: "ai-gateway",
-    version: 1,
+    version: 2,
     match: { path: PATH, tab: "api-keys" },
     icon: KeyRound,
-    title: "API keys",
-    summary: "Let people use your Gateway's models from the tools they already work in.",
+    title: "Members create their own keys",
+    summary: "Each person creates API keys for themselves, to use your Gateway's models from the tools they already work in.",
     highlights: [
-      { title: "Their own keys.", text: "Members create keys in their Library for Claude Code, Codex, Cursor or any compatible tool." },
+      { title: "Created in their Library.", text: "Members make keys in My Library › Models for Claude Code, Codex, Cursor or any compatible tool." },
       { title: "Same access, same limits.", text: "A key reaches only the models its owner is allowed, and counts toward their limit." },
-      { title: "One place to revoke.", text: "See every key, who owns it and when it was last used." },
+      { title: "One place to revoke.", text: "Every key shows up here with who owns it and when it was last used." },
     ],
     example: {
       Component: ApiKeysExample,
@@ -246,9 +245,8 @@ export const aiGatewayIntros = [
     },
     docsUrl: docsPage("ai-gateway/third-party-tools"),
     ctas: [
-      { when: (ctx) => ctx.facts.memberApiKeys === true, label: "Create your API key", href: `${getLibraryRoute()}?show=models` },
-      { when: (ctx) => ctx.can("canManageSettings"), label: "Allow 3rd party tools", href: getOrgSettingsRoute() },
-      { when: () => true, label: "Allow 3rd party tools", href: getOrgSettingsRoute(), locked: { reason: permissionLockReason("organization.update") } },
+      { when: (ctx) => ctx.facts.memberApiKeys === true, label: "Create your own key now", href: `${getLibraryRoute()}?show=models&create-key=1` },
+      { when: () => true, label: "Create your own key now", href: `${getLibraryRoute()}?show=models&create-key=1`, locked: { reason: "Turn on Allow 3rd party tools & harnesses above to let members create keys." } },
     ],
     setupState: (ctx) => ((ctx.facts.apiKeys ?? 0) > 0 ? "done" : "none"),
   }),

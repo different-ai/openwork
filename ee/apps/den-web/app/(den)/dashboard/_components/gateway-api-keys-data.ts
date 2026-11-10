@@ -8,9 +8,11 @@ import {
   organizationGatewayApiKeysViewSchema,
   type CreatedGatewayApiKey,
   type OrganizationAiGatewaySettings,
+  type OrganizationGatewayApiKeysView,
 } from "@openwork/types/den/gateway-api-keys";
 import { z } from "zod";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { getLibraryRoute } from "../../_lib/den-org";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
@@ -20,7 +22,6 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
  */
 export const gatewayApiKeyQueryKeys = {
   all: ["gateway-api-keys"] as const,
-  settings: (orgId: string | null) => ["gateway-api-keys", "settings", orgId] as const,
   mine: (orgId: string | null) => ["gateway-api-keys", "mine", orgId] as const,
   organization: (orgId: string | null) => ["gateway-api-keys", "organization", orgId] as const,
 };
@@ -45,15 +46,6 @@ function requireOrg(orgId: string | null): string {
   return orgId;
 }
 
-export function useAiGatewaySettings(enabled: boolean) {
-  const { orgId } = useOrgDashboard();
-  return useQuery({
-    queryKey: gatewayApiKeyQueryKeys.settings(orgId),
-    enabled: enabled && Boolean(orgId),
-    queryFn: async () => (await request(requireOrg(orgId), "/v1/org/ai-gateway-settings", { method: "GET" }, settingsViewSchema, "AI Gateway settings did not load. Try again.")).settings,
-  });
-}
-
 export function useSaveAiGatewaySettings() {
   const { orgId } = useOrgDashboard();
   const queryClient = useQueryClient();
@@ -61,7 +53,8 @@ export function useSaveAiGatewaySettings() {
     mutationFn: async (input: Partial<OrganizationAiGatewaySettings>) =>
       (await request(requireOrg(orgId), "/v1/org/ai-gateway-settings", { method: "PUT", body: JSON.stringify(input) }, settingsViewSchema, "Could not save AI Gateway settings.")).settings,
     onSuccess: (settings) => {
-      queryClient.setQueryData(gatewayApiKeyQueryKeys.settings(orgId), settings);
+      // The API Keys tab reads the setting from its key list; show the saved value before the refetch lands.
+      queryClient.setQueryData<OrganizationGatewayApiKeysView>(gatewayApiKeyQueryKeys.organization(orgId), (current) => current ? { ...current, enabled: settings.memberApiKeys } : current);
       void queryClient.invalidateQueries({ queryKey: gatewayApiKeyQueryKeys.mine(orgId) });
       void queryClient.invalidateQueries({ queryKey: gatewayApiKeyQueryKeys.organization(orgId) });
     },
@@ -159,6 +152,14 @@ export function expiryChoiceLabel(days: number | null): string {
   if (days === null) return "Never";
   if (days === 365) return "1 year";
   return `${days} days`;
+}
+
+/** Query parameter that opens "Create an API key" once on Library › Models. */
+export const CREATE_GATEWAY_API_KEY_PARAM = "create-key";
+
+/** Library › Models with the create dialog already open, for "Create your own key now". */
+export function createOwnGatewayApiKeyRoute(orgSlug?: string | null): string {
+  return `${getLibraryRoute(orgSlug)}?show=models&${CREATE_GATEWAY_API_KEY_PARAM}=1`;
 }
 
 /** The public docs page on calling AI Gateway from 3rd party tools. */
