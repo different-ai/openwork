@@ -13,12 +13,14 @@ function render({ setupValidation = false, secretRequired = true, manual = false
   return renderToStaticMarkup(<OAuthAppFields setupValidation={setupValidation} secretRequired={secretRequired} saving={false} error={null} onSave={() => undefined} draft={draft} onDraftChange={() => undefined} callbackUrl={callback ? callbackUrl : undefined} formId="oauth-test-form" />);
 }
 
-test("preset setup retains placeholder-only app fields, with no callback or confirmation", () => {
+test("preset setup shows the callback to register and labelled app fields, without custom-setup confirmation", () => {
   const html = render({ manual: true });
-  assert.doesNotMatch(html, /<label[^>]*>Client ID<\/label>/);
-  assert.doesNotMatch(html, /<label[^>]*>Client secret/);
-  assert.doesNotMatch(html, /oauth-app-callback|manual-oauth-trust-confirmation|novalidate/);
-  assert.match(html, /placeholder="Client ID"/);
+  assert.match(html, /<label[^>]*>Client ID<\/label>/);
+  assert.match(html, /<label[^>]*>Client secret<\/label>/);
+  assert.match(html, /<code[^>]*>https:\/\/api.example.test\/custom\/path\/callback\?runtime=verified<\/code>/);
+  assert.match(html, /<button[^>]*type="button"[^>]*aria-label="Copy callback URL"/);
+  assert.doesNotMatch(html, /manual-oauth-trust-confirmation|novalidate/);
+  assert.doesNotMatch(render({ callback: false }), /oauth-app-callback|Copy callback URL/);
 });
 
 test("revised app fields have persistent credential labels and accurate optionality", () => {
