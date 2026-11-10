@@ -110,6 +110,7 @@ export function launchReadHandoff(caller: string, graceMs = HELD_READ_GRACE_MS):
   const keyOf = (binding: McpAppToolBinding) => JSON.stringify([caller, binding.name])
   return {
     hold(binding, args, work) {
+      if (binding.kind === "mcp") return
       const key = keyOf(binding)
       const held: HeldRead = { binding, args, result: work.then((result) => result.isError ? null : result, () => null) }
       heldReads.delete(key)
