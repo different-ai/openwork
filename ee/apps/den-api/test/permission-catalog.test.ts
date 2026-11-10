@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import {
+  BILLING_MANAGER_PERMISSION_KEYS,
   PERMISSION_KEYS,
   PERMISSIONS,
   getPermissionDefinition,
@@ -43,7 +44,9 @@ test("no key is locked on: the owner can always restore access", () => {
 /**
  * "Admin === admin": admins keep exactly what plain admins could do before
  * Permissions. Every key here gates only actions the old code allowed to
- * admins (docs/permissions/route-inventory.md).
+ * admins (docs/permissions/route-inventory.md), plus keys for read-only
+ * screens added later that admins are meant to see (billing_invoices.view:
+ * the Invoices page).
  */
 const ADMIN_SCOPE_KEYS = [
   "agent_permissions.view",
@@ -54,6 +57,7 @@ const ADMIN_SCOPE_KEYS = [
   "audit.view",
   "billing.manage",
   "billing.view",
+  "billing_invoices.view",
   "connections.disconnect",
   "connections.manage",
   "connections.view",
@@ -136,6 +140,22 @@ test("recent sign-in matches the old freshness rules", () => {
   assert.equal(isPermissionSensitive("permissions.view"), false)
   assert.equal(isPermissionSensitive("connections.manage"), false)
   assert.equal(isPermissionSensitive("gateway_limits.manage"), false)
+})
+
+test("admins see invoices but can't open the billing portal by default", () => {
+  assert.ok(permissionDefaultKeys("admin").includes("billing_invoices.view"))
+  assert.equal(isPermissionOwnerOnlyByDefault("billing_portal.use"), true)
+  assert.equal(isPermissionSensitive("billing_invoices.view"), true)
+})
+
+test("billing manager keys stay inside billing and usage", () => {
+  for (const key of BILLING_MANAGER_PERMISSION_KEYS) {
+    assert.ok(isPermissionKey(key), key)
+    assert.ok(["billing", "gateway"].includes(getPermissionDefinition(key).area), key)
+  }
+  for (const excluded of ["members.update", "members.delete", "invitations.manage", "teams.manage", "teams.manage_admin", "permissions.manage", "connections.manage", "connectors.manage", "sso.manage", "scim.manage", "api_keys.manage", "organization.update"]) {
+    assert.equal((BILLING_MANAGER_PERMISSION_KEYS as readonly string[]).includes(excluded), false, excluded)
+  }
 })
 
 test("schema accepts catalog keys only", () => {

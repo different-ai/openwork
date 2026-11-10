@@ -314,6 +314,18 @@ export const PERMISSIONS = {
     defaultOn: OWNER_ONLY,
     sensitive: true,
   },
+  // Read-only invoices, split from the portal so admins (and billing managers)
+  // can see and download invoices without being able to change payment
+  // details or cancel. Sensitive like the portal: invoices carry the billing
+  // address and a payment method summary. New key: reconciliation turns it on
+  // in every organization's Admin set (it was never seen there before).
+  "billing_invoices.view": {
+    area: "billing",
+    label: "View invoices",
+    description: "See and download the organization's invoices. Does not open the billing portal or change payment details.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
 
   // Models and providers
   "inference.view": {
@@ -474,6 +486,23 @@ export const PERMISSIONS = {
 } as const satisfies Record<string, PermissionDefinition>
 
 export type PermissionKey = keyof typeof PERMISSIONS
+
+/**
+ * Starting point for a "Billing manager" custom role (a team permission set):
+ * see the plan, seats and usage, see and download invoices, open the billing
+ * portal (payment method, billing details, change or cancel the subscription)
+ * and start a subscription. Nothing else: no members, teams, permissions,
+ * connections, plugins, models, security or organization settings. Deleting
+ * the organization and transferring ownership stay owner-only and are not
+ * catalog keys at all.
+ */
+export const BILLING_MANAGER_PERMISSION_KEYS = [
+  "billing.view",
+  "billing.manage",
+  "billing_invoices.view",
+  "billing_portal.use",
+  "gateway_usage.view",
+] as const satisfies readonly PermissionKey[]
 
 type PermissionFollowsTargets = {
   [K in PermissionKey]: (typeof PERMISSIONS)[K] extends { follows: infer Target } ? Target : never

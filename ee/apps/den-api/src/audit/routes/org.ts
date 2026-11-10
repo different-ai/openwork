@@ -223,7 +223,7 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("GET", "/v1/billing/web", "tenant_read", "billing.web.read", "billing.management", "billing", null),
   member("POST", "/v1/billing/stripe/checkout", "tenant_external", "billing.checkout.create", "billing.management", "billing_subscription", null, { external: "stripe (checkout session)" }),
   member("POST", "/v1/billing/stripe/checkout/sync", "tenant_external", "billing.subscription.sync", "billing.management", "billing_subscription", null, { external: "stripe (subscription fetch + local entitlement sync)" }),
-  member("GET", "/v1/billing/stripe/invoices", "tenant_access", "billing.invoices.read", "billing.management", "billing", null, { notes: "Read-only Stripe invoices.list for the organization's verified customer (billing_portal.use). Returns Stripe hosted invoice and PDF links; changes nothing." }),
+  member("GET", "/v1/billing/stripe/invoices", "tenant_access", "billing.invoices.read", "billing.management", "billing", null, { notes: "Read-only Stripe invoices.list for the organization's verified customer (billing_invoices.view). Returns Stripe hosted invoice and PDF links; changes nothing." }),
   member("POST", "/v1/billing/stripe/portal", "tenant_external", "billing.portal.create", "billing.management", "billing", null, { external: "stripe (billing portal session)" }),
 
   // Cloud instance (OpenWork Web)

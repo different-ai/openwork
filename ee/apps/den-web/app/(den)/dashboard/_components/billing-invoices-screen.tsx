@@ -38,7 +38,7 @@ export function BillingInvoicesScreen() {
     orgContext?.currentMember.isOwner ?? false,
     orgContext?.currentMember.permissions,
   );
-  const canSeeInvoices = access.canOpenBillingPortal;
+  const canSeeInvoices = access.canViewInvoices;
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
@@ -51,7 +51,7 @@ export function BillingInvoicesScreen() {
     if (cursor) query.set("cursor", cursor);
     const path = `/v1/billing/stripe/invoices${cursor ? `?${query.toString()}` : ""}`;
     const result: { page: InvoicePage | null } = { page: null };
-    // Invoices need the billing portal permission, which asks for a recent sign-in.
+    // Invoices need the View invoices permission, which asks for a recent sign-in.
     await runReauthableAction("billing-invoices", async () => {
       const { response, payload } = await requestJson(path, { method: "GET", headers: { [ORG_SCOPE_HEADER]: expectedOrgId } }, 15000);
       if (!response.ok) throw getRequestError(payload, response, "Stripe didn't return your invoices.");
@@ -121,7 +121,7 @@ export function BillingInvoicesScreen() {
           <DenNotice
             tone="neutral"
             icon={LockKeyhole}
-            message={`Invoices are locked. ${permissionLockReason("billing_portal.use")}`}
+            message={`Invoices are locked. ${permissionLockReason("billing_invoices.view")}`}
           />
         ) : state.kind === "error" ? (
           <DenNotice

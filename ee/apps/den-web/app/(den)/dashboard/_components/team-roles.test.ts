@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { PERMISSION_KEYS, permissionDefaultKeys } from "@openwork/types/den/permissions";
+import { BILLING_MANAGER_PERMISSION_KEYS, PERMISSION_KEYS, permissionDefaultKeys } from "@openwork/types/den/permissions";
 import {
   allowedKeys,
   customRoleChoice,
@@ -55,6 +55,9 @@ test("a new role starts from Member, Admin or everything, limited to what the cr
   assert.deepEqual(roleStartKeys("everything", owner), [...PERMISSION_KEYS]);
   assert.deepEqual(roleStartKeys("admin", owner), permissionDefaultKeys("admin"));
   assert.deepEqual(roleStartKeys("member", owner), permissionDefaultKeys("member"));
+  assert.deepEqual(roleStartKeys("billing", owner), [...BILLING_MANAGER_PERMISSION_KEYS]);
+  // Limited to what the creator holds, like every other starting point.
+  assert.deepEqual(roleStartKeys("billing", new Set(["billing.view", "billing_invoices.view"])), ["billing.view", "billing_invoices.view"]);
   assert.deepEqual(roleStartKeys("everything", new Set(["teams.view"])), ["teams.view"]);
 });
 
