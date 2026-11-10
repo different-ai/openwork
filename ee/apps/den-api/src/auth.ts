@@ -50,6 +50,8 @@ import { DEN_ACCOUNT_CONFIG, denUserConfig } from "./account-linking-policy.js";
 import { cache } from "./cache.js";
 import { lastSignInCookieChange, lastSignInCookieWrites } from "./last-sign-in-method.js";
 import { hashSessionTokens } from "./session-token.js";
+import { DEN_DESKTOP_DEVICE_CLIENT_ID } from "./device-clients.js";
+import { desktopDeviceAccessDenied, desktopDeviceLoginEnabled, guardDesktopDeviceSessions, stageApprovedDesktopSession } from "./desktop-device-login.js";
 import { auditBetterAuthAfter, auditBetterAuthBefore, auditBetterAuthRefusal, auditBetterAuthSessionAfter, auditBetterAuthSessionBefore, BETTER_AUTH_AUDIT_AFTER_PATHS, BETTER_AUTH_AUDIT_BEFORE_PATHS, BETTER_AUTH_SESSION_AFTER_PATHS, BETTER_AUTH_SESSION_BEFORE_PATHS, noteOAuthConsentReference, noteOAuthRevocation, noteOAuthTokenIssuance, type BetterAuthHookSession } from "./audit/better-auth.js";
 import { auditUserUpdateAfter, auditUserUpdateBefore, recordAccountDeleted, recordIdentityLinked, recordIdentityUnlinked } from "./audit/domain/account.js";
 import { auditSessionMethod, auditSessionRevokeReason, recordSessionCreated, recordSessionRevoked } from "./audit/domain/sessions.js";
@@ -887,12 +889,11 @@ export const auth = betterAuth({
   // Session tokens are stored hashed (src/session-token.ts).
   // Primary only: the MySQL adapter inserts then selects the row back, which a
   // lagging read replica would miss.
-  database: hashSessionTokens(drizzleAdapter(db.$primary, {
-    provider: "mysql",
-    schema,
-  }), {
-    secret: env.betterAuthSecret,
-  }),
+  database: guardDesktopDeviceSessions(
+    hashSessionTokens(drizzleAdapter(db.$primary, { provider: "mysql", schema }), { secret: env.betterAuthSecret }),
+    (database) => hashSessionTokens(drizzleAdapter(database, { provider: "mysql", schema }), { secret: env.betterAuthSecret }),
+    (token) => { deviceApprovedSessionOrganizations.delete(token); },
+  ),
   account: DEN_ACCOUNT_CONFIG,
   user: denUserConfig({
     emailFollowsProvider: () => deploymentFeatureEnabled("signInEmailSync"),
@@ -1044,7 +1045,7 @@ export const auth = betterAuth({
           const userId = normalizeDenTypeId("user", session.userId);
           const deviceCode = context?.path === "/device/token" ? readStringProperty(context.body, "device_code") : null;
           const deviceApproval = deviceCode
-            ? await takeDeviceSessionOrganization({ deviceCode, userId })
+            ? await takeDeviceSessionOrganization({ deviceCode, userId, clientId: readStringProperty(context?.body, "client_id") })
             : null;
           const activeOrganizationId = deviceApproval?.organizationId ?? await getInitialActiveOrganizationIdForUser(userId);
           if (deviceApproval && typeof session.token === "string") {
@@ -1058,12 +1059,21 @@ export const auth = betterAuth({
             logger.error("invitation reconcile failed", { user_id: userId, error });
           }
 
+          // Resolve other session hooks before staging the insert guard.
+          const expiresAt = await clampSessionExpiresAt(userId, session.expiresAt, session.createdAt instanceof Date ? session.createdAt : new Date());
+          const desktopDevice = deviceApproval?.clientId === DEN_DESKTOP_DEVICE_CLIENT_ID;
+          if (desktopDevice) {
+            if (typeof session.token !== "string") throw desktopDeviceAccessDenied();
+            stageApprovedDesktopSession(session.token, { userId, organizationId: deviceApproval.organizationId });
+          }
           return {
             data: {
               ...session,
               activeOrganizationId,
+              // Existing non-schema session label; not an org-locked credential.
+              ...(desktopDevice ? { userAgent: DEN_DESKTOP_DEVICE_CLIENT_ID } : {}),
               // sessionSecuritySettings: the strictest session limits of the person's organizations.
-              expiresAt: await clampSessionExpiresAt(userId, session.expiresAt, session.createdAt instanceof Date ? session.createdAt : new Date()),
+              expiresAt,
             },
           };
         },
@@ -1139,6 +1149,13 @@ export const auth = betterAuth({
   },
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
+      if ((ctx.path === "/device/code" || ctx.path === "/device/token") && readStringProperty(ctx.body, "client_id") === DEN_DESKTOP_DEVICE_CLIENT_ID) {
+        const enabled = await db.transaction((tx) => desktopDeviceLoginEnabled(tx));
+        if (!enabled) {
+          if (ctx.path === "/device/code") throw new APIError("BAD_REQUEST", { error: "invalid_client", error_description: "Device sign-in is not available on this server." });
+          throw desktopDeviceAccessDenied();
+        }
+      }
       if (ctx.path === "/device/token") {
         const deviceCode = readStringProperty(ctx.body, "device_code");
         if (deviceCode) {

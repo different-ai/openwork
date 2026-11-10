@@ -8,6 +8,23 @@ import { useAutomationsDenContext } from "@/react-app/domains/automations/use-au
 
 const FEATURE_STALE_MS = 30_000
 
+/** Deployment-only even when signed in: pre-login capabilities cannot use an org override. */
+export function useDeploymentFeature(key: "remoteDesktopDeviceLogin"): boolean {
+  const settings = readDenSettings()
+  const { baseUrl, apiBaseUrl } = settings
+  const client = useMemo(() => createDenClient({ baseUrl, apiBaseUrl }), [baseUrl, apiBaseUrl])
+  const deployment = useQuery({
+    queryKey: ["den", "deployment-features", baseUrl, apiBaseUrl],
+    queryFn: () => client.getDeploymentFeatures(),
+    staleTime: FEATURE_STALE_MS,
+    refetchInterval: FEATURE_STALE_MS,
+    refetchIntervalInBackground: true,
+    retry: false,
+    select: (features) => features[key] === true,
+  })
+  return !deployment.isError && deployment.data === true
+}
+
 type DesktopFeatureKey = "claudeAgentProvider" | "computerUse" | "computerSessionHistory" | "remoteComputers" | "settledSessions" | "composerBackgroundTasks" | "agentQuestions" | "standardCodeMode" | "parallelComputerUse" | "steadyLiveTurn" | "plainFreeModel" | "remoteDevices" | "remoteSessionAccess"
 
 /**

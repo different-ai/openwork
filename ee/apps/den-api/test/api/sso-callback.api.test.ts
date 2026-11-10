@@ -95,6 +95,28 @@ test("a password-approved device cannot gain SSO by redeeming after enforcement 
   }
 })
 
+test("desktop device approval requires real SSO proof and carries it to the new session", async () => {
+  const ssoSession = await oidcSignIn()
+  assert.equal((await den.setFeature(orgId, "ssoPerOrganization", true)).status, 200)
+  assert.equal((await den.as(ssoSession, orgId)("PATCH", "/v1/org", { requireSso: true })).status, 200)
+  assert.equal((await den.asPlatformAdmin("PUT", "/v1/admin/features/remoteDesktopDeviceLogin", { enabled: true })).status, 200)
+  const code = await den.request(null, "POST", "/api/auth/device/code", { body: { client_id: "openwork-desktop-device" } })
+  assert.equal(code.status, 200)
+  const decision = { userCode: field(code.body, "user_code"), decision: "approve", organizationId: orgId }
+  const password = await den.request(owner.token, "POST", "/v1/auth/device/decision", { body: decision })
+  assert.equal(password.status, 403)
+  assert.equal(field(password.body, "error"), "sso_required")
+  const approved = await den.request(ssoSession.token, "POST", "/v1/auth/device/decision", { body: decision })
+  assert.equal(approved.status, 200)
+  const redeemed = await den.request(null, "POST", "/api/auth/device/token", { body: { client_id: "openwork-desktop-device", device_code: field(code.body, "device_code"), grant_type: "urn:ietf:params:oauth:grant-type:device_code" } })
+  assert.equal(redeemed.status, 200)
+  const deviceToken = text(field(redeemed.body, "access_token"), "device session")
+  assert.notEqual(deviceToken, ssoSession.token)
+  const opened = await den.request(deviceToken, "GET", "/v1/org", { orgId })
+  assert.equal(opened.status, 200)
+  assert.equal((await den.asPlatformAdmin("PUT", "/v1/admin/features/remoteDesktopDeviceLogin", { enabled: false })).status, 200)
+})
+
 test("SSO authentication does not grant organization settings permission", async () => {
   const admin = await oidcSignIn()
   const member = await den.signUp("Callback Member", `member@${domain}`)
