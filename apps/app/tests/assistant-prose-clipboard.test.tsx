@@ -4,7 +4,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { AssistantProse } from "../src/components/markdown/assistant-prose";
-import { copyAssistantProseSelection, serializeAssistantProseRange } from "../src/components/markdown/assistant-prose-clipboard";
+import { copyAssistantProseSelection, serializeAssistantProseRange, serializeAssistantMessageRange } from "../src/components/markdown/assistant-prose-clipboard";
 import { FEATURES } from "../../../packages/features/src/registry";
 
 const ownedDom = !GlobalRegistrator.isRegistered;
@@ -134,6 +134,95 @@ describe("semantic selected prose and structural spacing", () => {
   });
 });
 
+describe("review coverage conversions", () => {
+  test("actual renderer, GitHub decoration and search highlights stay portable", async () => {
+    const { renderMarkdownHtml } = await import('../src/components/markdown/markdown-primitive');
+    const { decorateGitHubReferences } = await import('../src/components/markdown/github-references');
+    const { applyTextHighlights } = await import('../src/components/markdown/text-highlights');
+    const root = prose(renderMarkdownHtml('### Subject\n\nSee [PR](https://github.com/different-ai/openwork/pull/7203) and [file](/tmp/report.pdf).\n\n> Quoted *text*.\n\n~~Old~~ `report.txt`\n\n---\n\nExpected: gap'));
+    decorateGitHubReferences(root); applyTextHighlights(root, 'text');
+    expect(root.querySelector('svg[data-github-reference-glyph]')).not.toBeNull();
+    expect(root.querySelector('mark[data-search-highlight]')).not.toBeNull();
+    const data = serializeAssistantProseRange(root, all(root));
+    expect(data).not.toBeNull(); expect(data?.html).not.toMatch(/svg|button|data-|class=|<mark/);
+    expect(data?.html).toContain('<a href="https://github.com/different-ai/openwork/pull/7203">PR</a>');
+    expect(data?.html).toContain('<blockquote style="margin:0">');
+    expect(data?.text).toContain('Expected: gap');
+  });
+  test.each([1, 2, 3, 4, 5, 6])("h%s becomes a bold paragraph without disabling surrounding copy", level => {
+    const data = result(`<h${level}>Thread <em>label</em></h${level}><ul><li>Item</li></ul><p><strong>Expected:</strong> gap</p>`);
+    expect(data.html).toBe('<p style="margin:0"><strong>Thread <em>label</em></strong></p>' + separator + '<ul style="margin:0"><li style="margin:0">Item</li></ul>' + separator + '<p style="margin:0"><strong>Expected:</strong> gap</p>');
+    expect(data.text).toBe('Thread label\n\n• Item\n\nExpected: gap');
+  });
+  test("horizontal rules are a single structural boundary, not extra empty blocks", () => {
+    const data = result('<p>First</p><hr><hr><p>After</p>');
+    expect(data.html).toBe('<p style="margin:0">First</p>' + separator + '<p style="margin:0">After</p>');
+    expect(data.text).toBe('First\n\nAfter');
+  });
+  test("strike and blockquotes remain semantic", () => {
+    const data = result('<p><del>Old</del> new</p><blockquote><p>Quoted <em>word</em></p><p>Next</p></blockquote>');
+    expect(data.html).toContain('<s>Old</s>');
+    expect(data.html).toContain('<blockquote style="margin:0"><p style="margin:0">Quoted <em>word</em></p>' + separator + '<p style="margin:0">Next</p></blockquote>');
+    expect(data.text).toBe('Old new\n\n> Quoted word\n> \n> Next');
+  });
+  test.each(['javascript:alert(1)', 'ftp://example.com/file', 'file:///tmp/report.pdf', '/tmp/report.pdf', '#section', 'https://bad host', ''])('nonportable href degrades only that label: %s', href => {
+    const data = result(`<p>Before <a href="${href}"><em>Label</em></a> and <a href="https://example.com">Web</a></p><p>After</p>`);
+    expect(data.html).toContain('Before <em>Label</em> and <a href="https://example.com">Web</a>');
+    expect(data.text).toBe('Before Label and Web (https://example.com)\n\nAfter');
+  });
+  test.each(['mailto:user@example.com', 'tel:+15555550100'])('safe non-web href stays a link: %s', href => {
+    expect(result(`<p><a href="${href}">Label</a></p>`).html).toContain(`href="${href}"`);
+  });
+  test("file-chip icon and Open with control are omitted; inline paths retain code", () => {
+    const data = result('<p>File <span><a href="/workspace/report.pdf" data-openwork-link-href="/workspace/report.pdf"><svg><path></path></svg>report.pdf</a><button data-openwork-link-chevron="/workspace/report.pdf" aria-label="Open with"><svg></svg></button></span>, <code data-openwork-inline-code-path="/tmp/file.txt" role="button">file.txt</code>, <span data-openwork-directory-path="/tmp">folder</span>.</p><p>After</p>');
+    expect(data.html).toBe('<p style="margin:0">File report.pdf, <code>file.txt</code>, folder.</p>' + separator + '<p style="margin:0">After</p>');
+    expect(data.text).toBe('File report.pdf, file.txt, folder.\n\nAfter');
+  });
+  test("partial file label preserves only selected words", () => {
+    const root = prose('<p><a href="file:///tmp/file" data-openwork-link-href="file:///tmp/file"><svg></svg>report.pdf</a></p>');
+    const range = document.createRange(); const label = root.querySelector('a')!.lastChild!; range.setStart(label, 2); range.setEnd(label, 6);
+    expect(serializeAssistantProseRange(root, range)).toEqual({html:'<p style="margin:0">port</p>', text:'port'});
+  });
+});
+
+describe("message-level prose mapping", () => {
+  function message() { return prose('<div data-assistant-reply-prose><p>First <em>answer</em></p></div><section><h2>Tool</h2><input value="private"><p>Reasoning/tool output</p></section><div data-assistant-reply-prose><p>Last <a href="https://example.com">link</a></p></div>'); }
+  test("prose → activity → prose serializes prose only", () => {
+    const root = message(); const range = document.createRange(); range.setStart(text(root, '[data-assistant-reply-prose] p'), 2); range.setEnd(text(root, 'a'), 3);
+    expect(serializeAssistantMessageRange(root, range)).toEqual({html:'<p style="margin:0">rst <em>answer</em></p>' + separator + '<p style="margin:0">Last <a href="https://example.com">lin</a></p>',text:'rst answer\n\nLast lin (https://example.com)'});
+  });
+  test("nested and activity-forged markers cannot duplicate or include activity", () => {
+    const root = prose('<div data-assistant-reply-prose><p>First <span data-assistant-reply-prose>word</span></p></div><section><div data-assistant-reply-prose><p>Secret tool</p></div></section><div data-assistant-reply-prose><p>Last</p></div>');
+    expect(serializeAssistantMessageRange(root, all(root))?.text).toBe('First word\n\nLast');
+  });
+  test.each(['hidden', 'aria-hidden="true"', 'style="display:none"'])("hidden prose roots stay native: %s", attribute => {
+    const root = prose(`<div data-assistant-reply-prose ${attribute}><p>Hidden</p></div><div data-assistant-reply-prose><p>Last</p></div>`);
+    expect(serializeAssistantMessageRange(root, all(root))).toBeNull();
+  });
+  test("textless unsupported prose between groups is not silently skipped", () => {
+    const root = prose('<div data-assistant-reply-prose><p>First</p></div><section>Tool</section><div data-assistant-reply-prose><img src="https://example.com/content.png" alt="Important image"></div><div data-assistant-reply-prose><p>Last</p></div>');
+    expect(serializeAssistantMessageRange(root, all(root))).toBeNull();
+  });
+  test("whole message selection never includes activity", () => {
+    const root = message(); const data = serializeAssistantMessageRange(root, all(root)); expect(data?.text).toBe('First answer\n\nLast link (https://example.com)'); expect(data?.html).not.toMatch(/Tool|private|Reasoning/);
+  });
+  test("tool-only and tool endpoints stay native", () => {
+    const root = message(); const range = document.createRange(); range.selectNodeContents(root.querySelector('section')!); expect(serializeAssistantMessageRange(root, range)).toBeNull();
+    range.setStart(text(root, '[data-assistant-reply-prose] p'), 0); expect(serializeAssistantMessageRange(root, range)).toBeNull();
+  });
+  test("another reply and unsupported selected prose stay native", () => {
+    const root = message(); const outside = prose('<p>Other reply</p>'); const range = all(root); range.setEnd(text(outside, 'p'), 3); expect(serializeAssistantMessageRange(root, range)).toBeNull();
+    root.querySelector('[data-assistant-reply-prose]')!.innerHTML='<p><span class="katex">math</span></p>'; expect(serializeAssistantMessageRange(root, all(root))).toBeNull();
+  });
+  test("grouped React listener handles bubbled copy once", async () => {
+    const host = document.createElement('div'); document.body.append(host); reactRoot = createRoot(host); const copied = mock(() => {});
+    await act(async () => reactRoot?.render(<AssistantProse grouped enabled onCopied={copied}><div data-assistant-reply-prose><p>First</p></div><section>Activity</section><div data-assistant-reply-prose><p>Last</p></div></AssistantProse>));
+    const root = host.firstElementChild as HTMLElement; select(all(root)); const c = copyEvent(root);
+    const event = new Event('copy', { bubbles: true, cancelable: true }); Object.defineProperty(event, 'clipboardData', {value:c.event.clipboardData}); root.querySelector('p')!.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true); expect(c.data.get('text/plain')).toBe('First\n\nLast'); expect(copied).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("review regression cases", () => {
   test.each(['ul', 'ol'])("descendant-only %s selection keeps native copy rather than inventing an empty parent marker", tag => {
     const root = prose(`<${tag}><li>Parent<ul><li>Child</li></ul></li><li>Next</li></${tag}>`);
@@ -190,13 +279,11 @@ describe("conservative native fallback", () => {
     '<p>Before <span class="katex">math</span> after</p>',
     '<p><span data-mention="id">mention</span></p>',
     '<p><a href="/workspace/private" data-openwork-session-reference="private">Task</a></p>',
-    '<p><code data-openwork-inline-code-path="file">file.txt</code></p>',
     '<p><img src="https://example.com/content.png" alt="Content image"></p>',
-    '<p><a href="javascript:alert(1)">Unsafe</a></p>',
     '<p hidden>Hidden content</p>',
     '<p style="display:none">Hidden content</p>',
     '<p><span aria-hidden="true">Hidden content</span>Visible</p>',
-    '<h2>Unsupported heading retains native copy</h2>',
+    '<ul><li><input type="checkbox">Task</li></ul>',
   ])("unsupported/atomic content is not silently degraded: %s", html => {
     const root = prose(html);
     expect(serializeAssistantProseRange(root, all(root))).toBeNull();

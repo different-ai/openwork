@@ -1,7 +1,7 @@
 /** Portable selection copy for supported assistant prose, never arbitrary UI. */
 export type AssistantProseClipboard = { html: string; text: string };
 
-type Tag = "p" | "ul" | "ol" | "li" | "strong" | "em" | "a" | "code" | "pre" | "br"
+type Tag = "p" | "ul" | "ol" | "li" | "strong" | "em" | "s" | "blockquote" | "hr" | "a" | "code" | "pre" | "br"
   | "table" | "thead" | "tbody" | "tfoot" | "tr" | "th" | "td";
 type Content = { kind: "text"; value: string } | {
   kind: "element";
@@ -12,11 +12,11 @@ type Content = { kind: "text"; value: string } | {
 };
 
 const TAGS = new Set<string>([
-  "p", "ul", "ol", "li", "strong", "em", "a", "code", "pre", "br",
+  "p", "ul", "ol", "li", "strong", "em", "s", "blockquote", "hr", "a", "code", "pre", "br",
   "table", "thead", "tbody", "tfoot", "tr", "th", "td",
 ]);
-const BLOCKS = new Set<Tag>(["p", "ul", "ol", "li", "pre", "table"]);
-const INLINE = new Set<Tag>(["strong", "em", "a", "code", "br"]);
+const BLOCKS = new Set<Tag>(["p", "ul", "ol", "li", "pre", "table", "blockquote", "hr"]);
+const INLINE = new Set<Tag>(["strong", "em", "s", "a", "code", "br"]);
 const isInline = (node: Content) => node.kind === "text" || INLINE.has(node.tag);
 const meaningful = (node: Content) => node.kind !== "text" || Boolean(node.value.trim());
 
@@ -29,15 +29,14 @@ function validateChildren(tag: Tag, children: Content[]) {
   } else if (tag === "table" || tag === "thead" || tag === "tbody" || tag === "tfoot" || tag === "tr") {
     const allowed = tag === "table" ? ["thead", "tbody", "tfoot", "tr"] : tag === "tr" ? ["th", "td"] : ["tr"];
     if (!content.every(node => node.kind === "element" && allowed.includes(node.tag))) return fail();
-  } else if (tag !== "pre" && !content.every(node => isInline(node) || (node.kind === "element" && ["p", "ul", "ol", "pre", "table"].includes(node.tag)))) {
+  } else if (tag !== "pre" && !content.every(node => isInline(node) || (node.kind === "element" && ["p", "ul", "ol", "pre", "table", "blockquote", "hr"].includes(node.tag)))) {
     return fail();
   }
 }
 const ATOMIC = [
   ".katex", "math", ".mention", "[data-mention]", '[data-type="mention"]',
   "[data-lexical-mention]", "[data-openwork-session-reference]",
-  "[data-openwork-untrusted-reference]", "[data-openwork-inline-code-path]",
-  "[data-openwork-directory-path]", "[data-openwork-mermaid]", "[data-openwork-image]",
+  "[data-openwork-untrusted-reference]", "[data-openwork-mermaid]", "[data-openwork-image]",
 ].join(",");
 const EDITABLE = 'input,textarea,select,button,[contenteditable]:not([contenteditable="false"])';
 const SEPARATOR = '<p style="margin:0"><br></p>';
@@ -56,12 +55,13 @@ function coversContents(range: Range, node: Node) {
   return range.compareBoundaryPoints(Range.START_TO_START, content) <= 0
     && range.compareBoundaryPoints(Range.END_TO_END, content) >= 0;
 }
-function hrefFor(link: Element) {
+function hrefFor(link: Element): string | undefined {
   const href = link.getAttribute("href");
-  if (!href || /[\u0000-\u0020\u007f]/.test(href)) return fail();
-  const url = new URL(href);
-  if (!["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) return fail();
-  return href;
+  if (!href || /[\u0000-\u0020\u007f]/.test(href)) return undefined;
+  try {
+    const url = new URL(href);
+    return ["http:", "https:", "mailto:", "tel:"].includes(url.protocol) ? href : undefined;
+  } catch { return undefined; }
 }
 function codeText(nodes: Content[]): string {
   return nodes.map(node => node.kind === "text" ? node.value : node.tag === "br" ? "\n" : codeText(node.children)).join("");
@@ -69,6 +69,8 @@ function codeText(nodes: Content[]): string {
 function htmlFor(node: Content): string {
   if (node.kind === "text") return escape(node.value);
   if (node.tag === "br") return "<br>";
+  if (node.tag === "hr") return SEPARATOR;
+  if (node.tag === "blockquote") return `<blockquote style="margin:0">${node.children.filter(meaningful).filter(child => child.kind !== "element" || child.tag !== "hr").map(htmlFor).join(SEPARATOR)}</blockquote>`;
   const margin = BLOCKS.has(node.tag) ? ' style="margin:0"' : "";
   const href = node.href ? ` href="${escape(node.href)}"` : "";
   const start = node.tag === "ol" && node.start !== undefined && node.start !== 1 ? ` start="${node.start}"` : "";
@@ -77,6 +79,8 @@ function htmlFor(node: Content): string {
 function textFor(node: Content, depth = 0): string {
   if (node.kind === "text") return node.value;
   if (node.tag === "br") return "\n";
+  if (node.tag === "hr") return "";
+  if (node.tag === "blockquote") return node.children.filter(meaningful).filter(child => child.kind !== "element" || child.tag !== "hr").map(child => textFor(child, depth)).join("\n\n").split("\n").map(line => `> ${line}`).join("\n");
   if (node.tag === "pre" || node.tag === "code") return codeText(node.children);
   if (node.tag === "ul" || node.tag === "ol") {
     let index = node.start ?? 1;
@@ -120,6 +124,10 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
   try {
     if (range.collapsed || !root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
     if (parent(range.startContainer)?.closest(EDITABLE) || parent(range.endContainer)?.closest(EDITABLE)) return null;
+    for (let ancestor: Element | null = root; ancestor; ancestor = ancestor.parentElement) {
+      const style = ancestor.ownerDocument.defaultView?.getComputedStyle(ancestor);
+      if (ancestor.hasAttribute("hidden") || ancestor.getAttribute("aria-hidden") === "true" || style?.display === "none" || style?.visibility === "hidden") return null;
+    }
     for (const node of root.querySelectorAll(ATOMIC)) if (range.intersectsNode(node)) return null;
     for (const table of root.querySelectorAll("table")) {
       if (range.intersectsNode(table) && !coversContents(range, table)) return null;
@@ -137,6 +145,7 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
       if (!(node instanceof Element)) return node.nodeType === Node.COMMENT_NODE ? [] : fail();
       // Favicons are decorations. Content images and other unsupported nodes use native copy instead.
       if (node.tagName === "IMG" && node.getAttribute("aria-hidden") === "true" && node.getAttribute("alt") === "" && node.closest("a")) return [];
+      if (node.matches('svg[data-github-reference-glyph][aria-hidden="true"]') && node.parentElement?.matches("a[data-openwork-link-href]")) return [];
       if (node.matches(ATOMIC) || node.hasAttribute("hidden") || node.getAttribute("aria-hidden") === "true") return fail();
       const style = node.ownerDocument.defaultView?.getComputedStyle(node);
       if (style?.display === "none" || style?.visibility === "hidden") return fail();
@@ -146,14 +155,31 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
         if (!pre || !range.intersectsNode(pre)) return fail();
         return walk(pre, true);
       }
-      const tag = node.tagName.toLowerCase();
+      const sourceTag = node.tagName.toLowerCase();
+      const heading = /^h[1-6]$/.test(sourceTag);
+      const tag = heading ? "p" : sourceTag === "del" ? "s" : sourceTag === "mark" && node.getAttribute("data-search-highlight") === "true" ? "span" : sourceTag;
+      if (node.matches("button[data-openwork-quote-copy]") && node.parentElement?.matches("blockquote[data-openwork-quote]")) return [];
+      // Only the renderer's paired file-chip affordance and its icon are decorations.
+      if (node.matches("button[data-openwork-link-chevron]")) {
+        const link = node.parentElement?.querySelector("a[data-openwork-link-href]");
+        if (link?.getAttribute("data-openwork-link-href") === node.getAttribute("data-openwork-link-chevron")) return [];
+      }
+      if (sourceTag === "svg") {
+        const link = node.closest("a[data-openwork-link-href]");
+        if (link && !hrefFor(link)) return [];
+      }
       if (tag !== "div" && tag !== "span" && !isTag(tag)) return fail();
       if (node.matches(EDITABLE)) return fail();
       if ((tag === "td" || tag === "th") && (node.hasAttribute("colspan") || node.hasAttribute("rowspan"))) return fail();
       if (tag === "li" && node.hasAttribute("value")) return fail();
       if (tag === "ol" && (node.hasAttribute("reversed") || (node.hasAttribute("type") && node.getAttribute("type") !== "1"))) return fail();
       const parts = [...node.childNodes].map(source => ({ source, content: walk(source, literal || tag === "pre" || tag === "code") }));
-      const children = parts.flatMap(part => part.content);
+      let children = parts.flatMap(part => part.content);
+      if (heading) children = [element("strong", children)];
+      if (tag === "blockquote") {
+        if (children.every(isInline)) children = [element("p", children)];
+        else if (!children.filter(meaningful).every(child => child.kind === "element" && BLOCKS.has(child.tag))) return fail();
+      }
       if (tag === "div") {
         const content = children.filter(meaningful);
         if (!content.length) return [];
@@ -167,7 +193,7 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
         return children;
       }
       if (!isTag(tag)) return fail();
-      if (tag !== "br" && !children.length) return [];
+      if (tag !== "br" && tag !== "hr" && !children.length) return [];
       validateChildren(tag, children);
       // A descendant-only selection cannot safely invent an empty parent item/marker.
       if (tag === "li" && children.filter(meaningful).every(child => child.kind === "element" && (child.tag === "ul" || child.tag === "ol"))) return fail();
@@ -177,7 +203,10 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
       }
       const result = element(tag, children);
       if (result.kind !== "element") return fail();
-      if (tag === "a") result.href = hrefFor(node);
+      if (tag === "a") {
+        result.href = hrefFor(node);
+        if (!result.href) return children;
+      }
       if (tag === "ol") {
         const declared = node.getAttribute("start") ?? "1";
         if (!/^-?\d+$/.test(declared)) return fail();
@@ -197,6 +226,7 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
       inline = [];
     };
     for (const node of selected) {
+      if (node.kind === "element" && node.tag === "hr") { flush(); continue; }
       if (node.kind === "element" && BLOCKS.has(node.tag)) {
         if (node.tag === "li") return fail();
         flush(); blocks.push(node);
@@ -214,6 +244,33 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
   }
 }
 
+/** One message may interleave prose and activity. Only marked prose contributes. */
+export function serializeAssistantMessageRange(root: HTMLElement, range: Range): AssistantProseClipboard | null {
+  try {
+    if (range.collapsed || !root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+    // Only React-owned direct children are provenance. Raw Markdown/tool HTML may forge attributes deeper down.
+    const groups = [...root.children].filter((node): node is HTMLElement => node instanceof HTMLElement && node.hasAttribute("data-assistant-reply-prose"));
+    const inProse = (node: Node) => node === root || groups.some(group => group.contains(node));
+    // A selection starting/ending in tool UI is still native. Activity between prose endpoints is omitted.
+    if (!inProse(range.startContainer) || !inProse(range.endContainer)) return null;
+    const pieces: AssistantProseClipboard[] = [];
+    for (const group of groups) {
+      if (!range.intersectsNode(group)) continue;
+      const clipped = group.ownerDocument.createRange();
+      clipped.selectNodeContents(group);
+      if (range.compareBoundaryPoints(Range.START_TO_START, clipped) > 0) clipped.setStart(range.startContainer, range.startOffset);
+      if (range.compareBoundaryPoints(Range.END_TO_END, clipped) < 0) clipped.setEnd(range.endContainer, range.endOffset);
+      if (clipped.collapsed) continue;
+      const piece = serializeAssistantProseRange(group, clipped);
+      if (!piece) return null;
+      pieces.push(piece);
+    }
+    if (!pieces.length) return null;
+    const text = pieces.map(piece => piece.text).join("\n\n");
+    return text.length > 1_000_000 ? null : { html: pieces.map(piece => piece.html).join(SEPARATOR), text };
+  } catch { return null; }
+}
+
 type ProseCopyEvent = {
   clipboardData: { setData: (format: string, data: string) => void } | null;
   defaultPrevented: boolean;
@@ -222,13 +279,13 @@ type ProseCopyEvent = {
 };
 
 /** No cancellation until both complete formats have been built and written. */
-export function copyAssistantProseSelection(event: ProseCopyEvent, root: HTMLElement, enabled: boolean): boolean {
+export function copyAssistantProseSelection(event: ProseCopyEvent, root: HTMLElement, enabled: boolean, grouped = false): boolean {
   if (!enabled || event.defaultPrevented || !event.clipboardData) return false;
   try {
     if (event.target instanceof Element && event.target.closest(EDITABLE)) return false;
     const selection = root.ownerDocument.getSelection();
     if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) return false;
-    const data = serializeAssistantProseRange(root, selection.getRangeAt(0));
+    const data = (grouped ? serializeAssistantMessageRange : serializeAssistantProseRange)(root, selection.getRangeAt(0));
     if (!data) return false;
     event.clipboardData.setData("text/html", data.html);
     event.clipboardData.setData("text/plain", data.text);

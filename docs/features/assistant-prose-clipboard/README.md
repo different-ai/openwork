@@ -4,43 +4,44 @@
 - **Deployments:** cloud and self-hosted, **off by default**
 - **Owner:** `yomgui`
 
-## What changes
+## Behavior and scope
 
-When enabled, copying a supported selection inside one assistant-prose region supplies semantic HTML and readable plain text instead of the browser's styled DOM fragment. The selected range is read from the original semantic nodes. App classes, colors, fonts, private attributes and decorative link favicons are not exported.
+When enabled, selected assistant text supplies semantic HTML and readable plain text instead of browser-styled markup. A single listener covers an assistant message. Only its React-owned direct prose groups contribute: a selection from prose through tool/reasoning activity to later prose omits that activity. Nested markup cannot declare more prose groups. Endpoints in activity, another message, inputs or the composer retain native copying. User messages and message/code Copy buttons are unchanged. No rendered layout or new control changes (DESIGN.md P5/P11).
 
-Only assistant text mounts the listener. User messages, reasoning/tool output, the composer and input controls retain native copying. Message Copy buttons and code-copy buttons are unchanged. There is no new control or rendered layout change (DESIGN.md P5/P11). This is a clipboard behavior rollout, not a new visual surface.
+The existing feature resolver reads organization/member or signed-out deployment state. Missing/unreachable state is off. Successful copies record only the existing feature-usage key, never clipboard contents.
 
-The shared desktop feature resolver handles active-member organization state and signed-out deployment state. Missing/unreachable state is off. A successful intercepted copy records only the existing feature-usage key, never clipboard content.
+## Portable content
 
-## Block spacing is structural
+The serializer rebuilds paragraphs, lists, emphasis, strike, safe links, literal code/pre, blockquotes and simple tables. App classes, fonts, colors, private attributes and decorative favicons/GitHub glyphs are omitted; search highlights retain their words without highlight markup.
 
-Supported HTML is rebuilt as `p`, `ul`/`ol`/`li`, `strong`, `em`, `a href`, `code`/`pre`, `br` and simple table elements. Blocks have only `style="margin:0"`. Exactly one `<p style="margin:0"><br></p>` separates top-level blocks. No separators are inserted inside lists or table rows.
+- `h1`–`h6` become bold paragraphs; Slack has no heading format.
+- `hr` becomes a structural boundary, coalesced with the normal boundary between blocks.
+- `del` becomes `s`; blockquotes retain semantic `blockquote` markup.
+- Local file chips retain their selected label without the icon or Open with control. Inline code paths remain `code`.
+- HTTP/HTTPS/mailto/tel destinations remain links. Missing, invalid, local or other-scheme destinations degrade only that link to its selected label; surrounding content still copies.
 
-This is intentional: clean HTML without spacing loses paragraph gaps in layout-heuristic importers, including the reported Quill-based paste path. Neither logical nor physical margins alone is a reliable solution. The internal baseline simulation predicts the structural form preserves the desired paragraph/list boundaries, but this is **not a cross-application guarantee**.
+Blocks use only `style="margin:0"`. Exactly one `<p style="margin:0"><br></p>` separates top-level blocks. No separators are inserted inside lists or table rows. This avoids relying on margins/layout guesses in Quill-like importers; it is not a universal cross-application guarantee.
 
-Text uses blank lines between top-level blocks, list markers/numbers with one item per line, literal code whitespace, tab-separated table cells and `label (url)` links. Bare-URL labels aren't repeated. This is readable text, not a Markdown-source export.
+Plain text has blank lines between blocks, list markers/source numbering, literal code whitespace, tab-separated table cells, quoted lines and `label (url)` links. Bare-URL labels are not repeated. This is readable text, not a Markdown-source export.
 
-## Safe native fallback
+## Native fallback
 
-The browser remains responsible when the flag is off, no clipboard data is available, the range is empty/multiple, or any selected endpoint leaves this prose region. Unsupported/atomic nodes, math, mentions/session references, content images, unsupported raw elements and partial/spanning table cells fall back rather than silently lose meaning. Headings and blockquotes currently retain native copying; they aren't coerced to paragraphs.
+Off, missing clipboard data, empty/multiple/outside ranges, errors or failed writes retain native behavior. Both formats are built and written before `preventDefault()`.
 
-Ordinary partial inline text/link selections and supported list selections are handled. Descendant-only nested-list selections that would invent an empty ancestor item stay native. Reversed/nondecimal ordered lists and ambiguous or invalid block/inline structures stay native rather than change meaning. Text-bearing `div` blocks preserve paragraph boundaries; renderer wrappers around supported blocks are transparent. Simple tables require a range enclosing their DOM contents: selecting from the first cell's text to the last cell's text still falls back, even if it looks complete. Renderer code-block toolbars are excluded while selected code is retained. Failures or moving ranges return to native copy without cancellation. Both complete formats are constructed before writing, and `preventDefault()` is called only after both writes succeed.
+Genuinely unsupported selected prose remains native rather than silently dropping it: math, images, diagrams, task checkboxes, mentions/session references and partial/spanning tables. An image-only prose group is not treated as empty. Hidden roots/ancestors are rejected. Ambiguous structures, reversed/nondecimal lists and descendant-only nested-list selections that would invent an empty parent marker also remain native. Simple tables require enclosing DOM boundaries; visually selecting first-to-last cell text alone falls back.
 
-## How to try it
+## Try and roll back
 
-Enable the feature only in an approved test organization/member using the existing feature controls. Select supported assistant text containing paragraphs, a list, emphasis and a web link, then copy and paste into a destination. Verify the list-to-paragraph gap, other block gaps, text fallback, emphasis and actual link destination. Test source selection and destination mode explicitly.
+Use existing feature controls only in an approved test scope. Select paragraphs, a list, headings, a local file chip, emphasis and a web link. Check every paragraph gap (especially list → Expected), formatting, destinations and plain-text paste. Include a prose → tool → prose selection.
 
-Turning the feature off removes the listener on the next feature-state refresh. Existing selections, stored conversations and already copied data aren't rewritten. Native copy resumes; there is no migration or persistent document-format change.
+Turning the feature off removes interception on the next state refresh. Stored conversations and existing clipboard data are not rewritten; there is no migration. Keep the flag off until intentional rollout approval.
 
-## Evidence and limits
+## Verification
 
-Validation for the draft PR (2026-11-09 America/New_York):
+- `bun test apps/app/tests/assistant-prose-clipboard.test.tsx`: unit/DOM/React coverage includes actual Markdown rendering plus GitHub/search decoration, conversions, grouped selection boundaries, forged markers, image-only groups and native fallback. Synthetic React events alone are not keyboard proof.
+- Separate isolated headless-shell proof uses trusted Meta+C through the actual grouped React component on the captured reply and heading/file/quote variant. Generated payloads and local Quill imports check gaps, italics, links, code and blockquotes. The private browser uses verified mock-keychain/basic-password-store flags and private HOME/XDG/profile; no normal account browser is used.
+- Run app typecheck, feature tests and `features:check` on the rebased head. Results, live paste receipts and unrelated CI findings are recorded with the review evidence, not interpreted as compatibility guarantees.
 
-- `bun test apps/app/tests/assistant-prose-clipboard.test.tsx`: **45 pass**, 93 assertions. Includes semantic export, structural boundaries, lists, links, code, tables, partial ranges, multiple ranges, flag gating, malformed structure and native fallback. React event tests in this file are synthetic, not real keyboard proof.
-- Separate local Playwright proof bundled the actual `AssistantProse` React component with esbuild and ran **trusted `Meta+C`** events in Chromium headless shell 156.0.8078.4. The supported paragraph/list/paragraph selection wrote both formats with exactly two separators, emphasis and an actual link. Partial link selection after composer focus and partial code selection passed. Flag off, outside-root text, textarea, cross-root and unsupported-heading copies were not cancelled. This was a component harness, not an authenticated full-app or destination paste test. The owned process arguments were verified: private profile/HOME/XDG, `--use-mock-keychain` and `--password-store=basic`; the browser was closed and its private directory removed.
-- `pnpm --filter @openwork/app typecheck`, `pnpm --filter @openwork/features test` (**26 pass**) and `pnpm features:check`: passed.
-- `pnpm check:ui-guardrails`: fails with **23 pre-existing findings** outside these changes. Running the same checker on an archive of base `062414c844c22e3bbb632a5a0f05665bace78a71` produced byte-identical stdout/stderr (23 findings, 411 baseline occurrences). No baseline waiver was added.
+Live self-DM validation (2026-11-09) is **not green**: the [captured reply](https://differentai.slack.com/archives/D0BSDT6QZLJ/p1794281028266079) retained italic/link formatting but its readback has no explicit blank line before Expected. The [heading/file/quote variant](https://differentai.slack.com/archives/D0BSDT6QZLJ/p1794281053425259) retained paragraph gaps and file labels, but read back as plain text without rich emphasis/linked labels. This conflicts with the passing local Quill import; the cause is not established. Native screenshot verification was unavailable, so do not infer pixel-layout acceptance from API text.
 
-No new live Slack paste test was performed for this implementation. Gmail, Google Docs and Notion remain **untested**; earlier Quill/Slack mechanism experiments are motivation, not acceptance of this implementation. No rollout, merge or release is authorized by this document.
-
-Watch for unexpected native fallbacks, selection-boundary mistakes, duplicated separators and changed emphasis/link destinations. Do not log clipboard payloads or enable a global copy listener to diagnose them.
+Gmail, Google Docs and Notion are untested. No merge, release or rollout is authorized by this document. Do not log real clipboard contents or introduce a global copy listener for diagnostics.
