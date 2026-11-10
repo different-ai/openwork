@@ -847,22 +847,16 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
       assertOpen();
       const key = visualValidationKey(visualEvidence);
       const judgments = judgmentsForVisualEvidence(visualEvidence);
-      const validated = artifacts.find((artifact) => artifact.png !== null && artifact.hash === screenshotHash && artifact.validationKey !== null);
-      if (validated) {
-        const caption = artifactCaption(name, validated.sequence, visualEvidence);
-        if (validated.validationKey !== key) {
-          throw new Error(`Screenshot pixels for "${caption}" already back the different visual validation "${validated.caption}".`);
-        }
-        validated.caption = caption;
-        validated.fileName = fileName(validated.sequence, caption);
-        validated.description = visualEvidence.description;
-        validated.model = visualEvidence.model;
-        validated.ok = visualEvidence.deferred ? null : visualEvidence.ok;
-        validated.results = visualEvidence.results;
-        validated.judgments = judgments;
-        return join(dir, validated.fileName);
+      const matching = artifacts.filter((artifact) => artifact.png !== null && artifact.hash === screenshotHash);
+      const conflicting = matching.find((artifact) => artifact.validationKey !== null && artifact.validationKey !== key);
+      if (conflicting) {
+        const caption = artifactCaption(name, conflicting.sequence, visualEvidence);
+        throw new Error(`Screenshot pixels for "${caption}" already back the different visual validation "${conflicting.caption}".`);
       }
-      const screenshotArtifact = artifacts.find((artifact) => artifact.png !== null && artifact.hash === screenshotHash && artifact.validationKey === null);
+      // Identical pixels can be captured in multiple steps. Attach the supplied
+      // evidence to the latest unvalidated capture, not an earlier judged one.
+      // Only revalidate an existing artifact when there is no fresh capture.
+      const screenshotArtifact = matching.findLast((artifact) => artifact.validationKey === null) ?? matching[0];
       if (!screenshotArtifact) throw new Error(`No recorded screenshot has hash "${screenshotHash}".`);
       const caption = artifactCaption(name, screenshotArtifact.sequence, visualEvidence);
       screenshotArtifact.caption = caption;
