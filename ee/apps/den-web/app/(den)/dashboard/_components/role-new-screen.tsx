@@ -8,24 +8,22 @@ import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSegmented } from "../../_components/ui/segmented";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
-import { getMembersRoute, getPermissionSetRoute, orgFeatureEnabled } from "../../_lib/den-org";
-import { markFeatureUsed } from "../../_lib/feature-usage";
+import { getMembersRoute, getOrgAccessFlags, getPermissionSetRoute, permissionLockReason } from "../../_lib/den-org";
 import {
-  BUILT_IN_ROLES,
-  READY_MADE_ROLES,
   ROLE_STARTS,
-  isReadyMadeRoleId,
+  customRoleValue,
   isRoleStart,
-  roleSetTeams,
   roleStartKeys,
   roleStartLabel,
   roleStartMissingLabels,
   type RoleStart,
 } from "../../_lib/role-catalog";
 import { useDenToast } from "./den-toast";
-import { TeamsField } from "./access-rows";
 import { LinkButton } from "./item-list";
-import { useCreateSharedRole, usePermissionSets, type PermissionStatus } from "./permissions-data";
+import { useCreateSharedRole, useOrganizationRoles, type PermissionStatus } from "./permissions-data";
+import { RoleHolders } from "./role-holders";
+import { memberRoleEntry, teamRoleEntry } from "./team-roles";
+import { useGiveRole } from "./use-give-role";
 import {
   PermissionEditor,
   PermissionsAccessState,
@@ -50,26 +48,23 @@ export function RoleNewScreen({ requestedStart = null }: { requestedStart?: stri
 }
 
 /**
- * sharedRoles: a role is created by name, given to any teams now (each team's
- * custom role is replaced), and starts with no permissions: the person turns
- * on what it adds.
- *
- * readyMadeRoles: the person can choose where the role starts (Member, Admin,
- * a ready-made role, or everything), limited to what they hold themselves.
- * A ready-made role also fills in its name.
+ * A role is created by name, given to any people and teams now (each one's
+ * current role is replaced, as the rows say), and starts from Member, Admin,
+ * Billing manager or everything, limited to what its creator holds.
  */
 function SharedRoleNewContent({ ready, requestedStart }: { ready: ReadyAccess; requestedStart: RoleStart }) {
   const { orgContext } = useOrgDashboard();
   const router = useRouter();
   const toast = useDenToast();
   const create = useCreateSharedRole(ready.orgId);
-  const setsQuery = usePermissionSets(ready.orgId, true);
-  const startChoice = orgFeatureEnabled(orgContext, "readyMadeRoles");
-  // Off: the role starts as Member, with nothing turned on, as before.
-  const [chosenStart, setStart] = useState<RoleStart>(requestedStart);
-  const start: RoleStart = startChoice ? chosenStart : "member";
-  const [name, setName] = useState(startChoice && isReadyMadeRoleId(requestedStart) ? READY_MADE_ROLES[requestedStart].label : "");
+  const organizationRoles = useOrganizationRoles(ready.orgId, true);
+  const { roles } = organizationRoles;
+  const { givePerson, giveTeam } = useGiveRole(ready.orgId);
+  const access = orgContext ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions) : null;
+  const [start, setStart] = useState<RoleStart>(requestedStart);
+  const [name, setName] = useState("");
   const [teamIds, setTeamIds] = useState<string[]>([]);
+  const [memberIds, setMemberIds] = useState<string[]>([]);
   // Switches the person changed by hand. Choosing another starting point keeps them.
   const [overrides, setOverrides] = useState<ReadonlyMap<PermissionKey, PermissionStatus>>(new Map());
   const base = new Set(roleStartKeys(start, ready.held));
@@ -78,17 +73,21 @@ function SharedRoleNewContent({ ready, requestedStart }: { ready: ReadyAccess; r
   const back = { href: `${getMembersRoute(ready.orgSlug)}?tab=roles`, label: "Roles" };
   const trimmed = name.trim();
 
-  const roleByTeam = new Map<string, string>();
-  for (const set of setsQuery.data ?? []) {
-    if (set.kind !== "team") continue;
-    for (const team of roleSetTeams(set)) roleByTeam.set(team.id, set.name);
-  }
+  // Nobody gives themselves a role, and the owner needs none.
+  const people = (orgContext?.members ?? []).filter((member) => !member.isOwner && member.id !== orgContext?.currentMember.id).map((member) => ({
+    id: member.id,
+    name: member.user.name || member.user.email,
+    detail: `${member.user.email}, now ${memberRoleEntry(organizationRoles.memberRoleState(member), roles).label}`,
+  }));
   const teams = (orgContext?.teams ?? []).map((team) => ({
     id: team.id,
     name: team.name,
-    detail: `${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}, now ${team.grantsOrganizationAdmin ? BUILT_IN_ROLES.admin.label : roleByTeam.get(team.id) ?? BUILT_IN_ROLES.member.label}`,
+    detail: `${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}, now ${teamRoleEntry(organizationRoles.teamRoleState(team), roles).label}`,
   }));
-  const chosenNames = teamIds.flatMap((id) => teams.find((team) => team.id === id)?.name ?? []);
+  const chosenNames = [
+    ...memberIds.flatMap((id) => people.find((person) => person.id === id)?.name ?? []),
+    ...teamIds.flatMap((id) => teams.find((team) => team.id === id)?.name ?? []),
+  ];
 
   const rows: PermissionEditorRow[] = PERMISSION_KEYS.map((key) => {
     const status: PermissionStatus = allowed.has(key) ? "allow" : "deny";
@@ -103,16 +102,20 @@ function SharedRoleNewContent({ ready, requestedStart }: { ready: ReadyAccess; r
   function chooseStart(next: RoleStart) {
     create.reset();
     setStart(next);
-    // A ready-made role brings its name, unless the person already typed their own.
-    const suggested = isReadyMadeRoleId(start) ? READY_MADE_ROLES[start].label : "";
-    if (trimmed === "" || trimmed === suggested) setName(isReadyMadeRoleId(next) ? READY_MADE_ROLES[next].label : "");
   }
 
   async function submit() {
     if (!trimmed) return;
     try {
-      const set = await create.mutateAsync({ name: trimmed, teamIds, permissions: [...allowed].map((key) => ({ key, status: "allow" })) });
-      if (startChoice && isReadyMadeRoleId(start)) markFeatureUsed("readyMadeRoles");
+      const set = await create.mutateAsync({ name: trimmed, teamIds, memberIds, permissions: [...allowed].map((key) => ({ key, status: "allow" })) });
+      // A person and a team hold one role: whoever was an admin becomes this role, as their row said.
+      const created = { kind: "custom" as const, value: customRoleValue(set.id), label: set.name, setId: set.id, allowedCount: set.allowedCount, teams: [], directMemberIds: [] };
+      for (const member of orgContext?.members ?? []) {
+        if (memberIds.includes(member.id)) await givePerson(member.id, { ...organizationRoles.memberRoleState(member), setId: set.id }, created);
+      }
+      for (const team of orgContext?.teams ?? []) {
+        if (teamIds.includes(team.id)) await giveTeam(team.id, { admin: team.grantsOrganizationAdmin, setId: set.id }, created);
+      }
       toast({ title: `${trimmed} created` });
       router.replace(getPermissionSetRoute(ready.orgSlug, set.id));
     } catch {
@@ -127,29 +130,37 @@ function SharedRoleNewContent({ ready, requestedStart }: { ready: ReadyAccess; r
         <DenInput value={name} onChange={(event) => { create.reset(); setName(event.target.value); }} placeholder="Skill publisher" maxLength={120} data-testid="role-new-name" />
       </label>
 
-      <div className="flex flex-col gap-1.5">
-        <span className="text-[13px] font-medium text-gray-700">Teams</span>
-        <TeamsField teams={teams} chosenIds={teamIds} onChange={(ids) => { create.reset(); setTeamIds(ids); }} rowTestId="role-new-team" />
-      </div>
+      <RoleHolders
+        title="Who gets this role"
+        testId="role-new-holders"
+        people={memberIds.flatMap((id) => people.find((person) => person.id === id) ?? [])}
+        teams={teamIds.flatMap((id) => teams.find((team) => team.id === id) ?? [])}
+        addablePeople={people.filter((person) => !memberIds.includes(person.id))}
+        peopleLockReason={access?.canManageRoles ? null : permissionLockReason("members.update")}
+        addableTeams={teams.filter((team) => !teamIds.includes(team.id))}
+        onAddPeople={(ids) => { create.reset(); setMemberIds((current) => [...current, ...ids]); }}
+        onAddTeams={(ids) => { create.reset(); setTeamIds((current) => [...current, ...ids]); }}
+        onRemovePerson={(id) => { create.reset(); setMemberIds((current) => current.filter((entry) => entry !== id)); }}
+        onRemoveTeam={(id) => { create.reset(); setTeamIds((current) => current.filter((entry) => entry !== id)); }}
+        empty="Nobody yet. You can also give it later."
+      />
 
-      {startChoice ? (
-        <div className="flex flex-col items-start gap-1.5" data-testid="role-new-start">
-          <span className="text-[13px] font-medium text-gray-700">Start from</span>
-          <DenSegmented
-            aria-label="Start from"
-            value={start}
-            onChange={chooseStart}
-            options={ROLE_STARTS.map((option) => ({ value: option, label: roleStartLabel(option) }))}
-            optionTestId={(option) => `role-new-start-${option}`}
-          />
-          {/* Blocked, not an error: say what is left out and why (C5). */}
-          {missing.length > 0 ? (
-            <p className="text-[13px] text-gray-500" data-testid="role-new-start-missing">
-              {`${roleStartLabel(start)} also has ${missing.join(", ")}. You don't have ${missing.length === 1 ? "that permission" : "those permissions"}, so this role starts without ${missing.length === 1 ? "it" : "them"}.`}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
+      <div className="flex flex-col items-start gap-1.5" data-testid="role-new-start">
+        <span className="text-[13px] font-medium text-gray-700">Start from</span>
+        <DenSegmented
+          aria-label="Start from"
+          value={start}
+          onChange={chooseStart}
+          options={ROLE_STARTS.map((option) => ({ value: option, label: roleStartLabel(option) }))}
+          optionTestId={(option) => `role-new-start-${option}`}
+        />
+        {/* Blocked, not an error: say what is left out and why (C5). */}
+        {missing.length > 0 ? (
+          <p className="text-[13px] text-gray-500" data-testid="role-new-start-missing">
+            {`${roleStartLabel(start)} also has ${missing.join(", ")}. You don't have ${missing.length === 1 ? "that permission" : "those permissions"}, so this role starts without ${missing.length === 1 ? "it" : "them"}.`}
+          </p>
+        ) : null}
+      </div>
 
       {create.error ? <DenNotice tone="error" message={create.error.message} /> : null}
 
@@ -160,7 +171,7 @@ function SharedRoleNewContent({ ready, requestedStart }: { ready: ReadyAccess; r
         summary={trimmed ? (
           <span className="flex flex-col">
             <span className="font-medium text-gray-900">{`${allowed.size} ${allowed.size === 1 ? "permission" : "permissions"} selected`}</span>
-            <span>{chosenNames.length > 0 ? `Given to ${chosenNames.join(", ")}` : "No team yet"}</span>
+            <span>{chosenNames.length > 0 ? `Given to ${chosenNames.join(", ")}` : "Nobody yet"}</span>
           </span>
         ) : <span>Name the role to save</span>}
       >

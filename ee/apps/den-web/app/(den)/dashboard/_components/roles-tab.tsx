@@ -1,35 +1,28 @@
 "use client";
 
-import { LockKeyhole, ShieldCheck, ShieldPlus, Users } from "lucide-react";
+import { LockKeyhole, ShieldCheck, Users } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { MemberListToolbar } from "./member-list-toolbar";
 import { DenNotice } from "../../_components/ui/notice";
 import {
-  getNewRoleRoute,
   getOrgAccessFlags,
   getPermissionKeysRoute,
   getPermissionSetRoute,
   isSuperAdminRole,
-  orgFeatureEnabled,
   permissionLockReason,
 } from "../../_lib/den-org";
-import { roleList, roleTeamNames, type BuiltInRoleId } from "../../_lib/role-catalog";
+import { permissionCountLabel, roleHeldByLabel, roleList, type BuiltInRoleId } from "../../_lib/role-catalog";
 import { useFeatureIntro } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IconTile } from "./access-rows";
-import { ItemMenu, ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection, LinkButton } from "./item-list";
+import { ItemMenu, ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection } from "./item-list";
 import { usePermissionSets } from "./permissions-data";
 
-function peopleLabel(count: number): string {
-  return `${count} ${count === 1 ? "person" : "people"}`;
-}
-
 /**
- * Built-in roles, named custom roles (which can apply to several teams) and,
- * with readyMadeRoles, the ready-made roles nobody has created yet. The rows
- * come from the organization's one role list (`roleList`), the same list the
- * role pickers show.
+ * Built-in roles and custom roles, each with who holds it. The rows come from
+ * the organization's one role list (`roleList`), the same list the role
+ * pickers show.
  * `showIntro` (Members › Roles) lets the custom roles intro take the empty list's place.
  */
 export function RolesTab({ action, showIntro = false }: { action?: ReactNode; showIntro?: boolean }) {
@@ -37,8 +30,7 @@ export function RolesTab({ action, showIntro = false }: { action?: ReactNode; sh
   if (!orgContext) return null;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
 
-  const createLock = canCreateRole(access) ? null : permissionLockReason(access.canManagePermissions ? "teams.manage" : "permissions.manage");
-  return <RolesTabContent orgId={orgId} orgSlug={orgSlug} canViewSets={access.canViewPermissions} createLock={createLock} action={action} showIntro={showIntro} />;
+  return <RolesTabContent orgId={orgId} orgSlug={orgSlug} canViewSets={access.canViewPermissions} action={action} showIntro={showIntro} />;
 }
 
 /** Whether the signed-in person can create a role (a team and its permission set). */
@@ -46,12 +38,10 @@ export function canCreateRole(input: { canManageTeams: boolean; canManagePermiss
   return input.canManageTeams && input.canManagePermissions;
 }
 
-function RolesTabContent({ orgId, orgSlug, canViewSets, createLock, action, showIntro }: {
+function RolesTabContent({ orgId, orgSlug, canViewSets, action, showIntro }: {
   orgId: string | null;
   orgSlug: string | null;
   canViewSets: boolean;
-  /** Why the person can't create a role, or null when they can. */
-  createLock: string | null;
   action?: ReactNode;
   showIntro: boolean;
 }) {
@@ -62,23 +52,28 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, createLock, action, show
 
   const matches = (name: string) => name.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase());
   const sets = setsQuery.data ?? [];
-  // Ready-made roles need the custom roles to tell which already exist.
-  const roles = roleList({ sets, readyMade: orgFeatureEnabled(orgContext, "readyMadeRoles") && canViewSets && setsQuery.data !== undefined });
+  const roles = roleList({ sets });
   const builtInRoles = roles.flatMap((role) => role.kind === "built_in" && matches(role.label) ? [role] : []);
   const customRoles = roles.flatMap((role) => role.kind === "custom" && matches(role.label) ? [role] : []);
-  const readyMadeRoles = roles.flatMap((role) => role.kind === "ready_made" && matches(role.label) ? [role] : []);
   // Known, unfiltered count of custom roles for the intro; null while loading, filtering or not allowed.
   const customRoleCount = canViewSets && setsQuery.data && !filter.trim() ? roles.filter((role) => role.kind === "custom").length : null;
 
   const owner = orgContext.members.find((member) => member.isOwner);
   const directAdmins = orgContext.members.filter((member) => !member.isOwner && member.userId !== null && member.role === "admin").length;
   const superAdmins = orgContext.members.filter((member) => !member.isOwner && member.userId !== null && isSuperAdminRole(member.role)).length;
-  const adminTeams = orgContext.teams.filter((team) => team.grantsOrganizationAdmin);
+  // Only teams and people still in the organization count.
+  const teamNames = (teams: readonly { id: string }[]) => teams.flatMap((entry) => orgContext.teams.find((team) => team.id === entry.id)?.name ?? []);
+  const peopleCount = (memberIds: readonly string[]) => memberIds.filter((id) => orgContext.members.some((member) => member.id === id)).length;
+  const linked = (id: BuiltInRoleId) => roles.find((role) => role.kind === "built_in" && role.id === id);
+  // A team that holds Super admin is an Admin team too; it is listed once, under Super admin.
+  const superAdminTeamIds = new Set((linked("super-admin")?.teams ?? []).map((team) => team.id));
+  const adminTeams = orgContext.teams.filter((team) => team.grantsOrganizationAdmin && !superAdminTeamIds.has(team.id));
   /** Who holds each built-in role. A new built-in role doesn't compile until it says who. */
   const heldBy: Record<BuiltInRoleId, string | undefined> = {
     member: "Everyone",
-    admin: [directAdmins > 0 ? peopleLabel(directAdmins) : null, ...adminTeams.map((team) => team.name)].filter(Boolean).join(", ") || "Nobody yet",
-    "super-admin": superAdmins > 0 ? peopleLabel(superAdmins) : "Nobody yet",
+    admin: roleHeldByLabel(directAdmins, adminTeams.map((team) => team.name)),
+    "billing-manager": canViewSets ? roleHeldByLabel(peopleCount(linked("billing-manager")?.directMemberIds ?? []), teamNames(linked("billing-manager")?.teams ?? [])) : undefined,
+    "super-admin": roleHeldByLabel(superAdmins, teamNames(linked("super-admin")?.teams ?? [])),
     owner: owner ? (owner.user.name || owner.user.email) : undefined,
   };
 
@@ -121,49 +116,21 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, createLock, action, show
           </ItemPanel>
         ) : (
           <ItemPanel>
-            {customRoles.map((role) => {
-              const teams = role.teams.filter((entry) => orgContext.teams.some((team) => team.id === entry.id));
-              return (
-                <ItemRow
-                  key={role.setId}
-                  logo={<IconTile icon={Users} />}
-                  title={role.label}
-                  description={`${role.allowedCount} ${role.allowedCount === 1 ? "permission" : "permissions"}`}
-                  status={teams.length > 0 ? roleTeamNames(teams) : "No teams yet"}
-                  href={getPermissionSetRoute(orgSlug, role.setId)}
-                  testId="role-row-custom"
-                />
-              );
-            })}
+            {customRoles.map((role) => (
+              <ItemRow
+                key={role.setId}
+                logo={<IconTile icon={Users} />}
+                title={role.label}
+                description={permissionCountLabel(role.allowedCount)}
+                status={roleHeldByLabel(peopleCount(role.directMemberIds), teamNames(role.teams))}
+                href={getPermissionSetRoute(orgSlug, role.setId)}
+                testId="role-row-custom"
+              />
+            ))}
           </ItemPanel>
         )}
       </ItemSection>
       </RolesIntroGate>
-
-      {/* readyMadeRoles: roles to create in one step. Create role opens with the role's name and permissions filled in (C2). */}
-      {readyMadeRoles.length > 0 ? (
-      <ItemSection title="Ready-made roles" testId="roles-ready-made">
-        <ItemPanel>
-          {readyMadeRoles.map((role) => {
-            const href = `${getNewRoleRoute(orgSlug)}?start=${role.id}`;
-            return (
-              <ItemRow
-                key={role.id}
-                logo={<IconTile icon={ShieldPlus} />}
-                title={role.label}
-                description={role.summary}
-                wideAction
-                // Locked, with why and who can change it (P4, C5).
-                action={createLock
-                  ? <DenButton size="sm" variant="secondary" icon={LockKeyhole} disabled title={createLock}>Create role</DenButton>
-                  : <LinkButton size="sm" href={href} data-testid={`role-ready-made-create-${role.id}`}>Create role</LinkButton>}
-                testId={`role-row-ready-made-${role.id}`}
-              />
-            );
-          })}
-        </ItemPanel>
-      </ItemSection>
-      ) : null}
       </div>
     </div>
   );

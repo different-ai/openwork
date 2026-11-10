@@ -321,16 +321,6 @@
               ],
               "description": "Super admin permission set: Super admins get their permissions from an editable Super admin role, seeded with every permission, beside Member and Admin. Off: super admins hold every permission and the role is hidden. Renders DEN_FEATURE_SUPER_ADMIN_PERMISSION_SET."
             },
-            "readyMadeRoles": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Ready-made roles and one role list: Members › Roles lists ready-made roles to add, starting with Billing manager. Create role can start from Member, Admin, Billing manager or everything the owner can do. The role pickers for people and teams list every role, with a lock and the reason on roles that can't be given there. Off: Create role starts empty and pickers leave those roles out. Renders DEN_FEATURE_READY_MADE_ROLES."
-            },
             "nativeDictation": {
               "enum": [
                 "",

@@ -35,10 +35,11 @@ import {
 } from "./permissions-ui";
 import { defaultSetForSetKind } from "../../_lib/role-catalog";
 import { roleKindLabel, roleName } from "./team-roles";
-import { RoleNameField, SharedRoleTeams } from "./shared-role-teams";
+import { RoleNameField } from "./role-name-field";
+import { RoleWhoHasIt } from "./role-who-has-it";
 
 type ReadyAccess = Extract<PermissionsAccess, { state: "ready" }>;
-type SetTab = "teams" | "permissions" | "history";
+type SetTab = "who" | "permissions" | "history";
 
 function plural(count: number, one: string, many = `${one}s`) {
   return `${count} ${count === 1 ? one : many}`;
@@ -57,7 +58,7 @@ function PermissionSetContent({ ready, permissionSetId }: { ready: ReadyAccess; 
   const query = usePermissionSet(ready.orgId, permissionSetId);
   // Lives above the editor, which remounts after each save, so Undo and errors survive it.
   const update = useUpdatePermissionSet(ready.orgId, permissionSetId);
-  // a custom role's page opens on its teams, and the role has its own name.
+  // A role's page opens on who has it. Member has no such list: everyone holds it.
 
   const [chosenTab, setTab] = useState<SetTab | null>(null);
   const rolesBack = { href: `${getMembersRoute(ready.orgSlug)}?tab=roles`, label: "Roles" };
@@ -84,8 +85,9 @@ function PermissionSetContent({ ready, permissionSetId }: { ready: ReadyAccess; 
   const sharedCustom = set.kind === "team";
   const back = listBack;
   const allowedLabel = `${set.allowedCount} of ${PERMISSION_KEYS.length} allowed`;
+  const givenToPeopleAndTeams = set.kind !== "member_default" && set.archivedAt === null;
   const tabs: readonly TabItem<SetTab>[] = [
-    ...(sharedCustom && set.archivedAt === null ? [{ value: "teams" as const, label: "Teams", icon: Users }] : []),
+    ...(givenToPeopleAndTeams ? [{ value: "who" as const, label: "People and teams", icon: Users }] : []),
     { value: "permissions", label: "Permissions", icon: ShieldCheck },
     { value: "history", label: "History", icon: History },
   ];
@@ -104,11 +106,11 @@ function PermissionSetContent({ ready, permissionSetId }: { ready: ReadyAccess; 
       action={removable ? <RemoveTeamPermissions ready={ready} set={set} /> : undefined}
       testId="permission-set"
     >
-      {sharedCustom && set.archivedAt === null ? null : <AppliesTo ready={ready} set={set} />}
+      {givenToPeopleAndTeams ? null : <AppliesTo ready={ready} set={set} />}
       <UnderlineTabs tabs={tabs} activeTab={tab} onChange={setTab} />
-      {tab === "teams" ? (
-        <div role="tabpanel" aria-label="Teams">
-          <SharedRoleTeams ready={ready} set={set} />
+      {tab === "who" ? (
+        <div role="tabpanel" aria-label="People and teams">
+          <RoleWhoHasIt ready={ready} set={set} />
         </div>
       ) : tab === "permissions" ? (
         <div role="tabpanel" aria-label="Permissions" className="flex flex-col gap-6">

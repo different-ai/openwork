@@ -57,6 +57,7 @@ const invitationResponseSchema = z.object({
   role: z.string(),
   expiresAt: z.string().datetime(),
   inviteToken: z.string(),
+  memberId: denTypeIdSchema("member").nullable().describe("The invited person's pending membership, for giving them a role before they join (PUT /v1/members/:memberId/permission-set). Null when the invitation has none."),
 }).meta({ ref: "InvitationResponse" })
 
 const invitationLinkResponseSchema = z.object({
@@ -556,7 +557,7 @@ export async function createInvitationAction(
     }, auditEventIds)
 
     if (options.sendEmail === false) {
-      return c.json({ invitationId, email, role: assignedRole, expiresAt, inviteToken }, refreshed ? 200 : 201)
+      return c.json({ invitationId, email, role: assignedRole, expiresAt, inviteToken, memberId: invitationOrgMemberId }, refreshed ? 200 : 201)
     }
 
     try {
@@ -601,7 +602,7 @@ export async function createInvitationAction(
       throw error
     }
 
-    return c.json({ invitationId, email, role: assignedRole, expiresAt, inviteToken }, refreshed ? 200 : 201)
+    return c.json({ invitationId, email, role: assignedRole, expiresAt, inviteToken, memberId: invitationOrgMemberId }, refreshed ? 200 : 201)
 }
 
 /** POST /v1/invitations/:invitationId/cancel, callable with an in-process route context (config-blob imports). */

@@ -74,7 +74,8 @@ type OrgDashboardContextValue = {
   deleteOrganization: () => Promise<void>;
   switchOrganization: (slug: string) => void;
   /** teamId (teamRoles): invite into a custom role by adding the pending member to its team. */
-  inviteMember: (input: { email: string; role: string; teamId?: string | null }) => Promise<void>;
+  /** Resolves to the invited person's pending member id, or null when the server didn't return one. */
+  inviteMember: (input: { email: string; role: string; teamId?: string | null }) => Promise<string | null>;
   startSeatCheckout: () => Promise<void>;
   cancelInvitation: (invitationId: string) => Promise<void>;
   /** The join link of a pending invitation; GET /v1/org never includes join tokens. */
@@ -84,7 +85,8 @@ type OrgDashboardContextValue = {
   /** Turns OpenWork Web on or off for a member or pending invitation (webPerMember). */
   setMemberOpenWorkWeb: (memberId: string, enabled: boolean) => Promise<void>;
   transferOwnership: (memberId: string) => Promise<void>;
-  createTeam: (input: { name: string; memberIds: string[] }) => Promise<void>;
+  /** Resolves to the new team's id, or null when the server didn't return one. */
+  createTeam: (input: { name: string; memberIds: string[] }) => Promise<string | null>;
   updateTeam: (teamId: string, input: { name?: string; memberIds?: string[]; grantsOrganizationAdmin?: boolean }) => Promise<void>;
   deleteTeam: (teamId: string) => Promise<void>;
   runReauthableAction: (label: string, action: () => Promise<void>, prompt?: ReauthPrompt) => Promise<void>;
@@ -125,6 +127,16 @@ function startOrgBootRequests(): OrgBootRequests {
 const OrgDashboardContext = createContext<OrgDashboardContextValue | null>(null);
 const ORG_SETTINGS_PATH = "/dashboard/org-settings";
 const ORG_SETTINGS_UPDATED_MESSAGE = "Workspace settings updated.";
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/** A string field of a response body, or null. */
+function stringField(value: unknown, key: string): string | null {
+  const field = isObject(value) ? value[key] : null;
+  return typeof field === "string" && field.length > 0 ? field : null;
+}
 
 export function OrgDashboardProvider({
   children,
@@ -832,6 +844,7 @@ export function OrgDashboardProvider({
       throw new Error(permissionLockReason("teams.manage"));
     }
 
+    let invitedMemberId: string | null = null;
     await runMutation("invite-member", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
@@ -855,8 +868,9 @@ export function OrgDashboardProvider({
         }
         throw getRequestError(payload, response, `Failed to invite member (${response.status}).`);
       }
-
+      invitedMemberId = stringField(payload, "memberId");
     });
+    return invitedMemberId;
   }
 
   async function startSeatCheckout() {
@@ -1036,6 +1050,7 @@ export function OrgDashboardProvider({
       throw new Error(permissionLockReason("teams.manage"));
     }
 
+    let createdTeamId: string | null = null;
     await runMutation("create-team", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
@@ -1050,7 +1065,9 @@ export function OrgDashboardProvider({
       if (!response.ok) {
         throw getRequestError(payload, response, `Failed to create team (${response.status}).`);
       }
+      createdTeamId = stringField(isObject(payload) ? payload.team : null, "id");
     });
+    return createdTeamId;
   }
 
   async function updateTeam(teamId: string, input: { name?: string; memberIds?: string[]; grantsOrganizationAdmin?: boolean }) {
