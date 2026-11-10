@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { control, createDesktopHandoffGrant, denFetch } from "@openwork/behaviors";
+import { control, createDesktopHandoffGrant, denFetch, quitDesktop } from "@openwork/behaviors";
 import { browserScript, evaluateOnSurface } from "@openwork/cdp";
 import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import type { App, Den, Seed } from "@openwork/env";
@@ -102,6 +102,16 @@ export async function remoteDesktopDeviceLogin(seed: Seed) {
   const binary = process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim();
   if (!binary?.startsWith("/") || !binary.endsWith("/openwork")) throw new Error("Native proof requires the prebuilt Linux unpacked openwork binary in OPENWORK_EVAL_ELECTRON_BINARY; source Electron is not evidence.");
   const den = await seed.den({ org: { name: "Device workspace A", admin: { name: "Device Approver" }, members: {} }, env: { DEN_FEATURE_REMOTE_DESKTOP_DEVICE_LOGIN: undefined } });
+  // /v1 supports bearer sessions; Better Auth's session-list endpoint requires
+  // its signed cookie. Arrange both from one real password sign-in, without
+  // copying either credential into the desktop or exposing them to evidence.
+  const login = await denFetch(den.ref, "/api/auth/sign-in/email", {
+    method: "POST", body: JSON.stringify({ email: den.admin.email, password: den.admin.password }),
+  });
+  if (!login.response.ok) throw new Error(`Arrange approving session: HTTP ${login.response.status}`);
+  const approvingCookie = login.response.headers.getSetCookie().map(value => value.split(";", 1)[0]).join("; ");
+  if (!approvingCookie) throw new Error("Approving session did not issue its signed cookie.");
+  den.admin = { ...den.admin, token: text(record(login.body).token) };
   const api = (path: string, init?: RequestInit) => denFetch(den.admin, path, {
     ...init, headers: { authorization: `Bearer ${den.admin.token}`, ...init?.headers }, signal: AbortSignal.timeout(15_000),
   });
@@ -111,7 +121,7 @@ export async function remoteDesktopDeviceLogin(seed: Seed) {
   };
   const publicFeatures = async () => record(record((await denFetch(den.ref, "/v1/features")).body).features).remoteDesktopDeviceLogin;
   const sessionCount = async () => {
-    const result = await api("/api/auth/list-sessions");
+    const result = await api("/api/auth/list-sessions", { headers: { cookie: approvingCookie } });
     if (!result.response.ok) throw new Error(`Read own session count: HTTP ${result.response.status}`);
     // Better Auth's session records can contain credentials. Only the count is
     // returned from this closure; never include response content in errors.
@@ -222,6 +232,9 @@ export async function remoteDesktopDeviceLogin(seed: Seed) {
     async [Symbol.asyncDispose]() {
       await shell.stop();
       await rollout(false);
+      // A packaged executable is not named electron. Use the maintained
+      // graceful quit so runtime children close before host disposal.
+      await quitDesktop(app);
       await app.stop();
       await shell.removeProfile();
     },
