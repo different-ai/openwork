@@ -34,7 +34,7 @@ export function validateParticipants(value) {
 export const GUEST_PERSONA = "Jordan Reyes";
 export function workplacePerson(participant) {
   const name = /^guest-[a-f0-9]{24}$/.test(participant.id) ? GUEST_PERSONA : participant.name;
-  return `${name}|${participant.id}|${/^guest-/.test(participant.id) ? "Operations lead" : "Workshop participant"}`;
+  return `${name}|${participant.id}|${/^guest-[a-f0-9]{24}$/.test(participant.id) ? "Operations lead" : "Workshop participant"}`;
 }
 
 function send(res, status, body, headers = {}) {
