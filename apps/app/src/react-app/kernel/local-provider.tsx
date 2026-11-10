@@ -18,7 +18,7 @@ import {
   isDesktopNotificationPreference,
   type DesktopNotificationPreference,
 } from "./desktop-notification-preferences";
-import { DEFAULT_SHOW_THINKING, isLinkOpenDestination, LOCAL_PREFERENCES_KEY, needsShowThinkingReset, type LinkOpenDestination } from "./local-preferences-storage";
+import { DEFAULT_SHOW_THINKING, isFollowUpDefault, isLinkOpenDestination, LOCAL_PREFERENCES_KEY, needsShowThinkingReset, type FollowUpDefault, type LinkOpenDestination } from "./local-preferences-storage";
 import {
   readStoredDefaultModel,
   storedDefaultModelChangedEvent,
@@ -74,6 +74,12 @@ export type LocalPreferences = {
    * On by default so long tasks are not cut off when the computer sleeps.
    */
   keepAwake: boolean;
+  /**
+   * What Enter does with a message typed while the agent is working: wait for
+   * it to finish (`queue`) or send right away (`steer`). Cmd/Ctrl+Enter does
+   * the other one.
+   */
+  followUpDefault: FollowUpDefault;
 };
 
 type LocalContextValue = {
@@ -104,6 +110,7 @@ const INITIAL_PREFS: LocalPreferences = {
   linkOpenDestination: "openwork",
   askBeforeOpeningLinks: true,
   keepAwake: true,
+  followUpDefault: "queue",
 };
 
 function readStored(key: string): unknown {
@@ -156,6 +163,7 @@ export function LocalProvider({ children }: LocalProviderProps) {
     persisted.linkOpenDestination = isLinkOpenDestination(persisted.linkOpenDestination)
       ? persisted.linkOpenDestination
       : "openwork";
+    persisted.followUpDefault = isFollowUpDefault(persisted.followUpDefault) ? persisted.followUpDefault : "queue";
     persisted.desktopNotifications = isDesktopNotificationPreference(persisted.desktopNotifications)
       ? persisted.desktopNotifications
       : DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE;
