@@ -44,7 +44,10 @@ test("a reader finds the newest conversation match first without enabling it for
     expect(await world.state()).toEqual({ reader: false, otherMember: false });
     expect(found.index).toBe(0);
     evidence.recordAssertionEvidence("Flag off starts at the first visible match", JSON.stringify(found), found.index === 0 && found.total === 9 && found.visible);
-    await reader.screenshot();
+    await reader.looks([
+      "Find in conversation contains orbital and shows the match counter 1/9.",
+      "The EARLIEST checkpoint heading and an amber-highlighted orbital occurrence are visible in the conversation.",
+    ]);
   });
 
   await step("before: Enter keeps the legacy forward direction", async () => {
@@ -52,7 +55,10 @@ test("a reader finds the newest conversation match first without enabling it for
     const found = await selection(1);
     expect(found.index).toBe(1);
     evidence.recordAssertionEvidence("Flag off Enter advances from 1/9 to 2/9", JSON.stringify(found), found.index === 1 && found.visible);
-    await reader.screenshot();
+    await reader.looks([
+      "Find in conversation contains orbital and shows the match counter 2/9.",
+      "The MIDDLE 2 checkpoint heading and an amber-highlighted orbital occurrence are visible in the conversation.",
+    ]);
   });
 
   await step("the owner enables latest-first for this reader through member features", async () => {
@@ -73,7 +79,10 @@ test("a reader finds the newest conversation match first without enabling it for
     const state = await adminProbe.eventually(world.state, { within: 10_000, label: "the reader alone receives the real Den override", until: value => value.reader === true });
     expect(state).toEqual({ reader: true, otherMember: false });
     evidence.recordAssertionEvidence("Only the selected member receives latest-first", JSON.stringify(state), state.reader === true && state.otherMember === false);
-    await admin.screenshot();
+    await admin.looks([
+      "The member feature editor shows Conversation find: latest first with its switch on.",
+      "The Conversation find: latest first feature shows Set for this member.",
+    ]);
   });
 
   await step("after: find selects the latest match and scrolls it into view", async () => {
@@ -85,28 +94,44 @@ test("a reader finds the newest conversation match first without enabling it for
     expect(found.index).toBe(8);
     expect(scrollDistance).toBeGreaterThan(1_000);
     evidence.recordAssertionEvidence("Flag on starts at 9/9 and moves through the actual long history", JSON.stringify({ ...found, scrollDistance }), found.index === 8 && found.visible && scrollDistance > 1_000);
-    await reader.screenshot();
+    await reader.looks([
+      "Find in conversation contains orbital and shows the match counter 9/9.",
+      "The LATEST checkpoint heading and an amber-highlighted orbital occurrence are visible in the conversation.",
+    ]);
   });
 
   await step("Enter searches older matches and Shift+Enter returns to newer matches", async () => {
     await reader.press("Enter");
     const older = await selection(7);
+    await reader.looks([
+      "Find in conversation contains orbital and shows the match counter 8/9.",
+      "The MIDDLE 8 checkpoint heading and an amber-highlighted orbital occurrence are visible in the conversation.",
+    ]);
     await reader.press("Shift+Enter");
     const newer = await selection(8);
     expect([older.index, newer.index]).toEqual([7, 8]);
     evidence.recordAssertionEvidence("Enter reaches 8/9; Shift+Enter returns to 9/9", JSON.stringify({ older, newer }), older.index === 7 && newer.index === 8 && older.visible && newer.visible);
-    await reader.screenshot();
+    await reader.looks([
+      "Find in conversation contains orbital and shows the match counter 9/9.",
+      "The LATEST checkpoint heading and an amber-highlighted orbital occurrence are visible in the conversation.",
+    ]);
   });
 
   await step("search wraps in both directions without losing the selected result", async () => {
     await reader.press("Shift+Enter");
     const oldest = await selection(0);
-    await reader.screenshot();
+    await reader.looks([
+      "Find in conversation contains orbital and shows the match counter 1/9.",
+      "The EARLIEST checkpoint heading and an amber-highlighted orbital occurrence are visible in the conversation.",
+    ]);
     await reader.press("Enter");
     const newest = await selection(8);
     expect([oldest.index, newest.index]).toEqual([0, 8]);
     evidence.recordAssertionEvidence("Newer wraps 9/9 to 1/9; older wraps 1/9 to 9/9", JSON.stringify({ oldest, newest }), oldest.index === 0 && newest.index === 8 && oldest.visible && newest.visible);
-    await reader.screenshot();
+    await reader.looks([
+      "Find in conversation contains orbital and shows the match counter 9/9.",
+      "The LATEST checkpoint heading and an amber-highlighted orbital occurrence are visible in the conversation.",
+    ]);
   });
 
   await step("the arrow buttons keep their spatial direction and the other member stays off", async () => {
@@ -118,6 +143,9 @@ test("a reader finds the newest conversation match first without enabling it for
     expect([older.index, newer.index]).toEqual([7, 8]);
     expect(state).toEqual({ reader: true, otherMember: false });
     evidence.recordAssertionEvidence("Up is older, Down is newer; the other member still inherits off", JSON.stringify({ older, newer, state }), older.index === 7 && newer.index === 8 && state.otherMember === false);
-    await reader.screenshot();
+    await reader.looks([
+      "Find in conversation contains orbital and shows the match counter 9/9.",
+      "The LATEST checkpoint heading and an amber-highlighted orbital occurrence are visible in the conversation.",
+    ]);
   });
 });
