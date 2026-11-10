@@ -32,8 +32,31 @@ With the feature on, both split it into three tabs:
 - "See the last 7 days" on Everyone's page opens Manage › Workbot on the
   Members' agents tab.
 
-Nothing else changes: every control, what it saves and who can edit it are
-the same.
+## Clearer rows on Members' agents
+
+With Your agent's brief on as well (`workbotAgentBrief`), the Members' agents
+rows are regrouped and reworded. Each row saves the same value as before.
+
+| Before | Now |
+|---|---|
+| **Send messages to**: a list with "A DM from Workbot" and "Nowhere yet" | **Send messages in Slack**: a switch, under Messages |
+| **Members start**: a list with "Opted in" and "Must opt in" | **On for members by default**: a switch, under the agents switch |
+| **Check**: four unlabelled lists in one row | Under Schedule, one row each: **Check for updates**, **Working hours**, **Working days** |
+| **Messages per person per day**: 1 to 10 | **Daily message limit**: "7 a day", under Messages |
+| **Extra checks agents may ask for** | **Extra checks**, under Schedule |
+
+The rules the rows follow:
+
+- A yes or no choice is a switch; a choice among several values is a list.
+- One setting per row, with a label that names it.
+- Each row has an "i" beside its label with one or two sentences on what it
+  does and what members can change (hover or keyboard focus).
+- Rows are grouped by what the admin is deciding: who gets an agent, what
+  messages they get, when agents check, what to tell people.
+
+Without the brief, the older rows (message types, lead time) are unchanged.
+
+What each control saves and who can edit it are the same.
 
 ## Try it
 

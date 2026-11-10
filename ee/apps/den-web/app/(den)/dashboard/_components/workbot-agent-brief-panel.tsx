@@ -53,7 +53,7 @@ function Row({ label, labelId, note, children, testId }: { label: string; labelI
 }
 
 /** What to tell people: the brief as one text, with Reset to default and Save, saved only on Save. */
-function BriefRow({ brief, locked, onSave }: { brief: AgentBriefView; locked: boolean; onSave: (text: string) => void }) {
+export function BriefRow({ brief, locked, onSave }: { brief: AgentBriefView; locked: boolean; onSave: (text: string) => void }) {
   const id = useId();
   const [draft, setDraft] = useState(brief.text);
   useEffect(() => setDraft(brief.text), [brief.text]);
