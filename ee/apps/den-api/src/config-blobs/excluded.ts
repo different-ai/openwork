@@ -114,6 +114,7 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   artifact_view: { reason: "personal", note: "Apps; a later personal blob" },
   artifact_view_revision: { reason: "personal" },
   dashboard_app: { reason: "personal" },
+  public_mcp_app_name: { reason: "personal", note: "public URL names of Apps; Apps are not exported, and a name is unique across the deployment" },
   workflow_run: { reason: "runtime" },
   remote_session_command: { reason: "runtime" },
   remote_session_request: { reason: "runtime" },

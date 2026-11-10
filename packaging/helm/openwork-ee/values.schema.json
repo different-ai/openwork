@@ -161,6 +161,26 @@
               ],
               "description": "Apps: fix a changed tool with an agent: When a connected tool an App uses changes at its provider, so OpenWork blocks the App's call to it, the App's managers see a Fix with agent button in Artifacts that starts a conversation to update the App. Renders DEN_FEATURE_APP_TOOL_REPAIR."
             },
+            "publicApps": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Apps: public Apps without sign-in: An App's editor, or their agent, can mark an App that has no tools as public. Anyone can then add its public MCP URL to an MCP client and open it without signing in to OpenWork. Renders DEN_FEATURE_PUBLIC_APPS."
+            },
+            "appSites": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Apps: open an App as a site: An App its author made a site also opens as a web page: a browser that opens the App's MCP URL shows the App full page. Signed-in members use its tools there; an App marked public opens for anyone. Renders DEN_FEATURE_APP_SITES."
+            },
             "composerBackgroundTasks": {
               "enum": [
                 "",

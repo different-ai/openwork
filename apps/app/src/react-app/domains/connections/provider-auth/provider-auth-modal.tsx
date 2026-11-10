@@ -1,7 +1,16 @@
 /** @jsxImportSource react */
-import { claudeAgentStatus, CLAUDE_AGENT_PROVIDER_ID, type ClaudeAgentSetupState } from "@/app/lib/claude-agent";
 import {
-  Lock,
+  CLAUDE_AGENT_HOST_PROVIDER_ID,
+  CLAUDE_AGENT_PROVIDER_ID,
+  CLAUDE_CODE_NAME,
+  CLAUDE_CODE_SETUP_URL,
+  CLAUDE_CODE_SIGN_IN_COMMAND,
+  claudeAgentConnected,
+  claudeAgentProblem,
+  type ClaudeAgentSetupState,
+} from "@/app/lib/claude-agent";
+import {
+  ArrowUpRight,
   ChevronLeft,
   Loader2,
   Search,
@@ -69,9 +78,10 @@ export const PROVIDER_LABELS: Record<string, string> = {
 const OPENWORK_MODELS_PROVIDER_ID = "openwork";
 
 export type ProviderAuthModalProps = {
+  /** Claude Code sign-in, offered as a way to connect Anthropic. Absent when the person cannot use it. */
   claudeAgent?: ClaudeAgentSetupState;
+  /** Resolves with the success message once the engine confirms the Claude Code login; rejects with the reason. */
   onConnectClaudeAgent?: () => Promise<unknown>;
-  onRefreshClaudeAgent?: () => Promise<unknown>;
   open: boolean;
   loading: boolean;
   submitting: boolean;
@@ -116,6 +126,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [oauthAutoBusy, setOauthAutoBusy] = useState(false);
   const [oauthCodeCopied, setOauthCodeCopied] = useState(false);
   const [oauthBrowserOpened, setOauthBrowserOpened] = useState(false);
+  const [claudeCommandCopied, setClaudeCommandCopied] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const isMobile = useIsMobile();
@@ -210,14 +221,14 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           id,
           name: formatProviderName(id, provider?.name),
           methods: entryMethods,
-          connected: id === CLAUDE_AGENT_PROVIDER_ID ? Boolean(props.claudeAgent?.integration?.connections.length) : connected.has(id) && !props.keylessProviderIds?.has(id),
+          connected: connected.has(id) && !props.keylessProviderIds?.has(id),
           env: Array.isArray(provider?.env) ? provider.env : [],
         } satisfies ProviderAuthEntry];
       })
       .sort(compareProviders);
 
     return nextEntries.filter((entry) => entry.id !== OPENWORK_MODELS_PROVIDER_ID && entry.id !== "openwork-free");
-  }, [props.authMethods, props.claudeAgent, props.connectedProviderIds, props.gatewayProviderIds, props.keylessProviderIds, props.providers]);
+  }, [props.authMethods, props.connectedProviderIds, props.gatewayProviderIds, props.keylessProviderIds, props.providers]);
 
   const selectedEntry = useMemo(
     () => entries.find((entry) => entry.id === selectedProviderId) ?? null,
@@ -225,8 +236,12 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   );
 
   const resolvedView = selectedEntry ? view : "list";
-  // Legacy provider metadata can fail independently of the native integration.
-  const errorMessage = localError ?? (resolvedView === "external" ? props.claudeAgent?.error : props.error);
+  const claudeChecking = Boolean(props.claudeAgent?.checking);
+  const claudeBusy = Boolean(props.claudeAgent?.busy);
+  // The engine's provider list can fail independently of Claude Code, whose
+  // step shows only its own result: the last check's reason, or none while checking.
+  const claudeError = claudeChecking ? null : props.claudeAgent?.error ?? claudeAgentProblem(props.claudeAgent)?.message ?? null;
+  const errorMessage = localError ?? (resolvedView === "external" ? claudeError : props.error);
 
   // Connected providers lead the list so the two groups render as one flat
   // array — keyboard navigation keeps indexing straight into display order.
@@ -290,6 +305,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     setOauthCodeCopied(false);
     setOauthBrowserOpened(false);
+    setClaudeCommandCopied(false);
   };
 
   const stopProviderPolling = () => {
@@ -347,12 +363,18 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     const preferredId = props.preferredProviderId?.trim().toLowerCase() ?? "";
     if (!preferredId || autoOpenedPreferredProviderIdRef.current === preferredId) return;
 
-    const entry = entries.find((item) => item.id.trim().toLowerCase() === preferredId);
-    if (!entry) return;
+    // "Sign in again" on the Claude Code row opens its step under Anthropic.
+    const claudeCode = preferredId === CLAUDE_AGENT_PROVIDER_ID;
+    const entry = entries.find((item) => item.id.trim().toLowerCase() === (claudeCode ? CLAUDE_AGENT_HOST_PROVIDER_ID : preferredId));
+    const externalMethod = claudeCode ? entry?.methods.find((method) => method.type === "external") : undefined;
+    if (!entry || (claudeCode && !externalMethod)) return;
 
     autoOpenedPreferredProviderIdRef.current = preferredId;
     queueMicrotask(() => {
-      handleEntrySelect(entry);
+      if (!externalMethod) { handleEntrySelect(entry); return; }
+      setSelectedProviderId(entry.id);
+      returnProviderIdRef.current = entry.id;
+      void handleMethodSelect(externalMethod, entry);
     });
   }, [
     entries,
@@ -586,6 +608,34 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
   };
 
+  const copyClaudeCommand = async () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      setLocalError(`Clipboard is unavailable. Run ${CLAUDE_CODE_SIGN_IN_COMMAND} in your terminal.`);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(CLAUDE_CODE_SIGN_IN_COMMAND);
+      setClaudeCommandCopied(true);
+    } catch {
+      setLocalError(`Could not copy the command. Run ${CLAUDE_CODE_SIGN_IN_COMMAND} in your terminal.`);
+    }
+  };
+
+  const handleClaudeConnect = async () => {
+    if (!props.onConnectClaudeAgent || claudeBusy || actionDisabled) return;
+    setLocalError(null);
+    try {
+      const result = await props.onConnectClaudeAgent();
+      // No message means the check was dropped (the workspace changed); nothing to report.
+      if (typeof result !== "string") return;
+      void reportActivationEvent("own_provider");
+      toast.success(result);
+      props.onClose();
+    } catch {
+      // The reason is published as the Claude Code step's error.
+    }
+  };
+
   const handleOauthCodeSubmit = async () => {
     if (!selectedEntry || !oauthSession || actionDisabled) return;
 
@@ -609,6 +659,12 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       setOauthCodeInput("");
       setOauthCodeCopied(false);
       setOauthBrowserOpened(false);
+      setLocalError(null);
+      return;
+    }
+
+    if (resolvedView === "external" && (selectedEntry?.methods.length ?? 0) > 1) {
+      setView("method");
       setLocalError(null);
       return;
     }
@@ -681,6 +737,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       return "Continue in the browser and let OpenWork finish the connection automatically.";
     }
     if (method.type === "cloud") return "Managed by your organization.";
+    if (method.type === "external") return "Use your Claude plan through Claude Code on this computer.";
     if (isOpencodeZenProvider(entry.id)) {
       return "Sign in to OpenCode Zen with an API key to unlock paid models alongside the free tier.";
     }
@@ -693,12 +750,12 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const showRetiredZen = showsRetiredOpencodeZen({ providerIds: entries.map((entry) => entry.id), query: searchText });
 
   const entrySubtitle = (entry: ProviderAuthEntry) => {
-    if (entry.id === CLAUDE_AGENT_PROVIDER_ID && props.claudeAgent) return claudeAgentStatus(props.claudeAgent);
     if (entry.connected) return entry.methods.some((method) => method.type === "oauth") ? "Signed in on this device" : "API key on this device";
     const oauth = entry.methods.some((method) => method.type === "oauth");
     const apiKey = entry.methods.some((method) => method.type === "api");
-    const signIn = isOpenAiProvider(entry.id, entry.name) ? "Sign in with ChatGPT" : isAnthropicProvider(entry.id, entry.name) ? "Sign in with Claude" : "Sign in";
-    const how = oauth && apiKey ? `${signIn} or paste an API key` : oauth ? `${signIn} in the browser` : "Paste an API key";
+    const external = entry.methods.some((method) => method.type === "external");
+    const signIn = external ? `Sign in with ${CLAUDE_CODE_NAME}` : isOpenAiProvider(entry.id, entry.name) ? "Sign in with ChatGPT" : isAnthropicProvider(entry.id, entry.name) ? "Sign in with Claude" : "Sign in";
+    const how = (oauth || external) && apiKey ? `${signIn} or paste an API key` : external ? signIn : oauth ? `${signIn} in the browser` : "Paste an API key";
     return props.organizationProviderIds?.has(entry.id) ? `${how} · also available from ${props.organizationName || "your organization"}` : how;
   };
 
@@ -720,12 +777,12 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
         onFocus={() => setActiveEntryIndex(index)}
         onClick={() => handleEntrySelect(entry)}
       >
-        <ProviderTile providerId={entry.id === CLAUDE_AGENT_PROVIDER_ID ? "anthropic" : entry.id} name={entry.name} size="sm" />
+        <ProviderTile providerId={entry.id} name={entry.name} size="sm" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-dls-text">{entry.name}</div>
           <div className="line-clamp-2 text-xs text-muted-foreground">{entrySubtitle(entry)}</div>
         </div>
-        {entry.id === CLAUDE_AGENT_PROVIDER_ID && props.claudeAgent?.blockedReason ? <Lock className="size-4 text-muted-foreground" aria-label="Unavailable" /> : entry.connected ? null : (
+        {entry.connected ? null : (
           <span className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${active ? "bg-dls-text text-dls-surface" : "text-muted-foreground"}`}>
             Connect
           </span>
@@ -863,20 +920,30 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                 </div>
               ) : null}
 
-              {resolvedView === "external" && props.claudeAgent ? (
-                <div className="space-y-4 px-2 py-2" data-testid="claude-agent-setup">
-                  <div className="flex items-center gap-3"><ProviderTile providerId="anthropic" name="Claude Agent" size="sm" /><h3 className="text-sm font-medium">Claude Agent</h3></div>
-                  {props.claudeAgent.blockedReason ? <p className="flex items-start gap-2 text-sm text-muted-foreground"><Lock className="mt-0.5 size-4 shrink-0" />{props.claudeAgent.blockedReason}</p> : <>
-                    <p className="text-sm text-muted-foreground">Claude Code must be installed on the computer running this workspace. After running claude auth login there, select Connect Claude Code to check your sign-in again.</p>
-                    <Button variant="link" className="h-auto p-0" onClick={() => void openExternalUrl("https://code.claude.com/docs/en/setup")}>Install Claude Code</Button>
-                    <div className="flex items-center justify-between gap-3 border-y border-border py-3"><code className="text-sm">claude auth login</code><Button variant="outline" onClick={() => { if (!navigator.clipboard?.writeText) { setLocalError("Clipboard is unavailable. Run claude auth login in your terminal."); return; } void navigator.clipboard.writeText("claude auth login").then(() => toast.success("Command copied"), () => setLocalError("Could not copy the command. Run claude auth login in your terminal.")); }}>Copy command</Button></div>
-                    <p role="status" className="text-sm text-muted-foreground">{claudeAgentStatus(props.claudeAgent)}</p>
-                    {props.claudeAgent.catalogError ? <p role="alert" className="text-sm text-muted-foreground">{props.claudeAgent.catalogError}</p> : null}
-                    <div className="flex items-center gap-2">
-                      <Button data-testid="claude-agent-connect" disabled={actionDisabled || props.claudeAgent.busy || !props.onConnectClaudeAgent} onClick={() => { setLocalError(null); void props.onConnectClaudeAgent?.().then((result) => { if (typeof result === "string") toast.success(result, { id: CLAUDE_AGENT_PROVIDER_ID }); }, (error: unknown) => setLocalError(error instanceof Error ? error.message : "Could not save connection. Check again before retrying.")); }}>Connect Claude Code</Button>
-                      <Button data-testid="claude-agent-check" variant="outline" disabled={actionDisabled || props.claudeAgent.busy || !props.onRefreshClaudeAgent} onClick={() => { setLocalError(null); void props.onRefreshClaudeAgent?.().catch((error: unknown) => setLocalError(error instanceof Error ? error.message : "Could not check connection.")); }}>Check again</Button>
+              {resolvedView === "external" && selectedEntry && props.claudeAgent ? (
+                <div className="space-y-4" data-testid="claude-code-setup">
+                  <div className="flex items-center gap-3">
+                    <div className="flex size-9 shrink-0 items-center justify-center rounded-[11px] border border-gray-5/60 bg-gray-1 shadow-sm overflow-hidden">
+                      <ProviderIcon providerId={selectedEntry.id} size={20} className="text-gray-12" />
                     </div>
-                  </>}
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-gray-12 truncate">{CLAUDE_CODE_NAME}</div>
+                      <div className="text-xs text-gray-10">Uses your Claude plan. Sign in to Claude Code first, then connect.</div>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-gray-6/70 bg-gray-2/40 p-3 flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-gray-9">Sign-in command</div>
+                      <div className="text-sm text-gray-12 font-mono break-all">{CLAUDE_CODE_SIGN_IN_COMMAND}</div>
+                    </div>
+                    <Button variant="outline" size="sm" className="shrink-0" onClick={() => void copyClaudeCommand()}>
+                      {claudeCommandCopied ? "Copied" : "Copy"}
+                    </Button>
+                  </div>
+                  <Button variant="link" className="h-auto gap-1 p-0 text-xs" onClick={() => void openExternalUrl(claudeAgentProblem(props.claudeAgent)?.url ?? CLAUDE_CODE_SETUP_URL)}>
+                    Install Claude Code
+                    <ArrowUpRight className="size-3.5" aria-hidden />
+                  </Button>
                 </div>
               ) : null}
 
@@ -1085,8 +1152,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           {/* One action bar per view: Back returns to the list, Close dismisses,
               and the view's primary action sits last. */}
           <div className="flex w-full items-center gap-2">
-            {resolvedView === "api" && selectedEntry ? (
-              <Button variant="outline" onClick={handleBack} disabled={actionDisabled}>
+            {(resolvedView === "api" || resolvedView === "external") && selectedEntry ? (
+              <Button variant="outline" onClick={handleBack} disabled={actionDisabled || (resolvedView === "external" && claudeChecking)}>
                 <ChevronLeft className="size-4" />
                 Back
               </Button>
@@ -1108,6 +1175,16 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                 ) : (
                   "Save key"
                 )}
+              </Button>
+            ) : null}
+            {resolvedView === "external" && selectedEntry && props.claudeAgent ? (
+              <Button data-testid="claude-code-connect" onClick={() => void handleClaudeConnect()} disabled={actionDisabled || claudeBusy || !props.onConnectClaudeAgent} aria-busy={claudeChecking}>
+                {claudeChecking ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Checking Claude Code…
+                  </>
+                ) : claudeAgentConnected(props.claudeAgent) ? "Check again" : "Connect"}
               </Button>
             ) : null}
           </div>

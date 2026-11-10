@@ -7,46 +7,76 @@
 
 ## What changes
 
-AI providers offers the engine's **Claude Agent** connection, which uses the
-unmodified Claude Code installation and its own login on the same computer as
-the OpenWork server. Anthropic API keys remain a separate option. OpenWork does
-not collect Claude subscription credentials, reuse the retired Anthropic OAuth
-flow, install Claude Code, or run its login command on the person's behalf.
+Connect a provider offers **Claude Code** as one of the ways to connect
+Anthropic, next to its API key. It uses the engine's Claude Agent connection:
+the unmodified Claude Code installation and its own login on the same computer
+as the OpenWork server. OpenWork does not collect Claude subscription
+credentials, reuse the retired Anthropic OAuth flow, install Claude Code, or run
+its login command on the person's behalf.
+
+The engine calls this provider "Claude Agent" (id `claude-agent`). People see
+"Claude Code" everywhere: in Connect a provider, on AI Providers and in the
+model picker.
 
 This needs OpenCode 2.2.3 or newer (the bundled version is 2.2.6) and Claude
-Code 2.1.248 or newer. Use the official Claude Code installation instructions,
-then run `claude auth login` on the computer running the engine. Hosted or remote
-workspaces cannot use a Claude Code login from the viewer's computer.
+Code 2.1.248 or newer. Hosted or remote workspaces cannot use a Claude Code
+login from the viewer's computer.
 
 ## Try it
 
 Enable `claudeAgentProvider` for a test organization in /admin. Open Settings →
-AI providers → Add provider and choose Claude Agent. Follow the installation
-and sign-in instructions, then save the connection. The upstream engine probes
-Claude Code asynchronously; a saved connection or cached model list is not a
-fresh login verification. Native sign-in problems remain visible. Also try with Claude Code
-missing or signed out, and with an organization that only permits its assigned
-AI providers.
+AI Providers → Connect a provider → Anthropic → Claude Code. Run
+`claude auth login` in a terminal, then press Connect.
+
+Connect waits for the engine's own check of `claude` and ends one of two ways:
+
+- the sheet closes with "Claude Code connected" and AI Providers lists a
+  Claude Code row marked Ready to use, or
+- the step stays open with the engine's reason (not installed, not logged in,
+  too old) and the button reads Check again.
+
+A row whose login later breaks reads "Needs your sign-in" with Sign in again,
+which reopens the same step. After a restart, before the engine has checked
+`claude`, the row reads "Not checked yet".
+
+Also try with Claude Code missing or signed out, and with an organization that
+only permits its assigned AI providers (Connect a provider is locked there, as
+for every personal provider).
 
 ## Turn it off
 
-Turning the feature off locks the setup entry point. It does not sign out of
-Claude Code, delete the engine's saved connection, interrupt a running turn, or
-change Anthropic API-key connections. Existing connections and history remain
-readable; organization model-access policy continues to govern use.
+With the feature off nothing about Claude Code is shown, read or changed: no
+entry under Anthropic, no row on AI Providers, no locked placeholder. Turning it
+off does not sign out of Claude Code, delete the engine's saved connection or
+interrupt a running turn; organization model-access policy continues to govern
+use. Anthropic API-key connections are unaffected.
 
-## Setup state
+## How "connected" is decided
 
-The real app connected to an isolated discovery-only Claude Code fixture. No
-Claude credentials or model requests were used. A saved external reference is
-not shown as verified authentication.
+Connecting only records the choice; the engine then checks `claude` and reports
+a problem on the connection. The engine keeps Claude Code's model list between
+checks and gives a new connection no status until its check ends, so a repeat
+check looks clean at first. OpenWork therefore treats a first connect as done
+once the models appear with no problem (confirmed by a second read), and holds a
+repeat check open for five seconds for a problem to arrive (it arrives in about
+one second with Claude Code 2.1 on a Mac). It reads once more fifteen seconds
+later so a slow computer cannot leave a wrong "Ready to use". After 65 seconds
+without an answer it says it could not confirm and offers Check again.
 
-![Claude Agent setup after saving the connection](./connection-saved.png)
+## Screens
+
+The real app connected to an isolated, discovery-only Claude Code fixture. No
+Claude credentials or model requests were used. In this local run the engine's
+own provider list could not be read, which is why the page behind the sheet
+shows a notice and Anthropic opened straight on Claude Code.
+
+![The Claude Code step](./claude-code-step.png)
+![Not signed in](./not-signed-in.png)
+![Connected](./connected.png)
 
 ## What to watch
 
-Check setup errors for missing/outdated Claude Code, a login that needs to be
-refreshed, and an unavailable native engine. A saved external connection alone
-is not proof that Claude Code is signed in. Never log credentials or raw login
-state while investigating. API-key setup must still go through the Anthropic
-provider, not Claude Agent.
+Check setup errors for missing or outdated Claude Code, a login that needs to be
+refreshed, and an unavailable native engine. Never log credentials or raw login
+state while investigating. API-key setup still goes through Anthropic's API key
+option, not Claude Code.

@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "66308112-f81b-40db-a917-8857b3aee496",
+  "id": "81197f98-1968-47ce-8b3c-f5fda9e0cb80",
   "prevId": "891ee9a0-46a3-4dfc-92ff-b9648343251f",
   "tables": {
     "admin_metric_refresh_lease": {
@@ -19972,45 +19972,6 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "den_instance": {
-      "name": "den_instance",
-      "columns": {
-        "singleton": {
-          "name": "singleton",
-          "type": "varchar(16)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "instance_id": {
-          "name": "instance_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "den_instance_singleton": {
-          "name": "den_instance_singleton",
-          "columns": [
-            "singleton"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
     "rate_limit": {
       "name": "rate_limit",
       "columns": {
@@ -22500,11 +22461,11 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "config_apply_run": {
-      "name": "config_apply_run",
+    "public_mcp_app_name": {
+      "name": "public_mcp_app_name",
       "columns": {
-        "id": {
-          "name": "id",
+        "name": {
+          "name": "name",
           "type": "varchar(64)",
           "primaryKey": false,
           "notNull": true,
@@ -22517,89 +22478,11 @@
           "notNull": true,
           "autoincrement": false
         },
-        "change_request_id": {
-          "name": "change_request_id",
+        "config_object_id": {
+          "name": "config_object_id",
           "type": "varchar(64)",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
-        },
-        "attempt": {
-          "name": "attempt",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "varchar(16)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'running'"
-        },
-        "requested_by_member_id": {
-          "name": "requested_by_member_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "requested_by_api_key_id": {
-          "name": "requested_by_api_key_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "runs_as_member_id": {
-          "name": "runs_as_member_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "report": {
-          "name": "report",
-          "type": "mediumtext",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "failure_area": {
-          "name": "failure_area",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "failure_ref": {
-          "name": "failure_ref",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "failure_code": {
-          "name": "failure_code",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "finished_at": {
-          "name": "finished_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": false,
           "autoincrement": false
         },
         "created_at": {
@@ -22620,483 +22503,27 @@
         }
       },
       "indexes": {
-        "config_apply_run_attempt": {
-          "name": "config_apply_run_attempt",
+        "public_mcp_app_name_config_object_id": {
+          "name": "public_mcp_app_name_config_object_id",
           "columns": [
-            "change_request_id",
-            "attempt"
+            "config_object_id"
           ],
           "isUnique": true
         },
-        "config_apply_run_org_request": {
-          "name": "config_apply_run_org_request",
+        "public_mcp_app_name_organization_id": {
+          "name": "public_mcp_app_name_organization_id",
           "columns": [
-            "organization_id",
-            "change_request_id"
+            "organization_id"
           ],
           "isUnique": false
         }
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {
-        "config_apply_run_id": {
-          "name": "config_apply_run_id",
+        "public_mcp_app_name_name": {
+          "name": "public_mcp_app_name_name",
           "columns": [
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "config_blob_alias": {
-      "name": "config_blob_alias",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "area": {
-          "name": "area",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_instance_id": {
-          "name": "source_instance_id",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_id": {
-          "name": "source_id",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "local_id": {
-          "name": "local_id",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_by_change_request_id": {
-          "name": "created_by_change_request_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        }
-      },
-      "indexes": {
-        "config_blob_alias_source": {
-          "name": "config_blob_alias_source",
-          "columns": [
-            "organization_id",
-            "area",
-            "source_instance_id",
-            "source_id"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "config_blob_alias_id": {
-          "name": "config_blob_alias_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "config_blob_export": {
-      "name": "config_blob_export",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "base_hash": {
-          "name": "base_hash",
-          "type": "varchar(80)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "areas": {
-          "name": "areas",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "blob": {
-          "name": "blob",
-          "type": "mediumtext",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        }
-      },
-      "indexes": {
-        "config_blob_export_org_base": {
-          "name": "config_blob_export_org_base",
-          "columns": [
-            "organization_id",
-            "base_hash"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "config_blob_export_id": {
-          "name": "config_blob_export_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "config_change_request": {
-      "name": "config_change_request",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "varchar(24)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'uploaded'"
-        },
-        "title": {
-          "name": "title",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "mode": {
-          "name": "mode",
-          "type": "varchar(16)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'merge'"
-        },
-        "source_kind": {
-          "name": "source_kind",
-          "type": "varchar(16)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_by_member_id": {
-          "name": "created_by_member_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "api_key_id": {
-          "name": "api_key_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "api_key_name": {
-          "name": "api_key_name",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "blob": {
-          "name": "blob",
-          "type": "mediumtext",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_instance_id": {
-          "name": "source_instance_id",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "source_org_id": {
-          "name": "source_org_id",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "source_org_slug": {
-          "name": "source_org_slug",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "source_org_name": {
-          "name": "source_org_name",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "source_deployment": {
-          "name": "source_deployment",
-          "type": "varchar(16)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "areas": {
-          "name": "areas",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "base_hash": {
-          "name": "base_hash",
-          "type": "varchar(80)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "plan": {
-          "name": "plan",
-          "type": "mediumtext",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "plan_hash": {
-          "name": "plan_hash",
-          "type": "varchar(80)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "decisions": {
-          "name": "decisions",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "secret_inputs": {
-          "name": "secret_inputs",
-          "type": "mediumtext",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "approvals": {
-          "name": "approvals",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "approved_plan_hash": {
-          "name": "approved_plan_hash",
-          "type": "varchar(80)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "apply_requested_by": {
-          "name": "apply_requested_by",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "auto_apply": {
-          "name": "auto_apply",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "execution": {
-          "name": "execution",
-          "type": "mediumtext",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "before_snapshot": {
-          "name": "before_snapshot",
-          "type": "mediumtext",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "errors": {
-          "name": "errors",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "lease_owner": {
-          "name": "lease_owner",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "lease_until": {
-          "name": "lease_until",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "available_at": {
-          "name": "available_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        },
-        "attempts": {
-          "name": "attempts",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "reverts_change_request_id": {
-          "name": "reverts_change_request_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "reverted_by_change_request_id": {
-          "name": "reverted_by_change_request_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "applied_at": {
-          "name": "applied_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
-        }
-      },
-      "indexes": {
-        "config_change_request_org_status": {
-          "name": "config_change_request_org_status",
-          "columns": [
-            "organization_id",
-            "status"
-          ],
-          "isUnique": false
-        },
-        "config_change_request_queue": {
-          "name": "config_change_request_queue",
-          "columns": [
-            "status",
-            "available_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "config_change_request_id": {
-          "name": "config_change_request_id",
-          "columns": [
-            "id"
+            "name"
           ]
         }
       },
