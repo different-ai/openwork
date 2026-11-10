@@ -11,6 +11,9 @@ import { getNewRoleRoute, getOrgAccessFlags, getPermissionSetRoute, orgFeatureEn
 import { roleList, roleSetTeams, roleTeamNames, type RoleListEntry } from "../../_lib/role-catalog";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IconTile } from "./access-rows";
+import { HelpTip } from "./help-tip";
+import { TEAM_ROLE_HELP, teamRoleAddsNothingLine } from "./team-section-help";
+import { useTeamSectionsHelp } from "./team-sections";
 import { RolePicker as SearchableRolePicker } from "./role-picker";
 import { useDenToast } from "./den-toast";
 import { ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection, LinkButton } from "./item-list";
@@ -38,6 +41,7 @@ import {
  */
 export function SharedTeamRolePanel({ team }: { team: DenOrgTeam }) {
   const { orgContext, orgId, orgSlug } = useOrgDashboard();
+  const help = useTeamSectionsHelp();
   const access = orgContext
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
     : null;
@@ -74,6 +78,12 @@ export function SharedTeamRolePanel({ team }: { team: DenOrgTeam }) {
   return (
     <div className="flex flex-col gap-6" data-testid="team-role" data-role={role.kind}>
       {setsQuery.isError ? <DenNotice tone="error" message={setsQuery.error instanceof Error ? setsQuery.error.message : "Couldn't load this team's role."} /> : null}
+      {help ? (
+        <div className="-mb-3 flex items-center gap-1.5 px-1" data-testid="team-role-heading">
+          <h2 className="text-[13px] font-medium text-gray-500">{`Role for ${team.name}`}</h2>
+          <HelpTip label="Role">{TEAM_ROLE_HELP}</HelpTip>
+        </div>
+      ) : null}
       <ItemPanel>
         <div className="flex flex-wrap items-center gap-3.5 px-5 py-4">
           <IconTile icon={ShieldCheck} />
@@ -104,6 +114,12 @@ export function SharedTeamRolePanel({ team }: { team: DenOrgTeam }) {
         <ItemSection title={`${team.name} can also`} testId="team-role-also">
           <ItemPanel>
             {alsoKeys.map((key) => <ItemRow key={key} logo={<CheckMark />} title={getPermissionDefinition(key).label} />)}
+          </ItemPanel>
+        </ItemSection>
+      ) : help && !setsQuery.isError ? (
+        <ItemSection title={`${team.name} can also`} testId="team-role-also-none">
+          <ItemPanel>
+            <p className="px-5 py-4 text-[13px] leading-5 text-gray-600">{teamRoleAddsNothingLine(role.kind, team.name)}</p>
           </ItemPanel>
         </ItemSection>
       ) : null}

@@ -33,3 +33,11 @@ test("a section no group names is still listed, last", () => {
     ["More", ["billing"]],
   ]);
 });
+
+test("a role that adds nothing says so, and what to do next", async () => {
+  const { agentPermissionsHeading, teamRoleAddsNothingLine } = await import("./team-section-help");
+  assert.equal(teamRoleAddsNothingLine("member", "Sales"), "People in Sales can do what every member can. Change the role to let them do more.");
+  assert.equal(teamRoleAddsNothingLine("custom", "Sales"), "This role adds nothing beyond what every member can do. Open the role to add permissions for Sales.");
+  assert.equal(agentPermissionsHeading("browser"), "Websites");
+  assert.equal(agentPermissionsHeading("agents"), "Agent permissions");
+});

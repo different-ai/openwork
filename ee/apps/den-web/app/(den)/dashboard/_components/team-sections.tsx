@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { type TabItem, UnderlineTabs, UnseenDot } from "../../_components/ui/tabs";
 import { orgFeatureEnabled, type DenOrgContext } from "../../_lib/den-org";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { groupTeamSections } from "./team-section-groups";
 
 /** Width of a team's page and Everyone's page: wider with the sidebar, so the sections keep their room. */
@@ -13,6 +14,11 @@ export function teamPageWidthClass(sidebar: boolean) {
 /** A team's page and Everyone's page list their sections in a sidebar with `teamSettingsSidebar` on. */
 export function teamSectionsSidebarEnabled(orgContext: DenOrgContext | null): boolean {
   return Boolean(orgContext) && orgFeatureEnabled(orgContext, "teamSettingsSidebar");
+}
+
+/** Sections explain themselves (a heading with an "i", and what an empty state means) with `teamSettingsSidebar` on. */
+export function useTeamSectionsHelp(): boolean {
+  return teamSectionsSidebarEnabled(useOrgDashboard().orgContext);
 }
 
 /**
