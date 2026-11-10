@@ -968,6 +968,43 @@ describe("security limits", () => {
     assert.ok(entry.flags.includes("blocked"))
     assert.equal(entry.fields.find((field) => field.path === "credentials.apiKey")?.to, "[redacted]")
   })
+
+  test("a secret under a dotted map key is redacted too, and the key is refused", () => {
+    const store = seed()
+    const areas = makeAreas(store, [], { "ai-gateway.providers": { secretFields: ["credentials.apiKey", "credentials.apiKeys.*"] } })
+    const blob = exportBlob(store, areas, ["ai-gateway.providers"])
+    blob["ai-gateway.providers"]!.items[0]!.spec.credentials = { apiKeys: { "A.B": "sk-dotted-secret-value", "C[0]": "sk-bracket-secret-value" } }
+    const result = buildPlan(planInput(store, areas, blob))
+    const json = JSON.stringify(result)
+    assert.ok(!json.includes("sk-dotted-secret-value"), "the dotted key's value never reaches the plan")
+    assert.ok(!json.includes("sk-bracket-secret-value"), "the bracketed key's value never reaches the plan")
+    assert.ok(result.fatalErrors.includes('ai-gateway.providers "Anthropic (prod)": a secret value was pasted into credentials.apiKeys.A.B; use the inputs step instead'), JSON.stringify(result.fatalErrors))
+    assert.ok(result.fatalErrors.some((error) => error.includes(`credentials.apiKeys.A.B: a secret's name can't contain`)))
+    const entry = item(result.plan, "ai-gateway.providers", "ipr_A")
+    assert.ok(entry.flags.includes("blocked"))
+
+    // A placeholder under such a key is refused as well: its `$secret` path would be ambiguous.
+    blob["ai-gateway.providers"]!.items[0]!.spec.credentials = { apiKeys: { "A.B": { $secret: "ai-gateway.providers/ipr_A/credentials.apiKeys.A.B", set: true } } }
+    const placeholder = buildPlan(planInput(store, areas, blob))
+    assert.ok(placeholder.fatalErrors.some((error) => error.includes(`credentials.apiKeys.A.B: a secret's name can't contain`)))
+    assert.ok(item(placeholder.plan, "ai-gateway.providers", "ipr_A").flags.includes("blocked"))
+  })
+
+  test("an area's credential redaction runs before diffing and makes the request invalid", () => {
+    const store = seed()
+    const areas = makeAreas(store, [], {
+      "ai-gateway.providers": {
+        redactCredentials: (spec) => typeof spec.baseUrl === "string" && spec.baseUrl.includes("token=")
+          ? { spec: { ...spec, baseUrl: "https://api.anthropic.com/?token=%5Bredacted%5D" }, problems: ["baseUrl: holds a credential"] }
+          : { spec, problems: [] },
+      },
+    })
+    const blob = exportBlob(store, areas, ["ai-gateway.providers"])
+    blob["ai-gateway.providers"]!.items[0]!.spec.baseUrl = "https://api.anthropic.com/?token=url-credential-value"
+    const result = buildPlan(planInput(store, areas, blob))
+    assert.ok(!JSON.stringify(result).includes("url-credential-value"))
+    assert.ok(result.fatalErrors.includes('ai-gateway.providers "Anthropic (prod)": baseUrl: holds a credential'))
+  })
 })
 
 describe("security fixes in planning", () => {

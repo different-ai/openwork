@@ -23,10 +23,11 @@
  * before they are saved (a failed probe fails the item), and OAuth discovery
  * is checked.
  */
+import { manualOAuthEndpointSchema } from "@openwork/enterprise-mcp-client"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { ExternalMcpConnectionAccessGrantTable, ExternalMcpConnectionTable, OrgOAuthClientTable } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import type { ConfigApplyStep } from "@openwork/types/den/config-blobs"
+import type { ConfigApplyStep, ConfigSpec } from "@openwork/types/den/config-blobs"
 import { z } from "zod"
 import {
   getExternalMcpConnection,
@@ -35,6 +36,7 @@ import {
   normalizeExternalMcpIdentityUrl,
 } from "../../capability-sources/external-mcp-connections.js"
 import { externalMcpRequestHeaderNames } from "../../capability-sources/external-mcp-request-headers.js"
+import { externalMcpUrlCredentialProblems, redactExternalMcpUrlCredentials } from "../../capability-sources/external-mcp-url-credentials.js"
 import { normalizeOAuthClientExtra } from "../../capability-sources/oauth-credentials.js"
 import {
   createExternalConnectionResponse,
@@ -77,7 +79,19 @@ const AREA = "connectors.mcp"
 
 const tokenEndpointAuthMethodSchema = z.enum(["client_secret_basic", "client_secret_post"])
 
+/** Same rule as the route's manual sign-in addresses (HTTPS, no URL credentials or credential-like query parameters). */
+const manualOAuthEndpointUrlSchema = z.string().trim().url().max(2048).refine(
+  (value) => manualOAuthEndpointSchema.safeParse(value).success,
+  "Use HTTPS (HTTP is allowed only on localhost), without URL credentials, fragments or credential-like query parameters.",
+)
+
 const specSchema = z.object({
+  /**
+   * The MCP server address. It can't carry credentials (a user name or
+   * password, or `access_token`, `api_key`, `token`… in the query): use the
+   * API key or a request header instead. An export shows any found in a stored
+   * URL as `[redacted]`.
+   */
   url: z.string().trim().url().max(2048),
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]),
@@ -94,8 +108,8 @@ const specSchema = z.object({
     authorizationServerIssuer: z.string().trim().url().max(2048).nullable(),
     requestedScopes: z.array(z.string().trim().min(1).max(255)),
     manualOAuthEndpoints: z.object({
-      authorizationEndpoint: z.string().trim().url().max(2048),
-      tokenEndpoint: z.string().trim().url().max(2048),
+      authorizationEndpoint: manualOAuthEndpointUrlSchema,
+      tokenEndpoint: manualOAuthEndpointUrlSchema,
     }).strict().nullable(),
     /** The administrator's pre-registered client. null: Den registers one itself when someone signs in. */
     client: z.object({
@@ -162,6 +176,74 @@ function readClientSecret(spec: JsonObject) {
   return client ? resolvedSecret(client.clientSecret, "oauth.client.clientSecret") : null
 }
 
+/** A manual sign-in address that fails the route's rule only because of its user name, password or query string. */
+function manualEndpointCredentials(value: string): boolean {
+  if (manualOAuthEndpointSchema.safeParse(value).success) return false
+  let url: URL
+  try {
+    url = new URL(value.trim())
+  } catch {
+    return false
+  }
+  if (!url.username && !url.password && !url.search) return false
+  url.username = ""
+  url.password = ""
+  url.search = ""
+  return manualOAuthEndpointSchema.safeParse(url.toString()).success
+}
+
+function redactManualEndpoint(value: string): string {
+  const url = new URL(value.trim())
+  if (url.username) url.username = "[redacted]"
+  if (url.password) url.password = "[redacted]"
+  const next = new URLSearchParams()
+  for (const parameter of url.searchParams.keys()) if (!next.has(parameter)) next.append(parameter, "[redacted]")
+  url.search = next.toString()
+  return url.toString()
+}
+
+/**
+ * Credentials in the connection's URL or manual sign-in addresses, replaced
+ * before anything plans with them (format.md › Secrets: values never travel
+ * in a blob). The problems name the field, never the value.
+ */
+export function redactConnectionCredentials(spec: ConfigSpec): { spec: ConfigSpec; problems: string[] } {
+  const problems: string[] = []
+  let next: ConfigSpec = spec
+  if (typeof spec.url === "string") {
+    const redacted = redactExternalMcpUrlCredentials(spec.url)
+    if (redacted.found.length > 0) {
+      problems.push(`url: holds a credential (${redacted.found.join(", ")}); MCP URLs can't carry credentials, so use the API key or a request header instead`)
+      next = { ...next, url: redacted.url }
+    }
+  }
+  const oauth = isJsonObject(spec.oauth) ? spec.oauth : null
+  const manual = oauth && isJsonObject(oauth.manualOAuthEndpoints) ? oauth.manualOAuthEndpoints : null
+  if (oauth && manual) {
+    const endpoints: JsonObject = { ...manual }
+    let changed = false
+    for (const field of ["authorizationEndpoint", "tokenEndpoint"]) {
+      const value = manual[field]
+      if (typeof value !== "string" || !manualEndpointCredentials(value)) continue
+      problems.push(`oauth.manualOAuthEndpoints.${field}: holds credentials or credential-like query parameters; sign-in addresses can't carry them`)
+      endpoints[field] = redactManualEndpoint(value)
+      changed = true
+    }
+    if (changed) next = { ...next, oauth: { ...oauth, manualOAuthEndpoints: endpoints } }
+  }
+  return { spec: next, problems }
+}
+
+/** The route's own rule, for the URL an op would save: no credentials, redacted ones included. */
+function urlCredentialBlock(url: unknown, name: string, current: boolean): string | null {
+  if (typeof url !== "string") return null
+  const problems = externalMcpUrlCredentialProblems(url)
+  if (problems.length === 0) return null
+  return current
+    ? `The saved URL of "${name}" holds a credential, which an import can't save again. Remove it from the URL in Connectors (use the API key or a request header instead), then plan again. ${problems.join(" ")}`
+    : `The URL of "${name}" holds a credential; MCP URLs can't carry credentials (use the API key or a request header instead). ${problems.join(" ")}`
+}
+
 export const connectorsMcpArea = defineConfigArea({
   key: AREA,
   label: "MCP connections",
@@ -179,9 +261,21 @@ export const connectorsMcpArea = defineConfigArea({
     get: (item) => typeof item.spec.url === "string" ? normalizeExternalMcpIdentityUrl(item.spec.url) : null,
   }],
   secretFields: ["apiKey", "requestHeaders[].value", "oauth.client.clientSecret"],
+  redactCredentials: redactConnectionCredentials,
   arrayKeys: { requestHeaders: "name" },
   transactional: false,
   externalEffects: true,
+
+  // POST/PUT /v1/mcp-connections refuse a URL with credentials; so does an import, before it runs.
+  async preflight(_ctx, op) {
+    if (op.kind === "delete") return null
+    if (op.kind === "create" || touches(op.changes, "url")) {
+      const block = urlCredentialBlock(op.item.spec.url, op.item.name, false)
+      return block ? { block } : null
+    }
+    const block = urlCredentialBlock(op.previous.spec.url, op.previous.name, true)
+    return block ? { block } : null
+  },
 
   irreversible: (op) => {
     if (op.kind === "delete") {
@@ -255,6 +349,8 @@ async function applyConnection(ctx: ConfigAreaContext, op: ConfigApplyOp, log: C
   const accessInput = { orgWide: specAccess.orgWide, memberIds: specAccess.memberIds, teamIds: specAccess.teamIds }
 
   if (op.kind === "create") {
+    const urlBlock = urlCredentialBlock(spec.url, op.item.name, false)
+    if (urlBlock) throw new ConfigApplyError("invalid_mcp_url", urlBlock)
     const droppedHeaders = headers.filter((header) => typeof header.value !== "string").map((header) => header.name)
     if (droppedHeaders.length > 0) warnings.push(`Request headers without a value were not created: ${droppedHeaders.join(", ")}.`)
     if (spec.authType === "apikey" && spec.credentialMode === "shared" && apiKeySecret?.decision !== "value") {
@@ -317,6 +413,9 @@ async function applyConnection(ctx: ConfigAreaContext, op: ConfigApplyOp, log: C
   // OAuth client, and access grants as a diff).
   const name = inScope("name") ? op.item.name : connection.name
   const url = inScope("url") ? spec.url : connection.url
+  // The route's schema refuses this URL on PUT; the handler called here has no schema of its own.
+  const urlBlock = urlCredentialBlock(url, connection.name, !inScope("url"))
+  if (urlBlock) throw new ConfigApplyError("invalid_mcp_url", urlBlock)
   const authType = inScope("authType") ? spec.authType : connection.authType
   const credentialMode = inScope("credentialMode") ? spec.credentialMode : connection.credentialMode
   const authTypeChanges = authType !== connection.authType
@@ -502,7 +601,8 @@ async function readConnections(ctx: ConfigAreaContext, ids: readonly string[] | 
       key: row.externalKey,
       name: row.name,
       spec: {
-        url: row.url,
+        // A URL saved before the route refused credentials in it: never exported, nor shown in a plan.
+        url: redactExternalMcpUrlCredentials(row.url).url,
         authType: row.authType,
         credentialMode: row.credentialMode,
         exposeDirectly: row.exposeDirectly,

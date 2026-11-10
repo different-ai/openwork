@@ -107,6 +107,10 @@ the file.
 | `settings.advanced.brand` | Settings › Advanced › Brand appearance | `branding.update` | `branding.update` |
 | `settings.audit` | Observability › Audit logs › Settings | `audit.view` | `audit.manage` |
 
+Importing an area (uploading, or a dry run) needs both permissions in its row: a
+plan shows the area's current settings next to the file's, so someone who may
+change an area but not view it can't import it.
+
 Some areas carry only part of what their screen shows:
 
 - **People** are invited, never added directly: someone who is a member on the
@@ -355,15 +359,31 @@ not supported and left out.
 
 ## CI with GitHub Actions
 
-Keep the export in a repository. A schedule records drift, pull requests get a
-dry-run plan, and merges submit a change request that an admin approves in the
-dashboard (or that a token with `config:apply` approves).
+Keep the export in a repository. A schedule records drift as a pull request,
+pull requests are checked against the public JSON Schema, and merges to `main`
+submit a change request that an admin approves in the dashboard (or that a token
+with `config:apply` approves).
+
+<Warning>
+Never give the config token to a job that a pull request triggers. A pull request
+can change the workflow file or the code a job runs, and so read any secret that
+job can read. Only the scheduled export and the submit after a merge hold the
+token; the pull request check needs none, because the schema is public.
+</Warning>
+
+Store the token as a secret of a GitHub
+[environment](https://docs.github.com/actions/deployment/targeting-different-environments/using-environments-for-deployment)
+(here `openwork-config`) that only `main` may deploy to, protect `main` with
+required reviews, and add required reviewers to the environment if you want a
+second person to release each run. The token reaches the shell as an environment
+variable, never written into the command in the workflow file.
+
+The trusted workflow, `.github/workflows/openwork-config.yml`:
 
 ```yaml
 name: OpenWork config
 on:
   schedule: [{ cron: "0 6 * * *" }]
-  pull_request: { paths: ["openwork/org-config.json"] }
   push: { branches: [main], paths: ["openwork/org-config.json"] }
 
 env:
@@ -373,11 +393,14 @@ jobs:
   export:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    environment: openwork-config
     permissions: { contents: write, pull-requests: write }
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          curl -sS --fail-with-body -H "x-api-key: ${{ secrets.OPENWORK_CONFIG_TOKEN }}" \
+      - env:
+          OPENWORK_CONFIG_TOKEN: ${{ secrets.OPENWORK_CONFIG_TOKEN }}
+        run: |
+          curl -sS --fail-with-body -H "x-api-key: $OPENWORK_CONFIG_TOKEN" \
             "$DEN_API_URL/v1/config-blobs/export" |
             jq 'del(.exportedAt)' > openwork/org-config.json
       - uses: peter-evans/create-pull-request@v7
@@ -386,38 +409,61 @@ jobs:
           title: "OpenWork configuration changed outside git"
           commit-message: "Update OpenWork config export"
 
-  plan:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: |
-          jq -n --slurpfile blob openwork/org-config.json '{blob: $blob[0], mode: "merge"}' |
-            curl -sS --fail-with-body -X POST -H "x-api-key: ${{ secrets.OPENWORK_CONFIG_TOKEN }}" \
-              -H 'Content-Type: application/json' --data-binary @- \
-              "$DEN_API_URL/v1/config-blobs/change-requests?dryRun=true" > plan.json
-          jq '.plan.summary' plan.json
-          jq -r '.plan.areas[].items[] | select(.op != "unchanged" and .op != "untouched") | "\(.op)\t\(.area)\t\((.blob // .target).name // .ref)"' plan.json
-          test "$(jq '.errors | length' plan.json)" = 0
-
   submit:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: openwork-config
+    permissions: { contents: read }
     steps:
       - uses: actions/checkout@v4
-      - run: |
+      - env:
+          OPENWORK_CONFIG_TOKEN: ${{ secrets.OPENWORK_CONFIG_TOKEN }}
+        run: |
           jq -n --slurpfile blob openwork/org-config.json \
             --arg title "git ${GITHUB_SHA::7}" '{blob: $blob[0], mode: "merge", title: $title}' |
-            curl -sS --fail-with-body -X POST -H "x-api-key: ${{ secrets.OPENWORK_CONFIG_TOKEN }}" \
+            curl -sS --fail-with-body -X POST -H "x-api-key: $OPENWORK_CONFIG_TOKEN" \
               -H 'Content-Type: application/json' --data-binary @- \
               "$DEN_API_URL/v1/config-blobs/change-requests" | jq .changeRequest
 ```
 
+The pull request check, `.github/workflows/openwork-config-check.yml`, has no
+secrets: it validates the file against the schema your server publishes.
+
+```yaml
+name: OpenWork config check
+on:
+  pull_request: { paths: ["openwork/org-config.json"] }
+
+permissions: { contents: read }
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          DEN_API_URL: ${{ vars.DEN_API_URL }}
+        run: |
+          curl -sS --fail-with-body "$DEN_API_URL/v1/config-blobs/schema/1" > config-blob.schema.json
+          npx --yes -p ajv-cli@5 -p ajv-formats@3 ajv validate --spec=draft2020 --strict=false \
+            -c ajv-formats -s config-blob.schema.json -d openwork/org-config.json
+```
+
+The full plan (what each item will do, secrets to fill in, blocking decisions) is
+produced after the merge, when the submitted change request is analyzed, and an
+admin reviews it in Settings › Config before anything is applied. If you also want
+a dry run (`?dryRun=true`) on pull requests, run it only from a trusted workflow
+that checks out the base branch, reads the pull request's file as data (through
+the GitHub API, never by running anything from the pull request) and keeps its
+output private: a plan shows the organization's current configuration next to the
+file's.
+
 Give the CI token `config:export` and `config:submit` only, so a person approves
-every change. A dry run reports `errors` (what would make the request `invalid`) and
-`plan.summary.blocking` (items that need a decision, such as secrets); it stores
-nothing and never supersedes an open request. Each push supersedes the previous
-open request from the same token for the same scope.
+every change, and limit it to the areas the repository manages. A dry run reports
+`errors` (what would make the request `invalid`) and `plan.summary.blocking`
+(items that need a decision, such as secrets); it stores nothing and never
+supersedes an open request. Each push supersedes the previous open request from
+the same token for the same scope.
 
 Export `exportedAt` changes on every run; drop it before committing, as above, so a
 scheduled export only opens a pull request when configuration really changed.

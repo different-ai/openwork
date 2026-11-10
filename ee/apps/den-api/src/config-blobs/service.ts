@@ -215,9 +215,23 @@ function canView(caller: Pick<ConfigCaller, "can" | "tokenAreas">, area: ConfigA
   return definition !== null && caller.can(definition.viewPermission) && tokenAllows(caller.tokenAreas, area)
 }
 
+/**
+ * Importing an area takes both of its permissions: a plan (dry run or
+ * stored) shows the area's current items next to the blob's, so a caller who
+ * may change an area but not view it (`prompts.manage` without
+ * `prompts.view`, say) would otherwise read it through the plan.
+ */
 function canImport(caller: Pick<ConfigCaller, "can" | "tokenAreas">, area: ConfigAreaKey): boolean {
   const definition = registeredArea(area)
-  return definition !== null && caller.can(definition.managePermission) && tokenAllows(caller.tokenAreas, area)
+  return definition !== null && caller.can(definition.managePermission) && caller.can(definition.viewPermission) && tokenAllows(caller.tokenAreas, area)
+}
+
+/** The view and manage permissions of `areas` the caller lacks. */
+function missingImportPermissions(caller: Pick<ConfigCaller, "can">, areas: readonly ConfigAreaKey[]): PermissionKey[] {
+  return [...new Set(areas.flatMap((area) => {
+    const definition = registeredArea(area)
+    return definition ? [definition.viewPermission, definition.managePermission].filter((key) => !caller.can(key)) : []
+  }))]
 }
 
 /**
@@ -631,11 +645,13 @@ function checkSubmission(caller: ConfigCaller, raw: unknown, options: { internal
   const scope = CONFIG_AREA_KEYS.filter((key) => blob.scope.includes(key))
   const denied = scope.filter((area) => !canImport(caller, area))
   if (denied.length > 0) {
+    const outside = denied.filter((area) => !tokenAllows(caller.tokenAreas, area))
+    const missing = missingImportPermissions(caller, denied)
     throw new ConfigBlobError(403, {
       error: "forbidden",
-      message: `You can't import ${denied.map(areaLabel).join(", ")}.`,
+      message: `You can't import ${denied.map(areaLabel).join(", ")}${outside.length > 0 ? `: outside this config token's areas (${outside.map(areaLabel).join(", ")})` : ""}${missing.length > 0 ? `${outside.length > 0 ? ";" : ":"} importing an area needs permission to view and to manage it (missing ${missing.join(", ")})` : ""}.`,
       areas: denied,
-      requiredPermissions: managePermissions(denied),
+      requiredPermissions: missing.length > 0 ? missing : managePermissions(denied),
     })
   }
   return { blob, scope }

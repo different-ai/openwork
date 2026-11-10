@@ -589,3 +589,62 @@ test("BYOK export and gateway providers follow what the routes show a view-only 
   assert.equal(exported.status, 403, summary(exported))
   assert.deepEqual(field(exported.body, "omitted"), [{ area: "ai-gateway.providers", reason: "needs the gateway_providers.manage permission" }])
 })
+
+const { redactConnectionCredentials } = await import("../../src/config-blobs/areas/connectors-mcp.js")
+const { redactUpstreamCredentials } = await import("../../src/config-blobs/areas/ai-gateway-providers.js")
+
+test("MCP: credentials in a URL never reach a plan, are refused before and during apply, and are redacted on export", async () => {
+  // Plan time: the URL's credential is replaced and named, never echoed.
+  const pasted = redactConnectionCredentials({ url: "https://mcp.example.test/mcp?tenant=acme&access_token=raw-url-token-1&API_KEY=raw-url-token-2" })
+  assert.equal(pasted.problems.length, 1)
+  assert.ok(pasted.problems[0]?.includes('query parameter "access_token"') && pasted.problems[0].includes('query parameter "API_KEY"'), JSON.stringify(pasted.problems))
+  assert.ok(!JSON.stringify(pasted).includes("raw-url-token"), "no credential value in the result")
+  assert.ok(String(pasted.spec.url).includes("tenant=acme"), "other parameters are kept")
+  const userinfo = redactConnectionCredentials({ url: "https://user:raw-password-1@mcp.example.test/mcp" })
+  assert.ok(userinfo.problems[0]?.includes("embedded credentials"))
+  assert.ok(!JSON.stringify(userinfo).includes("raw-password-1"))
+  const manual = redactConnectionCredentials({ url: "https://mcp.example.test/mcp", oauth: { manualOAuthEndpoints: { authorizationEndpoint: "https://idp.example.test/authorize", tokenEndpoint: "https://idp.example.test/token?client_secret=raw-endpoint-secret" } } })
+  assert.ok(manual.problems.some((problem) => problem.startsWith("oauth.manualOAuthEndpoints.tokenEndpoint")), JSON.stringify(manual.problems))
+  assert.ok(!JSON.stringify(manual).includes("raw-endpoint-secret"))
+  assert.deepEqual(redactConnectionCredentials({ url: "https://mcp.example.test/mcp?tenant=acme" }).problems, [])
+  // An already-redacted URL (from an export) is not a pasted credential; the write is refused later.
+  assert.deepEqual(redactConnectionCredentials({ url: "https://mcp.example.test/mcp?api_key=%5Bredacted%5D" }).problems, [])
+
+  // Same rule for a gateway provider's upstream address (the provider routes refuse any query or user info).
+  const upstream = redactUpstreamCredentials({ settings: { upstreamBaseUrl: "https://llm.example.test/v1?key=raw-upstream-key" } })
+  assert.equal(upstream.problems.length, 1)
+  assert.ok(!JSON.stringify(upstream).includes("raw-upstream-key"))
+  assert.deepEqual(redactUpstreamCredentials({ settings: { upstreamBaseUrl: "https://llm.example.test/v1" } }).problems, [])
+
+  const ctx = await ctxFor(orgA)
+  // A create whose URL holds a credential (redacted or not) is blocked at plan time and refused by apply.
+  const createOp = {
+    kind: "create" as const,
+    item: { name: "Token URL MCP", spec: { url: `${mcpServer.url}/mcp?access_token=%5Bredacted%5D`, authType: "none", credentialMode: "shared", exposeDirectly: false, apiKeyAuthScheme: "bearer", apiKey: null, requestHeaders: [], oauth: null, access: { orgWide: true, teams: [], members: [] } } },
+  }
+  const createVerdict = await connectorsMcpArea.preflight?.(ctx, createOp, { secrets: [] })
+  assert.ok(createVerdict?.block?.includes('MCP URL query parameter "access_token" must not contain credentials.'), JSON.stringify(createVerdict))
+  await assert.rejects(connectorsMcpArea.apply(ctx, createOp), (error: unknown) => error instanceof ConfigApplyItemError && error.message.includes("holds a credential"))
+  assert.equal((await connectorsMcpArea.exportItems(ctx)).some((item) => item.name === "Token URL MCP"), false)
+
+  // A connection saved before the route refused such URLs: the export redacts it, and an edit is blocked until it is fixed.
+  const created = await apiA("POST", "/v1/mcp-connections", { name: "Legacy MCP", url: `${mcpServer.url}/legacy`, authType: "none", access: { orgWide: true } })
+  assert.equal(created.status, 200, summary(created))
+  const legacyId = text(field(created.body, "id"), "legacy id")
+  await db.update(ExternalMcpConnectionTable).set({ url: `${mcpServer.url}/legacy?api_key=legacy-raw-key-1` }).where(eq(ExternalMcpConnectionTable.id, legacyId))
+  const exported = await connectorsMcpArea.exportItems(ctx)
+  assert.ok(!JSON.stringify(exported).includes("legacy-raw-key-1"), "the stored credential is not exported")
+  const [legacy] = (await connectorsMcpArea.readItems?.(ctx, [legacyId])) ?? []
+  assert.ok(legacy)
+  assert.ok(String(legacy.spec.url).endsWith("/legacy?api_key=%5Bredacted%5D"), String(legacy.spec.url))
+  const rename = updateOp(connectorsMcpArea, legacy, { key: legacy.key, name: "Legacy MCP (renamed)", spec: resolvedSpec(legacy.spec, sameOrgRefs, keepAll) })
+  const renameVerdict = await connectorsMcpArea.preflight?.(ctx, rename, { secrets: [] })
+  assert.ok(renameVerdict?.block?.includes("saved URL"), JSON.stringify(renameVerdict))
+  await assert.rejects(connectorsMcpArea.apply(ctx, rename), (error: unknown) => error instanceof ConfigApplyItemError && !error.message.includes("legacy-raw-key-1"))
+  const [row] = await db.select().from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, legacyId))
+  assert.equal(row?.name, "Legacy MCP", "nothing was written")
+  // Fixing the URL in the import is allowed: the new URL carries no credential.
+  const fixed = updateOp(connectorsMcpArea, legacy, { key: legacy.key, name: legacy.name, spec: { ...resolvedSpec(legacy.spec, sameOrgRefs, keepAll), url: `${mcpServer.url}/legacy` } })
+  assert.equal(await connectorsMcpArea.preflight?.(ctx, fixed, { secrets: [] }), null)
+  await db.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, legacyId))
+})

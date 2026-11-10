@@ -105,7 +105,7 @@ The engine is generic. Adapters contain no matching or diff logic.
 
 - API key type with `config:*` scopes, area-limited scopes, `allowApiKeys` on inputs for config tokens, `env:` secrets on self-hosted with an operator allowlist (Helm value).
 - `?dryRun=true`, public JSON Schema, docs page in `packages/docs/self-host/` (follows on from `declarative-configuration.mdx`; the `by-key` routes stay supported).
-- **Exit:** a GitHub Actions example that exports, diffs on PR, and submits on merge.
+- **Exit:** a GitHub Actions example that exports on a schedule, checks PRs against the public schema (no token in any PR-triggered job) and submits on merge from a protected environment.
 
 ## Phase 5: coverage
 

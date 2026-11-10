@@ -101,7 +101,7 @@ All routes are under the `configBlobs` flag (`requireFeature`). Each is declared
 | `POST /v1/config-blobs/change-requests/:id/cancel` | cancel | creator or admin |
 | `POST /v1/config-blobs/change-requests/:id/revert` | "Restore previous config" → new change request from the before-snapshot | UI or `config:apply` |
 
-**CI example:** export → commit to git → edit → `POST change-requests` → wait for `needs_review` → read the plan in the PR → an admin approves in the UI. `?dryRun=true` on submit analyzes without queueing, then discards the request after 24h, for a PR check (like safe-settings "nop").
+**CI example** (`packages/docs/self-host/export-import-configuration.mdx`): a scheduled export opens a drift PR; the PR check validates the file against the public JSON Schema with **no token**; a push to the protected `main` branch, in a GitHub environment that holds the token, runs `POST change-requests` → `needs_review` → an admin approves in the UI. The config token never reaches a `pull_request` job (a PR can rewrite the workflow or the code a job runs and read its secrets), and is passed to the shell through `env`, never written into the command. `?dryRun=true` analyzes at once and stores nothing; on PRs it belongs only in a trusted workflow that reads the PR's file as data and keeps the output private (a plan shows the target's current configuration).
 
 ## Secret inputs
 
@@ -109,6 +109,10 @@ All routes are under the `configBlobs` flag (`requireFeature`). Each is declared
 - Deleted after apply, cancel or expiry (e.g. 7 days).
 - Never part of `planHash` as values, only as decisions (`keep` / `env:NAME` / `value` / `unset`). That way, entering a secret doesn't silently change what was approved. Proposal: entering a value counts as a decision change and drops approval. Simpler, and safe.
 - Keyed by the placeholder's `$secret` path, so a path names exactly one placeholder: a blob in which two placeholders share a path is `invalid` (otherwise one value entered for one item could land in another, such as a custom provider pointed at another address). At apply a value only fills the placeholder whose plan decision is `value` or `env` for that path, and each value is used once.
+
+## Import permissions
+
+Uploading or dry-running a blob needs, for every area in its scope, the area's **view and manage** permissions (within the token's area limit): a plan shows the target's current items next to the blob's, so a caller with `prompts.manage` but not `prompts.view` would otherwise read prompt text through it. Missing either is a 403 naming the areas and the missing permissions (`service.ts` `checkSubmission`). Stored plans, decisions, reports and before-snapshots already require view of every area in the request.
 
 ## Config token area limits
 

@@ -58,21 +58,69 @@ export function findSecrets(layout: ArrayLayout, spec: unknown): SecretOccurrenc
 }
 
 /**
- * Whether a spec location matches a declared secret field. `schemaPath` uses
- * `[]` for array elements (`requestHeaders[].value`); a `*` segment in the
- * pattern matches any one object key, for maps keyed by name
- * (`credentials.apiKeys.*` matches `credentials.apiKeys.OPENAI_API_KEY`).
+ * One step of a spec location, kept structured: an object key exactly as it
+ * appears in the spec (dots and brackets included), followed by how many
+ * array levels were entered under it. Secret matching never re-splits a
+ * joined path, so a map key such as `A.B` stays one key.
  */
-export function matchesSecretField(pattern: string, schemaPath: string): boolean {
-  const want = pattern.split(".")
-  const have = schemaPath.split(".")
+export type SchemaSegment = { key: string; elements: number }
+
+function enterKey(path: readonly SchemaSegment[], key: string): SchemaSegment[] {
+  return [...path, { key, elements: 0 }]
+}
+
+function enterElement(path: readonly SchemaSegment[]): SchemaSegment[] {
+  const last = path[path.length - 1]
+  if (!last) return [{ key: "", elements: 1 }]
+  return [...path.slice(0, -1), { key: last.key, elements: last.elements + 1 }]
+}
+
+/** A declared pattern (`requestHeaders[].value`, `credentials.apiKeys.*`) as segments. Patterns are written by adapters, never by blob authors. */
+function patternSegments(pattern: string): SchemaSegment[] {
+  return pattern.split(".").map((part) => {
+    let key = part
+    let elements = 0
+    while (key.endsWith("[]")) {
+      key = key.slice(0, -2)
+      elements += 1
+    }
+    return { key, elements }
+  })
+}
+
+/** The structured form of a dotted schema path, for callers that only have one (tests, docs). Keys must not contain dots. */
+export function schemaSegments(schemaPath: string): SchemaSegment[] {
+  return schemaPath === "" ? [] : patternSegments(schemaPath)
+}
+
+/**
+ * Whether a spec location matches a declared secret field. Array elements are
+ * written `[]` in the pattern (`requestHeaders[].value`); a `*` segment
+ * matches any one object key whatever characters it holds, for maps keyed by
+ * name (`credentials.apiKeys.*` matches the key `OPENAI_API_KEY`, and also
+ * the single key `A.B`).
+ */
+export function matchesSecretField(pattern: string, path: readonly SchemaSegment[] | string): boolean {
+  const want = patternSegments(pattern)
+  const have = typeof path === "string" ? schemaSegments(path) : path
   if (want.length !== have.length) return false
   return want.every((segment, index) => {
-    const actual = have[index] ?? ""
-    if (segment === actual) return true
-    if (segment === "*") return !actual.endsWith("[]")
-    if (segment === "*[]") return actual.endsWith("[]")
-    return false
+    const actual = have[index]
+    if (!actual || segment.elements !== actual.elements) return false
+    return segment.key === "*" || segment.key === actual.key
+  })
+}
+
+/** Characters a key matched by a `*` secret pattern may not hold: they would make its `$secret` path and field ambiguous. */
+const AMBIGUOUS_MAP_KEY = /[.[\]]/
+
+function wildcardKeyProblem(secretFields: readonly string[], path: readonly SchemaSegment[]): boolean {
+  const last = path[path.length - 1]
+  if (!last || !AMBIGUOUS_MAP_KEY.test(last.key)) return false
+  return secretFields.some((pattern) => {
+    const want = patternSegments(pattern)
+    const segment = want[path.length - 1]
+    return segment?.key === "*" && matchesSecretField(pattern, path)
   })
 }
 
@@ -81,20 +129,24 @@ export type SecretFieldProblems = {
   undeclared: string[]
   /** Declared secret locations holding something other than a placeholder (a pasted secret, say). */
   raw: string[]
+  /** Keys of a secret map (`credentials.apiKeys.*`) holding `.`, `[` or `]`. */
+  invalidKeys: string[]
 }
 
 /**
  * Checks a blob spec against the area's `secretFields`: placeholders may only
  * sit at declared fields (wildcard map keys included), and declared fields may
  * only hold placeholders (or nothing). A raw value at a secret field is never
- * accepted inside a blob: values go through the inputs endpoint.
+ * accepted inside a blob: values go through the inputs endpoint. Secret map
+ * keys may not hold `.`, `[` or `]`.
  */
 export function checkSecretFields(secretFields: readonly string[], spec: unknown): SecretFieldProblems {
-  const problems: SecretFieldProblems = { undeclared: [], raw: [] }
-  const declared = (schemaPath: string) => secretFields.some((pattern) => matchesSecretField(pattern, schemaPath))
-  const walk = (value: unknown, field: string, schemaPath: string) => {
+  const problems: SecretFieldProblems = { undeclared: [], raw: [], invalidKeys: [] }
+  const declared = (path: readonly SchemaSegment[]) => secretFields.some((pattern) => matchesSecretField(pattern, path))
+  const walk = (value: unknown, field: string, path: readonly SchemaSegment[]) => {
     if (value === undefined || value === null) return
-    const isSecretField = schemaPath !== "" && declared(schemaPath)
+    const isSecretField = path.length > 0 && declared(path)
+    if (isSecretField && wildcardKeyProblem(secretFields, path)) problems.invalidKeys.push(field)
     if (isConfigSecret(value)) {
       if (!isSecretField) problems.undeclared.push(field || "(spec)")
       return
@@ -105,13 +157,13 @@ export function checkSecretFields(secretFields: readonly string[], spec: unknown
     }
     if (isConfigRef(value)) return
     if (Array.isArray(value)) {
-      const childSchema = elementSchemaPath(schemaPath)
-      value.forEach((element, index) => walk(element, `${field}[${index}]`, childSchema))
+      const childPath = enterElement(path)
+      value.forEach((element, index) => walk(element, `${field}[${index}]`, childPath))
       return
     }
-    if (isPlainObject(value)) for (const [key, child] of Object.entries(value)) walk(child, joinPath(field, key), joinPath(schemaPath, key))
+    if (isPlainObject(value)) for (const [key, child] of Object.entries(value)) walk(child, joinPath(field, key), enterKey(path, key))
   }
-  walk(spec, "", "")
+  walk(spec, "", [])
   return problems
 }
 
@@ -124,30 +176,30 @@ export function checkSecretFields(secretFields: readonly string[], spec: unknown
 export function redactRawSecrets(secretFields: readonly string[], spec: ConfigSpec): { spec: ConfigSpec; redacted: string[] } {
   if (secretFields.length === 0) return { spec, redacted: [] }
   const redacted: string[] = []
-  const declared = (schemaPath: string) => secretFields.some((pattern) => matchesSecretField(pattern, schemaPath))
-  const walk = (value: unknown, field: string, schemaPath: string): unknown => {
+  const declared = (path: readonly SchemaSegment[]) => secretFields.some((pattern) => matchesSecretField(pattern, path))
+  const walk = (value: unknown, field: string, path: readonly SchemaSegment[]): unknown => {
     if (value === undefined || value === null) return value
     if (isConfigSecret(value)) return value
-    if (schemaPath !== "" && declared(schemaPath)) {
+    if (path.length > 0 && declared(path)) {
       redacted.push(field)
       return REDACTED_SECRET
     }
     if (isConfigRef(value)) return value
     if (Array.isArray(value)) {
-      const childSchema = elementSchemaPath(schemaPath)
-      return value.map((element, index) => walk(element, `${field}[${index}]`, childSchema))
+      const childPath = enterElement(path)
+      return value.map((element, index) => walk(element, `${field}[${index}]`, childPath))
     }
     if (isPlainObject(value)) {
       const out: { [key: string]: unknown } = {}
       for (const [key, child] of Object.entries(value)) {
         if (isUnsafeKey(key)) continue
-        out[key] = walk(child, joinPath(field, key), joinPath(schemaPath, key))
+        out[key] = walk(child, joinPath(field, key), enterKey(path, key))
       }
       return out
     }
     return value
   }
-  const out = walk(spec, "", "")
+  const out = walk(spec, "", [])
   if (redacted.length === 0) return { spec, redacted }
   return { spec: isPlainObject(out) ? out : {}, redacted }
 }

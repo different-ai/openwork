@@ -120,6 +120,8 @@ There are three ways to identify an item, used in this order (details in [mappin
 
 - Secrets are never in the diff text. The plan shows only `secret: will keep / will set / missing`.
 - Whole encrypted JSON blobs that mix config and secrets (`sso_provider.oidc_config`) are split by the adapter: non-secret fields go in `spec`, secret fields become placeholders.
+- A raw value pasted at a secret field is replaced by `[redacted]` before anything diffs, hashes or stores the spec, and makes the request `invalid`. Secret fields are matched along the spec's structure (a `*` map key matches one key whatever it holds); keys of a secret map (`credentials.apiKeys.*`) may not contain `.`, `[` or `]`.
+- **Credentials in URLs** (area `redactCredentials`): the same treatment for credentials in fields that are not secret fields but could carry one, where the resource's own route refuses them. `connectors.mcp` `url` (user name or password, or `access_token`, `api_key`, `client_secret`, `token`, `refresh_token`, `id_token`, `code_verifier` in the query, the rule of `POST/PUT /v1/mcp-connections`) and `oauth.manualOAuthEndpoints.*`; `ai-gateway.providers` `settings.upstreamBaseUrl` (user info or any query). An export shows a credential found in a URL saved before the route refused it as `[redacted]`; a write of such a URL (create, URL change, or any update of a connection whose saved URL has one) is blocked at plan time and refused by apply, as the route refuses it.
 
 ## Hashes
 

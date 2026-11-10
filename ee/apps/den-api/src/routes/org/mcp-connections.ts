@@ -56,6 +56,7 @@ import type { PermissionKey } from "@openwork/types/den/permissions"
 import { forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, okSchema, unauthorizedSchema } from "../../openapi.js"
 import { createOAuthStateToken, verifyOAuthStateToken } from "../../capability-sources/generic-oauth.js"
 import { matchesLegacyExternalMcpOAuthStateIdentityBinding } from "../../capability-sources/external-mcp-oauth-state-identity.js"
+import { externalMcpUrlCredentialProblems } from "../../capability-sources/external-mcp-url-credentials.js"
 import {
   EXTERNAL_MCP_REQUEST_HEADERS_LIMIT,
   externalMcpRequestHeaderNames,
@@ -270,23 +271,7 @@ const externalMcpUrlSchema = z.string().trim().url().max(2048).superRefine((valu
   if (url.hash) {
     context.addIssue({ code: "custom", message: "MCP URLs must not contain a fragment." })
   }
-  if (url.username || url.password) {
-    context.addIssue({ code: "custom", message: "MCP URLs must not contain embedded credentials." })
-  }
-  const sensitiveParameters = new Set([
-    "access_token",
-    "api_key",
-    "client_secret",
-    "token",
-    "refresh_token",
-    "id_token",
-    "code_verifier",
-  ])
-  for (const parameter of url.searchParams.keys()) {
-    if (sensitiveParameters.has(parameter.toLowerCase())) {
-      context.addIssue({ code: "custom", message: `MCP URL query parameter "${parameter}" must not contain credentials.` })
-    }
-  }
+  for (const message of externalMcpUrlCredentialProblems(value)) context.addIssue({ code: "custom", message })
 })
 
 // Bounds only; validateExternalMcpRequestHeaders enforces the exact rules

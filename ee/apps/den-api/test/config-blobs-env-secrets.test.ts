@@ -13,7 +13,7 @@ import {
   partitionConfigSecretEnvAllowlist,
   readConfigSecretEnv,
 } from "../src/config-blobs/env-secrets.js"
-import { canonicalJson, checkSecretFields, findSecrets, matchesSecretField, specRev } from "../src/config-blobs/engine/index.js"
+import { canonicalJson, checkSecretFields, findSecrets, matchesSecretField, redactRawSecrets, specRev } from "../src/config-blobs/engine/index.js"
 import { arrayElementKey, isOrderedArray } from "../src/config-blobs/engine/util.js"
 
 describe("env secret allowlist", () => {
@@ -90,6 +90,10 @@ describe("engine paths", () => {
     assert.equal(matchesSecretField("credentials.apiKeys.*", "credentials.apiKeys.OPENAI_API_KEY"), true)
     assert.equal(matchesSecretField("credentials.apiKeys.*", "credentials.apiKeys"), false)
     assert.equal(matchesSecretField("credentials.apiKeys.*", "credentials.apiKeys.A.b"), false)
+    // Spec locations are matched structurally: a map key holding a dot is one key.
+    assert.equal(matchesSecretField("credentials.apiKeys.*", [{ key: "credentials", elements: 0 }, { key: "apiKeys", elements: 0 }, { key: "A.b", elements: 0 }]), true)
+    assert.equal(matchesSecretField("requestHeaders[].value", [{ key: "requestHeaders", elements: 1 }, { key: "value", elements: 0 }]), true)
+    assert.equal(matchesSecretField("requestHeaders[].value", [{ key: "requestHeaders[]", elements: 0 }, { key: "value", elements: 0 }]), false)
     assert.equal(matchesSecretField("requestHeaders[].value", "requestHeaders[].value"), true)
     assert.equal(matchesSecretField("credentials.apiKey", "credentials.apiKey"), true)
 
@@ -98,11 +102,17 @@ describe("engine paths", () => {
       credentials: { apiKeys: { OPENAI_API_KEY: { $secret: "a/x/credentials.apiKeys.OPENAI_API_KEY", set: true }, AZURE_KEY: { $secret: "a/x/credentials.apiKeys.AZURE_KEY", set: false } } },
       requestHeaders: [{ name: "X", value: { $secret: "a/x/requestHeaders.X.value", set: true } }],
     }
-    assert.deepEqual(checkSecretFields(fields, spec), { undeclared: [], raw: [] })
+    assert.deepEqual(checkSecretFields(fields, spec), { undeclared: [], raw: [], invalidKeys: [] })
     const found = findSecrets({ arrayKeys: { requestHeaders: "name" } }, spec).map((entry) => entry.field).sort()
     assert.deepEqual(found, ["credentials.apiKeys.AZURE_KEY", "credentials.apiKeys.OPENAI_API_KEY", "requestHeaders[name=X].value"])
 
     const pasted = { credentials: { apiKeys: { OPENAI_API_KEY: "sk-pasted" } }, other: { $secret: "a/x/other", set: true } }
-    assert.deepEqual(checkSecretFields(fields, pasted), { undeclared: ["other"], raw: ["credentials.apiKeys.OPENAI_API_KEY"] })
+    assert.deepEqual(checkSecretFields(fields, pasted), { undeclared: ["other"], raw: ["credentials.apiKeys.OPENAI_API_KEY"], invalidKeys: [] })
+
+    const dotted = { credentials: { apiKeys: { "A.B": "sk-dotted", "C]": { $secret: "a/x/credentials.apiKeys.C]", set: true } } } }
+    assert.deepEqual(checkSecretFields(fields, dotted), { undeclared: [], raw: ["credentials.apiKeys.A.B"], invalidKeys: ["credentials.apiKeys.A.B", "credentials.apiKeys.C]"] })
+    const redacted = redactRawSecrets(fields, dotted)
+    assert.deepEqual(redacted.redacted, ["credentials.apiKeys.A.B"])
+    assert.ok(!JSON.stringify(redacted.spec).includes("sk-dotted"))
   })
 })

@@ -297,3 +297,30 @@ test("delete removes the scope's configuration", async () => {
     assert.deepEqual(area.irreversible?.({ kind: "delete", targetId: team.id, previous: team }), [])
   }
 })
+
+test("prompts: importing (dry run or upload) needs prompts.view as well as prompts.manage, so a plan never shows prompt text to a manager who can't view it", async () => {
+  assert.equal((await den.setFeature(source.orgId, "configBlobs", true)).status, 200)
+  const exported = await ok(apiA("GET", "/v1/config-blobs/export?areas=members.prompts"), "export prompts")
+  const blob = JSON.parse(JSON.stringify(exported.body))
+  assert.ok(JSON.stringify(blob).includes("Confidential house rules"), "the owner's export carries the text")
+
+  const manager = await den.newMember(owner, source.orgId, "Prompt Manager")
+  const managers = await den.createTeam(owner, source.orgId, "Prompt managers", [manager.memberId])
+  await ok(apiA("POST", "/v1/permissions/sets", { name: "Manage prompts only", teamIds: [managers], permissions: [{ key: "prompts.manage", status: "allow" }] }), "manage-only role")
+  const managerApi = den.as(manager, source.orgId)
+
+  for (const path of ["/v1/config-blobs/change-requests?dryRun=true", "/v1/config-blobs/change-requests"]) {
+    const refused = await managerApi("POST", path, { blob, mode: "merge" })
+    assert.equal(refused.status, 403, summary(refused))
+    assert.equal(field(refused.body, "error"), "forbidden")
+    assert.deepEqual(field(refused.body, "areas"), ["members.prompts"])
+    assert.deepEqual(field(refused.body, "requiredPermissions"), ["prompts.view"])
+    assert.ok(String(field(refused.body, "message")).includes("view and to manage"), summary(refused))
+    assert.ok(!JSON.stringify(refused.body).includes("Confidential house rules"), "the refusal shows no prompt text")
+  }
+
+  const viewers = await den.createTeam(owner, source.orgId, "Prompt viewers", [manager.memberId])
+  await ok(apiA("POST", "/v1/permissions/sets", { name: "View prompts", teamIds: [viewers], permissions: [{ key: "prompts.view", status: "allow" }] }), "view role")
+  const allowed = await managerApi("POST", "/v1/config-blobs/change-requests?dryRun=true", { blob, mode: "merge" })
+  assert.equal(allowed.status, 200, summary(allowed))
+})

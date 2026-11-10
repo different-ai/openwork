@@ -32,7 +32,7 @@ import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, 
 import { gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
 import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
 import { createDenTypeId, denTypeIdPrefixes, normalizeDenTypeId, type DenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
-import { configRefSchema, configSecretSchema, type ConfigApplyStep, type ConfigFieldChange } from "@openwork/types/den/config-blobs"
+import { configRefSchema, configSecretSchema, type ConfigApplyStep, type ConfigFieldChange, type ConfigSpec } from "@openwork/types/den/config-blobs"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, GATEWAY_PROVIDER_CREDENTIAL_MODES, GATEWAY_PROVIDER_STATUSES, gatewayAwsSsoSettingsSchema, type GatewayAccessGrantWrite, type GatewayCredentialSetPatch, type GatewayModelGroupPatch } from "@openwork/types/den/gateway"
 import { GATEWAY_CUSTOM_PROVIDER_ID, gatewayCustomModelSchema, isGatewayCustomProviderId, type GatewayCustomProviderSettings } from "@openwork/types/den/gateway-custom-providers"
 import { z } from "zod"
@@ -826,6 +826,35 @@ function upstreamBaseUrlOf(spec: Record<string, unknown>): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
+/**
+ * A user name, password or query string in `settings.upstreamBaseUrl`
+ * (credentials, as the provider routes treat them: they refuse all three),
+ * replaced before anything plans with the spec. The problem names the field,
+ * never the value.
+ */
+export function redactUpstreamCredentials(spec: ConfigSpec): { spec: ConfigSpec; problems: string[] } {
+  const settings = spec.settings
+  if (typeof settings !== "object" || settings === null || Array.isArray(settings)) return { spec, problems: [] }
+  const value: unknown = Reflect.get(settings, "upstreamBaseUrl")
+  if (typeof value !== "string") return { spec, problems: [] }
+  let url: URL
+  try {
+    url = new URL(value.trim())
+  } catch {
+    return { spec, problems: [] }
+  }
+  if (!url.username && !url.password && !url.search) return { spec, problems: [] }
+  if (url.username) url.username = "[redacted]"
+  if (url.password) url.password = "[redacted]"
+  const query = new URLSearchParams()
+  for (const parameter of url.searchParams.keys()) if (!query.has(parameter)) query.append(parameter, "[redacted]")
+  url.search = query.toString()
+  return {
+    spec: { ...spec, settings: { ...settings, upstreamBaseUrl: url.toString() } },
+    problems: ["settings.upstreamBaseUrl: holds a user name, password or query string; an API address can't carry credentials, so enter the key as the credential instead"],
+  }
+}
+
 export const aiGatewayProvidersArea = defineConfigArea({
   key: AREA,
   label: "AI Providers",
@@ -851,6 +880,7 @@ export const aiGatewayProvidersArea = defineConfigArea({
   }],
   similarity,
   secretFields: ["credentialSets[].credential", "credentialSets[].oauthClientSecret"],
+  redactCredentials: redactUpstreamCredentials,
   orderedArrays: ["pinnedModelIds", "custom.models"],
   arrayKeys: { models: "modelId", "custom.models": "id" },
   comparableSpec,

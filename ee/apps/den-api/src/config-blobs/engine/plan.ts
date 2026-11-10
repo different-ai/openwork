@@ -298,7 +298,13 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
       state.items = state.items.map((item) => {
         const redaction = redactRawSecrets(area.secretFields, item.spec)
         for (const field of redaction.redacted) addError(`${area.label} "${item.name}": a secret value was pasted into ${field}; use the inputs step instead`, area.key)
-        return redaction.redacted.length > 0 ? { ...item, spec: redaction.spec } : item
+        for (const field of checkSecretFields(area.secretFields, redaction.spec).invalidKeys) {
+          addError(`${area.label} "${item.name}": ${field}: a secret's name can't contain ".", "[" or "]"`, area.key)
+        }
+        const credentials = area.redactCredentials?.(redaction.spec)
+        for (const problem of credentials?.problems ?? []) addError(`${area.label} "${item.name}": ${problem}`, area.key)
+        const spec = credentials && credentials.problems.length > 0 ? credentials.spec : redaction.spec
+        return spec !== item.spec ? { ...item, spec } : item
       })
       state.items.forEach((item, index) => {
         if (state.invalid.has(index)) return
@@ -546,10 +552,11 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         reasons.push(`invalid: ${invalid}`)
       }
       const secretProblems = checkSecretFields(area.secretFields, blob.spec)
-      if (secretProblems.undeclared.length || secretProblems.raw.length) {
+      if (secretProblems.undeclared.length || secretProblems.raw.length || secretProblems.invalidKeys.length) {
         item.flags.push("blocked")
         for (const field of secretProblems.undeclared) reasons.push(`${field}: a secret placeholder is not allowed here`)
         for (const field of secretProblems.raw) reasons.push(`${field}: a secret value was pasted here; use a $secret placeholder and enter the value in the inputs step`)
+        for (const field of secretProblems.invalidKeys) reasons.push(`${field}: a secret's name can't contain ".", "[" or "]"`)
       }
       const secrets = planSecrets({
         layout: area,

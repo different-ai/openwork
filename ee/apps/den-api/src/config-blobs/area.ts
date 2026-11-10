@@ -179,6 +179,14 @@ export type ConfigArea = {
   similarity?: ConfigSimilarity
   /** Spec paths holding `$secret` placeholders, e.g. "credentials.apiKey", "headers[].value". */
   secretFields: string[]
+  /**
+   * Credentials found in fields that are not secret fields but could carry
+   * one (an access token in a URL's query string, say). Planning runs this
+   * right after it replaces pasted secrets: each problem names the field and
+   * never the value, the returned spec has the credential replaced, and the
+   * request is invalid, so the value never reaches a plan, an error or a log.
+   */
+  redactCredentials?: (spec: ConfigSpec) => { spec: ConfigSpec; problems: string[] }
   /** True when spec contains confidential (encrypted-at-rest) content such as skill bodies or prompts. */
   containsConfidentialContent?: boolean
   /**
