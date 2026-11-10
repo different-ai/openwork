@@ -5,7 +5,7 @@ import { isRecord } from "./library.ts";
 import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
 /**
- * Cursor setup (`gatewayCursorSetup`): a real Den (cloud) and AI Gateway with one Anthropic-protocol
+ * Cursor setup (part of `gatewayMemberApiKeys`): a real Den (cloud) and AI Gateway with one Anthropic-protocol
  * provider whose only upstream is the deterministic Acme mock, every member allowed its model, member
  * API keys and Cursor setup on for the seeded organization, 3rd party tools allowed, and the owner
  * signed in on My Library › Models.
@@ -20,7 +20,7 @@ export async function gatewayCursorSetupWorld(seed: Seed) {
     if (!den.database) throw new Error("The Cursor setup world needs its disposable local database.");
     await startAcmeGateway(stack, den.database.url, { baseUrl: gateway.baseUrl, env });
     const provider = await seedAcmeGateway(den.admin, upstream);
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { gatewayMemberApiKeys: true, gatewayCursorSetup: true });
+    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { gatewayMemberApiKeys: true });
     const allowed = await seed.api(den.admin, "/v1/org/ai-gateway-settings", { method: "PUT", body: JSON.stringify({ memberApiKeys: true }) });
     if (!allowed.response.ok) throw new Error(`Allowing 3rd party tools failed: HTTP ${allowed.response.status} ${allowed.text.slice(0, 300)}`);
     const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/library?show=models", headless: true, viewport: { width: 1440, height: 1100 } });

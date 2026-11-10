@@ -1,4 +1,4 @@
-// OpenAI Responses API for Cursor (feature `gatewayCursorSetup`). Cursor's OpenAI override can
+// OpenAI Responses API for Cursor (feature `gatewayMemberApiKeys`). Cursor's OpenAI override can
 // send a model through Responses instead of Chat Completions. Every Gateway translator speaks Chat
 // Completions on the client side, so a Responses request is read as a chat request, sent to the
 // model's own protocol as usual, and the Chat Completions answer is written back as a Responses

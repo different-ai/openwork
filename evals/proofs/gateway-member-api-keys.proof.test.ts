@@ -54,13 +54,14 @@ test("an owner lets members use AI Gateway from 3rd party tools, creates their o
     await user.screenshot();
   });
 
-  await step("the owner names the key Claude Code, keeps the 90 day expiry, and sees the key once", async () => {
+  await step("the owner names the key Claude Code, keeps the 90 day expiry, and sees the key once under Start using this key", async () => {
     await user.see({ testId: "gateway-api-key-dialog" }, { timeoutMs: 15_000 });
     await user.type({ role: "textbox", label: "Name" }, "Claude Code");
     await user.see({ role: "button", label: "Expires" }, { text: "In 90 days" });
     await user.screenshot();
     await user.click({ testId: "gateway-api-key-submit" });
-    await user.see({ testId: "gateway-api-key-secret" }, { timeoutMs: 30_000 });
+    await user.see({ testId: "gateway-api-key-start" }, { timeoutMs: 30_000 });
+    await user.see({ testId: "gateway-api-key-secret" });
     key = (await probe.dom('[data-testid="gateway-api-key-secret"]')).elements[0]?.text ?? "";
     const mine = await probe.api(world.den.admin, "/v1/org/ai-gateway/api-keys/mine");
     const saved = isRecord(mine.body) && Array.isArray(mine.body.apiKeys) ? mine.body.apiKeys.filter(isRecord)[0] : undefined;
@@ -73,10 +74,13 @@ test("an owner lets members use AI Gateway from 3rd party tools, creates their o
   });
 
   await step("with only that key, a tool lists the owner's models and gets a reply from one through the AI Gateway", async () => {
+    // The base URLs are in each tool's steps; Another tool shows both.
+    await user.click({ testId: "gateway-tool-other" });
+    await user.see({ testId: "gateway-tool-other" }, { timeoutMs: 15_000 });
+    const openai = (await probe.dom('[data-testid="gateway-tool-other"] [data-testid="gateway-api-keys-base-url-openai"]')).elements[0]?.text ?? "";
+    const anthropic = (await probe.dom('[data-testid="gateway-tool-other"] [data-testid="gateway-api-keys-base-url-anthropic"]')).elements[0]?.text ?? "";
     await user.click({ testId: "gateway-api-key-done" });
     await user.see({ text: "Claude Code" }, { timeoutMs: 15_000 });
-    const openai = (await probe.dom('[data-testid="gateway-api-keys-base-url-openai"]')).elements[0]?.text ?? "";
-    const anthropic = (await probe.dom('[data-testid="gateway-api-keys-base-url-anthropic"]')).elements[0]?.text ?? "";
     expect(openai).toBe(`${world.gatewayUrl}/api/v1`);
     expect(anthropic).toBe(`${world.gatewayUrl}/api`);
     const models = await world.callGateway(key, "/api/v1/models");

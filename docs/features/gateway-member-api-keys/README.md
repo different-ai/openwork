@@ -27,16 +27,19 @@ A key works only while both are on. The Gateway checks both on every request
 ## What people see
 
 **Members**, in My Library › Models, get an "API keys for 3rd party tools"
-section at the top: their keys, when each expires and was last used, a revoke
-menu, a **How to use** docs link, and the OpenAI and Anthropic base URLs.
-**Create key** asks for a name and an expiry (7, 30, 90 days, 1 year or never;
-90 days by default) and shows the key once.
+section at the top: their keys, when each expires and was last used, a menu
+with **Set up** and **Revoke**, a **How to use** docs link and **Set up
+Cursor**. **Create key** asks for a name and an expiry (7, 30, 90 days, 1 year
+or never; 90 days by default), then shows **Start using this key**: the key
+once and a choice of tools (Cursor, OpenAI Codex, Claude Code, another tool),
+each with its setup steps. See `docs/features/gateway-cursor-setup/README.md`
+for the tool steps and the Gateway's Cursor endpoint.
 
 ![Library › Models](./library.png)
 
 ![Create key: name and expiry](./create-key-form.png)
 
-![The key, shown once](./create-key.png)
+![Start using this key: the key once, then a tool](./create-key.png)
 
 **Admins** get an **API Keys** tab in AI Gateway after Users & Teams. The setting
 sits at the top. Below it:

@@ -1,4 +1,4 @@
-// Cursor through the AI Gateway (feature `gatewayCursorSetup`). Cursor's only way to another
+// Cursor through the AI Gateway (feature `gatewayMemberApiKeys`). Cursor's only way to another
 // provider is its OpenAI key and base URL override, so every model, whatever its provider speaks,
 // has to answer as OpenAI Chat Completions under one base URL, by a name a person can type.
 //

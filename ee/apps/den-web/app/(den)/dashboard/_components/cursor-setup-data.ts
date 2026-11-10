@@ -9,7 +9,7 @@ import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 /**
- * Setting up a 3rd party tool with an AI Gateway API key (feature `gatewayCursorSetup`): the models
+ * Setting up a 3rd party tool with an AI Gateway API key (feature `gatewayMemberApiKeys`): the models
  * the viewer can use right now, one entry per model however many groups and credential sets grant
  * it, as the AI Gateway lists them.
  */
