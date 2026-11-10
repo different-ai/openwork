@@ -11,9 +11,9 @@
  * - `provider`: for an AI Gateway alias, a reference to the AI Gateway
  *   provider serving it. It orders the import after that provider and tells
  *   readers where the model comes from; apply does not write it.
- * - `maxSteps`: Workbot's step limit (`organization.metadata.workbot.maxSteps`),
- *   null for the deployment default, 0 for no limit. Always exported as stored;
- *   only applied where `workbotStepLimit` is on, otherwise skipped with a warning.
+ * - `maxSteps`: no longer carried. Workbot had a step limit for a short while;
+ *   exports from then may still hold the key, and it is dropped on import
+ *   rather than refused.
  * - `enabled`: whether Workbot is on for everyone whose teams don't say
  *   otherwise (`organization.metadata.workbot.enabled`, absent = on). Always
  *   exported as stored; only applied where `workbotTeamSettings` is on (its
@@ -32,7 +32,7 @@ import { GatewayProviderModelTable, GatewayProviderTable, OrganizationTable } fr
 import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { configRefSchema, type ConfigRef } from "@openwork/types/den/config-blobs"
-import { readWorkbotMaxSteps, readWorkbotModel, workbotMaxStepsSchema } from "@openwork/types/den/workbot-settings"
+import { readWorkbotModel } from "@openwork/types/den/workbot-settings"
 import { readWorkbotEnabled } from "@openwork/types/den/workbot-team-settings"
 import { z } from "zod"
 import { organizationFeatureEnabled } from "../../features.js"
@@ -46,23 +46,27 @@ const AREA = "workbot.settings"
 const ITEM_NAME = "Workbot settings"
 const PROVIDERS_AREA = "ai-gateway.providers"
 
-const workbotSettingsSpecSchema = z.object({
+/** Drops `maxSteps`, the retired step limit, from an older export's spec; everything else is validated as usual. */
+export function withoutRetiredMaxSteps(spec: unknown): unknown {
+  if (typeof spec !== "object" || spec === null || Array.isArray(spec) || !("maxSteps" in spec)) return spec
+  const { maxSteps: _retired, ...rest } = spec
+  return rest
+}
+
+const workbotSettingsSpecSchema = z.preprocess(withoutRetiredMaxSteps, z.object({
   /** Null: Workbot's default (managed Luna, else the AI Gateway default). */
   model: z.string().trim().min(1).max(255).nullable().default(null),
   /** The AI Gateway provider serving `model`; informational, orders the import after it. */
   provider: configRefSchema.nullable().default(null),
-  /** Workbot's step limit: null = the deployment default, 0 = no limit. */
-  maxSteps: workbotMaxStepsSchema.nullable().default(null),
   /** Whether Workbot is on for everyone whose teams don't set their own (workbotTeamSettings). */
   enabled: z.boolean().default(true),
-}).strict()
+}).strict())
 
-const applySpecSchema = z.object({
+const applySpecSchema = z.preprocess(withoutRetiredMaxSteps, z.object({
   model: z.string().trim().min(1).max(255).nullable().default(null),
   provider: z.unknown().optional(),
-  maxSteps: workbotMaxStepsSchema.nullable().default(null),
   enabled: z.boolean().default(true),
-}).strict()
+}).strict())
 
 async function providerRef(ctx: ConfigAreaContext, model: string | null): Promise<ConfigRef | null> {
   const alias = model ? parseGatewayModelAlias(model) : null
@@ -85,7 +89,7 @@ async function exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]> {
     .limit(1)
   if (!row) return []
   const model = readWorkbotModel(row.metadata)
-  return [{ id: ctx.organizationId, name: ITEM_NAME, spec: { model, provider: await providerRef(ctx, model), maxSteps: readWorkbotMaxSteps(row.metadata), enabled: readWorkbotEnabled(row.metadata) } }]
+  return [{ id: ctx.organizationId, name: ITEM_NAME, spec: { model, provider: await providerRef(ctx, model), enabled: readWorkbotEnabled(row.metadata) } }]
 }
 
 export const workbotSettingsArea = defineConfigArea({
@@ -118,20 +122,13 @@ export const workbotSettingsArea = defineConfigArea({
     const parsed = applySpecSchema.safeParse(specObject(op.item.spec))
     if (!parsed.success) throw steps.fail("invalid_spec", parsed.error.issues[0]?.message ?? "Invalid Workbot settings.", "model")
     const next = parsed.data.model
-    const nextMaxSteps = parsed.data.maxSteps
     const warnings: string[] = []
     const wantsModel = touches(op, "model")
-    const wantsMaxSteps = touches(op, "maxSteps")
     const wantsEnabled = touches(op, "enabled")
-    if (!wantsModel && !wantsMaxSteps && !wantsEnabled) return { localId, steps: [] }
+    if (!wantsModel && !wantsEnabled) return { localId, steps: [] }
     const [current] = await exportItems(ctx)
     if (!current) throw steps.fail("organization_not_found", "The organization no longer exists.", undefined, 404)
     const modelChanges = wantsModel && current.spec.model !== next
-    let maxStepsChanges = wantsMaxSteps && current.spec.maxSteps !== nextMaxSteps
-    if (maxStepsChanges && !await organizationFeatureEnabled(ctx.organizationId, "workbotStepLimit", { userId: ctx.actor.userId })) {
-      warnings.push("Workbot's step limit wasn't changed: the step limit isn't on for this organization.")
-      maxStepsChanges = false
-    }
     const nextEnabled = parsed.data.enabled
     let enabledChanges = wantsEnabled && current.spec.enabled !== nextEnabled
     if (enabledChanges && !await organizationFeatureEnabled(ctx.organizationId, "workbotTeamSettings", { userId: ctx.actor.userId })) {
@@ -147,13 +144,6 @@ export const workbotSettingsArea = defineConfigArea({
         if (saved.choice === "unknown_model") {
           throw new ConfigApplyError("unknown_model", `${UNKNOWN_MODEL_MESSAGE} (${next ?? "default"} isn't one of the models you can use in this organization.)`, 400)
         }
-      })
-    }
-    if (maxStepsChanges) {
-      const detail = nextMaxSteps === null ? "default" : nextMaxSteps === 0 ? "no limit" : String(nextMaxSteps)
-      await steps.run({ action: "set", target: "maxSteps", detail }, "maxSteps", async () => {
-        await requireActorPermission(ctx, "inference.manage")
-        await saveWorkbotDefaultModel({ organizationId: normalizeDenTypeId("organization", ctx.organizationId), userId: ctx.actor.userId, maxSteps: nextMaxSteps })
       })
     }
     if (enabledChanges) {

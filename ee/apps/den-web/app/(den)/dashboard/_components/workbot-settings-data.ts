@@ -87,8 +87,3 @@ function useSaveWorkbotSettings<Value>(orgId: string, save: { key: string; actio
 export function useSaveWorkbotModel(orgId: string) {
   return useSaveWorkbotSettings(orgId, { key: "save", action: "save-workbot-model", body: (model: string | null) => ({ model }), what: "the default model" });
 }
-
-/** How many steps Workbot may take on one request: null for the default, 0 for no limit. */
-export function useSaveWorkbotStepLimit(orgId: string) {
-  return useSaveWorkbotSettings(orgId, { key: "save-step-limit", action: "save-workbot-step-limit", body: (maxSteps: number | null) => ({ maxSteps }), what: "the step limit" });
-}

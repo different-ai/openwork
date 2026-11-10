@@ -14,7 +14,7 @@ This folder owns organization-facing Den API routes.
 - `templates.ts`: shared template CRUD
 - `web-origins.ts`: approved exact HTTPS web origins for sign-in handoff and Den API CORS
 - `workbot-readiness.ts`: whether Workbot has an AI Gateway provider, for any member (`GET /v1/org/workbot-readiness`)
-- `workbot-settings.ts`: the organization default model for Workbot, the Slack assistant and cloud-default Automations, and Workbot's step limit (`workbotStepLimit`)
+- `workbot-settings.ts`: the organization default model for Workbot, the Slack assistant and cloud-default Automations
 - `workbot-team-settings.ts`: a team's own Workbot default model, name and on/off switch, on top of the organization's, and the organization's switch for everyone (`workbotTeamSettings`)
 - `shared.ts`: shared route-local helpers, param schemas, and guard helpers
 

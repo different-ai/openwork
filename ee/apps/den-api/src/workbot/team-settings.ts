@@ -9,7 +9,7 @@ import {
   type WorkbotProactiveSettings,
   type WorkbotProactiveSettingsInput,
 } from "@openwork/types/den/workbot-proactive"
-import { readWorkbotMaxSteps, readWorkbotModel } from "@openwork/types/den/workbot-settings"
+import { readWorkbotModel } from "@openwork/types/den/workbot-settings"
 import {
   applyWorkbotTeamSettingsWrite,
   countWorkbotTeamConflicts,
@@ -35,8 +35,8 @@ import { readAgentTemplate, type AgentTemplateVersion } from "../workbot-proacti
  * (packages/types/src/den/workbot-team-settings.ts). Admins set them in Den › Members › Teams › a team › Workbot;
  * every reader that acts for one member asks `resolveMemberWorkbotSettings`, so a team's value follows its members
  * to Workbot, the Slack assistant, their cloud Automations and Your agent. With the feature off the rows are kept
- * and ignored. A team's step limit also needs `workbotStepLimit`: without it the value is kept, hidden from
- * admins and not counted in conflicts.
+ * and ignored. Rows saved while teams could set a step limit may still hold `maxSteps`: it is ignored, and dropped
+ * on the team's next save.
  *
  * A team can also have its own policy for its members' agents (`agent`, with `workbotProactive`): the whole of the
  * organization's policy and its "Your agent" template, kept together in the team's row. Every reader that acts
@@ -65,21 +65,15 @@ function parseMetadata(metadata: unknown): Record<string, unknown> {
 /**
  * The organization's values a team can override: its default model (null is the deployment's default), the
  * name it gave the app in Settings › Brand (null when it set none), which Workbot goes by, whether Workbot
- * is on for its members (on unless an admin turned it off), and its step limit (null is the deployment's default).
+ * is on for its members (on unless an admin turned it off).
  */
-export function organizationWorkbotSettings(metadata: unknown): { model: string | null; name: string | null; enabled: boolean; maxSteps: number | null } {
+export function organizationWorkbotSettings(metadata: unknown): { model: string | null; name: string | null; enabled: boolean } {
   const brand = parseMetadata(metadata).brandAppName
   return {
     model: readWorkbotModel(metadata),
     name: typeof brand === "string" && brand.trim() ? brand.trim() : null,
     enabled: readWorkbotEnabled(metadata),
-    maxSteps: readWorkbotMaxSteps(metadata),
   }
-}
-
-function withoutMaxSteps<T extends { maxSteps?: number | null }>(settings: T): Omit<T, "maxSteps"> {
-  const { maxSteps: _hidden, ...rest } = settings
-  return rest
 }
 
 function withoutAgent<T extends { agent?: WorkbotTeamAgent }>(settings: T): Omit<T, "agent"> {
@@ -89,10 +83,10 @@ function withoutAgent<T extends { agent?: WorkbotTeamAgent }>(settings: T): Omit
 
 /**
  * The organization's values and every team's overrides, teams by name, with each team's size and conflicts.
- * `stepLimit` is whether `workbotStepLimit` is on: off, the step limit is left out and its conflicts don't count.
- * `agents` is the same for members' agents (`workbotProactive` on a deployment with Workbot).
+ * `agents` is whether members' agents are on (`workbotProactive` on a deployment with Workbot): off, the team's
+ * own agent policy is left out and its conflicts don't count.
  */
-export async function listWorkbotTeamSettings(organizationId: OrganizationId, options: { stepLimit: boolean; agents: boolean }): Promise<Omit<WorkbotTeamSettingsView, "canEdit">> {
+export async function listWorkbotTeamSettings(organizationId: OrganizationId, options: { agents: boolean }): Promise<Omit<WorkbotTeamSettingsView, "canEdit">> {
   // Primary: every save answers with this view of the row it just wrote. Admin-only and rare.
   const [organizations, rows, teams] = await Promise.all([
     db.$primary.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId)).limit(1),
@@ -109,17 +103,14 @@ export async function listWorkbotTeamSettings(organizationId: OrganizationId, op
       .where(inArray(TeamMemberTable.teamId, teams.map((team) => team.id)))
     : []
   const memberships = membershipRows.flatMap((row) => row.memberId ? [{ teamId: row.teamId, memberId: row.memberId }] : [])
-  const shown = (settings: WorkbotTeamStoredSettings): WorkbotTeamStoredSettings => {
-    const limited = options.stepLimit ? settings : withoutMaxSteps(settings)
-    return options.agents ? limited : withoutAgent(limited)
-  }
+  const shown = (settings: WorkbotTeamStoredSettings): WorkbotTeamStoredSettings => options.agents ? settings : withoutAgent(settings)
   const byTeam = new Map(rows.map((row) => [row.teamId, shown(readWorkbotTeamSettings(row.settings))] as const))
   const teamSettings = teams.map((team) => ({ teamId: team.id, settings: byTeam.get(team.id) ?? {} }))
   const conflicts = countWorkbotTeamConflicts({ teams: teamSettings, memberships })
   const organization = organizationWorkbotSettings(organizations[0]?.metadata)
   const agentEnabled = options.agents ? readWorkbotProactiveSettings(organizations[0]?.metadata).enabled : false
   return {
-    organization: { ...(options.stepLimit ? organization : withoutMaxSteps(organization)), ...(options.agents ? { agentEnabled } : {}) },
+    organization: { ...organization, ...(options.agents ? { agentEnabled } : {}) },
     teams: teams.map((team) => {
       const settings = byTeam.get(team.id) ?? {}
       return {
@@ -129,7 +120,6 @@ export async function listWorkbotTeamSettings(organizationId: OrganizationId, op
         model: settings.model !== undefined ? { inherit: false as const, value: settings.model } : { inherit: true as const },
         name: settings.name !== undefined ? { inherit: false as const, value: settings.name } : { inherit: true as const },
         enabled: settings.enabled !== undefined ? { inherit: false as const, value: settings.enabled } : { inherit: true as const },
-        ...(options.stepLimit ? { maxSteps: settings.maxSteps !== undefined ? { inherit: false as const, value: settings.maxSteps } : { inherit: true as const } } : {}),
         ...(options.agents ? { agent: { inherit: !settings.agent, enabled: settings.agent ? settings.agent.settings.enabled : agentEnabled } } : {}),
         conflictingMemberCount: conflicts.get(team.id) ?? 0,
       }
@@ -296,12 +286,9 @@ export type MemberWorkbotSettings = {
   name: string | null
   /** Whether Workbot (its chat app and Your agent) is on for the member. Always the organization's while the feature is off. */
   enabled: boolean
-  /** Model calls per request: 0 is no limit, null the deployment's default. The caller checks `workbotStepLimit`. */
-  maxSteps: number | null
   modelFrom: WorkbotSettingSource
   nameFrom: WorkbotSettingSource
   enabledFrom: WorkbotSettingSource
-  maxStepsFrom: WorkbotSettingSource
   /** The member's teams' own policy for members' agents; null is the organization's (`resolveMemberAgentPolicy`). */
   agent: WorkbotTeamAgent | null
   agentFrom: WorkbotSettingSource
@@ -366,11 +353,11 @@ async function readMemberTeams(organizationId: OrganizationId, input: MemberWork
 }
 
 /**
- * The Workbot default model, name, on/off switch and step limit that apply to one member: their teams' when those
+ * The Workbot default model, name and on/off switch that apply to one member: their teams' when those
  * override the organization's and agree, otherwise the organization's (see resolveWorkbotTeamSettings). It selects
  * values only; it never grants model access.
  *
- * With the feature off this is the organization's model, name and step limit, Workbot is on for everyone (a saved
+ * With the feature off this is the organization's model and name, Workbot is on for everyone (a saved
  * switch is kept but ignored), and the team rows are not read. A member who cannot be found, or a failed team read, gives
  * the organization's values: a team setting never breaks a chat.
  */
@@ -386,7 +373,6 @@ export async function resolveMemberWorkbotSettings(
     modelFrom: { kind: "organization", teamConflict: false },
     nameFrom: { kind: "organization", teamConflict: false },
     enabledFrom: { kind: "organization", teamConflict: false },
-    maxStepsFrom: { kind: "organization", teamConflict: false },
     agent: null,
     agentFrom: { kind: "organization", teamConflict: false },
   }
@@ -400,11 +386,9 @@ export async function resolveMemberWorkbotSettings(
       model: resolved.model.value,
       name: resolved.name.value,
       enabled: resolved.enabled.value,
-      maxSteps: resolved.maxSteps.value,
       modelFrom: resolved.model.from,
       nameFrom: resolved.name.from,
       enabledFrom: resolved.enabled.from,
-      maxStepsFrom: resolved.maxSteps.from,
       agent: resolved.agent.value,
       agentFrom: resolved.agent.from,
     }

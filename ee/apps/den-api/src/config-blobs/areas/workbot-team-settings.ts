@@ -9,11 +9,11 @@
  * - `settings` holds only what the team overrides, as stored
  *   (packages/types/src/den/workbot-team-settings.ts): `model` (an AI Gateway
  *   alias or managed model id; null is the deployment's default), `name`,
- *   `enabled` and `maxSteps` (null is the deployment's default, 0 no limit).
- *   A key that is absent means the team uses the organization's value.
- *   Stored keys a server doesn't know yet are not carried.
- * - `maxSteps` is always exported as stored, and only applied where
- *   `workbotStepLimit` is on; otherwise it is skipped with a warning.
+ *   and `enabled`. A key that is absent means the team uses the
+ *   organization's value. Stored keys a server doesn't know yet are not carried.
+ * - `settings.maxSteps`, the retired per-team step limit, may still be in older
+ *   exports: it is dropped on import rather than refused, and an item left
+ *   with nothing to create is skipped.
  * - Apply goes through PUT /v1/org/workbot-settings/teams/:teamId's own
  *   functions (`checkWorkbotTeamModel`, `saveWorkbotTeamSettingsChange`): the
  *   applier's own servable models only, the managed Luna starter saved as the
@@ -26,14 +26,12 @@ import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid
 import { configRefSchema, type ConfigApplyStep } from "@openwork/types/den/config-blobs"
 import {
   readWorkbotTeamSettings,
-  workbotTeamMaxStepsSchema,
   workbotTeamModelSchema,
   workbotTeamNameSchema,
   type WorkbotTeamSettingsWrite,
   type WorkbotTeamStoredSettings,
 } from "@openwork/types/den/workbot-team-settings"
 import { z } from "zod"
-import { organizationFeatureEnabled } from "../../features.js"
 import { RUNNER_UNAVAILABLE_MESSAGE, UNKNOWN_MODEL_MESSAGE } from "../../routes/org/workbot-settings.js"
 import { checkWorkbotTeamModel, saveWorkbotTeamSettingsChange } from "../../routes/org/workbot-team-settings.js"
 import { defineConfigArea, type ConfigApplyOp, type ConfigAreaContext, type ConfigItem } from "../area.js"
@@ -49,23 +47,22 @@ import {
   scopeUniqueKey,
 } from "./members-scope-support.js"
 import { touches } from "./org-singleton.js"
+import { withoutRetiredMaxSteps } from "./workbot-settings.js"
 import { specObject, teamRef } from "./route-support.js"
 
 const AREA = "workbot.team-settings"
 const PROVIDERS_AREA = "ai-gateway.providers"
-const SETTING_KEYS = ["model", "name", "enabled", "maxSteps"] as const
+const SETTING_KEYS = ["model", "name", "enabled"] as const
 type SettingKey = (typeof SETTING_KEYS)[number]
 
-const settingsSchema = z.strictObject({
+const settingsSchema = z.preprocess(withoutRetiredMaxSteps, z.strictObject({
   /** The team's own default model; null is the deployment's default model. */
   model: workbotTeamModelSchema.optional(),
   /** The team's own Workbot name. */
   name: workbotTeamNameSchema.optional(),
   /** Whether Workbot is on for the team's members. */
   enabled: z.boolean().optional(),
-  /** The team's step limit: null is the deployment's default, 0 no limit. Applied only where workbotStepLimit is on. */
-  maxSteps: workbotTeamMaxStepsSchema.optional(),
-})
+}))
 
 const specSchema = z.object({
   team: configRefSchema,
@@ -80,7 +77,6 @@ function exportedSettings(stored: WorkbotTeamStoredSettings): TeamSettings {
     ...(stored.model !== undefined ? { model: stored.model } : {}),
     ...(stored.name !== undefined ? { name: stored.name } : {}),
     ...(stored.enabled !== undefined ? { enabled: stored.enabled } : {}),
-    ...(stored.maxSteps !== undefined ? { maxSteps: stored.maxSteps } : {}),
   }
 }
 
@@ -135,26 +131,20 @@ function parseSettings(spec: { [key: string]: unknown }): TeamSettings {
 function describe(key: SettingKey, settings: TeamSettings): string {
   if (!(key in settings)) return "the organization's"
   const value = settings[key]
-  if (key === "maxSteps") return value === null ? "default" : value === 0 ? "no limit" : String(value)
   if (key === "model") return value === null ? "default" : String(value)
   return String(value)
 }
 
 /**
  * The change to write: each key the plan names whose value differs from the target's, as the route's write
- * (`{ inherit: true }` when the team should use the organization's again). Keys whose feature is off here are
- * left out with a warning; a set model is checked against the applier's own models first.
+ * (`{ inherit: true }` when the team should use the organization's again). A set model is checked against the
+ * applier's own models first.
  */
 async function buildChange(ctx: ConfigAreaContext, op: ConfigApplyOp, next: TeamSettings, current: TeamSettings) {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
-  const warnings: string[] = []
   const keys = SETTING_KEYS.filter((key) => touches(op, `settings.${key}`) && JSON.stringify(next[key]) !== JSON.stringify(current[key]))
   const change: WorkbotTeamSettingsWrite = {}
   for (const key of keys) {
-    if (key === "maxSteps" && !await organizationFeatureEnabled(ctx.organizationId, "workbotStepLimit", { userId: ctx.actor.userId })) {
-      warnings.push("The team's Workbot step limit wasn't changed: the step limit isn't on for this organization.")
-      continue
-    }
     if (key === "model") {
       if (next.model === undefined) change.model = { inherit: true }
       else if (next.model === null) change.model = { inherit: false, value: null }
@@ -169,10 +159,9 @@ async function buildChange(ctx: ConfigAreaContext, op: ConfigApplyOp, next: Team
     }
     if (key === "name") change.name = next.name === undefined ? { inherit: true } : { inherit: false, value: next.name }
     if (key === "enabled") change.enabled = next.enabled === undefined ? { inherit: true } : { inherit: false, value: next.enabled }
-    if (key === "maxSteps") change.maxSteps = next.maxSteps === undefined ? { inherit: true } : { inherit: false, value: next.maxSteps }
   }
   const written = SETTING_KEYS.filter((key) => change[key] !== undefined)
-  return { change, written, warnings }
+  return { change, written }
 }
 
 function preferredRowId(id: string | undefined) {
@@ -213,10 +202,8 @@ export const workbotTeamSettingsArea = defineConfigArea({
     if (op.kind !== "create") return null
     const settings = settingsSchema.safeParse(specObject(op.item.spec).settings)
     if (!settings.success) return null
-    const keys = Object.keys(settings.data)
-    if (keys.length > 0 && keys.every((key) => key === "maxSteps") && !await organizationFeatureEnabled(ctx.organizationId, "workbotStepLimit", { userId: ctx.actor.userId })) {
-      return { skip: "only a step limit, and Workbot's step limit isn't on here" }
-    }
+    // An older export's item that held only the retired step limit has nothing left to set.
+    if (Object.keys(settings.data).length === 0) return { skip: "nothing to set: Workbot no longer has a step limit" }
     return null
   },
 
@@ -236,7 +223,7 @@ export const workbotTeamSettingsArea = defineConfigArea({
         await saveWorkbotTeamSettingsChange({
           organizationId: normalizeDenTypeId("organization", ctx.organizationId),
           teamId: normalizeDenTypeId("team", scope.teamId),
-          change: { model: { inherit: true }, name: { inherit: true }, enabled: { inherit: true }, maxSteps: { inherit: true } },
+          change: { model: { inherit: true }, name: { inherit: true }, enabled: { inherit: true } },
           updatedByOrgMemberId: normalizeDenTypeId("member", ctx.actor.memberId),
         })
           .catch((error: unknown) => applyFailure({ code: "write_failed", message: errorMessage(error), step }))
@@ -262,16 +249,16 @@ export const workbotTeamSettingsArea = defineConfigArea({
         if (current) {
           applyFailure({ code: "workbot_team_settings_exist", message: `${scope.teamName} already has its own Workbot settings here; match this item to them instead of creating new ones.`, field: "team", status: 409 })
         }
-        const { change, written, warnings } = await buildChange(ctx, op, next, {})
+        const { change, written } = await buildChange(ctx, op, next, {})
         if (written.length === 0) {
-          applyFailure({ code: "feature_disabled", message: `Nothing in ${scope.teamName}'s Workbot settings can be set here: ${warnings.join(" ") || "no setting given."}`, field: "settings" })
+          applyFailure({ code: "invalid_spec", message: `Nothing in ${scope.teamName}'s Workbot settings can be set here: no setting given.`, field: "settings" })
         }
         const step: ConfigApplyStep = { action: "create", target: scope.teamName, detail: written.map((key) => `${key}: ${describe(key, next)}`).join(", ") }
         await save(change, op.preferredId).catch((error: unknown) => applyFailure({ code: "write_failed", message: errorMessage(error), step }))
         steps.push(step)
         const created = await currentRow(ctx, scope.teamId)
         if (!created) applyFailure({ code: "unexpected_state", message: `${scope.teamName}'s Workbot settings were not saved.` }, steps)
-        return { localId: created.id, steps, ...(warnings.length ? { warnings } : {}) }
+        return { localId: created.id, steps }
       }
 
       if (changesScope(op.changes) || !sameScope(scope, previousScopeSpec(op.previous))) {
@@ -280,14 +267,14 @@ export const workbotTeamSettingsArea = defineConfigArea({
       if (!current || current.id !== op.targetId) {
         applyFailure({ code: "workbot_team_settings_not_found", message: `${scope.teamName}'s Workbot settings changed since the plan; analyze again.`, status: 409 })
       }
-      const { change, written, warnings } = await buildChange(ctx, op, next, current.settings)
-      if (written.length === 0) return { localId: current.id, steps, ...(warnings.length ? { warnings } : {}) }
+      const { change, written } = await buildChange(ctx, op, next, current.settings)
+      if (written.length === 0) return { localId: current.id, steps }
       const done: ConfigApplyStep[] = written.map((key) => ({ action: "set", target: `settings.${key}`, detail: describe(key, next) }))
       await save(change).catch((error: unknown) => applyFailure({ code: "write_failed", message: errorMessage(error), step: done[0] }))
       steps.push(...done)
       // Every override cleared: the route removed the row, and the team uses the organization's settings.
       const after = await currentRow(ctx, scope.teamId)
-      return { localId: after?.id ?? current.id, steps, ...(warnings.length ? { warnings } : {}) }
+      return { localId: after?.id ?? current.id, steps }
     } catch (error) {
       throw asItemError(error, steps)
     }

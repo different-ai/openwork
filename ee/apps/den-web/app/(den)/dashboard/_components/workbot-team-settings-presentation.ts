@@ -1,7 +1,6 @@
 import type { WorkbotSettings } from "@openwork/types/den/workbot-settings";
 import {
   WORKBOT_TEAM_NAME_MAX_LENGTH,
-  type WorkbotTeamMaxStepsSetting,
   type WorkbotTeamSettingsTeam,
   type WorkbotTeamSettingsView,
   type WorkbotTeamSettingsWrite,
@@ -9,7 +8,6 @@ import {
 import type { DenComboboxOption } from "../../_components/ui/combobox";
 import type { TeamScope } from "./team-scope";
 import { isWorkbotModelListed, workbotModelName, workbotModelOptions } from "./workbot-model-options";
-import { stepLimitLabel } from "./workbot-step-limit-options";
 
 /*
  * How Workbot's settings read on Members › Teams › Everyone (or a team) ›
@@ -20,10 +18,10 @@ import { stepLimitLabel } from "./workbot-step-limit-options";
 /** The picker value for the built-in default while its model isn't known (Workbot's models can't be reached). */
 const BUILT_IN_DEFAULT_VALUE = "::default";
 
-/** What differs for a member on two teams that disagree, for the conflict line: any of the rows, the step limit and the settings for members' agents too. */
+/** What differs for a member on two teams that disagree, for the conflict line: any of the rows and the settings for members' agents too. */
 export const WORKBOT_CONFLICT_SETTING = "Workbot setting";
 
-type WorkbotTeamSettingKey = "enabled" | "model" | "name" | "maxSteps" | "agent";
+type WorkbotTeamSettingKey = "enabled" | "model" | "name" | "agent";
 
 /** The heading of the section for members' agents, and what its "Use Everyone's" names. */
 export const WORKBOT_AGENTS_LABEL = "Members' agents";
@@ -60,17 +58,6 @@ export function workbotTeamRow(view: WorkbotTeamSettingsView, team: { teamId: st
     name: { inherit: true },
     conflictingMemberCount: 0,
   };
-}
-
-/**
- * The Step limit row, or null while the view has no step limit (the step limit isn't on): the limit in use, the
- * team's own or Everyone's while it follows Everyone (null is the default), and the team's own setting.
- */
-export function workbotTeamStepLimit(view: WorkbotTeamSettingsView, row: WorkbotTeamSettingsTeam): { value: number | null; setting: WorkbotTeamMaxStepsSetting } | null {
-  const everyones = view.organization.maxSteps;
-  if (everyones === undefined) return null;
-  const setting: WorkbotTeamMaxStepsSetting = row.maxSteps ?? { inherit: true };
-  return { value: setting.inherit ? everyones : setting.value, setting };
 }
 
 /** Whether Workbot is on for a team: its own choice, or Everyone's while it follows Everyone. */
@@ -126,12 +113,6 @@ function savedModelMessage(saved: string | null, settings: WorkbotSettings | und
   return unnamed;
 }
 
-function savedStepLimitMessage(maxSteps: number | null, requests: string): string {
-  if (maxSteps === null) return `Saved. ${requests} use the default step limit.`;
-  if (maxSteps === 0) return `Saved. ${requests} have no step limit.`;
-  return `Saved. ${requests} stop after ${stepLimitLabel(maxSteps)}.`;
-}
-
 /** The line shown after a team's save, next to Undo. */
 export function workbotTeamSavedMessage(change: WorkbotTeamSettingsWrite, settings: WorkbotSettings | undefined): string {
   if (change.enabled) {
@@ -150,20 +131,16 @@ export function workbotTeamSavedMessage(change: WorkbotTeamSettingsWrite, settin
   if (change.name) {
     return change.name.inherit ? "Saved. This team uses Everyone's name." : `Saved. This team's Workbot is called ${change.name.value}.`;
   }
-  if (change.maxSteps) {
-    return change.maxSteps.inherit ? "Saved. This team uses Everyone's step limit." : savedStepLimitMessage(change.maxSteps.value, "This team's requests");
-  }
   if (change.agent) return workbotTeamAgentsSavedMessage("everyone");
   return "Saved.";
 }
 
 /** One change on Everyone's page: each row saves on its own. */
-export type WorkbotEveryoneChange = { enabled: boolean } | { model: string | null } | { maxSteps: number | null };
+export type WorkbotEveryoneChange = { enabled: boolean } | { model: string | null };
 
 /** The line shown after a save on Everyone's page, next to Undo. */
 export function workbotEveryoneSavedMessage(change: WorkbotEveryoneChange, settings: WorkbotSettings | undefined): string {
   if ("enabled" in change) return `Saved. Workbot is ${change.enabled ? "on" : "off"} for Everyone.`;
-  if ("maxSteps" in change) return savedStepLimitMessage(change.maxSteps, "Requests");
   return savedModelMessage(change.model, settings, (name) => `Saved. New messages use ${name}.`, "Saved.");
 }
 
@@ -179,7 +156,7 @@ export function workbotTeamsOnCount(view: Pick<WorkbotTeamSettingsView, "teams">
 
 /** Teams with any Workbot setting of their own. */
 export function workbotTeamsOverridingCount(view: Pick<WorkbotTeamSettingsView, "teams">): number {
-  return view.teams.filter((team) => !team.enabled.inherit || !team.model.inherit || !team.name.inherit || team.maxSteps?.inherit === false || team.agent?.inherit === false).length;
+  return view.teams.filter((team) => !team.enabled.inherit || !team.model.inherit || !team.name.inherit || team.agent?.inherit === false).length;
 }
 
 export function workbotTeamsOverridingLabel(count: number): string {

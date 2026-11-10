@@ -18,7 +18,7 @@ export const WORKBOT_SETTINGS_TAB_PURPOSE: Record<WorkbotSettingsTab, string> = 
 export type WorkbotAgentsPart = "all" | "policy" | "sources";
 
 export type WorkbotSettingsParts = {
-  /** Workbot's own settings: on or off, default model, step limit, name. */
+  /** Workbot's own settings: on or off, default model, name. */
   general: boolean;
   /** The members' agents section, or null while another tab is open. */
   agents: WorkbotAgentsPart | null;

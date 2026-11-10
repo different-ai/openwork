@@ -5,7 +5,7 @@ Feature key: `workbotSettingsTabs` · Deployments: cloud and self-hosted · Defa
 ## What changes
 
 With members' agents on (`workbotProactive`), Workbot's settings are one long
-page: Workbot's own settings (on or off, default model, step limit, name),
+page: Workbot's own settings (on or off, default model, name),
 then how members' agents work (messages, schedule, limits, what to tell
 people, a preview), then what agents read (calendar, email, team chat and
 other connections). The same page appears in two places:
@@ -18,7 +18,7 @@ With the feature on, both split it into three tabs:
 
 | Tab | What it holds |
 |---|---|
-| General | Workbot on or off (teams and Everyone), default model, completion check (Manage › Workbot), step limit, name, and the saved and undo lines for these |
+| General | Workbot on or off (teams and Everyone), default model, completion check (Manage › Workbot), name, and the saved and undo lines for these |
 | Members' agents | The agents switch, where messages go, the schedule and limits, what to tell people and the preview; on Manage › Workbot also the last 7 days |
 | What agents read | Calendar, email, team chat and other context, with each connection's tools |
 
@@ -58,7 +58,7 @@ Without the brief, the older rows (message types, lead time) are unchanged.
 
 ## Help on the other tabs
 
-- **General**: Workbot, Default model, Completion check, Step limit and Name
+- **General**: Workbot, Default model, Completion check and Name
   each have an "i" saying what the setting does and what turning it off
   affects.
 - **What agents read**: Calendar, Email, Team chat and Other context each

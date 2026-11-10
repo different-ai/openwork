@@ -18,12 +18,10 @@ import { ServiceReadinessNotice } from "../../_components/service-readiness-noti
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenCombobox } from "../../_components/ui/combobox";
-import { DenSelect } from "../../_components/ui/select";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { effectiveWorkbotModel, isWorkbotModelListed, workbotDisplayName, workbotModelName, workbotModelOptions } from "./workbot-model-options";
-import { useSaveWorkbotModel, useSaveWorkbotStepLimit, useTestWorkbotDefaultModel, useWorkbotSettings } from "./workbot-settings-data";
-import { STEP_LIMIT_HELP, stepLimitChoices, stepLimitLabel, stepLimitValue } from "./workbot-step-limit-options";
+import { useSaveWorkbotModel, useTestWorkbotDefaultModel, useWorkbotSettings } from "./workbot-settings-data";
 import { useWorkbotTeamSettings } from "./workbot-team-settings-data";
 import { workbotTeamsOverridingCount, workbotTeamsOverridingLabel } from "./workbot-team-settings-presentation";
 import { WorkbotProactiveSection } from "./workbot-proactive-section";
@@ -84,14 +82,12 @@ export function WorkbotSettingsScreen() {
   const canManage = access.canManageModelsSettings;
   const query = useWorkbotSettings(orgId, Boolean(orgId));
   const save = useSaveWorkbotModel(orgId);
-  const saveStepLimit = useSaveWorkbotStepLimit(orgId);
   const modelTest = useTestWorkbotDefaultModel(orgId);
   // With settings per team on, the page says how many teams changed Workbot's settings for their members.
   const teamSettings = useWorkbotTeamSettings(orgId, orgFeatureEnabled(orgContext, "workbotTeamSettings"));
   const teamsOverriding = teamSettings.data ? workbotTeamsOverridingCount(teamSettings.data) : 0;
   const resetTest = modelTest.reset;
   const labelId = useId();
-  const stepLimitLabelId = useId();
   const [draft, setDraft] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ previous: string | null } | null>(null);
@@ -133,20 +129,6 @@ export function WorkbotSettingsScreen() {
       setSaved({ previous });
     } catch (error) {
       setSaveError(errorMessage(error, "Couldn't save the default model. Try again."));
-    }
-  }
-
-  // Saved on pick; the select shows the pick while it saves and goes back to the saved limit if that fails.
-  const savedStepLimit = settings?.maxSteps;
-  const stepLimit = saveStepLimit.isPending && saveStepLimit.variables !== undefined ? saveStepLimit.variables : savedStepLimit;
-
-  async function storeStepLimit(maxSteps: number | null) {
-    setSaveError(null);
-    setSaved(null);
-    try {
-      await saveStepLimit.mutateAsync(maxSteps);
-    } catch (error) {
-      setSaveError(errorMessage(error, "Couldn't save the step limit. Try again."));
     }
   }
 
@@ -254,26 +236,6 @@ export function WorkbotSettingsScreen() {
                     <div><dt className="font-medium">Provider-reported model</dt><dd className="font-mono">{modelTest.data.reportedModel ?? "Not reported"}</dd></div>
                   </dl>
                 </details>
-              ) : null}
-              {stepLimit !== undefined && savedStepLimit !== undefined ? (
-                <SettingsRow label="Step limit" labelId={stepLimitLabelId} help={help && STEP_LIMIT_HELP}>
-                  <div className="w-40" title={STEP_LIMIT_HELP} data-testid="workbot-step-limit">
-                    <DenSelect
-                      aria-labelledby={stepLimitLabelId}
-                      menuWidth="trigger"
-                      value={stepLimitValue(stepLimit)}
-                      disabled={!canManage || saveStepLimit.isPending}
-                      onChange={(event) => {
-                        const choice = stepLimitChoices(savedStepLimit).find((entry) => stepLimitValue(entry) === event.target.value);
-                        if (choice !== undefined && choice !== savedStepLimit) void storeStepLimit(choice);
-                      }}
-                    >
-                      {stepLimitChoices(savedStepLimit).map((choice) => (
-                        <option key={stepLimitValue(choice)} value={stepLimitValue(choice)}>{stepLimitLabel(choice)}</option>
-                      ))}
-                    </DenSelect>
-                  </div>
-                </SettingsRow>
               ) : null}
               <SettingsRow label="Name" help={help && WORKBOT_SETTING_HELP.name}>
                 <span className="text-[13px] text-gray-900" data-testid="workbot-name">{name}</span>

@@ -31,7 +31,7 @@ async function contextFor(orgId: string, actor: Member): Promise<ConfigAreaConte
   return { db, organizationId: orgId, actor: { userId: actor.userId, memberId: actor.memberId }, deployment: "self_hosted", features: await getOrganizationFeatures(orgId, { userId: actor.userId }) }
 }
 
-async function enable(orgId: string, ...features: Array<"workbotTeamSettings" | "workbotStepLimit">) {
+async function enable(orgId: string, ...features: Array<"workbotTeamSettings">) {
   for (const feature of features) assert.equal((await den.setFeature(orgId, feature, true)).status, 200, feature)
 }
 
@@ -60,11 +60,11 @@ function resolved(item: ConfigItem, teamId: string) {
 const owner = await den.signUp("Workbot Teams Owner")
 const source = await den.createOrg(owner, "Workbot Teams Source")
 const as = den.as(owner, source.orgId)
-await enable(source.orgId, "workbotTeamSettings", "workbotStepLimit")
+await enable(source.orgId, "workbotTeamSettings")
 const research = await den.createTeam(owner, source.orgId, "Research", [])
 const design = await den.createTeam(owner, source.orgId, "Design", [])
 await den.createTeam(owner, source.orgId, "Untouched", [])
-await ok(as("PUT", `${path}/${research}`, { name: own("Scout"), enabled: own(false), model: own(null), maxSteps: own(25) }), "research settings")
+await ok(as("PUT", `${path}/${research}`, { name: own("Scout"), enabled: own(false), model: own(null) }), "research settings")
 await ok(as("PUT", `${path}/${design}`, { name: own("Sketch") }), "design settings")
 const sourceCtx = await contextFor(source.orgId, source.owner)
 
@@ -87,9 +87,13 @@ test("export: one item per team with its own settings, only what it overrides, v
   }
   assert.deepEqual(byTeam(items, "Research").spec, {
     team: { $ref: `members.teams/${research}`, name: "Research" },
-    settings: { model: null, name: "Scout", enabled: false, maxSteps: 25 },
+    settings: { model: null, name: "Scout", enabled: false },
   })
   assert.deepEqual(byTeam(items, "Design").spec, { team: { $ref: `members.teams/${design}`, name: "Design" }, settings: { name: "Sketch" } })
+  // An older export's retired step limit is dropped, not refused.
+  const older = workbotTeamSettingsArea.specSchema.safeParse({ team: { $ref: `members.teams/${design}` }, settings: { name: "Sketch", maxSteps: 25 } })
+  assert.ok(older.success)
+  assert.deepEqual(older.data, { team: { $ref: `members.teams/${design}` }, settings: { name: "Sketch" } })
   // Strict: an unknown setting is refused.
   assert.equal(workbotTeamSettingsArea.specSchema.safeParse({ team: { $ref: `members.teams/${design}` }, settings: { colour: "red" } }).success, false)
   // Stable.
@@ -106,7 +110,7 @@ test("readItems: only the asked rows, nothing for other ids", async () => {
 
 test("update writes only the keys the plan changes", async () => {
   const before = byTeam(await workbotTeamSettingsArea.exportItems(sourceCtx), "Research")
-  const settings = { model: null, name: "Scout Two", enabled: false, maxSteps: 25 }
+  const settings = { model: null, name: "Scout Two", enabled: false }
   const op = updateOp(workbotTeamSettingsArea, before, resolved({ ...before, spec: { ...before.spec, settings } }, research))
   assert.deepEqual(op.changes.map((change) => change.path), ["settings.name"])
   const result = await workbotTeamSettingsArea.apply(sourceCtx, op)
@@ -134,7 +138,7 @@ test("update writes only the keys the plan changes", async () => {
   assert.deepEqual(byTeam(await workbotTeamSettingsArea.exportItems(sourceCtx), "Design").spec, design0.spec)
 })
 
-test("round trip into a second organization: the team is found by name; the step limit only where it is on", async () => {
+test("round trip into a second organization: the team is found by name; an older export's step limit is dropped", async () => {
   const targetOwner = await den.signUp("Workbot Teams Target Owner")
   const target = await den.createOrg(targetOwner, "Workbot Teams Target")
   await enable(target.orgId, "workbotTeamSettings")
@@ -147,30 +151,30 @@ test("round trip into a second organization: the team is found by name; the step
   assert.ok(naturalKey)
   assert.equal(naturalKey.get(blob), "team:research")
 
-  // Step limit off here: everything else is written, the limit is skipped with a warning; a free preferred id is
-  // reused (the engine offers the source's id only when it is free on the whole instance).
+  // An older export still carrying a step limit: everything else is written, the limit dropped; a free preferred id
+  // is reused (the engine offers the source's id only when it is free on the whole instance).
+  const blobSettings = blob.spec.settings
+  assert.ok(typeof blobSettings === "object" && blobSettings !== null && !Array.isArray(blobSettings))
+  const olderBlob = { ...blob, spec: { ...blob.spec, settings: { ...blobSettings, maxSteps: 25 } } }
   const preferredId = createDenTypeId("workbotTeamSetting")
-  const created = await workbotTeamSettingsArea.apply(targetCtx, { kind: "create", item: resolved(blob, targetResearch), preferredId })
+  const created = await workbotTeamSettingsArea.apply(targetCtx, { kind: "create", item: resolved(olderBlob, targetResearch), preferredId })
   assert.equal(created.localId, preferredId)
   assert.deepEqual(created.steps, [{ action: "create", target: "research", detail: "model: default, name: Scout, enabled: false" }])
-  assert.match(created.warnings?.join(" ") ?? "", /step limit isn't on/)
+  assert.equal(created.warnings, undefined)
   const [first] = await workbotTeamSettingsArea.exportItems(targetCtx)
   assert.ok(first)
   assert.equal(naturalKey.get(first), "team:research")
   assert.deepEqual(first.spec, { team: { $ref: `members.teams/${targetResearch}`, name: "research" }, settings: { model: null, name: "Scout", enabled: false } })
 
-  // With the step limit on, the next import writes just the limit.
-  await enable(target.orgId, "workbotStepLimit")
-  // As the engine plans it: the blob's team ref localized to the target's team.
+  // As the engine plans it (the blob's team ref localized to the target's team): nothing left to change.
   const op = updateOp(workbotTeamSettingsArea, first, resolved({ ...blob, spec: { ...blob.spec, team: first.spec.team } }, targetResearch))
-  assert.deepEqual(op.changes.map((change) => change.path), ["settings.maxSteps"])
-  assert.deepEqual((await workbotTeamSettingsArea.apply(targetCtx, op)).steps, [{ action: "set", target: "settings.maxSteps", detail: "25" }])
-  const [second] = await workbotTeamSettingsArea.exportItems(targetCtx)
-  assert.deepEqual(second?.spec.settings, blob.spec.settings)
+  assert.deepEqual(op.changes, [])
+  const second = first
+  assert.deepEqual(second.spec.settings, blob.spec.settings)
 
   // A model the applier can't use here fails on its field before anything is written.
   assert.ok(second)
-  const withModel = { ...second.spec, settings: { ...blob.spec.settings, model: "custom/not-a-served-model" } }
+  const withModel = { ...second.spec, settings: { ...blobSettings, model: "custom/not-a-served-model" } }
   await assert.rejects(
     workbotTeamSettingsArea.apply(targetCtx, updateOp(workbotTeamSettingsArea, second, resolved({ ...second, spec: withModel }, targetResearch))),
     (error: unknown) => error instanceof ConfigApplyItemError && ["unknown_model", "workbot_runner_unavailable"].includes(error.failure.code) && error.failure.field === "settings.model" && error.stepsDone.length === 0,
@@ -192,7 +196,7 @@ test("round trip into a second organization: the team is found by name; the step
   assert.deepEqual((await workbotTeamSettingsArea.apply(targetCtx, { kind: "delete", targetId: second.id, previous: second })).steps, [])
 })
 
-test("only a step limit, where it is off: the create is skipped at plan time", async () => {
+test("an older export's item with only a step limit is skipped at plan time", async () => {
   const otherOwner = await den.signUp("Workbot Teams Preflight Owner")
   const org = await den.createOrg(otherOwner, "Workbot Teams Preflight")
   await enable(org.orgId, "workbotTeamSettings")
@@ -201,10 +205,10 @@ test("only a step limit, where it is off: the create is skipped at plan time", a
   const item = { name: "Ops", spec: { team: { $ref: `members.teams/${teamId}`, name: "Ops" }, settings: { maxSteps: 10 } } }
   assert.ok(workbotTeamSettingsArea.preflight)
   const verdict = await workbotTeamSettingsArea.preflight(ctx, { kind: "create", item }, { secrets: [] })
-  assert.match(verdict?.skip ?? "", /step limit/)
+  assert.match(verdict?.skip ?? "", /nothing to set/)
   await assert.rejects(
     workbotTeamSettingsArea.apply(ctx, { kind: "create", item: resolved({ id: "x", ...item }, teamId) }),
-    (error: unknown) => error instanceof ConfigApplyItemError && error.failure.code === "feature_disabled",
+    (error: unknown) => error instanceof ConfigApplyItemError && error.failure.code === "invalid_spec",
   )
   assert.deepEqual(await rows(org.orgId), [])
 })

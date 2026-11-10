@@ -75,78 +75,21 @@ test("view-only and manage-only members can always read; writes/probes remain ma
   assert.equal(runner.calls().length, 1)
 })
 
-test("the step limit is read and saved only while workbotStepLimit is on, by people who manage models, and reaches Workbot's session", async () => {
+test("Workbot has no step limit: saving one is refused and neither the settings nor Workbot's session carry one", async () => {
   const workspace = await den.createOrg(await den.signUp("Step Limit Owner"), "Step limit workspace")
   const owner = den.as(workspace.owner, workspace.orgId)
-  const member = den.as(await den.newMember(workspace.owner, workspace.orgId, "Step Limit Member"), workspace.orgId)
   const token = await den.mintMcpToken(workspace.owner, workspace.orgId)
-  const session = async () => {
-    const read = await den.request(token, "GET", "/v1/workbot/session")
-    assert.equal(read.status, 200, summary(read))
-    return read.body
+  for (const body of [{ maxSteps: 250 }, { model: null, maxSteps: 250 }, {}]) {
+    const refused = await owner("PUT", path, body)
+    assert.equal(refused.status, 400, summary(refused))
   }
-  const settings = async () => {
-    const read = await owner("GET", path)
-    assert.equal(read.status, 200, summary(read))
-    return read.body
-  }
-  const feature = async (enabled: boolean) => {
-    const set = await den.setFeature(workspace.orgId, "workbotStepLimit", enabled)
-    assert.equal(set.status, 200, summary(set))
-  }
-
-  // Off: neither response mentions it, saving it is refused, and the model alone saves as it always has.
-  assert.equal(field(await settings(), "maxSteps"), undefined)
-  assert.equal(field(await session(), "maxSteps"), undefined)
-  const refused = await owner("PUT", path, { maxSteps: 250 })
-  assert.equal(refused.status, 400, summary(refused))
-  assert.equal(field(refused.body, "error"), "invalid_request")
-  const refusedWithModel = await owner("PUT", path, { model: null, maxSteps: 250 })
-  assert.equal(refusedWithModel.status, 400, summary(refusedWithModel))
   const modelOnly = await owner("PUT", path, { model: null })
   assert.equal(modelOnly.status, 200, summary(modelOnly))
   assert.equal(field(modelOnly.body, "maxSteps"), undefined)
-
-  // On: null (the deployment's default) until an admin chooses.
-  await feature(true)
-  assert.equal(field(await settings(), "maxSteps"), null)
-  assert.equal(field(await session(), "maxSteps"), null)
-  const saved = await owner("PUT", path, { maxSteps: 250 })
-  assert.equal(saved.status, 200, summary(saved))
-  assert.equal(field(saved.body, "maxSteps"), 250)
-  assert.equal(field(saved.body, "model"), null)
-  assert.equal(field(await settings(), "maxSteps"), 250)
-  assert.equal(field(await session(), "maxSteps"), 250)
-
-  // The model and the limit save together; either one alone leaves the other as it was.
-  const both = await owner("PUT", path, { model: null, maxSteps: 0 })
-  assert.equal(both.status, 200, summary(both))
-  assert.equal(field(both.body, "maxSteps"), 0)
-  assert.equal(field(await session(), "maxSteps"), 0, "no limit is its own value")
-  const modelAgain = await owner("PUT", path, { model: null })
-  assert.equal(modelAgain.status, 200, summary(modelAgain))
-  assert.equal(field(modelAgain.body, "maxSteps"), 0)
-
-  for (const body of [{ maxSteps: 100_001 }, { maxSteps: -1 }, { maxSteps: 2.5 }, {}]) {
-    const invalid = await owner("PUT", path, body)
-    assert.equal(invalid.status, 400, summary(invalid))
-  }
-  const denied = await member("PUT", path, { maxSteps: 100 })
-  assert.equal(denied.status, 403, summary(denied))
-  assert.equal((await member("GET", path)).status, 403)
-  assert.equal(field(await settings(), "maxSteps"), 0)
-
-  const cleared = await owner("PUT", path, { maxSteps: null })
-  assert.equal(cleared.status, 200, summary(cleared))
-  assert.equal(field(cleared.body, "maxSteps"), null)
-  assert.equal(field(await session(), "maxSteps"), null)
-
-  // Off again with a limit saved: the value is kept but ignored, and Workbot is told to clear it from its chats.
-  assert.equal((await owner("PUT", path, { maxSteps: 500 })).status, 200)
-  await feature(false)
-  assert.equal(field(await settings(), "maxSteps"), undefined)
-  assert.equal(field(await session(), "maxSteps"), null)
-  await feature(true)
-  assert.equal(field(await settings(), "maxSteps"), 500)
-  assert.equal(field(await session(), "maxSteps"), 500)
+  const read = await owner("GET", path)
+  assert.equal(read.status, 200, summary(read))
+  assert.equal(field(read.body, "maxSteps"), undefined)
+  const session = await den.request(token, "GET", "/v1/workbot/session")
+  assert.equal(session.status, 200, summary(session))
+  assert.equal(field(session.body, "maxSteps"), undefined)
 })

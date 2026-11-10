@@ -93,11 +93,6 @@ export type WorkbotDeps = {
   /** Den-resolved workbotBrowserRecovery; never set by the model. */
   browserRecovery?: boolean
   /**
-   * Den's step limit for the organization (`workbotStepLimit`): model calls per turn, 0 for no limit, null for the
-   * runner's own (clearing an earlier limit). Unset: nothing is sent, and the chats keep what they have.
-   */
-  maxSteps?: number | null
-  /**
    * Den's session `stepTurns` compatibility field: turns go to the runner with `execution: "steps"`, so a
    * runner deploy switches between steps instead of cutting one off. Unset: preserve older Den's continuous turns.
    */
@@ -545,7 +540,6 @@ async function settleSession(actor: WorkbotActor, timeZone: string, deps: Workbo
     documentNavigation: guidedNavigation,
     ...(deps.sandboxGateway !== undefined ? { sandboxGateway: deps.sandboxGateway } : {}),
     browserRecovery: deps.browserRecovery === true,
-    ...(deps.maxSteps !== undefined ? { maxSteps: deps.maxSteps } : {}),
     owner: workbotOwner(actor.organizationId, actor.memberId),
     timeZone,
   }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { readWorkbotMaxSteps, readWorkbotModel, withWorkbotMaxSteps, withWorkbotModel, WORKBOT_MAX_STEPS_CHOICES, WORKBOT_MAX_STEPS_LIMIT, workbotSettingsInputSchema, workbotSettingsSchema } from "@openwork/types/den/workbot-settings"
+import { readWorkbotModel, withWorkbotModel, workbotSettingsInputSchema, workbotSettingsSchema } from "@openwork/types/den/workbot-settings"
 
 // Importing these modules never touches the database; the values only satisfy env validation.
 for (const [name, value] of Object.entries({
@@ -81,44 +81,12 @@ test("the model is stored in organization metadata without touching anything els
   assert.equal(readWorkbotModel("not json"), null)
 })
 
-test("the step limit is stored next to the model: null clears it, and an invalid stored value reads as the default", () => {
-  const metadata = { brandAppName: "Acme Helper", workbot: { model: "gateway/model-a" } }
-  const saved = withWorkbotMaxSteps(metadata, 250)
-  assert.deepEqual(saved, { brandAppName: "Acme Helper", workbot: { model: "gateway/model-a", maxSteps: 250 } })
-  assert.equal(readWorkbotMaxSteps(saved), 250)
-  assert.equal(readWorkbotMaxSteps(JSON.stringify(saved)), 250)
-  // No limit is a value of its own, never the default.
-  assert.equal(readWorkbotMaxSteps(withWorkbotMaxSteps(saved, 0)), 0)
-  assert.deepEqual(withWorkbotMaxSteps(saved, null), metadata)
-  // Saving either setting leaves the other alone.
-  assert.equal(readWorkbotMaxSteps(withWorkbotModel(saved, null)), 250)
-  assert.equal(readWorkbotModel(withWorkbotMaxSteps(saved, null)), "gateway/model-a")
-  for (const stored of [undefined, null, "250", -1, 2.5, WORKBOT_MAX_STEPS_LIMIT + 1, Number.NaN, {}]) {
-    assert.equal(readWorkbotMaxSteps({ workbot: { maxSteps: stored } }), null, String(stored))
-  }
-  assert.equal(readWorkbotMaxSteps(null), null)
-  assert.equal(readWorkbotMaxSteps("not json"), null)
-})
-
-test("settings take the model, the step limit or both, and never neither or a limit out of range", () => {
+test("settings take the model, and nothing else: the retired step limit is refused", () => {
   assert.deepEqual(workbotSettingsInputSchema.parse({ model: "gateway/model-a" }), { model: "gateway/model-a" })
-  assert.deepEqual(workbotSettingsInputSchema.parse({ maxSteps: 500 }), { maxSteps: 500 })
-  assert.deepEqual(workbotSettingsInputSchema.parse({ maxSteps: null }), { maxSteps: null })
-  assert.deepEqual(workbotSettingsInputSchema.parse({ maxSteps: 0 }), { maxSteps: 0 })
-  assert.deepEqual(workbotSettingsInputSchema.parse({ model: null, maxSteps: WORKBOT_MAX_STEPS_LIMIT }), { model: null, maxSteps: WORKBOT_MAX_STEPS_LIMIT })
-  // The API takes any whole number in range, not only the ones the page offers.
-  assert.equal(workbotSettingsInputSchema.safeParse({ maxSteps: 137 }).success, true)
-  for (const choice of WORKBOT_MAX_STEPS_CHOICES) assert.equal(workbotSettingsInputSchema.safeParse({ maxSteps: choice }).success, true, String(choice))
-  for (const maxSteps of [-1, 2.5, WORKBOT_MAX_STEPS_LIMIT + 1, "500"]) {
-    assert.equal(workbotSettingsInputSchema.safeParse({ maxSteps }).success, false, String(maxSteps))
-    assert.equal(workbotSettingsInputSchema.safeParse({ model: null, maxSteps }).success, false, String(maxSteps))
-  }
+  assert.deepEqual(workbotSettingsInputSchema.parse({ model: null }), { model: null })
   assert.equal(workbotSettingsInputSchema.safeParse({}).success, false)
-  assert.equal(workbotSettingsInputSchema.safeParse({ maxSteps: 500, locked: true }).success, false)
-
-  // The settings response carries the limit only while the feature is on.
-  const view = workbotSettingsView(null, catalog)
-  assert.equal(workbotSettingsSchema.parse(view).maxSteps, undefined)
-  assert.equal(workbotSettingsSchema.parse({ ...view, maxSteps: null }).maxSteps, null)
-  assert.equal(workbotSettingsSchema.parse({ ...view, maxSteps: 0 }).maxSteps, 0)
+  assert.equal(workbotSettingsInputSchema.safeParse({ maxSteps: 500 }).success, false)
+  assert.equal(workbotSettingsInputSchema.safeParse({ model: null, maxSteps: 500 }).success, false)
+  // The response never carries a step limit.
+  assert.equal("maxSteps" in workbotSettingsSchema.parse({ ...workbotSettingsView(null, catalog), maxSteps: 250 }), false)
 })
