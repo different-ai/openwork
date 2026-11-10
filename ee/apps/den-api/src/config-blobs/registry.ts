@@ -26,6 +26,7 @@ import { settingsAuditArea } from "./areas/settings-audit.js"
 import { settingsAuthSecurityArea } from "./areas/settings-auth-security.js"
 import { settingsBrandArea } from "./areas/settings-brand.js"
 import { settingsCollectionsArea } from "./areas/settings-collections.js"
+import { settingsFeaturesArea } from "./areas/settings-features.js"
 import { settingsGeneralArea } from "./areas/settings-general.js"
 import { settingsWebOriginsArea } from "./areas/settings-web-origins.js"
 import { workbotProactiveArea } from "./areas/workbot-proactive.js"
@@ -59,6 +60,7 @@ const AREAS_BY_KEY: Record<ConfigAreaKey, ConfigArea> = {
   "settings.auth-security": settingsAuthSecurityArea,
   "settings.advanced.brand": settingsBrandArea,
   "settings.audit": settingsAuditArea,
+  "settings.features": settingsFeaturesArea,
 }
 
 export const CONFIG_AREAS: ConfigArea[] = CONFIG_AREA_KEYS.map((key) => AREAS_BY_KEY[key])

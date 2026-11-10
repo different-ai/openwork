@@ -5,7 +5,8 @@ description: "Download an organization's configuration as one JSON file, review 
 
 A **config blob** is one JSON file holding all or part of an organization's
 configuration: teams, roles and people, connectors, AI Gateway providers and
-limits, plugins and skills, desktop policies, Workbot, and settings (26 areas, listed
+limits, plugins and skills, desktop policies, Workbot, settings and the feature flags
+that are on (27 areas, listed
 below). You can export it, keep it in version control, edit it, and
 import it again into the same organization or into another OpenWork (for example
 from OpenWork Cloud to a self-hosted Den).
@@ -107,6 +108,7 @@ the file.
 | `settings.advanced.collections` | Settings › Advanced › Collections | `marketplaces.manage` | `marketplaces.manage` |
 | `settings.advanced.brand` | Settings › Advanced › Brand appearance | `branding.update` | `branding.update` |
 | `settings.audit` | Observability › Audit logs › Settings | `audit.view` | `audit.manage` |
+| `settings.features` | Feature flags (set by platform admins in `/admin`) | `organization.update` | `organization.update`, and the person applying must be a platform admin |
 
 Importing an area (uploading, or a dry run) needs both permissions in its row: a
 plan shows the area's current settings next to the file's, so someone who may
@@ -123,6 +125,24 @@ Some areas carry only part of what their screen shows:
   the domain, test, then enable it); SCIM tokens are never carried.
 - **Skills** that a source syncs are not imported (the source brings them), and the
   Workbot "Your agent" template travels with `workbot.proactive`.
+- **Feature flags** list only the features that are on for the organization (one
+  item per feature: its key as `id`, its name, and `"spec": { "enabled": true }`),
+  whether they are on for everyone, locked on by the operator, or turned on for the
+  organization in `/admin`. Features that are off, and features turned on for one
+  member only, are never exported. An import only ever turns features on, as the
+  organization override `/admin` sets (the feature's history in `/admin` shows who),
+  and never turns one off, even in mirror mode or when restoring. Only a platform
+  admin can apply these items: for anyone else they are blocked with "Only platform
+  admins can turn on features.", so you can skip them and apply the rest. A feature
+  is skipped when this server doesn't know its key (or has retired it), doesn't
+  offer it on this deployment, has it turned off everywhere with the kill switch, or
+  the operator locked it off (`DEN_FEATURE_*`).
+
+  ```json
+  "settings": { "features": { "specVersion": 1, "items": [
+    { "id": "configBlobs", "name": "Config import and export", "spec": { "enabled": true } }
+  ] } }
+  ```
 
 `GET /v1/config-blobs/areas` lists the areas of your server, whether each is
 supported there, and whether you may export or import it. An export leaves out the

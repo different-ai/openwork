@@ -48,6 +48,7 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   gateway_provider_oauth_states: { reason: "runtime" },
   gateway_litellm_issued_keys: { reason: "secret", note: "keys issued in an organization's LiteLLM proxy" },
   gateway_keys: { reason: "personal", note: "member gateway keys" },
+  gateway_api_keys: { reason: "personal", note: "API keys members create for 3rd party tools; only a digest is stored" },
   gateway_request_logs: { reason: "runtime" },
   gateway_usage_rollups: { reason: "runtime" },
   gateway_usage_audit: { reason: "runtime" },
@@ -104,8 +105,7 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   org_subscriptions: { reason: "billing" },
   organization_benefit_setting: { reason: "billing" },
   organization_grant: { reason: "billing", note: "platform-granted benefits" },
-  organization_feature: { reason: "platform", note: "feature flags are owned by platform admins" },
-  feature_change: { reason: "platform", note: "flag change history" },
+  feature_change: { reason: "platform", note: "flag change history; settings.features writes it through updateOrganizationFeatureOverrides" },
 
   // Personal work and runtime.
   automation: { reason: "personal", note: "My Automations" },

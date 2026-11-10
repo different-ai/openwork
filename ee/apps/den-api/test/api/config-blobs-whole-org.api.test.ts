@@ -1,6 +1,6 @@
 /**
  * Config blobs, whole organization, end to end through HTTP: organization A
- * is set up through the public API with something in as many of the 25 areas
+ * is set up through the public API with something in as many of the 27 areas
  * as the API allows, exported whole, and imported into an empty organization
  * B (worker driven in-process): plan, secrets, decisions, approval from a
  * fresh sign-in, apply. Then B's export is compared with A's area by area
@@ -293,7 +293,7 @@ let importId = ""
 test("export A: every area, no secret values", async () => {
   exportedA = await exportWhole(apiA)
   assert.deepEqual(exportedA.omitted ?? [], [], "nothing left out")
-  assert.deepEqual([...exportedA.scope].sort(), [...CONFIG_AREA_KEYS].sort(), "all 26 areas")
+  assert.deepEqual([...exportedA.scope].sort(), [...CONFIG_AREA_KEYS].sort(), "all 27 areas")
   const empty = CONFIG_AREA_KEYS.filter((key) => areaItems(exportedA, key).length === 0)
   assert.deepEqual(empty, [], "something in every area")
   // Task 1: the "Your agent" template rides with workbot.proactive only.
