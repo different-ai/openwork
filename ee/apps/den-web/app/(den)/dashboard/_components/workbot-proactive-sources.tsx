@@ -211,6 +211,19 @@ function PolicySelect({ label, value, disabled, onChange }: { label: string; val
   );
 }
 
+/** What the "Add app" menu says when every supported app is already listed. */
+export const SUPPORTED_APPS_LINE: Record<AgentCoreSource, string> = {
+  calendar: "Calendar works with Google Workspace and Microsoft 365. Connect one in Connectors to add it here.",
+  email: "Email works with Google Workspace and Microsoft 365. Connect one in Connectors to add it here.",
+  chat: "Team chat works with Microsoft 365 and Slack. Connect one in Connectors to add it here.",
+};
+
+/** The apps "Add app" offers for calendar, email or team chat: only ones that serve it, not any connection. */
+export function supportedToAdd(view: SourcesView, kind: AgentCoreSource): AgentSourceOption[] {
+  const serving = new Set(servingIds(view, kind));
+  return addableTo(view, kind).filter((option) => serving.has(option.id));
+}
+
 /** The columns of an app row with help on: the app, how many members connected it, the default, allowed. */
 const APP_COLUMNS = "grid grid-cols-[minmax(0,1fr)_6.5rem_4rem_4rem] items-center gap-x-4";
 
@@ -223,7 +236,7 @@ export function filterConnections<T extends { name: string }>(connections: reado
   return query ? connections.filter((connection) => connection.name.toLowerCase().includes(query)) : [...connections];
 }
 
-function AddSource<Option extends Pick<AgentSourceOption, "id" | "name" | "url">>({ slot, options, disabled, onPick, label = "Add source" }: { slot: AgentSourceSlot; options: Option[]; disabled: boolean; onPick: (option: Option) => void; label?: string }) {
+function AddSource<Option extends Pick<AgentSourceOption, "id" | "name" | "url">>({ slot, options, disabled, onPick, label = "Add source", emptyText = "Every connection is already here." }: { slot: AgentSourceSlot; options: Option[]; disabled: boolean; onPick: (option: Option) => void; label?: string; emptyText?: string }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -247,7 +260,7 @@ function AddSource<Option extends Pick<AgentSourceOption, "id" | "name" | "url">
             </div>
           ) : null}
           <div className={denDropdownListClass} role="menu" aria-label={`Connections to add to ${SLOT_LABEL[slot]}`}>
-            {options.length === 0 ? <p className="px-3 py-2.5 text-[13px] text-gray-500">Every connection is already here.</p> : null}
+            {options.length === 0 ? <p className="max-w-[280px] px-3 py-2.5 text-[13px] leading-5 text-gray-500">{emptyText}</p> : null}
             {options.length > 0 && shown.length === 0 ? <p className="px-3 py-2.5 text-[13px] text-gray-500">No connections match</p> : null}
             {shown.map((option) => (
               <button key={option.id} type="button" role="menuitem" aria-label={option.name} className={`${denDropdownRowBaseClass} ${denDropdownRowIdleClass} items-center justify-start`}
@@ -297,6 +310,7 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
   ) : null;
 
   // With help on: one aligned row per app under a line of column names, the default picked like a radio.
+  // Only the apps that serve the source are offered (and any an admin allowed before, so it can be turned off).
   const coreTable = (kind: AgentCoreSource) => (
     <>
       <div className={`${APP_COLUMNS} py-1.5 pl-14 pr-6 text-[12px] text-gray-500`} aria-hidden="true">
@@ -330,7 +344,8 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
           </div>
         );
       })}
-      <AddSource slot={kind} label="Add app" options={addableTo(view, kind)} disabled={locked} onPick={(option) => save(addSourceChange(view, kind, option.id))} />
+      {/* Only the apps that serve the source can be added; any other connection is Other context. */}
+      <AddSource slot={kind} label="Add app" options={supportedToAdd(view, kind)} emptyText={SUPPORTED_APPS_LINE[kind]} disabled={locked} onPick={(option) => save(addSourceChange(view, kind, option.id))} />
     </>
   );
 

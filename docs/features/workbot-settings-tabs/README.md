@@ -123,3 +123,14 @@ Both places show the single page again on the next load. Nothing is stored.
   list of the rest; a line under it says how many other connections are up
   to each member. Adding one saves it as "Members choose" (what it already
   was); Remove puts it back to that default.
+
+## Calendar, Email and Team chat take only the apps that serve them
+
+"Add app" under Calendar, Email and Team chat offers only apps that serve
+that source (Google Workspace and Microsoft 365 for calendar and email;
+Microsoft 365 and Slack for team chat). Before, it offered every
+connection, so Notion could be made the calendar. When every supported app
+is already listed, the menu says which apps work and to connect one in
+Connectors. Any other connection is added under Other context. An app that
+was added before stays listed so it can be turned off; the server still
+accepts the older setting.
