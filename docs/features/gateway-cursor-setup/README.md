@@ -60,16 +60,18 @@ copy button; **Choose another tool** goes back.
 - **OpenAI Codex:** the key line for the shell, and a `~/.codex/config.toml`
   provider (`wire_api = "responses"`) for the model chosen. Only OpenAI and
   Azure models are offered: Codex calls the provider-less Responses endpoint.
-- **Claude Code:** `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and the model
-  variables for the model chosen. Only Anthropic, Vertex Claude and Foundry
-  models are offered.
+- **Claude Code:** a project settings file (`.claude/settings.local.json`) for
+  a main and a fast model chosen from dropdowns, pointing at the Gateway's
+  Claude Code endpoint (below). Every model is offered.
 - **Another tool:** the key, both base URLs, and a model to choose with its id
   to copy.
 
 ![Cursor's steps](./cursor-steps.png)
 
-The Codex and Claude Code steps use today's provider-less endpoints; dedicated
-endpoints for them, like Cursor's, come later.
+The Codex steps use today's provider-less Responses endpoint; Cursor and Claude
+Code have their own endpoints.
+
+![Claude Code's steps](./claude-code-steps.png)
 
 In **My Library › Models**, each key's menu has **Set up**: the same choice of
 tools for a key that already exists. The key isn't shown again, so the steps
@@ -107,11 +109,50 @@ key, with a link to create one.
 - The page builds the same names in Den web from
   `GET /v1/inference-providers?scope=usable`; there is no new Den API route.
 
+## Claude Code endpoint
+
+`ANTHROPIC_BASE_URL` = `<gateway>/api/v1/claude-code`. Claude Code sends the key
+as `Authorization: Bearer` (`ANTHROPIC_AUTH_TOKEN`; `ANTHROPIC_API_KEY` stays
+empty). Code: `ee/apps/gateway/src/claude-code.ts`,
+`ee/apps/gateway/src/claude-code-messages.ts`. Public docs:
+`packages/docs/ai-gateway/claude-code.mdx`.
+
+- `GET /v1/models`: the member's models in Anthropic's list shape, for Claude
+  Code's gateway model discovery (`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`).
+  Claude Code lists only Claude models from it.
+- `POST /v1/messages` (Claude Code adds `?beta=true`): names are the Cursor names
+  with no thinking level, plus `[1m]` on models with a 1M token window (stripped
+  before matching). A raw catalog id (`claude-sonnet-4-5`) also resolves when one
+  of the member's models has it. A model on a Messages provider (Anthropic,
+  Vertex Claude, Foundry) gets the request as it is (thinking, cache control,
+  `anthropic-beta`); any other is translated Messages → Chat Completions → the
+  model's own protocol, and back as a Messages object or event stream.
+  Translated requests ask for at least 16 output tokens: Claude Code checks a
+  model it switches to with `max_tokens: 1`, which OpenAI refuses.
+- `POST /v1/messages/count_tokens`: an estimate (about four characters a token);
+  nothing goes upstream.
+- Errors are Anthropic error bodies (`{type: "error", error: {type, message}}`).
+
+The settings file pins Claude Code's Opus, Sonnet, Haiku and subagent slots,
+maps Claude models to Claude Code's own ids with `modelOverrides` (so it knows
+their limits and features), and sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS` when the
+main model is another provider's.
+
+Checked on 2026-11-10 with Claude Code 2.1.321-322 on a local Den and Gateway with
+real Anthropic and OpenAI keys: `claude -p` and interactive sessions with tool
+use on Claude Sonnet 4.5 (passed through) and GPT-5 mini (translated), `/model`
+discovery and switching. Found there: Claude Code reads the project settings
+file only after its first-run sign-in screen; a key in the shell or in
+`~/.claude/settings.json` skips it, so the steps say to start it once with
+`ANTHROPIC_AUTH_TOKEN="<key>" claude`. Not checked: an existing Claude account
+login next to the settings file (the steps follow OpenRouter: `/status`, then
+`/logout` if needed).
+
 ## Turning it off
 
 Turning off `gatewayMemberApiKeys` (or the organization setting) stops member
-keys at the Gateway, and `/api/v1/cursor/*` answers `404 not_found` within 15
-seconds. The setup screens go with the API keys section. Nothing else is stored
+keys at the Gateway, and `/api/v1/cursor/*` and `/api/v1/claude-code/*` answer
+`404` within 15 seconds. The setup screens go with the API keys section. Nothing else is stored
 for Cursor, so the model names people added to Cursor work again when it is
 turned back on.
 
@@ -138,4 +179,6 @@ Completions or Responses for each model.
 Chat Completions and Responses (JSON and streamed) translated to Anthropic and
 back, refusals, keys, and the feature being off.
 `evals/proofs/gateway-cursor-setup.proof.test.ts` drives the page and both APIs
-on a real Den and AI Gateway.
+on a real Den and AI Gateway. `ee/apps/gateway/test/claude-code.test.ts` and
+`evals/proofs/gateway-claude-code.proof.test.ts` do the same for Claude Code
+(a Claude model passed through, a DeepSeek model translated).

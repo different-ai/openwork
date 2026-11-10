@@ -19,7 +19,7 @@ import { isJsonObject, type JsonObject } from "./auto-router/chat.js"
 import { chatToolCallIds, type AutoTranslator } from "./auto-router/protocol.js"
 import type { ReasoningStore } from "./auto-router/reasoning-store.js"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
-import { classifyProtocolFamily } from "./protocols.js"
+import { classifyProtocolFamily, type ProtocolFamily } from "./protocols.js"
 import type { GatewayMemberAccessRow } from "./provider-access.js"
 import type { ProviderCatalog } from "./provider-catalog.js"
 import { isEventStreamContentType, isJsonContentType } from "./relay.js"
@@ -42,9 +42,11 @@ export type CursorDependencies = {
   forward: (target: AutoTarget) => Promise<Response>
 }
 
-type CursorModel = {
+export type CursorModel = {
   /** The model's `ipm_…` id: what a Cursor name's ending is matched against. */
   modelId: string
+  /** The protocol the model's provider speaks. */
+  family: ProtocolFamily
   name: string
   row: GatewayMemberAccessRow
   translator: AutoTranslator
@@ -70,9 +72,10 @@ export function cursorModels(rows: GatewayMemberAccessRow[], catalog: ProviderCa
     const catalogProvider = catalog.getCatalogProvider(row.provider.provider_id)
     const family = classifyProtocolFamily(catalogProvider)
     const translator = family ? translatorFor(family, catalogProvider?.npm ?? null) : null
-    if (!translator) continue
+    if (!family || !translator) continue
     models.push({
       modelId: row.model.id,
+      family,
       name: row.model.name || row.model.model_id,
       row,
       translator,

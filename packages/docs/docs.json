@@ -198,6 +198,7 @@
               "ai-gateway/users-and-teams",
               "ai-gateway/third-party-tools",
               "ai-gateway/cursor",
+              "ai-gateway/claude-code",
               "ai-gateway/provider-support",
               "ai-gateway/compare-litellm-bifrost",
               "ai-gateway/litellm",

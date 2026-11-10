@@ -120,19 +120,19 @@ async function memberApiKeysAllowed(organizationId: string): Promise<boolean> {
   return allowed
 }
 
-const cursorPolicyCache = new Map<string, { expires: number; enabled: boolean }>()
+const toolEndpointsPolicyCache = new Map<string, { expires: number; enabled: boolean }>()
 
 /**
- * Whether the Cursor endpoint is on for the organization: it is part of member API keys (feature
- * `gatewayMemberApiKeys`), cached like the key policy.
+ * Whether the Cursor and Claude Code endpoints are on for the organization: they are part of member
+ * API keys (feature `gatewayMemberApiKeys`), cached like the key policy.
  */
-export async function cursorEndpointEnabled(organizationId: string): Promise<boolean> {
+export async function toolEndpointsEnabled(organizationId: string): Promise<boolean> {
   const now = Date.now()
-  const cached = cursorPolicyCache.get(organizationId)
+  const cached = toolEndpointsPolicyCache.get(organizationId)
   if (cached && cached.expires > now) return cached.enabled
   const enabled = (await readFeatures(db, organizationId, env.features)).gatewayMemberApiKeys
-  if (cursorPolicyCache.size > 5_000) for (const [key, entry] of cursorPolicyCache) if (entry.expires <= now) cursorPolicyCache.delete(key)
-  cursorPolicyCache.set(organizationId, { expires: now + API_KEY_POLICY_CACHE_MS, enabled })
+  if (toolEndpointsPolicyCache.size > 5_000) for (const [key, entry] of toolEndpointsPolicyCache) if (entry.expires <= now) toolEndpointsPolicyCache.delete(key)
+  toolEndpointsPolicyCache.set(organizationId, { expires: now + API_KEY_POLICY_CACHE_MS, enabled })
   return enabled
 }
 

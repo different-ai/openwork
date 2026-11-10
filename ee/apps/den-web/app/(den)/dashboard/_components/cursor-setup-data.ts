@@ -37,8 +37,18 @@ export type GatewayToolModel = {
   providerName: string;
   /** The catalog provider, such as `anthropic` or `openai`. */
   providerKey: string;
+  /** The provider's own id for the model, such as `claude-sonnet-4-5`. */
+  upstreamModelId: string;
+  /** Tokens the model reads at most, when its catalog entry says. */
+  contextWindow: number | null;
   thinkingLevels: AutoRouterThinkingLevel[];
 };
+
+function contextWindow(config: Record<string, unknown> | undefined): number | null {
+  const limit = config?.limit;
+  const context = typeof limit === "object" && limit !== null && !Array.isArray(limit) ? Reflect.get(limit, "context") : null;
+  return typeof context === "number" && Number.isFinite(context) ? context : null;
+}
 
 /** Characters of a TypeID after its prefix. */
 const MODEL_ID_LENGTH = 26;
@@ -55,6 +65,8 @@ export function gatewayToolModels(payload: z.infer<typeof usableProvidersSchema>
         name: model.name,
         providerName: provider.name,
         providerKey: provider.providerId,
+        upstreamModelId: model.upstreamModelId,
+        contextWindow: contextWindow(model.config),
         thinkingLevels: autoRouterThinkingLevels(model.upstreamModelId, model.config ?? {}),
       });
     }
@@ -78,19 +90,16 @@ export function useGatewayToolModels(enabled: boolean) {
   });
 }
 
-/**
- * Providers whose models answer the Gateway's provider-less endpoint each tool calls: Codex sends the
- * Responses API, Claude Code the Anthropic Messages API. Cursor reaches every model.
- */
+/** Providers whose models answer the Gateway's provider-less Responses endpoint, which Codex calls. */
 const RESPONSES_PROVIDERS = new Set(["openai", "azure"]);
-const MESSAGES_PROVIDERS = new Set(["anthropic", "google-vertex-anthropic", "microsoft-foundry"]);
 
 export function codexModels(models: readonly GatewayToolModel[]) {
   return models.filter((model) => RESPONSES_PROVIDERS.has(model.providerKey));
 }
 
-export function claudeCodeModels(models: readonly GatewayToolModel[]) {
-  return models.filter((model) => MESSAGES_PROVIDERS.has(model.providerKey));
+/** A Claude model Claude Code knows by this id, so it can treat the OpenWork name as that model. */
+export function claudeModelId(model: GatewayToolModel): string | null {
+  return /^claude-[a-z0-9-]+$/.test(model.upstreamModelId) ? model.upstreamModelId : null;
 }
 
 export function getCursorSetupRoute(orgSlug?: string | null): string {
