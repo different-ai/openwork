@@ -11,6 +11,7 @@ import { gatewayRollupDimensionKey } from "@openwork-ee/utils/gateway-rollups"
 import { and, eq, gte, inArray, lt, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { runCapabilityUsageRollups, type CapabilityUsageRollupRepository } from "./capability-usage-rollups.js"
+import { foldWorkbotUsage } from "./workbot-usage-rollups.js"
 import type { Hono } from "hono"
 import { z } from "zod"
 
@@ -65,6 +66,8 @@ export type RollupStore = {
   aggregateHourRollupsToDay(dayStart: Date, limit: number): Promise<{ ids: RollupRow["id"][]; groups: AggregatedRollup[] }>
   upsertRollups(rows: RollupRow[]): Promise<void>
   deleteRawIds(ids: (typeof GatewayRequestLogTable.$inferSelect.id)[]): Promise<number>
+  /** Adds the batch's Workbot-tagged rows to workbot_usage_day (workbot-usage-rollups.ts). Optional for test stores. */
+  foldWorkbotUsage?(dayStart: Date, ids: (typeof GatewayRequestLogTable.$inferSelect.id)[]): Promise<void>
   deleteHourRollupIds(ids: RollupRow["id"][]): Promise<number>
 }
 
@@ -274,6 +277,9 @@ function createDbRollupStore(executor: Parameters<Parameters<typeof import("./db
       const set = Object.fromEntries([...ROLLUP_SUM_COLUMNS, ...ROLLUP_OBSERVATION_COLUMNS].map((column) => [column, sql`${rollup[column]} + values(${sql.identifier(column)})`]))
       await executor.insert(rollup).values(rows).onDuplicateKeyUpdate({ set })
     },
+    foldWorkbotUsage(dayStart, ids) {
+      return foldWorkbotUsage(executor, dayStart, ids)
+    },
     async deleteRawIds(ids) {
       if (!ids.length) return 0
       await assertUsageRetentionSafe(executor, ids)
@@ -358,6 +364,8 @@ export async function runRollups(input: RunRollupsInput = {}): Promise<RollupRun
     summary.rawRowsDeleted += await repository.transaction(async (store) => {
       const { ids, groups } = await store.aggregateRawHour(bucketStart, maxSourceRowsPerBucket)
       await store.upsertRollups(buildRollupRows("hour", bucketStart, groups))
+      // Before the rows are deleted: the hour rollups drop the conversation tag.
+      await store.foldWorkbotUsage?.(floorToDay(bucketStart), ids)
       return store.deleteRawIds(ids)
     })
     summary.hourBuckets += 1

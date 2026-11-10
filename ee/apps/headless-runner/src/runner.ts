@@ -657,6 +657,7 @@ export class Runner {
             tools: [],
             model: selectedModel,
             apiKey,
+            ...(access ? { sessionId } : {}),
             signal: AbortSignal.timeout(30_000),
           })
           title = cleanTitle(named.text)
@@ -1246,6 +1247,8 @@ export class Runner {
             tools: setup.toolSpecs,
             model: setup.turn?.model ?? this.options.defaultModel,
             apiKey: credentials.modelAccess?.apiKey ?? credentials.modelApiKey ?? this.options.defaultModelApiKey ?? "",
+            // Only through Den's own access (the gateway): a deployment's direct provider key never sees the id.
+            ...(credentials.modelAccess ? { sessionId } : {}),
             signal: AbortSignal.any([signal, writing.signal]),
             ...(events
               ? {
@@ -1875,6 +1878,8 @@ export class Runner {
             tools: setup.toolSpecs,
             model: setup.turn?.model ?? this.options.defaultModel,
             apiKey: chosen.apiKey,
+            // Only through Den's own access (the gateway): a deployment's direct provider key never sees the id.
+            ...(credentials.modelAccess ? { sessionId } : {}),
             signal: AbortSignal.any([signal, writing.signal]),
             ...(continueFrom ? { continueFrom } : {}),
             // Always streamed: the text so far is what a cut-off step continues from.

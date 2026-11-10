@@ -367,6 +367,14 @@
       "development": "./src/den/workbot-team-settings.ts",
       "default": "./src/den/workbot-team-settings.ts"
     },
+    "./den/workbot-usage": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/workbot-usage.d.ts",
+        "default": "./src/den/workbot-usage.ts"
+      },
+      "development": "./src/den/workbot-usage.ts",
+      "default": "./src/den/workbot-usage.ts"
+    },
     "./den/auto-router": {
       "types": {
         "openwork-build": "./dist/types/src/den/auto-router.d.ts",

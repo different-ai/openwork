@@ -199,10 +199,12 @@ for (const protocol of ["anthropic", "openai", "openai-responses"] as const) {
   test(`${protocol}: scoped adapter and synthetic probe use only the scoped URL/key/protocol`, async () => {
     const modelAccess = { ...access, protocol }
     const paths: string[] = []
+    const sessions: (string | null)[] = []
     const transport: typeof fetch = async (url, init) => {
       paths.push(String(url))
       assert.ok(String(url).startsWith(access.baseUrl))
       const headers = new Headers(init?.headers)
+      sessions.push(headers.get("x-openwork-headless-session"))
       assert.equal(protocol === "anthropic" ? headers.get("x-api-key") : headers.get("authorization"), protocol === "anthropic" ? access.apiKey : `Bearer ${access.apiKey}`)
       const body = z.object({ model: z.string() }).parse(JSON.parse(String(init?.body)))
       assert.equal(body.model, "member-model")
@@ -211,10 +213,12 @@ for (const protocol of ["anthropic", "openai", "openai-responses"] as const) {
       return Response.json({ model: "member-model", choices: [{ message: { content: "READY" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } })
     }
     const adapter = createModelAdapter(modelAccess, { maxOutputTokens: 32, fetch: transport })
-    assert.equal((await adapter.complete({ system: "test", messages: [{ role: "user", text: "Hello" }], model: "member-model", apiKey: access.apiKey, tools: [], signal: new AbortController().signal })).text, "READY")
+    assert.equal((await adapter.complete({ system: "test", messages: [{ role: "user", text: "Hello" }], model: "member-model", apiKey: access.apiKey, sessionId: "hs_usage_session_1", tools: [], signal: new AbortController().signal })).text, "READY")
     const probe = createModelProbe(config, transport)
     assert.deepEqual(await probe("member-model", new AbortController().signal, modelAccess), { status: "answered", errorCode: null, requestedModel: "member-model", reportedModel: "member-model" })
     assert.equal(paths.length, 2)
+    // A turn's call names its conversation for the gateway's Workbot usage; a model test has none.
+    assert.deepEqual(sessions, ["hs_usage_session_1", null])
   })
 }
 

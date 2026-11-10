@@ -12,6 +12,7 @@ import { isLiteLlmProviderId, liteLlmSpendTrackingEnabled } from "@openwork-ee/u
 import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { fixedModelPricing, readModelPrice, type PricingCatalog } from "./pricing.js"
 import { GATEWAY_REQUEST_MODEL_HEADER, GATEWAY_GRANT_HEADER, type GatewayRequestOutcome, type GatewayRequestProtocol } from "@openwork/types/den/gateway"
+import { HEADLESS_SESSION_HEADER, parseHeadlessSessionHeader } from "@openwork/types/den/workbot-usage"
 import type { Context, Hono } from "hono"
 import { sanitizeIncomingHeaders } from "./inference-reporting.js"
 import type { InferenceReporter } from "./inference-reporting.js"
@@ -899,6 +900,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         accessGrantId: loggedSelection?.row.grant.id ?? null,
         requestBytes: state.requestBytes,
         gatewayUsage,
+        headlessSession: parseHeadlessSessionHeader(c.req.header(HEADLESS_SESSION_HEADER)),
         signal: request.signal,
         startedAt,
         pricing: requestPricing,
