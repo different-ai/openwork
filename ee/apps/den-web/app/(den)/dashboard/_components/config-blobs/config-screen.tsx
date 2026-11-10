@@ -3,30 +3,29 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { DenPageHeader } from "../../../_components/ui/page-header";
 import { UnderlineTabs } from "../../../_components/ui/tabs";
-import { type ConfigTab, getConfigRoute } from "../../../_lib/den-org";
+import { type ConfigTab, getConfigRoute, readConfigTab } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useConfigChangeRequests } from "./config-blobs-data";
 import { ConfigChangeList } from "./config-change-list";
 import { ConfigExportSection } from "./config-export-section";
 import { ConfigImportSection } from "./config-import-section";
+import { ConfigOverviewSection } from "./config-overview-section";
 import { ConfigSettingsSection } from "./config-settings-section";
 import { useConfigBlobsFeature } from "./config-blobs-parts";
 
-function readTab(value: string | null): ConfigTab {
-  return value === "changes" || value === "history" ? value : "overview";
-}
-
-/** Settings › Config: export the organization's configuration, import a file as a change request, and follow requests. */
+/** Settings › Config: an overview, then import, export, open changes and history, one tab each (`?tab=`). */
 export function ConfigScreen() {
   const { ready } = useConfigBlobsFeature();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { orgId, activeOrg } = useOrgDashboard();
-  const tab = readTab(searchParams.get("tab"));
+  const tab = readConfigTab(searchParams.get("tab"));
   const open = useConfigChangeRequests(ready ? orgId : null, "open");
   const openCount = open.data?.changeRequests.length;
 
   if (!ready) return null;
+
+  const openTab = (next: ConfigTab) => router.replace(getConfigRoute(activeOrg?.slug, next));
 
   return (
     <section className="mx-auto flex w-full min-w-0 max-w-[860px] flex-col gap-6 p-4 sm:p-6 md:p-8" data-testid="config-screen">
@@ -34,22 +33,25 @@ export function ConfigScreen() {
       <UnderlineTabs
         tabs={[
           { value: "overview", label: "Overview" },
+          { value: "import", label: "Import" },
+          { value: "export", label: "Export" },
           { value: "changes", label: "Changes", count: openCount },
           { value: "history", label: "History" },
         ]}
         activeTab={tab}
-        onChange={(next) => router.replace(getConfigRoute(activeOrg?.slug, next))}
+        onChange={openTab}
       />
       {tab === "overview" ? (
-        <div className="flex flex-col gap-10">
-          <ConfigExportSection />
-          <div className="border-t border-gray-100" />
-          <ConfigImportSection />
-          <div className="border-t border-gray-100" />
-          <ConfigSettingsSection />
-        </div>
+        <ConfigOverviewSection onOpenTab={openTab} />
+      ) : tab === "import" ? (
+        <ConfigImportSection />
+      ) : tab === "export" ? (
+        <ConfigExportSection />
       ) : tab === "changes" ? (
-        <ConfigChangeList state="open" emptyMessage="No changes waiting. Import a config file from Overview to start one." />
+        <div className="flex flex-col gap-6">
+          <ConfigSettingsSection />
+          <ConfigChangeList state="open" emptyMessage="No changes waiting. Import a config file to start one." />
+        </div>
       ) : (
         <ConfigChangeList state="closed" emptyMessage="Nothing applied or closed yet. Applied changes show here with a copy of what they replaced." />
       )}

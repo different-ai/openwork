@@ -1,13 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CONFIG_BLOB_MAX_BYTES, EMPTY_CONFIG_DECISIONS, type ConfigApplyReport, type ConfigAreaDescriptor, type ConfigPlan } from "@openwork/types/den/config-blobs";
+import { CONFIG_BLOB_MAX_BYTES, EMPTY_CONFIG_DECISIONS, type ConfigApplyReport, type ConfigAreaDescriptor, type ConfigChangeRequestSummary, type ConfigPlan } from "@openwork/types/den/config-blobs";
+import { getConfigRoute, readConfigTab } from "../../../_lib/den-org";
 import {
   approvalState,
   canRestoreRequest,
+  changesOverview,
   checkImportFile,
   deletesHeading,
   configExportFileName,
   exportAreasParam,
+  exportOverview,
+  formatDay,
+  historyOverview,
+  importFileSummary,
   formatApplyStep,
   formatDuration,
   formatFieldChange,
@@ -61,6 +67,69 @@ test("import file check rejects invalid JSON, foreign files and oversize files",
   const valid = checkImportFile(JSON.stringify({ format: "openwork.config-blob", formatVersion: 1, scope: ["members.teams"], areas: { members: { teams: { specVersion: 1, items: [] } } } }), 100);
   assert.ok(valid.ok);
   assert.equal(valid.ok && valid.areaCount, 1);
+});
+
+test("tabs: ?tab= picks one of the five; unknown or retired values open Overview", () => {
+  for (const tab of ["overview", "import", "export", "changes", "history"] as const) assert.equal(readConfigTab(tab), tab);
+  for (const value of [null, undefined, "", "settings", "EXPORT", "queue"]) assert.equal(readConfigTab(value), "overview");
+  assert.equal(getConfigRoute("acme", "export"), `${getConfigRoute("acme")}?tab=export`);
+  assert.equal(getConfigRoute("acme", "overview"), getConfigRoute("acme"));
+});
+
+const SOURCE = { deployment: "cloud" as const, instanceId: "inst", appVersion: "1.0.0", organization: { id: "org_source", slug: "acme-source", name: "Acme Source" } };
+const EXPORTED_AT = "2026-11-09T12:00:00Z";
+
+test("the chosen file says where and when it was exported, leaving out what it doesn't carry", () => {
+  const day = formatDay(EXPORTED_AT, "en-US");
+  assert.equal(day, "Nov 9, 2026");
+  assert.equal(importFileSummary({ source: SOURCE, exportedAt: EXPORTED_AT, areaCount: 11 }, "org_target", "en-US"), 'Exported from "Acme Source" (OpenWork Cloud) on Nov 9, 2026. 11 areas.');
+  assert.equal(importFileSummary({ source: { ...SOURCE, deployment: "self_hosted" }, exportedAt: null, areaCount: 1 }, "org_target", "en-US"), 'Exported from "Acme Source" (self-hosted OpenWork). 1 area.');
+  assert.equal(importFileSummary({ source: SOURCE, exportedAt: EXPORTED_AT, areaCount: 3 }, "org_source", "en-US"), "Exported from this organization on Nov 9, 2026. 3 areas.");
+  assert.equal(importFileSummary({ source: null, exportedAt: EXPORTED_AT, areaCount: 2 }, "org_target", "en-US"), "Exported on Nov 9, 2026. 2 areas.");
+  assert.equal(importFileSummary({ source: null, exportedAt: "not a date", areaCount: 2 }, null, "en-US"), "2 areas.");
+  const checked = checkImportFile(JSON.stringify({ format: "openwork.config-blob", formatVersion: 1, exportedAt: EXPORTED_AT, source: SOURCE, scope: ["members.teams"], areas: { members: { teams: { specVersion: 1, items: [] } } } }), 100);
+  assert.ok(checked.ok);
+  assert.equal(checked.ok && importFileSummary(checked, "org_target", "en-US"), 'Exported from "Acme Source" (OpenWork Cloud) on Nov 9, 2026. 1 area.');
+});
+
+test("overview: how many areas Export offers", () => {
+  assert.equal(exportOverview(areas), "3 of 4 areas can be exported. The others need more access or aren't available here.");
+  assert.equal(exportOverview(areas.slice(0, 3)), "All 3 areas can be exported.");
+  assert.equal(exportOverview([areas[3]!]), "You can't export any area. Ask an organization owner or admin.");
+});
+
+function request(overrides: Partial<ConfigChangeRequestSummary>): ConfigChangeRequestSummary {
+  return {
+    id: "ccr_1", status: "needs_review", title: null, mode: "merge", source: "ui", sourceOrganization: null, sourceDeployment: null,
+    areas: ["members.teams"], summary: null, planHash: null, approvals: [], autoApply: false,
+    createdBy: { memberId: "m_1", name: "Ada", apiKeyName: null }, revertsChangeRequestId: null, revertedByChangeRequestId: null,
+    errors: [], createdAt: "2026-11-09T10:00:00Z", updatedAt: "2026-11-09T10:00:00Z", appliedAt: null, ...overrides,
+  };
+}
+
+const SUMMARY = { create: 1, update: 0, rename: 0, unchanged: 0, delete: 0, untouched: 0, skip: 0, blocking: 0 };
+
+test("overview: open changes, how many need a decision, and the most recent one", () => {
+  assert.deepEqual(changesOverview([]), { headline: "No changes waiting.", latest: null });
+  const now = Date.parse("2026-11-09T12:00:00Z");
+  const result = changesOverview([
+    request({ id: "a", title: "Copy AI providers", summary: { ...SUMMARY, blocking: 2 }, createdAt: "2026-11-09T11:55:00Z" }),
+    request({ id: "b", summary: SUMMARY, sourceOrganization: { id: "o", slug: "s", name: "Staging" }, createdAt: "2026-11-09T09:00:00Z" }),
+    request({ id: "c", status: "invalid", createdAt: "2026-11-08T09:00:00Z" }),
+  ], now);
+  assert.equal(result.headline, "3 open, 1 needs a decision, 1 ready to approve, 1 couldn't be read.");
+  assert.equal(result.latest, "Latest: Copy AI providers, needs review, uploaded 5 min ago.");
+});
+
+test("overview: the last applied or failed change, with its date", () => {
+  assert.equal(historyOverview([]), "Nothing applied yet.");
+  assert.equal(historyOverview([request({ status: "cancelled" })]), "Nothing applied yet. Withdrawn and replaced changes are listed here.");
+  assert.equal(historyOverview([
+    request({ status: "applied", title: "Older", appliedAt: "2026-11-01T10:00:00Z" }),
+    request({ status: "failed", title: "Teams from staging", updatedAt: "2026-11-09T10:00:00Z" }),
+    request({ status: "cancelled", title: "Withdrawn", updatedAt: "2026-11-10T10:00:00Z" }),
+  ], "en-US"), "Last failed: Teams from staging on Nov 9, 2026.");
+  assert.equal(historyOverview([request({ status: "applied", source: "revert", appliedAt: "2026-11-02T10:00:00Z" })], "en-US"), "Last applied: Restore previous config on Nov 2, 2026.");
 });
 
 const plan: ConfigPlan = {

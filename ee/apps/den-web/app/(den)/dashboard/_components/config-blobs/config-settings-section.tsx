@@ -6,7 +6,7 @@ import { getOrgAccessFlags, permissionLockReason } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useConfigBlobSettings, useUpdateConfigBlobSettings } from "./config-blobs-data";
 
-/** Settings › Config › Overview: rules for reviewing config changes. */
+/** Settings › Config › Changes, at the top: who has to approve a change before it is applied. */
 export function ConfigSettingsSection() {
   const { orgId, orgContext } = useOrgDashboard();
   const settings = useConfigBlobSettings(orgId);
@@ -17,8 +17,7 @@ export function ConfigSettingsSection() {
   const checked = settings.data?.settings.requireSecondApprover ?? false;
 
   return (
-    <section className="flex flex-col gap-4" aria-labelledby="config-review-title" data-testid="config-settings">
-      <h2 id="config-review-title" className="text-[15px] font-semibold tracking-[-0.1px] text-gray-950">Review</h2>
+    <section className="flex flex-col gap-3 border-b border-gray-100 pb-4" aria-label="Approvals" data-testid="config-settings">
       <div className="flex min-h-12 items-center justify-between gap-4">
         <div className="min-w-0">
           <p id="config-second-approver-label" className="text-[13px] font-medium text-gray-900">Require a second approver</p>

@@ -130,7 +130,7 @@ export async function configBlobsCloudToSelfHostedWorld(seed: Seed) {
     exportPath,
     read,
     url: (path: string) => new URL(path, selfHosted.ref.webUrl).toString(),
-    /** The owner downloads the whole organization from OpenWork Cloud, as Settings › Config › Download does, and saves the file. */
+    /** The owner downloads the whole organization from OpenWork Cloud, as Settings › Config › Export › Prepare download does (the admin session is recent, so no re-sign-in), and saves the file. */
     async exportFromCloud() {
       const result = await read(cloud.admin, "/v1/config-blobs/export");
       if (result.status !== 200) throw new Error(`Cloud export: HTTP ${result.status} ${result.text.slice(0, 300)}`);

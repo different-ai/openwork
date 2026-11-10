@@ -581,6 +581,41 @@ test("approving and applying need a recent sign-in from a person (M5)", async ()
   await apiA("POST", `/v1/config-blobs/change-requests/${id}/cancel`, {})
 })
 
+test("downloads (export, before-snapshot) need a recent sign-in from a person; config tokens don't", async () => {
+  const admin = await den.newMember(owner, orgA.orgId, "Flow Stale Exporter", "admin")
+  const apiAdmin = den.as(admin, orgA.orgId)
+  const closed = await apiA("GET", "/v1/config-blobs/change-requests?state=closed")
+  const list: unknown = field(closed.body, "changeRequests")
+  const applied: unknown = Array.isArray(list) ? list.find((entry) => isRecord(entry) && entry.status === "applied") : undefined
+  assert.ok(isRecord(applied) && typeof applied.id === "string", "an applied change request")
+  const downloads = ["/v1/config-blobs/export?areas=members.teams", "/v1/config-blobs/export", `/v1/config-blobs/change-requests/${applied.id}/before-snapshot`]
+
+  await db.update(AuthSessionTable).set({ createdAt: new Date(Date.now() - 3 * 60 * 60_000) }).where(eq(AuthSessionTable.userId, admin.userId))
+  for (const path of downloads) {
+    const refused = await apiAdmin("GET", path)
+    assert.equal(refused.status, 403, `${path}: ${summary(refused)}`)
+    assert.equal(field(refused.body, "error"), "reauth", "the refusal den-web turns into its re-sign-in prompt")
+    assert.equal(field(refused.body, "reason"), "fresh_auth_required")
+  }
+
+  // Signed in again (a fresh session): the same downloads work.
+  await db.update(AuthSessionTable).set({ createdAt: new Date() }).where(eq(AuthSessionTable.userId, admin.userId))
+  for (const path of downloads) {
+    const fresh = await apiAdmin("GET", path)
+    assert.equal(fresh.status, 200, `${path}: ${summary(fresh)}`)
+    assert.equal(asBlob(fresh.body).format, "openwork.config-blob")
+  }
+
+  // A config token has no session to step up.
+  const created = await apiA("POST", "/v1/api-keys", { name: "Flow export CI", type: "config", scopes: ["config:export", "config:submit"] })
+  assert.equal(created.status, 201, summary(created))
+  const key = text(field(created.body, "key"), "token")
+  for (const path of downloads) {
+    const token = await den.request(null, "GET", path, { headers: { "x-api-key": key } })
+    assert.equal(token.status, 200, `${path} with a config token: ${summary(token)}`)
+  }
+})
+
 test("an approval older than 24 hours is not applied: back to review, approvals dropped (M5)", async () => {
   const { id, plan: current } = await uploadTeams(apiA, await teamsExport(apiA), [{ name: "Expiring Team", spec: TEAM_SPEC }])
   assert.equal(asSummary(await apiA("POST", `/v1/config-blobs/change-requests/${id}/approve`, { planHash: current.planHash })).status, "approved")

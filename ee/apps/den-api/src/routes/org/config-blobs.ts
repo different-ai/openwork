@@ -281,6 +281,19 @@ function requireApprovalStepUp(c: PermissionRouteContext): void {
 
 const MCP_INTERNAL_SESSION_ID = "mcp_internal"
 
+/**
+ * Downloads (export, before-snapshot) carry prompts, skills and other
+ * confidential content: a person needs a recent sign-in (the organization's
+ * "Enforce fresh admin sessions" window), answered with the same `reauth`
+ * refusal as approving, which den-web turns into its re-sign-in prompt.
+ * Config tokens skip it (no session to step up).
+ */
+const requireRecentSignInForDownload: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
+  const fresh = checkFreshPrivilegedSession({ apiKey: c.get("apiKey"), session: c.get("session") }, organizationPrivilegedSessionMaxAgeMs(c.get("organizationContext")))
+  if (!fresh.ok) return c.json({ ...fresh.response, message: "For security, confirm it's you before downloading configuration." }, 403)
+  return next()
+}
+
 /** Sends a service refusal; anything else is a real error for the app's handler. */
 function refusal(error: unknown): Response {
   if (error instanceof ConfigBlobError) {
@@ -352,10 +365,11 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
 
   app.get(
     `${BASE}/export`,
-    describe("Export configuration", "Downloads the organization's configuration as a config blob (JSON attachment): every area, or the comma-separated `areas`. Areas the caller can't view are left out and listed in `omitted`. Secrets are never exported; they appear as `$secret` placeholders.", { status: 200, schema: blobSchema, description: "The config blob." }, { 400: jsonResponse("Unknown area.", errorSchema) }),
+    describe("Export configuration", "Downloads the organization's configuration as a config blob (JSON attachment): every area, or the comma-separated `areas`. Areas the caller can't view are left out and listed in `omitted`. Secrets are never exported; they appear as `$secret` placeholders. A signed-in person needs a recent sign-in (the organization's fresh admin session window); otherwise the answer is `403 { error: \"reauth\", reason: \"fresh_auth_required\" }`. Config tokens are exempt.", { status: 200, schema: blobSchema, description: "The config blob." }, { 400: jsonResponse("Unknown area.", errorSchema) }),
     orgMemberRoute(),
     feature,
     requireConfigScope("config:export"),
+    requireRecentSignInForDownload,
     queryValidator(exportQuerySchema),
     async (c) => {
       try {
@@ -467,10 +481,11 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
 
   app.get(
     `${BASE}/change-requests/:changeRequestId/before-snapshot`,
-    describe("Download a change request's before-snapshot", "The items the apply wrote, as they were just before it (JSON attachment; its scope is the areas written): the source of \"Restore previous config\".", { status: 200, schema: blobSchema, description: "The before-snapshot blob." }),
+    describe("Download a change request's before-snapshot", "The items the apply wrote, as they were just before it (JSON attachment; its scope is the areas written): the source of \"Restore previous config\". Like an export, a signed-in person needs a recent sign-in (`403 { error: \"reauth\" }` otherwise); config tokens are exempt.", { status: 200, schema: blobSchema, description: "The before-snapshot blob." }),
     orgMemberRoute(),
     feature,
     requireConfigScope("config:export"),
+    requireRecentSignInForDownload,
     paramValidator(changeRequestParams),
     async (c) => {
       try {

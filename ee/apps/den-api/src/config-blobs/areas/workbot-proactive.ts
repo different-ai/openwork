@@ -344,7 +344,7 @@ function describeChange(change: WorkbotProactiveSettingsInput): Array<{ target: 
 export const workbotProactiveArea = defineConfigArea({
   key: AREA,
   label: "Members' agents",
-  path: ["Manage", "Workbot"],
+  path: ["Manage", "Workbot", "Members' agents"],
   specVersion: 1,
   specSchema: proactiveSpecSchema,
   dependsOn: [MCP_AREA],

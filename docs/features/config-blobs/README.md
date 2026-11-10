@@ -58,8 +58,12 @@ Taken from the real Den web app (light theme, local Den with seeded test organiz
 
 | Screen | |
 |---|---|
-| **Settings › Config › Overview**: export tree (whole organization or chosen areas), import with Merge / Mirror, and the "Require a second approver" setting. | ![Config overview](./config-overview.png) |
-| **Changes**: open change requests with status and `+added ~changed −removed` counts. Applied and closed ones are under History. | ![Changes queue](./config-changes.png) |
+| **Settings › Config › Overview**: one row per tab (Import, Export, Changes, History) with where it stands and a button into it. | ![Config overview](./config-overview.png) |
+| **Export, whole organization**: the default. A switch with what the file is for and what it holds, and one Prepare download button. | ![Export the whole organization](./config-export-whole.png) |
+| **Export, chosen areas**: with the switch off, "Select data to download" lists the areas by sidebar section, with Prepare download above and below and a warning for confidential content. | ![Export chosen areas](./config-export-select.png) |
+| **Re-sign-in before a download**: a session that isn't recent confirms it's you first; the download starts after. | ![Re-sign-in prompt](./config-export-reauth.png) |
+| **Import**: where the file came from and when, how to handle missing items (Keep existing / Review manually), and a required title. | ![Import](./config-import.png) |
+| **Changes**: "Require a second approver" on top, then open change requests with status and `+added ~changed −removed` counts. Applied and closed ones are under History. | ![Changes queue](./config-changes.png) |
 | **Match**: items the server can't match on its own. Each offers "Add as a new item" or a scored candidate; nothing is picked for you. | ![Match step](./config-change-request-match.png) |
 | **References**: a reference to something that exists neither here nor in the file: use an existing item or leave it out. | ![References step](./config-change-request-references.png) |
 | **Secrets**: values are never in the file. Keep the current value (with "Keep all" when re-importing into the same organization), enter one, read an environment variable (self-hosted with an allowlist only) or leave it empty. | ![Secrets step](./config-change-request-secrets.png) |

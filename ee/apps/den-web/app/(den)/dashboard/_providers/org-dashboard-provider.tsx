@@ -87,8 +87,11 @@ type OrgDashboardContextValue = {
   createTeam: (input: { name: string; memberIds: string[] }) => Promise<void>;
   updateTeam: (teamId: string, input: { name?: string; memberIds?: string[]; grantsOrganizationAdmin?: boolean }) => Promise<void>;
   deleteTeam: (teamId: string) => Promise<void>;
-  runReauthableAction: (label: string, action: () => Promise<void>) => Promise<void>;
+  runReauthableAction: (label: string, action: () => Promise<void>, prompt?: ReauthPrompt) => Promise<void>;
 };
+
+/** What the re-sign-in dialog says, for actions that don't change workspace settings (a download). */
+export type ReauthPrompt = { title: string; description: string };
 
 type OrgSettingsCompletion = {
   message: string;
@@ -96,6 +99,7 @@ type OrgSettingsCompletion = {
 
 type PendingReauthMutation = {
   label: string;
+  prompt?: ReauthPrompt;
   action: () => Promise<void>;
   resolve: () => void;
   reject: (error: unknown) => void;
@@ -141,6 +145,7 @@ export function OrgDashboardProvider({
   const pendingReauthMutationsRef = useRef<PendingReauthMutation[]>([]);
   const pathnameRef = useRef(pathname);
   const [reauthDialogOpen, setReauthDialogOpen] = useState(false);
+  const [reauthPrompt, setReauthPrompt] = useState<ReauthPrompt | null>(null);
   // A full page load starts the workspace list and the active workspace's
   // details while the session check runs, instead of after it. The first load
   // consumes them; every later load (switches, refreshes, retries) asks again.
@@ -491,7 +496,13 @@ export function OrgDashboardProvider({
     }
   }
 
-  async function runReauthableAction(label: string, action: () => Promise<void>) {
+  /** Opens the re-sign-in dialog with the wording of the first action waiting on it. */
+  function openReauthDialog() {
+    setReauthPrompt(pendingReauthMutationsRef.current[0]?.prompt ?? null);
+    setReauthDialogOpen(true);
+  }
+
+  async function runReauthableAction(label: string, action: () => Promise<void>, prompt?: ReauthPrompt) {
     const organizationId = orgContext?.organization.id;
     const userId = user?.id;
     const scopedAction = async () => {
@@ -512,9 +523,9 @@ export function OrgDashboardProvider({
       await new Promise<void>((resolve, reject) => {
         pendingReauthMutationsRef.current = [
           ...pendingReauthMutationsRef.current,
-          { label, action: scopedAction, resolve, reject },
+          { label, prompt, action: scopedAction, resolve, reject },
         ];
-        setReauthDialogOpen(true);
+        openReauthDialog();
       });
     }
   }
@@ -588,7 +599,7 @@ export function OrgDashboardProvider({
           ...retryAfterReauth,
           ...queuedDuringRetry,
         ];
-        setReauthDialogOpen(true);
+        openReauthDialog();
         return;
       }
 
@@ -1190,6 +1201,7 @@ export function OrgDashboardProvider({
         orgContext={orgContext}
         onCancel={cancelReauth}
         onVerified={retryReauthMutation}
+        {...(reauthPrompt ?? {})}
       />
     </OrgDashboardContext.Provider>
   );

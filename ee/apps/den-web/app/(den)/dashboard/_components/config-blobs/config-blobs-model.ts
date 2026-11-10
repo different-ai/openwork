@@ -9,6 +9,7 @@ import {
   type ConfigAreaDescriptor,
   type ConfigAreaKey,
   type ConfigBlob,
+  type ConfigBlobSource,
   type ConfigChangeRequestStatus,
   type ConfigChangeRequestSummary,
   type ConfigDecisions,
@@ -156,11 +157,62 @@ export function exportAreasParam(areas: readonly ConfigAreaDescriptor[], selecte
   return exportable.filter((area) => selected.has(area.key)).map((area) => area.key).join(",");
 }
 
+/** `11 of 26 areas can be exported.`: what Export offers this person. */
+export function exportOverview(areas: readonly ConfigAreaDescriptor[]): string {
+  const exportable = areas.filter(isExportable).length;
+  if (areas.length === 0) return "No areas can be exported on this OpenWork.";
+  if (exportable === 0) return "You can't export any area. Ask an organization owner or admin.";
+  if (exportable === areas.length) return `All ${areas.length} areas can be exported.`;
+  return `${exportable} of ${areas.length} areas can be exported. The others need more access or aren't available here.`;
+}
+
+// ---------------------------------------------------------------------------
+// Overview summaries of Changes and History
+
+type ChangeRequestTitleFields = Pick<ConfigChangeRequestSummary, "title" | "source" | "revertsChangeRequestId" | "sourceOrganization">;
+
+export function changeRequestTitle(request: ChangeRequestTitleFields): string {
+  if (request.title) return request.title;
+  if (request.source === "revert") return "Restore previous config";
+  if (request.sourceOrganization) return `Import from ${request.sourceOrganization.name}`;
+  return request.source === "api" ? "Import from the API" : "Import";
+}
+
+/** Open requests that wait on someone: a decision on the plan, or an approval. */
+export function changesOverview(open: readonly ConfigChangeRequestSummary[], now = Date.now()): { headline: string; latest: string | null } {
+  if (open.length === 0) return { headline: "No changes waiting.", latest: null };
+  const toDecide = open.filter((request) => request.status === "needs_review" && (request.summary?.blocking ?? 0) > 0).length;
+  const toApprove = open.filter((request) => request.status === "needs_review" && (request.summary?.blocking ?? 0) === 0).length;
+  const unreadable = open.filter((request) => request.status === "invalid").length;
+  const parts = [`${open.length} open`];
+  if (toDecide > 0) parts.push(`${toDecide} ${toDecide === 1 ? "needs" : "need"} a decision`);
+  if (toApprove > 0) parts.push(`${toApprove} ready to approve`);
+  if (unreadable > 0) parts.push(`${unreadable} couldn't be read`);
+  const newest = open.reduce((latest, request) => Date.parse(request.createdAt) > Date.parse(latest.createdAt) ? request : latest);
+  const status = CONFIG_STATUS_PRESENTATION[newest.status].label.toLowerCase();
+  return {
+    headline: `${parts.join(", ")}.`,
+    latest: `Latest: ${changeRequestTitle(newest)}, ${status}, uploaded ${formatRelativeTime(newest.createdAt, now)}.`,
+  };
+}
+
+/** The last request that was applied or failed, with its date. */
+export function historyOverview(closed: readonly ConfigChangeRequestSummary[], locale?: string): string {
+  const finished = closed
+    .filter((request) => request.status === "applied" || request.status === "failed")
+    .map((request) => ({ request, at: request.appliedAt ?? request.updatedAt }))
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
+  if (!finished) return closed.length > 0 ? "Nothing applied yet. Withdrawn and replaced changes are listed here." : "Nothing applied yet.";
+  const day = formatDay(finished.at, locale);
+  const verb = finished.request.status === "applied" ? "Last applied" : "Last failed";
+  return `${verb}: ${changeRequestTitle(finished.request)}${day ? ` on ${day}` : ""}.`;
+}
+
 // ---------------------------------------------------------------------------
 // Import file
 
 export type ImportFileCheck =
-  | { ok: true; blob: ConfigBlob; areaCount: number; sourceName: string | null }
+  | { ok: true; blob: ConfigBlob; areaCount: number; source: ConfigBlobSource | null; exportedAt: string | null }
   | { ok: false; message: string };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -189,11 +241,49 @@ export function checkImportFile(text: string, byteSize: number): ImportFileCheck
   }
   const areas = result.data.areas;
   const blob: ConfigBlob = { ...result.data, areas: isAreasTree(areas) ? areas : {} };
-  return { ok: true, blob, areaCount: result.data.scope.length, sourceName: result.data.source?.organization.name ?? null };
+  return { ok: true, blob, areaCount: result.data.scope.length, source: result.data.source ?? null, exportedAt: result.data.exportedAt ?? null };
 }
 
 function isAreasTree(value: Record<string, unknown>): value is ConfigBlob["areas"] {
   return Object.values(value).every(isPlainObject);
+}
+
+/** `Nov 9, 2026` in the reader's locale; empty when the date can't be read. */
+export function formatDay(iso: string | null | undefined, locale?: string): string {
+  if (!iso) return "";
+  const parsed = Date.parse(iso);
+  if (Number.isNaN(parsed)) return "";
+  return new Date(parsed).toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric" });
+}
+
+const DEPLOYMENT_LABELS: Record<ConfigBlobSource["deployment"], string> = {
+  cloud: "OpenWork Cloud",
+  self_hosted: "self-hosted OpenWork",
+};
+
+/**
+ * Where a chosen file came from, for the line under its name:
+ * `Exported from "Acme Source" (OpenWork Cloud) on Nov 9, 2026. 11 areas.`,
+ * or `Exported from this organization on …` when it is the current one.
+ * Parts the file doesn't carry are left out.
+ */
+export function importFileSummary(
+  file: { source: ConfigBlobSource | null; exportedAt: string | null; areaCount: number },
+  currentOrganizationId: string | null,
+  locale?: string,
+): string {
+  const day = formatDay(file.exportedAt, locale);
+  const on = day ? ` on ${day}` : "";
+  let origin = "";
+  if (file.source && currentOrganizationId && file.source.organization.id === currentOrganizationId) {
+    origin = `Exported from this organization${on}`;
+  } else if (file.source) {
+    origin = `Exported from "${file.source.organization.name}" (${DEPLOYMENT_LABELS[file.source.deployment]})${on}`;
+  } else if (day) {
+    origin = `Exported${on}`;
+  }
+  const areas = `${file.areaCount} ${file.areaCount === 1 ? "area" : "areas"}`;
+  return origin ? `${origin}. ${areas}.` : `${areas}.`;
 }
 
 // ---------------------------------------------------------------------------
