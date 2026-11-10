@@ -49,7 +49,9 @@ function desktopShell(app: App, den: Den, binary: string) {
         const out = fs.openSync(dir + "/output", "w", 0o600);
         const child = cp.spawn(${JSON.stringify(binary)}, ["login", "--base-url", ${JSON.stringify(den.ref.webUrl)}, "--api-base-url", ${JSON.stringify(den.ref.apiUrl)}], {
           cwd: ${JSON.stringify(profile)}, stdio: ["ignore", out, out],
-          env: { PATH: process.env.PATH, HOME: ${JSON.stringify(join(profile, "home"))}, OPENWORK_DEV_MODE: "0", OPENWORK_UI_CONTROL_DISCOVERY: ${JSON.stringify(discovery)} } });
+          // The disposable unpacked Linux artifact has no installed SUID helper.
+          // Match its GUI fixture's explicit sandbox opt-out, never a production default.
+          env: { PATH: process.env.PATH, HOME: ${JSON.stringify(join(profile, "home"))}, OPENWORK_DEV_MODE: "0", ELECTRON_DISABLE_SANDBOX: "1", OPENWORK_UI_CONTROL_DISCOVERY: ${JSON.stringify(discovery)} } });
         fs.writeFileSync(dir + "/pid", String(child.pid), { mode: 0o600 });
         child.once("exit", code => fs.writeFileSync(dir + "/exit", String(code), { mode: 0o600 }));
         child.once("error", () => { fs.writeFileSync(dir + "/exit", "127", { mode: 0o600 }); });
