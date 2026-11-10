@@ -104,6 +104,36 @@ export const GatewayKeyTable = mysqlTable(
   ],
 )
 
+/**
+ * Keys members create themselves for 3rd party tools (feature `gatewayMemberApiKeys`). Separate from
+ * gateway_keys, which holds the one key OpenWork issues and pushes to each member's own apps. Only a
+ * digest is stored: the key is shown once when it is created. A key authenticates as its member, so it
+ * reaches exactly what that member's grants allow.
+ */
+export const GatewayApiKeyTable = mysqlTable(
+  "gateway_api_keys",
+  {
+    id: denTypeIdColumn("gatewayApiKey", "id").notNull().primaryKey(),
+    organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
+    org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
+    name: varchar("name", { length: 64 }).notNull(),
+    key_hash: varchar("key_hash", { length: 64 }).notNull(),
+    key_prefix: varchar("key_prefix", { length: 32 }).notNull(),
+    status: mysqlEnum("status", GATEWAY_KEY_STATUSES).notNull().default("active"),
+    last_used_at: timestamp("last_used_at", { fsp: 3 }),
+    /** The key stops working at this time; null never expires. */
+    expires_at: timestamp("expires_at", { fsp: 3 }),
+    revoked_at: timestamp("revoked_at", { fsp: 3 }),
+    revoked_by_org_membership_id: denTypeIdColumn("member", "revoked_by_org_membership_id"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("gateway_api_keys_key_hash").on(table.key_hash),
+    index("gateway_api_keys_org_status").on(table.organization_id, table.status),
+    index("gateway_api_keys_member_status").on(table.org_membership_id, table.status),
+  ],
+)
+
 export const GatewayModelGroupTable = mysqlTable(
   "gateway_model_groups",
   {
@@ -388,6 +418,17 @@ export const gatewayKeyRelations = relations(GatewayKeyTable, ({ one }) => ({
   }),
 }))
 
+export const gatewayApiKeyRelations = relations(GatewayApiKeyTable, ({ one }) => ({
+  organization: one(OrganizationTable, {
+    fields: [GatewayApiKeyTable.organization_id],
+    references: [OrganizationTable.id],
+  }),
+  orgMembership: one(MemberTable, {
+    fields: [GatewayApiKeyTable.org_membership_id],
+    references: [MemberTable.id],
+  }),
+}))
+
 export const gatewayModelGroupRelations = relations(GatewayModelGroupTable, ({ one, many }) => ({
   gatewayProvider: one(GatewayProviderTable, {
     fields: [GatewayModelGroupTable.gateway_provider_id],
@@ -421,6 +462,7 @@ export const gatewayCredentialSetRelations = relations(GatewayCredentialSetTable
 export const gatewayProvider = GatewayProviderTable
 export const gatewayProviderModel = GatewayProviderModelTable
 export const gatewayKey = GatewayKeyTable
+export const gatewayApiKey = GatewayApiKeyTable
 export const gatewayModelGroup = GatewayModelGroupTable
 export const gatewayModelGroupModel = GatewayModelGroupModelTable
 export const gatewayCredentialSet = GatewayCredentialSetTable

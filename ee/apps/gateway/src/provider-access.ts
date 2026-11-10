@@ -1,6 +1,6 @@
 import { and, eq, isNotNull, isNull, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
-  GatewayKeyTable, GatewayProviderAccessTable, GatewayProviderTable, GatewayCredentialSetTable,
+  GatewayApiKeyTable, GatewayKeyTable, GatewayProviderAccessTable, GatewayProviderTable, GatewayCredentialSetTable,
   GatewayModelGroupTable, GatewayModelGroupModelTable, GatewayProviderModelTable,
   MemberTable, TeamTable, TeamMemberTable,
 } from "@openwork-ee/den-db"
@@ -36,6 +36,25 @@ export async function loadMemberGatewayAccess(scope: GatewayContext, executor: A
 
 export const loadMemberGatewayAccessFromDb: LoadMemberGatewayAccess = async (scope) => loadMemberGatewayAccess(scope, (await import("./db.js")).db)
 
+/**
+ * The caller's key is still active and still the member's, checked on every read so a revoked key loses
+ * access even if it was authenticated moments earlier. Member API keys live in their own table.
+ */
+function callerKeyActive(scope: GatewayContext) {
+  if (scope.keySource === "api_key") {
+    const keys = GatewayApiKeyTable
+    // A member's API key also stops at its expiry, even mid-session.
+    return sql`exists (select 1 from ${keys} where ${keys.id} = ${scope.gatewayKeyId}
+      and ${keys.org_membership_id} = ${MemberTable.id} and ${keys.organization_id} = ${MemberTable.organizationId}
+      and ${keys.status} = 'active' and ${keys.revoked_at} is null
+      and (${keys.expires_at} is null or ${keys.expires_at} > current_timestamp(3)))`
+  }
+  const keys = GatewayKeyTable
+  return sql`exists (select 1 from ${keys} where ${keys.id} = ${scope.gatewayKeyId}
+    and ${keys.org_membership_id} = ${MemberTable.id} and ${keys.organization_id} = ${MemberTable.organizationId}
+    and ${keys.status} = 'active' and ${keys.revoked_at} is null)`
+}
+
 function gatewayAccessQuery(scope: GatewayContext & { gatewayProviderId: GatewayAccessScope["gatewayProviderId"] | undefined }, executor: AccessDb) {
   const grants = GatewayProviderAccessTable
   const groups = GatewayModelGroupTable
@@ -45,7 +64,6 @@ function gatewayAccessQuery(scope: GatewayContext & { gatewayProviderId: Gateway
   const provider = { id: GatewayProviderTable.id, provider_id: GatewayProviderTable.provider_id, name: GatewayProviderTable.name }
   return executor.select({ grant: grants, group: groups, credentialSet: sets, model: models, provider })
     .from(MemberTable)
-    .innerJoin(GatewayKeyTable, and(eq(GatewayKeyTable.org_membership_id, MemberTable.id), eq(GatewayKeyTable.organization_id, MemberTable.organizationId)))
     .innerJoin(GatewayProviderTable, eq(GatewayProviderTable.organization_id, MemberTable.organizationId))
     .innerJoin(grants, eq(grants.gateway_provider_id, GatewayProviderTable.id))
     .innerJoin(groups, and(eq(groups.id, grants.model_group_id), eq(groups.gateway_provider_id, GatewayProviderTable.id)))
@@ -56,7 +74,7 @@ function gatewayAccessQuery(scope: GatewayContext & { gatewayProviderId: Gateway
       sql`(JSON_LENGTH(${GatewayProviderTable.model_ids}) = 0 OR JSON_CONTAINS(${GatewayProviderTable.model_ids}, JSON_QUOTE(${models.model_id})))`))
     .where(and(
       eq(MemberTable.id, scope.orgMembershipId), eq(MemberTable.organizationId, scope.organizationId), isNull(MemberTable.removedAt), isNotNull(MemberTable.userId),
-      eq(GatewayKeyTable.id, scope.gatewayKeyId), eq(GatewayKeyTable.status, "active"), isNull(GatewayKeyTable.revoked_at),
+      callerKeyActive(scope),
       // Omitted only by loadMemberGatewayAccess; the org boundary still comes from the member join.
       scope.gatewayProviderId === undefined ? undefined : eq(GatewayProviderTable.id, scope.gatewayProviderId),
       eq(GatewayProviderTable.status, "active"), eq(groups.status, "active"), eq(sets.status, "active"),

@@ -14,6 +14,7 @@ export type FeatureIntroKey =
   | "ai-gateway.smart-routers"
   | "ai-gateway.limits"
   | "ai-gateway.users-and-teams"
+  | "ai-gateway.api-keys"
   | "ai-gateway.openwork-models"
   | "members"
   | "members.teams"

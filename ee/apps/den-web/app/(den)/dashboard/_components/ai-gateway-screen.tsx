@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, LockKeyhole, Plug, SlidersHorizontal, Sparkles, Users } from "lucide-react";
+import { KeyRound, LayoutDashboard, LockKeyhole, Plug, SlidersHorizontal, Sparkles, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
@@ -10,7 +10,7 @@ import { DenCard } from "../../_components/ui/card";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenNotice } from "../../_components/ui/notice";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
-import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute, getOrgAccessFlags, type DenOrgAccessFlags } from "../../_lib/den-org";
+import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute, getOrgAccessFlags, orgFeatureEnabled, type DenOrgAccessFlags } from "../../_lib/den-org";
 import { canOpenGatewayArea, gatewayAreaLockedMessage, type GatewayDashboardArea } from "../_lib/gateway-dashboard-access";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen, type FeatureIntroKey } from "../_features/feature-intros";
@@ -22,18 +22,20 @@ import { GatewayUsageSection } from "./gateway-usage-section";
 import { GatewayUsageLimitsSection } from "./gateway-usage-limits-section";
 import { GatewayUsageResetRequests } from "./gateway-usage-reset-requests";
 import { GatewayUsersTeamsSection } from "./gateway-users-teams-section";
+import { GatewayApiKeysAdminSection } from "./gateway-api-keys-admin-section";
 import { useOrgInferenceProviders } from "./inference-provider-data";
 import { GatewayProvidersSection } from "./inference-providers-screen";
 import { LegacyProvidersSection } from "./llm-providers-screen";
 import { InferenceScreen } from "./inference-screen";
 
-export type AiGatewayTab = "overview" | "ai-providers" | "limits" | "users-and-teams" | "openwork-models";
+export type AiGatewayTab = "overview" | "ai-providers" | "limits" | "users-and-teams" | "api-keys" | "openwork-models";
 
 const AI_GATEWAY_TABS: readonly TabItem<AiGatewayTab>[] = [
   { value: "overview", label: "Overview", icon: LayoutDashboard },
   { value: "ai-providers", label: "AI Providers", icon: Plug },
   { value: "limits", label: "Limits", icon: SlidersHorizontal },
   { value: "users-and-teams", label: "Users & Teams", icon: Users },
+  { value: "api-keys", label: "API Keys", icon: KeyRound },
   { value: "openwork-models", label: "OpenWork Models", icon: Sparkles },
 ];
 
@@ -43,6 +45,7 @@ const AI_GATEWAY_TAB_INTROS: Record<AiGatewayTab, FeatureIntroKey> = {
   "ai-providers": "ai-gateway.ai-providers",
   limits: "ai-gateway.limits",
   "users-and-teams": "ai-gateway.users-and-teams",
+  "api-keys": "ai-gateway.api-keys",
   "openwork-models": "ai-gateway.openwork-models",
 };
 
@@ -51,6 +54,7 @@ const GATEWAY_TAB_AREAS: Record<Exclude<AiGatewayTab, "openwork-models">, Gatewa
   "ai-providers": "providers",
   limits: "limits",
   "users-and-teams": "people",
+  "api-keys": "providers",
 };
 
 function canOpenAiGatewayTab(access: DenOrgAccessFlags, tab: AiGatewayTab): boolean {
@@ -125,7 +129,8 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
   );
   const router = useRouter();
   const searchParams = useSearchParams();
-  const tabs = AI_GATEWAY_TABS;
+  // API Keys only exists where member AI Gateway API keys are on (feature `gatewayMemberApiKeys`).
+  const tabs = orgFeatureEnabled(orgContext, "gatewayMemberApiKeys") ? AI_GATEWAY_TABS : AI_GATEWAY_TABS.filter((item) => item.value !== "api-keys");
   const introUnseen = useFeatureIntroUnseen();
   const introsEnabled = useFeatureIntroRuntime().enabled;
   // Smart Routers moved into AI Providers; old links to their tab land there.
@@ -174,6 +179,7 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
                     {tab === "overview" ? <AiGatewayOverview key={orgId} orgId={orgId} /> : null}
                     {tab === "ai-providers" ? <GatewayProvidersSection key={orgId} /> : null}
                     {tab === "users-and-teams" ? <GatewayUsersTeamsSection key={orgId} orgId={orgId} orgSlug={orgSlug} orgContext={orgContext} /> : null}
+                    {tab === "api-keys" ? <GatewayApiKeysAdminSection key={orgId} canManageKeys={memberAccess.canManageGatewayProviders} canManageSettings={memberAccess.canManageSettings} /> : null}
                     {tab === "limits" ? (
                       <>
                         <GatewayUsageResetRequests key={`requests-${orgId}`} orgId={orgId} members={orgContext.members} />
