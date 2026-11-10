@@ -44,7 +44,7 @@ const CLIENT_NAMES: Record<string, string> = {
 const CLIENT_COMMANDS: Record<string, string> = {
   "openwork-cli": "openwork-bootstrap login",
   "openwork-opencode-plugin": "opencode auth login openwork",
-  "openwork-desktop-device": "openwork-server device-login",
+  "openwork-desktop-device": "openwork login",
 };
 
 /** Where the person goes back to once the code is decided. */

@@ -77,7 +77,7 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") {
-      console.log("openwork-server device-login [--base-url URL] [--api-base-url URL] [--force]");
+      console.log("openwork-server login [--base-url URL] [--api-base-url URL] [--force]");
       return 0;
     }
     if (arg === "--force") { args.force = true; continue; }
@@ -87,7 +87,7 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
       else args.apiBaseUrl = value;
       continue;
     }
-    console.error("Unknown or missing device-login option. Use --help.");
+    console.error("Unknown or missing login option. Use --help.");
     return 1;
   }
   if (process.platform === "win32") {

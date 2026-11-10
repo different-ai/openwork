@@ -97,11 +97,9 @@ test("a remote desktop signs in with its own session to the workspace chosen on 
   });
 
   await step("the member explicitly chooses workspace B rather than the browser's active workspace A", async () => {
-    // A native select is driven with trusted keyboard input, never a state setter.
-    await browser.click({ role: "combobox", label: "Organization" });
-    await browser.press("Home");
-    for (let index = 0; index < world.orgBIndex; index++) await browser.press("ArrowDown");
-    await browser.press("Enter");
+    // The shared organization selector is a button/listbox, not an HTML combobox.
+    await browser.click({ role: "button", label: "Organization" });
+    await browser.click({ role: "option", label: world.orgB.name });
     await browser.see({ testId: "device-desktop-consent-line" }, { text: new RegExp(world.orgB.name) });
     await browser.click({ role: "button", label: "Approve" });
     await browser.see({ text: "Return to the OpenWork app on that computer." }, { timeoutMs: 30_000 });
