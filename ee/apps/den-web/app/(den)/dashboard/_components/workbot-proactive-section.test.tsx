@@ -23,7 +23,7 @@ import {
 import { WorkbotProactivePanel } from "./workbot-proactive-section";
 import { previewTime } from "./workbot-proactive-preview";
 import { WorkbotProactiveHealthTable } from "./workbot-proactive-health";
-import { addSourceChange, addableTo, allowAppChange, coreAppRows, makeDefaultChange, removeSourceChange, filterConnections, SUPPORTED_APPS_LINE, supportedToAdd, otherConnectionAdded, otherConnectionsRestLine, WorkbotProactiveSources } from "./workbot-proactive-sources";
+import { addSourceChange, addableTo, allowAppChange, coreAppRows, makeDefaultChange, removeSourceChange, filterConnections, supportedAppChange, supportedApps, otherConnectionAdded, otherConnectionsRestLine, WorkbotProactiveSources } from "./workbot-proactive-sources";
 
 const ready: WorkbotProactiveView = {
   settings: { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS, enabled: true },
@@ -415,24 +415,38 @@ test("grouped rows need the brief: without it the message types stay as they are
   assert.ok(text(renderGrouped(ready)).includes("Send messages to"));
 });
 
-test("data sources, with help: apps line up under column names, the default is a radio, and long lists can be filtered", () => {
+test("data sources, with help: only supported apps that were added are listed, with a clear default and Remove", () => {
   const props = { view: briefOn, canManage: true, saving: false, onChange: () => undefined };
   const html = renderToStaticMarkup(<WorkbotProactiveSources {...props} help />);
-  for (const about of ["Calendar", "Email", "Team chat", "Other context"]) assert.ok(html.includes(`aria-label="About ${about}"`), about);
+  for (const about of ["Calendar", "Email", "Team chat", "Other context", "Default for Calendar"]) assert.ok(html.includes(`aria-label="About ${about}"`), about);
   const view = text(html);
-  for (const column of ["App", "Connected", "Default", "Allowed", "4 members"]) assert.ok(view.includes(column), column);
-  assert.ok(view.includes("Add app"));
-  // "Add app" offers only apps that serve the source: here every one is already listed, so no other connection.
-  assert.deepEqual(supportedToAdd(briefOn, "calendar"), []);
-  assert.ok(addableTo(briefOn, "calendar").length > 0, "other connections exist, and are not offered");
-  assert.match(SUPPORTED_APPS_LINE.calendar, /Google Workspace and Microsoft 365/);
-  assert.ok(!view.includes("Make default"));
-  assert.match(html, /<input[^>]*type="radio"/);
-  assert.match(html, /aria-label="Make [^"]+ the default for Calendar"/);
+  for (const column of ["App", "Connected", "Default", "4 members", "Add app", "Remove"]) assert.ok(view.includes(column), column);
+  assert.ok(!view.includes("Allowed"));
+  assert.doesNotMatch(html, /type="radio"/);
+  // Other connections exist, and none of them is offered for calendar.
+  assert.ok(addableTo(briefOn, "calendar").length > 0);
+  assert.deepEqual(supportedApps(briefOn, "calendar").addable, []);
+  assert.deepEqual(supportedApps(briefOn, "calendar").listed.map((row) => row.option.id), ["google-workspace"]);
   const before = renderToStaticMarkup(<WorkbotProactiveSources {...props} />);
   assert.ok(!before.includes('aria-label="About'));
   assert.ok(text(before).includes("4 connected"));
-  assert.ok(!before.includes('type="radio"'));
+});
+
+test("a supported app is removed and added back; a connection that can't serve the source is dropped", () => {
+  const microsoft = { id: "microsoft-365", name: "Outlook Calendar", url: "https://microsoft.com", connectedMembers: 2, native: true, slots: ["calendar" as const] };
+  const google = { ...microsoft, id: "google-workspace", name: "Google Calendar", url: "https://google.com", connectedMembers: 4 };
+  const notes = { id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp", connectedMembers: null, native: false, slots: ["calendar" as const, "other" as const] };
+  const connections = briefOn.sourceConnections!;
+  const view = {
+    ...briefOn,
+    sourceConnections: { ...connections, calendar: [google, microsoft], all: [google, microsoft, notes] },
+    settings: { ...briefOn.settings, sources: { ...briefOn.settings.sources, coreConnections: { calendar: ["google-workspace", "emc_notes"] } } },
+  };
+  const apps = supportedApps(view, "calendar");
+  assert.deepEqual(apps.listed.map((row) => row.option.id), ["google-workspace"], "Meeting notes can't serve calendar: not listed");
+  assert.deepEqual(apps.addable.map((option) => option.id), ["microsoft-365"]);
+  assert.deepEqual(supportedAppChange(view, "calendar", "microsoft-365", true), { coreConnections: { calendar: null } }, "every supported app: back to automatic, without Meeting notes");
+  assert.deepEqual(supportedAppChange(view, "calendar", "google-workspace", false), { coreConnections: { calendar: [] } });
 });
 
 test("filtering connections matches part of a name, whatever its case", () => {

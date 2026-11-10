@@ -135,3 +135,16 @@ is already listed, the menu says which apps work and to connect one in
 Connectors. Any other connection is added under Other context. An app that
 was added before stays listed so it can be turned off; the server still
 accepts the older setting.
+
+## App lists under Calendar, Email and Team chat
+
+- The list holds only apps that serve the source and were added. A
+  connection that can't serve it is not shown, and is dropped from the saved
+  list the next time an app is added or removed.
+- **Default**: the default app shows a "Default" badge; the others show
+  "Set as default" in the same column. An "i" on the column says what the
+  default is. (The radio buttons are gone.)
+- **Remove** takes an app off the list (was the Allowed switch). The
+  default can't be removed until another app is the default.
+- **Add app** lists the supported apps: ones not on the list can be picked,
+  ones already there show "Added".

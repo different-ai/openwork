@@ -218,14 +218,31 @@ export const SUPPORTED_APPS_LINE: Record<AgentCoreSource, string> = {
   chat: "Team chat works with Microsoft 365 and Slack. Connect one in Connectors to add it here.",
 };
 
-/** The apps "Add app" offers for calendar, email or team chat: only ones that serve it, not any connection. */
-export function supportedToAdd(view: SourcesView, kind: AgentCoreSource): AgentSourceOption[] {
+/**
+ * With help on, calendar, email and team chat list only apps that serve them (never another connection), and only
+ * the ones added: `listed` are the rows, `addable` are what "Add app" still offers.
+ */
+export function supportedApps(view: SourcesView, kind: AgentCoreSource): { listed: CoreAppRow[]; addable: AgentSourceOption[] } {
   const serving = new Set(servingIds(view, kind));
-  return addableTo(view, kind).filter((option) => serving.has(option.id));
+  const rows = coreAppRows(view, kind).filter((row) => serving.has(row.option.id));
+  return { listed: rows.filter((row) => row.allowed), addable: rows.filter((row) => !row.allowed).map((row) => row.option) };
 }
 
-/** The columns of an app row with help on: the app, how many members connected it, the default, allowed. */
-const APP_COLUMNS = "grid grid-cols-[minmax(0,1fr)_6.5rem_4rem_4rem] items-center gap-x-4";
+/**
+ * Adds or removes one supported app for a core source. The saved list holds supported apps only, so a connection that
+ * can't serve the source is dropped; every supported app goes back to null (every one that serves it).
+ */
+export function supportedAppChange(view: SourcesView, kind: AgentCoreSource, connectionId: string, add: boolean): AgentSourcesPolicyInput {
+  const serving = servingIds(view, kind);
+  const listed = new Set(supportedApps(view, kind).listed.map((row) => row.option.id));
+  const next = serving.filter((id) => (id === connectionId ? add : listed.has(id)));
+  const coreConnections: NonNullable<AgentSourcesPolicyInput["coreConnections"]> = {};
+  coreConnections[kind] = next.length === serving.length ? null : next;
+  return { coreConnections };
+}
+
+/** The columns of an app row with help on: the app, how many members connected it, the default, Remove. */
+const APP_COLUMNS = "grid grid-cols-[minmax(0,1fr)_6.5rem_7.5rem_4.5rem] items-center gap-x-4";
 
 /** Other context shows a filter once the list is longer than this. */
 const FILTER_FROM = 8;
@@ -236,7 +253,16 @@ export function filterConnections<T extends { name: string }>(connections: reado
   return query ? connections.filter((connection) => connection.name.toLowerCase().includes(query)) : [...connections];
 }
 
-function AddSource<Option extends Pick<AgentSourceOption, "id" | "name" | "url">>({ slot, options, disabled, onPick, label = "Add source", emptyText = "Every connection is already here." }: { slot: AgentSourceSlot; options: Option[]; disabled: boolean; onPick: (option: Option) => void; label?: string; emptyText?: string }) {
+function AddSource<Option extends Pick<AgentSourceOption, "id" | "name" | "url">>({ slot, options, disabled, onPick, label = "Add source", emptyText = "Every connection is already here.", added = [] }: {
+  slot: AgentSourceSlot;
+  options: Option[];
+  disabled: boolean;
+  onPick: (option: Option) => void;
+  label?: string;
+  emptyText?: string;
+  /** Shown in the list too, marked "Added" and not pickable, so the list says what can be here. */
+  added?: Option[];
+}) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -260,7 +286,7 @@ function AddSource<Option extends Pick<AgentSourceOption, "id" | "name" | "url">
             </div>
           ) : null}
           <div className={denDropdownListClass} role="menu" aria-label={`Connections to add to ${SLOT_LABEL[slot]}`}>
-            {options.length === 0 ? <p className="max-w-[280px] px-3 py-2.5 text-[13px] leading-5 text-gray-500">{emptyText}</p> : null}
+            {options.length === 0 && added.length === 0 ? <p className="max-w-[280px] px-3 py-2.5 text-[13px] leading-5 text-gray-500">{emptyText}</p> : null}
             {options.length > 0 && shown.length === 0 ? <p className="px-3 py-2.5 text-[13px] text-gray-500">No connections match</p> : null}
             {shown.map((option) => (
               <button key={option.id} type="button" role="menuitem" aria-label={option.name} className={`${denDropdownRowBaseClass} ${denDropdownRowIdleClass} items-center justify-start`}
@@ -271,6 +297,15 @@ function AddSource<Option extends Pick<AgentSourceOption, "id" | "name" | "url">
                 <ConnectorLogo name={option.name} url={option.url} size="xs" />
                 <span className="truncate text-[13px] text-gray-900">{option.name}</span>
               </button>
+            ))}
+            {added.map((option) => (
+              <div key={option.id} role="menuitem" aria-disabled="true" aria-label={`${option.name}, added`} className={`${denDropdownRowBaseClass} cursor-default items-center justify-between gap-3`} data-testid={`workbot-source-added-${slot}-${option.id}`}>
+                <span className="flex min-w-0 items-center gap-2">
+                  <ConnectorLogo name={option.name} url={option.url} size="xs" />
+                  <span className="truncate text-[13px] text-gray-500">{option.name}</span>
+                </span>
+                <span className="shrink-0 text-[12px] text-gray-500">Added</span>
+              </div>
             ))}
           </div>
         </DenDropdownPopup>
@@ -292,7 +327,6 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
   tools?: { orgId: string; scope?: AgentPolicyScope; connectorHref: (connectionId: string) => string };
 }) {
   const headingId = useId();
-  const defaultGroup = useId();
   const [filter, setFilter] = useState("");
   const locked = !canManage || saving;
   const { sources } = view.settings;
@@ -309,45 +343,51 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
     <AgentConnectionTools orgId={tools.orgId} scope={tools.scope} connectionId={option.id} name={option.name} connectHref={tools.connectorHref(option.id)} disabled={locked} onChange={save} />
   ) : null;
 
-  // With help on: one aligned row per app under a line of column names, the default picked like a radio.
-  // Only the apps that serve the source are offered (and any an admin allowed before, so it can be turned off).
-  const coreTable = (kind: AgentCoreSource) => (
-    <>
-      <div className={`${APP_COLUMNS} py-1.5 pl-14 pr-6 text-[12px] text-gray-500`} aria-hidden="true">
-        <span>App</span>
-        <span>Connected</span>
-        <span className="text-center">Default</span>
-        <span className="text-center">Allowed</span>
-      </div>
-      {coreAppRows(view, kind).map(({ option, allowed, isDefault }) => {
-        const state = kind === "calendar" && allowed && option.native === false ? "Read on checks; no early meeting alerts" : null;
-        return (
-          <div key={option.id} className={`${APP_COLUMNS} min-h-[44px] py-2 pl-14 pr-6`} data-testid={`workbot-source-${kind}-${option.id}`} data-allowed={allowed} data-default={isDefault}>
+  // With help on: the supported apps that were added, one aligned row each. The default says "Default"; the others
+  // offer "Set as default" in the same place. Remove takes an app off the list; "Add app" puts it back.
+  const coreTable = (kind: AgentCoreSource) => {
+    const { listed, addable } = supportedApps(view, kind);
+    return (
+      <>
+        {listed.length > 0 ? (
+          <div className={`${APP_COLUMNS} py-1.5 pl-14 pr-6 text-[12px] text-gray-500`}>
+            <span>App</span>
+            <span>Connected</span>
+            <span className="flex items-center gap-1">Default<HelpTip label={`Default for ${SLOT_LABEL[kind]}`}>{AGENT_SOURCE_HELP.defaultApp}</HelpTip></span>
+            <span />
+          </div>
+        ) : <p className="py-2 pl-14 pr-6 text-[13px] text-gray-500" data-testid={`workbot-source-${kind}-empty`}>No apps added</p>}
+        {listed.map(({ option, isDefault }) => (
+          <div key={option.id} className={`${APP_COLUMNS} min-h-[44px] py-2 pl-14 pr-6`} data-testid={`workbot-source-${kind}-${option.id}`} data-allowed="true" data-default={isDefault}>
             <span className="flex min-w-0 items-center gap-3">
               <ConnectorLogo name={option.name} url={option.url} size="xs" />
-              <span className={`truncate text-[13px] ${allowed ? "text-gray-900" : "text-gray-500"}`}>{option.name}</span>
-              {allowed && !option.native ? toolsButtonOf(option) : null}
-              {state ? <span className="truncate text-[12px] text-gray-500">{state}</span> : null}
+              <span className="truncate text-[13px] text-gray-900">{option.name}</span>
+              {!option.native ? toolsButtonOf(option) : null}
             </span>
             <span className="whitespace-nowrap text-[12px] text-gray-500">
               {option.connectedMembers !== null ? `${option.connectedMembers} ${option.connectedMembers === 1 ? "member" : "members"}` : ""}
             </span>
-            <span className="flex justify-center">
-              <input type="radio" name={`${defaultGroup}-${kind}`} className="h-4 w-4 accent-gray-900 disabled:cursor-not-allowed" checked={isDefault} disabled={locked || !allowed}
-                aria-label={`Make ${option.name} the default for ${SLOT_LABEL[kind]}`}
-                onChange={() => { if (!isDefault) save(makeDefaultChange(kind, option.id)); }} />
+            <span className="flex items-center">
+              {isDefault ? <DenBadge size="sm">Default</DenBadge> : (
+                <DenButton variant="ghost" size="xs" disabled={locked} aria-label={`Set ${option.name} as the default for ${SLOT_LABEL[kind]}`}
+                  onClick={() => save(makeDefaultChange(kind, option.id))}>
+                  Set as default
+                </DenButton>
+              )}
             </span>
-            <span className="flex justify-center" title={isDefault ? "The default stays allowed. Pick another default first." : undefined}>
-              <DenSwitch size="sm" aria-label={`Allow ${option.name}`} checked={allowed} disabled={locked || isDefault}
-                onChange={(allow) => save(allowAppChange(view, kind, option.id, allow))} />
+            <span className="flex justify-end" title={isDefault ? "Set another app as the default first." : undefined}>
+              <DenButton variant="ghost" size="xs" disabled={locked || isDefault} aria-label={`Remove ${option.name} from ${SLOT_LABEL[kind]}`}
+                onClick={() => save(supportedAppChange(view, kind, option.id, false))}>
+                Remove
+              </DenButton>
             </span>
           </div>
-        );
-      })}
-      {/* Only the apps that serve the source can be added; any other connection is Other context. */}
-      <AddSource slot={kind} label="Add app" options={supportedToAdd(view, kind)} emptyText={SUPPORTED_APPS_LINE[kind]} disabled={locked} onPick={(option) => save(addSourceChange(view, kind, option.id))} />
-    </>
-  );
+        ))}
+        <AddSource slot={kind} label="Add app" options={addable} added={listed.map((row) => row.option)} emptyText={SUPPORTED_APPS_LINE[kind]} disabled={locked}
+          onPick={(option) => save(supportedAppChange(view, kind, option.id, true))} />
+      </>
+    );
+  };
 
   const coreRows = (kind: AgentCoreSource) => help ? coreTable(kind) : (
     <>

@@ -50,4 +50,5 @@ export const AGENT_SOURCE_HELP = {
   policy: "On for everyone: every member's agent reads it. Members choose: each member decides. Not allowed: agents don't read it.",
   apps: "Each member's agent reads one of the allowed apps: the default, unless the member picks another allowed one.",
   other: "Other connections agents may read for context. Each has its own setting.",
+  defaultApp: "The app a member's agent reads unless the member picks another app from this list.",
 } as const;
