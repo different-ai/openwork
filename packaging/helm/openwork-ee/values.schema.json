@@ -589,7 +589,7 @@
                 true,
                 false
               ],
-              "description": "Workbot: settings in tabs: Workbot's settings are split into three tabs, General, Members' agents and What agents read, instead of one long page: in Manage › Workbot and on the Workbot section of a team's page and Everyone's page. With Your agent's brief on, the Members' agents tab groups its rows (Messages, Schedule), uses switches for yes or no choices and explains each row in a tooltip. Turning it off restores the single page and its rows. Renders DEN_FEATURE_WORKBOT_SETTINGS_TABS."
+              "description": "Workbot: settings in tabs: Workbot's settings are split into three tabs, General, Agents and Data sources, instead of one long page: in Manage › Workbot and on the Workbot section of a team's page and Everyone's page. With Your agent's brief on, the Agents tab groups its rows (Messages, Schedule), uses switches for yes or no choices and explains each row in a tooltip. Turning it off restores the single page and its rows. Renders DEN_FEATURE_WORKBOT_SETTINGS_TABS."
             },
             "workbotStepLimit": {
               "enum": [

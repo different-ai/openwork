@@ -1,6 +1,6 @@
 "use client";
 
-import { Lock, Plus } from "lucide-react";
+import { Lock, Plus, Search } from "lucide-react";
 import { useId, useRef, useState } from "react";
 import {
   AGENT_CORE_SOURCES,
@@ -23,6 +23,7 @@ import {
 import { permissionLockReason } from "../../_lib/den-org";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenButton } from "../../_components/ui/button";
+import { DenInput } from "../../_components/ui/input";
 import { DenDropdownPopup, DenDropdownRoot, DenDropdownTrigger } from "../../_components/ui/dropdown-popup";
 import { denDropdownListClass, denDropdownRowBaseClass, denDropdownRowIdleClass } from "../../_components/ui/dropdown-styles";
 import { DenSelect } from "../../_components/ui/select";
@@ -197,7 +198,19 @@ function PolicySelect({ label, value, disabled, onChange }: { label: string; val
   );
 }
 
-function AddSource({ slot, options, disabled, onPick }: { slot: AgentSourceSlot; options: AgentSourceOption[]; disabled: boolean; onPick: (option: AgentSourceOption) => void }) {
+/** The columns of an app row with help on: the app, how many members connected it, the default, allowed. */
+const APP_COLUMNS = "grid grid-cols-[minmax(0,1fr)_6.5rem_4rem_4rem] items-center gap-x-4";
+
+/** Other context shows a filter once the list is longer than this. */
+const FILTER_FROM = 8;
+
+/** The connections whose name contains what was typed, ignoring case. */
+export function filterConnections<T extends { name: string }>(connections: readonly T[], typed: string): T[] {
+  const query = typed.trim().toLowerCase();
+  return query ? connections.filter((connection) => connection.name.toLowerCase().includes(query)) : [...connections];
+}
+
+function AddSource({ slot, options, disabled, onPick, label = "Add source" }: { slot: AgentSourceSlot; options: AgentSourceOption[]; disabled: boolean; onPick: (option: AgentSourceOption) => void; label?: string }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
@@ -207,7 +220,7 @@ function AddSource({ slot, options, disabled, onPick }: { slot: AgentSourceSlot;
         data-testid={`workbot-source-add-${slot}`}
         className="flex min-h-[40px] items-center gap-2 rounded-lg pl-14 pr-6 text-left text-[13px] font-medium text-gray-700 outline-hidden hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-gray-900/5 disabled:cursor-not-allowed disabled:opacity-60">
         <Plus size={16} strokeWidth={1.5} aria-hidden="true" />
-        Add source
+        {label}
       </DenDropdownTrigger>
       {open ? (
         <DenDropdownPopup anchor={triggerRef} popupRef={popupRef}>
@@ -243,6 +256,8 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
   tools?: { orgId: string; scope?: AgentPolicyScope; connectorHref: (connectionId: string) => string };
 }) {
   const headingId = useId();
+  const defaultGroup = useId();
+  const [filter, setFilter] = useState("");
   const locked = !canManage || saving;
   const { sources } = view.settings;
   const connections = view.sourceConnections;
@@ -258,7 +273,45 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
     <AgentConnectionTools orgId={tools.orgId} scope={tools.scope} connectionId={option.id} name={option.name} connectHref={tools.connectorHref(option.id)} disabled={locked} onChange={save} />
   ) : null;
 
-  const coreRows = (kind: AgentCoreSource) => (
+  // With help on: one aligned row per app under a line of column names, the default picked like a radio.
+  const coreTable = (kind: AgentCoreSource) => (
+    <>
+      <div className={`${APP_COLUMNS} py-1.5 pl-14 pr-6 text-[12px] text-gray-500`} aria-hidden="true">
+        <span>App</span>
+        <span>Connected</span>
+        <span className="text-center">Default</span>
+        <span className="text-center">Allowed</span>
+      </div>
+      {coreAppRows(view, kind).map(({ option, allowed, isDefault }) => {
+        const state = kind === "calendar" && allowed && option.native === false ? "Read on checks; no early meeting alerts" : null;
+        return (
+          <div key={option.id} className={`${APP_COLUMNS} min-h-[44px] py-2 pl-14 pr-6`} data-testid={`workbot-source-${kind}-${option.id}`} data-allowed={allowed} data-default={isDefault}>
+            <span className="flex min-w-0 items-center gap-3">
+              <ConnectorLogo name={option.name} url={option.url} size="xs" />
+              <span className={`truncate text-[13px] ${allowed ? "text-gray-900" : "text-gray-500"}`}>{option.name}</span>
+              {allowed && !option.native ? toolsButtonOf(option) : null}
+              {state ? <span className="truncate text-[12px] text-gray-500">{state}</span> : null}
+            </span>
+            <span className="whitespace-nowrap text-[12px] text-gray-500">
+              {option.connectedMembers !== null ? `${option.connectedMembers} ${option.connectedMembers === 1 ? "member" : "members"}` : ""}
+            </span>
+            <span className="flex justify-center">
+              <input type="radio" name={`${defaultGroup}-${kind}`} className="h-4 w-4 accent-gray-900 disabled:cursor-not-allowed" checked={isDefault} disabled={locked || !allowed}
+                aria-label={`Make ${option.name} the default for ${SLOT_LABEL[kind]}`}
+                onChange={() => { if (!isDefault) save(makeDefaultChange(kind, option.id)); }} />
+            </span>
+            <span className="flex justify-center" title={isDefault ? "The default stays allowed. Pick another default first." : undefined}>
+              <DenSwitch size="sm" aria-label={`Allow ${option.name}`} checked={allowed} disabled={locked || isDefault}
+                onChange={(allow) => save(allowAppChange(view, kind, option.id, allow))} />
+            </span>
+          </div>
+        );
+      })}
+      <AddSource slot={kind} label="Add app" options={addableTo(view, kind)} disabled={locked} onPick={(option) => save(addSourceChange(view, kind, option.id))} />
+    </>
+  );
+
+  const coreRows = (kind: AgentCoreSource) => help ? coreTable(kind) : (
     <>
       {coreAppRows(view, kind).map(({ option, allowed, isDefault }) => {
         const state = kind === "calendar" && allowed && option.native === false ? "Read on checks; no early meeting alerts" : null;
@@ -269,18 +322,16 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
                 <ConnectorLogo name={option.name} url={option.url} size="xs" />
                 <span className={`truncate text-[13px] ${allowed ? "text-gray-900" : "text-gray-500"}`}>{option.name}</span>
                 {isDefault ? <DenBadge size="sm">Default</DenBadge> : null}
-                {option.connectedMembers !== null ? <span className="whitespace-nowrap text-[12px] text-gray-500">{help ? `${option.connectedMembers} ${option.connectedMembers === 1 ? "member" : "members"} connected` : `${option.connectedMembers} connected`}</span> : null}
+                {option.connectedMembers !== null ? <span className="whitespace-nowrap text-[12px] text-gray-500">{`${option.connectedMembers} connected`}</span> : null}
                 {state ? <span className="text-[12px] text-gray-500">{state}</span> : null}
               </span>
               <span className="flex min-w-0 flex-wrap items-center justify-end gap-3">
-                {allowed && !option.native ? toolsButtonOf(option) : null}
                 {allowed && !isDefault ? (
                   <DenButton variant="ghost" size="xs" disabled={locked} aria-label={`Make ${option.name} the default for ${SLOT_LABEL[kind]}`}
                     onClick={() => save(makeDefaultChange(kind, option.id))}>
                     Make default
                   </DenButton>
                 ) : null}
-                {help ? <span className="text-[12px] text-gray-500" aria-hidden="true">{allowed ? "Allowed" : "Not allowed"}</span> : null}
                 <DenSwitch size="sm" aria-label={`Allow ${option.name}`} checked={allowed} disabled={locked || isDefault}
                   onChange={(allow) => save(allowAppChange(view, kind, option.id, allow))} />
               </span>
@@ -295,10 +346,19 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
 
   // With the brief: every connection, each with its policy and its tools; nothing to add or remove.
   const everyConnectionRows = () => {
-    const every = connections?.other ?? [];
+    const all = connections?.other ?? [];
+    const filtering = help && all.length > FILTER_FROM;
+    const every = filtering ? filterConnections(all, filter) : all;
     return (
       <>
-        {every.length === 0 ? <p className="py-2 pl-14 pr-6 text-[13px] text-gray-500" data-testid="workbot-source-other-empty">No connections</p> : null}
+        {filtering ? (
+          <div className="py-2 pl-14 pr-6">
+            <DenInput type="search" icon={Search} aria-label="Find a connection" placeholder="Find a connection" value={filter} data-testid="workbot-source-other-filter"
+              onChange={(event) => setFilter(event.target.value)} />
+          </div>
+        ) : null}
+        {all.length === 0 ? <p className="py-2 pl-14 pr-6 text-[13px] text-gray-500" data-testid="workbot-source-other-empty">No connections</p> : null}
+        {all.length > 0 && every.length === 0 ? <p className="py-2 pl-14 pr-6 text-[13px] text-gray-500" data-testid="workbot-source-other-no-match">No connections match</p> : null}
         {every.map((option) => {
           const policy = otherPolicy(view, option);
           return (
@@ -307,9 +367,9 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
                 <span className="flex min-w-0 items-center gap-3">
                   <ConnectorLogo name={option.name} url={option.url} size="xs" />
                   <span className={`truncate text-[13px] ${policy === "off" ? "text-gray-500" : "text-gray-900"}`}>{option.name}</span>
+                  {policy !== "off" ? toolsButtonOf(option) : null}
                 </span>
                 <span className="flex min-w-0 flex-wrap items-center justify-end gap-3">
-                  {policy !== "off" ? toolsButtonOf(option) : null}
                   <PolicySelect label={option.name} value={policy} disabled={locked} onChange={(next) => save({ connections: { [option.id]: next } })} />
                 </span>
               </div>

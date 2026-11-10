@@ -3,9 +3,16 @@ export type WorkbotSettingsTab = "general" | "agents" | "context";
 
 export const WORKBOT_SETTINGS_TABS: readonly { value: WorkbotSettingsTab; label: string }[] = [
   { value: "general", label: "General" },
-  { value: "agents", label: "Members' agents" },
-  { value: "context", label: "What agents read" },
+  { value: "agents", label: "Agents" },
+  { value: "context", label: "Data sources" },
 ];
+
+/** One sentence under the tabs: what the open tab is for. */
+export const WORKBOT_SETTINGS_TAB_PURPOSE: Record<WorkbotSettingsTab, string> = {
+  general: "How Workbot works for members: whether it is on, the model it starts on and what it is called.",
+  agents: "Each member has an agent that checks their work in the background and messages them when something needs them.",
+  context: "What members' agents may read to find what needs attention. Agents never send, edit or delete through these.",
+};
 
 /** Which part of the members' agents section shows: all of it, how agents work, or what they read. */
 export type WorkbotAgentsPart = "all" | "policy" | "sources";

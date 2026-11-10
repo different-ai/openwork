@@ -300,11 +300,13 @@ export function WorkbotProactiveSection({ orgId, canManage, connectorsHref, scop
     onEdit?.();
     save.mutate(next);
   };
-  const heading = <h2 id={headingId} className="px-1 text-[13px] font-medium text-gray-500">{show === "sources" ? "What agents read" : "Members' agents"}</h2>;
+  // In a tab, the tab already names the part: no heading on its own, and beside a team's chip it says whose settings these are.
+  const inTab = show !== "all";
+  const heading = <h2 id={headingId} className="px-1 text-[13px] font-medium text-gray-500">{inTab ? (show === "sources" ? "Data sources" : "Agents") : "Members' agents"}</h2>;
 
   return (
-    <section aria-labelledby={headingId} className="grid gap-2" data-section="workbot-proactive">
-      {headerAside ? (
+    <section aria-labelledby={inTab && !headerAside ? undefined : headingId} aria-label={inTab && !headerAside ? (show === "sources" ? "Data sources" : "Agents") : undefined} className="grid gap-2" data-section="workbot-proactive">
+      {inTab && !headerAside ? null : headerAside ? (
         <div className="flex min-h-6 flex-wrap items-center justify-between gap-3 pr-1">
           {heading}
           <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">{headerAside}</div>

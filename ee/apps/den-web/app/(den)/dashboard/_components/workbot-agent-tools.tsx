@@ -166,7 +166,16 @@ function DialogToolRow({ tool, connectionId, disabled, onChange }: { tool: Agent
   );
 }
 
-/** The button and its dialog, from a loaded view (rendered without fetching in tests). */
+/** The link's words: how many tools agents may call, or why that isn't known, short enough for a row. */
+export function toolsLinkLabel(view: AgentConnectionToolsView | undefined, failed: boolean): string {
+  if (failed) return "Couldn't load tools";
+  if (!view) return "Tools";
+  if (view.status === "needs_connection") return "Connect to see tools";
+  if (view.status === "unavailable") return "Tools unavailable";
+  return readToolsLine(view.readTools);
+}
+
+/** The link and its dialog, from a loaded view (rendered without fetching in tests). */
 export function ConnectionToolsButton({ view, failed, name, connectionId, connectHref, disabled, onChange, initialOpen = false }: {
   view: AgentConnectionToolsView | undefined;
   failed: boolean;
@@ -181,9 +190,15 @@ export function ConnectionToolsButton({ view, failed, name, connectionId, connec
   const state = toolsSummary(view, failed, name);
   const chosen = view?.tools.some((tool) => tool.override !== null) ?? false;
   return (
-    <span className="flex min-w-0 items-center gap-2" data-testid={`workbot-agent-tools-${connectionId}`} data-read-tools={view?.readTools ?? ""}>
-      {state ? <span className="truncate text-[12px] text-gray-500">{state}</span> : null}
-      <DenButton variant="secondary" size="xs" aria-label={`Manage tools for ${name}`} onClick={() => setOpen(true)}>Manage tools</DenButton>
+    <span className="flex min-w-0 items-center" data-testid={`workbot-agent-tools-${connectionId}`} data-read-tools={view?.readTools ?? ""}>
+      <button
+        type="button"
+        aria-label={`Manage tools for ${name}: ${toolsLinkLabel(view, failed)}`}
+        onClick={() => setOpen(true)}
+        className="truncate rounded text-[12px] text-gray-600 underline decoration-gray-300 underline-offset-2 hover:text-gray-900 hover:decoration-gray-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400"
+      >
+        {toolsLinkLabel(view, failed)}
+      </button>
       <Dialog.Root open={open} onOpenChange={setOpen}>
         <Dialog.Portal>
           <Dialog.Backdrop className="fixed inset-0 z-50 bg-gray-950/20" />
