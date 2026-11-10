@@ -10,6 +10,8 @@ beforeEach(() => GlobalRegistrator.register({ url: "http://localhost:5173/" }));
 afterEach(async () => { getReactQueryClient().clear(); await GlobalRegistrator.unregister(); });
 
 type Login = "ok" | "signed-out" | "missing";
+/** What the server's sign-in route answers, one per request; the last answer repeats. */
+type SignIn = { status: "idle" | "waiting" | "signed_in"; installed?: boolean } | { status: "failed"; message: string } | { error: number; code: string; message: string };
 const PROBLEMS: Record<Exclude<Login, "ok">, { status: "needs_auth"; message: string; url?: string }> = {
   "signed-out": { status: "needs_auth", message: "Claude Code is not logged in. Run `claude auth login` in a terminal." },
   missing: { status: "needs_auth", message: "Claude Code is not installed. Install it, then run `claude auth login`.", url: "https://code.claude.com/docs/en/setup" },
@@ -21,7 +23,7 @@ const PROBLEMS: Record<Exclude<Login, "ok">, { status: "needs_auth"; message: st
  * its models and, when the login is not usable, reports a problem on the
  * active reference. `probeReads` is how many integration reads that takes.
  */
-function fixture(input: { enabled?: boolean; workspace?: string | null; legacyFails?: boolean; uncertainPost?: boolean; catalogFails?: boolean; login?: Login; probeReads?: number; settleMs?: number; timeoutMs?: number; beforeRequest?: (request: Request, integration: ClaudeAgentIntegration) => void | Promise<void> } = {}) {
+function fixture(input: { enabled?: boolean; workspace?: string | null; legacyFails?: boolean; uncertainPost?: boolean; catalogFails?: boolean; login?: Login; probeReads?: number; settleMs?: number; timeoutMs?: number; signIn?: SignIn[]; beforeRequest?: (request: Request, integration: ClaudeAgentIntegration) => void | Promise<void> } = {}) {
   let enabled = input.enabled ?? true;
   let workspace = input.workspace === undefined ? "workspace" : input.workspace;
   let login: Login = input.login ?? "ok";
@@ -31,6 +33,7 @@ function fixture(input: { enabled?: boolean; workspace?: string | null; legacyFa
   let policyBlocked = false;
   let modelsListed = false;
   let pendingProbe: number | null = null;
+  const signIn = [...(input.signIn ?? [])];
   let integration: ClaudeAgentIntegration = {
     id: "claude-agent", name: "Claude Agent",
     methods: [{ id: "claude-login", type: "external", label: "Claude Code login (claude auth login)" }], connections: [],
@@ -46,6 +49,15 @@ function fixture(input: { enabled?: boolean; workspace?: string | null; legacyFa
     requests.push(request.clone());
     const path = new URL(request.url).pathname;
     await input.beforeRequest?.(request, integration);
+    if (path === "/claude-code/sign-in") {
+      const answer = signIn.length > 1 ? signIn.shift() : signIn[0];
+      if (request.method === "DELETE") return Response.json({ status: "idle" });
+      if (!answer) return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
+      if (answer && "error" in answer) return Response.json({ code: answer.code, message: answer.message }, { status: answer.error });
+      // Signing in is what makes a signed-out Claude Code usable.
+      if (answer.status === "signed_in") login = "ok";
+      return Response.json(answer);
+    }
     if (path.endsWith("/connect/external")) {
       integration.connections.unshift({ type: "credential", id: `credential-${nextCredential++}`, label: "Claude Code", method: "external" });
       pendingProbe = input.probeReads ?? 1;
@@ -75,7 +87,8 @@ function fixture(input: { enabled?: boolean; workspace?: string | null; legacyFa
   const client = createClientV2("http://localhost:8787/opencode2", "/workspace", {});
   const store = createProviderAuthStore({
     claudeAgentEnabled: () => enabled, nativeOpenworkClient: () => server, nativeWorkspaceId: () => workspace,
-    claudeCheckTiming: { pollMs: 1, settleMs: input.settleMs ?? 15, timeoutMs: input.timeoutMs ?? 400, followUpMs: 60_000 },
+    claudeCheckTiming: { pollMs: 1, settleMs: input.settleMs ?? 15, timeoutMs: input.timeoutMs ?? 400, followUpMs: 60_000, signInPollMs: 1 },
+    claudeSignInAvailable: () => input.signIn !== undefined,
     client: () => client, providers: () => [], providerDefaults: () => ({}), providerConnectedIds: () => [], disabledProviders: () => [],
     checkDesktopAppRestriction: () => policyBlocked,
     selectedWorkspaceDisplay: () => ({ id: "workspace", name: "Workspace", path: "/workspace", preset: "default", workspaceType: "local" }),
@@ -381,4 +394,143 @@ test("a model list that cannot be read is not taken for a working login", async 
     await expect(f.store.connectClaudeAgent()).rejects.toThrow("Couldn't confirm that Claude Code is ready");
     expect(f.store.getSnapshot().claudeAgent?.verified).toBe(false);
   } finally { f.cleanup(); }
+});
+
+const signInRequests = (f: ReturnType<typeof fixture>) => f.requests.filter((request) => new URL(request.url).pathname === "/claude-code/sign-in");
+
+test("sign-in is offered only where OpenWork can run it, and uses the host token, never the workspace proxy", async () => {
+  const web = fixture();
+  try {
+    expect(web.store.getSnapshot().claudeAgent?.canSignIn).toBe(false);
+    await expect(web.store.signInClaudeAgent()).rejects.toThrow("not available");
+    expect(signInRequests(web)).toHaveLength(0);
+  } finally { web.cleanup(); }
+  const f = fixture({ signIn: [{ status: "signed_in" }] });
+  try {
+    expect(f.store.getSnapshot().claudeAgent?.canSignIn).toBe(true);
+    expect(await f.store.signInClaudeAgent()).toBe("Claude Code connected");
+    const [start] = signInRequests(f);
+    expect(start?.method).toBe("POST");
+    expect(start?.headers.get("x-openwork-host-token")).toBe("fixture-host");
+    expect(start?.headers.get("authorization")).toBeNull();
+    expect(await start?.json()).toEqual({ force: false });
+  } finally { f.cleanup(); }
+});
+
+test("a Claude Code that is already signed in connects without the browser step", async () => {
+  const f = fixture({ signIn: [{ status: "signed_in" }] });
+  try {
+    const pending = f.store.signInClaudeAgent();
+    expect(f.store.getSnapshot().claudeAgent).toMatchObject({ busy: true, checking: true, signingIn: false });
+    expect(await pending).toBe("Claude Code connected");
+    expect(signInRequests(f)).toHaveLength(1);
+    expect(f.store.getSnapshot().claudeAgent).toMatchObject({ busy: false, checking: false, signingIn: false, verified: true });
+  } finally { f.cleanup(); }
+});
+
+test("a signed-out Claude Code waits on its browser sign-in, then connects by itself", async () => {
+  let waiting = false;
+  const f = fixture({ login: "signed-out", signIn: [{ status: "waiting" }, { status: "waiting" }, { status: "waiting" }, { status: "signed_in" }] });
+  try {
+    const stop = f.store.subscribe(() => { waiting ||= f.store.getSnapshot().claudeAgent?.signingIn === true; });
+    expect(await f.store.signInClaudeAgent()).toBe("Claude Code connected");
+    stop();
+    expect(waiting).toBe(true);
+    expect(posts(f).filter((request) => request.url.endsWith("/connect/external"))).toHaveLength(1);
+    expect(f.store.getSnapshot().claudeAgent).toMatchObject({ signingIn: false, verified: true, error: null });
+  } finally { f.cleanup(); }
+});
+
+test("a sign-in that fails or a missing Claude Code ends with the reason and never connects", async () => {
+  for (const answer of [
+    { status: "failed", message: "Claude Code could not finish signing in. Sign in again, or run claude auth login in a terminal." },
+    { error: 409, code: "claude_code_not_installed", message: "Claude Code is not installed. Install it, then sign in." },
+  ] satisfies SignIn[]) {
+    const f = fixture({ signIn: [answer] });
+    try {
+      await expect(f.store.signInClaudeAgent()).rejects.toThrow(answer.message);
+      expect(f.store.getSnapshot().claudeAgent).toMatchObject({ busy: false, signingIn: false, error: answer.message });
+      expect(posts(f).filter((request) => request.url.endsWith("/connect/external"))).toHaveLength(0);
+    } finally { f.cleanup(); }
+  }
+});
+
+test("after a failed check, signing in again asks for a fresh browser sign-in", async () => {
+  const f = fixture({ login: "signed-out", probeReads: 2, signIn: [{ status: "waiting" }, { status: "signed_in" }] });
+  try {
+    await expect(f.store.connectClaudeAgent()).rejects.toThrow("not logged in");
+    const pending = f.store.signInClaudeAgent();
+    // The browser is certain to open, so the sheet says so straight away.
+    expect(f.store.getSnapshot().claudeAgent?.signingIn).toBe(true);
+    expect(await pending).toBe("Claude Code connected");
+    expect(await signInRequests(f)[0]?.json()).toEqual({ force: true });
+  } finally { f.cleanup(); }
+});
+
+test("cancel stops waiting, tells the server, and nothing connects", async () => {
+  const f = fixture({ login: "signed-out", signIn: [{ status: "waiting" }] });
+  try {
+    const pending = f.store.signInClaudeAgent();
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(f.store.getSnapshot().claudeAgent?.signingIn).toBe(true);
+    await f.store.cancelClaudeAgentSignIn();
+    expect(await pending).toBeUndefined();
+    expect(signInRequests(f).at(-1)?.method).toBe("DELETE");
+    expect(f.store.getSnapshot().claudeAgent).toMatchObject({ busy: false, signingIn: false, error: null });
+    expect(posts(f).filter((request) => request.url.endsWith("/connect/external"))).toHaveLength(0);
+  } finally { f.cleanup(); }
+});
+
+test("a server too old to run the sign-in says to use the terminal", async () => {
+  const f = fixture({ signIn: [] });
+  try {
+    await expect(f.store.signInClaudeAgent()).rejects.toThrow();
+    expect(f.store.getSnapshot().claudeAgent?.error).toContain("Run claude auth login in a terminal");
+  } finally { f.cleanup(); }
+});
+
+test("the step learns whether Claude Code is installed, and finds it once the person has installed it", async () => {
+  const f = fixture({ signIn: [{ status: "idle", installed: false }, { status: "idle", installed: false }, { status: "idle", installed: true }] });
+  try {
+    expect(f.store.getSnapshot().claudeAgent?.installed).toBeUndefined();
+    await f.store.checkClaudeAgentInstalled();
+    expect(f.store.getSnapshot().claudeAgent?.installed).toBe(false);
+    expect(signInRequests(f).map((request) => request.method)).toEqual(["GET"]);
+    expect(signInRequests(f)[0]?.headers.get("x-openwork-host-token")).toBe("fixture-host");
+    await f.store.checkClaudeAgentInstalled();
+    await f.store.checkClaudeAgentInstalled();
+    expect(f.store.getSnapshot().claudeAgent?.installed).toBe(true);
+    // Looking never starts a sign-in or connects anything.
+    expect(posts(f)).toHaveLength(0);
+  } finally { f.cleanup(); }
+});
+
+test("a missing Claude Code is remembered as not installed, and installing it clears that reason", async () => {
+  const f = fixture({ signIn: [{ error: 409, code: "claude_code_not_installed", message: "Claude Code is not installed. Install it, then sign in." }, { status: "idle", installed: true }, { status: "signed_in", installed: true }] });
+  try {
+    await expect(f.store.signInClaudeAgent()).rejects.toThrow("not installed");
+    expect(f.store.getSnapshot().claudeAgent).toMatchObject({ installed: false, error: "Claude Code is not installed. Install it, then sign in." });
+    await f.store.checkClaudeAgentInstalled();
+    expect(f.store.getSnapshot().claudeAgent).toMatchObject({ installed: true, error: null });
+    // The new install has no login to replace: ask whether it is signed in before opening the browser.
+    expect(await f.store.signInClaudeAgent()).toBe("Claude Code connected");
+    expect(await signInRequests(f).at(-1)?.json()).toEqual({ force: false });
+  } finally { f.cleanup(); }
+});
+
+test("where OpenWork cannot look, or the server is too old to say, installed stays unknown", async () => {
+  const web = fixture();
+  try {
+    await web.store.checkClaudeAgentInstalled();
+    expect(signInRequests(web)).toHaveLength(0);
+    expect(web.store.getSnapshot().claudeAgent?.installed).toBeUndefined();
+  } finally { web.cleanup(); }
+  for (const signIn of [[], [{ status: "idle" }]] satisfies SignIn[][]) {
+    const f = fixture({ signIn });
+    try {
+      await f.store.checkClaudeAgentInstalled();
+      expect(f.store.getSnapshot().claudeAgent?.installed).toBeUndefined();
+      expect(f.store.getSnapshot().claudeAgent?.error).toBeNull();
+    } finally { f.cleanup(); }
+  }
 });

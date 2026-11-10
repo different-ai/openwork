@@ -2748,6 +2748,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         )}
         claudeAgent={providerAuthSnapshot.claudeAgent}
         onConnectClaudeAgent={providerAuthStore.connectClaudeAgent}
+        onSignInClaudeAgent={providerAuthStore.signInClaudeAgent}
+        onCancelClaudeAgentSignIn={providerAuthStore.cancelClaudeAgentSignIn}
+        onCheckClaudeAgentInstalled={providerAuthStore.checkClaudeAgentInstalled}
         onSelect={providerAuthStore.startProviderAuth}
         onSubmitApiKey={providerAuthStore.submitProviderApiKey}
         onSubmitOAuth={providerAuthStore.completeProviderAuthOAuth}

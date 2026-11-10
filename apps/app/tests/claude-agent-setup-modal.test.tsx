@@ -104,6 +104,100 @@ test("a failed check shows the engine's reason and offers to check again, and th
   expect(document.body.textContent).not.toContain("Connection saved");
 });
 
+test("where OpenWork can open the sign-in, the step is one action with no command to run", async () => {
+  let signIns = 0; let closed = 0;
+  await mount({
+    preferredProviderId: "claude-agent", claudeAgent: { ...setup, canSignIn: true }, onClose: () => { closed += 1; },
+    onSignInClaudeAgent: async () => { signIns += 1; return "Claude Code connected"; },
+    onConnectClaudeAgent: async () => { throw new Error("Connect must go through the sign-in"); },
+  });
+  expect(step()?.textContent).toContain("Uses your Claude plan through Claude Code on this computer.");
+  expect(step()?.textContent).toContain("Install Claude Code");
+  expect(step()?.textContent).not.toContain("claude auth login");
+  expect(buttons().filter((label) => label === "Connect" || label === "Sign in again" || label === "Check again" || label === "Copy")).toEqual(["Connect"]);
+  await act(async () => button("Connect").click());
+  await settle();
+  expect(signIns).toBe(1);
+  expect(closed).toBe(1);
+});
+
+test("while the browser sign-in is open the step says so, and Cancel or closing the sheet stops it", async () => {
+  let cancels = 0;
+  await mount({
+    preferredProviderId: "claude-agent", claudeAgent: { ...setup, canSignIn: true, busy: true, signingIn: true },
+    onSignInClaudeAgent: async () => "Claude Code connected", onCancelClaudeAgentSignIn: () => { cancels += 1; },
+  });
+  expect(document.querySelector('[data-testid="claude-code-waiting"]')?.textContent).toContain("Continue in your browser");
+  const action = document.querySelector('[data-testid="claude-code-connect"]') as HTMLButtonElement;
+  expect(action.textContent).toContain("Waiting for sign-in…");
+  expect(action.disabled).toBe(true);
+  expect(button("Back").disabled).toBe(true);
+  await act(async () => button("Cancel").click());
+  expect(cancels).toBe(1);
+  await act(async () => button("Close").click());
+  expect(cancels).toBe(2);
+});
+
+test("after a failed sign-in the step keeps the reason and offers to sign in again", async () => {
+  const reason = "Claude Code is not logged in. Run claude auth login in a terminal.";
+  await mount({
+    preferredProviderId: "claude-agent", onSignInClaudeAgent: async () => "Claude Code connected",
+    claudeAgent: { ...connected({ status: "needs_auth", message: reason }), error: reason, canSignIn: true, installed: true },
+  });
+  expect(document.body.textContent).toContain(reason);
+  expect(button("Sign in again").disabled).toBe(false);
+});
+
+const missingCard = () => document.querySelector('[data-testid="claude-code-missing"]');
+test("a missing Claude Code is its own state: one action that opens the installer, no error and no Connect", async () => {
+  const opened: string[] = [];
+  const open = window.open;
+  window.open = ((url: string) => { opened.push(url); return null; }) as typeof window.open;
+  try {
+    let checks = 0;
+    const render = await mount({
+      preferredProviderId: "claude-agent", onSignInClaudeAgent: async () => "Claude Code connected", onCheckClaudeAgentInstalled: () => { checks += 1; },
+      claudeAgent: { ...setup, canSignIn: true, installed: false },
+    });
+    // Opening the step looks for Claude Code straight away.
+    expect(checks).toBeGreaterThan(0);
+    expect(missingCard()?.textContent).toContain("Claude Code is not on this computer yet");
+    expect(buttons().filter((label) => ["Connect", "Sign in again", "Check again", "Install Claude Code", "Get Claude Code"].includes(label))).toEqual(["Get Claude Code"]);
+    await act(async () => button("Get Claude Code").click());
+    expect(opened).toEqual(["https://code.claude.com/docs/en/setup"]);
+    // The reason the server or the engine gave for it is the same state, not a red error to read.
+    await render({ claudeAgent: { ...setup, canSignIn: true, error: "Claude Code is not installed. Install it, then sign in." } });
+    expect(missingCard()).not.toBeNull();
+    expect(document.body.textContent).not.toContain("Install it, then sign in.");
+    await render({ claudeAgent: { ...connected({ status: "needs_auth", message: "Claude Code is not installed. Install it, then run claude auth login." }), canSignIn: true, installed: false } });
+    expect(buttons()).toContain("Get Claude Code");
+  } finally { window.open = open; }
+});
+
+test("coming back to OpenWork looks again, and a Claude Code found since then goes straight to Connect", async () => {
+  let checks = 0;
+  const overrides = { preferredProviderId: "claude-agent", onSignInClaudeAgent: async () => "Claude Code connected", onCheckClaudeAgentInstalled: () => { checks += 1; } };
+  const render = await mount({ ...overrides, claudeAgent: { ...setup, canSignIn: true, installed: false } });
+  const before = checks;
+  await act(async () => { window.dispatchEvent(new Event("focus")); });
+  expect(checks).toBe(before + 1);
+  await render({ ...overrides, claudeAgent: { ...setup, canSignIn: true, installed: true } });
+  expect(missingCard()).toBeNull();
+  expect(document.querySelector('[data-testid="claude-code-found"]')?.textContent).toContain("Claude Code is installed");
+  expect(buttons().filter((label) => ["Connect", "Get Claude Code", "Install Claude Code"].includes(label))).toEqual(["Connect"]);
+  // An engine reason from before the install is out of date, not an error.
+  await render({ ...overrides, claudeAgent: { ...connected({ status: "needs_auth", message: "Claude Code is not installed. Install it, then run claude auth login." }), canSignIn: true, installed: true } });
+  expect(document.body.textContent).not.toContain("Claude Code is not installed.");
+  expect(button("Check again").disabled).toBe(false);
+});
+
+test("where OpenWork cannot look for Claude Code, the step never asks and keeps its install link", async () => {
+  let checks = 0;
+  await mount({ preferredProviderId: "claude-agent", onConnectClaudeAgent: async () => "Claude Code connected", onCheckClaudeAgentInstalled: () => { checks += 1; } });
+  expect(checks).toBe(0);
+  expect(buttons()).toContain("Install Claude Code");
+});
+
 test("the engine's provider list failing does not show up as a Claude Code failure", async () => {
   await mount({ preferredProviderId: "claude-agent", error: "Legacy provider backend is unavailable", onConnectClaudeAgent: async () => "Claude Code connected" });
   expect(step()).not.toBeNull();
