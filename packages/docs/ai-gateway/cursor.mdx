@@ -1,0 +1,78 @@
+---
+title: "Use Cursor with AI Gateway"
+description: "Point Cursor at your organization's AI Gateway and add your models by name."
+keywords: ["Cursor", "Override OpenAI Base URL", "custom model", "AI Gateway API key", "3rd party tools"]
+---
+
+With an [AI Gateway API key](/ai-gateway/third-party-tools) you can use the
+models your organization gives you in Cursor's chat and agent. Requests go
+through AI Gateway like any other: the key only reaches models you're allowed,
+and usage counts toward your limit.
+
+Your organization needs **Allow 3rd party tools & harnesses** turned on, and
+Cursor setup available.
+
+## Set it up
+
+Open **My Library**, select the **Models** tab, then **Set up Cursor**. The page
+gives you everything to paste.
+
+1. **Create an API key.** Select **Create key**, name it (`Cursor on my laptop`)
+   and copy it. It's shown once.
+2. **Point Cursor at OpenWork.** In Cursor, open **Settings › Models › API
+   Keys**. Turn on **OpenAI API Key** and paste your key. Turn on **Override
+   OpenAI Base URL** and paste the base URL from the page. It ends in
+   `/api/v1/cursor`.
+3. **Add your models.** In Cursor's **Models** settings, select **Add model**
+   and paste a model's name from the page, for example
+   `openwork/claude-opus-5.5-k3f9`. Repeat for each model you want.
+4. **Pick a model.** Open Cursor's model picker and select one you added.
+
+<Warning>
+  The base URL must end in `/api/v1/cursor`, not `/api/v1`. The Cursor address
+  answers in the formats Cursor expects for every model, including Claude and
+  Gemini models.
+</Warning>
+
+## Model names
+
+Cursor has one field per model, used both as its id and as the name it shows.
+OpenWork gives each of your models a short name for it:
+
+```text
+openwork/<model name>-<4 characters>
+```
+
+The four characters tell apart models with the same name, for example the same
+model from two providers. Copy names from the page rather than typing them.
+
+## Thinking level
+
+Cursor doesn't send a thinking level for models added this way, so the level is
+part of the name. On the page, choose a level next to a model and copy the name
+it shows:
+
+```text
+openwork/claude-opus-5.5-k3f9:high
+```
+
+Without a level, the model uses its provider's default. To switch between
+levels in Cursor, add the same model once per level.
+
+## Good to know
+
+- **Tab completions** and Cursor's own models keep using your Cursor plan.
+- **Cursor calls the base URL from its own servers.** A self-hosted AI Gateway
+  has to be reachable from the internet for Cursor to use it. If it isn't,
+  Cursor says the model you selected isn't available.
+- While the override is on, Cursor sends its OpenAI models to the base URL too.
+  Only the names from the page work there.
+
+## When it doesn't work
+
+| Cursor shows | What to do |
+| --- | --- |
+| `invalid_api_key` | The key was revoked, has expired, or 3rd party tools are off for your organization. Check it in **My Library › Models**. |
+| `invalid_cursor_model` | The model name isn't an OpenWork one. Copy it again from **Set up Cursor**. |
+| `model_not_found` | You no longer have that model. Open **Set up Cursor** to see your current models. |
+| `unsupported_thinking_level` | That model doesn't have the level in the name. Copy the name again with a level from the page. |

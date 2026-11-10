@@ -192,6 +192,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  gatewayCursorSetup: {
+    label: "AI Gateway: Cursor setup",
+    description: "Members with an AI Gateway API key get a Set up Cursor page in Library › Models: the base URL to paste into Cursor and a short name to add for each of their models. The Gateway serves those names at /api/v1/cursor through OpenAI Chat Completions and Responses, whatever the model's provider is.",
+    category: "models",
+    added: "2026-11-10",
+    since: "2026-11",
+    author: "OmarMcAdam",
+    docs: "docs/features/gateway-cursor-setup/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   plainFreeModel: {
     label: "Desktop: OpenWork Free listed like any other model",
     description: "The free model shows in the model picker under its own name (GPT-6 Luna) with the same row as every other model, stays selectable when its usage limit is used up, and the limit message appears in the chat after sending.",

@@ -71,6 +71,7 @@ import { loadAutoRouterConfigFromDb, type LoadAutoRouterConfig } from "./auto-ro
 import { handleAutoRequest } from "./auto-router/handler.js"
 import { createJevClient, type AskJev } from "./auto-router/jev.js"
 import { createDbReasoningStore, type ReasoningStore } from "./auto-router/reasoning-store.js"
+import { cursorApiPaths, cursorModels, cursorModelsPath, cursorPathPrefix, handleCursorChat, listCursorModels, type CursorApi } from "./cursor.js"
 
 export type { GatewayCredential, GatewayProvider } from "./provider-credentials.js"
 
@@ -104,6 +105,8 @@ export type GatewayDependencies = {
   autoRouterReasoning: ReasoningStore
   /** Whether a TypeSafe key is configured; without one Smart is off. */
   autoRouterRoutingConfigured: boolean
+  /** Whether the Cursor endpoint (feature `gatewayCursorSetup`) is on for an organization. */
+  cursorEnabled: (organizationId: string) => Promise<boolean>
 }
 
 export type GatewayRouteDependencies =
@@ -816,6 +819,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }),
     autoRouterReasoning: input.autoRouterReasoning ?? createDbReasoningStore(),
     autoRouterRoutingConfigured: input.autoRouterRoutingConfigured ?? Boolean(env.autoRouter.typesafeApiKey),
+    cursorEnabled: input.cursorEnabled ?? (async (organizationId) => (await import("./keys.js")).cursorEndpointEnabled(organizationId)),
   }
 
   // `target` is set by the provider-less routes, which pick the provider from the model alias.
@@ -1250,6 +1254,44 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     c.header("cache-control", "no-store")
     return c.json(listGatewayModels(await dependencies.loadMemberGatewayAccess(identity)))
   })
+  // Cursor (feature `gatewayCursorSetup`): every model as Chat Completions under names a person can type.
+  const cursorOff = () => gatewayError(404, "not_found", "The Cursor endpoint is not available for this organization.")
+  api.get(cursorModelsPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
+    if (!await dependencies.cursorEnabled(identity.organizationId)) return cursorOff()
+    c.header("cache-control", "no-store")
+    return c.json(listCursorModels(cursorModels(await dependencies.loadMemberGatewayAccess(identity), dependencies.catalog)))
+  })
+  const cursorChat = async (c: Context<GatewayEnv>, api: CursorApi) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
+    const requestId = c.get("openworkRequestId")
+    const finish = (response: Response) => { response.headers.set("x-openwork-request-id", requestId); return response }
+    if (!await dependencies.cursorEnabled(identity.organizationId)) return finish(cursorOff())
+    let body: unknown
+    try {
+      body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await readBoundedBody(c.req.raw)))
+    } catch (error) {
+      if (error instanceof RequestBodyLimitError) return finish(gatewayError(413, "request_too_large", "Could not read the request body within gateway limits."))
+      return finish(gatewayError(400, "invalid_json", "The request body must be JSON with a model field."))
+    }
+    if (!isJsonObject(body)) return finish(gatewayError(400, "invalid_json", "The request body must be JSON with a model field."))
+    return finish(await handleCursorChat({
+      request: c.req.raw,
+      body,
+      api,
+      identity,
+      dependencies: {
+        loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
+        catalog: dependencies.catalog,
+        reasoningStore: dependencies.autoRouterReasoning,
+        forward: (target) => handleGatewayRequest(c, target),
+      },
+    }))
+  }
+  for (const [path, cursorApi] of Object.entries(cursorApiPaths)) api.post(path, (c) => cursorChat(c, cursorApi))
+  api.all(`${cursorPathPrefix}/*`, (c) => gatewayError(404, "not_found", `Unsupported Cursor route: ${c.req.method} ${c.req.path}.`))
   // Provider-less invocation: the body's gwm_ alias names the provider. Models keys fall through.
   for (const [path, endpoint] of Object.entries(gatewayModelEndpoints)) {
     api.post(path, async (c, next) => {

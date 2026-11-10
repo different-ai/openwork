@@ -527,6 +527,14 @@
       "development": "./src/den/gateway-api-keys.ts",
       "default": "./src/den/gateway-api-keys.ts"
     },
+    "./den/gateway-cursor": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/gateway-cursor.d.ts",
+        "default": "./src/den/gateway-cursor.ts"
+      },
+      "development": "./src/den/gateway-cursor.ts",
+      "default": "./src/den/gateway-cursor.ts"
+    },
     "./den/automation-settings": {
       "types": {
         "openwork-build": "./dist/types/src/den/automation-settings.d.ts",

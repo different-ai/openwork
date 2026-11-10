@@ -141,6 +141,16 @@
               ],
               "description": "AI Gateway: API keys for 3rd party tools: Admins allow members, in AI Gateway › API Keys, to create their own AI Gateway API keys and use the Gateway's models from 3rd party tools and harnesses. Members manage their keys in Library › Models; admins see and revoke every key on the same tab. Renders DEN_FEATURE_GATEWAY_MEMBER_API_KEYS."
             },
+            "gatewayCursorSetup": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "AI Gateway: Cursor setup: Members with an AI Gateway API key get a Set up Cursor page in Library › Models: the base URL to paste into Cursor and a short name to add for each of their models. The Gateway serves those names at /api/v1/cursor through OpenAI Chat Completions and Responses, whatever the model's provider is. Renders DEN_FEATURE_GATEWAY_CURSOR_SETUP."
+            },
             "plainFreeModel": {
               "enum": [
                 "",

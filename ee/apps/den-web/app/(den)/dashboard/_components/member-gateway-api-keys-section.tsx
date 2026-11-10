@@ -14,6 +14,9 @@ import { useEffect, useState, type FormEvent } from "react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
+import { orgFeatureEnabled } from "../../_lib/den-org";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { getCursorSetupRoute } from "./cursor-setup-data";
 import { ItemMenu } from "./item-list";
 import { LibraryCompactSurface } from "./library-compact";
 import {
@@ -37,6 +40,8 @@ import {
 export function MemberGatewayApiKeysSection() {
   const keys = useMyGatewayApiKeys(true);
   const revoke = useRevokeGatewayApiKey("mine");
+  const { orgSlug, orgContext } = useOrgDashboard();
+  const cursorSetup = orgFeatureEnabled(orgContext, "gatewayCursorSetup");
   const [creating, setCreating] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -70,6 +75,11 @@ export function MemberGatewayApiKeysSection() {
             <a href={GATEWAY_API_KEYS_DOCS_URL} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "ghost", size: "sm" })} data-testid="gateway-api-keys-docs">
               How to use
             </a>
+            {cursorSetup ? (
+              <DenButton size="sm" variant="ghost" href={getCursorSetupRoute(orgSlug)} data-testid="gateway-api-keys-cursor-setup">
+                Set up Cursor
+              </DenButton>
+            ) : null}
             {enabled ? (
               <DenButton size="sm" variant="secondary" icon={Plus} onClick={() => setCreating(true)} data-testid="gateway-api-keys-create">
                 Create key
