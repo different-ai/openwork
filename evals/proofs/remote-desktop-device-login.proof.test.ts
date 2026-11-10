@@ -19,7 +19,7 @@ test("a remote desktop signs in with its own session to the workspace chosen on 
   let userCode = "";
 
   await step("before: device sign-in is off by default while existing terminal clients remain available", async () => {
-    await appUser.see({ text: "Welcome to OpenWork" }, { timeoutMs: 180_000 });
+    await appUser.see({ text: "Sync with OpenWork Cloud" }, { timeoutMs: 180_000 });
     const origin = await world.packagedOrigin();
     expect(origin.protocol).toBe("file:");
     expect(origin.path).toContain("/resources/app-dist/index.html");
@@ -152,7 +152,7 @@ test("a remote desktop cannot finish a pending sign-in after the operator kills 
   const desktop = agent.on(world.app);
   const appUser = user.on(world.app);
   await step("before: the operator enables device sign-in and a fresh computer waits for approval", async () => {
-    await appUser.see({ text: "Welcome to OpenWork" }, { timeoutMs: 180_000 });
+    await appUser.see({ text: "Sync with OpenWork Cloud" }, { timeoutMs: 180_000 });
     await world.rollout(true);
     await probe.eventually(async () => record(await desktop.run("auth.device-login.status")), {
       within: 90_000, label: "the configured deployment enables device sign-in", until: value => value.state !== "unsupported",
@@ -181,7 +181,7 @@ test("a remote desktop cannot finish a pending sign-in after the operator kills 
     expect(auth.user).toBeNull();
     const rejected = await world.codeStatus();
     expect(rejected.error).toBe("invalid_client");
-    await appUser.see({ text: "Welcome to OpenWork" });
+    await appUser.see({ text: "Sync with OpenWork Cloud" });
     const finished = (await world.traffic()).tokens.length;
     const observedAt = Date.now();
     const stable = await probe.eventually(async () => ({ elapsed: Date.now() - observedAt, count: (await world.traffic()).tokens.length }), {
@@ -199,7 +199,7 @@ test("a remote desktop respects expiry and server backoff without replacing the 
   const desktop = agent.on(world.app);
   const appUser = user.on(world.app);
   await step("before: the packaged computer is signed out and device sign-in is enabled", async () => {
-    await appUser.see({ text: "Welcome to OpenWork" }, { timeoutMs: 180_000 });
+    await appUser.see({ text: "Sync with OpenWork Cloud" }, { timeoutMs: 180_000 });
     await world.rollout(true);
     const status = await probe.eventually(async () => record(await desktop.run("auth.device-login.status")), {
       within: 90_000, label: "the configured deployment enables device sign-in", until: value => value.state !== "unsupported",
@@ -219,7 +219,7 @@ test("a remote desktop respects expiry and server backoff without replacing the 
     expect(auth.user).toBeNull();
     const traffic = await world.traffic();
     expect(traffic.tokens.some(request => request.faulted && request.status === 400)).toBe(true);
-    await appUser.see({ text: "Welcome to OpenWork" });
+    await appUser.see({ text: "Sync with OpenWork Cloud" });
     evidence.recordAssertionEvidence("Expired sign-in stops without enrolling the computer", `real start; token-boundary expired_token; desktop=${String(expired.state)}; account=none`, expired.state === "expired" && auth.user === null);
   });
   await step("slow down and a rate limit delay the same code instead of starting another sign-in", async () => {
@@ -244,7 +244,7 @@ test("a remote desktop respects expiry and server backoff without replacing the 
     expect(traffic.codes.length - before.codes.length).toBe(1);
     expect(record(await desktop.run("auth.device-login.status")).state).toBe("pending");
     await desktop.run("auth.device-login.cancel");
-    await appUser.see({ text: "Welcome to OpenWork" });
+    await appUser.see({ text: "Sync with OpenWork Cloud" });
     evidence.recordAssertionEvidence("Backoff and Retry-After preserve the original pending sign-in", `slow_down gap=${slowDownGap}ms; 429 Retry-After=17s gap=${rateLimitGap}ms (longer than default 15s); code starts=1; cancelled while signed out`, slowDownGap >= 9_500 && rateLimitGap >= 16_500 && rateLimitGap < 30_000 && traffic.codes.length - before.codes.length === 1);
     await appUser.screenshot();
   });
@@ -257,7 +257,7 @@ test("approval does not grant a remote computer access after the operator kills 
   let startedAt = 0;
   let approvalUrl = "";
   await step("before: a fresh packaged computer waits for a browser decision with its next token request delayed", async () => {
-    await appUser.see({ text: "Welcome to OpenWork" }, { timeoutMs: 180_000 });
+    await appUser.see({ text: "Sync with OpenWork Cloud" }, { timeoutMs: 180_000 });
     await world.rollout(true);
     await probe.eventually(async () => record(await desktop.run("auth.device-login.status")), {
       within: 90_000, label: "the configured deployment enables device sign-in", until: value => value.state !== "unsupported",
@@ -303,7 +303,7 @@ test("approval does not grant a remote computer access after the operator kills 
     expect(traffic.tokens.every(request => request.status !== 200)).toBe(true);
     const sessions = await world.sessionCount();
     expect(sessions).toBe(world.baselineSessionCount);
-    await appUser.see({ text: "Welcome to OpenWork" });
+    await appUser.see({ text: "Sync with OpenWork Cloud" });
     evidence.recordAssertionEvidence("Approval cannot bypass a killed redemption", `desktop=${String(terminal.state)}; held token request arrived=true; account=none; Den sessions before/after=${world.baselineSessionCount}/${sessions}; successful token responses=0`, auth.user === null && sessions === world.baselineSessionCount && traffic.tokenArrivals.length > 0 && traffic.tokens.every(request => request.status !== 200));
     await appUser.screenshot();
   });
@@ -313,7 +313,7 @@ test("a member can still use the existing sign-in handoff when device sign-in is
   const desktop = agent.on(world.app);
   const appUser = user.on(world.app);
   await step("before: the packaged app is signed out and the new device sign-in is unavailable", async () => {
-    await appUser.see({ text: "Welcome to OpenWork" }, { timeoutMs: 180_000 });
+    await appUser.see({ text: "Sync with OpenWork Cloud" }, { timeoutMs: 180_000 });
     expect(await world.features()).toBe(false);
     const disabled = record(await desktop.run("auth.device-login.start", world.args));
     expect(disabled.state).toBe("unsupported");
