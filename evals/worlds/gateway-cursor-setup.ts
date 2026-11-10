@@ -1,4 +1,5 @@
-import type { Seed } from "@openwork/env";
+import { connect } from "node:net";
+import { queryDenDatabase, type Seed } from "@openwork/env";
 import { gatewayEnvironment, seedAcmeGateway, startAcmeGateway, startAcmeUpstream } from "../../worlds/lib/acme-gateway.ts";
 import { isRecord } from "./library.ts";
 import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
@@ -30,6 +31,15 @@ export async function gatewayCursorSetupWorld(seed: Seed) {
       provider,
       upstream,
       gatewayUrl: gateway.baseUrl,
+      apiKeysTabUrl: `${den.ref.webUrl}/dashboard/ai-gateway?tab=api-keys`,
+      /** Ages every session past the step-up window, so the next workspace setting change asks to confirm it's you. */
+      async ageSessions() {
+        const database = den.database?.url;
+        if (!database || !new URL(database).pathname.startsWith("/openwork_eval_")) throw new Error("Aging sessions needs the isolated testkit database.");
+        await queryDenDatabase(database, "UPDATE session SET created_at = DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 2 DAY)");
+        // Den caches sessions in Redis; drop the cached copies (never revocations) so it reads the aged rows.
+        await dropCachedSessions(process.env.DATABASE_REDIS_URL || "redis://127.0.0.1:6379");
+      },
       /** A key for Cursor, created as the owner would in My Library › Models. */
       async createApiKey(name: string): Promise<string> {
         const created = await seed.api(den.admin, "/v1/org/ai-gateway/api-keys/mine", { method: "POST", body: JSON.stringify({ name }) });
@@ -55,5 +65,66 @@ export async function gatewayCursorSetupWorld(seed: Seed) {
   } catch (error) {
     await stack.disposeAsync();
     throw error;
+  }
+}
+
+/** Deletes Den's cached session lookups (`cache:auth:session:*`) with plain RESP: SCAN, then DEL. */
+async function dropCachedSessions(redisUrl: string): Promise<void> {
+  const url = new URL(redisUrl);
+  const socket = connect({ host: url.hostname, port: Number(url.port || 6379) });
+  await new Promise<void>((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
+  let buffer = "";
+  socket.setEncoding("utf8");
+  socket.on("data", (chunk: string) => { buffer += chunk; });
+  const encode = (args: string[]) => `*${args.length}\r\n${args.map((arg) => `$${Buffer.byteLength(arg)}\r\n${arg}\r\n`).join("")}`;
+  /** Reads one RESP value from the buffer, or undefined while it is incomplete. */
+  const parse = (text: string, at = 0): { value: unknown; end: number } | undefined => {
+    const line = text.indexOf("\r\n", at);
+    if (line < 0) return undefined;
+    const head = text.slice(at + 1, line);
+    switch (text[at]) {
+      case "+": case "-": return { value: head, end: line + 2 };
+      case ":": return { value: Number(head), end: line + 2 };
+      case "$": {
+        const length = Number(head);
+        if (length < 0) return { value: null, end: line + 2 };
+        if (text.length < line + 2 + length + 2) return undefined;
+        return { value: text.slice(line + 2, line + 2 + length), end: line + 2 + length + 2 };
+      }
+      case "*": {
+        const items: unknown[] = [];
+        let end = line + 2;
+        for (let index = 0; index < Number(head); index += 1) {
+          const item = parse(text, end);
+          if (!item) return undefined;
+          items.push(item.value);
+          end = item.end;
+        }
+        return { value: items, end };
+      }
+      default: throw new Error(`Unexpected Redis reply: ${text.slice(at, at + 40)}`);
+    }
+  };
+  const command = async (args: string[]): Promise<unknown> => {
+    buffer = "";
+    socket.write(encode(args));
+    for (let waited = 0; waited < 5000; waited += 10) {
+      const reply = parse(buffer);
+      if (reply) return reply.value;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`Redis did not answer ${args[0]}.`);
+  };
+  try {
+    let cursor = "0";
+    do {
+      const reply = await command(["SCAN", cursor, "MATCH", "cache:auth:session:*", "COUNT", "1000"]);
+      if (!Array.isArray(reply) || typeof reply[0] !== "string" || !Array.isArray(reply[1])) throw new Error("Unexpected SCAN reply.");
+      cursor = reply[0];
+      const keys = reply[1].filter((key): key is string => typeof key === "string");
+      if (keys.length) await command(["DEL", ...keys]);
+    } while (cursor !== "0");
+  } finally {
+    socket.end();
   }
 }
