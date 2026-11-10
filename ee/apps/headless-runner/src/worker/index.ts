@@ -412,6 +412,12 @@ function forward(env: CellEnv, request: Request, cell: Cell, init: { method?: st
 }
 
 const router = new Hono<{ Bindings: CellEnv }>()
+// Nothing here belongs in a search index (Google: block indexing with the X-Robots-Tag response header).
+// A WebSocket upgrade is left as it is: it is not a document, and its response cannot be rebuilt.
+router.use("*", async (c, next) => {
+  await next()
+  if (c.res.status !== 101) c.header("X-Robots-Tag", "noindex, nofollow")
+})
 router.get("/health", (c) => c.json({ ok: true }))
 // Cell-to-cell routes are only for cells: never reachable from outside, whatever the request carries.
 router.all("/internal/*", (c) => c.json({ error: "not_found" }, 404))

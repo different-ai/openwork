@@ -6,6 +6,7 @@ import { bodyLimit } from "hono/body-limit"
 import type { RequestIdVariables } from "hono/request-id"
 import { loadPublicMcpApp } from "../mcp-apps.js"
 import { publicRoute } from "../middleware/index.js"
+import { noIndex } from "../public-response-headers.js"
 import { createMcpAppServer } from "./app-server.js"
 import { appSiteResponse, wantsAppSite } from "./app-site.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
@@ -44,6 +45,11 @@ async function requestId(request: Request): Promise<string | number | null> {
  * which Apps exist.
  */
 export function registerPublicMcpAppRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(app: Hono<T>) {
+  // These URLs are open to anyone and get linked from outside, so they are the
+  // ones a crawler finds. Marked here as well as API-wide, so the public
+  // surface stays out of search results whatever changes around it.
+  app.use("/mcp/public", noIndex)
+  app.use("/mcp/public/*", noIndex)
   app.all(
     PUBLIC_MCP_APP_ROUTE,
     publicRoute,

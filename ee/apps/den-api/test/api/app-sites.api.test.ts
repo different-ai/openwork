@@ -35,6 +35,8 @@ async function isPage(path: string, mode: "public" | "member", why: string) {
   assert.equal(page.status, 200, `${why}: ${page.text.slice(0, 200)}`)
   assert.match(page.headers.get("content-type") ?? "", /text\/html/)
   assert.match(page.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/)
+  assert.equal(page.headers.get("x-robots-tag"), "noindex, nofollow", why)
+  assert.ok(page.text.includes('<meta name="robots" content="noindex, nofollow">'), why)
   assert.ok(page.text.includes(`data-mode="${mode}"`), why)
   return page
 }
