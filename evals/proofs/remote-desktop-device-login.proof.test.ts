@@ -22,7 +22,7 @@ test("a remote desktop signs in with its own session to the workspace chosen on 
     await appUser.see({ text: "Welcome to OpenWork" }, { timeoutMs: 180_000 });
     const origin = await world.packagedOrigin();
     expect(origin.protocol).toBe("file:");
-    expect(origin.path).toContain("app.asar");
+    expect(origin.path).toContain("/resources/app-dist/index.html");
     expect(new URL(world.den.ref.webUrl).protocol).toBe("https:");
     expect(world.defaultEnabled).toBe(false);
     expect(await world.features()).toBe(false);
