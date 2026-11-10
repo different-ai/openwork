@@ -93,6 +93,30 @@ test("a member creates a key, picks Cursor under Start using this key, and Curso
     await user.click({ testId: "gateway-api-key-done" });
   });
 
+  await step("the key's row shows no URLs, and its menu's Set up opens the tool choice again, without the key", async () => {
+    await user.see({ text: "Cursor" }, { timeoutMs: 15_000 });
+    const urls = (await probe.dom('[data-testid="library-gateway-api-keys"] [data-testid^="gateway-api-keys-base-url-"]')).elements.length;
+    expect(urls).toBe(0);
+    // The row's menu shows on hover, as for a person with a mouse.
+    await user.hover({ text: new RegExp(`^${key.slice(0, 12).replace(/[-_]/g, "\\$&")}`) });
+    await user.click({ role: "button", label: "Actions for Cursor" });
+    await user.click({ role: "menuitem", text: "Set up" });
+    await user.see({ testId: "gateway-api-key-setup-dialog" }, { timeoutMs: 15_000 });
+    await user.see({ testId: "gateway-tool-picker" });
+    await user.click({ testId: "gateway-tool-codex" });
+    await user.see({ testId: "gateway-tool-codex" }, { timeoutMs: 15_000 });
+    const env = (await probe.dom('[data-testid="gateway-tool-codex-env"]')).elements[0]?.text ?? "";
+    const note = (await probe.dom('[data-testid="gateway-api-key-setup-key-note"]')).elements.length;
+    const secrets = (await probe.dom('[data-testid="gateway-api-key-setup-dialog"] [data-testid="gateway-tool-api-key"]')).elements.length;
+    evidence.recordAssertionEvidence("Set up leaves a place for the key and never shows it", `URLs on the row ${urls}; Codex key line "${env}"; key note ${note}; keys shown ${secrets}`, urls === 0 && env.includes("<your API key>") && !env.includes(key) && note === 1 && secrets === 0);
+    expect(env).toContain("<your API key>");
+    expect(env).not.toContain(key);
+    expect(note).toBe(1);
+    expect(secrets).toBe(0);
+    await user.screenshot();
+    await user.click({ testId: "gateway-api-key-done" });
+  });
+
   await step("Set up Cursor (from the Library) lists the same model names without showing a key", async () => {
     await user.click({ testId: "gateway-api-keys-cursor-setup" });
     await user.see({ testId: "cursor-setup" }, { timeoutMs: 60_000 });

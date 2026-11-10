@@ -70,8 +70,15 @@ dialog keeps showing the key and the two base URLs as before.
 The Codex and Claude Code steps use today's provider-less endpoints; dedicated
 endpoints for them, like Cursor's, come later.
 
-In **My Library › Models**, the API keys section also links to **Set up
-Cursor** (`/dashboard/library/tools/cursor`): the same Cursor steps without a
+In **My Library › Models**, each key's menu has **Set up**: the same choice of
+tools for a key that already exists. The key isn't shown again, so the steps
+say which key to use (by its prefix) and leave a place for it. With this
+feature on, the section no longer lists the base URLs: each tool's steps carry
+the ones it needs.
+
+![Set up from a key's menu](./set-up-existing-key.png)
+
+The section also links to **Set up Cursor** (`/dashboard/library/tools/cursor`): the same Cursor steps without a
 key, with a link to create one.
 
 ![Set up Cursor](./cursor-setup.png)
