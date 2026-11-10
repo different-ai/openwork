@@ -70,7 +70,6 @@ export function assignedGatewayModelOptions(
     providerID: provider.id,
     modelID: model.id,
     title: model.name,
-    description: provider.name,
     behaviorTitle: "Reasoning",
     behaviorLabel: "Default",
     behaviorDescription: "",
