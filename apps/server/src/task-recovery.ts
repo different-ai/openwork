@@ -18,9 +18,38 @@ const recordSchema = z.object({
 });
 type RecoveryRecord = z.infer<typeof recordSchema>;
 type Engine = RecoveryRecord["engine"];
+/**
+ * The journal can outlive the code that wrote it (downgrades, reverted
+ * releases), so one unrecognized record must not block server startup.
+ * Unreadable records are dropped and reported; valid ones are still recovered.
+ */
+export function parseRecoveryRecords(json: string): RecoveryRecord[] {
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch (error) {
+    console.warn("[task-recovery] discarding unreadable recovery journal", error);
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    console.warn("[task-recovery] discarding recovery journal that is not a list", { type: typeof value });
+    return [];
+  }
+  const records: RecoveryRecord[] = [];
+  const dropped: { index: number; issues: { path: PropertyKey[]; code: string }[] }[] = [];
+  value.forEach((item, index) => {
+    const result = recordSchema.safeParse(item);
+    if (result.success) records.push(result.data);
+    else dropped.push({ index, issues: result.error.issues.map(({ path, code }) => ({ path, code })) });
+  });
+  if (dropped.length > 0) {
+    console.warn(`[task-recovery] discarded ${dropped.length} unrecognized recovery record(s)`, dropped);
+  }
+  return records.slice(0, MAX_TASKS);
+}
 const store = createWorkspaceKvStore<RecoveryRecord[]>({
   tableName: "desktop_task_recovery", valueColumn: "state_json",
-  parse: (json) => z.array(recordSchema).max(MAX_TASKS).parse(JSON.parse(json)),
+  parse: parseRecoveryRecords,
   serialize: JSON.stringify,
 });
 const RECOVERY_PROMPT = "Continue the interrupted task from the current state. First inspect the conversation and workspace to verify which actions already completed. Preserve completed work, do not repeat side effects, and finish only what remains. Stop and ask if an earlier action's outcome cannot be verified.";
