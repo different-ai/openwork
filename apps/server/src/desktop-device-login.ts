@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -69,7 +70,10 @@ function printable(value: string): string {
 
 /** Shell adapter only: the running desktop owns start, polling, tokens and durable enrollment. */
 export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
-  const args: { baseUrl?: string; apiBaseUrl?: string; force?: boolean } = {};
+  // Public correlation only, not a credential. A stale command must never
+  // observe or cancel the newer invocation that superseded it.
+  const requestId = randomUUID();
+  const args: { requestId: string; baseUrl?: string; apiBaseUrl?: string; force?: boolean } = { requestId };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") {
@@ -122,10 +126,10 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
     // authorization running. Only an explicit conflict is safe to retry.
     cancel = async () => {
       const deadline = Date.now() + 20_000;
-      let receipt = await request("command", "auth.device-login.cancel", {}, true);
+      let receipt = await request("command", "auth.device-login.cancel", { requestId }, true);
       while (!receipt.ok && receipt.code === "conflict" && Date.now() < deadline) {
         await delay(250);
-        receipt = await request("command", "auth.device-login.cancel", {}, true);
+        receipt = await request("command", "auth.device-login.cancel", { requestId }, true);
       }
     };
     const start = await request("command", "auth.device-login.start", args);
@@ -148,7 +152,7 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
     const deadline = Math.min(started.expiresAt, Date.now() + 15 * 60_000);
     while (!stop.signal.aborted && Date.now() < deadline) {
       await delay(1_000, undefined, { signal: stop.signal });
-      const receipt = await request("query", "auth.device-login.status");
+      const receipt = await request("query", "auth.device-login.status", { requestId });
       if (!receipt.ok) throw new Error("Desktop status unavailable");
       const status = statusSchema.parse(receipt.result);
       if (status.state === "pending" || status.state === "approved") continue;
