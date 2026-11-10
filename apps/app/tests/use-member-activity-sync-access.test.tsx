@@ -43,6 +43,7 @@ const { readDashboardTileCache, rememberDashboardTileRead, writeDashboardTileCac
 const { denSettingsChangedEvent } = await import("../src/app/lib/den-session-events");
 const { memberAccessCheckPending, memberAccessConfirmed, resetMemberAccessSession } = await import("../src/react-app/domains/dashboard/mcp-app-member-access");
 const { CLOUD_INVENTORY_CHANGED_EVENT } = await import("../src/react-app/domains/connections/cloud-inventory-cache");
+const { dispatchProviderCatalogChanged } = await import("../src/app/lib/provider-events");
 
 const tiles = `${DASHBOARD_TILE_CACHE_STORAGE_PREFIX}.sync-test`;
 const entry = "personal:orders";
@@ -63,6 +64,10 @@ async function mounted(run: (rerender: () => Promise<void>) => Promise<void>) {
   }
 }
 const changed = async () => { await act(async () => { window.dispatchEvent(new Event(CLOUD_INVENTORY_CHANGED_EVENT)); }); await settle(); };
+const catalogChanged = async (reason?: "native" | "reconnect") => {
+  await act(async () => { dispatchProviderCatalogChanged({ baseUrl: "http://engine", ...(reason ? { reason } : {}) }); });
+  await settle();
+};
 
 beforeEach(() => {
   localStorage.clear();
@@ -154,4 +159,23 @@ test("a later start with the same revision confirms as soon as the revision is r
   resetMemberAccessSession();
   outcome = "failed";
   await mounted(async () => { expect(memberAccessConfirmed()).toBe(true); });
+});
+
+test("a reopened engine event stream reloads only when Den's revision has moved", async () => {
+  await mounted(async () => {
+    await catalogChanged("reconnect");
+    await catalogChanged("reconnect");
+    expect(inventoryLoads).toBe(1);
+    revision = "r2";
+    await catalogChanged("reconnect");
+    expect(inventoryLoads).toBe(2);
+  });
+});
+
+test("a provider change reported by the engine reloads at once", async () => {
+  await mounted(async () => {
+    await catalogChanged("native");
+    await catalogChanged();
+    expect(inventoryLoads).toBe(3);
+  });
 });
