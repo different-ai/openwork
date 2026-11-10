@@ -51,7 +51,7 @@ async function fixture(options: {
   return {
     calls, inputs,
     async run(argv: string[] = []) {
-      const child = spawn(process.execPath, [join(import.meta.dirname, "../bin/openwork-server.mjs"), "device-login", ...argv], {
+      const child = spawn(process.execPath, [join(import.meta.dirname, "../bin/openwork-server.mjs"), "login", ...argv], {
         env: { ...process.env, NODE_OPTIONS: "--conditions=development", OPENWORK_UI_CONTROL_DISCOVERY: discovery }, stdio: ["ignore", "pipe", "pipe"], detached: true,
       });
       // A terminal sends Ctrl-C to the foreground process group, including the
@@ -145,6 +145,27 @@ for (const { terminal, code } of [
     assert.ok(!result.stdout.includes("Signed in as"));
   });
 }
+
+test("server CLI advertises login and rejects unknown commands without starting a server", async () => {
+  async function command(args: string[]) {
+    const child = spawn(process.execPath, [join(import.meta.dirname, "../bin/openwork-server.mjs"), ...args], {
+      env: { ...process.env, NODE_OPTIONS: "--conditions=development" }, stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (value) => { stdout += value; });
+    child.stderr.on("data", (value) => { stderr += value; });
+    const code = await new Promise<number | null>((resolve, reject) => { child.on("error", reject); child.on("close", resolve); });
+    return { code, stdout, stderr };
+  }
+  const help = await command(["login", "--help"]);
+  assert.equal(help.code, 0);
+  assert.match(help.stdout, /openwork-server login/);
+  const unknown = await command(["not-a-command"]);
+  assert.equal(unknown.code, 1);
+  assert.equal(unknown.stdout, "");
+  assert.match(unknown.stderr, /Unknown command/);
+});
 
 test("Windows fails closed with the sign-in link, before discovery or network access", async () => {
   const moduleUrl = new URL("../src/desktop-device-login.ts", import.meta.url).href;
