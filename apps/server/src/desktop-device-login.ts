@@ -86,6 +86,10 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
     console.error("Unknown or missing device-login option. Use --help.");
     return 1;
   }
+  if (process.platform === "win32") {
+    console.error("The device sign-in command is not available on Windows. Use the sign-in link instead.");
+    return 4;
+  }
   let cancel: (() => Promise<unknown>) | undefined;
   const stop = new AbortController();
   const interrupt = () => stop.abort();
