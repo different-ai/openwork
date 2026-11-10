@@ -5,13 +5,13 @@
  */
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
-import { foldWorkbotUsage } from "../../../gateway/src/workbot-usage-rollups.js"
 import { bootDen, field, list, summary } from "./harness.js"
 
 const den = await bootDen()
 after(() => den.close())
 
 const { db } = await import("../../src/db.js")
+const { foldWorkbotUsage } = await import("@openwork-ee/den-db")
 const { GatewayRequestLogTable, WorkbotUsageDayTable } = await import("@openwork-ee/den-db/schema")
 const { eq, inArray } = await import("@openwork-ee/den-db/drizzle")
 const { createDenTypeId, normalizeDenTypeId } = await import("@openwork-ee/utils/typeid")

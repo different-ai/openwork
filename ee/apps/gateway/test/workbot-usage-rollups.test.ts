@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { HEADLESS_SESSION_HEADER, parseHeadlessSessionHeader, workbotUsageSurfaceOfSession } from "@openwork/types/den/workbot-usage"
 import type { GatewayRequestLogRow } from "../src/request-log.js"
 import { runRollups, type RollupRepository, type RollupStore } from "../src/rollups.js"
-import { buildWorkbotUsageDayRows, type WorkbotUsageAggregate } from "../src/workbot-usage-rollups.js"
+import { buildWorkbotUsageDayRows, type WorkbotUsageAggregate } from "@openwork-ee/den-db"
 
 // request-log.ts loads the gateway environment; nothing here reaches a database.
 process.env.DATABASE_URL ??= "mysql://fixture:fixture@127.0.0.1:1/fixture"

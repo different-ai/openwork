@@ -33,7 +33,7 @@ and adds nothing to the cost.
 - The hourly rollup (`ee/apps/gateway/src/rollups.ts`) adds those requests to
   `workbot_usage_day`, one row per UTC day, member, surface and model, in the
   transaction that deletes the logs. The conversation id is not kept; the
-  surface is read from its prefix (`packages/types/src/den/workbot-usage.ts`).
+  surface is read from its prefix (`foldWorkbotUsage` in `ee/packages/den-db/src/workbot-usage.ts`).
 - `GET /v1/workbot-usage` adds the folded days and the request logs that are
   not folded yet (about the last two days).
 

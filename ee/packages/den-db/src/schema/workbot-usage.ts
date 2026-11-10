@@ -5,7 +5,7 @@ import { denTypeIdColumn, timestamps } from "../columns"
 /**
  * What Workbot spent on models, one row per UTC day, member, surface and model
  * (packages/types/src/den/workbot-usage.ts). The gateway's rollup job
- * (ee/apps/gateway/src/rollups.ts) adds to it from the request logs the
+ * (ee/apps/gateway/src/rollups.ts, through foldWorkbotUsage) adds to it from the request logs the
  * headless runner tagged with its conversation, in the same transaction that
  * consumes those logs, so a request is counted once. Requests still in
  * gateway_request_logs are not here yet; readers add them.

@@ -5,13 +5,12 @@
 // One bounded source batch per bucket/transaction. Retried runs consume only
 // remaining source IDs; inserting new raw rows is NEW consumption, not replay.
 import { timingSafeEqual } from "node:crypto"
-import { GatewayProviderOauthStateTable, GatewayRequestLogTable, GatewayUsageRollupTable, GatewayRollupLockTable } from "@openwork-ee/den-db"
+import { foldWorkbotUsage, GatewayProviderOauthStateTable, GatewayRequestLogTable, GatewayUsageRollupTable, GatewayRollupLockTable } from "@openwork-ee/den-db"
 import { assertUsageRetentionSafe } from "@openwork-ee/den-db/gateway-usage-limits"
 import { gatewayRollupDimensionKey } from "@openwork-ee/utils/gateway-rollups"
 import { and, eq, gte, inArray, lt, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { runCapabilityUsageRollups, type CapabilityUsageRollupRepository } from "./capability-usage-rollups.js"
-import { foldWorkbotUsage } from "./workbot-usage-rollups.js"
 import type { Hono } from "hono"
 import { z } from "zod"
 
@@ -66,7 +65,7 @@ export type RollupStore = {
   aggregateHourRollupsToDay(dayStart: Date, limit: number): Promise<{ ids: RollupRow["id"][]; groups: AggregatedRollup[] }>
   upsertRollups(rows: RollupRow[]): Promise<void>
   deleteRawIds(ids: (typeof GatewayRequestLogTable.$inferSelect.id)[]): Promise<number>
-  /** Adds the batch's Workbot-tagged rows to workbot_usage_day (workbot-usage-rollups.ts). Optional for test stores. */
+  /** Adds the batch's Workbot-tagged rows to workbot_usage_day (den-db workbot-usage.ts). Optional for test stores. */
   foldWorkbotUsage?(dayStart: Date, ids: (typeof GatewayRequestLogTable.$inferSelect.id)[]): Promise<void>
   deleteHourRollupIds(ids: RollupRow["id"][]): Promise<number>
 }
