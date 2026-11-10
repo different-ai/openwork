@@ -70,12 +70,29 @@ function result(html: string) {
 }
 
 describe("semantic selected prose and structural spacing", () => {
-  test("paragraph → list → paragraph: zero margins and exactly one separator per top-level boundary", () => {
+  test("paragraph → list → paragraph: two separators after the list and one at other boundaries", () => {
     const data = result('<div><p class="my-3" style="font:13px system-ui;color:red">Intro</p></div><div><ul class="list-disc"><li><p>One</p></li><li><p>Two</p></li></ul></div><div><p><strong>Expected:</strong> Result</p></div>');
-    expect(data.html).toBe('<p style="margin:0">Intro</p>' + separator + '<ul style="margin:0"><li style="margin:0"><p style="margin:0">One</p></li><li style="margin:0"><p style="margin:0">Two</p></li></ul>' + separator + '<p style="margin:0"><strong>Expected:</strong> Result</p>');
+    expect(data.html).toBe('<p style="margin:0">Intro</p>' + separator + '<ul style="margin:0"><li style="margin:0"><p style="margin:0">One</p></li><li style="margin:0"><p style="margin:0">Two</p></li></ul>' + separator + separator + '<p style="margin:0"><strong>Expected:</strong> Result</p>');
     expect(data.text).toBe("Intro\n\n• One\n• Two\n\nExpected: Result");
-    expect(data.html.split(separator)).toHaveLength(3);
+    expect(data.html.split(separator)).toHaveLength(4);
     expect(data.html).not.toMatch(/class=|font|color|data-openwork/);
+  });
+  test.each(['ul','ol'])("top-level %s gets two HTML separators but unchanged plain text", tag => {
+    const data = result(`<${tag}><li>First<ul><li>Nested</li></ul></li><li>Workspace menu.</li></${tag}><p><strong>Expected:</strong> gap</p><p>After</p>`);
+    expect(data.html).toContain(`</${tag}>` + separator + separator + '<p style="margin:0"><strong>Expected:</strong>');
+    expect(data.html).not.toContain('</li>' + separator);
+    expect(data.text).toBe((tag==='ol'?'1. First\n  • Nested\n2. Workspace menu.':'• First\n  • Nested\n• Workspace menu.')+'\n\nExpected: gap\n\nAfter');
+    expect(data.html.endsWith('<p style="margin:0">After</p>')).toBe(true);
+  });
+  test("list-at-end has no extra trailing paragraphs; escaped list text is not a list boundary", () => {
+    expect(result('<ul><li>Only</li></ul>').html.endsWith('</ul>')).toBe(true);
+    expect(result('<p><code>&lt;/ul&gt;</code></p><p>Next</p>').html).toBe('<p style="margin:0"><code>&lt;/ul&gt;</code></p>'+separator+'<p style="margin:0">Next</p>');
+  });
+  test("two list separators also survive a prose-group boundary", () => {
+    const root = prose('<div data-assistant-reply-prose><ul><li>Workspace menu.</li></ul></div><section>Tool</section><div data-assistant-reply-prose><p><strong>Expected:</strong> gap</p></div>');
+    const data = serializeAssistantMessageRange(root,all(root));
+    expect(data?.html).toContain('</ul>'+separator+separator+'<p style="margin:0"><strong>Expected:</strong>');
+    expect(data?.text).toBe('• Workspace menu.\n\nExpected: gap');
   });
   test("consecutive paragraphs have structural spacing, not a margin heuristic", () => {
     const data = result('<p>First</p><p>Second<br>continued</p><p>Third</p>');
@@ -152,7 +169,7 @@ describe("review coverage conversions", () => {
   });
   test.each([1, 2, 3, 4, 5, 6])("h%s becomes a bold paragraph without disabling surrounding copy", level => {
     const data = result(`<h${level}>Thread <em>label</em></h${level}><ul><li>Item</li></ul><p><strong>Expected:</strong> gap</p>`);
-    expect(data.html).toBe('<p style="margin:0"><strong>Thread <em>label</em></strong></p>' + separator + '<ul style="margin:0"><li style="margin:0">Item</li></ul>' + separator + '<p style="margin:0"><strong>Expected:</strong> gap</p>');
+    expect(data.html).toBe('<p style="margin:0"><strong>Thread <em>label</em></strong></p>' + separator + '<ul style="margin:0"><li style="margin:0">Item</li></ul>' + separator + separator + '<p style="margin:0"><strong>Expected:</strong> gap</p>');
     expect(data.text).toBe('Thread label\n\n• Item\n\nExpected: gap');
   });
   test("horizontal rules are a single structural boundary, not extra empty blocks", () => {
@@ -167,23 +184,44 @@ describe("review coverage conversions", () => {
     expect(data.html).not.toContain('<blockquote');
     expect(data.text).toBe('Old new\n\nQuoted word\n\nNext');
   });
-  test.each(['javascript:alert(1)', 'ftp://example.com/file', 'file:///tmp/report.pdf', '/tmp/report.pdf', '#section', 'https://bad host', ''])('nonportable href degrades only that label: %s', href => {
+  test.each(['javascript:alert(1)', 'ftp://example.com/file', '#section', 'https://bad host', ''])('nonportable href degrades only that label: %s', href => {
     const data = result(`<p>Before <a href="${href}"><em>Label</em></a> and <a href="https://example.com">Web</a></p><p>After</p>`);
     expect(data.html).toContain('Before <em>Label</em> and <a href="https://example.com">Web</a>');
     expect(data.text).toBe('Before Label and Web (https://example.com)\n\nAfter');
   });
+  test.each(['file:///tmp/report.pdf','/tmp/report.pdf','notes/report.pdf'])('local destinations retain label and literal path: %s', path => {
+    const data = result(`<p><a href="${path}"><em>Label</em></a></p>`);
+    expect(data.html).toBe(`<p style="margin:0"><em>Label</em> (<code>${path}</code>)</p>`);
+    expect(data.text).toBe(`Label (${path})`);
+  });
   test.each(['mailto:user@example.com', 'tel:+15555550100'])('safe non-web href stays a link: %s', href => {
     expect(result(`<p><a href="${href}">Label</a></p>`).html).toContain(`href="${href}"`);
   });
+  test("local file label carries its path as written, never a contextual absolute expansion", () => {
+    const data = result('<p>Local file: <span><a href="/Users/private/workspace/notes/copy-probe.md" data-openwork-link-href="notes/copy-probe.md"><svg></svg>Copy probe note</a><button data-openwork-link-chevron="notes/copy-probe.md" aria-label="Open with"><svg></svg></button></span>.</p>');
+    expect(data.html).toBe('<p style="margin:0">Local file: Copy probe note (<code>notes/copy-probe.md</code>).</p>');
+    expect(data.text).toBe('Local file: Copy probe note (notes/copy-probe.md).');
+    expect(data.html).not.toContain('/Users/');
+  });
+  test.each(['copy-probe.md','notes/copy-probe.md'])('matching file label reduces to code path: %s', label => {
+    const data = result(`<p><a href="notes/copy-probe.md" data-openwork-link-href="notes/copy-probe.md">${label}</a></p>`);
+    expect(data).toEqual({html:'<p style="margin:0"><code>notes/copy-probe.md</code></p>',text:'notes/copy-probe.md'});
+  });
+  test("encoded path remains exactly written even when filename comparison is decoded", () => {
+    expect(result('<p><a href="./notes/my%20file.txt" data-openwork-link-href="./notes/my%20file.txt">my file.txt</a></p>')).toEqual({html:'<p style="margin:0"><code>./notes/my%20file.txt</code></p>',text:'./notes/my%20file.txt'});
+  });
+  test("inline code preserves written path rather than its resolved metadata", () => {
+    expect(result('<p><code data-openwork-inline-code-path="/Users/private/notes/file.txt">notes/file.txt</code></p>')).toEqual({html:'<p style="margin:0"><code>notes/file.txt</code></p>',text:'notes/file.txt'});
+  });
   test("file-chip icon and Open with control are omitted; inline paths retain code", () => {
     const data = result('<p>File <span><a href="/workspace/report.pdf" data-openwork-link-href="/workspace/report.pdf"><svg><path></path></svg>report.pdf</a><button data-openwork-link-chevron="/workspace/report.pdf" aria-label="Open with"><svg></svg></button></span>, <code data-openwork-inline-code-path="/tmp/file.txt" role="button">file.txt</code>, <span data-openwork-directory-path="/tmp">folder</span>.</p><p>After</p>');
-    expect(data.html).toBe('<p style="margin:0">File report.pdf, <code>file.txt</code>, folder.</p>' + separator + '<p style="margin:0">After</p>');
-    expect(data.text).toBe('File report.pdf, file.txt, folder.\n\nAfter');
+    expect(data.html).toBe('<p style="margin:0">File <code>/workspace/report.pdf</code>, <code>file.txt</code>, folder.</p>' + separator + '<p style="margin:0">After</p>');
+    expect(data.text).toBe('File /workspace/report.pdf, file.txt, folder.\n\nAfter');
   });
-  test("partial file label preserves only selected words", () => {
+  test("partial file label preserves selected words plus its source-written destination", () => {
     const root = prose('<p><a href="file:///tmp/file" data-openwork-link-href="file:///tmp/file"><svg></svg>report.pdf</a></p>');
     const range = document.createRange(); const label = root.querySelector('a')!.lastChild!; range.setStart(label, 2); range.setEnd(label, 6);
-    expect(serializeAssistantProseRange(root, range)).toEqual({html:'<p style="margin:0">port</p>', text:'port'});
+    expect(serializeAssistantProseRange(root, range)).toEqual({html:'<p style="margin:0">port (<code>file:///tmp/file</code>)</p>', text:'port (file:///tmp/file)'});
   });
 });
 

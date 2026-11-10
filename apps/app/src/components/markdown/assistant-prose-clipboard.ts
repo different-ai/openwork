@@ -1,3 +1,5 @@
+import { localPathName, parseLocalPathReference } from "@/react-app/domains/session/artifacts/local-path";
+
 /** Portable selection copy for supported assistant prose, never arbitrary UI. */
 export type AssistantProseClipboard = { html: string; text: string };
 
@@ -41,6 +43,23 @@ const ATOMIC = [
 const EDITABLE = 'input,textarea,select,button,[contenteditable]:not([contenteditable="false"])';
 const SEPARATOR = '<p style="margin:0"><br></p>';
 
+function joinHtmlBlocks(blocks: readonly string[]): string {
+  return blocks.map((html, index) => {
+    if (index === 0) return html;
+    // Only our serialized top-level blocks enter here; escaped code cannot look like a closing list tag.
+    const previous = blocks[index - 1]!;
+    const afterList = previous.endsWith("</ul>") || previous.endsWith("</ol>");
+    return SEPARATOR.repeat(afterList ? 2 : 1) + html;
+  }).join("");
+}
+
+/** Keep the same boundary rule across separately rendered prose groups and message actions. */
+export function joinAssistantProseClipboard(pieces: readonly AssistantProseClipboard[]): AssistantProseClipboard | null {
+  if (!pieces.length) return null;
+  const text = pieces.map(piece => piece.text).join("\n\n");
+  return text.length > 1_000_000 ? null : { html: joinHtmlBlocks(pieces.map(piece => piece.html)), text };
+}
+
 function isTag(tag: string): tag is Tag { return TAGS.has(tag); }
 function element(tag: Tag, children: Content[]): Content { return { kind: "element", tag, children }; }
 function fail(): never { throw new Error("Selection cannot be copied portably"); }
@@ -62,6 +81,14 @@ function hrefFor(link: Element): string | undefined {
     const url = new URL(href);
     return ["http:", "https:", "mailto:", "tel:"].includes(url.protocol) ? href : undefined;
   } catch { return undefined; }
+}
+function filePathFor(link: Element) {
+  if (hrefFor(link)) return undefined;
+  // The renderer retains the Markdown destination here, before contextual resolution/expansion.
+  const literal = link.getAttribute("data-openwork-link-href") ?? link.getAttribute("href");
+  if (!literal || literal.trim().startsWith("#")) return undefined;
+  const parsed = parseLocalPathReference(literal, { decode: true });
+  return parsed ? { literal, name: localPathName(parsed.path) } : undefined;
 }
 function codeText(nodes: Content[]): string {
   return nodes.map(node => node.kind === "text" ? node.value : node.tag === "br" ? "\n" : codeText(node.children)).join("");
@@ -199,6 +226,13 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
       const result = element(tag, children);
       if (result.kind !== "element") return fail();
       if (tag === "a") {
+        const file = filePathFor(node);
+        if (file) {
+          const path = element("code", [{ kind: "text", value: file.literal }]);
+          const label = codeText(children);
+          if (label === file.literal || label === file.name) return [path];
+          return [...children, { kind: "text", value: " (" }, path, { kind: "text", value: ")" }];
+        }
         result.href = hrefFor(node);
         if (!result.href) return children;
       }
@@ -233,7 +267,7 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
     flush();
     const text = blocks.map(node => textFor(node)).join("\n\n");
     if (!text.trim() || text.length > 1_000_000) return null;
-    return { html: blocks.map(htmlFor).join(SEPARATOR), text };
+    return { html: joinHtmlBlocks(blocks.map(htmlFor)), text };
   } catch {
     return null;
   }
@@ -260,9 +294,7 @@ export function serializeAssistantMessageRange(root: HTMLElement, range: Range):
       if (!piece) return null;
       pieces.push(piece);
     }
-    if (!pieces.length) return null;
-    const text = pieces.map(piece => piece.text).join("\n\n");
-    return text.length > 1_000_000 ? null : { html: pieces.map(piece => piece.html).join(SEPARATOR), text };
+    return joinAssistantProseClipboard(pieces);
   } catch { return null; }
 }
 
