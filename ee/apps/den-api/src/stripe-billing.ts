@@ -12,6 +12,7 @@ import {
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { db } from "./db.js"
+import { withDeadlockRetry } from "./utils/deadlock-retry.js"
 import { env } from "./env.js"
 import { setInferenceEnabled } from "./inference.js"
 import { assertOrganizationManagedModelsAllowed, updateOrganizationMetadata } from "./organization-metadata.js"
@@ -593,6 +594,50 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
   const organizationId = metadata.organizationId as OrgId
   const status = subscriptionStatus(subscription.status)
   const subscriptionType = subscriptionTypeFromStripeSubscription(subscription, item)
+  // Stripe delivers a new subscription's events (checkout.session.completed,
+  // customer.subscription.created/updated, invoice.paid) at the same moment,
+  // so several requests insert the same not-yet-existing row at once and
+  // MySQL can pick one as a deadlock victim across the table's unique
+  // indexes. The victim wrote nothing: read the row again and write again
+  // instead of failing the delivery.
+  const written = await withDeadlockRetry(() => writeOrgSubscriptionFromStripe({ subscription, item, organizationId, status, subscriptionType, eventId }))
+  if (written.ignored) {
+    return written.existingSubscription
+  }
+  const { existingSubscription } = written
+
+  if (subscriptionType === INFERENCE_SUBSCRIPTION_TYPE) {
+    if (INFERENCE_DISABLING_STATUSES.has(status)) {
+      await setInferenceEnabled({ organizationId, enabled: false })
+    } else if (
+      ACTIVE_STATUSES.has(status)
+      && existingSubscription
+      && !ACTIVE_STATUSES.has(existingSubscription.status)
+    ) {
+      // A recovered renewal (Stripe retry succeeded, card updated in the
+      // portal) or a replacement subscription taking over the row: restore
+      // the access the earlier failure removed. Brand-new rows are activated
+      // by the Checkout handlers once payment is confirmed.
+      await activatePurchasedInference(organizationId)
+    }
+  }
+  if (isPlanSubscriptionType(subscriptionType)) {
+    await syncOrganizationPlanFromSubscriptions(organizationId, subscriptionType === SEAT_SUBSCRIPTION_TYPE ? subscription : undefined)
+  }
+
+  return findOrgSubscriptionByStripeId(subscription.id, db.$primary)
+}
+
+async function writeOrgSubscriptionFromStripe(input: {
+  subscription: Stripe.Subscription
+  item: ReturnType<typeof firstSubscriptionItem>
+  organizationId: OrgId
+  status: ReturnType<typeof subscriptionStatus>
+  subscriptionType: ReturnType<typeof subscriptionTypeFromStripeSubscription>
+  eventId?: string | null
+}) {
+  const { subscription, item, organizationId, status, subscriptionType, eventId } = input
+  const metadata = getSubscriptionMetadata(subscription)
   const existingSubscription = await findOrgSubscriptionByType(organizationId, subscriptionType, db.$primary)
   const sameSubscription = existingSubscription?.stripe_subscription_id === subscription.id
 
@@ -612,7 +657,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
         incoming_status: status,
         event_id: eventId ?? null,
       })
-      return existingSubscription
+      return { ignored: true as const, existingSubscription }
     }
     logger.info("replacing the organization's tracked Stripe subscription", {
       organization_id: organizationId,
@@ -685,26 +730,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
     },
   })
 
-  if (subscriptionType === INFERENCE_SUBSCRIPTION_TYPE) {
-    if (INFERENCE_DISABLING_STATUSES.has(status)) {
-      await setInferenceEnabled({ organizationId, enabled: false })
-    } else if (
-      ACTIVE_STATUSES.has(status)
-      && existingSubscription
-      && !ACTIVE_STATUSES.has(existingSubscription.status)
-    ) {
-      // A recovered renewal (Stripe retry succeeded, card updated in the
-      // portal) or a replacement subscription taking over the row: restore
-      // the access the earlier failure removed. Brand-new rows are activated
-      // by the Checkout handlers once payment is confirmed.
-      await activatePurchasedInference(organizationId)
-    }
-  }
-  if (isPlanSubscriptionType(subscriptionType)) {
-    await syncOrganizationPlanFromSubscriptions(organizationId, subscriptionType === SEAT_SUBSCRIPTION_TYPE ? subscription : undefined)
-  }
-
-  return findOrgSubscriptionByStripeId(subscription.id, db.$primary)
+  return { ignored: false as const, existingSubscription }
 }
 
 async function currentStripeSubscriptionStatus(stripeSubscriptionId: string) {
