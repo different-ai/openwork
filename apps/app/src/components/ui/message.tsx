@@ -4,7 +4,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { MarkdownBlock } from "@/components/markdown/markdown"
+import { MarkdownBlock, type RenderedMarkdownListener } from "@/components/markdown/markdown"
 import { cn } from "@/lib/utils"
 
 const messageContentClassName =
@@ -53,6 +53,7 @@ export type MessageContentProps = {
   sessionReferences?: boolean
   highlightQuery?: string
   githubReferences?: boolean
+  onRenderedMarkdown?: RenderedMarkdownListener
   className?: string
 } & React.ComponentProps<"div">
 
@@ -64,6 +65,7 @@ const MessageContent = ({
   sessionReferences,
   highlightQuery,
   githubReferences,
+  onRenderedMarkdown,
   ...props
 }: MessageContentProps) => {
   if (markdown) {
@@ -75,6 +77,7 @@ const MessageContent = ({
         sessionReferences={sessionReferences}
         highlightQuery={highlightQuery}
         githubReferences={githubReferences}
+        onRenderedMarkdown={onRenderedMarkdown}
         {...props}
       />
     )

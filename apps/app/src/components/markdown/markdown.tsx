@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   Dialog,
@@ -38,7 +38,11 @@ export { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "./markdown-pr
 
 const CODE_COPY_RESET_DELAY_MS = 2000;
 
+export type RenderedMarkdownListener = (root: HTMLElement, source: string) => void | (() => void);
+
 type MarkdownBlockInnerProps = {
+  /** React-owned DOM/source identity, after selection-stable rendering commits. */
+  onRenderedMarkdown?: RenderedMarkdownListener;
   className?: string;
   text: string;
   streaming?: boolean;
@@ -58,8 +62,8 @@ type MarkdownBlockInnerProps = {
  * the whole document at once, exactly as history does.
  */
 type RenderedMarkdown =
-  | { kind: "document"; html: string }
-  | { kind: "blocks"; blocks: MarkdownBlockHtml[] };
+  | { kind: "document"; html: string; source: string }
+  | { kind: "blocks"; blocks: MarkdownBlockHtml[]; source: string };
 
 function MarkdownBlockInner({
   className,
@@ -68,6 +72,7 @@ function MarkdownBlockInner({
   sessionReferences = false,
   highlightQuery,
   githubReferences = false,
+  onRenderedMarkdown,
   ...props
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -160,11 +165,15 @@ function MarkdownBlockInner({
   }, []);
 
   const candidate = useMemo<RenderedMarkdown>(() => {
-    if (!streaming && highlightedHtml?.text === text && highlightedHtml.resolveReference === resolveReference) return { kind: "document", html: highlightedHtml.html };
-    if (streamedBlocks) return { kind: "blocks", blocks: streamedBlocks };
-    return { kind: "document", html: syncHtml };
+    if (!streaming && highlightedHtml?.text === text && highlightedHtml.resolveReference === resolveReference) return { kind: "document", html: highlightedHtml.html, source: text };
+    if (streamedBlocks) return { kind: "blocks", blocks: streamedBlocks, source: text };
+    return { kind: "document", html: syncHtml, source: text };
   }, [highlightedHtml, streamedBlocks, streaming, syncHtml, text, resolveReference]);
   const rendered = useSelectionStableValue(rootRef, candidate);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (root) return onRenderedMarkdown?.(root, rendered.source);
+  }, [rendered, onRenderedMarkdown]);
   // Keep the innerHTML prop referentially stable too: a fresh wrapper object
   // can make an unrelated React render replace selected text nodes even when
   // the HTML string itself is unchanged.
