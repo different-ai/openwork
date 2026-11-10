@@ -116,8 +116,9 @@ Both places show the single page again on the next load. Nothing is stored.
 - **Agent instructions** (was "What to tell people"): the text shows as
   text with an **Edit** button. Edit opens the box with Reset to default,
   Cancel and Save instructions; nothing saves until Save.
-- **Example conversation** (was "Preview"): the agent's message, a member's
-  question and the agent's answer. Sample text with fictional names.
+- **Example message** (was "Preview"): the same single sample of the DM a
+  member gets in Slack from their agent, with an "i" saying it is a sample
+  and does not change with the instructions.
 - **Other context**: lists only the connections an admin added, each with
   its setting, its tools and Remove. **Add connector** opens a searchable
   list of the rest; a line under it says how many other connections are up

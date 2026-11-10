@@ -17,7 +17,7 @@ import { DenSelect } from "../../_components/ui/select";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { HelpTip } from "./help-tip";
-import { everyLabel, hourLabel } from "./workbot-agent-brief-panel";
+import { BriefPreview, everyLabel, hourLabel } from "./workbot-agent-brief-panel";
 import { agentsSwitchLabel, type AgentPolicyScope } from "./workbot-agent-scope";
 
 /**
@@ -35,6 +35,7 @@ export const AGENT_SETTING_HELP = {
   hours: "Agents check and send messages only between these hours, in each member's calendar time zone.",
   days: "The days agents check and send messages.",
   instructions: "What every member's agent looks for and tells them about, in plain words. Agents read this on each check.",
+  example: "A sample of the direct message a member gets in Slack from their agent. The names are made up, and it does not change with your instructions.",
   extraChecks: "Besides the schedule, an agent may ask for this many more checks a day, for example at 1:45 before a 2 PM meeting.",
 } as const;
 
@@ -97,41 +98,6 @@ function InstructionsRow({ brief, locked, onSave }: { brief: AgentBriefView; loc
       ) : (
         <p className="whitespace-pre-wrap rounded-xl bg-gray-50 px-4 py-3 text-[13px] leading-5 text-gray-700">{brief.text}</p>
       )}
-    </div>
-  );
-}
-
-function ExampleMessage({ from, time, avatar, children }: { from: string; time: string; avatar: ReactNode; children: ReactNode }) {
-  return (
-    <div className="flex gap-3">
-      {avatar}
-      <div className="grid min-w-0 gap-0.5">
-        <p className="flex items-baseline gap-2">
-          <span className="font-semibold">{from}</span>
-          <span className="text-[12px] text-gray-500">{time}</span>
-        </p>
-        <p>{children}</p>
-      </div>
-    </div>
-  );
-}
-
-/** A sample of what members get: the agent's message, a member's question, and the answer. Fictional names; not interactive. */
-export function AgentExampleConversation() {
-  const agent = <img src="/openwork-mark.svg" alt="" className="mt-0.5 h-8 w-8 shrink-0 rounded-lg border border-gray-200 bg-white p-1.5" />;
-  const member = <span aria-hidden="true" className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-200 text-[12px] font-semibold text-gray-700">M</span>;
-  return (
-    <div className="grid gap-4 rounded-xl bg-gray-50 px-4 py-3 text-[13px] leading-5 text-gray-900" data-testid="workbot-agent-example">
-      <ExampleMessage from="OpenWork" time="1:45 PM" avatar={agent}>
-        Before your 2 PM with Northwind Labs: Dana asked in Slack for the updated pricing sheet and is still waiting. I checked your sent mail and found nothing since Tuesday.
-      </ExampleMessage>
-      <ExampleMessage from="Maya" time="1:46 PM" avatar={member}>
-        What exactly did she ask for?
-      </ExampleMessage>
-      <ExampleMessage from="OpenWork" time="1:46 PM" avatar={agent}>
-        The pricing sheet with the new annual tiers. She asked on Monday and again this morning.{" "}
-        <span className="font-medium underline underline-offset-2">Slack message</span>
-      </ExampleMessage>
     </div>
   );
 }
@@ -257,8 +223,11 @@ export function WorkbotAgentSettingsGroups({ view, brief, canManage, saving, onC
       <Group>
         <InstructionsRow brief={brief} locked={locked} onSave={(text) => onChange({ brief: { text } })} />
         <div className="grid gap-3 px-6 py-4" data-testid="workbot-proactive-preview-row">
-          <span className="text-[13px] font-medium text-gray-900">Example conversation</span>
-          <AgentExampleConversation />
+          <span className="flex items-center gap-1.5">
+            <span className="text-[13px] font-medium text-gray-900">Example message</span>
+            <HelpTip label="Example message">{AGENT_SETTING_HELP.example}</HelpTip>
+          </span>
+          <BriefPreview />
         </div>
       </Group>
     </div>

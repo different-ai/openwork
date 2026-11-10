@@ -396,7 +396,7 @@ function renderGrouped(view: WorkbotProactiveView) {
 test("grouped: yes or no settings are switches, the schedule is one row per setting, and each row has help", () => {
   const html = renderGrouped(briefOn);
   const view = text(html);
-  for (const label of ["Agents for everyone", "On for members by default", "Messages", "Send messages in Slack", "Daily message limit", "Schedule", "Check for updates", "Working hours", "Working days", "Extra checks", "Agent instructions", "Edit", "Example conversation", "What exactly did she ask for?"]) assert.ok(view.includes(label), label);
+  for (const label of ["Agents for everyone", "On for members by default", "Messages", "Send messages in Slack", "Daily message limit", "Schedule", "Check for updates", "Working hours", "Working days", "Extra checks", "Agent instructions", "Edit", "Example message", "Want me to draft a reply?"]) assert.ok(view.includes(label), label);
   assert.doesNotMatch(html, /<textarea/, "the instructions are text until Edit is clicked");
   for (const gone of ["Send messages to", "Nowhere yet", "Members start", "Must opt in", "Messages per person per day", "Extra checks agents may ask for", "What to tell people", "Preview"]) assert.ok(!view.includes(gone), gone);
   assert.match(switchFor(html, "Send messages in Slack") ?? "", /aria-checked="true"/);
