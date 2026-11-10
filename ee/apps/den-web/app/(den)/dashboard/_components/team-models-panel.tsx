@@ -57,9 +57,11 @@ export function ModelsPanel({ team }: { team: { id: string; name: string } | nul
   return (
     <div className="flex flex-col gap-8" data-testid="team-models">
       {access.defaultModel ? (
-        team ? (
-          <ItemSection title="Default model"><TeamDefaultModelSection teamId={team.id} canManage={access.manageDefaultModel} embedded /></ItemSection>
-        ) : <OrgDefaultModelSection canManage={access.manageDefaultModel} embedded />
+        <ItemSection title="Default model">
+          {team
+            ? <TeamDefaultModelSection team={team} canManage={access.manageDefaultModel} embedded />
+            : <OrgDefaultModelSection canManage={access.manageDefaultModel} embedded />}
+        </ItemSection>
       ) : null}
       {access.gateway ? (
         <>
