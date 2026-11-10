@@ -23,7 +23,7 @@ import {
 import { WorkbotProactivePanel } from "./workbot-proactive-section";
 import { previewTime } from "./workbot-proactive-preview";
 import { WorkbotProactiveHealthTable } from "./workbot-proactive-health";
-import { addSourceChange, addableTo, allowAppChange, coreAppRows, makeDefaultChange, removeSourceChange, WorkbotProactiveSources } from "./workbot-proactive-sources";
+import { addSourceChange, addableTo, allowAppChange, coreAppRows, makeDefaultChange, removeSourceChange, filterConnections, WorkbotProactiveSources } from "./workbot-proactive-sources";
 
 const ready: WorkbotProactiveView = {
   settings: { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS, enabled: true },
@@ -414,14 +414,24 @@ test("grouped rows need the brief: without it the message types stay as they are
   assert.ok(text(renderGrouped(ready)).includes("Send messages to"));
 });
 
-test("what agents read, with help: each heading explains itself and each app says whether it is allowed", () => {
+test("data sources, with help: apps line up under column names, the default is a radio, and long lists can be filtered", () => {
   const props = { view: briefOn, canManage: true, saving: false, onChange: () => undefined };
   const html = renderToStaticMarkup(<WorkbotProactiveSources {...props} help />);
   for (const about of ["Calendar", "Email", "Team chat", "Other context"]) assert.ok(html.includes(`aria-label="About ${about}"`), about);
   const view = text(html);
-  assert.ok(view.includes("4 members connected"));
-  assert.ok(view.includes("Allowed"));
+  for (const column of ["App", "Connected", "Default", "Allowed", "4 members", "Add app"]) assert.ok(view.includes(column), column);
+  assert.ok(!view.includes("Make default"));
+  assert.match(html, /<input[^>]*type="radio"/);
+  assert.match(html, /aria-label="Make [^"]+ the default for Calendar"/);
   const before = renderToStaticMarkup(<WorkbotProactiveSources {...props} />);
   assert.ok(!before.includes('aria-label="About'));
   assert.ok(text(before).includes("4 connected"));
+  assert.ok(!before.includes('type="radio"'));
+});
+
+test("filtering connections matches part of a name, whatever its case", () => {
+  const list = [{ name: "Google Workspace" }, { name: "Granola" }, { name: "Stripe" }];
+  assert.deepEqual(filterConnections(list, " gr ").map((entry) => entry.name), ["Granola"]);
+  assert.deepEqual(filterConnections(list, "G").map((entry) => entry.name), ["Google Workspace", "Granola"]);
+  assert.equal(filterConnections(list, "").length, 3);
 });

@@ -19,3 +19,9 @@ test("a link to the last 7 days opens Members' agents", () => {
   assert.equal(workbotSettingsTabForHash("#workbot-default-model", "agent-health"), null);
   assert.equal(workbotSettingsTabForHash("", "agent-health"), null);
 });
+
+test("every tab has a short name and one sentence on what it is for", async () => {
+  const { WORKBOT_SETTINGS_TAB_PURPOSE } = await import("./workbot-settings-tabs-model");
+  assert.deepEqual(WORKBOT_SETTINGS_TABS.map((tab) => tab.label), ["General", "Agents", "Data sources"]);
+  for (const { value } of WORKBOT_SETTINGS_TABS) assert.match(WORKBOT_SETTINGS_TAB_PURPOSE[value], /\.$/);
+});

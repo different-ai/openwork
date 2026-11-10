@@ -91,3 +91,19 @@ Both places show the single page again on the next load. Nothing is stored.
 - `workbot-settings-screen.tsx` (Manage › Workbot) and
   `team-workbot-panel.tsx` (teams and Everyone) choose the part;
   `workbot-proactive-section.tsx` renders only that part (`show`).
+
+## Tab names and Data sources layout
+
+- The tabs are **General**, **Agents** and **Data sources** (were General,
+  Members' agents, What agents read). Under the tabs, one sentence says what
+  the open tab is for. The heading that repeated the tab's name is gone; on
+  a team's page it stays beside the "Changed for {team}" chip.
+- **Calendar, Email, Team chat**: apps line up under column names (App,
+  Connected, Default, Allowed). The default is picked with a radio button in
+  the Default column instead of a "Default" badge on one row and "Make
+  default" on the others. "Add source" reads "Add app".
+- **Tools**: the count is the link ("10 read tools") beside the
+  connection's name and opens the same dialog; the separate "Manage tools"
+  button is gone.
+- **Other context**: with more than 8 connections, a "Find a connection"
+  box filters the list by name.

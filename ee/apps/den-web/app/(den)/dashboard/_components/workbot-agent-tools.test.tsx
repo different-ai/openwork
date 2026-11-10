@@ -117,8 +117,9 @@ test("a switch saves the admin's choice; it shows at once, and a locked tool nev
 
 test("Manage tools: the row keeps the count and one button; the tools stay out of the page until it is opened", () => {
   const html = renderToStaticMarkup(<ConnectionToolsButton view={deskTools} failed={false} name={desk.name} connectionId={desk.id} connectHref="/library/connectors/emc_desk" disabled={false} onChange={() => undefined} />);
-  assert.match(text(html), /2 read tools Manage tools/);
-  assert.match(html, /aria-label="Manage tools for Lumen Support Desk"/);
+  assert.match(text(html), /2 read tools/);
+  assert.doesNotMatch(text(html), /Manage tools/, "the count is the link");
+  assert.match(html, /aria-label="Manage tools for Lumen Support Desk: 2 read tools"/);
   assert.doesNotMatch(html, /<details/);
   assert.doesNotMatch(html, /workbot-agent-tool-list_tickets/, "closed: no tool rows in the page");
 });
