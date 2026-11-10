@@ -41,6 +41,8 @@ export type RequestLogStartInput = {
   requestBytes?: number | null
   startedAt?: Date
   gatewayUsage?: GatewayUsageSnapshot
+  /** The headless runner conversation that made the call (parseHeadlessSessionHeader); the rollup attributes it to Workbot. */
+  headlessSession?: string | null
   signal?: AbortSignal
   /** Per-request prices that override the models.dev snapshot (synced LiteLLM models). */
   pricing?: PricingCatalog
@@ -269,6 +271,7 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         metadata: {
           ...(input.requestedModelSource ? { requested_model_source: input.requestedModelSource } : {}),
           ...(input.gatewayUsage ? { gateway_usage: input.gatewayUsage } : {}),
+          ...(input.headlessSession ? { headless_session: input.headlessSession } : {}),
         },
       }
       const row = pending

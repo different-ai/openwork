@@ -37,6 +37,7 @@ import { gatewayProviderTestPath, registerProviderTestRoute } from "./provider-t
 import type { GatewayDependencies } from "./gateway.js"
 import { isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./relay.js"
 import { createRequestLogRecorder, insertRequestLogIntoDb, REQUEST_LOG_UNAVAILABLE_MESSAGE } from "./request-log.js"
+import { HEADLESS_SESSION_HEADER, parseHeadlessSessionHeader } from "@openwork/types/den/workbot-usage"
 import { openWorkModelsAllowanceResponse } from "./models-allowance.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
 import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usage/openai-chat.js"
@@ -598,6 +599,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         stream: input.stream,
         requestBytes: input.requestBytes,
         startedAt,
+        headlessSession: parseHeadlessSessionHeader(c.req.header(HEADLESS_SESSION_HEADER)),
         signal: c.req.raw.signal,
       })
     }

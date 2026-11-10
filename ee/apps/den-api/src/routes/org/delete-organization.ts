@@ -62,6 +62,7 @@ import {
   InferenceUsageLedgerBucketChargeTable,
   InferenceUsageLedgerEntryTable,
   GatewayUsageRollupTable,
+  WorkbotUsageDayTable,
   InstallLinkTable,
   InvitationTable,
   LlmProviderAccessTable,
@@ -584,6 +585,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         // Account erasure remains distinct from provider deletion, which retains its history.
         await tx.delete(GatewayRequestLogTable).where(eq(GatewayRequestLogTable.organization_id, organizationId))
         await tx.delete(GatewayUsageRollupTable).where(eq(GatewayUsageRollupTable.organization_id, organizationId))
+        await tx.delete(WorkbotUsageDayTable).where(eq(WorkbotUsageDayTable.organization_id, organizationId))
         await tx.delete(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, organizationId))
         await tx.delete(GatewayKeyTable).where(eq(GatewayKeyTable.organization_id, organizationId))
         await tx.delete(GatewayApiKeyTable).where(eq(GatewayApiKeyTable.organization_id, organizationId))

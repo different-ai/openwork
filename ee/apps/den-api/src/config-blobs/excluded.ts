@@ -51,6 +51,7 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   gateway_api_keys: { reason: "personal", note: "API keys members create for 3rd party tools; only a digest is stored" },
   gateway_request_logs: { reason: "runtime" },
   gateway_usage_rollups: { reason: "runtime" },
+  workbot_usage_day: { reason: "runtime" },
   gateway_usage_audit: { reason: "runtime" },
   gateway_usage_bucket: { reason: "runtime" },
   gateway_usage_bucket_charge: { reason: "runtime" },

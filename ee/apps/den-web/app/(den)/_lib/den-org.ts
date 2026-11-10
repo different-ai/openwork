@@ -826,6 +826,10 @@ export function getLibraryUsageRoute(orgSlug?: string | null): string {
   return `${getAnalyticsRoute(orgSlug)}/library`;
 }
 
+export function getWorkbotUsageRoute(orgSlug?: string | null): string {
+  return `${getAnalyticsRoute(orgSlug)}/workbot`;
+}
+
 export function getMembersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/members`;
 }

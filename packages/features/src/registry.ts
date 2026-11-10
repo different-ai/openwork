@@ -694,6 +694,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotUsageAnalytics: {
+    label: "Workbot: cost in Analytics",
+    description: "Admins see what Workbot spent on models over the last 30 days in Analytics › Workbot: the total, per day, per person, per model, and split between chats, members' agents, and Slack and automations.",
+    category: "workbot",
+    added: "2026-11-10",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/workbot-usage-analytics/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   browserUploadPermissions: {
     label: "Browser: managed and remembered file-sharing permissions",
     description: "Admins set Allow, Ask first or Block for browser uploads, with website exceptions. Members can remember permission for one website and a folder on this computer across chats and Slack-started tasks, and revoke it in Settings.",

@@ -281,6 +281,7 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   read("/v1/telemetry/analytics", "telemetry.analytics.read", "telemetry.adoption", res("telemetry_event"), "Aggregates only."),
 
   // Library usage
+  read("/v1/workbot-usage", "workbot_usage.read", "workbot_usage.reporting", res("workbot_usage_day"), "Aggregates only: Workbot's model requests, tokens and cost over the last 30 UTC days by day, by where it ran, by model and by member (name and email of current members). Never a conversation id or content."),
   read("/v1/library-usage", "library_usage.breakdown.read", "library_usage.reporting", res("capability_usage_event"), "Aggregates only: use, failure, distinct member and per-source counts grouped by item, member id and UTC day; member ids, never names or content."),
   read("/v1/library-usage/:kind", "library_usage.read", "library_usage.reporting", res("capability_usage_event"), "Aggregates only: per skill, plugin or connector use counts, failure counts, distinct member counts and last use; no member identities."),
 

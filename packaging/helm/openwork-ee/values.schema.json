@@ -601,6 +601,16 @@
               ],
               "description": "Workbot: settings per team: Admins can give a team its own Workbot default model and its own Workbot name, and turn Workbot on or off for everyone or for a team; teams without their own use the organization's. A member on several teams whose settings differ gets the organization's. Renders DEN_FEATURE_WORKBOT_TEAM_SETTINGS."
             },
+            "workbotUsageAnalytics": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: cost in Analytics: Admins see what Workbot spent on models over the last 30 days in Analytics › Workbot: the total, per day, per person, per model, and split between chats, members' agents, and Slack and automations. Renders DEN_FEATURE_WORKBOT_USAGE_ANALYTICS."
+            },
             "browserUploadPermissions": {
               "enum": [
                 "",

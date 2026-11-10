@@ -1,3 +1,4 @@
+import { HEADLESS_SESSION_HEADER } from "@openwork/types/den/workbot-usage"
 import { z } from "zod"
 import type { DesktopView, HeadlessModelAccess, Message, ToolCall, ToolSpec } from "./types.js"
 
@@ -17,6 +18,12 @@ export type ModelRequest = {
   model: string
   apiKey: string
   signal: AbortSignal
+  /**
+   * The conversation the call is for, sent as a header so OpenWork's gateway can attribute the spend to Workbot
+   * (Den › Analytics › Workbot). The gateway never forwards it to the model provider; callers set it only for calls
+   * that go through the gateway.
+   */
+  sessionId?: string
   /** Streams the model's text as it is written. Without it the call is not streamed. */
   onText?: (delta: string) => void
   /** The streamed text so far is void: the call is being retried from the start. */
@@ -92,6 +99,10 @@ export function describeProviderError(body: string, requestId: string | null): s
   // Provider messages don't carry keys, but never log one if a proxy echoes it.
   const redacted = text.replace(/\b(sk|ow_[a-z]+|key)[-_][A-Za-z0-9_-]{8,}/g, "[redacted]").replace(/\s+/g, " ").slice(0, 300)
   return requestId ? `${redacted} (request ${requestId})` : redacted
+}
+
+function sessionHeader(request: Pick<ModelRequest, "sessionId">): Record<string, string> {
+  return request.sessionId ? { [HEADLESS_SESSION_HEADER]: request.sessionId } : {}
 }
 
 type Fetch = typeof fetch
@@ -623,7 +634,7 @@ export function anthropicModel(options: {
       fetch: options.fetch ?? fetch,
       sleep,
       url: `${options.baseUrl}/messages`,
-      headers: { "x-api-key": request.apiKey, "anthropic-version": "2023-06-01" },
+      headers: { "x-api-key": request.apiKey, "anthropic-version": "2023-06-01", ...sessionHeader(request) },
       signal: request.signal,
       body: {
         model: request.model,
@@ -887,7 +898,7 @@ export function openAIModel(options: { baseUrl: string; maxOutputTokens: number;
         fetch: options.fetch ?? fetch,
         sleep,
         url: `${options.baseUrl}/chat/completions`,
-        headers: { authorization: `Bearer ${request.apiKey}` },
+        headers: { authorization: `Bearer ${request.apiKey}`, ...sessionHeader(request) },
         signal: request.signal,
         body: {
           model: request.model,
@@ -1102,7 +1113,7 @@ export function openAIResponsesModel(options: { baseUrl: string; maxOutputTokens
         fetch: options.fetch ?? fetch,
         sleep,
         url: `${options.baseUrl}/responses`,
-        headers: { authorization: `Bearer ${request.apiKey}` },
+        headers: { authorization: `Bearer ${request.apiKey}`, ...sessionHeader(request) },
         signal: request.signal,
         body: {
           model: request.model,
