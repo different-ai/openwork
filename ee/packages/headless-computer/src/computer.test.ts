@@ -142,8 +142,8 @@ test("a pause nothing can call off is waited for, and leaves nothing due", async
   await idle
   await returning
   assert.equal(back, true)
-  await computers.delete("wait")
   assert.equal(pauses.has("wait"), false)
+  await computers.delete("wait")
 })
 
 test("what runs before a pause is still waited for, even where the pause can be called off", async () => {
