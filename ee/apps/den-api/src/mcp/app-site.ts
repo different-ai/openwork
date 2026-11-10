@@ -165,8 +165,18 @@ const SITE_CSP = [
   "form-action 'none'",
 ].join("; ")
 
+/**
+ * Keeps an App's URLs out of search results. A shared App is for the people
+ * given its link, like any shared document: search engines may fetch the URL
+ * but must not list it, follow its links or keep a copy. It is sent both as a
+ * header, which also covers answers that are not HTML, and in the page. The
+ * URLs are deliberately not disallowed in robots.txt: a crawler that may not
+ * fetch a URL never sees this, and can still list the bare link.
+ */
+export const NO_INDEX = "noindex, nofollow, noarchive"
+
 function sitePage(mode: "public" | "member"): string {
-  return `<!doctype html><html lang="en" data-mode="${mode}" data-sign-in="${escapeAttribute(env.webUrl)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>OpenWork App</title><style>html,body{margin:0;height:100%}body{font:15px system-ui,sans-serif;color-scheme:light dark}#app{display:block;width:100%;height:100%;border:0}#status{margin:0;padding:24px}</style></head><body><p id="status" role="status">Opening…</p><iframe id="app" title="App" sandbox="allow-scripts allow-forms" hidden></iframe><script>${SITE_SCRIPT}</script></body></html>`
+  return `<!doctype html><html lang="en" data-mode="${mode}" data-sign-in="${escapeAttribute(env.webUrl)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="${NO_INDEX}"><title>OpenWork App</title><style>html,body{margin:0;height:100%}body{font:15px system-ui,sans-serif;color-scheme:light dark}#app{display:block;width:100%;height:100%;border:0}#status{margin:0;padding:24px}</style></head><body><p id="status" role="status">Opening…</p><iframe id="app" title="App" sandbox="allow-scripts allow-forms" hidden></iframe><script>${SITE_SCRIPT}</script></body></html>`
 }
 
 /** Sent by the page on its signed-in requests, so the App's server refuses an App that was not made a site. */
@@ -192,6 +202,7 @@ export async function appSiteResponse(input: { appIdOrName: string; publicOnly: 
       "cache-control": "no-store",
       "referrer-policy": "no-referrer",
       "x-content-type-options": "nosniff",
+      "x-robots-tag": NO_INDEX,
     },
   })
 }

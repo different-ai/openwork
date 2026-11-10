@@ -116,3 +116,24 @@ test("MCP clients get the answers they got before", async () => {
   })
   assert.ok(listed.text.includes("open_app"), listed.text)
 })
+
+test("App pages and public App URLs ask search engines not to list them", async () => {
+  const noIndex = "noindex, nofollow, noarchive"
+  const appId = await createApp("Unlisted", { site: true, public: true })
+  for (const path of [publicPath(appId), memberPath(appId)]) {
+    const page = await browse(path)
+    assert.equal(page.headers.get("x-robots-tag"), noIndex, path)
+    assert.ok(page.text.includes(`<meta name="robots" content="${noIndex}">`), path)
+  }
+  // Answers that are not the page carry it too: a crawler's plain GET, an unknown name, an MCP reply.
+  const plainGet = await den.request(null, "GET", publicPath(appId))
+  assert.equal(plainGet.status, 405)
+  assert.equal(plainGet.headers.get("x-robots-tag"), noIndex)
+  assert.equal((await browse(publicPath("no-such-app"))).headers.get("x-robots-tag"), noIndex)
+  const mcpReply = await den.request(null, "POST", publicPath(appId), {
+    headers: { accept: "application/json, text/event-stream" },
+    body: { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
+  })
+  assert.equal(mcpReply.status, 200)
+  assert.equal(mcpReply.headers.get("x-robots-tag"), noIndex)
+})

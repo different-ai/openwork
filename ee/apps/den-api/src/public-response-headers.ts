@@ -16,7 +16,8 @@ const INTERNAL_RESPONSE_HEADERS = new Set([
   "x-request-id",
   "x-vercel-id",
 ])
-const SAFE_X_RESPONSE_HEADERS = new Set(["x-content-type-options", "x-audit-next-cursor", "x-audit-snapshot-at", "x-audit-resource-scope"])
+// x-robots-tag is a standard header for search engines, not an internal one.
+const SAFE_X_RESPONSE_HEADERS = new Set(["x-content-type-options", "x-robots-tag", "x-audit-next-cursor", "x-audit-snapshot-at", "x-audit-resource-scope"])
 
 function isInternalResponseHeader(name: string) {
   const normalized = name.toLowerCase()
