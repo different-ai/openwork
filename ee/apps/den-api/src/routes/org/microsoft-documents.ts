@@ -129,7 +129,7 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     if (input.cursor) {
       // Continue only Microsoft's own next page link, never an arbitrary address.
       let next: URL
-      try { next = new URL(Buffer.from(input.cursor, "base64url").toString("utf8")) } catch { return failure(c, "This page link is invalid.") }
+      try { next = new URL(Buffer.from(input.cursor, "base64url").toString("utf8"), graphRootFor(access)) } catch { return failure(c, "This page link is invalid.") }
       if (next.origin !== graphRootFor(access).origin || !next.pathname.startsWith(graphRootFor(access).pathname)) return failure(c, "This page link is invalid.")
       url = next
     } else if (input.query) {
