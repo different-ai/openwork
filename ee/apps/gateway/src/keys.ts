@@ -120,6 +120,19 @@ async function memberApiKeysAllowed(organizationId: string): Promise<boolean> {
   return allowed
 }
 
+const cursorPolicyCache = new Map<string, { expires: number; enabled: boolean }>()
+
+/** Whether the Cursor endpoint (feature `gatewayCursorSetup`) is on for the organization. Cached like the key policy. */
+export async function cursorEndpointEnabled(organizationId: string): Promise<boolean> {
+  const now = Date.now()
+  const cached = cursorPolicyCache.get(organizationId)
+  if (cached && cached.expires > now) return cached.enabled
+  const enabled = (await readFeatures(db, organizationId, env.features)).gatewayCursorSetup
+  if (cursorPolicyCache.size > 5_000) for (const [key, entry] of cursorPolicyCache) if (entry.expires <= now) cursorPolicyCache.delete(key)
+  cursorPolicyCache.set(organizationId, { expires: now + API_KEY_POLICY_CACHE_MS, enabled })
+  return enabled
+}
+
 const LAST_USED_RESOLUTION_MS = 60_000
 
 /** Records when a member API key was last used, at most once a minute per key. Never fails the request. */

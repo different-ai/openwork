@@ -100,7 +100,7 @@ function isThinkingLevel(value: string): value is AutoRouterThinkingLevel {
   return AUTO_ROUTER_THINKING_LEVELS.some((level) => level === value)
 }
 
-function accessPriority(row: GatewayMemberAccessRow) {
+export function accessPriority(row: GatewayMemberAccessRow) {
   return row.grant.org_membership_id !== null ? 3 : row.grant.team_id !== null ? 2 : 1
 }
 
@@ -112,7 +112,7 @@ function modelName(row: GatewayMemberAccessRow) {
   return row.model?.name ?? row.model?.model_id ?? "model"
 }
 
-function maxOutputTokens(row: GatewayMemberAccessRow) {
+export function maxOutputTokens(row: GatewayMemberAccessRow) {
   const config = row.model?.model_config
   const limit = config && isJsonObject(config.limit) ? config.limit.output : null
   return typeof limit === "number" && Number.isInteger(limit) && limit > 0 ? Math.min(limit, 128_000) : null
@@ -146,7 +146,7 @@ export function autoCandidates(config: AutoRouterConfig, rows: GatewayMemberAcce
   return candidates
 }
 
-function forwardedHeaders(request: Request, extra: Record<string, string>) {
+export function forwardedHeaders(request: Request, extra: Record<string, string>) {
   const headers = new Headers()
   for (const name of ["content-type", "accept", "user-agent", "x-opencode-session-id", "x-openwork-session-id"]) {
     const value = request.headers.get(name)
@@ -230,25 +230,38 @@ async function readJson(response: Response): Promise<unknown> {
   return response.json().catch(() => null)
 }
 
-async function translateResponse(response: Response, translator: AutoTranslator, input: TranslateResponseInput): Promise<Response> {
+/**
+ * An upstream response as Chat Completions. Smart responses (`smart`, the default) also name the
+ * routed model in headers and on every error; other callers get the translated response alone.
+ */
+export async function translateResponse(response: Response, translator: AutoTranslator, input: TranslateResponseInput, options: { smart: boolean } = { smart: true }): Promise<Response> {
   const contentType = response.headers.get("content-type")
   const { route } = input
+  const respond = (body: BodyInit | null, type?: string) => {
+    if (options.smart) return withRouteHeaders(response, route, body, type)
+    const headers = new Headers(response.headers)
+    headers.delete("content-length")
+    if (type) headers.set("content-type", type)
+    return new Response(body, { status: response.status, statusText: response.statusText, headers })
+  }
+  const error = (body: JsonObject) => options.smart ? annotateChatError(body, route) : body
+  const stream = (body: ReadableStream<Uint8Array>) => options.smart ? annotateChatStreamErrors(body, route) : body
   if (!response.ok) {
     const body = isJsonContentType(contentType) ? await readJson(response) : (await response.body?.cancel().catch(() => {}), null)
-    return withRouteHeaders(response, route, JSON.stringify(annotateChatError(translator.errorToChat(body, response.status), route)), "application/json")
+    return respond(JSON.stringify(error(translator.errorToChat(body, response.status))), "application/json")
   }
   if (response.body && (isEventStreamContentType(contentType) || isAwsEventStreamContentType(contentType) || (input.stream && !isJsonContentType(contentType)))) {
-    return withRouteHeaders(response, route, annotateChatStreamErrors(translator.streamToChat(response.body, input), route), "text/event-stream; charset=utf-8")
+    return respond(stream(translator.streamToChat(response.body, input)), "text/event-stream; charset=utf-8")
   }
   if (isJsonContentType(contentType)) {
     const body = await readJson(response)
     // Google streams a JSON array without alt=sse; translators accept it as a body.
     if (input.stream && Array.isArray(body)) {
-      return withRouteHeaders(response, route, annotateChatStreamErrors(translator.streamToChat(new Response(`data: ${body.map((item) => JSON.stringify(item)).join("\n\ndata: ")}\n\n`).body ?? new ReadableStream(), input), route), "text/event-stream; charset=utf-8")
+      return respond(stream(translator.streamToChat(new Response(`data: ${body.map((item) => JSON.stringify(item)).join("\n\ndata: ")}\n\n`).body ?? new ReadableStream(), input)), "text/event-stream; charset=utf-8")
     }
-    return withRouteHeaders(response, route, JSON.stringify(translator.jsonToChat(body, input)), "application/json")
+    return respond(JSON.stringify(translator.jsonToChat(body, input)), "application/json")
   }
-  return withRouteHeaders(response, route, response.body)
+  return respond(response.body)
 }
 
 export async function handleAutoRequest(input: {

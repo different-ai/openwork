@@ -130,6 +130,14 @@ before running the new runtime. Do not deploy it against the old table names.
   upstream_model_id}`. No grants is an empty list, not an error. Call a listed
   model through the provider-less endpoints below, or through
   `/api/v1/providers/{openwork.provider_id}/*`.
+- Cursor (feature `gatewayCursorSetup`): `GET /api/v1/cursor/models`,
+  `POST /api/v1/cursor/chat/completions` and `POST /api/v1/cursor/responses`
+  accept only `ow_gw_` keys. Models are named
+  `openwork/<name slug>-<last 4 of the ipm_ id>[:<thinking level>]`; the name is
+  resolved against the member's grants (id ending, then slug), the request is
+  translated to the model's own protocol and run through the same provider
+  handler, and the response returns in the API it came in on. Off is 404.
+  See `docs/features/gateway-cursor-setup/README.md`.
 - Requests resolve configured provider model rows and active group/set grants.
   Explicit aliases constrain candidates before member > team > organization
   priority. Equal-priority different sets return HTTP 409 with the shared
