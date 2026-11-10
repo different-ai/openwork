@@ -1,5 +1,8 @@
 "use client";
 
+import { HelpTip } from "./help-tip";
+import { agentPermissionsHeading } from "./team-section-help";
+import { useTeamSectionsHelp } from "./team-sections";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import {
   agentPermissionDefaultDecision,
@@ -235,6 +238,7 @@ function ScopeAgents({ access, data, policy, team, area }: {
     });
   }
 
+  const help = useTeamSectionsHelp();
   const intro = area === "browser"
     ? team
       ? `Which pages agents and the built-in browser can open for people in ${team}. Rows you don't change follow Everyone.`
@@ -246,7 +250,14 @@ function ScopeAgents({ access, data, policy, team, area }: {
   return (
     <div className="flex flex-col gap-4" data-testid={area === "browser" ? "agent-permissions-browser" : "agent-permissions-agents"} data-scope={policy.scopeId}>
       <div className="flex min-h-8 flex-wrap items-center justify-between gap-3">
-        <p className="min-w-0 flex-1 text-[13px] text-gray-500" data-testid="agent-permissions-intro">{intro}</p>
+        {help ? (
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 px-1" data-testid="agent-permissions-intro">
+            <h2 className="text-[13px] font-medium text-gray-500">{agentPermissionsHeading(area)}</h2>
+            <HelpTip label={agentPermissionsHeading(area)}>{intro}</HelpTip>
+          </div>
+        ) : (
+          <p className="min-w-0 flex-1 text-[13px] text-gray-500" data-testid="agent-permissions-intro">{intro}</p>
+        )}
         {team ? (
           <div className="flex shrink-0 items-center gap-4">
             <Link
@@ -254,7 +265,7 @@ function ScopeAgents({ access, data, policy, team, area }: {
               className="rounded text-[13px] font-medium text-gray-700 underline-offset-2 hover:text-gray-900 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400"
               data-testid="agent-permissions-open-everyone"
             >
-              Open Everyone
+              {help ? "View Everyone's settings" : "Open Everyone"}
             </Link>
             {/* Reset removes every change the team made, so it lives on the Agents tab only. */}
             {access.canManage && editable && savedChanges.length > 0 && area !== "browser" ? (
