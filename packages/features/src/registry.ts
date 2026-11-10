@@ -113,7 +113,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/claude-agent-provider/README.md",
     deployments: everywhere,
-    default: true,
+    default: false,
   },
   configBlobs: {
     label: "Config import and export",
@@ -736,7 +736,7 @@ export const FEATURES = defineFeatures({
     author: "reachjalil",
     docs: "docs/features/computer-use-background/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
 
   computerSessionHistory: {
