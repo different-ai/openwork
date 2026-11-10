@@ -6,12 +6,13 @@ const authorization = { device_code: "private-device-code", user_code: "ABCD-EFG
 const identity = { email: "member@example.test", org: { id: "org-b", name: "Second workspace" } };
 const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 
-function harness(input: { enabled?: boolean; signedIn?: boolean; start?: Response | Promise<Response>; responses?: Array<Response | Error>; enroll?: () => Promise<typeof identity> } = {}) {
+function harness(input: { enabled?: boolean; signedIn?: boolean; start?: Response | Promise<Response>; starts?: Array<Response | Promise<Response>>; responses?: Array<Response | Error>; enroll?: () => Promise<typeof identity> } = {}) {
   let clock = 0;
   let generation = 0;
   const requests: Array<{ url: string; body: unknown }> = [];
   const waits: Array<{ ms: number; wake(): void }> = [];
   const responses = [...(input.responses ?? [])];
+  const starts = [...(input.starts ?? [])];
   const enroll = mock(input.enroll ?? (async () => identity));
   const prepare = mock(async () => input.enabled === false ? null : destination);
   const flow = createDesktopDeviceLogin({
@@ -29,7 +30,7 @@ function harness(input: { enabled?: boolean; signedIn?: boolean; start?: Respons
     }),
     fetcher: async (url, init) => {
       requests.push({ url: String(url), body: typeof init?.body === "string" ? JSON.parse(init.body) : null });
-      if (String(url).endsWith("/device/code")) return input.start ?? Response.json(authorization);
+      if (String(url).endsWith("/device/code")) return starts.shift() ?? input.start ?? Response.json(authorization);
       const next = responses.shift();
       if (next instanceof Error) throw next;
       return next ?? Response.json({ error: "authorization_pending" }, { status: 400 });
@@ -145,6 +146,73 @@ describe("desktop-owned device sign-in", () => {
     await h.tick();
     expect(h.flow.status().state).toBe("expired");
     expect(h.requests).toHaveLength(1);
+  });
+
+  test("older A status/cancel cannot inspect or cancel superseding B", async () => {
+    const h = harness();
+    await h.flow.start({ requestId: "request-a" });
+    await h.flow.start({ requestId: "request-b" });
+    expect(h.flow.status("request-a")).toEqual({ state: "failed", message: "Device sign-in was superseded by a newer sign-in." });
+    expect(h.flow.cancel("request-a")).toEqual(h.flow.status("request-a"));
+    expect(h.flow.status("request-b")).toEqual({ state: "pending" });
+    expect(h.flow.status()).toEqual({ state: "pending" });
+    expect(h.flow.cancel("request-b")).toEqual({ state: "failed", message: "Device sign-in was cancelled." });
+    await h.tick();
+    await h.tick();
+    expect(h.requests).toHaveLength(2);
+    expect(h.enroll).not.toHaveBeenCalled();
+  });
+
+  test("terminal A ownership is retained until B allocates, then late A never sees B identity", async () => {
+    const h = harness({ responses: [Response.json({ access_token: "private-a" }), Response.json({ access_token: "private-b" })] });
+    await h.flow.start({ requestId: "request-a" });
+    await h.tick();
+    expect(h.flow.status("request-a")).toEqual({ state: "signed_in", ...identity, runner: "unknown" });
+    await h.flow.start({ requestId: "request-b", force: true });
+    expect(h.flow.cancel("request-a")).toEqual({ state: "failed", message: "Device sign-in was superseded by a newer sign-in." });
+    expect(h.flow.status("request-b").state).toBe("pending");
+    await h.tick();
+    expect(h.flow.status("request-b")).toEqual({ state: "signed_in", ...identity, runner: "unknown" });
+    expect(h.flow.status("request-a")).not.toHaveProperty("email");
+    expect(h.flow.cancel("request-a")).not.toHaveProperty("org");
+    expect(h.flow.status("request-b").state).toBe("signed_in");
+    expect(h.requests.every((request) => typeof request.body === "object" && request.body !== null && !("requestId" in request.body))).toBe(true);
+  });
+
+  test("rejected non-force start does not take ownership from the existing terminal flow", async () => {
+    const input = { signedIn: false, responses: [Response.json({ access_token: "private-a" })] };
+    const h = harness(input);
+    await h.flow.start({ requestId: "request-a" });
+    await h.tick();
+    input.signedIn = true;
+    expect(await h.flow.start({ requestId: "request-b" })).toHaveProperty("ok", false);
+    expect(h.flow.status("request-a").state).toBe("signed_in");
+    expect(h.flow.status("request-b")).not.toHaveProperty("email");
+    expect(h.prepare).toHaveBeenCalledTimes(1);
+  });
+
+  test("A cleanup after an uncertain start response cannot cancel B", async () => {
+    let resolve = (_response: Response) => {};
+    const pendingCode = new Promise<Response>((complete) => { resolve = complete; });
+    const h = harness({ starts: [pendingCode, Response.json(authorization)] });
+    const a = h.flow.start({ requestId: "request-a" });
+    await settle();
+    await h.flow.start({ requestId: "request-b" });
+    expect(h.flow.cancel("request-a").state).toBe("failed");
+    expect(h.flow.status("request-b").state).toBe("pending");
+    resolve(Response.json(authorization));
+    expect(await a).toHaveProperty("ok", false);
+    expect(h.flow.status("request-b").state).toBe("pending");
+    expect(h.flow.cancel("request-b").message).toBe("Device sign-in was cancelled.");
+  });
+
+  test("an unowned caller retains legacy status/cancel behavior for an owned flow", async () => {
+    const h = harness();
+    await h.flow.start({ requestId: "request-a" });
+    expect(h.flow.status().state).toBe("pending");
+    expect(h.flow.cancel().message).toBe("Device sign-in was cancelled.");
+    expect(h.flow.status("request-a").message).toBe("Device sign-in was cancelled.");
+    expect(h.flow.status("request-b")).not.toHaveProperty("email");
   });
 
   test("cancel before a poll prevents all token requests", async () => {

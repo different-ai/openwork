@@ -11,7 +11,7 @@ import {
 } from "../../app/lib/den";
 import { exchangeHandoffAndSignIn } from "../../app/lib/den-handoff";
 import { denDeviceLogin, isConfiguredDenDeviceDestination } from "../../app/lib/den-device-login";
-import { createDeviceLoginControl } from "../../app/lib/device-login-control";
+import { createDeviceLoginControl, readDeviceLoginRequestId } from "../../app/lib/device-login-control";
 import { useDeploymentFeature } from "../domains/session/status/use-desktop-feature";
 import {
   denSettingsChangedEvent,
@@ -313,10 +313,14 @@ function DenAuthControlActions() {
       { name: "baseUrl", type: "string", required: false, description: "Optional Den base URL." },
       { name: "apiBaseUrl", type: "string", required: false, description: "Optional separately hosted Den API URL." },
       { name: "force", type: "boolean", required: false, description: "Replace an existing sign-in (equivalent to --force)." },
+      { name: "requestId", type: "string", required: false, description: "Public caller ID to scope later status and cancellation to this attempt." },
     ],
     execute: (args) => {
+      const request = readDeviceLoginRequestId(args);
+      if (!request.ok) return request;
       const value = args && typeof args === "object" ? args : {};
       return deviceLoginControl.start({
+        requestId: request.requestId,
         baseUrl: "baseUrl" in value && typeof value.baseUrl === "string" ? value.baseUrl : undefined,
         apiBaseUrl: "apiBaseUrl" in value && typeof value.apiBaseUrl === "string" ? value.apiBaseUrl : undefined,
         force: "force" in value && value.force === true,
@@ -331,7 +335,13 @@ function DenAuthControlActions() {
     kind: "query",
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
-    execute: () => deviceLoginControl.status(),
+    args: [
+      { name: "requestId", type: "string", required: false, description: "Public caller ID of the sign-in attempt to inspect." },
+    ],
+    execute: (args) => {
+      const request = readDeviceLoginRequestId(args);
+      return request.ok ? deviceLoginControl.status(request.requestId) : request;
+    },
   }), [deviceLoginControl]);
   useControlAction(deviceLoginStatusAction);
 
@@ -340,7 +350,13 @@ function DenAuthControlActions() {
     label: "Cancel device sign-in",
     description: "Stop polling and discard this computer's pending sign-in code.",
     sideEffect: "mutation",
-    execute: () => deviceLoginControl.cancel(),
+    args: [
+      { name: "requestId", type: "string", required: false, description: "Public caller ID of the sign-in attempt to cancel." },
+    ],
+    execute: (args) => {
+      const request = readDeviceLoginRequestId(args);
+      return request.ok ? deviceLoginControl.cancel(request.requestId) : request;
+    },
   }), [deviceLoginControl]);
   useControlAction(deviceLoginCancelAction);
 
