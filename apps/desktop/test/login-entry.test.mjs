@@ -52,14 +52,20 @@ for (const argv of [
 }
 
 for (const defaultApp of [false, true]) {
-  test(`login bypasses every GUI import (${defaultApp ? "development" : "packaged"})`, () => {
+  test(`login bypasses every GUI import (${defaultApp ? "development" : "packaged"})`, async () => {
     const { options, calls, child } = fixture();
     const argv = defaultApp
       ? ["/electron", "/source/electron/entry.mjs", "login", "--force"]
       : ["/installed/OpenWork", "login", "--force"];
-    dispatchDesktopEntry({ ...options, argv, defaultApp, loadGui: () => assert.fail("GUI imported") });
+    const completion = dispatchDesktopEntry({ ...options, argv, defaultApp, loadGui: () => assert.fail("GUI imported") });
+    assert.ok(completion instanceof Promise);
+    let settled = false;
+    completion.then(() => { settled = true; });
+    await Promise.resolve();
+    assert.equal(settled, false);
     assert.deepEqual(calls.find(([name]) => name === "spawn")[2].slice(1), ["login", "--force"]);
     child.emit("close", 0, null);
+    assert.equal(await completion, 0);
   });
 }
 
@@ -121,11 +127,16 @@ test("Linux sandbox override requires the existing exact explicit flag", () => {
 });
 
 for (const code of [0, 1, 2, 3, 4, 130]) {
-  test(`preserves CLI exit ${code} and removes listeners/profile once`, () => {
+  test(`preserves CLI exit ${code} and removes listeners/profile once`, async () => {
     const { options, calls, signals, child } = fixture();
-    runLoginCommand(options);
+    const completion = runLoginCommand(options);
+    let settled = false;
+    completion.then(() => { settled = true; });
+    await Promise.resolve();
+    assert.equal(settled, false);
     child.emit("close", code, null);
     child.emit("close", 1, null);
+    assert.equal(await completion, code);
     assert.deepEqual(calls.filter(([name]) => name === "exit"), [["exit", code]]);
     assert.deepEqual(calls.filter(([name]) => name === "removeProfile"), [["removeProfile", "/temporary/login"]]);
     assert.equal(signals.listenerCount("SIGINT"), 0);
@@ -135,9 +146,11 @@ for (const code of [0, 1, 2, 3, 4, 130]) {
 }
 
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  test(`${signal} forwards once and waits for CLI cancellation cleanup`, () => {
+  test(`${signal} forwards once and waits for CLI cancellation cleanup`, async () => {
     const { options, calls, signals, child } = fixture();
-    runLoginCommand(options);
+    const completion = runLoginCommand(options);
+    let settled = false;
+    completion.then(() => { settled = true; });
     signals.emit(signal);
     signals.emit(signal);
     signals.emit(signal === "SIGINT" ? "SIGTERM" : "SIGINT");
@@ -146,7 +159,10 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
       ["kill", signal === "SIGHUP" ? "SIGTERM" : signal],
     ]);
     assert.equal(calls.some(([name]) => name === "exit" || name === "removeProfile"), false);
+    await Promise.resolve();
+    assert.equal(settled, false);
     child.emit("close", 130, null);
+    assert.equal(await completion, 130);
     assert.deepEqual(calls.at(-1), ["exit", 130]);
     assert.equal(signals.listenerCount("SIGHUP"), 0);
   });
@@ -161,20 +177,27 @@ for (const [signal, expected] of [["SIGINT", 130], ["SIGTERM", 143], [null, 1]])
   });
 }
 
-test("spawn errors fail safely without printing error details or exiting twice", () => {
+test("spawn errors fail safely without printing error details or exiting twice", async () => {
   const { options, calls, child } = fixture();
-  runLoginCommand(options);
+  const completion = runLoginCommand(options);
+  let settled = false;
+  completion.then(() => { settled = true; });
+  await Promise.resolve();
+  assert.equal(settled, false);
   child.emit("error", new Error("sensitive diagnostic"));
   child.emit("close", -2, null);
+  assert.equal(await completion, 1);
   assert.deepEqual(calls.filter(([name]) => name === "exit"), [["exit", 1]]);
   assert.deepEqual(calls.filter(([name]) => name === "error"), [
     ["error", "Device sign-in could not start. Use the sign-in link instead."],
   ]);
 });
 
-test("synchronous startup failures remove only the temporary parent profile", () => {
+test("synchronous startup failures remove only the temporary parent profile", async () => {
   const { options, calls, signals } = fixture();
-  runLoginCommand({ ...options, spawnChild: () => { throw new Error("private path"); } });
+  const completion = runLoginCommand({ ...options, spawnChild: () => { throw new Error("private path"); } });
+  assert.ok(completion instanceof Promise);
+  assert.equal(await completion, 1);
   assert.deepEqual(calls.at(-2), ["removeProfile", "/temporary/login"]);
   assert.deepEqual(calls.at(-1), ["exit", 1]);
   assert.equal(signals.listenerCount("SIGINT"), 0);
@@ -185,6 +208,7 @@ test("packaging and development start through the small entry, not GUI main", ()
   assert.equal(pkg.main, "electron/entry.mjs");
   assert.match(pkg.scripts.electron, /electron \.\/electron\/entry\.mjs/);
   const entry = readFileSync(new URL("../electron/entry.mjs", import.meta.url), "utf8");
+  assert.match(entry, /await dispatchDesktopEntry\(/);
   assert.match(entry, /loadGui: \(\) => import\("\.\/main\.mjs"\)/);
   assert.doesNotMatch(entry, /from ["']\.\/main\.mjs/);
   const development = readFileSync(new URL("../scripts/electron-dev.mjs", import.meta.url), "utf8");
