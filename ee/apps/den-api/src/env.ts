@@ -12,6 +12,7 @@ import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
 import { readFreeInferenceConfig } from "@openwork/types/den/inference"
 import { parseFeatureEnvironment } from "@openwork/features"
+import { partitionConfigSecretEnvAllowlist } from "./config-blobs/env-secrets.js"
 
 export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
 
@@ -587,6 +588,13 @@ for (const problem of featureEnvironment.problems) {
 const corsHandledByEdge = parseBooleanFlag(parsed.DEN_CORS_HANDLED_BY_EDGE ?? "false")
 const openworkWebEnabled = parseBooleanFlag(parsed.DEN_OPENWORK_WEB_ENABLED ?? "false")
 
+// Config-blob `env` secrets: only `OPENWORK_IMPORT_` names can be allowlisted
+// (config-blobs/env-secrets.ts). Other entries are dropped, with a warning.
+const configSecretEnvAllowlist = partitionConfigSecretEnvAllowlist(splitCsv(parsed.DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST))
+for (const { entry, problem } of configSecretEnvAllowlist.ignored) {
+  console.warn(`[config-blobs] DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST entry "${entry}" is ignored: ${problem}`)
+}
+
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
 const port = Number(parsed.PORT ?? "8790")
 const botIdProtectionEnabled = (parsed.DEN_BOTID_PROTECTION_ENABLED ?? "0").trim() === "1"
@@ -756,8 +764,9 @@ export const env = {
   configBlobs: {
     // Environment variables a config-blob import may read for a `$secret`
     // (`env` decision). Self-hosted only; empty means none. Comma-separated
-    // names, a trailing `*` matches a prefix (`OPENWORK_IMPORT_*`).
-    secretEnvAllowlist: splitCsv(parsed.DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST),
+    // names, a trailing `*` matches a prefix (`OPENWORK_IMPORT_*`). Only
+    // entries inside the `OPENWORK_IMPORT_` namespace are kept.
+    secretEnvAllowlist: configSecretEnvAllowlist.allowed,
   },
   diagnostics: {
     origin: diagnosticsOrigin,

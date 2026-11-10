@@ -114,7 +114,7 @@ There are three ways to identify an item, used in this order (details in [mappin
 | Form | Meaning |
 |---|---|
 | `{ "$secret": "…", "keep": true }` | keep the target's current value (only if the item matched and has a value) |
-| `{ "$secret": "…", "env": "ANTHROPIC_KEY" }` | resolved on the server from an environment variable. Self-hosted only, behind an operator allowlist |
+| `{ "$secret": "…", "env": "OPENWORK_IMPORT_ANTHROPIC_KEY" }` | resolved on the server from an environment variable. Self-hosted only, behind an operator allowlist, and only for names starting with `OPENWORK_IMPORT_` |
 | `{ "$secret": "…", "value": "sk-…" }` | **only accepted through the inputs endpoint or UI**, never stored inside the blob (see [change-requests.md](./change-requests.md#secret-inputs)) |
 | `{ "$secret": "…", "unset": true }` | create without it. The item is marked "needs setup" in the UI |
 

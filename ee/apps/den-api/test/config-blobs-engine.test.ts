@@ -1214,7 +1214,7 @@ describe("people as member ids (callers who may not read the member directory)",
 
   test("the redactor writes people as member ids and hides their emails and name hints", () => {
     const redactor = createPeopleRedactor(people)
-    assert.deepEqual(redactor.spec({ grant: { $ref: "people/Ada@Example.com", name: "Ada Lovelace" }, team: { $ref: "members.teams/tem_A", name: "Platform" }, contact: "ada@example.com" }), {
+    assert.deepEqual(redactor.spec({ grant: { $ref: "people/Ada@Example.com", name: "Ada Example" }, team: { $ref: "members.teams/tem_A", name: "Platform" }, contact: "ada@example.com" }), {
       grant: { $ref: "people/om_ada" },
       team: { $ref: "members.teams/tem_A", name: "Platform" },
       // Config values are never rewritten in a blob.
@@ -1227,18 +1227,123 @@ describe("people as member ids (callers who may not read the member directory)",
       issues: [{ level: "warning", message: "eve@example.com is not a member" }],
       areas: [{ area: "members.teams", label: "Teams", items: [{
         area: "members.teams", ref: "tem_A", op: "update", matchedBy: "id", flags: [],
-        fields: [{ path: "members", added: ["Eve Example", "people/bob@example.com"], removed: [{ $ref: "people/ada@example.com", name: "Ada Lovelace" }] }],
+        fields: [{ path: "members", added: ["Eve Example", "people/bob@example.com"], removed: [{ $ref: "people/ada@example.com", name: "Ada Example" }] }],
         refs: [{ path: "members[0]", ref: "people/eve@example.com", name: "Eve Example", resolvedId: null, via: null }],
         reasons: ["members[0]: eve@example.com is not a member of this organization"],
       }] }],
     }
     const shown = redactor.plan(plan)
     const json = JSON.stringify(shown)
-    for (const hidden of ["eve@example.com", "Eve Example", "ada@example.com", "Ada Lovelace", "bob@example.com"]) assert.ok(!json.includes(hidden), `${hidden} in ${json}`)
+    for (const hidden of ["eve@example.com", "Eve Example", "ada@example.com", "Ada Example", "bob@example.com"]) assert.ok(!json.includes(hidden), `${hidden} in ${json}`)
     const entry = shown.areas[0]!.items[0]!
     assert.deepEqual(entry.fields[0]?.added, ["(hidden)", "people/om_bob"])
     assert.deepEqual(entry.fields[0]?.removed, [{ $ref: "people/om_ada" }])
     assert.deepEqual(entry.refs, [{ path: "members[0]", ref: "people/hidden", resolvedId: null, via: null }])
     assert.equal(redactor.text("Removed bob@example.com from a team"), "Removed om_bob from a team")
+  })
+})
+
+describe("security review fixes", () => {
+  const providerSpec = (secretPath: string, baseUrl: string) => ({
+    providerId: "openai", baseUrl, models: [], fallback: [], access: { orgWide: true, teams: [] },
+    credentials: { apiKey: { $secret: secretPath, set: true } },
+  })
+
+  test("two placeholders sharing a $secret path make the request invalid, across items and areas", () => {
+    const store = seed()
+    const areas = makeAreas(store, [])
+    const shared = "ai-gateway.providers/ipr_NEW/credentials.apiKey"
+    const blob: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = {
+      "ai-gateway.providers": { specVersion: 1, items: [
+        { id: "ipr_NEW", name: "OpenAI", spec: providerSpec(shared, "https://api.openai.com") },
+        // Same handle, another item that sends its key somewhere else.
+        { id: "ipr_EVIL", name: "Elsewhere", spec: providerSpec(shared, "https://evil.example.test/v1") },
+      ] },
+    }
+    const result = buildPlan(planInput(store, areas, blob, { secretInputs: [{ path: shared, decision: "value", value: "sk-entered-once" }] }))
+    assert.ok(result.fatalErrors.some((error) => error.includes(shared) && error.includes("2 times")), JSON.stringify(result.fatalErrors))
+    assert.ok(!JSON.stringify(result).includes("sk-entered-once"))
+
+    const unique = structuredClone(blob)
+    unique["ai-gateway.providers"]!.items[1]!.spec = providerSpec("ai-gateway.providers/ipr_EVIL/credentials.apiKey", "https://evil.example.test/v1")
+    assert.deepEqual(buildPlan(planInput(store, areas, unique)).fatalErrors, [])
+  })
+
+  test("a supplied value only fills the placeholder whose plan decision asked for it, and only once", async () => {
+    const store = seed()
+    const calls: Call[] = []
+    const areas = makeAreas(store, calls)
+    const own = "ai-gateway.providers/ipr_NEW/credentials.apiKey"
+    const other = "ai-gateway.providers/ipr_OTHER/credentials.apiKey"
+    const blob: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = {
+      "ai-gateway.providers": { specVersion: 1, items: [
+        { id: "ipr_NEW", name: "OpenAI", spec: providerSpec(own, "https://api.openai.com") },
+        { id: "ipr_OTHER", name: "Other", spec: providerSpec(other, "https://other.example.test/v1") },
+      ] },
+    }
+    const { execution } = buildPlan(planInput(store, areas, blob, { secretInputs: [
+      { path: own, decision: "value", value: "sk-own" },
+      { path: other, decision: "unset" },
+    ] }))
+    assert.equal(execution.blocking, 0)
+    // A value handed over for a placeholder whose decision is `unset` is never placed.
+    const secrets = new Map<string, ResolvedConfigSecret>([
+      [own, { $secret: own, decision: "value", value: "sk-own" }],
+      [other, { $secret: other, decision: "value", value: "sk-own" }],
+    ])
+    const result = await executePlan(execution, areas, ctx, secrets)
+    assert.equal(result.ok, true)
+    const specs = calls.map((call) => (call.op.kind === "delete" ? null : call.op.item.spec.credentials))
+    assert.deepEqual(specs, [
+      { apiKey: { $secret: own, decision: "value", value: "sk-own" } },
+      { apiKey: { $secret: other, decision: "unset" } },
+    ])
+
+    // Two ops claiming the same path (a plan built before paths had to be unique): the second fails.
+    const duplicated = { ...execution, ops: execution.ops.map((op) => ({ ...op, secrets: op.secrets.map((secret) => ({ ...secret, path: own, decision: "value" as const })), item: op.item ? { ...op.item, spec: providerSpec(own, "https://x.example.test") } : op.item })) }
+    const twice = await executePlan(duplicated, makeAreas(seed(), []), ctx, new Map([[own, { $secret: own, decision: "value", value: "sk-own" }]]))
+    assert.equal(twice.ok, false)
+    assert.deepEqual(twice.items.map((entry) => entry.status), ["applied", "failed"])
+    assert.match(twice.items[1]?.failure?.message ?? "", /already used for another item/)
+  })
+
+  test("without people write access, invite decisions plan no invitation and stay unresolved", () => {
+    const store = seed()
+    const areas = makeAreas(store, [])
+    const blob: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = {
+      "members.teams": { specVersion: 1, items: [{ id: "tem_A", key: "platform", name: "Platform", spec: { description: "core", members: [ada, { $ref: "people/bob@example.com" }] } }] },
+    }
+    const invite = decisions({ refs: [{ area: "members.teams", ref: "tem_A", path: "members[1]", resolution: { invite: true } }] })
+    const allowed = buildPlan(planInput(store, areas, blob, { decisions: invite }))
+    assert.ok(allowed.execution.ops.some((op) => op.area === "members.people"))
+    const refused = buildPlan(planInput(store, areas, blob, { decisions: invite, mayInvite: false }))
+    assert.ok(refused.execution.ops.every((op) => op.area !== "members.people"))
+    assert.equal(items(refused.plan, "members.people").length, 0)
+    const entry = item(refused.plan, "members.teams", "tem_A")
+    assert.ok(entry.flags.includes("ref_unresolved"))
+    assert.ok(refused.plan.summary.blocking > 0)
+  })
+
+  test("summaries and reports for callers who may not read people keep member ids and drop names", () => {
+    const redactor = createPeopleRedactor(new Map([["ada@example.com", "om_ada"]]))
+    const summary = redactor.summary({
+      id: "ccr_1", status: "needs_review", title: null, mode: "merge", source: "ui", sourceOrganization: null, sourceDeployment: null,
+      areas: ["members.teams"], summary: null, planHash: null, autoApply: false,
+      approvals: [{ memberId: "om_bob", name: "Bob Example", at: "2026-01-01T00:00:00.000Z" }],
+      createdBy: { memberId: "om_ada", name: "Ada Example", apiKeyName: "CI" },
+      revertsChangeRequestId: null, revertedByChangeRequestId: null, errors: ["ada@example.com failed"],
+      createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", appliedAt: null,
+    })
+    assert.deepEqual(summary.createdBy, { memberId: "om_ada", name: null, apiKeyName: "CI" })
+    assert.deepEqual(summary.approvals, [{ memberId: "om_bob", name: null, at: "2026-01-01T00:00:00.000Z" }])
+    assert.deepEqual(summary.errors, ["om_ada failed"])
+    const report = redactor.report({
+      runId: "car_1", attempt: 1, status: "applied", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: null,
+      requestedBy: { memberId: "om_ada", name: "Ada Example", apiKeyName: null }, runsAs: { memberId: "om_bob", name: "Bob Example" },
+      counts: { applied: 0, noop: 0, failed: 0, not_reached: 0, skipped: 0 }, failure: null, items: [], warnings: [],
+    })
+    assert.deepEqual(report.requestedBy, { memberId: "om_ada", name: null, apiKeyName: null })
+    assert.deepEqual(report.runsAs, { memberId: "om_bob", name: null })
+    assert.ok(!JSON.stringify([summary, report]).includes("Example"))
   })
 })

@@ -23,7 +23,7 @@
  *
  * LiteLLM providers are exported (so a blob shows them) but cannot be created
  * or changed by a config blob: their models, groups and member keys come from
- * syncing the customer's LiteLLM proxy. Apply fails with a clear message.
+ * syncing the organization's own LiteLLM proxy. Apply fails with a clear message.
  */
 import { isDeepStrictEqual } from "node:util"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
@@ -835,7 +835,11 @@ export const aiGatewayProvidersArea = defineConfigArea({
   specSchema: exportSpecSchema,
   dependsOn: ["members.teams", "members.people"],
   deployments: ["cloud", "self_hosted"],
-  viewPermission: "gateway_providers.view",
+  // The export holds what GET /v1/inference-providers?scope=manageable only shows to managers
+  // (the upstream address, OAuth client, tenant and AWS IAM Identity Center settings, who is
+  // granted): viewers without Manage Gateway providers get a redacted view there, so the area
+  // is theirs to export only with the manage permission (otherwise it is listed in `omitted`).
+  viewPermission: MANAGE,
   managePermission: MANAGE,
   tables: ["gateway_providers", "gateway_provider_models", "gateway_model_groups", "gateway_model_group_models", "gateway_credential_sets", "gateway_provider_access"],
   naturalKeys: [{

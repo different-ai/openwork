@@ -5,7 +5,8 @@
  * - Carried: the policy saved in `organization.metadata.workbot.proactive`
  *   (on/off, working hours, daily limit, members' starting choice, default
  *   destination), what agents may read (`sources`), the brief an admin saved
- *   under `workbotAgentBrief` (only the fields they saved), and the content
+ *   under `workbotAgentBrief` (only the fields they saved, and only while
+ *   that feature is on for the exporting member), and the content
  *   of the "Your agent" template (responsibilities and organization
  *   instructions; each save on the target adds a template version).
  * - Connections in `sources` are references: an MCP connection is
@@ -192,10 +193,11 @@ function localList(list: readonly SpecConnection[] | null, connections: readonly
 
 async function exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]> {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
-  const [settings, template, connectionList] = await Promise.all([
+  const [settings, template, connectionList, briefOn] = await Promise.all([
     readProactiveSettings(organizationId),
     readAgentTemplate(organizationId),
     organizationConnections(organizationId),
+    agentBriefAllowed(organizationId, ctx.actor.userId),
   ])
   const connections = new Map(connectionList.map((connection) => [connection.id, connection]))
   const { sources } = settings
@@ -240,7 +242,9 @@ async function exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]> {
       connections: policyEntries,
       toolOverrides,
     },
-    brief: { ...settings.brief },
+    // As the dashboard: the saved brief only while Your agent's brief is on for the actor. Off, it is left
+    // out, and an import without it leaves the target's saved brief as it is (apply never clears a field).
+    brief: briefOn ? { ...settings.brief } : {},
     template: { responsibilities: { ...template.responsibilities }, instructions: template.instructions },
   }
   return [{ id: ctx.organizationId, name: ITEM_NAME, spec }]

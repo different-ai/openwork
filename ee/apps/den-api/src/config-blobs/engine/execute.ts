@@ -13,7 +13,10 @@
  *   `members.people` create the plan added for them (it runs first), so an
  *   adapter never sees a reference without an id;
  * - every `$secret` becomes a `ResolvedConfigSecret` (keep / value / unset).
- *   `env` decisions must be resolved by the caller into `value` secrets;
+ *   `env` decisions must be resolved by the caller into `value` secrets. A
+ *   supplied value is bound to one placeholder: the op must hold a `value` or
+ *   `env` decision for that exact path, and a path is used at most once per
+ *   run (`buildPlan` already refuses blobs that repeat a `$secret` path);
  * - an update carries the plan's field `changes` and the `secretPaths` whose
  *   decision writes a credential. An update with neither is never sent: it is
  *   reported `noop`.
@@ -123,6 +126,8 @@ export async function executePlan(
   const areaByKey = new Map(areas.map((area) => [area.key, area]))
   /** `${area}\u0000${blob ref}` → local id of creates done in this run. */
   const planned = new Map<string, string>()
+  /** Secret paths whose supplied value an op already received: a value goes into one placeholder only. */
+  const usedSecrets = new Set<string>()
   for (const [index, op] of execution.ops.entries()) {
     const entry = items[index]
     if (!entry) continue
@@ -138,7 +143,7 @@ export async function executePlan(
     try {
       const area = areaByKey.get(op.area)
       if (!area) throw new Error(`area ${op.area} is not available`)
-      const applyOp = await toApplyOp(op, planned, secrets, opts)
+      const applyOp = await toApplyOp(op, planned, secrets, usedSecrets, opts)
       if (area.irreversible) entry.irreversible = safeIrreversible(area, applyOp) ?? entry.irreversible
       await progress()
       const applied = await area.apply(ctx, applyOp)
@@ -189,6 +194,7 @@ async function toApplyOp(
   op: ExecutionOp,
   planned: ReadonlyMap<string, string>,
   secrets: ReadonlyMap<string, ResolvedConfigSecret>,
+  usedSecrets: Set<string>,
   opts: ExecuteOptions,
 ): Promise<ConfigApplyOp> {
   if (op.kind === "delete") {
@@ -196,7 +202,7 @@ async function toApplyOp(
     return { kind: "delete", targetId: op.targetId, previous: op.previous }
   }
   if (!op.item) throw new Error(`${op.kind} without an item`)
-  const item: ResolvedConfigItem = { name: op.item.name, spec: resolveSpec(op, op.item.spec, planned, secrets) }
+  const item: ResolvedConfigItem = { name: op.item.name, spec: resolveSpec(op, op.item.spec, planned, secrets, usedSecrets) }
   if (op.item.sourceId) item.sourceId = op.item.sourceId
   if (op.item.key !== undefined) item.key = op.item.key
   if (op.kind === "update") {
@@ -213,6 +219,8 @@ export function resolveSpec(
   spec: ConfigSpec,
   planned: ReadonlyMap<string, string>,
   secrets: ReadonlyMap<string, ResolvedConfigSecret>,
+  /** Paths whose supplied value was already placed (shared across a run): a second use throws. */
+  usedSecrets: Set<string> = new Set<string>(),
 ): ConfigSpec {
   const refsByPath = new Map(op.refs.map((ref) => [ref.path, ref]))
   const withRefs = rewriteRefs(spec, (path, ref) => {
@@ -238,18 +246,28 @@ export function resolveSpec(
         throw new Error(`${path}: ${resolution.reason}`)
     }
   })
-  const decisions = new Map(op.secrets.map((secret) => [secret.path, secret]))
+  const decisions = new Map<string, ExecutionOp["secrets"][number]>()
+  for (const secret of op.secrets) {
+    if (decisions.has(secret.path)) throw new Error(`secret ${secret.path}: placed more than once in this item`)
+    decisions.set(secret.path, secret)
+  }
+  const seen = new Set<string>()
   const withSecrets = replaceSecrets(withRefs, (path) => {
-    const provided = secrets.get(path)
-    if (provided) {
-      if (provided.$secret !== path) throw new Error(`secret ${path}: resolved for a different placeholder`)
-      return provided
-    }
+    if (seen.has(path)) throw new Error(`secret ${path}: placed more than once in this item`)
+    seen.add(path)
     const decision = decisions.get(path)
     if (!decision) throw new Error(`secret ${path}: no decision`)
+    if (decision.decision === "value" || decision.decision === "env") {
+      // A supplied value only goes where the plan decided to write one, and only once.
+      const provided = secrets.get(path)
+      if (!provided) throw new Error(`secret ${path}: no value was provided`)
+      if (provided.$secret !== path) throw new Error(`secret ${path}: resolved for a different placeholder`)
+      if (usedSecrets.has(path)) throw new Error(`secret ${path}: its value was already used for another item`)
+      usedSecrets.add(path)
+      return provided
+    }
     if (decision.decision === "keep") return { $secret: path, decision: "keep" }
-    if (decision.decision === "unset") return { $secret: path, decision: "unset" }
-    throw new Error(`secret ${path}: no value was provided`)
+    return { $secret: path, decision: "unset" }
   })
   return isPlainObject(withSecrets) ? withSecrets : {}
 }

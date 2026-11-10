@@ -46,7 +46,7 @@ import {
   type ResolvedRefOccurrence,
 } from "./refs.js"
 import { namePeopleByEmail } from "./people.js"
-import { checkSecretFields, planSecrets, redactRawSecrets, replacesSecretValue, type ExecutionSecret } from "./secrets.js"
+import { checkSecretFields, findSecrets, planSecrets, redactRawSecrets, replacesSecretValue, type ExecutionSecret } from "./secrets.js"
 import { isPlainObject, sha256, typeIdPrefix } from "./util.js"
 
 
@@ -87,6 +87,13 @@ export type BuildPlanInput = {
    * every area is visible.
    */
   visibleAreas?: ReadonlySet<ConfigAreaKey>
+  /**
+   * Whether the caller may write `members.people` (its manage permission,
+   * within the config token's area limit). False: an `invite` decision on a
+   * people reference is not planned (the reference stays unresolved), so no
+   * invitation can come from a caller who could not invite. Default: true.
+   */
+  mayInvite?: boolean
   /**
    * The areas' `preflight` verdicts on the ops of an earlier build of this
    * same plan, keyed by `preflightKey(area, ref)` (see `runPreflight`):
@@ -318,6 +325,20 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
     state.match = matchResult
   }
 
+  // Secret inputs are keyed by `$secret` path, so a path names exactly one
+  // placeholder in the whole blob. Two placeholders sharing one would let a
+  // value entered for one item land in another (one with an endpoint of the
+  // uploader's choosing, say): such a blob is refused.
+  const secretPathCount = new Map<string, number>()
+  for (const state of states) {
+    for (const item of state.items) {
+      for (const occurrence of findSecrets(state.area, item.spec)) secretPathCount.set(occurrence.path, (secretPathCount.get(occurrence.path) ?? 0) + 1)
+    }
+  }
+  for (const [path, count] of secretPathCount) {
+    if (count > 1) addError(`the secret placeholder "${path}" appears ${count} times: every $secret path must be unique in a config file`)
+  }
+
   // Skips: admin exclusions and unsupported areas.
   const skipped = new Set<string>()
   for (const skip of decisions.skips) skipped.add(skippedKey(skip.area, skip.ref))
@@ -396,7 +417,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
     aliases: input.aliases,
     people: input.people,
     decisions: decisions.refs,
-    canInvite: peopleArea !== undefined && unsupportedReason(peopleArea, input.deployment, input.features) === null,
+    canInvite: input.mayInvite !== false && peopleArea !== undefined && unsupportedReason(peopleArea, input.deployment, input.features) === null,
   })
   const inputsByPath = new Map((input.secretInputs ?? []).map((secretInput) => [secretInput.path, secretInput]))
   const overrides = new Set(decisions.overrides.map((entry) => skippedKey(entry.area, entry.ref)))
@@ -575,7 +596,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
       }
     }
   }
-  if (peopleArea) {
+  if (peopleArea && input.mayInvite !== false) {
     for (const email of invited) {
       const spec: ConfigSpec = { email, role: "member", status: "invited", teams: [], managedBy: "manual" }
       const ref = inviteRef(email)

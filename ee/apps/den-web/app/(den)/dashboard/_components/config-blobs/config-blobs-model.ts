@@ -477,7 +477,7 @@ export function formatRunCounts(counts: ConfigApplyReport["counts"]): string {
   return parts.length > 0 ? parts.join(", ") : "Nothing to apply";
 }
 
-/** `Ada Lovelace`, `Ada Lovelace with the token "CI"`, or `a member`. */
+/** `Ada Example`, `Ada Example with the token "CI"`, or `a member`. */
 export function runRequester(run: Pick<ConfigApplyReport, "requestedBy">): string {
   const by = run.requestedBy;
   if (!by) return "a member";

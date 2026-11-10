@@ -321,3 +321,37 @@ test("settings.audit: the capture change names the config token the apply runs u
   assert.ok(byMember.every((operation) => operation.principalKey.endsWith(`:key:${apiKeyId}`)), JSON.stringify(byMember))
   assert.ok(byMember.every((operation) => field(operation.initiatingActor, "credentialId") === apiKeyId), JSON.stringify(byMember))
 })
+
+test("workbot.proactive carries the saved brief only while workbotAgentBrief is on; an import without it leaves it alone", async () => {
+  const { readProactiveSettings } = await import("../../src/workbot-proactive/access.js")
+  const organizationId = normalizeDenTypeId("organization", source.orgId)
+  assert.equal((await den.setFeature(source.orgId, "workbotAgentBrief", true)).status, 200)
+  await ok(as("PUT", "/v1/org/workbot-settings/proactive", { brief: { text: "Only what matters today.", checkEveryHours: 2 } }), "save the brief")
+  const on = await only(workbotProactiveArea, sourceCtx)
+  assert.deepEqual(on.spec.brief, { text: "Only what matters today.", checkEveryHours: 2 })
+
+  assert.equal((await den.setFeature(source.orgId, "workbotAgentBrief", false)).status, 200)
+  try {
+    const off = await only(workbotProactiveArea, sourceCtx)
+    assert.deepEqual(off.spec.brief, {}, "the saved brief stays out of the export while the feature is off")
+    assert.ok(!JSON.stringify(off).includes("Only what matters today."))
+    // Re-importing that export (the brief left out, as a plan's diff would name it) never clears the saved brief.
+    const result = await workbotProactiveArea.apply(sourceCtx, {
+      kind: "update", targetId: source.orgId, previous: on, item: { name: off.name, spec: off.spec },
+      changes: [{ path: "brief.text", from: "Only what matters today." }, { path: "brief.checkEveryHours", from: 2 }], secretPaths: [],
+    })
+    assert.deepEqual(result.steps, [])
+    assert.deepEqual((await readProactiveSettings(organizationId)).brief, { text: "Only what matters today.", checkEveryHours: 2 })
+    // A brief in the file isn't written while the feature is off either.
+    const written = await workbotProactiveArea.apply(sourceCtx, {
+      kind: "update", targetId: source.orgId, previous: off, item: { name: off.name, spec: { ...off.spec, brief: { text: "Imported brief" } } },
+      changes: [{ path: "brief.text", to: "Imported brief" }], secretPaths: [],
+    })
+    assert.deepEqual(written.steps, [])
+    assert.ok((written.warnings ?? []).some((warning) => warning.includes("brief isn't on")), JSON.stringify(written.warnings))
+    assert.equal((await readProactiveSettings(organizationId)).brief?.text, "Only what matters today.")
+  } finally {
+    // Last test of the file: the feature stays off, as the earlier tests ran.
+    assert.equal((await den.setFeature(source.orgId, "workbotAgentBrief", false)).status, 200)
+  }
+})

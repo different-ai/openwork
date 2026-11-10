@@ -564,3 +564,28 @@ test("collections: a description change sends only the description and keeps the
   assert.deepEqual(await grants(), before)
   assert.equal(settingsCollectionsArea.irreversible?.({ kind: "delete", targetId: collection.id, previous: collection }).length, 1)
 })
+
+test("BYOK export and gateway providers follow what the routes show a view-only caller", async () => {
+  const viewer = await den.newMember(owner, orgA.orgId, "Provider Viewer")
+  const viewers = await den.createTeam(owner, orgA.orgId, "Provider viewers", [viewer.memberId])
+  const role = await apiA("POST", "/v1/permissions/sets", {
+    name: "View providers",
+    teamIds: [viewers],
+    permissions: ["llm_providers.view", "gateway_providers.view"].map((key) => ({ key, status: "allow" })),
+  })
+  assert.ok(role.status < 300, summary(role))
+
+  // GET /v1/llm-providers gives this caller redacted views of providers they neither created nor may edit:
+  // the export leaves those providers out rather than exposing their stored config and grants.
+  const viewerCtx: Ctx = { ...(await ctxFor(orgA)), actor: { userId: viewer.userId, memberId: viewer.memberId } }
+  assert.deepEqual(await aiGatewayByokArea.exportItems(viewerCtx), [])
+  assert.deepEqual(await aiGatewayByokArea.readItems?.(viewerCtx, [byokId]), [])
+  const ownerNames = (await aiGatewayByokArea.exportItems(await ctxFor(orgA))).map((item) => item.name).sort()
+  assert.deepEqual(ownerNames, ["Acme LLM", "Keyless LLM"])
+
+  // AI Gateway providers show manager-only details (address, OAuth client, grantees): no export without Manage.
+  assert.equal((await den.setFeature(orgA.orgId, "configBlobs", true)).status, 200)
+  const exported = await den.as(viewer, orgA.orgId)("GET", "/v1/config-blobs/export?areas=ai-gateway.providers")
+  assert.equal(exported.status, 403, summary(exported))
+  assert.deepEqual(field(exported.body, "omitted"), [{ area: "ai-gateway.providers", reason: "needs the gateway_providers.manage permission" }])
+})

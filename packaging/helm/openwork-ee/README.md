@@ -1247,9 +1247,10 @@ MCP connections are both trusted.
 
 When config import and export (`configBlobs`) is on, an imported config file
 can ask Den API to fill a secret from one of its own environment variables
-(`{ "$secret": "…", "env": "OPENWORK_IMPORT_ANTHROPIC_KEY" }`). Nothing is
-allowed until you list the variables, by exact name or with a trailing `*`
-prefix:
+(`{ "$secret": "…", "env": "OPENWORK_IMPORT_ANTHROPIC_KEY" }`). Only variables
+whose names start with `OPENWORK_IMPORT_` can ever be read, and none is allowed
+until you list them, by exact name or with a trailing `*` prefix that itself
+starts with `OPENWORK_IMPORT_`:
 
 ```yaml
 denApi:
@@ -1259,8 +1260,11 @@ denApi:
 
 Provide the variables themselves to the Den API container as well (from a
 Secret you manage; `denApi.env` writes plain values into the pod spec, so keep
-it for test keys). A bare `*` is refused, so Den's own
-settings (database URL, auth secret) can never be read this way. Cloud
+it for test keys). Entries outside the `OPENWORK_IMPORT_` namespace (an exact
+name such as `DATABASE_URL`, a bare `*`, or a prefix such as `D*` or
+`OPENWORK_*`) are ignored and logged as a warning when Den API starts. Den API's
+own settings (`DATABASE_*`, `DEN_*`, `BETTER_AUTH_*` and other credentials it
+reads) are refused even if listed, so they can never be read this way. Cloud
 deployments ignore the allowlist.
 
 ## Migrations

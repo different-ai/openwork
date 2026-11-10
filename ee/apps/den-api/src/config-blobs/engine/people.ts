@@ -105,7 +105,9 @@ export type PeopleRedactor = {
   /** Text with the emails of people (members, and anyone a people ref names) and their name hints hidden. */
   text: (value: string) => string
   plan: (plan: ConfigPlan) => ConfigPlan
+  /** Also drops the names of who requested and who ran the apply (member ids stay). */
   report: (report: ConfigApplyReport) => ConfigApplyReport
+  /** Errors with people hidden, and the creator's and approvers' names dropped (member ids stay). */
   summary: (summary: ConfigChangeRequestSummary) => ConfigChangeRequestSummary
 }
 
@@ -256,8 +258,17 @@ export function createPeopleRedactor(people: ReadonlyMap<string, string>): Peopl
           : null,
         items: report.items.map((item) => reportItem(view, item)),
         warnings: report.warnings.map(view.text),
+        // Who asked for and who ran the apply: member ids stay, names go.
+        requestedBy: report.requestedBy ? { ...report.requestedBy, name: null } : null,
+        runsAs: report.runsAs ? { ...report.runsAs, name: null } : null,
       }
     },
-    summary: (summary) => ({ ...summary, errors: summary.errors.map(display(null).text) }),
+    summary: (summary) => ({
+      ...summary,
+      errors: summary.errors.map(display(null).text),
+      // Creator and approvers: member ids stay, names go.
+      createdBy: { ...summary.createdBy, name: null },
+      approvals: summary.approvals.map((approval) => ({ ...approval, name: null })),
+    }),
   }
 }

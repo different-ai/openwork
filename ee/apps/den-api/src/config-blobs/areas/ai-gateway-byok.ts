@@ -14,6 +14,9 @@
  * provider with one env key, or `credentials.apiKeys.<ENV>` per env key for
  * multi-key providers (Bedrock…). Per-member credentials are never exported.
  * Managed OpenWork providers (`source = openwork`) are not part of this area.
+ * Like GET /v1/llm-providers, a caller who can't edit a provider (no Edit any
+ * provider permission, not its creator) never gets its stored configuration
+ * or grants: such providers are left out of what this area reads.
  *
  * Applies through the same handlers as POST/PATCH/DELETE /v1/llm-providers
  * (`createLlmProvider`, `updateLlmProvider`, `deleteLlmProvider`). Catalog
@@ -26,6 +29,7 @@ import type { ConfigApplyStep, ConfigFieldChange } from "@openwork/types/den/con
 import { z } from "zod"
 import { sameCustomOrigin } from "../../llm/gateway-custom-provider.js"
 import { decodeProviderCredential, readProviderEnvNames } from "../../llm/provider-credentials.js"
+import { resolvePermissionsForMember } from "../../permissions/resolve.js"
 import { createLlmProvider, deleteLlmProvider, updateLlmProvider, type LlmProviderWriteInput } from "../../routes/org/llm-providers.js"
 import { defineConfigArea, type ConfigApplyOp, type ConfigApplyResult, type ConfigAreaContext, type ConfigItem } from "../area.js"
 import {
@@ -477,10 +481,17 @@ async function readProviders(ctx: ConfigAreaContext, ids: readonly string[] | nu
     }
   }) ?? null
   if (providerIds && providerIds.length === 0) return []
-  const rows = await ctx.db
+  const stored = await ctx.db
     .select()
     .from(LlmProviderTable)
     .where(and(eq(LlmProviderTable.organizationId, organizationId), ne(LlmProviderTable.source, "openwork"), providerIds ? inArray(LlmProviderTable.id, providerIds) : undefined))
+  if (stored.length === 0) return []
+  // As GET /v1/llm-providers: only callers who can edit a provider (Edit any provider, or its
+  // creator) see its stored configuration and who is granted it; everyone else gets a redacted
+  // view. A redacted provider can't round-trip, so it is left out of the export instead.
+  const permissions = await resolvePermissionsForMember({ organizationId, memberId: normalizeDenTypeId("member", ctx.actor.memberId) })
+  const canUpdateAll = permissions.has("llm_providers.update")
+  const rows = canUpdateAll ? stored : stored.filter((row) => row.createdByOrgMembershipId === ctx.actor.memberId)
   if (rows.length === 0) return []
   const rowIds = rows.map((row) => row.id)
   const [models, access] = await Promise.all([

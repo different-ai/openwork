@@ -220,6 +220,23 @@ function canImport(caller: Pick<ConfigCaller, "can" | "tokenAreas">, area: Confi
   return definition !== null && caller.can(definition.managePermission) && tokenAllows(caller.tokenAreas, area)
 }
 
+/**
+ * A write over `areas` by this caller: every area within its config token's
+ * area limit (a 403 otherwise, whatever the issuing member holds), then the
+ * areas' manage permissions.
+ */
+async function authorizeWrites(caller: ConfigCaller, areas: readonly ConfigAreaKey[]): Promise<void> {
+  const outside = areas.filter((area) => !tokenAllows(caller.tokenAreas, area))
+  if (outside.length > 0) {
+    throw new ConfigBlobError(403, {
+      error: "forbidden",
+      message: `This config token can't change ${outside.map(areaLabel).join(", ")}.`,
+      areas: outside,
+    })
+  }
+  await caller.authorize(managePermissions(areas))
+}
+
 function managePermissions(areas: readonly ConfigAreaKey[]): PermissionKey[] {
   return [...new Set(areas.flatMap((area) => {
     const definition = registeredArea(area)
@@ -748,13 +765,21 @@ function addAliasProvenance(plan: ConfigPlan, provenance: GroupedAliases["proven
   }
 }
 
-/** Areas the planning member (and its config token's area limit) may view: references elsewhere lose their names in the plan. */
-async function visibleAreasFor(organizationId: OrganizationId, actor: ConfigActor, apiKeyId: string | null): Promise<Set<ConfigAreaKey>> {
+/**
+ * What the planning member (within its config token's area limit) may do:
+ * the areas it may view (references elsewhere lose their names in the plan)
+ * and whether it may write `members.people` (only then are invitations planned).
+ */
+async function planningAccessFor(organizationId: OrganizationId, actor: ConfigActor, apiKeyId: string | null): Promise<{ visibleAreas: Set<ConfigAreaKey>; mayInvite: boolean }> {
   const permissions = await resolvePermissionsForMember({ organizationId, memberId: normalizeDenTypeId("member", actor.memberId) })
   const token = apiKeyId ? await getApiKeySessionById(apiKeyId) : null
   // A token that is gone sees nothing; an unrestricted one (null) sees what its member sees.
   const tokenAreas = apiKeyId ? (token ? token.configAreas : []) : null
-  return new Set(CONFIG_AREAS.filter((area) => permissions.has(area.viewPermission) && tokenAllows(tokenAreas, area.key)).map((area) => area.key))
+  const people = registeredArea(PEOPLE_AREA_KEY)
+  return {
+    visibleAreas: new Set(CONFIG_AREAS.filter((area) => permissions.has(area.viewPermission) && tokenAllows(tokenAreas, area.key)).map((area) => area.key)),
+    mayInvite: people !== null && permissions.has(people.managePermission) && tokenAllows(tokenAreas, PEOPLE_AREA_KEY),
+  }
 }
 
 async function baseSpecsFor(organizationId: OrganizationId, hash: string | null): Promise<Map<string, ConfigSpec> | undefined> {
@@ -804,6 +829,7 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
   const decisions = overrides.decisions ?? row.decisions ?? EMPTY_CONFIG_DECISIONS
   const secretInputs = overrides.secretInputs ?? row.secretInputs ?? []
   const grouped = sourceInstanceId ? groupAliases(await listAliasRows(row.organizationId, sourceInstanceId, db.$primary)) : null
+  const access = await planningAccessFor(row.organizationId, actor, row.apiKeyId)
   const planInput: Parameters<typeof buildPlan>[0] = {
     areas: CONFIG_AREAS,
     blobAreas: areas,
@@ -811,7 +837,8 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
     mode: row.mode,
     targetItems,
     aliases: grouped?.aliases,
-    visibleAreas: await visibleAreasFor(row.organizationId, actor, row.apiKeyId),
+    visibleAreas: access.visibleAreas,
+    mayInvite: access.mayInvite,
     decisions,
     secretInputs,
     people: await loadPeople(row.organizationId),
@@ -927,12 +954,16 @@ async function loadEditable(organizationId: OrganizationId, id: string, caller: 
   if (!EDITABLE_STATUSES.includes(row.status)) {
     throw new ConfigBlobError(409, { error: "change_request_not_editable", message: row.status === "uploaded" || row.status === "analyzing" ? "This change is still being analyzed." : "This change can no longer be edited.", status: row.status })
   }
-  await caller.authorize(managePermissions(row.areas))
+  await authorizeWrites(caller, row.areas)
   return row
 }
 
 export async function updateDecisions(organizationId: OrganizationId, id: string, caller: ConfigCaller, decisions: ConfigDecisions) {
   const row = await loadEditable(organizationId, id, caller)
+  // Choosing to invite someone plans a `members.people` create: only for callers who may write people.
+  const inviteKey = (entry: ConfigDecisions["refs"][number]) => `${entry.area}\u0000${entry.ref}\u0000${entry.path}`
+  const invitedBefore = new Set((row.decisions?.refs ?? []).filter((entry) => "invite" in entry.resolution).map(inviteKey))
+  if (decisions.refs.some((entry) => "invite" in entry.resolution && !invitedBefore.has(inviteKey(entry)))) await authorizeWrites(caller, [PEOPLE_AREA_KEY])
   return replan(row, caller, { decisions })
 }
 
@@ -988,7 +1019,7 @@ async function approveRow(row: ConfigChangeRequestRow, caller: ConfigCaller, pla
     throw new ConfigBlobError(409, { error: "plan_blocked", message: `${row.plan.summary.blocking} item(s) still need a decision.`, blocking: row.plan.summary.blocking })
   }
   caller.requireApprovalStepUp()
-  await caller.authorize(managePermissions(writeAreas(row.plan)))
+  await authorizeWrites(caller, writeAreas(row.plan))
   const approvals = currentApprovals(row)
   if (approvals.some((approval) => approval.memberId === caller.memberId)) {
     throw new ConfigBlobError(409, { error: "already_approved", message: "You already approved this change." })
@@ -1026,7 +1057,7 @@ export async function requestApply(organizationId: OrganizationId, id: string, c
     throw new ConfigBlobError(409, { error: "change_request_not_approved", message: row.status === "needs_review" ? "This change needs approval first." : "This change can't be applied now.", status: row.status })
   }
   caller.requireApprovalStepUp()
-  await caller.authorize(managePermissions(writeAreas(row.plan)))
+  await authorizeWrites(caller, writeAreas(row.plan))
   const lastApproval = applyingApproval(row)
   if (lastApproval && approvalExpired(lastApproval)) {
     await updateChangeRequest(organizationId, row.id, ["approved"], { status: "needs_review", approvals: [], approvedPlanHash: null, errors: [APPROVAL_EXPIRED_ERROR] })
@@ -1048,7 +1079,7 @@ export async function cancelChangeRequest(organizationId: OrganizationId, id: st
   if (!CANCELLABLE.includes(row.status)) {
     throw new ConfigBlobError(409, { error: "change_request_not_cancellable", message: row.status === "applying" ? "This change is being applied." : "This change is already closed.", status: row.status })
   }
-  if (row.createdByMemberId !== caller.memberId) await caller.authorize(managePermissions(row.areas))
+  if (row.createdByMemberId !== caller.memberId) await authorizeWrites(caller, row.areas)
   const updated = await updateChangeRequest(organizationId, row.id, [row.status], { status: "cancelled", secretInputs: null, leaseOwner: null, leaseUntil: null })
   if (!updated) throw new ConfigBlobError(409, { error: "change_request_moved_on", message: "This change moved on. Reload and try again." })
   return summaryFor(updated, caller)
@@ -1118,7 +1149,7 @@ export async function revertChangeRequest(org: ConfigOrganization, id: string, c
       throw new ConfigBlobError(409, { error: "revert_in_progress", message: "A restore of this change is already open.", changeRequestId: existing.id })
     }
   }
-  await caller.authorize(managePermissions(row.areas))
+  await authorizeWrites(caller, row.areas)
   const runs = await listApplyRuns(org.id, row.id, db.$primary)
   const afterRevs: Record<string, string> = {}
   for (const run of [...runs].reverse()) Object.assign(afterRevs, run.report.afterRevs ?? {})
@@ -1435,6 +1466,12 @@ export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Pr
   }
   if (!actor) return refusal("The person who approved this change is no longer a member of the organization.")
   if (approval.apiKeyId && !await apiKeyUsable(approval.apiKeyId)) return refusal("The config token that approved this change was revoked or expired.")
+  if (approval.apiKeyId) {
+    // The token's area limit binds every area the apply writes, not just the scope it was uploaded with.
+    const token = await getApiKeySessionById(approval.apiKeyId)
+    const outside = writeAreas(claim.plan).filter((area) => !tokenAllows(token ? token.configAreas : [], area))
+    if (outside.length > 0) return refusal(`The config token that approved this change can't change ${outside.map(areaLabel).join(", ")}.`)
+  }
   const permissions = await resolvePermissionsForMember({ organizationId, memberId: normalizeDenTypeId("member", actor.memberId) })
   const missingPermissions = managePermissions(writeAreas(claim.plan)).filter((key) => !permissions.has(key))
   if (missingPermissions.length > 0) return refusal(`The person who approved this change no longer holds ${missingPermissions.join(", ")}.`)

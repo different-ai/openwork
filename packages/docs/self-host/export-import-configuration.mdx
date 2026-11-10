@@ -89,8 +89,8 @@ the file.
 | `members.prompts` | Members › Teams › Prompts | `prompts.view` | `prompts.manage` |
 | `connectors.oauth-clients` | Connectors › OAuth apps | `oauth_clients.view` | `oauth_clients.manage` |
 | `connectors.mcp` | Connectors › MCP | `connections.view` | `connections.manage` |
-| `ai-gateway.providers` | AI Gateway › AI Providers | `gateway_providers.view` | `gateway_providers.manage` |
-| `ai-gateway.byok` | AI Gateway › Bring your own keys | `llm_providers.view` | `llm_providers.update` |
+| `ai-gateway.providers` | AI Gateway › AI Providers | `gateway_providers.manage` | `gateway_providers.manage` |
+| `ai-gateway.byok` | AI Gateway › Bring your own keys | `llm_providers.view` (only providers you can edit: with `llm_providers.update`, or ones you created) | `llm_providers.update` |
 | `ai-gateway.limits` | AI Gateway › Limits | `gateway_limits.view` | `gateway_limits.manage` |
 | `ai-gateway.smart-routers` | AI Gateway › AI Providers › Smart routers (OpenWork Cloud) | `gateway_providers.view` | `gateway_providers.manage` |
 | `ai-gateway.openwork-models` | AI Gateway › OpenWork Models (OpenWork Cloud) | `inference.view` | `inference.manage` |
@@ -145,7 +145,7 @@ through the inputs endpoint:
 | --- | --- | --- |
 | Keep the target's current value | `{ "$secret": "…", "keep": true }` | `{ "path": "…", "decision": "keep" }` |
 | Leave it unset ("needs setup") | `{ "$secret": "…", "unset": true }` | `{ "path": "…", "decision": "unset" }` |
-| Read an environment variable on the server | `{ "$secret": "…", "env": "ANTHROPIC_KEY" }` | `{ "path": "…", "decision": "env", "env": "ANTHROPIC_KEY" }` |
+| Read an environment variable on the server | `{ "$secret": "…", "env": "OPENWORK_IMPORT_ANTHROPIC_KEY" }` | `{ "path": "…", "decision": "env", "env": "OPENWORK_IMPORT_ANTHROPIC_KEY" }` |
 | Set a value | never in the file | `{ "path": "…", "decision": "value", "value": "sk-…" }` |
 
 - Values are write-only: stored encrypted on the change request, never returned,
@@ -156,15 +156,18 @@ through the inputs endpoint:
 - **Environment variables are self-hosted only**, and only for names the operator
   allows in `DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST` on the den-api process
   (Helm: `denApi.env`). It is a comma-separated list of exact names, or prefixes
-  ending in `*`:
+  ending in `*`. Only names starting with `OPENWORK_IMPORT_` can be read, so every
+  entry must start with it:
 
   ```yaml
   denApi:
     env:
-      DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST: "OPENWORK_IMPORT_*,ANTHROPIC_KEY"
+      DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST: "OPENWORK_IMPORT_*"
   ```
 
-  A bare `*` is refused. The variable is read when the change is applied; if it is
+  Other entries (a bare `*`, `D*`, `OPENWORK_*`, `DATABASE_URL`…) are ignored, with a
+  warning in the den-api log at startup, and Den's own settings (`DATABASE_*`, `DEN_*`,
+  `BETTER_AUTH_*` and other credentials it reads) are refused even if listed. The variable is read when the change is applied; if it is
   missing, nothing is applied. OpenWork Cloud never reads environment variables for
   an organization.
 

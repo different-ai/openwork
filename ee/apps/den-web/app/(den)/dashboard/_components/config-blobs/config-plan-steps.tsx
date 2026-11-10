@@ -237,7 +237,8 @@ function SecretRow({ entry, secret, editable, saving, allowEnv, onInput }: {
   const [choice, setChoice] = useState<SecretChoice | "">(secret.decision ?? "");
   const [value, setValue] = useState("");
   const [env, setEnv] = useState(secret.env ?? "");
-  const envValid = /^[A-Z][A-Z0-9_]{0,127}$/.test(env);
+  // The server only reads variables in its import namespace (config-blobs/env-secrets.ts).
+  const envValid = /^OPENWORK_IMPORT_[A-Z0-9_]{1,112}$/.test(env);
 
   async function pick(next: SecretChoice | "") {
     setChoice(next);
@@ -300,7 +301,7 @@ function SecretRow({ entry, secret, editable, saving, allowEnv, onInput }: {
           <DenInput
             value={env}
             onChange={(event) => setEnv(event.target.value.toUpperCase())}
-            placeholder="OPENAI_API_KEY"
+            placeholder="OPENWORK_IMPORT_OPENAI_API_KEY"
             className="font-mono"
             aria-label={`Environment variable for ${formatFieldPath(secret.field)}`}
             disabled={!editable || saving}

@@ -66,7 +66,7 @@ Also never exported: the organization's name and slug (target identity; `source`
 Decision D2: blobs carry people. Each item is one person, identified by **email** (the user ID is per instance and only used as a tier-1 hint on the same instance):
 
 ```jsonc
-{ "id": "om_01h…", "key": "ada@example.com", "name": "Ada Lovelace",
+{ "id": "om_01h…", "key": "ada@example.com", "name": "Ada Example",
   "spec": { "email": "ada@example.com", "role": "admin", "status": "active",   // active | invited
             "teams": [ { "$ref": "members.teams/tem_01h…", "name": "Platform" } ],
             "managedBy": "scim" } }                                                  // scim | sso | manual

@@ -46,7 +46,7 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   // AI Gateway.
   gateway_provider_credentials: { reason: "secret", note: "written through ai-gateway.providers $secret placeholders" },
   gateway_provider_oauth_states: { reason: "runtime" },
-  gateway_litellm_issued_keys: { reason: "secret", note: "keys issued in a customer's LiteLLM proxy" },
+  gateway_litellm_issued_keys: { reason: "secret", note: "keys issued in an organization's LiteLLM proxy" },
   gateway_keys: { reason: "personal", note: "member gateway keys" },
   gateway_request_logs: { reason: "runtime" },
   gateway_usage_rollups: { reason: "runtime" },

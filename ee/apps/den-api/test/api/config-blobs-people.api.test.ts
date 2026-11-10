@@ -202,3 +202,59 @@ test("in another organization a member id is unresolved: choose or drop, never r
   const ref = policy?.refs?.find((entry) => entry.ref === personRef)
   assert.equal(ref?.resolvedId, null, JSON.stringify(policy?.refs))
 })
+
+test("summaries drop creator and approver names for callers who may not read people; member ids stay", async () => {
+  const closed = await ok(reviewerApi("GET", "/v1/config-blobs/change-requests?state=closed"), "reviewer list")
+  const requests = list(field(closed.body, "changeRequests")).map(asSummary)
+  const appliedRequest = requests.find((request) => request.title === "Unassign Grace")
+  assert.ok(appliedRequest, JSON.stringify(requests.map((request) => request.title)))
+  assert.equal(appliedRequest.createdBy.memberId !== null, true)
+  assert.equal(appliedRequest.createdBy.name, null)
+  assert.ok(appliedRequest.approvals.length > 0 && appliedRequest.approvals.every((approval) => approval.name === null && approval.memberId.length > 0))
+  const detail = await ok(reviewerApi("GET", `/v1/config-blobs/change-requests/${appliedRequest.id}`), "reviewer detail")
+  assert.equal(field(detail.body, "changeRequest", "createdBy", "name"), null)
+  assert.equal(field(detail.body, "report", "requestedBy", "name"), null)
+  assert.equal(field(detail.body, "report", "runsAs", "name"), null)
+  for (const name of [owner.name, reviewer.name]) assert.ok(!JSON.stringify([closed.body, detail.body]).includes(name), `${name} shown to the reviewer`)
+
+  const forOwner = await ok(ownerApi("GET", `/v1/config-blobs/change-requests/${appliedRequest.id}`), "owner detail")
+  assert.equal(field(forOwner.body, "changeRequest", "createdBy", "name"), owner.name)
+})
+
+test("a config token whose areas leave out members.people can't plan, approve or apply an invitation", async () => {
+  const created = await ok(ownerApi("POST", "/v1/api-keys", { name: "Policies applier", type: "config", scopes: ["config:export", "config:submit", "config:apply"], areas: ["desktop-policies"] }), "token")
+  const key = text(field(created.body, "key"), "token")
+  const token: Api = (method, pathname, body) => den.request(null, method, pathname, { body, headers: { "x-api-key": key } })
+
+  const blob = asBlob((await ok(ownerApi("GET", "/v1/config-blobs/export?areas=desktop-policies"), "owner export")).body)
+  const policies = areaItems(blob, "desktop-policies").map((item) => (item.name === "Grace's policy" ? { ...item, spec: { ...item.spec, assignments: { roles: [], teams: [], members: [{ $ref: "people/invitee-by-token@example.test" }] } } } : item))
+  const node = isRecord(blob.areas) ? blob.areas["desktop-policies"] : undefined
+  assert.ok(isRecord(node))
+  node.items = policies
+  const policyRef = policies.find((item) => item.name === "Grace's policy")?.id
+  assert.ok(policyRef)
+  const invite = { matches: [], refs: [{ area: "desktop-policies", ref: policyRef, path: "assignments.members[0]", resolution: { invite: true } }], deletes: [], overrides: [], skips: [], renames: [], people: { sendInviteEmails: false } }
+
+  // Uploaded by the token: choosing to invite is refused, and nothing invites on its own.
+  const mine = asSummary(field((await ok(token("POST", "/v1/config-blobs/change-requests", { blob, mode: "merge", title: "Token invite" }), "token submit")).body, "changeRequest"))
+  await settle(token, mine.id)
+  const refused = await token("PUT", `/v1/config-blobs/change-requests/${mine.id}/decisions`, invite)
+  assert.equal(refused.status, 403, summary(refused))
+  assert.deepEqual(field(refused.body, "areas"), ["members.people"])
+  const tokenPlan = asPlan(field((await ok(token("GET", `/v1/config-blobs/change-requests/${mine.id}/plan`), "token plan")).body, "plan"))
+  assert.ok(planItems(tokenPlan).every((item) => item.area !== "members.people"), JSON.stringify(tokenPlan))
+  await ok(token("POST", `/v1/config-blobs/change-requests/${mine.id}/cancel`, {}), "cancel")
+
+  // Uploaded by the owner, who chose to invite: the token can't approve or apply the invitation.
+  const owners = asSummary(field((await ok(ownerApi("POST", "/v1/config-blobs/change-requests", { blob, mode: "merge", title: "Owner invite" }), "owner submit")).body, "changeRequest"))
+  await settle(ownerApi, owners.id)
+  const decided = await ok(ownerApi("PUT", `/v1/config-blobs/change-requests/${owners.id}/decisions`, invite), "owner decides")
+  const plan = asPlan(field(decided.body, "plan"))
+  assert.ok(planItems(plan).some((item) => item.area === "members.people" && item.op === "create"), JSON.stringify(plan))
+  for (const action of ["approve", "apply"]) {
+    const denied = await token("POST", `/v1/config-blobs/change-requests/${owners.id}/${action}`, { planHash: plan.planHash })
+    assert.equal(denied.status, 403, `${action}: ${summary(denied)}`)
+    assert.deepEqual(field(denied.body, "areas"), ["members.people"])
+  }
+  await ok(ownerApi("POST", `/v1/config-blobs/change-requests/${owners.id}/cancel`, {}), "cancel owner's")
+})
