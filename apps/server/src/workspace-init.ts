@@ -1,4 +1,4 @@
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 
 import { ensureDir, exists } from "./utils.js";
@@ -68,12 +68,55 @@ export function isLegacyBrowserPlugin(value: unknown): boolean {
   return value === LEGACY_BROWSER_PLUGIN;
 }
 
+// Reading a workspace config can block forever: a cloud-offloaded file that
+// cannot be downloaded, a dead network share. Startup and every request that
+// resolves the workspace would wait with it, and each blocked read holds one of
+// the runtime's few file threads. Stop waiting after a few seconds, and start
+// no second read of a file while its read is still blocked.
+const CONFIG_READ_TIMEOUT_MS = 5_000;
+const configReads = new Map<string, { read: Promise<{ data: Record<string, unknown> }>; blocked: boolean }>();
+
+function configReadBlockedError(path: string): ApiError {
+  return new ApiError(409, "workspace_inaccessible", "Workspace config could not be read in time", { path });
+}
+
+/** True while this workspace's config read is blocked; its other files are likely to block too. */
+export function workspaceConfigReadBlocked(workspaceRoot: string): boolean {
+  return configReads.get(resolve(opencodeConfigPath(workspaceRoot)))?.blocked === true;
+}
+
+async function readOpencodeConfigData(configPath: string): Promise<Record<string, unknown>> {
+  const path = resolve(configPath);
+  let entry = configReads.get(path);
+  if (entry?.blocked) throw configReadBlockedError(path);
+  if (!entry) {
+    const read = readJsoncFile<Record<string, unknown>>(path, {}, { allowInvalid: true });
+    entry = { read, blocked: false };
+    configReads.set(path, entry);
+    const settled = () => { configReads.delete(path); };
+    read.then(settled, settled);
+  }
+  const current = entry;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const blocked = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      current.blocked = true;
+      reject(configReadBlockedError(path));
+    }, CONFIG_READ_TIMEOUT_MS);
+  });
+  try {
+    return (await Promise.race([current.read, blocked])).data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function ensureOpencodeConfig(workspaceRoot: string): Promise<boolean> {
   const path = opencodeConfigPath(workspaceRoot);
   if (!(await exists(path))) return false;
   let data: Record<string, unknown>;
   try {
-    ({ data } = await readJsoncFile<Record<string, unknown>>(path, {}, { allowInvalid: true }));
+    data = await readOpencodeConfigData(path);
   } catch (error) {
     if (!isConfigAccessError(error)) throw error;
     warnConfigAccessError("read", path, error);
