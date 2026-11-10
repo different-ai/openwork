@@ -54,15 +54,17 @@ copy button; **Choose another tool** goes back.
 
 ![Start using this key](./start-using-key.png)
 
-- **Cursor:** the key, the base URL, and every model's Cursor name to copy,
-  with a thinking level for models that have levels.
+- **Cursor:** the key, the base URL, then a model (and thinking level, for
+  models that have levels) to choose from a dropdown, with its Cursor name to
+  copy. The last step says to run the agent in Local mode (This Mac), not Cloud.
 - **OpenAI Codex:** the key line for the shell, and a `~/.codex/config.toml`
   provider (`wire_api = "responses"`) for the model chosen. Only OpenAI and
   Azure models are offered: Codex calls the provider-less Responses endpoint.
 - **Claude Code:** `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and the model
   variables for the model chosen. Only Anthropic, Vertex Claude and Foundry
   models are offered.
-- **Another tool:** the key, both base URLs and every model id.
+- **Another tool:** the key, both base URLs, and a model to choose with its id
+  to copy.
 
 ![Cursor's steps](./cursor-steps.png)
 
@@ -122,16 +124,13 @@ turned back on.
 - `gateway_request_logs` rows with `gateway_api_key_id` set carry Cursor's
   traffic like any other 3rd party tool; the requested model is the `gwm_` alias.
 
-## Not checked yet
+## Checked with a real Cursor
 
-Not yet called by a real Cursor. Tried on 2026-11-10 with Cursor 3.29.15
-pointed at a Gateway on `127.0.0.1`: Cursor answered "The AI model you
-selected isn't available" and no request reached the Gateway, which confirms
-Cursor calls the base URL from its own servers. A test needs a Gateway on a
-public HTTPS URL. Check there: which API Cursor uses for which model (Chat
-Completions or Responses), the body it sends (this assumes Chat Completions with flat
-tools), what its key verification calls, and that it accepts `/` and `:` in a
-model name.
+On 2026-11-10 a real Cursor answered through `openwork/gpt-5.6-luna-zp1h` on
+production in **Local** mode (This Mac). Cursor's **Cloud** agents still fail
+with OpenWork models, so the steps and the public docs tell people to use
+Local. Still to look into: why Cloud agents fail, and whether Cursor uses Chat
+Completions or Responses for each model.
 
 ## Proof
 

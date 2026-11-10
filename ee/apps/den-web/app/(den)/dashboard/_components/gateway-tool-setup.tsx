@@ -134,29 +134,34 @@ function ModelsState({ loading, error, empty }: { loading: boolean; error: Error
   return null;
 }
 
-/** One model with its Cursor name to copy, and a thinking level when the model has levels. */
-function CursorModelRow({ model }: { model: GatewayToolModel }) {
+/** Choose a model (and its thinking level, when it has levels); the name to copy follows the choice. */
+function CursorModelPicker({ models }: { models: readonly GatewayToolModel[] }) {
+  const [selected, setSelected] = useState<string | null>(null);
   const [thinking, setThinking] = useState<AutoRouterThinkingLevel>("default");
-  const name = cursorModelName({ name: model.name, modelId: model.modelId, thinking });
+  const model = models.find((entry) => entry.modelId === selected) ?? models[0] ?? null;
+  if (!model) return null;
+  const level = model.thinkingLevels.includes(thinking) ? thinking : "default";
+  const name = cursorModelName({ name: model.name, modelId: model.modelId, thinking: level });
   return (
-    <div className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0" data-cursor-model={model.name}>
-      <div className="flex min-w-0 items-center justify-between gap-3">
-        <span className="min-w-0">
-          <span className="block truncate text-[13px] font-medium leading-5 text-gray-900">{model.name}</span>
-          <span className="block truncate text-[12px] leading-4 text-gray-500">{model.providerName}</span>
+    <div className="flex flex-col gap-2" data-cursor-model={model.name}>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <span className="min-w-0 flex-1">
+          <DenSelect value={model.modelId} aria-label="Model" onChange={(event) => setSelected(event.target.value)}>
+            {models.map((entry) => <option key={entry.modelId} value={entry.modelId}>{`${entry.name} · ${entry.providerName}`}</option>)}
+          </DenSelect>
         </span>
         {model.thinkingLevels.length > 1 ? (
-          <span className="w-44 shrink-0">
+          <span className="sm:w-44">
             <DenSelect
-              value={thinking}
-              aria-label={`Thinking level for ${model.name}`}
+              value={level}
+              aria-label="Thinking level"
               onChange={(event) => {
-                const level = autoRouterThinkingLevelSchema.safeParse(event.target.value);
-                if (level.success) setThinking(level.data);
+                const next = autoRouterThinkingLevelSchema.safeParse(event.target.value);
+                if (next.success) setThinking(next.data);
               }}
             >
-              {model.thinkingLevels.map((level) => (
-                <option key={level} value={level}>{level === "default" ? "Default thinking" : `${AUTO_ROUTER_THINKING_LABELS[level]} thinking`}</option>
+              {model.thinkingLevels.map((entry) => (
+                <option key={entry} value={entry}>{entry === "default" ? "Default thinking" : `${AUTO_ROUTER_THINKING_LABELS[entry]} thinking`}</option>
               ))}
             </DenSelect>
           </span>
@@ -185,13 +190,16 @@ export function CursorSteps({ apiKey, baseUrl, keyStep }: { apiKey: string | nul
         <SetupStep
           number={4}
           field={(
-            <div className="flex flex-col divide-y divide-gray-100 rounded-xl border border-gray-100 px-3 py-3" data-testid="cursor-setup-models">
+            <div className="flex flex-col gap-2" data-testid="cursor-setup-models">
               <ModelsState loading={models.isLoading} error={models.error} empty={models.data && list.length === 0 ? "Your organization hasn't given you any models yet." : null} />
-              {list.map((model) => <CursorModelRow key={model.modelId} model={model} />)}
+              <CursorModelPicker models={list} />
             </div>
           )}
         >
-          Under <Strong>Models</Strong>, select <Strong>Add model</Strong> and paste a name. Add each model you want, then pick one in Cursor&apos;s model picker.
+          Under <Strong>Models</Strong>, select <Strong>Add model</Strong> and paste the name below. Choose another model here and repeat for each one you want.
+        </SetupStep>
+        <SetupStep number={5}>
+          Pick the model in Cursor&apos;s model picker and run the agent in <Strong>Local</Strong> mode (on <Strong>This Mac</Strong>), not <Strong>Cloud</Strong>: Cursor&apos;s cloud agents don&apos;t work with OpenWork models yet.
         </SetupStep>
       </ol>
       <p className="text-[12px] leading-4 text-gray-500">Cursor doesn&apos;t send a thinking level, so it&apos;s part of the name. Add a model once per level to switch between them.</p>
@@ -318,16 +326,13 @@ export function OtherToolSteps({ apiKey, baseUrl }: { apiKey: string | null; bas
           field={(
             <div className="flex flex-col gap-2">
               <ModelsState loading={models.isLoading} error={models.error} empty={models.data && list.length === 0 ? "Your organization hasn't given you any models yet." : null} />
-              {list.map((model) => (
-                <div key={model.alias} className="flex flex-col gap-1">
-                  <span className="text-[12px] text-gray-500">{`${model.name} · ${model.providerName}`}</span>
-                  <CopyField value={model.alias} label={`Copy the model id for ${model.name}`} />
-                </div>
-              ))}
+              <ModelSnippet models={list} loading={false} error={null} empty="">
+                {(model) => model ? <CopyField value={model.alias} label={`Copy the model id for ${model.name}`} testId="gateway-tool-model-id" /> : null}
+              </ModelSnippet>
             </div>
           )}
         >
-          Use one of these as the model:
+          Choose a model and use its id as the model:
         </SetupStep>
       </ol>
       <DocsLink href={GATEWAY_API_KEYS_DOCS_URL} />
