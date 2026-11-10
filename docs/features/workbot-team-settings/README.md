@@ -13,6 +13,14 @@ Teams › a team › **Workbot**):
 - **Workbot name**: what Workbot is called for the team's members (1 to 40 characters). Without one they see the
   organization's app name, or "Workbot".
 
+With Workbot's step limit on as well (`workbotStepLimit`), both pages have a fourth row, **Step limit**, after
+the default model: a team can have its own limit (`maxSteps` in the view, the team's change and its row; the
+same values as the organization's, saved on Everyone's page through `PUT /v1/org/workbot-settings`), resolved
+like the other settings and sent to Workbot by `GET /v1/workbot/session`. Turning either feature off keeps the
+teams' limits but ignores them: with the step limit off the row is gone, a change carrying `maxSteps` is
+refused (400) and chats go back to the deployment's default on their next message; with team settings off they
+go back to Everyone's limit.
+
 A team stores only what it overrides. A team without its own value for a setting uses the organization's, and
 follows it when the organization's changes.
 

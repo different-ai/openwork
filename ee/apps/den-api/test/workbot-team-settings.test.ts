@@ -30,16 +30,17 @@ type Deps = NonNullable<Parameters<typeof resolveMemberWorkbotSettings>[1]>
 const orgId = createDenTypeId("organization")
 const memberId = createDenTypeId("member")
 const userId = createDenTypeId("user")
-const organization = { model: "gateway/org", name: "Acme", enabled: true }
+const organization = { model: "gateway/org", name: "Acme", enabled: true, maxSteps: null }
 const fromOrganization = { kind: "organization" as const, teamConflict: false }
 const onForEveryone = { value: true, from: fromOrganization }
+const defaultSteps = { value: null, from: fromOrganization }
 
 test("a member with no overriding team gets the organization's model and name", () => {
-  const expected = { model: { value: "gateway/org", from: fromOrganization }, name: { value: "Acme", from: fromOrganization }, enabled: onForEveryone }
+  const expected = { model: { value: "gateway/org", from: fromOrganization }, name: { value: "Acme", from: fromOrganization }, enabled: onForEveryone, maxSteps: defaultSteps }
   assert.deepEqual(resolveWorkbotTeamSettings({ organization, teams: [] }), expected)
   assert.deepEqual(resolveWorkbotTeamSettings({ organization, teams: [{ name: "Sales", settings: {} }] }), expected)
   // An organization with nothing set stays on the deployment's default model and no name.
-  const unset = resolveWorkbotTeamSettings({ organization: { model: null, name: null, enabled: true }, teams: [{ name: "Sales", settings: {} }] })
+  const unset = resolveWorkbotTeamSettings({ organization: { model: null, name: null, enabled: true, maxSteps: null }, teams: [{ name: "Sales", settings: {} }] })
   assert.equal(unset.model.value, null)
   assert.equal(unset.name.value, null)
   assert.equal(unset.enabled.value, true)
@@ -67,6 +68,32 @@ test("Workbot on or off resolves like the other settings: a team's own, the orga
   const mixed = resolveWorkbotTeamSettings({ organization: off, teams: [{ name: "Research", settings: { enabled: true, model: "gateway/research" } }] })
   assert.deepEqual(mixed.model, { value: "gateway/research", from: fromTeams("Research") })
   assert.deepEqual(mixed.name, { value: "Acme", from: fromOrganization })
+})
+
+test("the step limit resolves like the other settings: a team's own, the organization's on a conflict", () => {
+  const limited = { ...organization, maxSteps: 500 }
+  const research = (maxSteps: number | null) => ({ name: "Research", settings: { maxSteps } })
+  const design = (maxSteps: number | null) => ({ name: "Design", settings: { maxSteps } })
+  const fromTeams = (...teamNames: string[]) => ({ kind: "team" as const, teamNames })
+  const conflict = { kind: "organization" as const, teamConflict: true }
+  const resolve = (base: typeof limited, teams: Parameters<typeof resolveWorkbotTeamSettings>[0]["teams"]) => resolveWorkbotTeamSettings({ organization: base, teams }).maxSteps
+
+  // No team says: the organization's, a number or the deployment's default.
+  assert.deepEqual(resolve(limited, [{ name: "Sales", settings: { name: "Scout" } }]), { value: 500, from: fromOrganization })
+  assert.deepEqual(resolve({ ...limited, maxSteps: null }, []), defaultSteps)
+  // A team's own limit; no limit (0) and the deployment's default (null) are choices too, not "use the organization's".
+  assert.deepEqual(resolve(limited, [research(100), { name: "Sales", settings: {} }]), { value: 100, from: fromTeams("Research") })
+  assert.deepEqual(resolve(limited, [research(0)]), { value: 0, from: fromTeams("Research") })
+  assert.deepEqual(resolve(limited, [research(null)]), { value: null, from: fromTeams("Research") })
+  // Teams that agree apply; teams that differ give the organization's.
+  assert.deepEqual(resolve(limited, [research(100), design(100)]), { value: 100, from: fromTeams("Design", "Research") })
+  assert.deepEqual(resolve(limited, [research(100), design(250)]), { value: 500, from: conflict })
+  assert.deepEqual(resolve(limited, [design(null), research(0)]), { value: 500, from: conflict })
+  // The step limit never moves the model, the name or the switch.
+  const mixed = resolveWorkbotTeamSettings({ organization: limited, teams: [{ name: "Research", settings: { maxSteps: 100, model: "gateway/research" } }] })
+  assert.deepEqual(mixed.model, { value: "gateway/research", from: fromTeams("Research") })
+  assert.deepEqual(mixed.name, { value: "Acme", from: fromOrganization })
+  assert.deepEqual(mixed.enabled, onForEveryone)
 })
 
 test("one overriding team replaces the organization's value, each setting on its own", () => {
@@ -112,6 +139,9 @@ test("each team counts its members who are in a conflict for at least one settin
       { teamId: "support", settings: { name: "Helper" } },
       { teamId: "paused", settings: { enabled: false } },
       { teamId: "pilot", settings: { enabled: true } },
+      { teamId: "short", settings: { maxSteps: 100 } },
+      { teamId: "long", settings: { maxSteps: 0 } },
+      { teamId: "plain", settings: { maxSteps: null } },
     ],
     memberships: [
       { teamId: "research", memberId: "a" }, { teamId: "design", memberId: "a" }, // a: models differ
@@ -121,9 +151,12 @@ test("each team counts its members who are in a conflict for at least one settin
       { teamId: "design", memberId: "e" }, { teamId: "support", memberId: "e" }, // e: different settings, no conflict
       { teamId: "paused", memberId: "f" }, { teamId: "pilot", memberId: "f" }, // f: one team off, one on
       { teamId: "paused", memberId: "g" }, { teamId: "sales", memberId: "g" }, // g: off in one, the organization's in the other
+      { teamId: "short", memberId: "h" }, { teamId: "long", memberId: "h" }, // h: step limits differ
+      { teamId: "long", memberId: "i" }, { teamId: "plain", memberId: "i" }, // i: no limit against the deployment's default
+      { teamId: "short", memberId: "j" }, { teamId: "sales", memberId: "j" }, // j: one limit, the organization's in the other
     ],
   })
-  assert.deepEqual(Object.fromEntries(counts), { research: 2, design: 1, sales: 0, ops: 0, support: 1, paused: 1, pilot: 1 })
+  assert.deepEqual(Object.fromEntries(counts), { research: 2, design: 1, sales: 0, ops: 0, support: 1, paused: 1, pilot: 1, short: 1, long: 2, plain: 1 })
 })
 
 test("stored settings keep what can be read and treat the rest as no override", () => {
@@ -132,6 +165,9 @@ test("stored settings keep what can be read and treat the rest as no override", 
   assert.deepEqual(readWorkbotTeamSettings({ enabled: false }), { enabled: false })
   assert.deepEqual(readWorkbotTeamSettings({ enabled: true, name: "Scout" }), { name: "Scout", enabled: true })
   assert.deepEqual(readWorkbotTeamSettings({ enabled: "false", name: "Scout" }), { name: "Scout" })
+  // A step limit: a whole number in range, 0 for no limit, or null for the deployment's default.
+  for (const maxSteps of [100, 0, null, 100_000]) assert.deepEqual(readWorkbotTeamSettings({ maxSteps }), { maxSteps })
+  for (const maxSteps of [-1, 1.5, 100_001, "100", true]) assert.deepEqual(readWorkbotTeamSettings({ maxSteps, name: "Scout" }), { name: "Scout" }, String(maxSteps))
   // Keys added by a later version are tolerated; a value that cannot be read is no override.
   assert.deepEqual(readWorkbotTeamSettings({ name: "Scout", proactive: { enabled: false } }), { name: "Scout" })
   assert.deepEqual(readWorkbotTeamSettings({ model: 12, name: "x".repeat(41) }), {})
@@ -146,6 +182,7 @@ test("a change sets or clears each setting and leaves the others, including unkn
   assert.equal(parse({ model: { inherit: true } }).success, true)
   assert.equal(parse({ model: { inherit: false, value: null }, name: { inherit: false, value: "Scout" } }).success, true)
   for (const enabled of [{ inherit: true }, { inherit: false, value: false }, { inherit: false, value: true }]) assert.equal(parse({ enabled }).success, true)
+  for (const maxSteps of [{ inherit: true }, { inherit: false, value: 250 }, { inherit: false, value: 0 }, { inherit: false, value: null }]) assert.equal(parse({ maxSteps }).success, true, JSON.stringify(maxSteps))
   assert.deepEqual(parse({ name: { inherit: false, value: " Scout " } }).data, { name: { inherit: false, value: "Scout" } })
   for (const refused of [
     { model: { inherit: true, value: "gateway/a" } },
@@ -159,6 +196,13 @@ test("a change sets or clears each setting and leaves the others, including unkn
     { enabled: { inherit: false } },
     { enabled: { inherit: false, value: "off" } },
     { enabled: { inherit: true, value: false } },
+    { maxSteps: 250 },
+    { maxSteps: { inherit: false } },
+    { maxSteps: { inherit: false, value: -1 } },
+    { maxSteps: { inherit: false, value: 2.5 } },
+    { maxSteps: { inherit: false, value: 100_001 } },
+    { maxSteps: { inherit: false, value: "250" } },
+    { maxSteps: { inherit: true, value: 250 } },
     { other: { inherit: true } },
   ]) assert.equal(parse(refused).success, false, JSON.stringify(refused))
 
@@ -174,15 +218,26 @@ test("a change sets or clears each setting and leaves the others, including unkn
   assert.deepEqual(applyWorkbotTeamSettingsWrite(paused, { name: { inherit: false, value: "Scout" } }), { ...paused, name: "Scout" })
   assert.deepEqual(applyWorkbotTeamSettingsWrite(paused, { enabled: { inherit: true } }), stored)
   assert.deepEqual(applyWorkbotTeamSettingsWrite({ enabled: false }, { enabled: { inherit: true } }), {})
+  // No limit and the deployment's default are values of their own; only "use the organization's" removes the limit.
+  const limited = applyWorkbotTeamSettingsWrite(stored, { maxSteps: { inherit: false, value: 250 } })
+  assert.deepEqual(limited, { ...stored, maxSteps: 250 })
+  assert.deepEqual(applyWorkbotTeamSettingsWrite(limited, { maxSteps: { inherit: false, value: 0 } }), { ...stored, maxSteps: 0 })
+  assert.deepEqual(applyWorkbotTeamSettingsWrite(limited, { maxSteps: { inherit: false, value: null } }), { ...stored, maxSteps: null })
+  assert.deepEqual(applyWorkbotTeamSettingsWrite(limited, { name: { inherit: false, value: "Scout" } }), { ...limited, name: "Scout" })
+  assert.deepEqual(applyWorkbotTeamSettingsWrite(limited, { maxSteps: { inherit: true } }), stored)
+  assert.deepEqual(applyWorkbotTeamSettingsWrite({ maxSteps: null }, { maxSteps: { inherit: true } }), {})
+  assert.deepEqual(applyWorkbotTeamSettingsWrite({ maxSteps: "many", name: "Scout" }, { name: { inherit: true } }), {})
   // Nothing left: the caller deletes the row. A value that could not be read is dropped with it.
   assert.deepEqual(applyWorkbotTeamSettingsWrite({ model: "gateway/a", name: 5 }, { model: { inherit: true } }), {})
 })
 
 test("the organization's values come from its metadata", () => {
   assert.deepEqual(organizationWorkbotSettings({ brandAppName: " Acme ", workbot: { model: "gateway/org" } }), organization)
-  assert.deepEqual(organizationWorkbotSettings(JSON.stringify({ brandAppName: "Acme" })), { model: null, name: "Acme", enabled: true })
-  for (const empty of [null, undefined, "not json", { brandAppName: "  " }]) assert.deepEqual(organizationWorkbotSettings(empty), { model: null, name: null, enabled: true })
+  assert.deepEqual(organizationWorkbotSettings(JSON.stringify({ brandAppName: "Acme" })), { model: null, name: "Acme", enabled: true, maxSteps: null })
+  for (const empty of [null, undefined, "not json", { brandAppName: "  " }]) assert.deepEqual(organizationWorkbotSettings(empty), { model: null, name: null, enabled: true, maxSteps: null })
   assert.deepEqual(organizationWorkbotSettings({ brandAppName: "Acme", workbot: { model: "gateway/org", enabled: false } }), { ...organization, enabled: false })
+  assert.deepEqual(organizationWorkbotSettings({ brandAppName: "Acme", workbot: { model: "gateway/org", maxSteps: 500 } }), { ...organization, maxSteps: 500 })
+  assert.deepEqual(organizationWorkbotSettings({ brandAppName: "Acme", workbot: { model: "gateway/org", maxSteps: 0 } }), { ...organization, maxSteps: 0 })
 })
 
 test("Workbot is on for an organization unless its metadata turns it off, and turning it on removes the key", () => {
@@ -205,7 +260,10 @@ test("Workbot is on for an organization unless its metadata turns it off, and tu
 })
 
 const metadata = { brandAppName: "Acme", workbot: { model: "gateway/org" } }
-const organizationValues = { model: "gateway/org", name: "Acme", enabled: true, modelFrom: fromOrganization, nameFrom: fromOrganization, enabledFrom: fromOrganization }
+const organizationValues = {
+  model: "gateway/org", name: "Acme", enabled: true, maxSteps: null,
+  modelFrom: fromOrganization, nameFrom: fromOrganization, enabledFrom: fromOrganization, maxStepsFrom: fromOrganization,
+}
 const never = async (): Promise<never> => { throw new Error("must not be read") }
 
 test("with the feature off a member gets the organization's values and no team is read", async () => {
@@ -244,6 +302,23 @@ test("with the feature on Workbot is off for a member when the organization or t
   assert.equal((await resolveMemberWorkbotSettings({ organizationId: orgId, featureOn: true }, { ...deps([], false), teams: never, rows: never })).enabled, false)
 })
 
+test("a member's step limit is their team's with the feature on, and the organization's otherwise", async () => {
+  const limited = { ...metadata, workbot: { ...metadata.workbot, maxSteps: 500 } }
+  const teams = [{ id: "tem_1", name: "Research" }, { id: "tem_2", name: "Sales" }]
+  const resolve = async (rows: { teamId: string; settings: unknown }[], featureOn = true) => {
+    const deps: Deps = { metadata: async () => limited, featureOn: never, memberId: never, teams: featureOn ? async () => teams : never, rows: featureOn ? async () => rows : never }
+    const resolved = await resolveMemberWorkbotSettings({ organizationId: orgId, memberId, featureOn }, deps)
+    return { maxSteps: resolved.maxSteps, from: resolved.maxStepsFrom }
+  }
+  assert.deepEqual(await resolve([]), { maxSteps: 500, from: fromOrganization })
+  assert.deepEqual(await resolve([{ teamId: "tem_1", settings: { name: "Scout" } }]), { maxSteps: 500, from: fromOrganization })
+  assert.deepEqual(await resolve([{ teamId: "tem_1", settings: { maxSteps: 100 } }]), { maxSteps: 100, from: { kind: "team", teamNames: ["Research"] } })
+  assert.deepEqual(await resolve([{ teamId: "tem_1", settings: { maxSteps: null } }]), { maxSteps: null, from: { kind: "team", teamNames: ["Research"] } })
+  assert.deepEqual(await resolve([{ teamId: "tem_1", settings: { maxSteps: 100 } }, { teamId: "tem_2", settings: { maxSteps: 0 } }]), { maxSteps: 500, from: { kind: "organization", teamConflict: true } })
+  // Team settings off: the organization's limit, and no team is read.
+  assert.deepEqual(await resolve([{ teamId: "tem_1", settings: { maxSteps: 100 } }], false), { maxSteps: 500, from: fromOrganization })
+})
+
 test("with the feature on a member gets their teams' values, found from the member or the user", async () => {
   const seen: string[] = []
   const on: Deps = {
@@ -254,8 +329,8 @@ test("with the feature on a member gets their teams' values, found from the memb
     rows: async (_organizationId, teamIds) => { seen.push(`rows:${teamIds.join(",")}`); return [{ teamId: "tem_1", settings: { model: "gateway/research", name: "Scout" } }] },
   }
   const expected = {
-    model: "gateway/research", name: "Scout", enabled: true,
-    modelFrom: { kind: "team", teamNames: ["Research"] }, nameFrom: { kind: "team", teamNames: ["Research"] }, enabledFrom: fromOrganization,
+    model: "gateway/research", name: "Scout", enabled: true, maxSteps: null,
+    modelFrom: { kind: "team", teamNames: ["Research"] }, nameFrom: { kind: "team", teamNames: ["Research"] }, enabledFrom: fromOrganization, maxStepsFrom: fromOrganization,
   }
   assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, userId }, on), expected)
   assert.deepEqual(seen, [`enabled:${userId}`, `member:${userId}`, `teams:${memberId}`, "rows:tem_1,tem_2"])
