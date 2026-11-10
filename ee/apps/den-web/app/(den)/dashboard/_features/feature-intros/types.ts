@@ -25,6 +25,7 @@ export type FeatureIntroKey =
   | "team-detail.agents"
   | "team-detail.browser"
   | "team-detail.models"
+  | "team-detail.workbot"
   | "team-detail.prompts"
   | "team-detail.desktop"
   | "connectors"

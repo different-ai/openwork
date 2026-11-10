@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { agentPermissionDefaultDecision, agentPermissionDefinitions, decideAgentPermission, resolveAgentPermissionRules, type AgentPermissionSettings } from "@openwork/types/den/agent-permissions";
+import { teamOverrideSummary } from "./agent-permissions-data";
 import { agentPermissionBlockedBy, agentPermissionChoiceOptions, agentPermissionChoiceValue, storedAgentPermissionDecision, effectiveAgentPermissionSettings, visibleAgentPermissionGroups, visibleAgentPermissionTryKinds } from "./agent-permissions-presentation";
 
 function visibleKeys(area: "all" | "agents" | "browser", harnessEnabled: boolean, computerUseEnabled: boolean) {
@@ -114,4 +115,12 @@ test("upload defaults are distinct from explicit Ask without changing existing c
 test("the existing commands block retains its reason and test id suffix", () => {
   assert.deepEqual(agentPermissionBlockedBy("commands", {}, { fileEdits: { decision: "deny" } }), { key: "edits", reason: "Blocked while Edit files is blocked, because any command can change files." });
   assert.equal(agentPermissionBlockedBy("commands", { fileEdits: { decision: "allow" } }, { fileEdits: { decision: "deny" } }), null);
+});
+
+test("the Teams list counts a team's own permissions as changes, and nothing while it follows Everyone", () => {
+  const team = { scopeId: "team_sales", teamId: "team_sales", name: "Sales", memberCount: 2 };
+  assert.equal(teamOverrideSummary({ ...team, settings: { commands: { decision: "ask" } }, updatedAt: "2026-01-01T00:00:00.000Z" }), "1 change");
+  assert.equal(teamOverrideSummary({ ...team, settings: { commands: { decision: "ask" }, fileEdits: { decision: "deny" } }, updatedAt: "2026-01-01T00:00:00.000Z" }), "2 changes");
+  assert.equal(teamOverrideSummary({ ...team, settings: {}, updatedAt: null }), null);
+  assert.equal(teamOverrideSummary(undefined), null);
 });

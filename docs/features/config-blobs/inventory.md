@@ -40,13 +40,14 @@ Source of truth: `ee/apps/den-api/src/config-blobs/registry.ts` (one adapter per
 | `plugins.plugins` | Plugins | `plugin`, `plugin_config_object`, `plugin_access_grant`, `plugin_mcp_requirement_binding`, `marketplace_plugin` | – | moving an MCP requirement to another connection doesn't carry sign-ins | archived, never deleted; source-filled plugins refused |
 | `plugins.skills` | Skills, agents and commands | `config_object`, `config_object_version`, `config_object_access_grant`, `remote_mcp_app` | – | each content change saves a new version | org-shared objects only, never personal ones, authored MCP Apps or the Workbot "Your agent" template (owned by `workbot.proactive`); preflight: source-managed creates and the template (skip), source-managed content changes (block) |
 | `plugins.sources` | Sources | `connector_instance`, `connector_target`, `connector_mapping`, `connector_instance_access_grant`, `connector_account` | – | a sync is queued; deleting a source deletes everything imported from it | the GitHub installation is never created; preflight: no matching installation here (block) |
-| `workbot.settings` | Workbot | – (organization metadata) | – | – | never the Slack installation |
+| `workbot.settings` | Workbot | – (organization metadata) | – | – | never the Slack installation; `maxSteps` applied only with `workbotStepLimit`, `enabled` (Workbot on for everyone) only with `workbotTeamSettings` (skipped with a warning) |
 | `workbot.proactive` | Members' agents | – (organization metadata, "Your agent" template versions) | – | turning agents on starts reading members' sources; sent messages can't be unsent | `workbotProactive` |
+| `workbot.team-settings` | Workbot per team (team Workbot tab) | `workbot_team_setting` | – | – | `workbotTeamSettings`; one item per team with its own settings, matched by team name; only the keys a team overrides (`model`, `name`, `enabled`, `maxSteps`); `maxSteps` applied only with `workbotStepLimit` (skipped with a warning); delete = the team uses the organization's settings |
 | `settings.auth-security` | Auth & Security | `sso_connection`, `sso_provider`, `scim_provider` | `oidc.clientSecret` | sign-ins ended by stricter session limits or Require SSO; SSO identities on delete; a reconfigured connection is disabled until tested | new connections start disabled and unverified; never SCIM tokens; preflight: Require SSO / Restrict domain without a ready connection or under `ssoPerOrganization` (block), OIDC secret unset (block) |
 | `settings.advanced.brand` | Brand appearance | `organization_brand_asset` | – | – | uploaded images travel as base64 `data` (2 MB each) |
 | `settings.audit` | Audit logs (settings) | `audit_policy` | – | – | only `captureOn` |
 
-Run `pnpm --filter @openwork-ee/den-api config-blobs:coverage` for the live numbers: 146 org-scoped tables, 58 owned by an area, 95 excluded (`excluded.ts`).
+Run `pnpm --filter @openwork-ee/den-api config-blobs:coverage` for the live numbers: 148 org-scoped tables, 59 owned by an area, 96 excluded (`excluded.ts`).
 
 ### Excluded tables (`excluded.ts`), by reason
 

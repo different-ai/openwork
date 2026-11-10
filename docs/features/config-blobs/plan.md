@@ -11,7 +11,7 @@ Every user-visible piece goes behind `configBlobs` (cloud + self-hosted, off by 
 | 2 · change requests + plan | **Done.** `config_change_request` table and worker; matching tiers, references, three-way diff, plan hash; decisions and inputs endpoints; Changes tab and change request page; **plan-time preflight** (area `preflight`, verdicts fed into `buildPlan`; change-requests.md › Preflight). |
 | 3 · apply | **Done.** Approvals (optional second approver, fresh sign-in, 24 h expiry), per-org apply queue, stale detection on the written items only, before-snapshot of the written items, minimal per-item writes, per-attempt run reports (`config_apply_run`), aliases, secret write-through and purge, `tenant_job` audit, "Restore previous config", `mirror` deletes. Not one database transaction (change-requests.md › Apply). |
 | 4 · config token + API docs | **Done.** `config` API keys with `config:export` / `config:submit` / `config:apply` and area limits; `env` secrets on self-hosted; `?dryRun=true`; public JSON Schema; secret inputs expire after 7 days; `packages/docs/self-host/export-import-configuration.mdx`. |
-| 5 · coverage | **Done: all 25 areas** (inventory.md › Areas). Whole-organization round trip: `test/api/config-blobs-whole-org.api.test.ts`. |
+| 5 · coverage | **Done: all 26 areas** (inventory.md › Areas). Whole-organization round trip: `test/api/config-blobs-whole-org.api.test.ts`. |
 | 6 · cross-deployment polish | **Partly.** Done: `unsupportedReason` per area (cloud-only areas skip on self-hosted), `specVersion` check and upgrader hook, D4 id reuse across instances, comparing instance-specific child ids by name (`comparableSpec`). |
 
 **Remaining:**

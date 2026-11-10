@@ -38,6 +38,38 @@ The gateway exposes two tools, so your client's tool list stays small:
 
 Access follows your organization membership, role, policies, and exposure allowlists. The OpenWork desktop app connects automatically when you sign in; there is nothing to configure.
 
+## Set up once for the whole organization
+
+Nobody on your team installs or configures an MCP server. An admin adds each app once in OpenWork Cloud, and everyone reaches it through the gateway.
+
+<Steps>
+  <Step title="An admin adds the app">
+    In **Manage › Connectors**, click **Add connector** and pick the app, or paste the address of its MCP server.
+  </Step>
+  <Step title="The admin chooses who can use it">
+    Everyone in the organization, or specific teams and people.
+  </Step>
+  <Step title="Each person signs in once">
+    The first time someone asks their AI to use the app, it asks them to sign in with their own account. They can also sign in ahead of time from their Library.
+  </Step>
+  <Step title="It keeps working">
+    The sign-in is kept in OpenWork Cloud, so it follows the person to every device and every AI client connected to the gateway.
+  </Step>
+</Steps>
+
+Each person's AI works in the app as that person, with their permissions and nothing more. Removing someone's access, or removing the connector, takes it away from their AI right away. For a bot or service account, choose **One account for everyone** instead and nobody else signs in.
+
+Full walkthrough: [Connectors](/cloud/share-with-your-team/connectors).
+
+### Which apps you can add
+
+| The app's MCP server | What the admin does |
+| --- | --- |
+| Hosted by the provider, with its own sign-in | Pick it from the list or paste its address. |
+| Hosted by the provider, but it needs your own OAuth app, as Google's servers do | Create the OAuth app once and enter its client ID and secret on the connector. See [Connect Google Cloud CLI](/cloud/share-with-your-team/google-cloud-cli) for an example. |
+| Not hosted: a program you run yourself | Deploy it once at an HTTPS address your organization controls, then paste that address. Members still install nothing. |
+| No MCP server | Google Workspace and Microsoft 365 are built in, and we build more on request for enterprise customers. See [Native integrations](/integrations/native-integrations). |
+
 ## Reference
 
 <AccordionGroup>

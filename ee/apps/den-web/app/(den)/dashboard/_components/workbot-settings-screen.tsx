@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { Lock } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import { WORKBOT_DEFAULT_MODEL_NAME, WORKBOT_MAX_STEPS_CHOICES, type WorkbotModelTest, type WorkbotSettings } from "@openwork/types/den/workbot-settings";
+import type { WorkbotModelTest, WorkbotSettings } from "@openwork/types/den/workbot-settings";
 import {
   getBrandAppearanceRoute,
   getMcpConnectionsRoute,
+  getMembersTeamsRoute,
   getOrgAccessFlags,
   orgFeatureEnabled,
   parseOrganizationMetadata,
@@ -16,73 +17,23 @@ import { DenButton } from "../../_components/ui/button";
 import { ServiceReadinessNotice } from "../../_components/service-readiness-notice";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenNotice } from "../../_components/ui/notice";
-import { DenBrandMark } from "../../_components/ui/brand-mark";
-import { DenCombobox, type DenComboboxOption } from "../../_components/ui/combobox";
+import { DenCombobox } from "../../_components/ui/combobox";
 import { DenSelect } from "../../_components/ui/select";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { providerIconSlug } from "./library-models";
+import { effectiveWorkbotModel, isWorkbotModelListed, workbotDisplayName, workbotModelName, workbotModelOptions } from "./workbot-model-options";
 import { useSaveWorkbotModel, useSaveWorkbotStepLimit, useTestWorkbotDefaultModel, useWorkbotSettings } from "./workbot-settings-data";
+import { STEP_LIMIT_HELP, stepLimitChoices, stepLimitLabel, stepLimitValue } from "./workbot-step-limit-options";
+import { useWorkbotTeamSettings } from "./workbot-team-settings-data";
+import { workbotTeamsOverridingCount, workbotTeamsOverridingLabel } from "./workbot-team-settings-presentation";
 import { WorkbotProactiveSection } from "./workbot-proactive-section";
 import { WorkbotProactiveHealthSection } from "./workbot-proactive-health";
 import { FeatureIntroGate, useFeatureIntroRuntime } from "../_features/feature-intros";
 import { useWorkbotIntroFacts } from "./workbot-intro-facts";
 
-/** The name Workbot introduces itself with: the organization's brand name, unless it is unset or OpenWork. */
-function workbotName(metadata: string | null): string {
-  const brand = parseOrganizationMetadata(metadata)?.brandAppName;
-  const trimmed = typeof brand === "string" ? brand.trim() : "";
-  return trimmed && trimmed !== "OpenWork" ? trimmed.slice(0, 40) : "Workbot";
-}
-
-/** Runner model ids read "provider/model"; the provider part picks the logo. */
-function ModelMark({ id, provider: brand }: { id: string; provider?: string }) {
-  const provider = brand ?? (id.includes("/") ? id.slice(0, id.indexOf("/")) : id);
-  return (
-    <DenBrandMark
-      name={provider}
-      simpleIconSlug={providerIconSlug(provider)}
-      className="h-5 w-5 rounded-[5px] border-gray-200"
-      imageClassName="h-3.5 w-3.5"
-    />
-  );
-}
-
-/**
- * The model Workbot answers with: the organization's saved choice, or the built-in default when none is saved.
- * There is one default model; the picker always shows this one, never a separate "Default" entry.
- */
-function effectiveModel(settings: WorkbotSettings): string | null {
-  return settings.model ?? settings.defaultModel;
-}
-
-function isListed(settings: WorkbotSettings, id: string | null): boolean {
-  return Boolean(id) && settings.models.some((entry) => entry.id === id);
-}
-
-function modelName(settings: WorkbotSettings, id: string | null): string {
-  if (!id) return "No model";
-  const listed = settings.models.find((entry) => entry.id === id)?.name;
-  if (listed) return listed;
-  // The built-in default keeps its name even when it isn't offered to this person.
-  return !settings.model && id === settings.defaultModel ? WORKBOT_DEFAULT_MODEL_NAME : "Unavailable model";
-}
-
-/** The models that can be chosen, plus the current model when it isn't one of them, so the picker never hides it. */
-function modelOptions(settings: WorkbotSettings): DenComboboxOption[] {
-  const current = effectiveModel(settings);
-  const missing = current && !isListed(settings, current)
-    ? [{ value: current, label: modelName(settings, current), description: settings.gatewayModels ? "Not available to you" : "No longer available" }]
-    : [];
-  return [
-    ...missing,
-    ...settings.models.map((entry) => ({ value: entry.id, label: entry.name, keywords: [entry.id], icon: <ModelMark id={entry.id} provider={entry.provider} /> })),
-  ];
-}
-
 function availabilityLabel(settings: WorkbotSettings, id: string): string {
   if (!settings.runnerReachable) return "Couldn't check";
-  return isListed(settings, id) ? "Available" : "Unavailable";
+  return isWorkbotModelListed(settings, id) ? "Available" : "Unavailable";
 }
 
 function modelTestLabel(result: WorkbotModelTest | null | undefined): string {
@@ -100,26 +51,6 @@ function modelTestLabel(result: WorkbotModelTest | null | undefined): string {
     busy: "Another test is running. Try again shortly.",
   };
   return messages[result.errorCode];
-}
-
-const STEP_LIMIT_HELP = "How many steps Workbot can take on one request before it stops and asks for a smaller piece.";
-
-/** A step limit as the select's value and its label: null is the deployment's default, 0 is no limit. */
-function stepLimitValue(maxSteps: number | null): string {
-  return maxSteps === null ? "default" : String(maxSteps);
-}
-
-function stepLimitLabel(maxSteps: number | null): string {
-  if (maxSteps === null) return "Default";
-  if (maxSteps === 0) return "No limit";
-  return `${maxSteps.toLocaleString("en-US")} ${maxSteps === 1 ? "step" : "steps"}`;
-}
-
-/** The limits offered, plus the saved one when it isn't among them (set through the API), so the select never hides it. */
-function stepLimitChoices(saved: number | null): (number | null)[] {
-  const numbers: number[] = [...WORKBOT_MAX_STEPS_CHOICES];
-  if (saved !== null && saved !== 0 && !numbers.includes(saved)) numbers.push(saved);
-  return [null, ...numbers.sort((left, right) => left - right), 0];
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -148,6 +79,9 @@ export function WorkbotSettingsScreen() {
   const save = useSaveWorkbotModel(orgId);
   const saveStepLimit = useSaveWorkbotStepLimit(orgId);
   const modelTest = useTestWorkbotDefaultModel(orgId);
+  // With settings per team on, the page says how many teams changed Workbot's settings for their members.
+  const teamSettings = useWorkbotTeamSettings(orgId, orgFeatureEnabled(orgContext, "workbotTeamSettings"));
+  const teamsOverriding = teamSettings.data ? workbotTeamsOverridingCount(teamSettings.data) : 0;
   const resetTest = modelTest.reset;
   const labelId = useId();
   const stepLimitLabelId = useId();
@@ -156,7 +90,7 @@ export function WorkbotSettingsScreen() {
   const [saved, setSaved] = useState<{ previous: string | null } | null>(null);
 
   const settings = query.data;
-  const current = settings ? effectiveModel(settings) : null;
+  const current = settings ? effectiveWorkbotModel(settings) : null;
   const introFacts = useWorkbotIntroFacts(useFeatureIntroRuntime().enabled, settings);
   useEffect(() => {
     setDraft(current ?? "");
@@ -166,7 +100,7 @@ export function WorkbotSettingsScreen() {
     resetTest();
   }, [orgId, current, draft, resetTest]);
 
-  const name = workbotName(orgContext?.organization.metadata ?? null);
+  const name = workbotDisplayName(parseOrganizationMetadata(orgContext?.organization.metadata ?? null)?.brandAppName);
   // Members' agents ride on Workbot: shown only with the rollout on and Workbot deployed here.
   const proactive = orgFeatureEnabled(orgContext, "workbotProactive") && orgContext?.capabilities.workbot === true;
   const savedModel = settings?.model ?? null;
@@ -217,10 +151,10 @@ export function WorkbotSettingsScreen() {
               )}
             />
           ) : null}
-          {settings && settings.runnerReachable && current && !isListed(settings, current) ? (
+          {settings && settings.runnerReachable && current && !isWorkbotModelListed(settings, current) ? (
             <DenNotice
               tone="warning"
-              message={`Workbot can't use ${modelName(settings, current) === "Unavailable model" ? "the saved model" : modelName(settings, current)} right now, so new messages won't send. Choose an available model, or ask your model administrator to check your AI Gateway access. Existing conversations are kept.`}
+              message={`Workbot can't use ${workbotModelName(settings, current) === "Unavailable model" ? "the saved model" : workbotModelName(settings, current)} right now, so new messages won't send. Choose an available model, or ask your model administrator to check your AI Gateway access. Existing conversations are kept.`}
             />
           ) : null}
 
@@ -245,7 +179,7 @@ export function WorkbotSettingsScreen() {
                       <DenCombobox
                         ariaLabel="Default model"
                         value={draft}
-                        options={modelOptions(settings)}
+                        options={workbotModelOptions(settings)}
                         disabled={!canChoose}
                         placeholder="Choose a model"
                         searchPlaceholder="Search models"
@@ -339,7 +273,7 @@ export function WorkbotSettingsScreen() {
           ) : null}
           {saved && settings ? (
             <div role="status" className="flex items-center justify-between gap-3 px-1 text-[13px] text-gray-600">
-              <span className="min-w-0 [overflow-wrap:anywhere]">Saved. New messages use {modelName(settings, effectiveModel(settings))}.</span>
+              <span className="min-w-0 [overflow-wrap:anywhere]">Saved. New messages use {workbotModelName(settings, effectiveWorkbotModel(settings))}.</span>
               <DenButton
                 variant="ghost"
                 size="xs"
@@ -349,6 +283,17 @@ export function WorkbotSettingsScreen() {
                 Undo
               </DenButton>
             </div>
+          ) : null}
+          {teamsOverriding > 0 ? (
+            <p className="px-1 text-[13px] text-gray-500" data-testid="workbot-team-settings-count">
+              {workbotTeamsOverridingLabel(teamsOverriding)}{" "}
+              <Link
+                href={getMembersTeamsRoute(orgSlug)}
+                className="rounded text-gray-700 underline underline-offset-2 hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900"
+              >
+                See teams
+              </Link>
+            </p>
           ) : null}
           {proactive && orgId ? (
             <WorkbotProactiveSection orgId={orgId} canManage={canManage} connectorsHref={getMcpConnectionsRoute(orgSlug)} />

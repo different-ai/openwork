@@ -74,6 +74,7 @@ export const CONFIG_AREA_KEYS = [
   "plugins.sources",
   "workbot.settings",
   "workbot.proactive",
+  "workbot.team-settings",
   "settings.auth-security",
   "settings.advanced.brand",
   "settings.audit",

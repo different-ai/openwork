@@ -30,6 +30,7 @@ import { settingsGeneralArea } from "./areas/settings-general.js"
 import { settingsWebOriginsArea } from "./areas/settings-web-origins.js"
 import { workbotProactiveArea } from "./areas/workbot-proactive.js"
 import { workbotSettingsArea } from "./areas/workbot-settings.js"
+import { workbotTeamSettingsArea } from "./areas/workbot-team-settings.js"
 
 const AREAS_BY_KEY: Record<ConfigAreaKey, ConfigArea> = {
   "members.teams": membersTeamsArea,
@@ -54,6 +55,7 @@ const AREAS_BY_KEY: Record<ConfigAreaKey, ConfigArea> = {
   "plugins.sources": pluginsSourcesArea,
   "workbot.settings": workbotSettingsArea,
   "workbot.proactive": workbotProactiveArea,
+  "workbot.team-settings": workbotTeamSettingsArea,
   "settings.auth-security": settingsAuthSecurityArea,
   "settings.advanced.brand": settingsBrandArea,
   "settings.audit": settingsAuditArea,

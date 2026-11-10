@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode, useEffect, useState } from "react";
-import { ArrowLeft, Laptop, Compass, KeyRound, Layers, ScrollText, ShieldCheck, SquareTerminal, Users } from "lucide-react";
+import { ArrowLeft, Laptop, Compass, KeyRound, Layers, MessageCircle, ScrollText, ShieldCheck, SquareTerminal, Users } from "lucide-react";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
-import { getMembersRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getMembersRoute, getMembersTeamsRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
 import { DesktopSuggestionsPanel } from "./desktop-suggestions-panel";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -15,6 +15,8 @@ import { ModelsPanel, modelsTabVisible, teamModelsAccess } from "./team-models-p
 import { directoryAccess } from "./gateway-directory-data";
 import { useGatewayAccessProviders } from "./gateway-subject-access-data";
 import { PromptsPanel, promptsTabVisible } from "./prompts-panel";
+import { teamScopeOf } from "./team-scope";
+import { WorkbotPanel, workbotTabVisible } from "./team-workbot-panel";
 import { OrgMemberIdentity } from "./org-member-identity";
 import { SharedTeamRolePanel } from "./shared-team-role-panel";
 import { MemberTeamRoles } from "./member-team-roles";
@@ -23,7 +25,7 @@ import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen, type F
 import type { TeamDetailFacts } from "../_features/feature-intros/intros/team-detail";
 import { useAiGatewayIntroFacts } from "./ai-gateway-intro-facts";
 
-export type TeamDetailTab = "role" | "overview" | "access" | "agents" | "browser" | "models" | "prompts" | "desktop";
+export type TeamDetailTab = "role" | "overview" | "access" | "agents" | "browser" | "models" | "workbot" | "prompts" | "desktop";
 
 /** Each tab's feature intro, for `?` and its unseen dot (DESIGN.md I9). Everyone's page shares them. */
 export const TEAM_DETAIL_TAB_INTROS: Record<TeamDetailTab, FeatureIntroKey> = {
@@ -33,6 +35,7 @@ export const TEAM_DETAIL_TAB_INTROS: Record<TeamDetailTab, FeatureIntroKey> = {
   agents: "team-detail.agents",
   browser: "team-detail.browser",
   models: "team-detail.models",
+  workbot: "team-detail.workbot",
   prompts: "team-detail.prompts",
   desktop: "team-detail.desktop",
 };
@@ -64,6 +67,8 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
   const showDesktop = desktopPolicyScreenRemoved(orgContext);
   const showModels = modelsTabVisible(orgContext);
   const showPrompts = promptsTabVisible(orgContext);
+  // What the team changes from Everyone's Workbot settings, with settings per team on.
+  const showWorkbot = workbotTabVisible(orgContext);
   const [chosenTab, setChosenTab] = useState<TeamDetailTab | null>(initialTab);
   const defaultTab: TeamDetailTab = "role";
   // The tab is in the address (?tab=agents), so a reload or a shared link opens it again.
@@ -79,6 +84,7 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
       : tab === "browser" ? showBrowser
         : tab === "desktop" ? showDesktop
         : tab === "models" ? showModels
+        : tab === "workbot" ? showWorkbot
         : tab === "prompts" ? showPrompts
           : true;
   const activeTab: TeamDetailTab = chosenTab && available(chosenTab) ? chosenTab : defaultTab;
@@ -108,6 +114,7 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
     ...(showAgents ? [{ value: "agents" as const, label: "Agents", icon: SquareTerminal }] : []),
     ...(showBrowser ? [{ value: "browser" as const, label: "Browser", icon: Compass }] : []),
     ...(showModels ? [{ value: "models" as const, label: "Models", icon: Layers }] : []),
+    ...(showWorkbot ? [{ value: "workbot" as const, label: "Workbot", icon: MessageCircle }] : []),
     ...(showPrompts ? [{ value: "prompts" as const, label: "Prompts", icon: ScrollText }] : []),
     ...(showDesktop ? [{ value: "desktop" as const, label: "Desktop", icon: Laptop }] : []),
   ];
@@ -122,7 +129,7 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
     <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
       <div className="mb-6 flex items-center justify-between gap-4">
         <Link
-          href={getMembersRoute(orgSlug)}
+          href={getMembersTeamsRoute(orgSlug)}
           className="inline-flex items-center gap-1.5 text-[13px] text-gray-500 transition hover:text-gray-700"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -154,7 +161,7 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
         ) : null}
 
         {activeTab === "overview" ? (
-          <div role="tabpanel" aria-label="Overview">
+          <div role="tabpanel" aria-label="Members">
             <TeamTabIntro tab="overview" facts={teamFacts}>
             {teamMembers.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
@@ -201,6 +208,12 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
         {activeTab === "prompts" && team ? (
           <div role="tabpanel" aria-label="Prompts">
             <PromptsPanel team={{ id: team.id, name: team.name }} />
+          </div>
+        ) : null}
+
+        {activeTab === "workbot" && team ? (
+          <div role="tabpanel" aria-label="Workbot">
+            <TeamTabIntro tab="workbot" facts={teamFacts}><WorkbotPanel scope={teamScopeOf(team)} /></TeamTabIntro>
           </div>
         ) : null}
 

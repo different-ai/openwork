@@ -116,7 +116,7 @@ test("export: allowlisted single items, valid specs, no secrets or source-bound 
     assert.ok(!text.toLowerCase().includes(forbidden.toLowerCase()), `export contains ${forbidden}`)
   }
 
-  assert.deepEqual(exported.get("workbot.settings")?.spec, { model: "custom/not-a-served-model", provider: null, maxSteps: null })
+  assert.deepEqual(exported.get("workbot.settings")?.spec, { model: "custom/not-a-served-model", provider: null, maxSteps: null, enabled: true })
   const proactive = exported.get("workbot.proactive")?.spec
   assert.deepEqual(proactive, {
     enabled: true, leadMinutes: 30, workingDays: "weekdays", startHour: 9, endHour: 19, dailyCap: 5, membersStart: "opted_out", destination: "workbot_dm",
@@ -257,18 +257,18 @@ test("round trip into a second organization; brand bytes identical; a model the 
   // workbot.settings: the source's model isn't one the applier can use here.
   const settings = await only(workbotSettingsArea, sourceCtx)
   const targetSettings = await only(workbotSettingsArea, targetCtx)
-  assert.deepEqual(targetSettings.spec, { model: null, provider: null, maxSteps: null })
+  assert.deepEqual(targetSettings.spec, { model: null, provider: null, maxSteps: null, enabled: true })
   await assert.rejects(workbotSettingsArea.apply(targetCtx, {
     kind: "update", targetId: target.orgId, previous: targetSettings, item: { name: settings.name, spec: settings.spec }, changes: [{ path: "model" }], secretPaths: [],
   }), (error: unknown) => error instanceof ConfigApplyItemError && ["unknown_model", "workbot_runner_unavailable"].includes(error.failure.code) && error.failure.field === "model" && error.failure.step?.target === "model")
-  assert.deepEqual((await only(workbotSettingsArea, targetCtx)).spec, { model: null, provider: null, maxSteps: null }, "nothing was written")
+  assert.deepEqual((await only(workbotSettingsArea, targetCtx)).spec, { model: null, provider: null, maxSteps: null, enabled: true }, "nothing was written")
 
   // The default (null) is always allowed: clearing the source's model works.
   const cleared = await workbotSettingsArea.apply(sourceCtx, {
-    kind: "update", targetId: source.orgId, previous: settings, item: { name: settings.name, spec: { model: null, provider: null, maxSteps: null } }, changes: [{ path: "model" }], secretPaths: [],
+    kind: "update", targetId: source.orgId, previous: settings, item: { name: settings.name, spec: { model: null, provider: null, maxSteps: null, enabled: true } }, changes: [{ path: "model" }], secretPaths: [],
   })
   assert.deepEqual(cleared.steps, [{ action: "set", target: "model", detail: "default" }])
-  assert.deepEqual((await only(workbotSettingsArea, sourceCtx)).spec, { model: null, provider: null, maxSteps: null })
+  assert.deepEqual((await only(workbotSettingsArea, sourceCtx)).spec, { model: null, provider: null, maxSteps: null, enabled: true })
 })
 
 test("workbot.settings carries Workbot's step limit and applies it only where workbotStepLimit is on", async () => {

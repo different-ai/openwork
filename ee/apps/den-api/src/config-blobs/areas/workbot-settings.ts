@@ -14,12 +14,17 @@
  * - `maxSteps`: Workbot's step limit (`organization.metadata.workbot.maxSteps`),
  *   null for the deployment default, 0 for no limit. Always exported as stored;
  *   only applied where `workbotStepLimit` is on, otherwise skipped with a warning.
+ * - `enabled`: whether Workbot is on for everyone whose teams don't say
+ *   otherwise (`organization.metadata.workbot.enabled`, absent = on). Always
+ *   exported as stored; only applied where `workbotTeamSettings` is on (its
+ *   route, PUT /v1/org/workbot-settings/everyone, needs it), otherwise skipped
+ *   with a warning. Teams' own settings are `workbot.team-settings`.
  * - Never carried: the Workbot Slack installation (signing secret, bot token
  *   and workspace binding), the model test results and the readiness checks
  *   (runtime). The proactive agent settings are `workbot.proactive`.
  *
  * Apply goes through PUT /v1/org/workbot-settings's own function
- * (`saveWorkbotDefaultModel`): the applier's own servable models only, the
+ * (`saveWorkbotDefaultModel`; `enabled` through `saveWorkbotEnabledForEveryone`): the applier's own servable models only, the
  * managed Luna starter saved as the default.
  */
 import { eq } from "@openwork-ee/den-db/drizzle"
@@ -28,9 +33,11 @@ import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { configRefSchema, type ConfigRef } from "@openwork/types/den/config-blobs"
 import { readWorkbotMaxSteps, readWorkbotModel, workbotMaxStepsSchema } from "@openwork/types/den/workbot-settings"
+import { readWorkbotEnabled } from "@openwork/types/den/workbot-team-settings"
 import { z } from "zod"
 import { organizationFeatureEnabled } from "../../features.js"
 import { RUNNER_UNAVAILABLE_MESSAGE, UNKNOWN_MODEL_MESSAGE, saveWorkbotDefaultModel } from "../../routes/org/workbot-settings.js"
+import { saveWorkbotEnabledForEveryone } from "../../routes/org/workbot-team-settings.js"
 import { defineConfigArea, type ConfigAreaContext, type ConfigItem } from "../area.js"
 import { ApplySteps, ORG_SINGLETON_NATURAL_KEY, readSingleton, requireActorPermission, touches } from "./org-singleton.js"
 import { ConfigApplyError, specObject } from "./route-support.js"
@@ -46,12 +53,15 @@ const workbotSettingsSpecSchema = z.object({
   provider: configRefSchema.nullable().default(null),
   /** Workbot's step limit: null = the deployment default, 0 = no limit. */
   maxSteps: workbotMaxStepsSchema.nullable().default(null),
+  /** Whether Workbot is on for everyone whose teams don't set their own (workbotTeamSettings). */
+  enabled: z.boolean().default(true),
 }).strict()
 
 const applySpecSchema = z.object({
   model: z.string().trim().min(1).max(255).nullable().default(null),
   provider: z.unknown().optional(),
   maxSteps: workbotMaxStepsSchema.nullable().default(null),
+  enabled: z.boolean().default(true),
 }).strict()
 
 async function providerRef(ctx: ConfigAreaContext, model: string | null): Promise<ConfigRef | null> {
@@ -75,7 +85,7 @@ async function exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]> {
     .limit(1)
   if (!row) return []
   const model = readWorkbotModel(row.metadata)
-  return [{ id: ctx.organizationId, name: ITEM_NAME, spec: { model, provider: await providerRef(ctx, model), maxSteps: readWorkbotMaxSteps(row.metadata) } }]
+  return [{ id: ctx.organizationId, name: ITEM_NAME, spec: { model, provider: await providerRef(ctx, model), maxSteps: readWorkbotMaxSteps(row.metadata), enabled: readWorkbotEnabled(row.metadata) } }]
 }
 
 export const workbotSettingsArea = defineConfigArea({
@@ -112,7 +122,8 @@ export const workbotSettingsArea = defineConfigArea({
     const warnings: string[] = []
     const wantsModel = touches(op, "model")
     const wantsMaxSteps = touches(op, "maxSteps")
-    if (!wantsModel && !wantsMaxSteps) return { localId, steps: [] }
+    const wantsEnabled = touches(op, "enabled")
+    if (!wantsModel && !wantsMaxSteps && !wantsEnabled) return { localId, steps: [] }
     const [current] = await exportItems(ctx)
     if (!current) throw steps.fail("organization_not_found", "The organization no longer exists.", undefined, 404)
     const modelChanges = wantsModel && current.spec.model !== next
@@ -120,6 +131,12 @@ export const workbotSettingsArea = defineConfigArea({
     if (maxStepsChanges && !await organizationFeatureEnabled(ctx.organizationId, "workbotStepLimit", { userId: ctx.actor.userId })) {
       warnings.push("Workbot's step limit wasn't changed: the step limit isn't on for this organization.")
       maxStepsChanges = false
+    }
+    const nextEnabled = parsed.data.enabled
+    let enabledChanges = wantsEnabled && current.spec.enabled !== nextEnabled
+    if (enabledChanges && !await organizationFeatureEnabled(ctx.organizationId, "workbotTeamSettings", { userId: ctx.actor.userId })) {
+      warnings.push("Whether Workbot is on for everyone wasn't changed: Workbot settings per team aren't on for this organization.")
+      enabledChanges = false
     }
 
     if (modelChanges) {
@@ -137,6 +154,12 @@ export const workbotSettingsArea = defineConfigArea({
       await steps.run({ action: "set", target: "maxSteps", detail }, "maxSteps", async () => {
         await requireActorPermission(ctx, "inference.manage")
         await saveWorkbotDefaultModel({ organizationId: normalizeDenTypeId("organization", ctx.organizationId), userId: ctx.actor.userId, maxSteps: nextMaxSteps })
+      })
+    }
+    if (enabledChanges) {
+      await steps.run({ action: "set", target: "enabled", detail: nextEnabled ? "on" : "off" }, "enabled", async () => {
+        await requireActorPermission(ctx, "inference.manage")
+        await saveWorkbotEnabledForEveryone(normalizeDenTypeId("organization", ctx.organizationId), nextEnabled)
       })
     }
     return { localId, steps: steps.done, ...(warnings.length ? { warnings } : {}) }

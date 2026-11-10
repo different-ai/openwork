@@ -147,6 +147,7 @@ export const idTypesMapNameToPrefix = {
   configBlobExport: "cbe",
   configApplyRun: "car",
   denInstance: "dni",
+  workbotTeamSetting: "wts",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

@@ -23,6 +23,14 @@ The choice is one value for the organization. It applies to every member's
 Workbot chats, main and side chats and the background tasks they start, from
 each chat's next message. It does not change the Slack assistant or Automations.
 
+With Workbot settings per team on as well (`workbotTeamSettings`), a team can
+have its own step limit: the same choices, on Members › Teams › a team ›
+Workbot, with the organization's limit on Everyone's page. A member gets their
+team's limit, or the organization's when none of their teams sets one or their
+teams differ. Turning either feature off keeps the teams' limits but ignores
+them: chats go back to the organization's limit (team settings off) or the
+deployment's default (step limit off) on their next message.
+
 ## How it works
 
 - Den keeps the value in the organization's metadata as `workbot.maxSteps`

@@ -1101,7 +1101,7 @@ function MembersTeamsIntroSlot({ facts, children }: { facts: Pick<MembersFacts, 
   return <>{children(useFeatureIntro("members.teams", facts))}</>;
 }
 
-/** A team's agent permissions in the Teams list: its own overrides, or that it follows Everyone. */
+/** A team's agent permissions in the Teams list: its own changes, or that it follows Everyone. */
 function TeamAgentPermissionsCell({ summary, failed }: { summary: string | null | undefined; failed: boolean }) {
   if (failed) return <TeamsListLane testId="team-row-agent-permissions" title="Couldn't load agent permissions" tone="muted">—</TeamsListLane>;
   if (summary === undefined) return <span role="status" aria-label="Loading agent permissions" data-testid="team-row-agent-permissions" className="hidden lg:block"><DenSkeleton className="h-3 w-24" /></span>;

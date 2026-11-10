@@ -51,8 +51,8 @@ import { memberPermissionsForRequest, type OrgRouteVariables } from "./shared.js
 const workbotSettingsDocumentSchema = workbotSettingsSchema.meta({ ref: "WorkbotSettings" })
 const workbotSettingsInputDocumentSchema = workbotSettingsInputSchema.meta({ ref: "WorkbotSettingsInput" })
 const featureDisabledSchema = z.object({ error: z.literal("feature_disabled"), feature: z.string() })
-const unknownModelSchema = z.object({ error: z.literal("unknown_model"), message: z.string() }).meta({ ref: "WorkbotUnknownModelError" })
-const runnerUnavailableSchema = z
+export const unknownModelSchema = z.object({ error: z.literal("unknown_model"), message: z.string() }).meta({ ref: "WorkbotUnknownModelError" })
+export const runnerUnavailableSchema = z
   .object({ error: z.literal("workbot_runner_unavailable"), message: z.string() })
   .meta({ ref: "WorkbotRunnerUnavailableError" })
 
@@ -61,7 +61,7 @@ export const RUNNER_UNAVAILABLE_MESSAGE = "Workbot's models can't be checked rig
 
 const notFound = jsonResponse("The organization was not found, or Workbot is off.", featureDisabledSchema)
 
-const requireWorkbotSettingsRead: ReturnType<typeof requireOrgPermission> = async (c, next) => {
+export const requireWorkbotSettingsRead: ReturnType<typeof requireOrgPermission> = async (c, next) => {
   if ((await memberPermissionsForRequest(c))?.has("inference.manage")) return next()
   return requireOrgPermission("inference.view")(c, next)
 }

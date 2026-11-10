@@ -10,8 +10,8 @@ import {
 import { Switch } from "@/components/ui/switch";
 
 import { t } from "@/i18n";
-import { isElectronRuntime } from "@/app/utils";
-import { isLinkOpenDestination, type LinkOpenDestination } from "@/react-app/kernel/local-preferences-storage";
+import { isElectronRuntime, isMacPlatform } from "@/app/utils";
+import { isFollowUpDefault, isLinkOpenDestination, type FollowUpDefault, type LinkOpenDestination } from "@/react-app/kernel/local-preferences-storage";
 import {
   DESKTOP_NOTIFICATION_PREFERENCE_VALUES,
   isDesktopNotificationPreference,
@@ -40,6 +40,8 @@ export type PreferencesViewProps = {
   onToggleAutoCompactContext: () => void;
   analyticsEnabled: boolean;
   onToggleAnalytics: () => void;
+  followUpDefault: FollowUpDefault;
+  onFollowUpDefaultChange: (value: FollowUpDefault) => void;
   keepAwake: boolean;
   onToggleKeepAwake: () => void;
   desktopNotifications: DesktopNotificationPreference;
@@ -64,6 +66,11 @@ export function PreferencesView(props: PreferencesViewProps) {
     { value: "openwork", label: "OpenWork" },
     { value: "external", label: t("settings.links.external") },
   ];
+  const followUpItems = [
+    { value: "queue", label: t("settings.follow_up.queue") },
+    { value: "steer", label: t("settings.follow_up.steer") },
+  ];
+  const followUpModifier = isMacPlatform() ? "⌘" : "Ctrl";
   const desktopNotificationItems = DESKTOP_NOTIFICATION_PREFERENCE_VALUES.map((value) => ({
     value,
     label: desktopNotificationPreferenceLabel(value),
@@ -105,6 +112,41 @@ export function PreferencesView(props: PreferencesViewProps) {
                 disabled={props.busy || props.autoCompactContextBusy}
                 onCheckedChange={props.onToggleAutoCompactContext}
               />
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+      </LayoutSection>
+
+      <LayoutSection>
+        <LayoutSectionHeader>
+          <LayoutSectionTitle>{t("settings.follow_up.title")}</LayoutSectionTitle>
+          <LayoutSectionDescription>{t("settings.follow_up.section_desc")}</LayoutSectionDescription>
+        </LayoutSectionHeader>
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("settings.follow_up.enter")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>
+              {t(props.followUpDefault === "steer" ? "settings.follow_up.enter_desc_steer" : "settings.follow_up.enter_desc_queue", { modifier: followUpModifier })}
+            </LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Select
+                items={followUpItems}
+                value={props.followUpDefault}
+                onValueChange={(value) => {
+                  if (isFollowUpDefault(value)) props.onFollowUpDefaultChange(value);
+                }}
+              >
+                <SelectTrigger className="w-52" aria-label={t("settings.follow_up.enter")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {followUpItems.map(({ value, label }) => (
+                      <SelectItem key={value} value={value}>{label}</SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
             </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>
         </LayoutSectionItem>

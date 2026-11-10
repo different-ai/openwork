@@ -5,7 +5,7 @@ description: "Download an organization's configuration as one JSON file, review 
 
 A **config blob** is one JSON file holding all or part of an organization's
 configuration: teams, roles and people, connectors, AI Gateway providers and
-limits, plugins and skills, desktop policies, Workbot, and settings (25 areas, listed
+limits, plugins and skills, desktop policies, Workbot, and settings (26 areas, listed
 below). You can export it, keep it in version control, edit it, and
 import it again into the same organization or into another OpenWork (for example
 from OpenWork Cloud to a self-hosted Den).
@@ -100,6 +100,7 @@ the file.
 | `desktop-policies` | Desktop policies | `desktop_policies.view` | `desktop_policies.manage` |
 | `workbot.settings` | Manage › Workbot | `inference.view` | `inference.manage` |
 | `workbot.proactive` | Manage › Workbot › Members' agents | `inference.view` | `inference.manage` |
+| `workbot.team-settings` | Members › Teams › Workbot (when Workbot settings per team are on) | `inference.view` | `inference.manage` |
 | `settings.general` | Settings › General | `organization.update` | `organization.update` |
 | `settings.web-origins` | Settings › Web origins | `web_origins.view` | `web_origins.manage` |
 | `settings.auth-security` | Settings › Auth & Security | `sso.view` | `sso.manage` |

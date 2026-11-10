@@ -46,7 +46,7 @@ import {
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
 import { canOpenAdminRoute } from "./admin-route-access";
-import { type WorkbotEntry, workbotEntryHref, workbotNavMarker } from "./workbot-entry";
+import { myBotNavMarker, type WorkbotEntry, workbotEntryHref, workbotNavMarker } from "./workbot-entry";
 
 export type DashboardNavChild = {
   href: string;
@@ -131,7 +131,7 @@ export function buildDashboardNavSections({
       ? [{ href: workbotEntryHref(organizationId), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot", ...workbotNavMarker(workbotEntry) }]
       : []),
     ...(myBot && orgSlug
-      ? [{ href: getLibraryMyAgentRoute(orgSlug), label: "My bot", icon: Radar, testId: "dashboard-nav-my-bot" }]
+      ? [{ href: getLibraryMyAgentRoute(orgSlug), label: "My bot", icon: Radar, testId: "dashboard-nav-my-bot", ...myBotNavMarker(workbotEntry) }]
       : []),
     {
       href: orgSlug ? getLibraryRoute(orgSlug) : "#",

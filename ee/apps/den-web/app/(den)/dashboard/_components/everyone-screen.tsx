@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowLeft, Laptop, Compass, Layers, ScrollText, ShieldCheck, SquareTerminal } from "lucide-react";
+import { ArrowLeft, Laptop, Compass, Layers, MessageCircle, ScrollText, ShieldCheck, SquareTerminal } from "lucide-react";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import { getMembersTeamsRoute, getOrgAccessFlags, getPermissionSetRoute } from "../../_lib/den-org";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
@@ -13,13 +13,15 @@ import { AgentsPanel, agentsTabVisible } from "./agent-permissions-editor";
 import { ItemPanel, ItemRow } from "./item-list";
 import { ModelsPanel, modelsTabVisible } from "./team-models-panel";
 import { PromptsPanel, promptsTabVisible } from "./prompts-panel";
+import { EVERYONE_SCOPE } from "./team-scope";
+import { WorkbotPanel, workbotTabVisible } from "./team-workbot-panel";
 import { usePermissionSets } from "./permissions-data";
 import { useFeatureIntroRuntime, useFeatureIntroUnseen } from "../_features/feature-intros";
 import type { TeamDetailFacts } from "../_features/feature-intros/intros/team-detail";
 import { useAiGatewayIntroFacts } from "./ai-gateway-intro-facts";
 import { TEAM_DETAIL_TAB_INTROS, TeamTabIntro } from "./team-detail-screen";
 
-export type EveryoneTab = "role" | "agents" | "browser" | "models" | "prompts" | "desktop";
+export type EveryoneTab = "role" | "agents" | "browser" | "models" | "workbot" | "prompts" | "desktop";
 
 /**
  * Members › Teams › Everyone: every member, including people in no team.
@@ -37,6 +39,8 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
   const showDesktop = desktopPolicyScreenRemoved(orgContext);
   const showModels = modelsTabVisible(orgContext);
   const showPrompts = promptsTabVisible(orgContext);
+  // Workbot holds Everyone's settings (on or off, model, name), which a team's Workbot tab can change for its members.
+  const showWorkbot = workbotTabVisible(orgContext);
   const [chosenTab, setChosenTab] = useState<EveryoneTab | null>(initialTab);
   // The tab is in the address, so a reload or a shared link opens it again.
   const chooseTab = (tab: EveryoneTab) => {
@@ -48,6 +52,7 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
   const activeTab: EveryoneTab = chosenTab === "agents" && showAgents ? "agents"
     : chosenTab === "browser" && showBrowser ? "browser"
       : chosenTab === "models" && showModels ? "models"
+      : chosenTab === "workbot" && showWorkbot ? "workbot"
       : chosenTab === "prompts" && showPrompts ? "prompts"
         : chosenTab === "desktop" && showDesktop ? "desktop" : "role";
   const memberCount = orgContext?.members.length ?? 0;
@@ -64,6 +69,7 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
     ...(showAgents ? [{ value: "agents" as const, label: "Agents", icon: SquareTerminal }] : []),
     ...(showBrowser ? [{ value: "browser" as const, label: "Browser", icon: Compass }] : []),
     ...(showModels ? [{ value: "models" as const, label: "Models", icon: Layers }] : []),
+    ...(showWorkbot ? [{ value: "workbot" as const, label: "Workbot", icon: MessageCircle }] : []),
     ...(showPrompts ? [{ value: "prompts" as const, label: "Prompts", icon: ScrollText }] : []),
     ...(showDesktop ? [{ value: "desktop" as const, label: "Desktop", icon: Laptop }] : []),
   ];
@@ -114,6 +120,10 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
             <TeamTabIntro tab="models" facts={modelsFacts ? { providers: modelsFacts.providers, openworkModels: modelsFacts.openworkModels } : null}>
               <ModelsPanel team={null} />
             </TeamTabIntro>
+          </div>
+        ) : activeTab === "workbot" ? (
+          <div role="tabpanel" aria-label="Workbot">
+            <TeamTabIntro tab="workbot" facts={introFacts}><WorkbotPanel scope={EVERYONE_SCOPE} /></TeamTabIntro>
           </div>
         ) : activeTab === "prompts" ? (
           <div role="tabpanel" aria-label="Prompts">

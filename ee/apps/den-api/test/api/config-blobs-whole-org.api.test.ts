@@ -40,7 +40,7 @@ const { and, eq } = await import("@openwork-ee/den-db/drizzle")
 const { AGENT_TEMPLATE_PATH } = await import("../../src/workbot-proactive/template.js")
 
 const SECRETS = { byok: "sk-whole-byok-SECRET-1", gateway: "sk-whole-gateway-SECRET-1", oauth: "whole-oauth-client-SECRET-1", oidc: "whole-oidc-client-SECRET-1" }
-const FEATURES = ["configBlobs", "autoRouter", "workbotProactive", "sessionSecuritySettings", "authSecuritySettings", "multipleSsoConnections"]
+const FEATURES = ["configBlobs", "autoRouter", "workbotProactive", "sessionSecuritySettings", "authSecuritySettings", "multipleSsoConnections", "workbotTeamSettings"]
 const skillMarkdown = (name: string, body: string) => `---\nname: ${name}\ndescription: A skill of the whole-org round trip.\n---\n\n${body}\n`
 
 type Api = ReturnType<typeof den.as>
@@ -264,6 +264,7 @@ await ok(apiA("PUT", "/v1/org/workbot-settings/proactive", {
   enabled: true, leadMinutes: 30, startHour: 9, dailyCap: 5, membersStart: "opted_out",
   sources: { email: "members" }, responsibilities: { meeting_prep: false }, instructions: "Keep it short.",
 }), "members' agents")
+await ok(apiA("PUT", `/v1/org/workbot-settings/teams/${platform}`, { name: { inherit: false, value: "Scout" }, enabled: { inherit: false, value: false } }), "team Workbot settings")
 // The "Your agent" template that save created, shared with everyone: still workbot.proactive's, never plugins.skills'.
 if (!("getConnection" in client)) throw new Error("needs MySQL mode")
 const [templates] = await client.query("SELECT id FROM config_object WHERE organization_id = ? AND current_relative_path = ?", [orgA.orgId, AGENT_TEMPLATE_PATH])
@@ -292,7 +293,7 @@ let importId = ""
 test("export A: every area, no secret values", async () => {
   exportedA = await exportWhole(apiA)
   assert.deepEqual(exportedA.omitted ?? [], [], "nothing left out")
-  assert.deepEqual([...exportedA.scope].sort(), [...CONFIG_AREA_KEYS].sort(), "all 25 areas")
+  assert.deepEqual([...exportedA.scope].sort(), [...CONFIG_AREA_KEYS].sort(), "all 26 areas")
   const empty = CONFIG_AREA_KEYS.filter((key) => areaItems(exportedA, key).length === 0)
   assert.deepEqual(empty, [], "something in every area")
   // Task 1: the "Your agent" template rides with workbot.proactive only.

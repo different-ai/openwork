@@ -62,6 +62,15 @@ test("facts come from the saved model and the Workbot readiness check", () => {
     workbotIntroFacts({ deployed: true, settings: { model: null }, readiness: { gatewayRequired: false, hasGatewayProvider: false, organizationGatewayRequired: true } }),
     { modelChosen: false, needsProvider: true },
   );
+  // An admin turned Workbot off for this person: said only then, so every other answer is unchanged.
+  assert.deepEqual(
+    workbotIntroFacts({ deployed: true, settings: { model: null }, readiness: { gatewayRequired: false, hasGatewayProvider: false, enabled: false } }),
+    { modelChosen: false, needsProvider: false, workbotOff: true },
+  );
+  assert.deepEqual(
+    workbotIntroFacts({ deployed: true, settings: { model: null }, readiness: { gatewayRequired: false, hasGatewayProvider: false, enabled: true } }),
+    { modelChosen: false, needsProvider: false },
+  );
   // Workbot not deployed here: never replaces the page, and needs no readiness check.
   assert.deepEqual(workbotIntroFacts({ deployed: false, settings: { model: null }, readiness: undefined }), { modelChosen: false, needsProvider: false });
 });
@@ -88,5 +97,11 @@ test("actions follow permissions, never offering what can't be done", () => {
   assert.equal(pickIntroCta(section, ctx(ready, []))?.label, "Open Workbot");
   assert.equal(pickIntroCta(section, ctx(ready, []))?.href, "/workbot");
   assert.ok(pickIntroCta(section, ctx(ready, [], false))?.locked);
+  // Workbot is off for this person: Open Workbot stays, locked, with who can turn it on.
+  const off = pickIntroCta(section, ctx({ ...ready, workbotOff: true }, []));
+  assert.equal(off?.label, "Open Workbot");
+  assert.match(off?.locked?.reason ?? "", /Workbot is off for your team\. An admin can turn it on in Members › Teams\./);
+  // Someone who manages Workbot's settings still gets their own action.
+  assert.equal(pickIntroCta(section, ctx({ ...ready, workbotOff: true }))?.href, "#workbot-default-model");
   assert.ok(pickIntroCta(section, ctx({ modelChosen: true, needsProvider: true }, []))?.locked);
 });

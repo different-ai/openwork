@@ -56,7 +56,7 @@ type PaletteEntry = {
 type DenCommandPaletteProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Returns true when it handled the navigation itself (the Workbot entry while Workbot has no AI provider). */
+  /** Returns true when it handled the navigation itself (the Workbot entry while it is blocked). */
   interceptNavigation?: (href: string) => boolean;
 };
 

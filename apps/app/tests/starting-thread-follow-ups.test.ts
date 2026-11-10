@@ -25,16 +25,20 @@ beforeEach(() => useComposerStateStore.getState().clearQueuedDrafts(SESSION));
 
 test("Enter and Cmd+Enter while a thread is starting keep the follow-up instead of dropping it", () => {
   const starting = { hasContent: true, disabled: false, busy: true, editing: false, stopping: false, submissionPreparing: true };
-  expect(resolveComposerSubmit({ ...starting, steer: false })).toBe("queue");
-  expect(resolveComposerSubmit({ ...starting, steer: true })).toBe("steer");
+  expect(resolveComposerSubmit({ ...starting, modifier: false })).toBe("queue");
+  expect(resolveComposerSubmit({ ...starting, modifier: true })).toBe("steer");
+
+  // Settings can make Enter send right away; Cmd/Ctrl+Enter then queues.
+  expect(resolveComposerSubmit({ ...starting, followUpDefault: "steer", modifier: false })).toBe("steer");
+  expect(resolveComposerSubmit({ ...starting, followUpDefault: "steer", modifier: true })).toBe("queue");
 
   // A fresh send with nothing running still waits for preparation, as does Enter after Stop.
-  expect(resolveComposerSubmit({ ...starting, busy: false, steer: false })).toBeNull();
-  expect(resolveComposerSubmit({ ...starting, stopping: true, steer: false })).toBeNull();
-  expect(resolveComposerSubmit({ ...starting, stopping: true, submissionPreparing: false, steer: false })).toBe("send");
-  expect(resolveComposerSubmit({ ...starting, busy: false, submissionPreparing: false, steer: false })).toBe("send");
-  expect(resolveComposerSubmit({ ...starting, disabled: true, steer: false })).toBeNull();
-  expect(resolveComposerSubmit({ ...starting, hasContent: false, steer: true })).toBeNull();
+  expect(resolveComposerSubmit({ ...starting, busy: false, modifier: false })).toBeNull();
+  expect(resolveComposerSubmit({ ...starting, stopping: true, modifier: false })).toBeNull();
+  expect(resolveComposerSubmit({ ...starting, stopping: true, submissionPreparing: false, modifier: false })).toBe("send");
+  expect(resolveComposerSubmit({ ...starting, busy: false, submissionPreparing: false, modifier: false })).toBe("send");
+  expect(resolveComposerSubmit({ ...starting, disabled: true, modifier: false })).toBeNull();
+  expect(resolveComposerSubmit({ ...starting, hasContent: false, modifier: true })).toBeNull();
 });
 
 test("Send now requests go out once each, in click order, ahead of plain queued rows", () => {
