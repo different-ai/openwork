@@ -66,6 +66,11 @@ Without the brief, the older rows (message types, lead time) are unchanged.
   allowed", and how the default app is used. Each app's switch says
   "Allowed" or "Not allowed" beside it, and "6 connected" reads "6 members
   connected".
+- **Tools per connection**: the "Tools agents may use: 2 read tools · Review"
+  line under each connection is gone. The connection's row shows the count
+  ("2 read tools") and a **Manage tools** button, which opens a dialog with
+  each tool's name, description, why it is or isn't allowed and its switch,
+  plus "Use automatic choices". The choices save as before.
 
 What each control saves and who can edit it are the same.
 

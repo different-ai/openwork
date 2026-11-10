@@ -1,14 +1,16 @@
 "use client";
 
+import { Dialog } from "@base-ui/react/dialog";
 import { ChevronRight, Lock } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 import {
   AGENT_TOOL_DECISION_COPY,
   type AgentConnectionToolsView,
   type AgentSourcesPolicyInput,
   type AgentToolDecisionView,
 } from "@openwork/types/den/workbot-proactive";
-import { DenButton } from "../../_components/ui/button";
+import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
 import type { AgentPolicyScope } from "./workbot-agent-scope";
 import { useAgentConnectionTools } from "./workbot-proactive-data";
@@ -120,5 +122,102 @@ export function ConnectionToolsDisclosure({ view, failed, name, connectionId, co
         ) : null}
       </div>
     </details>
+  );
+}
+
+/**
+ * With `workbotSettingsTabs`: the same tools and choices, opened from a "Manage tools" button on the connection's own
+ * row instead of a second line under it. The row keeps one line (the count beside the button); the dialog has room
+ * for each tool's description, why it is or isn't allowed, and its switch.
+ */
+export function AgentConnectionToolsButton({ orgId, scope, connectionId, name, connectHref, disabled, onChange }: {
+  orgId: string;
+  /** Whose choices: Everyone's, or one team's. */
+  scope?: AgentPolicyScope;
+  connectionId: string;
+  name: string;
+  connectHref: string;
+  disabled: boolean;
+  onChange: (change: AgentSourcesPolicyInput) => void;
+}) {
+  const query = useAgentConnectionTools(orgId, connectionId, true, scope);
+  return <ConnectionToolsButton view={query.data} failed={query.isError} name={name} connectionId={connectionId} connectHref={connectHref} disabled={disabled} onChange={onChange} />;
+}
+
+function DialogToolRow({ tool, connectionId, disabled, onChange }: { tool: AgentToolDecisionView; connectionId: string; disabled: boolean; onChange: (change: AgentSourcesPolicyInput) => void }) {
+  const label = tool.title && tool.title !== tool.name ? tool.title : tool.name;
+  const reason = tool.locked ? `${AGENT_TOOL_DECISION_COPY[tool.reason]}. No one can allow it.` : AGENT_TOOL_DECISION_COPY[tool.reason];
+  return (
+    <div className="flex items-start justify-between gap-4 py-3" data-testid={`workbot-agent-tool-${tool.name}`} data-allowed={tool.allowed} data-locked={tool.locked}>
+      <span className="grid min-w-0 gap-0.5">
+        <span className="truncate text-[13px] font-medium text-gray-900">{label}</span>
+        {tool.description ? <span className="line-clamp-2 text-[12px] leading-4 text-gray-600">{tool.description}</span> : null}
+        <span className="text-[12px] leading-4 text-gray-500">{reason}</span>
+      </span>
+      {tool.locked ? (
+        <span className="flex h-5 w-9 shrink-0 items-center justify-center">
+          <Lock size={14} strokeWidth={1.5} className="text-gray-500" role="img" aria-label={`${tool.name}: ${reason}`} />
+        </span>
+      ) : (
+        <DenSwitch size="sm" aria-label={`Agents may use ${tool.name}`} checked={tool.allowed} disabled={disabled}
+          onChange={(allowed) => onChange(toolChoiceChange(connectionId, tool.name, allowed))} />
+      )}
+    </div>
+  );
+}
+
+/** The button and its dialog, from a loaded view (rendered without fetching in tests). */
+export function ConnectionToolsButton({ view, failed, name, connectionId, connectHref, disabled, onChange, initialOpen = false }: {
+  view: AgentConnectionToolsView | undefined;
+  failed: boolean;
+  name: string;
+  connectionId: string;
+  connectHref: string;
+  disabled: boolean;
+  onChange: (change: AgentSourcesPolicyInput) => void;
+  initialOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(initialOpen);
+  const state = toolsSummary(view, failed, name);
+  const chosen = view?.tools.some((tool) => tool.override !== null) ?? false;
+  return (
+    <span className="flex min-w-0 items-center gap-2" data-testid={`workbot-agent-tools-${connectionId}`} data-read-tools={view?.readTools ?? ""}>
+      {state ? <span className="truncate text-[12px] text-gray-500">{state}</span> : null}
+      <DenButton variant="secondary" size="xs" aria-label={`Manage tools for ${name}`} onClick={() => setOpen(true)}>Manage tools</DenButton>
+      <Dialog.Root open={open} onOpenChange={setOpen}>
+        <Dialog.Portal>
+          <Dialog.Backdrop className="fixed inset-0 z-50 bg-gray-950/20" />
+          <Dialog.Popup
+            data-testid={`workbot-agent-tools-dialog-${connectionId}`}
+            className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(640px,calc(100vh-2rem))] w-[calc(100%-2rem)] max-w-[560px] -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border border-gray-100 bg-white outline-none"
+          >
+            <div className="px-6 pt-5">
+              <Dialog.Title className="text-[16px] font-semibold leading-6 text-gray-900">{`${name}: tools agents may use`}</Dialog.Title>
+              <Dialog.Description className="mt-1 text-[13px] text-gray-500">
+                {state ? `${state}. ` : ""}Choose which tools members' agents may call.
+              </Dialog.Description>
+            </div>
+            <div className="mt-3 min-h-0 flex-1 divide-y divide-gray-100 overflow-y-auto border-t border-gray-100 px-6" data-testid={`workbot-agent-tools-list-${connectionId}`}>
+              {view?.status === "needs_connection" ? (
+                <p className="py-3 text-[13px] text-gray-500">
+                  <Link href={connectHref} className="font-medium text-gray-900 underline-offset-2 hover:underline">{`Connect ${name}`}</Link>
+                  {" to see its tools."}
+                </p>
+              ) : null}
+              {!view && !failed ? <p className="py-3 text-[13px] text-gray-500">Loading tools</p> : null}
+              {view?.status === "ready" && view.tools.length === 0 ? <p className="py-3 text-[13px] text-gray-500">It lists no tools.</p> : null}
+              {view?.status === "ready" ? view.tools.map((tool) => <DialogToolRow key={tool.name} tool={tool} connectionId={connectionId} disabled={disabled} onChange={onChange} />) : null}
+              {view?.coreSourcesElsewhere ? <p className="py-3 text-[12px] text-gray-500">Calendar, mail and chat are read under their own sources.</p> : null}
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t border-gray-100 px-6 py-4">
+              {chosen ? (
+                <DenButton variant="ghost" size="sm" disabled={disabled} onClick={() => onChange(automaticToolsChange(connectionId))}>Use automatic choices</DenButton>
+              ) : <span />}
+              <Dialog.Close className={buttonVariants({ variant: "primary", size: "sm" })}>Done</Dialog.Close>
+            </div>
+          </Dialog.Popup>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </span>
   );
 }

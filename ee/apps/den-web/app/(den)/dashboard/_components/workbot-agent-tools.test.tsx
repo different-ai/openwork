@@ -8,7 +8,8 @@ import {
   type AgentConnectionToolsView,
   type WorkbotProactiveView,
 } from "@openwork/types/den/workbot-proactive";
-import { automaticToolsChange, ConnectionToolsDisclosure, readToolsLine, toolChoiceChange, toolsSummary } from "./workbot-agent-tools";
+import { automaticToolsChange, ConnectionToolsButton,
+  ConnectionToolsDisclosure, readToolsLine, toolChoiceChange, toolsSummary } from "./workbot-agent-tools";
 import { withToolOverrides } from "./workbot-proactive-data";
 import { connectionCount, otherPolicy, WorkbotProactiveSources } from "./workbot-proactive-sources";
 
@@ -112,4 +113,12 @@ test("a switch saves the admin's choice; it shows at once, and a locked tool nev
   const html = renderToStaticMarkup(<ConnectionToolsDisclosure view={shown} failed={false} name={desk.name} connectionId={desk.id} connectHref="/x" disabled={false} onChange={() => undefined} />);
   assert.match(text(html), /Use automatic choices/);
   assert.match(text(html), /get_ticket Turned off by an admin/);
+});
+
+test("Manage tools: the row keeps the count and one button; the tools stay out of the page until it is opened", () => {
+  const html = renderToStaticMarkup(<ConnectionToolsButton view={deskTools} failed={false} name={desk.name} connectionId={desk.id} connectHref="/library/connectors/emc_desk" disabled={false} onChange={() => undefined} />);
+  assert.match(text(html), /2 read tools Manage tools/);
+  assert.match(html, /aria-label="Manage tools for Lumen Support Desk"/);
+  assert.doesNotMatch(html, /<details/);
+  assert.doesNotMatch(html, /workbot-agent-tool-list_tickets/, "closed: no tool rows in the page");
 });
