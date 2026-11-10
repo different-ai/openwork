@@ -252,7 +252,7 @@ test("approval does not grant a remote computer access after the operator kills 
   const desktop = agent.on(world.app);
   const appUser = user.on(world.app);
   const browser = user.on(world.web);
-  let startedAt = 0;
+  let tokenArrivedAt = 0;
   let approvalUrl = "";
   await step("before: a fresh packaged computer waits for a browser decision with its next token request delayed", async () => {
     await appUser.see({ text: "Sync with OpenWork Cloud" }, { timeoutMs: 180_000 });
@@ -261,13 +261,15 @@ test("approval does not grant a remote computer access after the operator kills 
       within: 90_000, label: "the configured deployment enables device sign-in", until: value => value.state !== "unsupported",
     });
     await world.holdNextToken();
-    startedAt = Date.now();
     const started = record(await desktop.run("auth.device-login.start", world.faultArgs));
     approvalUrl = text(started.verificationUriComplete);
     const held = await probe.eventually(() => world.traffic(), {
       within: 30_000, intervalMs: 250, label: "a real token request arrives at the nine-second network hold", until: value => value.tokenArrivals.some(request => request.faulted),
     });
     expect(held.tokenArrivals.length).toBe(1);
+    const arrival = held.tokenArrivals[0];
+    if (!arrival?.faulted) throw new Error("The token hold must identify its actual arrival.");
+    tokenArrivedAt = arrival.at;
     expect(held.tokens).toEqual([]);
     expect(record(await desktop.run("auth.device-login.status")).state).toBe("pending");
     evidence.recordAssertionEvidence("The desktop's real token request has arrived but has not completed", "real Den code issued; token request arrival=1; responses=0; network delay=9000ms", held.tokenArrivals.length === 1 && held.tokens.length === 0);
@@ -279,12 +281,14 @@ test("approval does not grant a remote computer access after the operator kills 
     await browser.see({ text: "Return to the OpenWork app on that computer." }, { timeoutMs: 15_000 });
     // A witness, not a hopeful race: fail if cold page hydration consumed the
     // hold window. No test setter or interception of a successful token exists.
-    expect(Date.now() - startedAt).toBeLessThan(9_000);
+    expect(Date.now() - tokenArrivedAt).toBeLessThan(9_000);
     expect(record(await desktop.run("auth.device-login.status")).state).toBe("pending");
     await world.rollout(true, true);
     expect(await world.features()).toBe(false);
-    const elapsed = Date.now() - startedAt;
-    evidence.recordAssertionEvidence("The kill switch is set after browser approval and before redemption", `browser approved; desktop still pending; kill enabled at ${elapsed}ms; token delay=9000ms`, elapsed < 9_000);
+    const elapsed = Date.now() - tokenArrivedAt;
+    const killedBeforeRedemption = elapsed < 9_000;
+    expect(killedBeforeRedemption).toBe(true);
+    evidence.recordAssertionEvidence("The kill switch is set after browser approval and before redemption", `browser approved; desktop still pending; kill enabled ${elapsed}ms after held request arrival; token delay=9000ms`, killedBeforeRedemption);
     await browser.screenshot();
   });
   await step("after: the approved computer still has no account or newly issued Den session", async () => {
@@ -293,7 +297,7 @@ test("approval does not grant a remote computer access after the operator kills 
     });
     const auth = record(await desktop.run("auth.status"));
     expect(auth.user).toBeNull();
-    await probe.eventually(() => Date.now() - startedAt, {
+    await probe.eventually(() => Date.now() - tokenArrivedAt, {
       within: 30_000, intervalMs: 500, label: "the held token request's response and cancellation window has elapsed", until: elapsed => elapsed >= 17_000,
     });
     const traffic = await world.traffic();
