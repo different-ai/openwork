@@ -60,6 +60,8 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   support("ALL", "/api/auth/sso/saml2/callback/*", "sso.saml_callback.policy", "samlResponsePolicyMiddleware before better-auth; the endpoint itself is declared with the better-auth endpoints."),
   support("ALL", "/api/auth/sso/saml2/sp/acs/*", "sso.saml_acs.policy", "samlResponsePolicyMiddleware before better-auth ACS; the endpoint itself is declared with the better-auth endpoints."),
   support("ALL", "/v1/auth/desktop-handoff/exchange", "desktop_handoff.cors", "Reflecting CORS middleware for the grant exchange (only when !env.corsHandledByEdge)."),
+  support("ALL", "/mcp/public", "mcp_public.no_index", "noIndex middleware: marks the public App MCP surface as not to be indexed by search engines (header only); the App server route is declared with the MCP consumption transports."),
+  support("ALL", "/mcp/public/*", "mcp_public.no_index", "noIndex middleware: marks the public App MCP surface as not to be indexed by search engines (header only); the App server route is declared with the MCP consumption transports."),
 
   // app.fetch re-dispatch
   route("ALL", "/v1/orgs/:orgId/*", "proxy", "legacy_org.proxy", "request.proxy", "organization", "orgId", "delegatedRoute legacy org proxy re-dispatches through app.fetch; the destination route records."),
