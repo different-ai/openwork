@@ -420,7 +420,11 @@ feedTest("a member uses Feed Archive and More on the main conversation without c
     await user.reload();
     await user.see("composer", { editable: true });
     expect(await probe.hash()).toContain(world.main.sessionId);
-    expect((await probe.dom('[data-sidebar-view="feed"][aria-selected="true"]')).elements).toHaveLength(1);
+    await probe.eventually(() => probe.dom('[data-sidebar-view="feed"][aria-selected="true"]'), {
+      within: 10_000,
+      label: "the saved Feed selection rehydrates after reload",
+      until: value => value.elements.length === 1,
+    });
     expect(await nativeSession(probe, world, world.main.sessionId)).toEqual(restored);
     await expectPins(probe, world, false);
     await unchangedOthers();
