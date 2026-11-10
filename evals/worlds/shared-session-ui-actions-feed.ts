@@ -1,5 +1,3 @@
-import { realpathSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
 import type { Seed } from "@openwork/env";
 import { configureProvider } from "./chat.ts";
 import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
@@ -22,8 +20,8 @@ export async function sharedSessionUiActionsFeed(seed: Seed) {
     daytonaSeedDemo: false,
   });
   await enableOrganizationCapabilities(seed, den.admin, { settledSessions: true });
-  const requested = seed.tmpPath("shared-session-ui-actions-feed");
-  const workspacePath = join(realpathSync(dirname(requested)), basename(requested));
+  // Keep the seed's sandbox path: realpath on a Mac would send /private to Linux.
+  const workspacePath = seed.tmpPath("shared-session-ui-actions-feed");
   const { app, workspace } = await signedInAppWeb(seed, {
     den, webPort, as: "reviewer", engine: "v2",
     name: "shared-session-ui-actions-feed", workspacePath, headless: true,
