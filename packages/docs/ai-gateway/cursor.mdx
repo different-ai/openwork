@@ -24,10 +24,17 @@ a key? Open **Set up Cursor** in the same section.
    Keys**. Turn on **OpenAI API Key** and paste your key. Turn on **Override
    OpenAI Base URL** and paste the base URL from the page. It ends in
    `/api/v1/cursor`.
-3. **Add your models.** In Cursor's **Models** settings, select **Add model**
-   and paste a model's name from the page, for example
-   `openwork/claude-opus-5.5-k3f9`. Repeat for each model you want.
-4. **Pick a model.** Open Cursor's model picker and select one you added.
+3. **Add your models.** Choose a model on the page and copy its name, for
+   example `openwork/claude-opus-5.5-k3f9`. In Cursor's **Models** settings,
+   select **Add model** and paste it. Repeat for each model you want.
+4. **Pick a model and run locally.** Open Cursor's model picker, select one you
+   added, and run the agent on **This Mac** (Local), not in the Cloud.
+
+<Warning>
+  Use Cursor's **Local** mode. Cursor's cloud agents don't work with OpenWork
+  models yet: a prompt sent to the Cloud fails. Choose **This Mac** under the
+  prompt box before you send.
+</Warning>
 
 <Warning>
   The base URL must end in `/api/v1/cursor`, not `/api/v1`. The Cursor address
@@ -76,4 +83,5 @@ levels in Cursor, add the same model once per level.
 | `invalid_api_key` | The key was revoked, has expired, or 3rd party tools are off for your organization. Check it in **My Library › Models**. |
 | `invalid_cursor_model` | The model name isn't an OpenWork one. Copy it again from **Set up Cursor**. |
 | `model_not_found` | You no longer have that model. Open **Set up Cursor** to see your current models. |
+| A prompt fails in a cloud agent | Switch the agent to **This Mac** (Local). Cloud agents don't work with OpenWork models yet. |
 | `unsupported_thinking_level` | That model doesn't have the level in the name. Copy the name again with a level from the page. |

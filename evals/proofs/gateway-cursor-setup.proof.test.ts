@@ -52,7 +52,12 @@ test("a member creates a key, picks Cursor under Start using this key, and Curso
     await user.see({ testId: "cursor-model-name" }, { timeoutMs: 30_000 });
     const shownKey = (await probe.dom('[data-testid="gateway-tool-api-key"]')).elements[0]?.text ?? "";
     baseUrl = (await probe.dom('[data-testid="cursor-setup-base-url-value"]')).elements[0]?.text ?? "";
-    modelName = (await probe.dom('[data-testid="cursor-model-name"]')).elements[0]?.text ?? "";
+    const names = (await probe.dom('[data-testid="cursor-model-name"]')).elements;
+    modelName = names[0]?.text ?? "";
+    // One name to copy, for the model chosen in the dropdown, and the Local mode note.
+    expect(names).toHaveLength(1);
+    await user.see({ role: "button", label: "Model" });
+    await user.see({ text: /run the agent in Local mode/ });
     evidence.recordAssertionEvidence("what the member pastes into Cursor", `key matches=${shownKey === key}; base URL ${baseUrl}; model name ${modelName}`, shownKey === key && baseUrl === `${world.gatewayUrl}/api/v1/cursor` && /^openwork\/[a-z0-9.-]+-[0-9a-z]{4}$/.test(modelName));
     expect(shownKey).toBe(key);
     expect(baseUrl).toBe(`${world.gatewayUrl}/api/v1/cursor`);
