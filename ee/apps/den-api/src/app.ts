@@ -61,6 +61,7 @@ import { sessionMiddleware } from "./session.js"
 import { inventoryRevisionMiddleware } from "./middleware/inventory-revision.js"
 import { preclaimScopeMiddleware } from "./middleware/preclaim-scope.js"
 import { auditRequestMiddleware } from "./audit/request-capture.js"
+import { confineConfigTokens } from "./config-blobs/token.js"
 import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
 import { sanitizePublicResponseHeaders } from "./public-response-headers.js"
 import { isDraining } from "./drain-state.js"
@@ -214,6 +215,8 @@ app.use("*", sessionMiddleware)
 // Registered before preclaimScopeMiddleware so its 403 denials are recorded
 // (platform store) against the endpoint they refused.
 app.use("*", auditRequestMiddleware)
+// Config tokens (API keys of type `config`) only reach /v1/config-blobs/*.
+app.use("*", confineConfigTokens)
 app.use("/v1/*", preclaimScopeMiddleware)
 
 app.get(
@@ -435,6 +438,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Permissions", description: "Organization permissions: the permission catalog, Member, Admin and team permission sets, their history, and each member's effective permissions." },
       { name: "API Keys", description: "Organization API key management routes." },
       { name: "Desktop Policies", description: "Desktop app policies applied to the organization, members, or teams." },
+      { name: "Config blobs", description: "Export the organization's configuration as JSON and import it through reviewed change requests: plan, decisions, secret inputs, approval, apply and revert." },
       { name: "Agent Permissions", description: "What agents may do on members' computers, set for everyone and per team." },
       { name: "LLM Providers", description: "Organization LLM provider catalog, configuration, and access routes." },
       { name: "Inference", description: "Organization inference settings." },

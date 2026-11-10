@@ -3,6 +3,9 @@ import { describeRoute, resolver } from "hono-openapi"
 import { z } from "zod"
 import {
   buildOrganizationApiKeyMetadata,
+  CONFIG_TOKEN_SCOPES,
+  configTokenPermissions,
+  DEN_API_KEY_TYPES,
   deleteOrganizationApiKey,
   DEN_API_KEY_RATE_LIMIT_MAX,
   DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
@@ -15,14 +18,38 @@ import { auditChangeCapture } from "../../audit/request-capture.js"
 import { jsonValidator, orgPermissionRoute, paramValidator } from "../../middleware/index.js"
 import { denTypeIdSchema } from "../../openapi.js"
 import { auth } from "../../auth.js"
+import { isConfigTokenAreaPattern } from "../../config-blobs/token.js"
 import { AuthApiKeyTable } from "@openwork-ee/den-db/schema"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import type { OrgRouteVariables } from "./shared.js"
 import { idParamSchema } from "./shared.js"
 
+const apiKeyTypeSchema = z.enum(DEN_API_KEY_TYPES).meta({ ref: "OrganizationApiKeyType" })
+const configTokenScopeSchema = z.enum(CONFIG_TOKEN_SCOPES).meta({ ref: "ConfigTokenScope" })
+
 const createOrganizationApiKeySchema = z.object({
   name: z.string().trim().min(2).max(64),
+  /** `config`: a config token (feature `configBlobs`), limited to the config-blob routes its scopes open. */
+  type: apiKeyTypeSchema.optional(),
+  scopes: z.array(configTokenScopeSchema).min(1).max(CONFIG_TOKEN_SCOPES.length).optional(),
+  /** Config tokens only: area keys or `prefix.*` (e.g. `ai-gateway.*`); left out = every area. */
+  areas: z.array(z.string().trim().min(1).max(64)).min(1).max(64).optional(),
+}).superRefine((value, ctx) => {
+  if (value.type === "config") {
+    if (!value.scopes) ctx.addIssue({ code: "custom", path: ["scopes"], message: "A config token needs at least one scope." })
+    for (const [index, area] of (value.areas ?? []).entries()) {
+      if (!isConfigTokenAreaPattern(area)) ctx.addIssue({ code: "custom", path: ["areas", index], message: `Unknown config area: ${area}` })
+    }
+    return
+  }
+  if (value.scopes) ctx.addIssue({ code: "custom", path: ["scopes"], message: "Only config tokens have scopes." })
+  if (value.areas) ctx.addIssue({ code: "custom", path: ["areas"], message: "Only config tokens have an area limit." })
 }).meta({ ref: "CreateOrganizationApiKeyRequest" })
+
+const featureDisabledSchema = z.object({
+  error: z.literal("feature_disabled"),
+  feature: z.literal("configBlobs"),
+}).meta({ ref: "OrganizationApiKeyFeatureDisabledError" })
 
 const validationIssueSchema = z.object({
   message: z.string(),
@@ -74,6 +101,11 @@ const organizationApiKeySchema = z.object({
   expiresAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+  type: apiKeyTypeSchema,
+  /** Config token scopes; empty for standard keys. */
+  scopes: z.array(configTokenScopeSchema),
+  /** Config token area limit; null = every area (and always null for standard keys). */
+  areas: z.array(z.string()).nullable(),
   owner: apiKeyOwnerSchema,
 }).meta({ ref: "OrganizationApiKey" })
 
@@ -93,6 +125,9 @@ const createdOrganizationApiKeySchema = z.object({
   expiresAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+  type: apiKeyTypeSchema,
+  scopes: z.array(configTokenScopeSchema),
+  areas: z.array(z.string()).nullable(),
 }).meta({ ref: "CreatedOrganizationApiKey" })
 
 const createOrganizationApiKeyResponseSchema = z.object({
@@ -167,7 +202,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
     describeRoute({
       tags: ["API Keys"],
       summary: "Create an organization API key",
-      description: "Creates a new API key for the selected organization.",
+      description: "Creates a new API key for the selected organization. With the configBlobs feature on, `type: \"config\"` creates a config token with `scopes` and an optional `areas` limit; it still acts with the issuing member's permissions.",
       hide: hideApiKeyGenerationRoute,
       security: [{ bearerAuth: [] }],
       responses: {
@@ -180,10 +215,10 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         400: {
-          description: "Invalid request",
+          description: "Invalid request, or a config token while the configBlobs feature is off",
           content: {
             "application/json": {
-              schema: resolver(invalidRequestSchema),
+              schema: resolver(z.union([invalidRequestSchema, featureDisabledSchema])),
             },
           },
         },
@@ -218,6 +253,12 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
     async (c) => {
       const payload = c.get("organizationContext")
       const input = c.req.valid("json")
+      const config = input.type === "config" && input.scopes
+        ? { scopes: CONFIG_TOKEN_SCOPES.filter((scope) => input.scopes?.includes(scope)), areas: input.areas ? [...new Set(input.areas)] : null }
+        : null
+      if (input.type === "config" && !payload.features.configBlobs) {
+        return c.json({ error: "feature_disabled", feature: "configBlobs" }, 400)
+      }
       const created = await auth.api.createApiKey({
         body: {
           userId: payload.currentMember.userId,
@@ -227,7 +268,10 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
             orgMembershipId: payload.currentMember.id,
             issuedByUserId: payload.currentMember.userId,
             issuedByOrgMembershipId: payload.currentMember.id,
+            ...(config ? { config: { areas: config.areas } } : {}),
           }),
+          // Better Auth apiKey permissions: {"config":["export","submit",...]} (server-only field).
+          ...(config ? { permissions: configTokenPermissions(config.scopes) } : {}),
           rateLimitEnabled: true,
           rateLimitMax: DEN_API_KEY_RATE_LIMIT_MAX,
           rateLimitTimeWindow: DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
@@ -239,7 +283,8 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
       const capture = auditChangeCapture(c)
       const auditEventIds = await appendDomainChangesAfterCommit(capture, "api_key.created", async (tx) => {
         const [row] = await tx.select(apiKeyAuditColumns).from(AuthApiKeyTable).where(eq(AuthApiKeyTable.id, created.id)).limit(1)
-        return row ? [apiKeyCreatedEvent(payload.organization.id, row, { userId: payload.currentMember.userId, memberId: payload.currentMember.id })] : []
+        const kind = config ? { type: "config" as const, scopes: config.scopes, areas: config.areas } : null
+        return row ? [apiKeyCreatedEvent(payload.organization.id, row, { userId: payload.currentMember.userId, memberId: payload.currentMember.id }, kind)] : []
       })
       await finishLegacyAuditAction(capture, {
         organizationId: payload.organization.id,
@@ -250,6 +295,8 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           orgMembershipId: payload.currentMember.id,
           name: created.name,
           prefix: created.prefix,
+          type: config ? "config" : "standard",
+          ...(config ? { scopes: config.scopes.join(","), areas: config.areas ? config.areas.join(",") : null } : {}),
         },
       }, auditEventIds)
 
@@ -266,6 +313,9 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           expiresAt: created.expiresAt,
           createdAt: created.createdAt,
           updatedAt: created.updatedAt,
+          type: config ? "config" : "standard",
+          scopes: config?.scopes ?? [],
+          areas: config?.areas ?? null,
         },
         key: created.key,
       }, 201)

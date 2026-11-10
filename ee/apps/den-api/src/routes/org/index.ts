@@ -16,6 +16,7 @@ import { registerOrgWorkflowRoutes } from "./codemode-scripts.js"
 import { LEGACY_ORG_PROXY_HEADER } from "../../middleware/user-organizations.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgCoreRoutes } from "./core.js"
+import { registerOrgConfigBlobRoutes } from "./config-blobs.js"
 import { registerOrgServiceReadinessRoutes } from "./service-readiness.js"
 import { registerOrgMcpAppCatalogRoutes } from "./mcp-app-catalog.js"
 import { registerDeleteOrganizationRoutes } from "./delete-organization.js"
@@ -93,6 +94,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgWorkflowRoutes(app)
   registerOrgMcpAppCatalogRoutes(app)
   registerOrgDesktopPolicyRoutes(app)
+  registerOrgConfigBlobRoutes(app)
   registerOrgAgentPermissionRoutes(app)
   registerOrgEgressDiagnosticRoutes(app)
   registerOrgInferenceRoutes(app)

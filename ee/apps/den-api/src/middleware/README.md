@@ -92,3 +92,12 @@ never starts a check and withholds settings, notes, durations and server facts.
 
 - If a value is broadly useful across multiple route areas, put it here
 - If a helper only exists for one route area, keep it in that route folder instead
+
+## Config tokens (configBlobs)
+
+A config token is an organization API key of type `config` with scopes
+(`config:export`, `config:submit`, `config:apply`) and an optional area limit.
+Config-blob routes gate API keys only with `requireConfigScope(scope)` from
+`src/config-blobs/token.ts`: UI sessions pass, standard keys never do. The key
+still acts as its member, so routes keep their permission markers. For secret
+inputs use `refuseMachineSecrets(fields, { allowApiKeys: allowConfigTokenSecrets })`.

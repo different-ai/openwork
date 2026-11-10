@@ -1,7 +1,9 @@
-import type { Hono } from "hono"
+import type { Context, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+
+type OrgOAuthClientId = DenTypeId<"orgOAuthClient">
 import { attributeOAuthCallbackMember } from "../../audit/request-capture.js"
 import { env } from "../../env.js"
 import { recordWorkbotConnection } from "../../workbot/telemetry.js"
@@ -308,6 +310,107 @@ async function resolveMemberNativeProviderCredential(input: {
     : "forbidden"
 }
 
+export type SaveOrgOAuthProviderClientBody = Omit<z.infer<typeof saveClientBodySchema>, "clientSecret"> & {
+  /** Omitted keeps the stored secret; null clears it (config-blob imports only, the route never sends null). */
+  clientSecret?: string | null
+}
+
+/**
+ * POST /v1/oauth-providers/:providerId/client, callable outside a request
+ * (config-blob imports). `requireLiteralProvider` refuses a provider key that
+ * resolves to a native-provider connection's client; `preferredId` reuses an id
+ * for a newly created row.
+ */
+export async function saveOrgOAuthProviderClient(
+  c: Pick<Context, "json">,
+  payload: NonNullable<OrgRouteVariables["organizationContext"]>,
+  providerId: string,
+  body: SaveOrgOAuthProviderClientBody,
+  options: { requireLiteralProvider?: boolean; preferredId?: OrgOAuthClientId } = {},
+) {
+  const resolved = await resolveNativeProviderCredential({
+    organizationId: payload.organization.id,
+    providerOrConnectionId: providerId,
+  })
+  if (!resolved) {
+    return c.json({ error: "unknown_oauth_provider", message: `"${providerId}" is not a known native OAuth provider.` }, 404)
+  }
+  const { provider, credentialProviderId } = resolved
+  if (options.requireLiteralProvider && credentialProviderId !== providerId) {
+  return c.json({ error: "oauth_client_owned_by_connection", message: `"${providerId}" is configured through a connector; edit it there.` }, 409)
+  }
+
+  const existing = await getOrgOAuthClient(payload.organization.id, credentialProviderId)
+  if (!existing && !body.clientId) {
+    return c.json({ error: "invalid_request", message: "clientId is required for first-time setup." }, 400)
+  }
+
+  if (body.features !== undefined) {
+    const optionalFeatures = provider.optionalFeatures ?? {}
+    const unknownFeatures = body.features.filter((feature) => !Object.hasOwn(optionalFeatures, feature))
+    if (unknownFeatures.length > 0) {
+      return c.json({ error: "invalid_request", message: `Unknown optional feature(s): ${unknownFeatures.join(", ")}.` }, 400)
+    }
+  }
+
+  if (body.tenantId !== undefined && !provider.tenantIdExtraKey) {
+    return c.json({ error: "invalid_request", message: `tenantId is not supported for "${providerId}".` }, 400)
+  }
+
+  const tenantId = provider.tenantIdExtraKey
+    ? body.tenantId !== undefined
+      ? normalizeEntraTenantId(body.tenantId)
+      : readProviderTenantId(existing?.extra ?? null, provider.tenantIdExtraKey)
+    : null
+  if (provider.tenantIdExtraKey && !tenantId) {
+    return c.json({ error: "invalid_request", message: "A valid Microsoft Entra tenant ID (GUID) or verified tenant domain is required." }, 400)
+  }
+
+  const clientId = body.clientId ?? existing?.clientId
+  if (!clientId) {
+    return c.json({ error: "invalid_request", message: "clientId is required for first-time setup." }, 400)
+  }
+
+  const extra = { ...(existing?.extra ?? {}) }
+  if (body.features !== undefined) extra.features = body.features
+  if (provider.tenantIdExtraKey && tenantId) extra[provider.tenantIdExtraKey] = tenantId
+
+  const previousTenantId = provider.tenantIdExtraKey
+    ? readProviderTenantId(existing?.extra ?? null, provider.tenantIdExtraKey)
+    : null
+  // Fail closed: old-tenant/client tokens are removed before the provider
+  // identity changes, so a failed revoke can never leave them usable under
+  // the new org configuration. A later save failure only requires reconnect.
+  await revokeAccountsBeforeOAuthClientIdentityChange({
+    hadExistingClient: Boolean(existing),
+    previousClientId: existing?.clientId ?? null,
+    nextClientId: clientId,
+    previousTenantId,
+    nextTenantId: tenantId,
+    organizationId: payload.organization.id,
+    providerId: credentialProviderId,
+    revoke: disconnectProviderAccountsForOrganization,
+  })
+
+  const saved = await upsertOrgOAuthClient({
+    organizationId: payload.organization.id,
+    providerId: credentialProviderId,
+    clientId,
+    ...(body.clientSecret !== undefined ? { clientSecret: body.clientSecret } : {}),
+    ...((body.features !== undefined || provider.tenantIdExtraKey) ? { extra } : {}),
+    createdByOrgMembershipId: payload.currentMember.id,
+    ...(options.preferredId ? { id: options.preferredId } : {}),
+  })
+
+  return c.json({
+    ok: true,
+    providerId,
+    clientId: saved.clientId,
+    features: clientSelectedFeatures(provider, saved.extra),
+    tenantId: provider.tenantIdExtraKey ? readProviderTenantId(saved.extra, provider.tenantIdExtraKey) : null,
+  })
+}
+
 /**
  * Generic OAuth provider routes, parameterized by providerId. This is what
  * makes any native provider (google-workspace today, anything else we
@@ -337,89 +440,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
     orgPermissionRoute("oauth_clients.manage"),
     paramValidator(providerParamsSchema),
     jsonValidator(saveClientBodySchema),
-    async (c) => {
-      const payload = c.get("organizationContext")
-
-      const { providerId } = c.req.valid("param")
-      const resolved = await resolveNativeProviderCredential({
-        organizationId: payload.organization.id,
-        providerOrConnectionId: providerId,
-      })
-      if (!resolved) {
-        return c.json({ error: "unknown_oauth_provider", message: `"${providerId}" is not a known native OAuth provider.` }, 404)
-      }
-      const { provider, credentialProviderId } = resolved
-
-      const body = c.req.valid("json")
-      const existing = await getOrgOAuthClient(payload.organization.id, credentialProviderId)
-      if (!existing && !body.clientId) {
-        return c.json({ error: "invalid_request", message: "clientId is required for first-time setup." }, 400)
-      }
-
-      if (body.features !== undefined) {
-        const optionalFeatures = provider.optionalFeatures ?? {}
-        const unknownFeatures = body.features.filter((feature) => !Object.hasOwn(optionalFeatures, feature))
-        if (unknownFeatures.length > 0) {
-          return c.json({ error: "invalid_request", message: `Unknown optional feature(s): ${unknownFeatures.join(", ")}.` }, 400)
-        }
-      }
-
-      if (body.tenantId !== undefined && !provider.tenantIdExtraKey) {
-        return c.json({ error: "invalid_request", message: `tenantId is not supported for "${providerId}".` }, 400)
-      }
-
-      const tenantId = provider.tenantIdExtraKey
-        ? body.tenantId !== undefined
-          ? normalizeEntraTenantId(body.tenantId)
-          : readProviderTenantId(existing?.extra ?? null, provider.tenantIdExtraKey)
-        : null
-      if (provider.tenantIdExtraKey && !tenantId) {
-        return c.json({ error: "invalid_request", message: "A valid Microsoft Entra tenant ID (GUID) or verified tenant domain is required." }, 400)
-      }
-
-      const clientId = body.clientId ?? existing?.clientId
-      if (!clientId) {
-        return c.json({ error: "invalid_request", message: "clientId is required for first-time setup." }, 400)
-      }
-
-      const extra = { ...(existing?.extra ?? {}) }
-      if (body.features !== undefined) extra.features = body.features
-      if (provider.tenantIdExtraKey && tenantId) extra[provider.tenantIdExtraKey] = tenantId
-
-      const previousTenantId = provider.tenantIdExtraKey
-        ? readProviderTenantId(existing?.extra ?? null, provider.tenantIdExtraKey)
-        : null
-      // Fail closed: old-tenant/client tokens are removed before the provider
-      // identity changes, so a failed revoke can never leave them usable under
-      // the new org configuration. A later save failure only requires reconnect.
-      await revokeAccountsBeforeOAuthClientIdentityChange({
-        hadExistingClient: Boolean(existing),
-        previousClientId: existing?.clientId ?? null,
-        nextClientId: clientId,
-        previousTenantId,
-        nextTenantId: tenantId,
-        organizationId: payload.organization.id,
-        providerId: credentialProviderId,
-        revoke: disconnectProviderAccountsForOrganization,
-      })
-
-      const saved = await upsertOrgOAuthClient({
-        organizationId: payload.organization.id,
-        providerId: credentialProviderId,
-        clientId,
-        ...(body.clientSecret !== undefined ? { clientSecret: body.clientSecret } : {}),
-        ...((body.features !== undefined || provider.tenantIdExtraKey) ? { extra } : {}),
-        createdByOrgMembershipId: payload.currentMember.id,
-      })
-
-      return c.json({
-        ok: true,
-        providerId,
-        clientId: saved.clientId,
-        features: clientSelectedFeatures(provider, saved.extra),
-        tenantId: provider.tenantIdExtraKey ? readProviderTenantId(saved.extra, provider.tenantIdExtraKey) : null,
-      })
-    },
+    async (c) => saveOrgOAuthProviderClient(c, c.get("organizationContext"), c.req.valid("param").providerId, c.req.valid("json")),
   )
 
   app.get(

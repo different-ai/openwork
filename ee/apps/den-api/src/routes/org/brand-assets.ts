@@ -49,7 +49,8 @@ const invalidAssetSchema = z.object({
   message: z.string(),
 }).meta({ ref: "InvalidManagedBrandAssetError" })
 
-function publicBaseUrl() {
+/** Base URL of signed brand asset links (also used by config-blob imports). */
+export function brandAssetPublicBaseUrl() {
   return env.apiPublicUrl ?? `http://127.0.0.1:${env.port}`
 }
 
@@ -75,7 +76,8 @@ function normalizeAssetRoute(input: {
   }
 }
 
-async function uploadedAsset(input: {
+/** Validates, normalizes and stores one upload (also used by config-blob imports, src/config-blobs/areas/settings-brand.ts). */
+export async function uploadedAsset(input: {
   file: File
   kind: BrandAssetKind
   organizationId: BrandAssetStorageKey["organizationId"]
@@ -112,7 +114,7 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
   options: { storage?: BrandAssetStorage; publicBaseUrl?: string; signingSecret?: string } = {},
 ) {
   const storage = options.storage ?? databaseBrandAssetStorage
-  const assetPublicBaseUrl = options.publicBaseUrl ?? publicBaseUrl()
+  const assetPublicBaseUrl = options.publicBaseUrl ?? brandAssetPublicBaseUrl()
   const signingSecret = options.signingSecret ?? env.betterAuthSecret
 
   app.get(

@@ -355,7 +355,7 @@ function notFoundBody(scope: ConnectionScope) {
   return scope === "primary" ? { error: "organization_not_found" as const } : { error: "sso_connection_not_found" as const }
 }
 
-type RegistrationRequest = {
+export type RegistrationRequest = {
   kind: "saml" | "oidc"
   payload: OrganizationPayload
   headers: Headers
@@ -364,13 +364,13 @@ type RegistrationRequest = {
   target: SsoRegistrationTarget
 }
 
-type RegistrationOutcome =
+export type RegistrationOutcome =
   | { ok: true; connection: SsoConnection; domainVerificationToken: string | null }
   | { ok: false; status: 400; body: ReturnType<typeof invalidRequest> | { error: "invalid_request"; details: Array<{ message: string; path: Array<string | number> }> } }
   | { ok: false; status: 402; body: Extract<ReturnType<typeof checkEntitlement>, { ok: false }>["response"] }
 
 /** Registers a new connection or replaces one's configuration, with its audit trail. */
-async function registerConnection(request: RegistrationRequest): Promise<RegistrationOutcome> {
+export async function registerConnection(request: RegistrationRequest): Promise<RegistrationOutcome> {
   const { payload } = request
   const entitlement = checkEntitlement(payload.organization.metadata, "sso")
   if (!entitlement.ok) return { ok: false, status: 402, body: entitlement.response }
@@ -431,7 +431,7 @@ async function registerConnection(request: RegistrationRequest): Promise<Registr
   return { ok: true, connection, domainVerificationToken }
 }
 
-async function deleteConnection(payload: OrganizationPayload, connection: SsoConnection, capture: AuditChangeCapture | null) {
+export async function deleteConnection(payload: OrganizationPayload, connection: SsoConnection, capture: AuditChangeCapture | null) {
   const deleted = await deleteOrganizationSsoConnection(payload.organization.id, capture, connection)
   if (!deleted) return
   await finishLegacyAuditAction(capture, {
@@ -460,7 +460,7 @@ async function createTest(payload: OrganizationPayload, connection: SsoConnectio
   return { ok: true as const, intentId: intent.intentId, expiresAt: intent.expiresAt.toISOString(), testUrl: testUrl.toString() }
 }
 
-async function enableConnection(payload: OrganizationPayload, connection: SsoConnection | null, capture: AuditChangeCapture | null) {
+export async function enableConnection(payload: OrganizationPayload, connection: SsoConnection | null, capture: AuditChangeCapture | null) {
   const enabled = await enableOrganizationSsoConnection(connection, capture)
   if (!enabled.ok) return enabled
   if (!await organizationFeatureEnabled(payload.organization.id, "ssoPerOrganization")) {
@@ -480,7 +480,7 @@ async function enableConnection(payload: OrganizationPayload, connection: SsoCon
   return enabled
 }
 
-async function disableConnection(payload: OrganizationPayload, connection: SsoConnection | null, capture: AuditChangeCapture | null) {
+export async function disableConnection(payload: OrganizationPayload, connection: SsoConnection | null, capture: AuditChangeCapture | null) {
   const disabled = await disableOrganizationSsoConnection(connection, capture)
   if (!disabled.ok) return disabled
   await finishLegacyAuditAction(capture, {

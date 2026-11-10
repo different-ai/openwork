@@ -22,6 +22,7 @@ import { startModelsAnalyticsExportLoop } from "./models-analytics-export.js"
 import { markServerListening } from "./server-start.js"
 import { startMcpRegistrationProbeLoop } from "./mcp-registration/probe.js"
 import { startAdminMetricsRefreshLoop } from "./admin-metrics/worker.js"
+import { startConfigBlobWorker } from "./config-blobs/worker.js"
 
 const stopSlackAssistantWorker = startSlackAssistantWorker()
 const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()
@@ -36,6 +37,7 @@ const stopGithubSyncWorker = startGithubSyncWorker()
 const stopModelsAnalyticsExportLoop = startModelsAnalyticsExportLoop()
 const stopMcpRegistrationProbeLoop = startMcpRegistrationProbeLoop()
 const stopAdminMetricsRefreshLoop = startAdminMetricsRefreshLoop()
+const stopConfigBlobWorker = startConfigBlobWorker()
 const automationScheduler = startAutomationSchedulerLoop({ enabled: env.automations.runtimeEnabled })
 
 appLogger.info("external mcp implementation selected", { component: "server", runtime: externalMcpClientRuntimeName })
@@ -68,6 +70,7 @@ async function stopBackgroundLoops() {
     stopGithubSyncWorker(),
     stopMcpRegistrationProbeLoop(),
     stopAdminMetricsRefreshLoop(),
+    stopConfigBlobWorker(),
     automationScheduler.stop(),
   ])
 

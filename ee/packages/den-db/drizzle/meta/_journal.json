@@ -1310,6 +1310,13 @@
       "when": 1794269738592,
       "tag": "0187_workbot_team_setting",
       "breakpoints": true
+    },
+    {
+      "idx": 188,
+      "version": "5",
+      "when": 1794272898643,
+      "tag": "0188_config_blobs",
+      "breakpoints": true
     }
   ]
 }

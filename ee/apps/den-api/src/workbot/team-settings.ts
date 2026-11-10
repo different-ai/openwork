@@ -119,6 +119,8 @@ export async function saveWorkbotTeamSettings(input: {
   teamId: TeamId
   change: WorkbotTeamSettingsWrite
   updatedByOrgMemberId: MemberId
+  /** The new row's id when the team has none yet (a config import reuses the source's); otherwise a new one. */
+  id?: DenTypeId<"workbotTeamSetting">
 }): Promise<void> {
   const now = new Date()
   await db.transaction(async (tx) => {
@@ -142,7 +144,7 @@ export async function saveWorkbotTeamSettings(input: {
       return
     }
     await tx.insert(WorkbotTeamSettingTable).values({
-      id: createDenTypeId("workbotTeamSetting"),
+      id: input.id ?? createDenTypeId("workbotTeamSetting"),
       organizationId: input.organizationId,
       teamId: input.teamId,
       settings,

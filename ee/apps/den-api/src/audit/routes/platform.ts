@@ -54,7 +54,7 @@ const ADMIN = "adminRoute(): platform admin acting across tenants; no single ten
 
 export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   // app.use middleware entries (not endpoints)
-  support("ALL", "/*", "request.pipeline", "Global middleware stack (observability, request id, headers, access log, CORS, sessionMiddleware, audit request capture)."),
+  support("ALL", "/*", "request.pipeline", "Global middleware stack (observability, request id, headers, access log, CORS, sessionMiddleware, audit request capture, config token confinement)."),
   support("ALL", "/v1/*", "request.preclaim_scope", "preclaimScopeMiddleware: denies provisional agent users outside their bootstrap scope."),
   support("ALL", "/api/auth/scim/v2/*", "scim.diagnostics", "SCIM diagnostics middleware (timing logs only); concrete SCIM v2 routes are declared in ./org.ts."),
   support("ALL", "/api/auth/sso/saml2/callback/*", "sso.saml_callback.policy", "samlResponsePolicyMiddleware before better-auth; the endpoint itself is declared with the better-auth endpoints."),
@@ -95,6 +95,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   readOnly("/oauth/client-metadata.json", "discovery.oauth_client_metadata.read", "platform.discovery", "discovery_document", null),
   readOnly("/docs", "api_docs.read", "platform.discovery", "api_document", null),
   readOnly("/openapi.json", "api_docs.openapi.read", "platform.discovery", "api_document", null),
+  readOnly("/v1/config-blobs/schema/:formatVersion", "config_blob.schema.read", "platform.discovery", "api_document", null, "Public JSON Schema of the config blob format (envelope and area spec schemas); no organization, no flag, side-effect free."),
   readOnly("/v1/app-version", "app_version.read", "platform.discovery", "app_version", null),
   readOnly("/v1/orgs/sso/singleton", "auth.sso_singleton.read", "platform.discovery", "deployment", null),
   readOnly("/v1/auth/bootstrap/status", "auth.bootstrap.status.read", "platform.discovery", "deployment", null),

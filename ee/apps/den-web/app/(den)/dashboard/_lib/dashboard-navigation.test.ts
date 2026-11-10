@@ -69,3 +69,20 @@ test("authSecuritySettings shows one Auth & Security entry when either SSO or SC
   }
   assert.ok(!settingsChildren([], true).some((item) => item.label === "Auth & Security"));
 });
+
+function configChildren(permissions: Parameters<typeof getOrgAccessFlags>[2], configBlobs: boolean) {
+  return buildDashboardNavSections({
+    orgSlug: "workspace", access: getOrgAccessFlags("member", false, permissions),
+    capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, configBlobs,
+  }).flatMap((section) => section.items).flatMap((item) => item.children ?? []);
+}
+
+test("Config appears under Settings after Advanced only with configBlobs on and organization.update held", () => {
+  const children = configChildren(["organization.update", "sharing.manage_all"], true);
+  const labels = children.map((item) => item.label);
+  assert.ok(labels.includes("Config"));
+  assert.equal(children.find((item) => item.label === "Config")?.href, "/dashboard/config");
+  assert.equal(labels.indexOf("Config"), labels.indexOf("Advanced") + 1);
+  assert.ok(!configChildren(["organization.update"], false).some((item) => item.label === "Config"));
+  assert.ok(!configChildren(["sharing.manage_all"], true).some((item) => item.label === "Config"));
+});

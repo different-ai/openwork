@@ -142,6 +142,11 @@ export const idTypesMapNameToPrefix = {
   mcpRegistrationStatus: "mrs",
   mcpRegistrationEvent: "mre",
   featureIntroState: "fis",
+  configChangeRequest: "ccr",
+  configBlobAlias: "cba",
+  configBlobExport: "cbe",
+  configApplyRun: "car",
+  denInstance: "dni",
   workbotTeamSetting: "wts",
 } as const
 
