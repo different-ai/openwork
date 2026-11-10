@@ -14,7 +14,7 @@ export type DeviceLoginStatus = {
   org?: { id: string; name: string };
   runner?: "unknown";
 };
-export type DeviceLoginStartOptions = { baseUrl?: string; apiBaseUrl?: string; force?: boolean };
+export type DeviceLoginStartOptions = { baseUrl?: string; apiBaseUrl?: string; force?: boolean; requestId?: string };
 type Dependencies = {
   isSignedIn(): boolean;
   beginEnrollment(): Attempt;
@@ -62,8 +62,14 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
   const wait = deps.sleep ?? sleep;
   let status: DeviceLoginStatus = { state: "failed", message: "No device sign-in is pending." };
   let current: { attempt: Attempt; controller: AbortController } | null = null;
+  // Public caller correlation only, never sent to Den or used as auth authority.
+  // Retain terminal ownership so an older command cannot inspect a later result.
+  let ownerRequestId: string | undefined;
+  const superseded = (): DeviceLoginStatus => ({ state: "failed", message: "Device sign-in was superseded by a newer sign-in." });
+  const isOwner = (requestId?: string) => requestId === undefined || requestId === ownerRequestId;
 
-  function cancel() {
+  function cancel(requestId?: string): DeviceLoginStatus {
+    if (!isOwner(requestId)) return superseded();
     if (current) {
       current.attempt.cancel();
       current.controller.abort();
@@ -80,6 +86,7 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
     cancel();
     const flow = { attempt: deps.beginEnrollment(), controller: new AbortController() };
     current = flow;
+    ownerRequestId = options.requestId;
     status = { state: "pending" };
     const live = () => current === flow && flow.attempt.isCurrent() && !flow.controller.signal.aborted;
     const finish = (state: DeviceLoginStatus["state"], message?: string) => {
@@ -190,8 +197,9 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
 
   return {
     start,
-    status: (): DeviceLoginStatus => {
-      if (current && !current.attempt.isCurrent()) cancel();
+    status: (requestId?: string): DeviceLoginStatus => {
+      if (!isOwner(requestId)) return superseded();
+      if (current && !current.attempt.isCurrent()) cancel(requestId);
       return { ...status, ...(status.org ? { org: { ...status.org } } : {}) };
     },
     cancel,

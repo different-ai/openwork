@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { createDeviceLoginControl } from "../src/app/lib/device-login-control";
+import { createDeviceLoginControl, readDeviceLoginRequestId } from "../src/app/lib/device-login-control";
 import { DEVICE_LOGIN_UNSUPPORTED, type createDesktopDeviceLogin, type DeviceLoginStatus } from "../src/app/lib/device-login-flow";
 
 function harness() {
@@ -9,13 +9,14 @@ function harness() {
     state = { state: "pending" };
     return { userCode: "ABCD-EFGH", verificationUri: "https://den.example.test/device", verificationUriComplete: "https://den.example.test/device?user_code=ABCD-EFGH", expiresAt: 900000 };
   });
-  const cancel = mock(() => { state = { state: "failed", message: "Cancelled." }; return state; });
+  const cancel = mock((_requestId?: string) => { state = { state: "failed", message: "Cancelled." }; return state; });
+  const status = mock((_requestId?: string) => state);
   const control = createDeviceLoginControl({
-    flow: { start, status: () => state, cancel },
+    flow: { start, status, cancel },
     deploymentEnabled: () => enabled,
     isConfiguredDestination: (options) => !options.baseUrl || options.baseUrl === "https://den.example.test",
   });
-  return { control, start, cancel, enable: (value: boolean) => { enabled = value; }, state: (value: DeviceLoginStatus) => { state = value; } };
+  return { control, start, cancel, status, enable: (value: boolean) => { enabled = value; }, state: (value: DeviceLoginStatus) => { state = value; } };
 }
 
 describe("device control deployment UX gate", () => {
@@ -55,6 +56,43 @@ describe("device control deployment UX gate", () => {
     expect(h.control.status().state).toBe("unsupported");
     expect(h.cancel).toHaveBeenCalledTimes(1);
     expect(h.start).toHaveBeenCalledTimes(1);
+  });
+
+  test("caller IDs pass through start/status/cancel without an unowned follow-up read", async () => {
+    const h = harness();
+    h.enable(true);
+    await h.control.start({ requestId: "request-b" });
+    expect(h.start).toHaveBeenCalledWith({ requestId: "request-b" });
+    h.control.status("request-a");
+    expect(h.status).toHaveBeenLastCalledWith("request-a");
+    h.control.cancel("request-a");
+    expect(h.cancel).toHaveBeenLastCalledWith("request-a");
+    expect(h.status).toHaveBeenLastCalledWith("request-a");
+  });
+
+  test("a scoped failure stays failed and cannot trigger an unowned gate cancellation", () => {
+    const h = harness();
+    h.state({ state: "failed", message: "Device sign-in was superseded by a newer sign-in." });
+    expect(h.control.status("request-a")).toEqual({ state: "failed", message: "Device sign-in was superseded by a newer sign-in." });
+    expect(h.cancel).not.toHaveBeenCalled();
+    expect(h.status).toHaveBeenCalledWith("request-a");
+  });
+
+  test("blocked configured start does not enter the flow with a new owner", async () => {
+    const h = harness();
+    expect(await h.control.start({ requestId: "request-b" })).toHaveProperty("state", "unsupported");
+    expect(h.start).not.toHaveBeenCalled();
+    expect(h.cancel).not.toHaveBeenCalled();
+  });
+
+  test("optional request IDs preserve exact strings and reject malformed provided values", () => {
+    const requestId = "123e4567-e89b-42d3-a456-426614174000";
+    expect(readDeviceLoginRequestId({ requestId })).toEqual({ ok: true, requestId });
+    expect(readDeviceLoginRequestId(undefined)).toEqual({ ok: true });
+    expect(readDeviceLoginRequestId({})).toEqual({ ok: true });
+    for (const value of ["", " request-a", "request-a ", "a".repeat(129), 123, null]) {
+      expect(readDeviceLoginRequestId({ requestId: value })).toHaveProperty("ok", false);
+    }
   });
 
   test("turning off cannot undo a completed enrollment", () => {

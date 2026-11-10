@@ -88,10 +88,15 @@ test("shell prints only public code, final identity and existing runner state", 
 test("shell forwards an explicit replacement and destination without reading Den credentials", async () => {
   await using world = await fixture();
   assert.equal((await world.run(["--force", "--base-url", "https://den.example.test", "--api-base-url", "https://api.example.test"])).code, 0);
-  assert.deepEqual(world.inputs[1], {
+  const start = world.inputs[1];
+  assert.ok(start && typeof start === "object" && "args" in start && start.args && typeof start.args === "object" && "requestId" in start.args);
+  const requestId = start.args.requestId;
+  assert.equal(typeof requestId, "string");
+  assert.deepEqual(start, {
     id: "auth.device-login.start",
-    args: { force: true, baseUrl: "https://den.example.test", apiBaseUrl: "https://api.example.test" },
+    args: { requestId, force: true, baseUrl: "https://den.example.test", apiBaseUrl: "https://api.example.test" },
   });
+  assert.deepEqual(world.inputs[2], { id: "auth.device-login.status", args: { requestId } });
 });
 
 test("a prior unsupported attempt does not prevent a new start", async () => {
@@ -104,6 +109,9 @@ test("a lost start receipt cancels instead of replaying or leaving a live flow",
   await using world = await fixture({ dropStart: true });
   assert.equal((await world.run()).code, 1);
   assert.deepEqual(world.calls, ["auth.device-login.status", "auth.device-login.start", "auth.device-login.cancel"]);
+  const start = world.inputs[1];
+  assert.ok(start && typeof start === "object" && "args" in start);
+  assert.deepEqual(world.inputs[2], { id: "auth.device-login.cancel", args: start.args });
 });
 
 for (const interruptAt of ["preflight", "status"] satisfies ("preflight" | "status")[]) {

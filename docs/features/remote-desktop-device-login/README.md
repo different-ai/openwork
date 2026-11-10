@@ -123,7 +123,10 @@ Older Den reports unsupported: **use the sign-in link instead**.
 
 Exit codes: success `0`, failure `1`, denied `2`, expired `3`, unavailable `4`,
 interrupted/cancelled `130`. Interrupting stops the local poll; it does not revoke
-an unredeemed server-side authorization, which expires normally.
+an unredeemed server-side authorization, which expires normally. Shell status
+and cleanup are correlated with that command's public invocation ID, so an old
+command cannot cancel or report the newer attempt that superseded it. The ID is
+not a credential and is never sent to Den.
 
 ## Shared enrollment and regression coverage
 
