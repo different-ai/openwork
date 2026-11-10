@@ -48,3 +48,20 @@ export function sanitizePublicResponseHeaders(headers: Headers) {
   for (const name of internalHeaders) headers.delete(name)
   sanitizeExposeHeaders(headers)
 }
+
+/**
+ * Nothing this API serves belongs in a search index: search engines may fetch
+ * a URL but must not list it, follow its links or keep a copy. Sent on every
+ * response, as Google's block-indexing guidance asks: the header works for
+ * JSON, event streams and files, where a <meta> tag cannot. No robots.txt
+ * disallows these paths, because a crawler that may not fetch a URL never
+ * sees the rule and can still list the bare link.
+ */
+export const ROBOTS_HEADER = "X-Robots-Tag"
+export const NO_INDEX = "noindex, nofollow, noarchive"
+
+/** Marks the response noindex whatever the handler set, including refusals and errors. */
+export async function noIndex(c: { header: (name: string, value: string) => void }, next: () => Promise<void>) {
+  await next()
+  c.header(ROBOTS_HEADER, NO_INDEX)
+}

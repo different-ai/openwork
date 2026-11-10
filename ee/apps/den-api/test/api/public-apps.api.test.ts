@@ -128,6 +128,24 @@ test("unknown ids, other methods and oversized requests are refused", async () =
   assert.equal(huge.status, 413, "oversized requests are refused unread")
 })
 
+test("every answer under /mcp/public tells search engines not to index it", async () => {
+  const app = await createApp("Open day", { public: true })
+  const noIndex = (call: Call, why: string) => assert.equal(call.headers.get("x-robots-tag"), "noindex, nofollow, noarchive", why)
+
+  noIndex((await anonymous(app.appId, "tools/list")).call, "a served App")
+  noIndex((await anonymous("no-such-app", "tools/list")).call, "a refused App")
+  noIndex(await den.request(null, "GET", `/mcp/public/apps/${app.appId}`), "a method that is not allowed")
+  noIndex(await den.request(null, "GET", "/mcp/public"), "the bare prefix")
+  noIndex(await den.request(null, "GET", "/mcp/public/anything/else"), "a path nothing serves")
+  noIndex(await den.request(null, "POST", `/mcp/public/apps/${app.appId}`, {
+    headers: { accept: "application/json, text/event-stream" },
+    body: { jsonrpc: "2.0", id: 1, method: "tools/list", params: { padding: "x".repeat(70 * 1024) } },
+  }), "an oversized request")
+  // The rest of the API says the same.
+  noIndex(await den.request(null, "GET", "/health"), "health")
+  noIndex(await den.request(null, "GET", "/v1/no-such-route"), "an unknown API route")
+})
+
 test("a friendly name serves the App, is unique across organizations, and a new name retires the old URL", async () => {
   const app = await createApp("Front desk", { public: true, publicName: "visit-us" })
   assert.ok(app.raw.includes("/mcp/public/apps/visit-us"), "create_app returns the friendly URL")

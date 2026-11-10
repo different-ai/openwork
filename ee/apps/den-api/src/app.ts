@@ -63,7 +63,7 @@ import { preclaimScopeMiddleware } from "./middleware/preclaim-scope.js"
 import { auditRequestMiddleware } from "./audit/request-capture.js"
 import { confineConfigTokens } from "./config-blobs/token.js"
 import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
-import { sanitizePublicResponseHeaders } from "./public-response-headers.js"
+import { noIndex, sanitizePublicResponseHeaders } from "./public-response-headers.js"
 import { isDraining } from "./drain-state.js"
 import { AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER, AUTOMATION_SCHEDULE_KINDS_HEADER } from "@openwork/types/automations"
 
@@ -134,6 +134,7 @@ app.use("*", async (c, next) => {
   c.header("X-Content-Type-Options", "nosniff")
   c.header("Strict-Transport-Security", strictTransportSecurityHeader)
 })
+app.use("*", noIndex)
 app.use("*", createTelemetryErrorSanitizerMiddleware())
 app.use("*", async (c, next) => {
   await next()

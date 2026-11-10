@@ -22,6 +22,8 @@ app.use("*", async (c, next) => {
   c.header("X-Content-Type-Options", "nosniff")
   c.header("Referrer-Policy", "strict-origin-when-cross-origin")
   c.header("X-Frame-Options", "DENY")
+  // Nothing here belongs in a search index (Google: block indexing with the X-Robots-Tag response header).
+  c.header("X-Robots-Tag", "noindex, nofollow, noarchive")
 })
 app.onError(auth.onError)
 app.get("/healthz", (c) => c.json({ ok: true }))
