@@ -28,6 +28,8 @@ import { workbotDisplayName } from "./workbot-model-options";
 import { useSaveWorkbotProactive, useWorkbotProactive, type AgentPolicyView } from "./workbot-proactive-data";
 import { WorkbotProactiveSection } from "./workbot-proactive-section";
 import { useSaveWorkbotModel, useSaveWorkbotStepLimit, useWorkbotSettings } from "./workbot-settings-data";
+import { WorkbotSettingsTabs, workbotSettingsTabsEnabled } from "./workbot-settings-tabs";
+import { workbotSettingsParts, type WorkbotAgentsPart, type WorkbotSettingsParts, type WorkbotSettingsTab } from "./workbot-settings-tabs-model";
 import { STEP_LIMIT_HELP, stepLimitChoices, stepLimitLabel, stepLimitValue } from "./workbot-step-limit-options";
 import { useSaveWorkbotEveryoneSettings, useSaveWorkbotTeamSettings, useWorkbotTeamSettings } from "./workbot-team-settings-data";
 import {
@@ -55,7 +57,7 @@ import {
 
 type TeamSettingsQuery = ReturnType<typeof useWorkbotTeamSettings>;
 type ModelsQuery = ReturnType<typeof useWorkbotSettings>;
-type RowsProps = { orgId: string; orgSlug: string | null; view: TeamSettingsQuery; models: ModelsQuery; canEdit: boolean };
+type RowsProps = { orgId: string; orgSlug: string | null; view: TeamSettingsQuery; models: ModelsQuery; canEdit: boolean; parts: WorkbotSettingsParts };
 type TeamOnlyScope = Extract<TeamScope, { kind: "team" }>;
 
 /** The Workbot tab shows with settings per team on, for people who can view Workbot's settings. */
@@ -83,7 +85,11 @@ export function WorkbotPanel({ scope }: { scope: TeamScope }) {
   const view = useWorkbotTeamSettings(orgId, visible);
   // The same read as Manage › Workbot: the models this person can choose, and their names.
   const models = useWorkbotSettings(orgId, visible && Boolean(orgId));
+  const [tab, setTab] = useState<WorkbotSettingsTab>("general");
   if (!orgContext || !visible) return null;
+  // Tabs split Workbot's own settings from members' agents and what they read, where there are agents to show.
+  const tabs = workbotSettingsTabsEnabled(orgContext) && Boolean(view.data && workbotAgentsShown(view.data));
+  const parts = workbotSettingsParts(tabs, tab);
   const canManage = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canManageModelsSettings;
   const canEdit = canManage && (view.data?.canEdit ?? true);
 
@@ -111,9 +117,10 @@ export function WorkbotPanel({ scope }: { scope: TeamScope }) {
           action={<DenButton variant="secondary" size="sm" loading={models.isFetching} onClick={() => void models.refetch()}>Try again</DenButton>}
         />
       ) : null}
+      {tabs ? <WorkbotSettingsTabs activeTab={tab} onChange={setTab} /> : null}
       {scope.kind === "team"
-        ? <TeamWorkbotSettings key={scope.teamId} scope={scope} orgId={orgId} orgSlug={orgSlug} view={view} models={models} canEdit={canEdit} />
-        : <EveryoneWorkbotSettings scope={scope} orgId={orgId} orgSlug={orgSlug} view={view} models={models} canEdit={canEdit} />}
+        ? <TeamWorkbotSettings key={scope.teamId} scope={scope} orgId={orgId} orgSlug={orgSlug} view={view} models={models} canEdit={canEdit} parts={parts} />
+        : <EveryoneWorkbotSettings scope={scope} orgId={orgId} orgSlug={orgSlug} view={view} models={models} canEdit={canEdit} parts={parts} />}
     </div>
   );
 }
@@ -195,7 +202,7 @@ function WorkbotStepLimitSelect({ labelId, saved, disabled, onPick }: {
 }
 
 /** Everyone: Workbot on or off, its default model and its step limit, saved on change. The name is the organization's brand name. */
-function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit }: RowsProps & { scope: TeamScope }) {
+function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, parts }: RowsProps & { scope: TeamScope }) {
   const ids = { enabled: useId(), model: useId(), maxSteps: useId(), name: useId() };
   const saveEveryone = useSaveWorkbotEveryoneSettings(orgId);
   const saveModel = useSaveWorkbotModel(orgId);
@@ -223,6 +230,7 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit 
 
   return (
     <>
+      {parts.general ? (<>
       <DenCard size="comfortable" className="divide-y divide-gray-100 overflow-hidden !p-0" data-section="everyone-workbot-settings">
         <SettingRow
           label="Workbot"
@@ -286,8 +294,9 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit 
       {saved ? (
         <SavedUndoLine message={workbotEveryoneSavedMessage(saved.change, settings)} pending={pending} onUndo={() => void store(saved.undo, saved.change)} />
       ) : null}
-      {data && workbotAgentsShown(data) ? (
-        <EveryoneMembersAgents scope={scope} orgId={orgId} orgSlug={orgSlug} changedTeams={workbotTeamsChanged(data, "agent")} canEdit={canEdit} />
+      </>) : null}
+      {parts.agents && data && workbotAgentsShown(data) ? (
+        <EveryoneMembersAgents scope={scope} orgId={orgId} orgSlug={orgSlug} changedTeams={workbotTeamsChanged(data, "agent")} canEdit={canEdit} show={parts.agents} />
       ) : null}
     </>
   );
@@ -296,7 +305,8 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit 
 const quietLinkClass = "shrink-0 rounded text-[12px] text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900";
 
 /** Everyone's members' agents: the same controls, value and save as Manage › Workbot, so the two pages never disagree. */
-function EveryoneMembersAgents({ scope, orgId, orgSlug, changedTeams, canEdit }: {
+function EveryoneMembersAgents({ scope, orgId, orgSlug, changedTeams, canEdit, show }: {
+  show: WorkbotAgentsPart;
   scope: TeamScope;
   orgId: string;
   orgSlug: string | null;
@@ -304,10 +314,11 @@ function EveryoneMembersAgents({ scope, orgId, orgSlug, changedTeams, canEdit }:
   canEdit: boolean;
 }) {
   return (
-    <div className="mt-3" data-testid="team-workbot-agents">
+    <div className={show === "all" ? "mt-3" : undefined} data-testid="team-workbot-agents">
       <WorkbotProactiveSection
         orgId={orgId}
         scope={scope}
+        show={show}
         canManage={canEdit}
         connectorsHref={getMcpConnectionsRoute(orgSlug)}
         headerAside={(
@@ -326,7 +337,8 @@ function EveryoneMembersAgents({ scope, orgId, orgSlug, changedTeams, canEdit }:
  * A team's members' agents: Everyone's settings until the team changes a control, which gives the team its own
  * copy of all of them. "Use Everyone's" removes that copy; Undo saves it back.
  */
-function TeamMembersAgents({ scope, orgId, orgSlug, row, canEdit }: {
+function TeamMembersAgents({ scope, orgId, orgSlug, row, canEdit, show }: {
+  show: WorkbotAgentsPart;
   scope: TeamOnlyScope;
   orgId: string;
   orgSlug: string | null;
@@ -369,10 +381,11 @@ function TeamMembersAgents({ scope, orgId, orgSlug, row, canEdit }: {
   }
 
   return (
-    <div className="mt-3" data-testid="team-workbot-agents">
+    <div className={show === "all" ? "mt-3" : undefined} data-testid="team-workbot-agents">
       <WorkbotProactiveSection
         orgId={orgId}
         scope={scope}
+        show={show}
         canManage={canEdit}
         connectorsHref={getMcpConnectionsRoute(orgSlug)}
         busy={pending}
@@ -406,7 +419,7 @@ function TeamMembersAgents({ scope, orgId, orgSlug, row, canEdit }: {
 }
 
 /** A team: each row shows Everyone's value until the team changes it, and "Use Everyone's" takes it back. */
-function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit }: RowsProps & { scope: TeamOnlyScope }) {
+function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, parts }: RowsProps & { scope: TeamOnlyScope }) {
   const ids = { enabled: useId(), model: useId(), maxSteps: useId(), name: useId() };
   const save = useSaveWorkbotTeamSettings(orgId);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -445,6 +458,7 @@ function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit }: R
 
   return (
     <>
+      {parts.general ? (<>
       <DenCard size="comfortable" className="divide-y divide-gray-100 overflow-hidden !p-0" data-section="team-workbot-settings">
         <SettingRow
           label="Workbot"
@@ -542,8 +556,9 @@ function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit }: R
       {saved ? (
         <SavedUndoLine message={workbotTeamSavedMessage(saved.change, settings)} pending={save.isPending} onUndo={() => void store(saved.undo, saved.change)} />
       ) : null}
-      {data && row && workbotAgentsShown(data) ? (
-        <TeamMembersAgents scope={scope} orgId={orgId} orgSlug={orgSlug} row={row} canEdit={canEdit} />
+      </>) : null}
+      {parts.agents && data && row && workbotAgentsShown(data) ? (
+        <TeamMembersAgents scope={scope} orgId={orgId} orgSlug={orgSlug} row={row} canEdit={canEdit} show={parts.agents} />
       ) : null}
     </>
   );

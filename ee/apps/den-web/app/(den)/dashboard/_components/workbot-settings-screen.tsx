@@ -28,6 +28,9 @@ import { useWorkbotTeamSettings } from "./workbot-team-settings-data";
 import { workbotTeamsOverridingCount, workbotTeamsOverridingLabel } from "./workbot-team-settings-presentation";
 import { WorkbotProactiveSection } from "./workbot-proactive-section";
 import { WorkbotProactiveHealthSection } from "./workbot-proactive-health";
+import { AGENT_HEALTH_ANCHOR } from "./workbot-agent-scope";
+import { WorkbotSettingsTabs, workbotSettingsTabsEnabled } from "./workbot-settings-tabs";
+import { workbotSettingsParts, workbotSettingsTabForHash, type WorkbotSettingsTab } from "./workbot-settings-tabs-model";
 import { FeatureIntroGate, useFeatureIntroRuntime } from "../_features/feature-intros";
 import { useWorkbotIntroFacts } from "./workbot-intro-facts";
 
@@ -103,6 +106,15 @@ export function WorkbotSettingsScreen() {
   const name = workbotDisplayName(parseOrganizationMetadata(orgContext?.organization.metadata ?? null)?.brandAppName);
   // Members' agents ride on Workbot: shown only with the rollout on and Workbot deployed here.
   const proactive = orgFeatureEnabled(orgContext, "workbotProactive") && orgContext?.capabilities.workbot === true;
+  // Tabs split Workbot's own settings from members' agents and what they read, where there are agents to show.
+  const tabs = workbotSettingsTabsEnabled(orgContext) && proactive;
+  const [tab, setTab] = useState<WorkbotSettingsTab>("general");
+  const parts = workbotSettingsParts(tabs, tab);
+  // "See the last 7 days" on Everyone's page links to a section under Members' agents.
+  useEffect(() => {
+    const linked = workbotSettingsTabForHash(window.location.hash, AGENT_HEALTH_ANCHOR);
+    if (linked) setTab(linked);
+  }, []);
   const savedModel = settings?.model ?? null;
   const changed = draft !== (current ?? "");
   const canChoose = canManage && settings?.runnerReachable === true && !save.isPending && !modelTest.isPending;
@@ -158,7 +170,8 @@ export function WorkbotSettingsScreen() {
             />
           ) : null}
 
-          {query.isError ? (
+          {tabs ? <WorkbotSettingsTabs activeTab={tab} onChange={setTab} /> : null}
+          {!parts.general ? null : query.isError ? (
             <DenNotice
               tone="error"
               message={errorMessage(query.error, "Couldn't load Workbot settings.")}
@@ -268,10 +281,10 @@ export function WorkbotSettingsScreen() {
             </div>
           )}
 
-          {saveError ? (
+          {parts.general && saveError ? (
             <p role="alert" className="px-1 text-[13px] text-red-700">{saveError}</p>
           ) : null}
-          {saved && settings ? (
+          {parts.general && saved && settings ? (
             <div role="status" className="flex items-center justify-between gap-3 px-1 text-[13px] text-gray-600">
               <span className="min-w-0 [overflow-wrap:anywhere]">Saved. New messages use {workbotModelName(settings, effectiveWorkbotModel(settings))}.</span>
               <DenButton
@@ -284,7 +297,7 @@ export function WorkbotSettingsScreen() {
               </DenButton>
             </div>
           ) : null}
-          {teamsOverriding > 0 ? (
+          {parts.general && teamsOverriding > 0 ? (
             <p className="px-1 text-[13px] text-gray-500" data-testid="workbot-team-settings-count">
               {workbotTeamsOverridingLabel(teamsOverriding)}{" "}
               <Link
@@ -295,10 +308,10 @@ export function WorkbotSettingsScreen() {
               </Link>
             </p>
           ) : null}
-          {proactive && orgId ? (
-            <WorkbotProactiveSection orgId={orgId} canManage={canManage} connectorsHref={getMcpConnectionsRoute(orgSlug)} />
+          {proactive && orgId && parts.agents ? (
+            <WorkbotProactiveSection orgId={orgId} canManage={canManage} connectorsHref={getMcpConnectionsRoute(orgSlug)} show={parts.agents} />
           ) : null}
-          {proactive && orgId ? (
+          {proactive && orgId && parts.agents && parts.agents !== "sources" ? (
             <WorkbotProactiveHealthSection orgId={orgId} />
           ) : null}
           {!canManage && settings ? (

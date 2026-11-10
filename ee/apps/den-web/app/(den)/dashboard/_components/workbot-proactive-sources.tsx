@@ -228,7 +228,9 @@ function AddSource({ slot, options, disabled, onPick }: { slot: AgentSourceSlot;
   );
 }
 
-export function WorkbotProactiveSources({ view, canManage, saving, onChange, tools }: {
+export function WorkbotProactiveSources({ view, canManage, saving, onChange, tools, heading = true }: {
+  /** False where the section around it already says "What agents read". */
+  heading?: boolean;
   view: WorkbotProactiveView;
   canManage: boolean;
   saving: boolean;
@@ -334,8 +336,8 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
   };
 
   return (
-    <section aria-labelledby={headingId} className="grid gap-2" data-section="workbot-proactive-sources">
-      <h2 id={headingId} className="px-1 text-[13px] font-medium text-gray-500">What agents read</h2>
+    <section aria-labelledby={heading ? headingId : undefined} aria-label={heading ? undefined : "What agents read"} className="grid gap-2" data-section="workbot-proactive-sources">
+      {heading ? <h2 id={headingId} className="px-1 text-[13px] font-medium text-gray-500">What agents read</h2> : null}
       <div className="divide-y divide-gray-100 overflow-hidden rounded-2xl border border-gray-100 bg-white" data-testid="workbot-proactive-sources">
         {AGENT_CORE_SOURCES.map((kind) => {
           const label = AGENT_CORE_SOURCE_COPY[kind].label;

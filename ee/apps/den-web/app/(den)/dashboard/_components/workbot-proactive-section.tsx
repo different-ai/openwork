@@ -21,6 +21,7 @@ import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { agentsSwitchLabel, type AgentPolicyScope } from "./workbot-agent-scope";
+import type { WorkbotAgentsPart } from "./workbot-settings-tabs-model";
 import { useSaveWorkbotProactive, useWorkbotProactive } from "./workbot-proactive-data";
 import { PROACTIVE_PREVIEW_KINDS, WorkbotProactivePreview } from "./workbot-proactive-preview";
 import { WorkbotProactiveSources } from "./workbot-proactive-sources";
@@ -267,7 +268,9 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim() ? error.message : fallback;
 }
 
-export function WorkbotProactiveSection({ orgId, canManage, connectorsHref, scope = EVERYONE, headerAside, belowHeader, busy = false, onEdit }: {
+export function WorkbotProactiveSection({ orgId, canManage, connectorsHref, scope = EVERYONE, headerAside, belowHeader, busy = false, onEdit, show = "all" }: {
+  /** With Workbot's settings in tabs: only how agents work ("policy"), or only what they read ("sources"). */
+  show?: WorkbotAgentsPart;
   orgId: string;
   canManage: boolean;
   connectorsHref: string;
@@ -291,7 +294,7 @@ export function WorkbotProactiveSection({ orgId, canManage, connectorsHref, scop
     onEdit?.();
     save.mutate(next);
   };
-  const heading = <h2 id={headingId} className="px-1 text-[13px] font-medium text-gray-500">Members' agents</h2>;
+  const heading = <h2 id={headingId} className="px-1 text-[13px] font-medium text-gray-500">{show === "sources" ? "What agents read" : "Members' agents"}</h2>;
 
   return (
     <section aria-labelledby={headingId} className="grid gap-2" data-section="workbot-proactive">
@@ -314,16 +317,20 @@ export function WorkbotProactiveSection({ orgId, canManage, connectorsHref, scop
         />
       ) : query.data ? (
         <div className="grid gap-6">
-          <WorkbotProactivePanel
-            view={query.data}
-            canManage={canManage}
-            saving={saving}
-            connectorsHref={connectorsHref}
-            onChange={change}
-            scope={scope}
-          />
-          <WorkbotProactiveSources view={query.data} canManage={canManage} saving={saving} onChange={change}
-            tools={{ orgId, scope, connectorHref: (connectionId) => getLibraryConnectorRoute(orgSlug, connectionId) }} />
+          {show === "sources" ? null : (
+            <WorkbotProactivePanel
+              view={query.data}
+              canManage={canManage}
+              saving={saving}
+              connectorsHref={connectorsHref}
+              onChange={change}
+              scope={scope}
+            />
+          )}
+          {show === "policy" ? null : (
+            <WorkbotProactiveSources view={query.data} canManage={canManage} saving={saving} onChange={change} heading={show !== "sources"}
+              tools={{ orgId, scope, connectorHref: (connectionId) => getLibraryConnectorRoute(orgSlug, connectionId) }} />
+          )}
         </div>
       ) : (
         <PanelSkeleton />

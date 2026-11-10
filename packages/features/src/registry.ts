@@ -672,6 +672,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotSettingsTabs: {
+    label: "Workbot: settings in tabs",
+    description: "Workbot's settings are split into three tabs, General, Members' agents and What agents read, instead of one long page: in Manage › Workbot and on the Workbot section of a team's page and Everyone's page. Turning it off restores the single page.",
+    category: "workbot",
+    added: "2026-11-10",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/workbot-settings-tabs/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   workbotStepLimit: {
     label: "Workbot: step limit",
     description: "Admins choose in Manage › Workbot how many steps Workbot may take on one request before it stops and asks for a smaller piece: the deployment's default, a number, or no limit. Applies to each member's chats from their next message.",
