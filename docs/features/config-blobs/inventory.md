@@ -14,7 +14,7 @@ The sidebar isn't fully stable, so keys **follow the sidebar but live in their o
 
 We pick the key once and never rename it. If the UI moves, the key stays and the registry records which screen it belongs to. Data shown on several screens (for example, team access to a provider) has **one** owning key; see "Where grants live" below.
 
-## Areas (as built: all 25)
+## Areas (as built: all 27)
 
 Source of truth: `ee/apps/den-api/src/config-blobs/registry.ts` (one adapter per key in `areas/*.ts`). Every area is on cloud and self-hosted unless noted. "Preflight" marks areas whose `preflight` skips or blocks writes that can't work before the apply (see change-requests.md › Preflight).
 
@@ -46,8 +46,9 @@ Source of truth: `ee/apps/den-api/src/config-blobs/registry.ts` (one adapter per
 | `settings.auth-security` | Auth & Security | `sso_connection`, `sso_provider`, `scim_provider` | `oidc.clientSecret` | sign-ins ended by stricter session limits or Require SSO; SSO identities on delete; a reconfigured connection is disabled until tested | new connections start disabled and unverified; never SCIM tokens; preflight: Require SSO / Restrict domain without a ready connection or under `ssoPerOrganization` (block), OIDC secret unset (block) |
 | `settings.advanced.brand` | Brand appearance | `organization_brand_asset` | – | – | uploaded images travel as base64 `data` (2 MB each) |
 | `settings.audit` | Audit logs (settings) | `audit_policy` | – | – | only `captureOn` |
+| `settings.features` | Feature flags (`/admin`) | `organization_feature` | – | turning a feature on: a restore never turns it off (deletes are refused); a platform admin does, in `/admin` | one item per feature that is on for the organization (`resolveFeature` without member overrides: on for everyone, operator lock or organization override); id = feature key, spec `{ enabled: true }`; import only turns features on, through `updateOrganizationFeatureOverrides` (`feature_change` records the applier); platform admins only (the `/v1/admin` check: allowlisted, verified email), others blocked; preflight skips unknown or retired keys, features not on this deployment, killed, or locked off |
 
-Run `pnpm --filter @openwork-ee/den-api config-blobs:coverage` for the live numbers: 148 org-scoped tables, 59 owned by an area, 96 excluded (`excluded.ts`).
+Run `pnpm --filter @openwork-ee/den-api config-blobs:coverage` for the live numbers: 149 org-scoped tables, 60 owned by an area, 96 excluded (`excluded.ts`).
 
 ### Excluded tables (`excluded.ts`), by reason
 
@@ -55,9 +56,9 @@ Run `pnpm --filter @openwork-ee/den-api config-blobs:coverage` for the live numb
 |---|---|---|
 | `runtime` | 65 | usage, logs, rollups, buckets and events (gateway, inference, telemetry, audit), sync state of sources, SCIM groups and events (pushed by the IdP), member agent checks and deliveries, sessions, workers, workflow runs |
 | `secret` | 6 | tables holding only credentials: `gateway_provider_credentials` (carried as `$secret` placeholders of `ai-gateway.providers`), LiteLLM issued keys, OpenWork Models upstream keys, analytics settings, the Slack installation, diagnostic credentials |
-| `personal` | 10 | one member's: their Gateway and inference keys, BYOK member credentials, connected accounts, their agent, automations, artifacts, dashboard apps, intro state |
+| `personal` | 12 | one member's: their Gateway and inference keys, the AI Gateway API keys they create, BYOK member credentials, connected accounts, their agent, automations, artifacts, dashboard apps, intro state |
 | `billing` | 4 | subscriptions, purchases, grants, benefit settings |
-| `platform` | 6 | feature flags and changes, sandbox organizations, managed deployments, account follow-ups |
+| `platform` | 5 | feature flag change history (`feature_change`; the overrides themselves are `settings.features`), sandbox organizations, managed deployments, account follow-ups |
 | `config_blobs_internal` | 4 | `config_change_request`, `config_apply_run`, `config_blob_alias`, `config_blob_export` |
 
 Also never exported: the organization's name and slug (target identity; `source` info only), API keys (secrets; recreate them), billing.

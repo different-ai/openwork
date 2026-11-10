@@ -78,6 +78,7 @@ export const CONFIG_AREA_KEYS = [
   "settings.auth-security",
   "settings.advanced.brand",
   "settings.audit",
+  "settings.features",
 ] as const;
 export type ConfigAreaKey = (typeof CONFIG_AREA_KEYS)[number];
 export const configAreaKeySchema = z.enum(CONFIG_AREA_KEYS);
