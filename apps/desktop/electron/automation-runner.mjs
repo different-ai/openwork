@@ -849,7 +849,7 @@ export async function executeDesktopAutomation(assignment, options) {
   const created = await client.createThread({
     title: `Automation: ${assignment.automationName}`.slice(0, 120),
     ...(assignment.instructions ? { prompt: assignment.instructions } : {}),
-    model: assignment.model,
+    model: modelInputFromAssignment(assignment.model),
     signal: options.signal,
   })
   const sessionId = created.id
@@ -1117,7 +1117,7 @@ export async function executeDesktopRemoteSession(assignment, options) {
     const created = await client.createThread({
       title: assignment.title,
       ...(assignment.prompt ? { prompt: assignment.prompt } : {}),
-      ...(assignment.model ? { model: assignment.model } : {}),
+      ...(assignment.model ? { model: modelInputFromAssignment(assignment.model) } : {}),
       signal: options.signal,
     })
     sessionId = created.id

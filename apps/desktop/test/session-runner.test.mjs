@@ -554,7 +554,8 @@ test("scheduled Automation execution stays independent with a recovery-capable t
   native.autoReply = true
   const den = runnerFixture(native, {
     kind: "automation_run", runId: "run_fixture", automationName: "Fixture schedule", attempt: 1,
-    instructions: "scheduled turn", model: { providerId: "fixture", modelId: "fixture-model" }, timeoutMs: 10_000,
+    // Den sends a model without a variant as `variant: null`.
+    instructions: "scheduled turn", model: { providerId: "fixture", modelId: "fixture-model", variant: null }, timeoutMs: 10_000,
     workspaceId: "workspace_fixture",
   })
   // Scheduled runs preflight their model's availability before creation.
@@ -569,6 +570,10 @@ test("scheduled Automation execution stays independent with a recovery-capable t
   const complete = den.calls.find((call) => call.path === "/v1/automation-runs/run_fixture/complete")
   assert.equal(complete.body.status, "succeeded")
   assert.equal(native.calls.find((call) => call.path.endsWith("/prompt")).body.id, undefined)
+  // The engine only accepts a string variant, so a missing one is left out.
+  const modelCalls = native.calls.filter((call) => call.body?.model)
+  assert.ok(modelCalls.some((call) => call.path.endsWith("/model")))
+  for (const call of modelCalls) assert.deepEqual(call.body.model, { providerID: "fixture", id: "fixture-model" })
   const disk = JSON.parse(await readFile(join(root, desktopSessionRunnerPartition(denBaseUrl, account), "journal.json"), "utf8").catch(() => "{\"commands\":[],\"requests\":[]}"))
   assert.deepEqual(disk.commands, [])
 })
