@@ -16,7 +16,8 @@ import { judgeMessage, reportMarkdown, scoreDay, type DayScore } from "./agent-r
  *     [--concurrency 6] [--model openai/gpt-6-luna] [--judge anthropic/claude-sonnet-4.5] [--send-check]
  *
  * --send-check runs the brief's pipeline with the send check (workbotAgentSendCheck): each message step 2 wrote is
- * read by typesafe-ai/jev before Den's limits (JEV_AI_GATEWAY_API_KEY, else the model key). Compare its report with a
+ * read by typesafe-ai/jev before Den's limits. It needs its own JEV_AI_GATEWAY_API_KEY (a Vercel AI Gateway key); the
+ * replay model's key is never used for it. Compare its report with a
  * run without the flag; runs.json lists what each check held and why. `--send-check shadow` holds nothing and writes
  * every answer with its probabilities to send-check.json, to see what a threshold would have held.
  *
@@ -87,7 +88,9 @@ function jevSendCheck(key: string, shadow: boolean, where: { scenario: string; r
     }
   };
 }
-const sendCheckKey = process.env.JEV_AI_GATEWAY_API_KEY?.trim() || apiKey;
+// Its own key, for Vercel's evaluation endpoint only. Never the replay model's key: that one may belong to a custom
+// endpoint (OPENWORK_AGENT_REPLAY_BASE_URL) and must not be sent anywhere else.
+const sendCheckKey = process.env.JEV_AI_GATEWAY_API_KEY?.trim();
 const sendCheckMode = process.argv.includes("--send-check") ? (flag("--send-check") === "shadow" ? "shadow" : "hold") : null;
 
 async function pool<T>(tasks: (() => Promise<T>)[], size: number): Promise<T[]> {
@@ -105,6 +108,9 @@ async function pool<T>(tasks: (() => Promise<T>)[], size: number): Promise<T[]> 
 
 if (!apiKey) {
   console.log(JSON.stringify({ status: "configuration_error", reason: "set AI_GATEWAY_API_KEY or OPENWORK_AGENT_REPLAY_API_KEY" }));
+  process.exitCode = 2;
+} else if (sendCheckMode && !sendCheckKey) {
+  console.log(JSON.stringify({ status: "configuration_error", reason: "--send-check needs JEV_AI_GATEWAY_API_KEY" }));
   process.exitCode = 2;
 } else {
   const model = chatCompletionsModel({ baseUrl, apiKey, model: modelId });

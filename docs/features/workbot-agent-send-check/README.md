@@ -73,8 +73,10 @@ with the brief alone. Nothing is stored for the check, so there is nothing to mi
 The replay evals can run the brief's pipeline with the check:
 
 ```sh
-AI_GATEWAY_API_KEY=… pnpm --dir evals agent:brief-replay --pipelines new --send-check
+AI_GATEWAY_API_KEY=… JEV_AI_GATEWAY_API_KEY=… pnpm --dir evals agent:brief-replay --pipelines new --send-check
 ```
+
+The check uses its own `JEV_AI_GATEWAY_API_KEY`, never the replay model's key, which may belong to another endpoint.
 
 Compare the report with a run without `--send-check`: unwanted interruptions should drop while missed items stay
 where they were. `runs.json` lists what each check held and why. The 0.8 threshold has not been tuned on those days
