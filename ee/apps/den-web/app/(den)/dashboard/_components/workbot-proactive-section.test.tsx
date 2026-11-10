@@ -23,7 +23,7 @@ import {
 import { WorkbotProactivePanel } from "./workbot-proactive-section";
 import { previewTime } from "./workbot-proactive-preview";
 import { WorkbotProactiveHealthTable } from "./workbot-proactive-health";
-import { addSourceChange, addableTo, allowAppChange, coreAppRows, makeDefaultChange, removeSourceChange, filterConnections, WorkbotProactiveSources } from "./workbot-proactive-sources";
+import { addSourceChange, addableTo, allowAppChange, coreAppRows, makeDefaultChange, removeSourceChange, filterConnections, otherConnectionAdded, otherConnectionsRestLine, WorkbotProactiveSources } from "./workbot-proactive-sources";
 
 const ready: WorkbotProactiveView = {
   settings: { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS, enabled: true },
@@ -396,8 +396,9 @@ function renderGrouped(view: WorkbotProactiveView) {
 test("grouped: yes or no settings are switches, the schedule is one row per setting, and each row has help", () => {
   const html = renderGrouped(briefOn);
   const view = text(html);
-  for (const label of ["Agents for everyone", "On for members by default", "Messages", "Send messages in Slack", "Daily message limit", "Schedule", "Check for updates", "Working hours", "Working days", "Extra checks", "What to tell people", "Preview"]) assert.ok(view.includes(label), label);
-  for (const gone of ["Send messages to", "Nowhere yet", "Members start", "Must opt in", "Messages per person per day", "Extra checks agents may ask for"]) assert.ok(!view.includes(gone), gone);
+  for (const label of ["Agents for everyone", "On for members by default", "Messages", "Send messages in Slack", "Daily message limit", "Schedule", "Check for updates", "Working hours", "Working days", "Extra checks", "Agent instructions", "Edit", "Example conversation", "What exactly did she ask for?"]) assert.ok(view.includes(label), label);
+  assert.doesNotMatch(html, /<textarea/, "the instructions are text until Edit is clicked");
+  for (const gone of ["Send messages to", "Nowhere yet", "Members start", "Must opt in", "Messages per person per day", "Extra checks agents may ask for", "What to tell people", "Preview"]) assert.ok(!view.includes(gone), gone);
   assert.match(switchFor(html, "Send messages in Slack") ?? "", /aria-checked="true"/);
   assert.match(switchFor(html, "On for members by default") ?? "", /aria-checked="true"/);
   for (const about of ["On for members by default", "Send messages in Slack", "Daily message limit", "Check for updates", "Working hours", "Working days", "Extra checks"]) assert.ok(html.includes(`aria-label="About ${about}"`), about);
@@ -434,4 +435,21 @@ test("filtering connections matches part of a name, whatever its case", () => {
   assert.deepEqual(filterConnections(list, " gr ").map((entry) => entry.name), ["Granola"]);
   assert.deepEqual(filterConnections(list, "G").map((entry) => entry.name), ["Google Workspace", "Granola"]);
   assert.equal(filterConnections(list, "").length, 3);
+});
+
+test("other context, with help: only added connections are listed; the rest are behind Add connector", () => {
+  const notes = { id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp" };
+  const tracker = { id: "emc_tracker", name: "Issue tracker", url: "https://mcp.linear.app/mcp" };
+  const view = { ...briefOn, settings: { ...briefOn.settings, sources: { ...briefOn.settings.sources, connections: { [notes.id]: "everyone" as const } } } };
+  assert.equal(otherConnectionAdded(view, notes), true);
+  assert.equal(otherConnectionAdded(view, tracker), false);
+  assert.equal(otherConnectionAdded(view, { ...tracker, policy: "off" }), true, "one the server holds back stays listed");
+  const html = renderToStaticMarkup(<WorkbotProactiveSources view={view} canManage saving={false} onChange={() => undefined} help />);
+  assert.match(html, /data-testid="workbot-source-other-emc_notes"/);
+  assert.doesNotMatch(html, /data-testid="workbot-source-other-emc_tracker"/);
+  const shown = text(html);
+  assert.ok(shown.includes("Add connector"));
+  assert.ok(shown.includes("1 other connection is up to each member."));
+  assert.ok(shown.includes("1 of 2 connections"));
+  assert.equal(otherConnectionsRestLine(58), "58 other connections are up to each member.");
 });
