@@ -21,14 +21,22 @@ type GroupActionsOptions = {
 };
 
 export function buildSessionGroupActions(options: GroupActionsOptions): SessionAction[] {
-  return [
-    sessionAction("ungroup", { disabled: !options.assignedGroupId, onSelect: () => options.onAssignGroup(null) }),
+  const actions: SessionAction[] = [
+    sessionAction("ungroup", {
+      disabled: !options.assignedGroupId,
+      onSelect: () => options.onAssignGroup(null),
+    }),
     ...options.groups.map((group) => sessionAction("group", {
-      id: `group:${group.id}`, label: group.label, disabled: options.assignedGroupId === group.id,
+      id: `group:${group.id}`,
+      label: group.label,
+      disabled: options.assignedGroupId === group.id,
       onSelect: () => options.onAssignGroup(group.id),
     })),
-    ...(options.onCreateGroup ? [{ type: "separator" }, sessionAction("new-group", { onSelect: options.onCreateGroup })] satisfies SessionAction[] : []),
   ];
+  if (options.onCreateGroup) {
+    actions.push({ type: "separator" }, sessionAction("new-group", { onSelect: options.onCreateGroup }));
+  }
+  return actions;
 }
 
 /** Human UI actions only. Destructive callbacks open the existing safeguards/dialogs. */
@@ -36,13 +44,20 @@ export function buildSessionMenuActions(options: GroupActionsOptions & {
   isPinned: boolean;
   isArchived: boolean;
   onTogglePin: () => void;
+  workbenchActions?: readonly SessionAction[];
   onRename?: () => void;
   onArchive?: () => void | Promise<void>;
   onDelete?: () => void;
 }): SessionAction[] {
-  const actions: SessionAction[] = [sessionAction("pin", { onSelect: options.onTogglePin }, options)];
+  const actions: SessionAction[] = [
+    sessionAction("pin", { onSelect: options.onTogglePin }, options),
+    ...(options.workbenchActions ?? []),
+  ];
   if (options.onRename) actions.push(sessionAction("rename", { onSelect: options.onRename }));
-  actions.push(sessionAction("move-to-group", { submenu: buildSessionGroupActions(options), submenuClassName: { dropdown: "w-52" } }));
+  actions.push(sessionAction("move-to-group", {
+    submenu: buildSessionGroupActions(options),
+    submenuClassName: { dropdown: "w-52" },
+  }));
   if (options.onArchive) actions.push(sessionAction("archive", { onSelect: options.onArchive }, options));
   if (options.onDelete) actions.push({ type: "separator" }, sessionAction("delete", { onSelect: options.onDelete }));
   return actions;

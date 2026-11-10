@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { afterAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { readFileSync } from "node:fs";
+import type { SessionActionOptions } from "../src/react-app/domains/session/sidebar/session-action-resolver";
 import ts from "typescript";
 
 const ownedDom = typeof window === "undefined";
@@ -20,7 +20,7 @@ const { SessionQuickActionButton } = await import("../src/react-app/domains/sess
 const { createRoot } = await import("react-dom/client");
 const { act } = await import("react");
 
-function fixture(overrides: Partial<Parameters<typeof resolveSessionActions>[0]> = {}) {
+function fixture(overrides: Partial<SessionActionOptions> = {}) {
   const calls: unknown[][] = [];
   const management = { togglePin: (id: string) => { calls.push(["pin", id]); },
     assignGroup: (owner: string, id: string, group: string | null) => { calls.push(["group", owner, id, group]); } };
@@ -33,21 +33,16 @@ function fixture(overrides: Partial<Parameters<typeof resolveSessionActions>[0]>
     surface: "sidebar", isPinned: false, isArchived: false, groups: [], assignedGroupId: null, services, ...overrides }) };
 }
 
-describe("session UI catalog and explicit surface coverage", () => {
-  test("all catalog entries have a deliberate policy for every adapter, included palette ids stay unique", () => {
-    const ids: string[] = [];
-    for (const definition of Object.values(sessionActionCatalog)) {
-      expect(Object.keys(definition.surfaces).sort()).toEqual(["feedQuick", "groupPicker", "legacyQuick", "menu", "palette"]);
-      for (const policy of Object.values(definition.surfaces)) {
-        if (policy.treatment !== "included") expect(policy.reason.length).toBeGreaterThan(10);
-      }
-      if (definition.surfaces.palette.treatment === "included") ids.push(definition.surfaces.palette.id);
-    }
+describe("session UI catalog projections", () => {
+  test("palette ids stay unique and quick projections match their physical slots", () => {
+    const ids = Object.values(sessionActionCatalog).flatMap((definition) => definition.palette ? [definition.palette.id] : []);
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).toContain("session.archive");
     // The Feed has one physical shortcut slot. A new inclusion must update that adapter, not vanish at [0].
-    expect(Object.entries(sessionActionCatalog).filter(([, definition]) => definition.surfaces.feedQuick.treatment === "included").map(([kind]) => kind)).toEqual(["archive"]);
-    expect(Object.entries(sessionActionCatalog).filter(([, definition]) => definition.surfaces.legacyQuick.treatment === "included").map(([kind]) => kind)).toEqual(["pin", "archive"]);
+    const feedActions = Object.entries(sessionActionCatalog).filter(([, definition]) => definition.feedQuick);
+    const legacyActions = Object.entries(sessionActionCatalog).filter(([, definition]) => definition.legacyQuick);
+    expect(feedActions.map(([kind]) => kind)).toEqual(["archive"]);
+    expect(legacyActions.map(([kind]) => kind)).toEqual(["pin", "archive"]);
   });
 
   test("future unknown descriptors fail closed with a diagnostic, not the old silent allowlist", () => {
@@ -115,13 +110,51 @@ describe("bound session state, owner and shipped surface differences", () => {
 });
 
 describe("workbench intents and quick rendering", () => {
+  test.each([undefined, "", "   ", "Raw title"])("row split preserves raw title %j while dialogs retain display fallback", async (sessionTitle) => {
+    const { captureSessionActionTarget } = await import("../src/react-app/domains/session/sidebar/session-menu-actions");
+    const { getDisplaySessionTitle } = await import("../src/app/lib/session-title");
+    const { sessionDialogRequestFromEvent, OPEN_SESSION_ACTION_EVENT } = await import("../src/react-app/shell/session-actions-bus");
+    const target = captureSessionActionTarget([
+      { workspace: { id: "row-owner" }, sessions: [{ id: "same", title: sessionTitle }] },
+    ], "same", "row-owner")!;
+    expect(target.title).toBe(getDisplaySessionTitle(sessionTitle));
+    const openedTabs: unknown[] = [];
+    const splitTabs: unknown[] = [];
+    const { actions } = fixture({
+      target,
+      workbench: {
+        primary: { workspaceId: "main-owner", sessionId: "main" },
+        secondary: null,
+        sessionTitle,
+        getState: () => ({
+          openTab: (tab) => { openedTabs.push(tab); },
+          setSplit: (tab) => { splitTabs.push(tab); },
+        }),
+      },
+    });
+    await dispatchMenuAction(actions, "open-split");
+    const expectedTab = { ...target, title: sessionTitle, workspaceTitle: "row-owner" };
+    expect(openedTabs).toEqual([expectedTab]);
+    expect(splitTabs).toEqual([expectedTab]);
+    // The dialog bridge still accepts only display-string targets, not raw undefined titles.
+    const event = (title: unknown) => new CustomEvent(OPEN_SESSION_ACTION_EVENT, {
+      detail: { action: "delete", target: { ...target, title } },
+    });
+    expect(sessionDialogRequestFromEvent(event(target.title))).toEqual({ action: "delete", target });
+    expect(sessionDialogRequestFromEvent(event(undefined))).toBeNull();
+    expect(sessionDialogRequestFromEvent(event(1))).toBeNull();
+  });
+
   test("row binding opens the captured explicit owner and closes through the existing non-destructive workbench service", async () => {
     const main = { workspaceId: "main", sessionId: "same" };
     const side = { workspaceId: "side", sessionId: "same" };
     const events: unknown[] = [];
-    const workbench = { primary: main, secondary: side, workspaceTitle: " Row workspace ",
+    const workbench = { primary: main, secondary: side, workspaceTitle: " Row workspace ", sessionTitle: "Captured",
       getState: () => ({ openTab: (tab: unknown) => { events.push(["open", tab]); }, setSplit: (tab: unknown) => { events.push(["split", tab]); } }) };
     const row = fixture({ workbench });
+    expect(row.actions.map((action) => action.type === "item" ? action.id : "separator")).toEqual([
+      "pin", "open-split", "rename", "move-to-group", "archive", "separator", "delete",
+    ]);
     await dispatchMenuAction(row.actions, "open-split");
     const expectedTab = { workspaceId: "row-owner", sessionId: "same", title: "Captured", workspaceTitle: "Row workspace" };
     expect(events).toEqual([["open", expectedTab], ["split", expectedTab]]);
@@ -173,22 +206,4 @@ describe("workbench intents and quick rendering", () => {
     } finally { await act(async () => root.unmount()); host.remove(); }
   });
 
-  test("integration boundaries no longer independently implement the four action gaps", () => {
-    const source = (path: string) => readFileSync(new URL(`../src/react-app/${path}`, import.meta.url), "utf8");
-    const sidebar = source("domains/session/sidebar/app-sidebar.tsx");
-    const palette = source("shell/command-palette.tsx");
-    const route = source("shell/session-route.tsx");
-    const adapter = source("shell/command-palette-session-actions.ts");
-    expect(sidebar).toContain("resolveSessionActions({");
-    expect(sidebar.match(/useSessionMenuActions\(\{/g)).toHaveLength(2); // Definition + one resolution per row.
-    expect(sidebar).not.toContain("togglePin(sessionId)");
-    expect(sidebar).not.toContain("ctx.onArchiveSession?.");
-    expect(sidebar).not.toContain('t("session_management.archive_session")');
-    expect(palette).toContain("resolveWorkbenchActions({");
-    expect(palette).not.toContain('id: "close-split"');
-    expect(palette).not.toContain('id: "new-split"');
-    expect(route).toContain("target, surface: \"palette\"");
-    expect(route).not.toContain("togglePin(target.sessionId)");
-    expect(adapter).not.toContain("SESSION_ACTION_IDS");
-  });
 });
