@@ -7,34 +7,28 @@ import { getPermissionDefinition, permissionDefaultKeys, type PermissionKey } fr
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
-import { getNewRoleRoute, getOrgAccessFlags, getPermissionSetRoute, type DenOrgTeam } from "../../_lib/den-org";
+import { getNewRoleRoute, getOrgAccessFlags, getPermissionSetRoute, orgFeatureEnabled, type DenOrgTeam } from "../../_lib/den-org";
+import { roleList, roleSetTeams, roleTeamNames, type RoleListEntry } from "../../_lib/role-catalog";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IconTile } from "./access-rows";
 import { RolePicker as SearchableRolePicker } from "./role-picker";
 import { useDenToast } from "./den-toast";
 import { ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection, LinkButton } from "./item-list";
-import { usePermissionSet, usePermissionSets, useSetTeamRole, type PermissionSetSummary } from "./permissions-data";
+import { usePermissionSet, usePermissionSets, useSetTeamRole } from "./permissions-data";
 import {
   TEAM_ROLE_DESCRIPTIONS,
   TEAM_ROLE_LABELS,
   allowedKeys,
   sameSharedTeamRole,
   sharedTeamRole,
-  sharedTeamRoleLockReason,
+  sharedTeamRoleFromValue,
   sharedTeamRoleSteps,
+  sharedTeamRoleValue,
+  teamRoleOptions,
   type SharedTeamRole,
   type SharedTeamRoleState,
   type TeamRoleAbilities,
 } from "./team-roles";
-
-/** Teams a set applies to (older responses only carry `team`). */
-function setTeams(set: PermissionSetSummary): { id: string; name: string | null }[] {
-  return set.teams.length > 0 ? set.teams : set.team ? [set.team] : [];
-}
-
-function teamNames(teams: readonly { name: string | null }[]): string {
-  return teams.map((team) => team.name ?? "A deleted team").join(", ");
-}
 
 /**
  * sharedRoles: a team's one role (Member, Admin, or one of the organization's
@@ -50,7 +44,7 @@ export function SharedTeamRolePanel({ team }: { team: DenOrgTeam }) {
   const setsQuery = usePermissionSets(orgId, true);
   const sets = setsQuery.data ?? [];
   const customSets = sets.filter((set) => set.kind === "team");
-  const teamSet = customSets.find((set) => setTeams(set).some((entry) => entry.id === team.id)) ?? null;
+  const teamSet = customSets.find((set) => roleSetTeams(set).some((entry) => entry.id === team.id)) ?? null;
   const adminSet = sets.find((set) => set.kind === "admin_default") ?? null;
   const memberSet = sets.find((set) => set.kind === "member_default") ?? null;
   const state: SharedTeamRoleState = { admin: team.grantsOrganizationAdmin, setId: teamSet?.id ?? null };
@@ -65,12 +59,12 @@ export function SharedTeamRolePanel({ team }: { team: DenOrgTeam }) {
   const alsoKeys = (role.kind === "admin" ? adminKeys : role.kind === "custom" ? customKeys : []).filter((key) => !memberKeys.includes(key));
   const loading = setsQuery.isPending || (teamSet !== null && teamSetDetail.isPending);
 
-  const otherTeams = teamSet ? setTeams(teamSet).filter((entry) => entry.id !== team.id) : [];
+  const otherTeams = teamSet ? roleSetTeams(teamSet).filter((entry) => entry.id !== team.id) : [];
   const title = role.kind === "custom" && teamSet ? teamSet.name : TEAM_ROLE_LABELS[role.kind];
   const description = role.kind === "admin"
     ? `Everyone in ${team.name} is an admin`
     : role.kind === "custom"
-      ? otherTeams.length > 0 ? `Custom role, also on ${teamNames(otherTeams)}` : "Custom role"
+      ? otherTeams.length > 0 ? `Custom role, also on ${roleTeamNames(otherTeams)}` : "Custom role"
       : TEAM_ROLE_DESCRIPTIONS.member;
   const abilities: TeamRoleAbilities = {
     canManageAdminTeams: access?.canManageAdminTeams ?? false,
@@ -94,7 +88,8 @@ export function SharedTeamRolePanel({ team }: { team: DenOrgTeam }) {
             <RolePicker
               team={team}
               state={state}
-              customSets={customSets}
+              roles={roleList({ sets, readyMade: false })}
+              showUnavailable={orgFeatureEnabled(orgContext, "readyMadeRoles")}
               abilities={abilities}
               disabled={loading}
               newRoleHref={getNewRoleRoute(orgSlug)}
@@ -120,13 +115,12 @@ function CheckMark() {
   return <span aria-hidden className="flex h-8 w-8 items-center justify-center text-gray-900"><Check className="h-4 w-4" strokeWidth={2} /></span>;
 }
 
-type PickerOption = { role: SharedTeamRole; title: string; description: string };
-
-/** Change role: every role in one searchable list, opened under the button. */
-function RolePicker({ team, state, customSets, abilities, disabled, newRoleHref }: {
+/** Change role: the organization's one role list in a searchable picker, opened under the button. */
+function RolePicker({ team, state, roles, showUnavailable, abilities, disabled, newRoleHref }: {
   team: DenOrgTeam;
   state: SharedTeamRoleState;
-  customSets: PermissionSetSummary[];
+  roles: readonly RoleListEntry[];
+  showUnavailable: boolean;
   abilities: TeamRoleAbilities;
   disabled: boolean;
   newRoleHref: string;
@@ -140,20 +134,9 @@ function RolePicker({ team, state, customSets, abilities, disabled, newRoleHref 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const builtIn: PickerOption[] = [
-    { role: { kind: "member" }, title: TEAM_ROLE_LABELS.member, description: TEAM_ROLE_DESCRIPTIONS.member },
-    { role: { kind: "admin" }, title: TEAM_ROLE_LABELS.admin, description: "Invite people, manage teams, and run connections and models" },
-  ];
-  const custom: PickerOption[] = customSets.map((set) => {
-    const teams = setTeams(set);
-    return {
-      role: { kind: "custom", setId: set.id },
-      title: set.name,
-      description: teams.length ? `On ${teamNames(teams)}` : "No teams yet",
-    };
-  });
+  const options = teamRoleOptions({ roles, state, abilities, showUnavailable });
   const changed = !sameSharedTeamRole(choice, current);
-  const chosenTitle = [...builtIn, ...custom].find((option) => sameSharedTeamRole(option.role, choice))?.title ?? "";
+  const chosenTitle = options.find((option) => option.value === sharedTeamRoleValue(choice))?.label ?? "";
 
   function close() {
     setOpen(false);
@@ -191,17 +174,10 @@ function RolePicker({ team, state, customSets, abilities, disabled, newRoleHref 
     }
   }
 
-  const options = [...builtIn, ...custom].map((option) => ({
-    value: option.role.kind === "custom" ? option.role.setId : option.role.kind,
-    label: option.title,
-    caption: option.description,
-    lockReason: sameSharedTeamRole(option.role, current) ? null : sharedTeamRoleLockReason(state, option.role, abilities),
-    disabled: !sameSharedTeamRole(option.role, current) && sharedTeamRoleLockReason(state, option.role, abilities) !== null,
-  }));
   return <div className="w-[280px] max-w-full">
     <SearchableRolePicker
-      value={choice.kind === "custom" ? choice.setId : choice.kind}
-      onChange={(value) => setChoice(value === "member" ? { kind: "member" } : value === "admin" ? { kind: "admin" } : { kind: "custom", setId: value })}
+      value={sharedTeamRoleValue(choice)}
+      onChange={(value) => setChoice(sharedTeamRoleFromValue(value) ?? current)}
       options={options} label={`Role for ${team.name}`} trigger="Change role" disabled={disabled}
       testId="team-role" open={open} onOpenChange={(next) => next ? (setChoice(current), setOpen(true)) : close()}
       footer={<>

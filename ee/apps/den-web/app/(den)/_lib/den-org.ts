@@ -2,6 +2,7 @@ import type { BillingPlanTier } from "@openwork/types/den/billing-plans";
 import type { SsoSettings } from "./sso-settings";
 import { parseDeploymentCapabilities, type DeploymentCapabilities } from "@openwork/types/den/deployment-capabilities";
 import { mapFeatures, type FeatureMap } from "@openwork/features";
+import { BUILT_IN_ROLES } from "./role-catalog";
 import { PERMISSION_KEYS, getPermissionDefinition, isPermissionKey, isPermissionOwnerOnlyByDefault, permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions";
 
 export type DenOrgSummary = {
@@ -779,9 +780,9 @@ export function permissionLockReason(key: PermissionKey): string {
 }
 
 export function formatRoleLabel(role: string): string {
-  if (normalizeRoleSlug(role) === "super-admin") return "Super admin";
+  if (normalizeRoleSlug(role) === "super-admin") return BUILT_IN_ROLES["super-admin"].label;
   const canonicalRole = normalizeCanonicalRole(role);
-  if (canonicalRole === "admin") return "Admin";
+  if (canonicalRole === "admin") return BUILT_IN_ROLES.admin.label;
   return role
     .split(/[-_\s]+/)
     .filter(Boolean)
