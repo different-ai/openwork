@@ -7,15 +7,10 @@ import { copyMessage, type MessageCopyRequest } from "./message-clipboard";
 
 export function messageCopyActions(request: MessageCopyRequest, onPortableCopy?: () => void): MenuAction[] {
   if (!request.markdown) return [];
-  const actions: MenuAction[] = [{
+  return [{
     type: "item", id: "copy", label: "Copy", icon: <Copy className="size-4" />,
     onSelect: async () => { if (await copyMessage(request) === "rich") onPortableCopy?.(); },
   }];
-  if (request.enabled) actions.push({
-    type: "item", id: "copy-markdown", label: "Copy as Markdown", icon: <Copy className="size-4" />,
-    onSelect: () => navigator.clipboard.writeText(request.markdown),
-  });
-  return actions;
 }
 
 export function MessageCopyButton({ request, onPortableCopy }: { request: MessageCopyRequest; onPortableCopy?: () => void }) {

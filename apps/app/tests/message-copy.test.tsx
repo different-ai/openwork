@@ -117,20 +117,17 @@ describe('message Copy', () => {
 });
 
 describe('message menus', () => {
-  test.each([false, true])('Markdown item visibility is gated in native/web shared actions: enabled=%s', enabled => {
-    const r = request(); r.enabled = enabled;
-    expect(serializeMenuActions(actions.messageCopyActions(r)).map(item => item.type === 'item' ? item.label : '')).toEqual(enabled ? ['Copy','Copy as Markdown'] : ['Copy']);
+  test('message menu exposes only the existing Copy action', () => {
+    expect(serializeMenuActions(actions.messageCopyActions(request())).map(item => item.type === 'item' ? item.label : '')).toEqual(['Copy']);
   });
-  test('Copy menu uses rich route and Copy as Markdown writes the unchanged source', async () => {
-    const r = request(); r.markdown = ' **source**\n\n- exact\n';
-    const menu = actions.messageCopyActions(r);
+  test('Copy menu uses the rich route when enabled', async () => {
+    const r = request(); const menu = actions.messageCopyActions(r);
     expect(await dispatchMenuAction(menu,'copy')).toBe(true); expect(write).toHaveBeenCalledTimes(1);
-    expect(await dispatchMenuAction(menu,'copy-markdown')).toBe(true); expect(plainWrites).toEqual([r.markdown]);
+    expect(plainWrites).toEqual([]);
   });
-  test('off menu Copy stays Markdown, and Markdown-only item cannot be dispatched', async () => {
-    const r = request(); r.enabled = false; const menu = actions.messageCopyActions(r);
-    expect(await dispatchMenuAction(menu,'copy')).toBe(true); expect(plainWrites).toEqual([r.markdown]);
-    expect(await dispatchMenuAction(menu,'copy-markdown')).toBe(false);
+  test('off menu Copy keeps the exact Markdown source', async () => {
+    const r = request(); r.enabled = false; r.markdown = ' **source**\n\n- exact\n';
+    expect(await dispatchMenuAction(actions.messageCopyActions(r),'copy')).toBe(true); expect(plainWrites).toEqual([r.markdown]);
   });
 });
 
