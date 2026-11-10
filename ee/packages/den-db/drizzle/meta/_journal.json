@@ -1303,6 +1303,13 @@
       "when": 1794267959453,
       "tag": "0186_public_mcp_app_names",
       "breakpoints": true
+    },
+    {
+      "idx": 187,
+      "version": "5",
+      "when": 1794269738592,
+      "tag": "0187_workbot_team_setting",
+      "breakpoints": true
     }
   ]
 }

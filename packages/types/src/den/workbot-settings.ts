@@ -115,6 +115,8 @@ export const workbotReadinessSchema = z.object({
    * admin's own entitlement doesn't decide what the workspace has set up. Absent from older servers.
    */
   organizationGatewayRequired: z.boolean().optional(),
+  /** False when an admin turned Workbot off for the caller (Workbot settings per team). Absent means on. */
+  enabled: z.boolean().optional(),
 })
 export type WorkbotReadiness = z.infer<typeof workbotReadinessSchema>
 

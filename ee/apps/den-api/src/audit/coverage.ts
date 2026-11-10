@@ -206,6 +206,7 @@ export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>
   "teams.ts": routes("Team and membership management."),
   "web-origins.ts": bridged(["organization.web_origin.approved", "organization.web_origin.removed"], ["web_origin"]),
   "workbot-settings.ts": routes("Workbot default model and members' agent settings (organization metadata and the Your agent template version)."),
+  "workbot-team-settings.ts": routes("A team's own Workbot default model, name and on/off switch (workbot_team_setting), and the organization's switch for everyone (organization metadata)."),
 }
 
 function boundary(limitations: string): AuditCoverageDeclaration {

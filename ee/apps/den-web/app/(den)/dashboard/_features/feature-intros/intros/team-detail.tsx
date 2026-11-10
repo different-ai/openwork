@@ -1,4 +1,4 @@
-import { Compass, KeyRound, Laptop, Layers, ScrollText, ShieldCheck, SquareTerminal, Users } from "lucide-react";
+import { Compass, KeyRound, Laptop, Layers, MessageCircle, ScrollText, ShieldCheck, SquareTerminal, Users } from "lucide-react";
 import { getAiGatewayProvidersRoute, getMembersRoute, getNewAiGatewayProviderRoute, getNewRoleRoute, getPluginsRoute, permissionLockReason } from "../../../../_lib/den-org";
 import { defineFeatureIntro } from "../types";
 import { docsPage } from "./docs";
@@ -9,6 +9,7 @@ import { TeamAgentsExample, TeamBrowserExample } from "./examples/members/team-a
 import { TeamMembersExample } from "./examples/members/team-members-example";
 import { TeamModelsExample } from "./examples/members/team-models-example";
 import { TeamPromptExample } from "./examples/members/team-prompt-example";
+import { TeamWorkbotExample } from "./examples/members/team-workbot-example";
 
 /**
  * Facts a team's page (and Everyone's, which shares these tabs) reports from
@@ -204,6 +205,29 @@ export const teamDetailIntros = [
       if (ctx.facts.providers === 0) return "none";
       return ctx.facts.sharedProviders === 0 ? "partial" : "done";
     },
+  }),
+
+  defineFeatureIntro<TeamDetailFacts>({
+    key: "team-detail.workbot",
+    parent: "members.teams",
+    version: 1,
+    match: { path: PATH, tab: "workbot" },
+    icon: MessageCircle,
+    title: "Workbot",
+    summary: "Choose which teams have Workbot, and give a team its own model and name, or keep Everyone's.",
+    highlights: [
+      { title: "On for the teams you choose.", text: "Turn Workbot off for Everyone and on for a pilot team, or off for one team." },
+      { title: "A model and a name for the team.", text: "People in the team start new Workbot chats on its model and see the name you gave it." },
+      { title: "Several teams at once.", text: "Someone in teams with different settings gets Everyone's." },
+    ],
+    example: {
+      Component: TeamWorkbotExample,
+      alt: "Example: Support calls Workbot Helpdesk and starts on Claude Sonnet 4.5, Sales uses Everyone's name, Workbot, and model, GPT-6 Luna, and Workbot is off for Engineering.",
+    },
+    docsUrl: docsPage("workbot/overview"),
+    // The tab is the editor, and "From Everyone" is a valid state: `?` only.
+    ctas: [],
+    setupState: () => "done",
   }),
 
   defineFeatureIntro<TeamDetailFacts>({

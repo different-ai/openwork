@@ -1,6 +1,7 @@
 export * from "./admin-metrics"
 export * from "./agent-permissions"
 export * from "./default-models"
+export * from "./workbot-team-settings"
 export * from "./auto-router"
 export * from "./prompts"
 export * from "./auth"

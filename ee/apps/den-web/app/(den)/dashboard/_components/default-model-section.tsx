@@ -21,6 +21,7 @@ import { getAiGatewayRoute, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { providerIconSlug } from "./library-models";
 import { useDefaultModelOptions, useDefaultModelSettings, useSaveDefaultModel } from "./default-model-data";
+import { SettingRow } from "./scoped-setting";
 
 /** The combobox value for "no model of its own": no default (organization) or use the organization's (team). */
 const INHERIT_VALUE = "";
@@ -80,18 +81,6 @@ function comboboxOptions(input: {
     ? [{ value: valueOf(input.saved), label: input.saved.modelId, description: "No longer available" }]
     : [];
   return [{ value: INHERIT_VALUE, label: input.inherit.label, description: input.inherit.description, icon: input.inherit.icon }, ...missing, ...listed];
-}
-
-function SettingRow({ label, labelId, aside, children }: { label: string; labelId: string; aside?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 px-6 py-3">
-      <span className="flex min-w-0 items-center gap-2">
-        <span id={labelId} className="text-[13px] font-medium text-gray-900">{label}</span>
-        {aside}
-      </span>
-      <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">{children}</div>
-    </div>
-  );
 }
 
 type PickerProps = {
