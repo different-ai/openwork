@@ -271,6 +271,16 @@
               ],
               "description": "Den: Auth & Security settings: Settings shows one Auth & Security page with Single sign-on (SSO) and User provisioning (SCIM) tabs instead of separate SSO and SCIM pages; old SSO and SCIM links open the matching tab. Turning it off restores the separate pages. Renders DEN_FEATURE_AUTH_SECURITY_SETTINGS."
             },
+            "teamSettingsSidebar": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Den: team sections in a sidebar: On Members › Teams, a team's page and Everyone's page list their sections (Role, Members, Access, Agents, Browser, Models, Workbot, Prompts, Desktop) in a grouped sidebar on the left instead of a row of tabs across the top. Turning it off restores the tabs. Renders DEN_FEATURE_TEAM_SETTINGS_SIDEBAR."
+            },
             "sessionSecuritySettings": {
               "enum": [
                 "",
