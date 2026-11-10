@@ -335,7 +335,7 @@ export function WorkbotProactiveSection({ orgId, canManage, connectorsHref, scop
             />
           )}
           {show === "policy" ? null : (
-            <WorkbotProactiveSources view={query.data} canManage={canManage} saving={saving} onChange={change} heading={show !== "sources"}
+            <WorkbotProactiveSources view={query.data} canManage={canManage} saving={saving} onChange={change} heading={show !== "sources"} help={workbotSettingsTabsEnabled(orgContext)}
               tools={{ orgId, scope, connectorHref: (connectionId) => getLibraryConnectorRoute(orgSlug, connectionId) }} />
           )}
         </div>

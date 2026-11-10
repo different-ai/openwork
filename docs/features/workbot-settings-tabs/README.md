@@ -56,6 +56,17 @@ The rules the rows follow:
 
 Without the brief, the older rows (message types, lead time) are unchanged.
 
+## Help on the other tabs
+
+- **General**: Workbot, Default model, Completion check, Step limit and Name
+  each have an "i" saying what the setting does and what turning it off
+  affects.
+- **What agents read**: Calendar, Email, Team chat and Other context each
+  have an "i" explaining "On for everyone", "Members choose" and "Not
+  allowed", and how the default app is used. Each app's switch says
+  "Allowed" or "Not allowed" beside it, and "6 connected" reads "6 members
+  connected".
+
 What each control saves and who can edit it are the same.
 
 ## Try it

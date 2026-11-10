@@ -27,10 +27,12 @@ import { DenDropdownPopup, DenDropdownRoot, DenDropdownTrigger } from "../../_co
 import { denDropdownListClass, denDropdownRowBaseClass, denDropdownRowIdleClass } from "../../_components/ui/dropdown-styles";
 import { DenSelect } from "../../_components/ui/select";
 import { DenSwitch } from "../../_components/ui/switch";
+import { HelpTip } from "./help-tip";
 import { ConnectorLogo } from "./item-logo";
 import { SourceIcon } from "./source-icon";
 import type { AgentPolicyScope } from "./workbot-agent-scope";
 import { AgentConnectionTools } from "./workbot-agent-tools";
+import { AGENT_SOURCE_HELP } from "./workbot-settings-tabs-model";
 
 /**
  * Manage › Workbot › What agents read. The admin sets guardrails and each member picks within them: for calendar,
@@ -228,7 +230,9 @@ function AddSource({ slot, options, disabled, onPick }: { slot: AgentSourceSlot;
   );
 }
 
-export function WorkbotProactiveSources({ view, canManage, saving, onChange, tools, heading = true }: {
+export function WorkbotProactiveSources({ view, canManage, saving, onChange, tools, heading = true, help = false }: {
+  /** With `workbotSettingsTabs`: an "i" on each heading, and each app's switch and count say what they are. */
+  help?: boolean;
   /** False where the section around it already says "What agents read". */
   heading?: boolean;
   view: WorkbotProactiveView;
@@ -261,7 +265,7 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
                 <ConnectorLogo name={option.name} url={option.url} size="xs" />
                 <span className={`truncate text-[13px] ${allowed ? "text-gray-900" : "text-gray-500"}`}>{option.name}</span>
                 {isDefault ? <DenBadge size="sm">Default</DenBadge> : null}
-                {option.connectedMembers !== null ? <span className="whitespace-nowrap text-[12px] text-gray-500">{`${option.connectedMembers} connected`}</span> : null}
+                {option.connectedMembers !== null ? <span className="whitespace-nowrap text-[12px] text-gray-500">{help ? `${option.connectedMembers} ${option.connectedMembers === 1 ? "member" : "members"} connected` : `${option.connectedMembers} connected`}</span> : null}
                 {state ? <span className="text-[12px] text-gray-500">{state}</span> : null}
               </span>
               <span className="flex min-w-0 items-center justify-end gap-3">
@@ -271,6 +275,7 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
                     Make default
                   </DenButton>
                 ) : null}
+                {help ? <span className="text-[12px] text-gray-500" aria-hidden="true">{allowed ? "Allowed" : "Not allowed"}</span> : null}
                 <DenSwitch size="sm" aria-label={`Allow ${option.name}`} checked={allowed} disabled={locked || isDefault}
                   onChange={(allow) => save(allowAppChange(view, kind, option.id, allow))} />
               </span>
@@ -347,7 +352,10 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
                 <span className="flex min-w-0 items-center gap-3">
                   <SourceIcon kind={kind} />
                   <span className="flex min-w-0 flex-col">
-                    <span className="text-[13px] font-medium text-gray-900">{label}</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-[13px] font-medium text-gray-900">{label}</span>
+                      {help ? <HelpTip label={label}>{`${AGENT_SOURCE_HELP.policy} ${AGENT_SOURCE_HELP.apps}`}</HelpTip> : null}
+                    </span>
                     <span className="truncate text-[12px] leading-4 text-gray-500" data-testid={`workbot-category-state-${kind}`}>
                       {connections ? coreStateLine(view, kind) : AGENT_CORE_SOURCE_COPY[kind].via}
                     </span>
@@ -362,7 +370,10 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
         {connections ? (
           <div className="pb-1" data-testid="workbot-source-others">
             <div className="flex min-h-[48px] items-center justify-between gap-3 px-6 py-2">
-              <span className="text-[13px] font-medium text-gray-900">Other context</span>
+              <span className="flex items-center gap-1.5">
+                <span className="text-[13px] font-medium text-gray-900">Other context</span>
+                {help ? <HelpTip label="Other context">{`${AGENT_SOURCE_HELP.other} ${AGENT_SOURCE_HELP.policy}`}</HelpTip> : null}
+              </span>
               {anyConnector ? <span className="text-[12px] text-gray-500" data-testid="workbot-source-others-count">{connectionCount(connections.other.length)}</span> : null}
             </div>
             {anyConnector ? everyConnectionRows() : otherRows()}

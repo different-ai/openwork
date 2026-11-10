@@ -413,3 +413,15 @@ test("grouped: with messages going nowhere and members opting in themselves, bot
 test("grouped rows need the brief: without it the message types stay as they are", () => {
   assert.ok(text(renderGrouped(ready)).includes("Send messages to"));
 });
+
+test("what agents read, with help: each heading explains itself and each app says whether it is allowed", () => {
+  const props = { view: briefOn, canManage: true, saving: false, onChange: () => undefined };
+  const html = renderToStaticMarkup(<WorkbotProactiveSources {...props} help />);
+  for (const about of ["Calendar", "Email", "Team chat", "Other context"]) assert.ok(html.includes(`aria-label="About ${about}"`), about);
+  const view = text(html);
+  assert.ok(view.includes("4 members connected"));
+  assert.ok(view.includes("Allowed"));
+  const before = renderToStaticMarkup(<WorkbotProactiveSources {...props} />);
+  assert.ok(!before.includes('aria-label="About'));
+  assert.ok(text(before).includes("4 connected"));
+});

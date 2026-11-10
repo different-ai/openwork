@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Info, Lock } from "lucide-react";
+import { Lock } from "lucide-react";
 import { useId, type ReactNode } from "react";
 import {
   AGENT_BRIEF_DAILY_CAP_MAX,
@@ -13,7 +13,7 @@ import {
 } from "@openwork/types/den/workbot-proactive";
 import { DenSelect } from "../../_components/ui/select";
 import { DenSwitch } from "../../_components/ui/switch";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../../_components/ui/tooltip";
+import { HelpTip } from "./help-tip";
 import { BriefPreview, BriefRow, everyLabel, hourLabel } from "./workbot-agent-brief-panel";
 import { agentsSwitchLabel, type AgentPolicyScope } from "./workbot-agent-scope";
 
@@ -33,22 +33,6 @@ export const AGENT_SETTING_HELP = {
   days: "The days agents check and send messages.",
   extraChecks: "Besides the schedule, an agent may ask for this many more checks a day, for example at 1:45 before a 2 PM meeting.",
 } as const;
-
-function HelpTip({ label, children }: { label: string; children: string }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={<button type="button" />}
-        aria-label={`About ${label}`}
-        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-500 outline-hidden hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-gray-400"
-      >
-        <Info size={14} strokeWidth={1.5} aria-hidden="true" />
-        <span className="sr-only">{`: ${children}`}</span>
-      </TooltipTrigger>
-      <TooltipContent>{children}</TooltipContent>
-    </Tooltip>
-  );
-}
 
 function Row({ label, labelId, help, note, children, testId }: { label: string; labelId?: string; help?: string; note?: ReactNode; children: ReactNode; testId?: string }) {
   return (
