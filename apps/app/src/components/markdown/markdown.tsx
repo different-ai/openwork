@@ -87,6 +87,10 @@ function MarkdownBlockInner({
   useEffect(() => () => {
     videoCleanups.current.forEach((cleanup) => cleanup());
     videoCleanups.current.clear();
+    for (const image of rootRef.current?.querySelectorAll<HTMLImageElement>("img[data-openwork-image-path]") ?? []) {
+      image.removeAttribute("src");
+      delete image.dataset.openworkImageState;
+    }
     for (const pending of localImageUrls.current.values()) void pending.then((url) => { if (url) URL.revokeObjectURL(url); });
     localImageUrls.current.clear();
   }, [client, workspaceId, workspaceRoot, sessionId]);
