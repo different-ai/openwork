@@ -413,7 +413,7 @@ function useSessionMenuActions({
       onArchiveSession: ctx.onArchiveSession,
       onOpenCreateGroupModal: ctx.onOpenCreateGroupModal,
     },
-    workbench: { primary, secondary, workspaceTitle, sessionTitle, getState: useWorkbenchStore.getState },
+    workbench: { primary, secondary, workspaceTitle, getState: useWorkbenchStore.getState },
   });
 }
 
@@ -2380,7 +2380,14 @@ export function SessionMenuItem({
     />
   );
 
-  const actions = useSessionMenuActions({ sessionId: session.id, workspaceId, sessionTitle: session.title, workspaceTitle: workspaceName, isPinned, isArchived });
+  const actions = useSessionMenuActions({
+    sessionId: session.id,
+    workspaceId,
+    sessionTitle: displayTitle,
+    workspaceTitle: workspaceName,
+    isPinned,
+    isArchived,
+  });
   const menu = ctx.feedEnabled ? (
     <SessionRowMenu
       sessionId={session.id}

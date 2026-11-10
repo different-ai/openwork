@@ -15,7 +15,7 @@ afterAll(async () => {
 const { sessionAction, sessionActionCatalog, sessionQuickActions } = await import("../src/react-app/domains/session/sidebar/session-action-catalog");
 const { resolveSessionActions, resolveWorkbenchActions } = await import("../src/react-app/domains/session/sidebar/session-action-resolver");
 const { dispatchMenuAction, serializeMenuActions } = await import("../src/components/ui/action-menu-model");
-const { sessionMenuActionsToPalette } = await import("../src/react-app/shell/command-palette-session-actions");
+const { sessionMenuActionsToPalette, sessionGroupActionsToPalette } = await import("../src/react-app/shell/command-palette-session-actions");
 const { SessionQuickActionButton } = await import("../src/react-app/domains/session/sidebar/session-quick-action-button");
 const { createRoot } = await import("react-dom/client");
 const { act } = await import("react");
@@ -43,6 +43,13 @@ describe("session UI catalog projections", () => {
     const legacyActions = Object.entries(sessionActionCatalog).filter(([, definition]) => definition.legacyQuick);
     expect(feedActions.map(([kind]) => kind)).toEqual(["archive"]);
     expect(legacyActions.map(([kind]) => kind)).toEqual(["pin", "archive"]);
+  });
+
+  test("omitted shortcut and group flags default to excluded", () => {
+    const actions = [sessionAction("rename")];
+    expect(sessionQuickActions(actions, "legacyQuick")).toEqual([]);
+    expect(sessionQuickActions(actions, "feedQuick")).toEqual([]);
+    expect(sessionGroupActionsToPalette(actions, () => {})).toEqual([]);
   });
 
   test("future unknown descriptors fail closed with a diagnostic, not the old silent allowlist", () => {
@@ -110,14 +117,9 @@ describe("bound session state, owner and shipped surface differences", () => {
 });
 
 describe("workbench intents and quick rendering", () => {
-  test.each([undefined, "", "   ", "Raw title"])("row split preserves raw title %j while dialogs retain display fallback", async (sessionTitle) => {
-    const { captureSessionActionTarget } = await import("../src/react-app/domains/session/sidebar/session-menu-actions");
+  test.each([undefined, "", "   ", "Named conversation"])("row split keeps the display title for %j", async (sessionTitle) => {
     const { getDisplaySessionTitle } = await import("../src/app/lib/session-title");
-    const { sessionDialogRequestFromEvent, OPEN_SESSION_ACTION_EVENT } = await import("../src/react-app/shell/session-actions-bus");
-    const target = captureSessionActionTarget([
-      { workspace: { id: "row-owner" }, sessions: [{ id: "same", title: sessionTitle }] },
-    ], "same", "row-owner")!;
-    expect(target.title).toBe(getDisplaySessionTitle(sessionTitle));
+    const target = { workspaceId: "row-owner", sessionId: "same", title: getDisplaySessionTitle(sessionTitle) };
     const openedTabs: unknown[] = [];
     const splitTabs: unknown[] = [];
     const { actions } = fixture({
@@ -125,7 +127,6 @@ describe("workbench intents and quick rendering", () => {
       workbench: {
         primary: { workspaceId: "main-owner", sessionId: "main" },
         secondary: null,
-        sessionTitle,
         getState: () => ({
           openTab: (tab) => { openedTabs.push(tab); },
           setSplit: (tab) => { splitTabs.push(tab); },
@@ -133,23 +134,16 @@ describe("workbench intents and quick rendering", () => {
       },
     });
     await dispatchMenuAction(actions, "open-split");
-    const expectedTab = { ...target, title: sessionTitle, workspaceTitle: "row-owner" };
+    const expectedTab = { ...target, workspaceTitle: "row-owner" };
     expect(openedTabs).toEqual([expectedTab]);
     expect(splitTabs).toEqual([expectedTab]);
-    // The dialog bridge still accepts only display-string targets, not raw undefined titles.
-    const event = (title: unknown) => new CustomEvent(OPEN_SESSION_ACTION_EVENT, {
-      detail: { action: "delete", target: { ...target, title } },
-    });
-    expect(sessionDialogRequestFromEvent(event(target.title))).toEqual({ action: "delete", target });
-    expect(sessionDialogRequestFromEvent(event(undefined))).toBeNull();
-    expect(sessionDialogRequestFromEvent(event(1))).toBeNull();
   });
 
   test("row binding opens the captured explicit owner and closes through the existing non-destructive workbench service", async () => {
     const main = { workspaceId: "main", sessionId: "same" };
     const side = { workspaceId: "side", sessionId: "same" };
     const events: unknown[] = [];
-    const workbench = { primary: main, secondary: side, workspaceTitle: " Row workspace ", sessionTitle: "Captured",
+    const workbench = { primary: main, secondary: side, workspaceTitle: " Row workspace ",
       getState: () => ({ openTab: (tab: unknown) => { events.push(["open", tab]); }, setSplit: (tab: unknown) => { events.push(["split", tab]); } }) };
     const row = fixture({ workbench });
     expect(row.actions.map((action) => action.type === "item" ? action.id : "separator")).toEqual([

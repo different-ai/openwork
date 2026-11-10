@@ -7,9 +7,9 @@ sessionAction("future-action");
 const { pin, ...missingPin } = sessionActionCatalog;
 // @ts-expect-error Each known action needs a catalog definition.
 const incompleteCatalog: typeof sessionActionCatalog = missingPin;
-const { feedQuick, ...missingProjection } = pin;
-// @ts-expect-error Every definition must explicitly declare each projection.
-const incompleteDefinition: typeof pin = missingProjection;
+const { palette, ...missingPalette } = pin;
+// @ts-expect-error Every definition must declare palette inclusion or exclusion.
+const incompleteDefinition: typeof pin = missingPalette;
 const future = { ...sessionAction("pin"), kind: "future-action" };
 // @ts-expect-error An adapter cannot accept an unknown action kind.
 sessionMenuActionsToPalette([future], "", () => {});

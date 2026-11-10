@@ -69,8 +69,6 @@ export type SessionActionOptions = {
     primary: WorkbenchSessionTab | null;
     secondary: WorkbenchSessionTab | null;
     workspaceTitle?: string;
-    /** Keep the row's raw title for tabs; dialog targets carry a display title. */
-    sessionTitle?: string;
     getState: () => {
       openTab: (tab: WorkbenchSessionTab) => void;
       setSplit: (tab: WorkbenchSessionTab | null) => void;
@@ -96,7 +94,6 @@ export function resolveSessionActions(options: SessionActionOptions): SessionAct
     onOpenRow: () => {
       const tab = {
         ...target,
-        title: workbench.sessionTitle,
         workspaceTitle: workbench.workspaceTitle?.trim() || target.workspaceId,
       };
       const state = workbench.getState();

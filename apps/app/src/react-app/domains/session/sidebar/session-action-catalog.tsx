@@ -32,12 +32,12 @@ type SessionActionDefinition = {
   icon?: (state: SessionActionState) => ReactNode;
   variant?: "destructive";
   palette: false | PalettePresentation;
-  groupPicker: boolean;
-  legacyQuick: boolean;
-  feedQuick: boolean;
+  groupPicker?: boolean;
+  legacyQuick?: boolean;
+  feedQuick?: boolean;
 };
 
-/** Shared presentation and projections. Menu order and availability live in the builders. */
+/** Shared presentation. Omitted shortcut/group flags are false; builders own menu order and availability. */
 export const sessionActionCatalog: Record<SessionActionKind, SessionActionDefinition> = {
   pin: {
     label: (state) => state.isPinned ? t("session_management.unpin_session") : t("session_management.pin_session"),
@@ -46,17 +46,12 @@ export const sessionActionCatalog: Record<SessionActionKind, SessionActionDefini
       id: "session.pin.toggle",
       keywords: ["pin", "unpin", "favorite", "star", "keep on top", "sidebar"],
     },
-    groupPicker: false,
     legacyQuick: true,
-    feedQuick: false,
   },
   rename: {
     label: () => t("workspace_list.rename_session"),
     icon: () => <Pencil className="size-4" />,
     palette: { id: "session.rename", keywords: ["rename", "title", "name", "edit title"] },
-    groupPicker: false,
-    legacyQuick: false,
-    feedQuick: false,
   },
   archive: {
     label: (state) => state.isArchived ? t("session_management.unarchive_session") : t("session_management.archive_session"),
@@ -65,7 +60,6 @@ export const sessionActionCatalog: Record<SessionActionKind, SessionActionDefini
       id: "session.archive",
       keywords: ["archive", "restore", "unarchive", "done", "finished", "clear", "tidy", "sidebar"],
     },
-    groupPicker: false,
     legacyQuick: true,
     feedQuick: true,
   },
@@ -74,18 +68,12 @@ export const sessionActionCatalog: Record<SessionActionKind, SessionActionDefini
     icon: () => <Trash2 className="size-4" />,
     variant: "destructive",
     palette: { id: "session.delete", keywords: ["delete", "remove"] },
-    groupPicker: false,
-    legacyQuick: false,
-    feedQuick: false,
   },
   "open-split": {
     label: () => t("session_management.open_in_split_view"),
     icon: () => <Columns2 className="size-4" />,
     // The palette uses the chooser instead of opening the route session.
     palette: false,
-    groupPicker: false,
-    legacyQuick: false,
-    feedQuick: false,
   },
   "choose-split": {
     label: () => `${t("session_management.open_in_split_view")}…`,
@@ -98,9 +86,6 @@ export const sessionActionCatalog: Record<SessionActionKind, SessionActionDefini
       detail: "Choose any session, including one from another workspace",
       searchText: "side chat split view side by side session workspace",
     },
-    groupPicker: false,
-    legacyQuick: false,
-    feedQuick: false,
   },
   "new-split": {
     label: () => t("session_management.new_split"),
@@ -111,9 +96,6 @@ export const sessionActionCatalog: Record<SessionActionKind, SessionActionDefini
       detail: "Start an empty session beside this one",
       searchText: "new side chat new split empty session side by side pane",
     },
-    groupPicker: false,
-    legacyQuick: false,
-    feedQuick: false,
   },
   "close-split": {
     label: () => t("session_management.close_split_view"),
@@ -123,41 +105,29 @@ export const sessionActionCatalog: Record<SessionActionKind, SessionActionDefini
       meta: "Workbench",
       searchText: "close side chat split view pane keep conversation",
     },
-    groupPicker: false,
-    legacyQuick: false,
-    feedQuick: false,
   },
   "move-to-group": {
     label: () => t("session_management.move_to_group"),
     icon: () => <Tag className="size-4" />,
     // The palette's group submode also supports unsent drafts.
     palette: false,
-    groupPicker: false,
-    legacyQuick: false,
-    feedQuick: false,
   },
   ungroup: {
     label: () => t("session_management.no_group"),
     palette: false,
     groupPicker: true,
-    legacyQuick: false,
-    feedQuick: false,
   },
   group: {
     // Label is supplied by the named group, never its id.
     label: () => "",
     palette: false,
     groupPicker: true,
-    legacyQuick: false,
-    feedQuick: false,
   },
   "new-group": {
     label: () => t("session_management.new_group"),
     icon: () => <FolderPlus className="size-4" />,
     palette: false,
     groupPicker: true,
-    legacyQuick: false,
-    feedQuick: false,
   },
 };
 
