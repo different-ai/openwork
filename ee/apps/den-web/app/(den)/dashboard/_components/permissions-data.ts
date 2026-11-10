@@ -5,6 +5,7 @@ import { getPermissionDefinition, isPermissionKey } from "@openwork/types/den/pe
 import { z } from "zod";
 import { getErrorMessage, getReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
+import { roleSetTeams } from "../../_lib/role-catalog";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { permissionsQueryKeys } from "./permissions-query-keys";
 
@@ -260,8 +261,7 @@ export function useCustomRoleTeams(orgId: string | null, enabled: boolean) {
   for (const set of query.data ?? []) {
     if (set.kind !== "team") continue;
     // A shared role (sharedRoles) applies to every team in `teams`.
-    const teams = set.teams.length > 0 ? set.teams : set.team ? [set.team] : [];
-    for (const team of teams) setByTeam.set(team.id, set);
+    for (const team of roleSetTeams(set)) setByTeam.set(team.id, set);
   }
   const nameByTeam = new Map([...setByTeam].map(([teamId, set]) => [teamId, set.name]));
   return { setByTeam, nameByTeam, teamIds: new Set(setByTeam.keys()), loading: enabled && query.isPending };

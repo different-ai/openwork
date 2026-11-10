@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { ChevronRight, History, LockKeyhole, ShieldCheck, Users } from "lucide-react";
-import { PERMISSION_KEYS, getPermissionDefinition, isPermissionDefaultOn, isPermissionKey, type PermissionDefaultSetKey, type PermissionKey } from "@openwork/types/den/permissions";
+import { PERMISSION_KEYS, getPermissionDefinition, isPermissionDefaultOn, isPermissionKey, type PermissionKey } from "@openwork/types/den/permissions";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
@@ -33,6 +33,7 @@ import {
   type PermissionEditorRow,
   type PermissionsAccess,
 } from "./permissions-ui";
+import { defaultSetForSetKind } from "../../_lib/role-catalog";
 import { roleKindLabel, roleName } from "./team-roles";
 import { RoleNameField, SharedRoleTeams } from "./shared-role-teams";
 
@@ -199,24 +200,11 @@ function AppliesTo({ ready, set }: { ready: ReadyAccess; set: PermissionSetDetai
   );
 }
 
-function setDefaultKey(set: Pick<PermissionSetDetail, "kind">): PermissionDefaultSetKey | null {
-  switch (set.kind) {
-    case "member_default":
-      return "member";
-    case "admin_default":
-      return "admin";
-    case "super_admin_default":
-      return "super-admin";
-    default:
-      return null;
-  }
-}
-
 /** Why a key can't be changed in this set by this person, or null. */
 function keyLockReason(ready: ReadyAccess, set: PermissionSetDetail, key: PermissionKey, saved: PermissionStatus, locked: boolean): string | null {
   if (locked) return "Always on for admins";
   if (saved === "allow" || ready.held.has(key)) return null;
-  const defaultKey = setDefaultKey(set);
+  const defaultKey = defaultSetForSetKind(set.kind);
   // Re-allowing a key that is on by default in this default set is always allowed.
   if (defaultKey && isPermissionDefaultOn(getPermissionDefinition(key), defaultKey)) return null;
   return "You don't have this permission";

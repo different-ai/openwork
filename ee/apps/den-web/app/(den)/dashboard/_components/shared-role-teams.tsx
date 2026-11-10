@@ -6,6 +6,7 @@ import { Users } from "lucide-react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
+import { roleSetTeams } from "../../_lib/role-catalog";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { AccessRow, AddPicker, IconTile, RemoveButton } from "./access-rows";
 import { useDenToast } from "./den-toast";
@@ -37,7 +38,7 @@ export function SharedRoleTeams({ ready, set }: { ready: ReadyAccess; set: Permi
   const roleByTeam = new Map<string, string>();
   for (const other of setsQuery.data ?? []) {
     if (other.kind !== "team" || other.id === set.id) continue;
-    for (const team of other.teams.length > 0 ? other.teams : other.team ? [other.team] : []) roleByTeam.set(team.id, other.name);
+    for (const team of roleSetTeams(other)) roleByTeam.set(team.id, other.name);
   }
   const addable = teams
     .filter((team) => !onRole.has(team.id))
