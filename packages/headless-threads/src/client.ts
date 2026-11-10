@@ -386,7 +386,7 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
         parts: [{ type: "text", text: prompt }],
         ...(messageId === undefined ? {} : { messageID: messageId }),
         ...(model === null ? {} : { model: { providerID: model.providerId, modelID: model.modelId } }),
-        ...(model?.variant === undefined ? {} : { variant: model.variant }),
+        ...(model?.variant ? { variant: model.variant } : {}),
       }, { signal: requestSignal(signal) });
       sdkSuccess(result, "POST", path);
     },
@@ -529,7 +529,7 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       if (model !== null) {
         const modelPath = `${v2SessionPath(threadId)}/model`;
         const result = await send("POST", modelPath, {
-          body: { model: { providerID: model.providerId, id: model.modelId, ...(model.variant === undefined ? {} : { variant: model.variant }) } },
+          body: { model: { providerID: model.providerId, id: model.modelId, ...(model.variant ? { variant: model.variant } : {}) } },
           signal,
         });
         if (!result.response.ok) throw failure("POST", modelPath, result);
