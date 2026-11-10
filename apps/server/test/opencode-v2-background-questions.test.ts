@@ -21,7 +21,7 @@ async function fakeEngine() {
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.write(`data: ${JSON.stringify({ type: "server.connected", data: {} })}\n\n`);
       streams.add(response);
-      request.on("close", () => streams.delete(response));
+      response.on("close", () => streams.delete(response));
       return;
     }
     let text = "";
