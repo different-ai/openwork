@@ -10,6 +10,9 @@ import {
   setDenBootstrapConfig,
 } from "../../app/lib/den";
 import { exchangeHandoffAndSignIn } from "../../app/lib/den-handoff";
+import { denDeviceLogin, isConfiguredDenDeviceDestination } from "../../app/lib/den-device-login";
+import { createDeviceLoginControl } from "../../app/lib/device-login-control";
+import { useDeploymentFeature } from "../domains/session/status/use-desktop-feature";
 import {
   denSettingsChangedEvent,
   denSessionUpdatedEvent,
@@ -255,6 +258,18 @@ function DenSigninGate({ children }: DenSigninGateProps) {
  */
 function DenAuthControlActions() {
   const denAuth = useDenAuth();
+  const deviceLoginEnabled = useDeploymentFeature("remoteDesktopDeviceLogin");
+  const deviceLoginEnabledRef = useRef(deviceLoginEnabled);
+  deviceLoginEnabledRef.current = deviceLoginEnabled;
+  const deviceLoginControl = useMemo(() => createDeviceLoginControl({
+    flow: denDeviceLogin,
+    deploymentEnabled: () => deviceLoginEnabledRef.current,
+    isConfiguredDestination: isConfiguredDenDeviceDestination,
+  }), []);
+  useEffect(() => {
+    // Stop a pending configured-server flow when its deployment switch goes off.
+    if (!deviceLoginEnabled) deviceLoginControl.status();
+  }, [deviceLoginControl, deviceLoginEnabled]);
 
   const exchangeGrantAction = useMemo<OpenworkControlAction>(() => ({
     id: "auth.exchange-grant",
@@ -288,6 +303,46 @@ function DenAuthControlActions() {
     },
   }), []);
   useControlAction(exchangeGrantAction);
+
+  const deviceLoginStartAction = useMemo<OpenworkControlAction>(() => ({
+    id: "auth.device-login.start",
+    label: "Start device sign-in",
+    description: "Sign this computer in by approving a code on another computer. Requires this server's device sign-in feature.",
+    sideEffect: "mutation",
+    args: [
+      { name: "baseUrl", type: "string", required: false, description: "Optional Den base URL." },
+      { name: "apiBaseUrl", type: "string", required: false, description: "Optional separately hosted Den API URL." },
+      { name: "force", type: "boolean", required: false, description: "Replace an existing sign-in (equivalent to --force)." },
+    ],
+    execute: (args) => {
+      const value = args && typeof args === "object" ? args : {};
+      return deviceLoginControl.start({
+        baseUrl: "baseUrl" in value && typeof value.baseUrl === "string" ? value.baseUrl : undefined,
+        apiBaseUrl: "apiBaseUrl" in value && typeof value.apiBaseUrl === "string" ? value.apiBaseUrl : undefined,
+        force: "force" in value && value.force === true,
+      });
+    },
+  }), [deviceLoginControl]);
+  useControlAction(deviceLoginStartAction);
+
+  const deviceLoginStatusAction = useMemo<OpenworkControlAction>(() => ({
+    id: "auth.device-login.status",
+    label: "Get device sign-in status",
+    kind: "query",
+    effects: { data: "read", ui: "none", external: false },
+    sideEffect: "none",
+    execute: () => deviceLoginControl.status(),
+  }), [deviceLoginControl]);
+  useControlAction(deviceLoginStatusAction);
+
+  const deviceLoginCancelAction = useMemo<OpenworkControlAction>(() => ({
+    id: "auth.device-login.cancel",
+    label: "Cancel device sign-in",
+    description: "Stop polling and discard this computer's pending sign-in code.",
+    sideEffect: "mutation",
+    execute: () => deviceLoginControl.cancel(),
+  }), [deviceLoginControl]);
+  useControlAction(deviceLoginCancelAction);
 
   const authStatusAction = useMemo<OpenworkControlAction>(() => ({
     id: "auth.status",
