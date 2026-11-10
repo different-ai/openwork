@@ -50,21 +50,26 @@ export async function workbotBrowserLifecycle(_seed: Seed, { place }: { place: P
       await delay(100);
     }
     const web = resources.use(await chrome({ host: place.host(), name: "workbot-browser-lifecycle", startUrl: "about:blank", headless: true }));
-    let cardObject: string | undefined;
+    // Read-only CDP DOM identity witness: the browser keeps one backend node id for
+    // a DOM node's whole life. This only observes; it never runs page code, injects
+    // a selector marker, changes app state or replaces a frame.
+    const cardNode = async () => {
+      const document = z.object({ root: z.object({ nodeId: z.number() }) }).parse(await web.client.send("DOM.getDocument", { depth: 0 }));
+      const match = z.object({ nodeId: z.number() }).parse(await web.client.send("DOM.querySelector", { nodeId: document.root.nodeId, selector: "[data-workbot-browser-card]" }));
+      if (!match.nodeId) return undefined;
+      const described = z.object({ node: z.object({ backendNodeId: z.number() }) }).parse(await web.client.send("DOM.describeNode", { nodeId: match.nodeId }));
+      return described.node.backendNodeId;
+    };
+    let card: number | undefined;
     return {
       web, url,
       async requests() { return witnessSchema.parse(await fetch(`${url}fixture/browser-witness`).then(response => response.json())); },
-      // CDP retains the actual DOM node as an opaque handle. This only observes;
-      // it never injects a selector marker, changes app state or replaces a frame.
       async keepCardIdentity() {
-        const result = z.object({ result: z.object({ objectId: z.string().optional() }) }).parse(await web.client.send("Runtime.evaluate", { expression: 'document.querySelector("[data-workbot-browser-card]")' }));
-        cardObject = result.result.objectId;
-        if (!cardObject) throw new Error("The browser card did not exist");
+        card = await cardNode();
+        if (card === undefined) throw new Error("The browser card did not exist");
       },
       async sameCard() {
-        if (!cardObject) return false;
-        const result = z.object({ result: z.object({ value: z.boolean() }) }).parse(await web.client.send("Runtime.callFunctionOn", { objectId: cardObject, functionDeclaration: 'function () { return this.isConnected && this === document.querySelector("[data-workbot-browser-card]"); }', returnByValue: true }));
-        return result.result.value === true;
+        return card !== undefined && await cardNode() === card;
       },
       async [Symbol.asyncDispose]() { await resources.disposeAsync(); },
     };
