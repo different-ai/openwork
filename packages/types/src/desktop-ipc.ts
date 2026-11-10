@@ -305,6 +305,7 @@ export type NukeReceipt = {
 
 export type DesktopFetchInit = {
   transferId?: string;
+  redirect?: "error";
   method?: string;
   headers?: Record<string, string>;
   body?: string;

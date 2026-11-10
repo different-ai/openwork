@@ -5,7 +5,7 @@
 // (createRuntimeManager pattern).
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
-import { rm, writeFile } from "node:fs/promises";
+import { open, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export function createUiControlServer({
@@ -216,11 +216,20 @@ export function createUiControlServer({
     const port = typeof address === "object" && address ? address.port : null;
     if (!port) throw new Error("Could not start OpenWork UI control bridge.");
     uiControlDiscoveryPath = path.join(app.getPath("userData"), "openwork-ui-control.json");
-    await writeFile(
-      uiControlDiscoveryPath,
-      `${JSON.stringify({ version: 2, app: appName, identifier: appIdentifier, platform: process.platform, baseUrl: `http://127.0.0.1:${port}`, token: uiControlToken }, null, 2)}\n`,
-      "utf8",
-    );
+    const discovery = `${JSON.stringify({ version: 2, app: appName, identifier: appIdentifier, platform: process.platform, baseUrl: `http://127.0.0.1:${port}`, token: uiControlToken }, null, 2)}\n`;
+    if (process.platform === "win32") {
+      await writeFile(uiControlDiscoveryPath, discovery, "utf8");
+    } else {
+      const file = await open(uiControlDiscoveryPath, "w", 0o600);
+      try {
+        // open's mode applies only to new files. Tighten an existing discovery
+        // file before writing the new bearer, not after exposing it briefly.
+        await file.chmod(0o600);
+        await file.writeFile(discovery, "utf8");
+      } finally {
+        await file.close();
+      }
+    }
     // Make the discovery path available to child processes (server → managed OpenCode → plugin).
     process.env.OPENWORK_UI_CONTROL_DISCOVERY = uiControlDiscoveryPath;
   }

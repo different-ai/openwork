@@ -51,7 +51,7 @@ import { cache } from "./cache.js";
 import { lastSignInCookieChange, lastSignInCookieWrites } from "./last-sign-in-method.js";
 import { hashSessionTokens } from "./session-token.js";
 import { DEN_DESKTOP_DEVICE_CLIENT_ID } from "./device-clients.js";
-import { desktopDeviceAccessDenied, desktopDeviceLoginEnabled, guardDesktopDeviceSessions, stageApprovedDesktopSession } from "./desktop-device-login.js";
+import { beginDesktopDeviceClaim, desktopDeviceAccessDenied, desktopDeviceLoginEnabled, guardDesktopDeviceSessions, requireDesktopDeviceClaim } from "./desktop-device-login.js";
 import { auditBetterAuthAfter, auditBetterAuthBefore, auditBetterAuthRefusal, auditBetterAuthSessionAfter, auditBetterAuthSessionBefore, BETTER_AUTH_AUDIT_AFTER_PATHS, BETTER_AUTH_AUDIT_BEFORE_PATHS, BETTER_AUTH_SESSION_AFTER_PATHS, BETTER_AUTH_SESSION_BEFORE_PATHS, noteOAuthConsentReference, noteOAuthRevocation, noteOAuthTokenIssuance, type BetterAuthHookSession } from "./audit/better-auth.js";
 import { auditUserUpdateAfter, auditUserUpdateBefore, recordAccountDeleted, recordIdentityLinked, recordIdentityUnlinked } from "./audit/domain/account.js";
 import { auditSessionMethod, auditSessionRevokeReason, recordSessionCreated, recordSessionRevoked } from "./audit/domain/sessions.js";
@@ -892,7 +892,6 @@ export const auth = betterAuth({
   database: guardDesktopDeviceSessions(
     hashSessionTokens(drizzleAdapter(db.$primary, { provider: "mysql", schema }), { secret: env.betterAuthSecret }),
     (database) => hashSessionTokens(drizzleAdapter(database, { provider: "mysql", schema }), { secret: env.betterAuthSecret }),
-    (token) => { deviceApprovedSessionOrganizations.delete(token); },
   ),
   account: DEN_ACCOUNT_CONFIG,
   user: denUserConfig({
@@ -1044,11 +1043,12 @@ export const auth = betterAuth({
         before: async (session, context) => {
           const userId = normalizeDenTypeId("user", session.userId);
           const deviceCode = context?.path === "/device/token" ? readStringProperty(context.body, "device_code") : null;
-          const deviceApproval = deviceCode
-            ? await takeDeviceSessionOrganization({ deviceCode, userId, clientId: readStringProperty(context?.body, "client_id") })
-            : null;
+          const desktopDevice = context?.path === "/device/token" && readStringProperty(context.body, "client_id") === DEN_DESKTOP_DEVICE_CLIENT_ID;
+          const deviceApproval = desktopDevice
+            ? requireDesktopDeviceClaim(userId)
+            : deviceCode ? await takeDeviceSessionOrganization({ deviceCode, userId }) : null;
           const activeOrganizationId = deviceApproval?.organizationId ?? await getInitialActiveOrganizationIdForUser(userId);
-          if (deviceApproval && typeof session.token === "string") {
+          if (deviceApproval && !desktopDevice && typeof session.token === "string") {
             deviceApprovedSessionOrganizations.set(session.token, deviceApproval);
           }
           try {
@@ -1059,13 +1059,7 @@ export const auth = betterAuth({
             logger.error("invitation reconcile failed", { user_id: userId, error });
           }
 
-          // Resolve other session hooks before staging the insert guard.
           const expiresAt = await clampSessionExpiresAt(userId, session.expiresAt, session.createdAt instanceof Date ? session.createdAt : new Date());
-          const desktopDevice = deviceApproval?.clientId === DEN_DESKTOP_DEVICE_CLIENT_ID;
-          if (desktopDevice) {
-            if (typeof session.token !== "string") throw desktopDeviceAccessDenied();
-            stageApprovedDesktopSession(session.token, { userId, organizationId: deviceApproval.organizationId });
-          }
           return {
             data: {
               ...session,
@@ -1095,8 +1089,11 @@ export const auth = betterAuth({
                 .catch((error) => logger.error("earlier SSO sign-ins could not be carried to the new session", { error }));
             }
           }
-          const deviceApproval = typeof session.token === "string" ? deviceApprovedSessionOrganizations.get(session.token) : undefined;
-          if (typeof session.token === "string") deviceApprovedSessionOrganizations.delete(session.token);
+          const desktopDevice = path === "/device/token" && readStringProperty(context?.body, "client_id") === DEN_DESKTOP_DEVICE_CLIENT_ID;
+          const deviceApproval = desktopDevice
+            ? requireDesktopDeviceClaim(normalizeDenTypeId("user", session.userId))
+            : typeof session.token === "string" ? deviceApprovedSessionOrganizations.get(session.token) : undefined;
+          if (!desktopDevice && typeof session.token === "string") deviceApprovedSessionOrganizations.delete(session.token);
           if (deviceApproval?.ssoProviderId && typeof session.id === "string") {
             await recordDeviceSessionSsoAuthentication({ sessionId: session.id, userId: session.userId, organizationId: deviceApproval.organizationId, providerId: deviceApproval.ssoProviderId, authenticatedAt: deviceApproval.ssoAuthenticatedAt })
               .catch((error) => logger.error("device session SSO provenance could not be recorded", { error }));
@@ -1149,6 +1146,9 @@ export const auth = betterAuth({
   },
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path === "/device/token" && readStringProperty(ctx.body, "client_id") === DEN_DESKTOP_DEVICE_CLIENT_ID) {
+        beginDesktopDeviceClaim();
+      }
       if ((ctx.path === "/device/code" || ctx.path === "/device/token") && readStringProperty(ctx.body, "client_id") === DEN_DESKTOP_DEVICE_CLIENT_ID) {
         const enabled = await db.transaction((tx) => desktopDeviceLoginEnabled(tx));
         if (!enabled) {
@@ -1156,7 +1156,7 @@ export const auth = betterAuth({
           throw desktopDeviceAccessDenied();
         }
       }
-      if (ctx.path === "/device/token") {
+      if (ctx.path === "/device/token" && readStringProperty(ctx.body, "client_id") !== DEN_DESKTOP_DEVICE_CLIENT_ID) {
         const deviceCode = readStringProperty(ctx.body, "device_code");
         if (deviceCode) {
           await stageDeviceSessionOrganization(deviceCode);
@@ -1428,7 +1428,7 @@ export const auth = betterAuth({
 
       if (ctx.path === "/device/token") {
         const deviceCode = readStringProperty(ctx.body, "device_code");
-        if (deviceCode) {
+        if (deviceCode && readStringProperty(ctx.body, "client_id") !== DEN_DESKTOP_DEVICE_CLIENT_ID) {
           clearDeviceSessionOrganization(deviceCode);
         }
         return;

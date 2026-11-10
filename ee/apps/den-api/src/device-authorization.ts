@@ -5,7 +5,7 @@ import { db } from "./db.js"
 import { readSessionSsoProof } from "./organization-sso-access.js"
 import type { FeatureDatabase } from "@openwork-ee/den-db/organization-features"
 import { DEN_DESKTOP_DEVICE_CLIENT_ID } from "./device-clients.js"
-import { desktopDeviceAccessDenied, desktopDeviceLoginEnabled } from "./desktop-device-login.js"
+import { desktopDeviceLoginEnabled } from "./desktop-device-login.js"
 
 /**
  * OAuth 2.0 Device Authorization Grant (RFC 8628) for command-line sign-in.
@@ -27,7 +27,7 @@ export function normalizeDeviceUserCode(userCode: string): string {
   return userCode.replace(/[\s-]/g, "").toUpperCase()
 }
 
-export type PendingDeviceOrganization = { userId: string; organizationId: string; clientId: string | null; ssoProviderId: string | null; ssoAuthenticatedAt: Date | null }
+export type PendingDeviceOrganization = { userId: string; organizationId: string; ssoProviderId: string | null; ssoAuthenticatedAt: Date | null }
 
 // Filled by the `/device/token` before-hook when the code is approved and read
 // by the session-create hook in the same request; the after-hook always clears
@@ -39,7 +39,6 @@ export async function stageDeviceSessionOrganization(deviceCode: string): Promis
   const [row] = await db.$primary
     .select({
       status: DeviceCodeTable.status,
-      clientId: DeviceCodeTable.clientId,
       userId: DeviceCodeTable.userId,
       organizationId: DeviceCodeTable.organizationId,
       ssoProviderId: DeviceCodeTable.ssoProviderId,
@@ -51,7 +50,7 @@ export async function stageDeviceSessionOrganization(deviceCode: string): Promis
   if (!row || row.status !== "approved" || !row.userId || !row.organizationId) {
     return
   }
-  pendingDeviceOrganizations.set(deviceCode, { userId: row.userId, organizationId: row.organizationId, clientId: row.clientId, ssoProviderId: row.ssoProviderId, ssoAuthenticatedAt: row.ssoAuthenticatedAt })
+  pendingDeviceOrganizations.set(deviceCode, { userId: row.userId, organizationId: row.organizationId, ssoProviderId: row.ssoProviderId, ssoAuthenticatedAt: row.ssoAuthenticatedAt })
 }
 
 export function clearDeviceSessionOrganization(deviceCode: string): void {
@@ -81,14 +80,9 @@ async function activeMemberId(input: { userId: string; organizationId: string },
  * default. Membership is re-checked at token time so a person removed between
  * approval and the next poll never lands in that organization.
  */
-export async function takeDeviceSessionOrganization(input: { deviceCode: string; userId: string; clientId?: string | null }): Promise<PendingDeviceOrganization | null> {
+export async function takeDeviceSessionOrganization(input: { deviceCode: string; userId: string }): Promise<PendingDeviceOrganization | null> {
   const pending = pendingDeviceOrganizations.get(input.deviceCode)
   pendingDeviceOrganizations.delete(input.deviceCode)
-  if (input.clientId === DEN_DESKTOP_DEVICE_CLIENT_ID || pending?.clientId === DEN_DESKTOP_DEVICE_CLIENT_ID) {
-    // A missing/removed approval must never take the default-organization path.
-    if (!pending || pending.userId !== input.userId || pending.clientId !== input.clientId) throw desktopDeviceAccessDenied()
-    return pending // Membership + rollout are locked again around the actual insert.
-  }
   if (!pending || pending.userId !== input.userId) return null
   return await isActiveMember(pending) ? pending : null
 }

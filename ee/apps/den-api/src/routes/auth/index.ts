@@ -19,6 +19,7 @@ import {
   recordEmailSignInResult,
 } from "../../auth-protection.js"
 import { db } from "../../db.js"
+import { withDesktopDeviceClaimRequest } from "../../desktop-device-login.js"
 import { env } from "../../env.js"
 import { findDomainSsoRequirement, listOrganizationSsoSignInOptions, ssoSignInUrl } from "../../organization-sso-access.js"
 import { resolveLoginSsoRouting } from "../../sso-routing.js"
@@ -890,7 +891,7 @@ async function handleAuthRequest(c: Context) {
 
   let response: Response
   try {
-    response = await timeScimDiagnosticStage("better_auth_ms", () => auth.handler(betterAuthRequest(authRequest)))
+    response = await timeScimDiagnosticStage("better_auth_ms", () => withDesktopDeviceClaimRequest(() => auth.handler(betterAuthRequest(authRequest))))
   } catch (error) {
     if (ssoCallbackAuthorization?.ok && ssoCallbackAuthorization.mode === "test") {
       await failOrganizationSsoTestIntent(ssoCallbackAuthorization.intentId, "authentication")

@@ -1,5 +1,6 @@
 import type { DesktopAgentPermissionRule } from "@openwork/types/den/desktop-policies";
 import { nativeDeepLinkEvent } from "./deep-link-bridge";
+import { DESKTOP_DEVICE_CLIENT_ID } from "./device-login-flow";
 
 export type * from "./desktop-types";
 export type {
@@ -40,6 +41,7 @@ import type {
   DesktopCommandInvokers,
   DesktopCommandName,
   DesktopCommandResult,
+  DesktopFetchInit,
   DesktopFetchResult,
   EvalRelaunchResult,
   NukeManifestPreview,
@@ -395,6 +397,19 @@ export function isPermissionReplyRequest(input: RequestInfo | URL, init?: Reques
   }
 }
 
+export function isDesktopDeviceLoginRequest(input: RequestInfo | URL, init?: RequestInit): boolean {
+  const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+  if (method.toUpperCase() !== "POST" || typeof init?.body !== "string") return false;
+  const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  try {
+    if (!/\/api\/auth\/device\/(?:code|token)$/.test(new URL(raw).pathname)) return false;
+    const body: unknown = JSON.parse(init.body);
+    return typeof body === "object" && body !== null && "client_id" in body && body.client_id === DESKTOP_DEVICE_CLIENT_ID;
+  } catch {
+    return false;
+  }
+}
+
 function desktopTransferId(): string {
   return crypto.randomUUID();
 }
@@ -460,12 +475,17 @@ async function desktopFetchThroughMain(
   // command POSTs keep their distinct admission/unknown-outcome contract.
   const cancellable = ["GET", "PATCH"].includes(requestMethod)
     || (requestMethod === "POST" && /\/session\/[^/]+\/abort$/.test(new URL(url).pathname))
-    || isPermissionReplyRequest(url, { method: requestMethod });
+    || isPermissionReplyRequest(url, { method: requestMethod })
+    || isDesktopDeviceLoginRequest(url, { method: requestMethod, body });
   const signal = cancellable && diagnosticsDeadlineAtMs === undefined
     ? init?.signal === undefined ? (input instanceof Request ? input.signal : undefined) : init.signal
     : undefined;
   const transferId = signal ? desktopTransferId() : undefined;
-  const fetchResponse = () => invokeElectronHelper("__fetch", url, {
+  const fetchInit: DesktopFetchInit = {
+    // Only forward explicit refusal. Existing callers keep their transport defaults.
+    ...((init?.redirect ?? (input instanceof Request ? input.redirect : undefined)) === "error"
+      ? { redirect: "error" satisfies RequestRedirect }
+      : {}),
     transferId,
     method,
     headers,
@@ -474,7 +494,8 @@ async function desktopFetchThroughMain(
     agentContextDiagnostics: diagnosticsDeadlineAtMs === undefined
       ? undefined
       : { deadlineAtMs: diagnosticsDeadlineAtMs },
-  });
+  };
+  const fetchResponse = () => invokeElectronHelper("__fetch", url, fetchInit);
   let result: DesktopFetchResult;
   try {
     result = transferId && signal

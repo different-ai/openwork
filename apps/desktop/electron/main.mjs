@@ -2705,6 +2705,7 @@ const desktopCommandHandlers = {
         body: typeof init.body === "string" ? init.body : undefined,
         credentials: "omit",
         cache: "no-store",
+        ...(init.redirect === "error" ? { redirect: "error" } : {}),
       };
       if (init.agentContextDiagnostics && typeof init.agentContextDiagnostics === "object") {
         return fetchAgentContextDiagnosticsResponse(
@@ -2727,8 +2728,13 @@ const desktopCommandHandlers = {
         };
       };
       const method = (requestInit.method ?? "GET").toUpperCase();
+      let desktopDeviceRequest = false;
+      if (method === "POST" && /\/api\/auth\/device\/(?:code|token)$/.test(new URL(url).pathname) && typeof requestInit.body === "string") {
+        try { desktopDeviceRequest = JSON.parse(requestInit.body)?.client_id === "openwork-desktop-device"; } catch {}
+      }
       const cancellable = ["GET", "PATCH"].includes(method)
-        || (method === "POST" && /\/(?:session\/[^/]+\/abort|permission\/[A-Za-z0-9_-]+\/reply)$/.test(new URL(url).pathname));
+        || (method === "POST" && /\/(?:session\/[^/]+\/abort|permission\/[A-Za-z0-9_-]+\/reply)$/.test(new URL(url).pathname))
+        || desktopDeviceRequest;
       return cancellable && init.transferId
         ? desktopTransfers.run(event, init.transferId, fetchResponse)
         : fetchResponse(undefined);

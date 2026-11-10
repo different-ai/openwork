@@ -7,6 +7,13 @@ import {
 } from "./den";
 import { beginDenEnrollment, commitDenEnrollment } from "./den-handoff";
 import { createDesktopDeviceLogin, type DeviceLoginStartOptions } from "./device-login-flow";
+import { desktopFetchViaMain } from "./desktop";
+import { isDesktopRuntime } from "./runtime-env";
+
+/** Finite app-owned transport, also for packaged file:// renderers and alternate loopback ports. */
+export function fetchDenDeviceLogin(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return isDesktopRuntime() ? desktopFetchViaMain(input, init, 10_000) : fetch(input, init);
+}
 
 export function isConfiguredDenDeviceDestination(options: DeviceLoginStartOptions): boolean {
   const stored = readDenSettings();
@@ -28,11 +35,10 @@ function assertDeviceLoginUrl(value: string) {
   )) throw new Error("Invalid device sign-in destination.");
 }
 
-// Deliberately renderer fetch: desktopFetch serializes credentials through __fetch IPC.
-// Cross-origin deployments must permit these bearer-only requests via CORS; do not
-// silently fall back to the main-process transport when a server rejects preflight.
+// Credentials stay within the app's existing trusted renderer/main transport,
+// never the shell command, engine, project plugins, or public control projection.
 async function getJson(apiBaseUrl: string, path: string, signal: AbortSignal, token?: string): Promise<unknown> {
-  const response = await fetch(`${apiBaseUrl.replace(/\/+$/, "")}${path}`, {
+  const response = await fetchDenDeviceLogin(`${apiBaseUrl.replace(/\/+$/, "")}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     credentials: "omit", redirect: "error", cache: "no-store", signal,
   });
@@ -42,6 +48,7 @@ async function getJson(apiBaseUrl: string, path: string, signal: AbortSignal, to
 
 /** Renderer singleton: control actions receive only the public projection of this flow. */
 export const denDeviceLogin = createDesktopDeviceLogin({
+  fetcher: fetchDenDeviceLogin,
   isSignedIn: () => Boolean(readDenSettings().authToken?.trim()),
   beginEnrollment: () => beginDenEnrollment({ deferred: true }),
   async prepare(options, signal) {

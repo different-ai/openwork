@@ -105,6 +105,30 @@ describe("desktop-owned device sign-in", () => {
     expect(h.waits).toHaveLength(0);
   });
 
+  test.each([
+    { error: "access_denied", error_description: "Device sign-in is not available on this server. Use the sign-in link instead." },
+    { code: "FORBIDDEN", message: "Device sign-in is not available on this server. Use the sign-in link instead." },
+  ])("the server's fixed disabled error is unsupported, not a user denial (%j)", async (payload) => {
+    const h = harness({ responses: [Response.json(payload, { status: 403 })] });
+    await h.flow.start();
+    await h.tick();
+    expect(h.flow.status()).toEqual({ state: "unsupported", message: DEVICE_LOGIN_UNSUPPORTED });
+    expect(h.enroll).not.toHaveBeenCalled();
+  });
+
+  test("disabled during code issuance returns only the fixed unsupported message", async () => {
+    const h = harness({ start: Response.json({ error: "access_denied", error_description: "Device sign-in is not available on this server. Use the sign-in link instead." }, { status: 403 }) });
+    expect(await h.flow.start()).toEqual({ state: "unsupported", message: DEVICE_LOGIN_UNSUPPORTED });
+    expect(h.requests).toHaveLength(1);
+  });
+
+  test("ordinary access_denied descriptions remain user denial and are never echoed", async () => {
+    const h = harness({ responses: [Response.json({ error: "access_denied", error_description: "private-device-code" }, { status: 400 })] });
+    await h.flow.start();
+    await h.tick();
+    expect(h.flow.status()).toEqual({ state: "denied" });
+  });
+
   test("network timeouts back off without restarting the authorization", async () => {
     const h = harness({ responses: [new Error("private-device-code"), Response.json({ access_token: "private-bearer" })] });
     await h.flow.start();
@@ -178,6 +202,7 @@ describe("desktop-owned device sign-in", () => {
 
   test("Retry-After accepts seconds and HTTP dates, rejects numeric junk", () => {
     expect(deviceRetryAfterMs("20", 0)).toBe(20000);
+    expect(deviceRetryAfterMs("9".repeat(400), 0)).toBe(15 * 60_000);
     expect(deviceRetryAfterMs("Thu, 01 Jan 1970 00:01:00 GMT", 10000)).toBe(50000);
     expect(deviceRetryAfterMs("-1", 0)).toBe(0);
   });
