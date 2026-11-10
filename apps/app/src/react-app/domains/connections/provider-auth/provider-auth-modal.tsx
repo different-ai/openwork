@@ -7,6 +7,7 @@ import {
   CLAUDE_CODE_SIGN_IN_COMMAND,
   claudeAgentConnected,
   claudeAgentProblem,
+  claudeCodeMissing,
   type ClaudeAgentSetupState,
 } from "@/app/lib/claude-agent";
 import {
@@ -82,6 +83,13 @@ export type ProviderAuthModalProps = {
   claudeAgent?: ClaudeAgentSetupState;
   /** Resolves with the success message once the engine confirms the Claude Code login; rejects with the reason. */
   onConnectClaudeAgent?: () => Promise<unknown>;
+  /**
+   * Connects like onConnectClaudeAgent, first making sure Claude Code is signed in: when it is not, Claude Code's
+   * own sign-in opens in the browser. Used where `claudeAgent.canSignIn` says OpenWork can run it.
+   */
+  onSignInClaudeAgent?: () => Promise<unknown>;
+  /** Stops waiting on a Claude Code sign-in the person gave up on. */
+  onCancelClaudeAgentSignIn?: () => unknown;
   open: boolean;
   loading: boolean;
   submitting: boolean;
@@ -238,9 +246,12 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const resolvedView = selectedEntry ? view : "list";
   const claudeChecking = Boolean(props.claudeAgent?.checking);
   const claudeBusy = Boolean(props.claudeAgent?.busy);
+  const claudeSigningIn = Boolean(props.claudeAgent?.signingIn);
+  // OpenWork opens Claude Code's sign-in itself here; elsewhere the person runs the command in a terminal.
+  const claudeCanSignIn = Boolean(props.claudeAgent?.canSignIn && props.onSignInClaudeAgent);
   // The engine's provider list can fail independently of Claude Code, whose
   // step shows only its own result: the last check's reason, or none while checking.
-  const claudeError = claudeChecking ? null : props.claudeAgent?.error ?? claudeAgentProblem(props.claudeAgent)?.message ?? null;
+  const claudeError = claudeChecking || claudeSigningIn ? null : props.claudeAgent?.error ?? claudeAgentProblem(props.claudeAgent)?.message ?? null;
   const errorMessage = localError ?? (resolvedView === "external" ? claudeError : props.error);
 
   // Connected providers lead the list so the two groups render as one flat
@@ -323,6 +334,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const handleClose = () => {
+    // Closing gives up on a Claude Code sign-in still open in the browser.
+    if (props.claudeAgent?.busy && claudeCanSignIn) void props.onCancelClaudeAgentSignIn?.();
     void props.onRefreshProviders?.();
     stopOauthAutoPolling();
     stopProviderPolling();
@@ -622,10 +635,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const handleClaudeConnect = async () => {
-    if (!props.onConnectClaudeAgent || claudeBusy || actionDisabled) return;
+    const connect = claudeCanSignIn ? props.onSignInClaudeAgent : props.onConnectClaudeAgent;
+    if (!connect || claudeBusy || actionDisabled) return;
     setLocalError(null);
     try {
-      const result = await props.onConnectClaudeAgent();
+      const result = await connect();
       // No message means the check was dropped (the workspace changed); nothing to report.
       if (typeof result !== "string") return;
       void reportActivationEvent("own_provider");
@@ -928,18 +942,31 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     </div>
                     <div className="min-w-0">
                       <div className="text-sm font-medium text-gray-12 truncate">{CLAUDE_CODE_NAME}</div>
-                      <div className="text-xs text-gray-10">Uses your Claude plan. Sign in to Claude Code first, then connect.</div>
+                      <div className="text-xs text-gray-10">{claudeCanSignIn ? "Uses your Claude plan through Claude Code on this computer." : "Uses your Claude plan. Sign in to Claude Code first, then connect."}</div>
                     </div>
                   </div>
-                  <div className="rounded-xl border border-gray-6/70 bg-gray-2/40 p-3 flex items-center gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs text-gray-9">Sign-in command</div>
-                      <div className="text-sm text-gray-12 font-mono break-all">{CLAUDE_CODE_SIGN_IN_COMMAND}</div>
+                  {claudeSigningIn ? (
+                    <div className="rounded-xl border border-gray-6/70 bg-gray-2/40 p-3 flex items-center gap-3" role="status" data-testid="claude-code-waiting">
+                      <Loader2 className="size-4 shrink-0 animate-spin text-gray-10" aria-hidden />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-gray-12">Continue in your browser</div>
+                        <div className="text-xs text-gray-10 text-pretty">Sign in to Claude there. OpenWork connects by itself when you're done.</div>
+                      </div>
+                      <Button variant="outline" size="sm" className="shrink-0" onClick={() => void props.onCancelClaudeAgentSignIn?.()}>
+                        Cancel
+                      </Button>
                     </div>
-                    <Button variant="outline" size="sm" className="shrink-0" onClick={() => void copyClaudeCommand()}>
-                      {claudeCommandCopied ? "Copied" : "Copy"}
-                    </Button>
-                  </div>
+                  ) : claudeCanSignIn ? null : (
+                    <div className="rounded-xl border border-gray-6/70 bg-gray-2/40 p-3 flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs text-gray-9">Sign-in command</div>
+                        <div className="text-sm text-gray-12 font-mono break-all">{CLAUDE_CODE_SIGN_IN_COMMAND}</div>
+                      </div>
+                      <Button variant="outline" size="sm" className="shrink-0" onClick={() => void copyClaudeCommand()}>
+                        {claudeCommandCopied ? "Copied" : "Copy"}
+                      </Button>
+                    </div>
+                  )}
                   <Button variant="link" className="h-auto gap-1 p-0 text-xs" onClick={() => void openExternalUrl(claudeAgentProblem(props.claudeAgent)?.url ?? CLAUDE_CODE_SETUP_URL)}>
                     Install Claude Code
                     <ArrowUpRight className="size-3.5" aria-hidden />
@@ -1153,7 +1180,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
               and the view's primary action sits last. */}
           <div className="flex w-full items-center gap-2">
             {(resolvedView === "api" || resolvedView === "external") && selectedEntry ? (
-              <Button variant="outline" onClick={handleBack} disabled={actionDisabled || (resolvedView === "external" && claudeChecking)}>
+              <Button variant="outline" onClick={handleBack} disabled={actionDisabled || (resolvedView === "external" && (claudeChecking || claudeSigningIn))}>
                 <ChevronLeft className="size-4" />
                 Back
               </Button>
@@ -1178,13 +1205,13 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
               </Button>
             ) : null}
             {resolvedView === "external" && selectedEntry && props.claudeAgent ? (
-              <Button data-testid="claude-code-connect" onClick={() => void handleClaudeConnect()} disabled={actionDisabled || claudeBusy || !props.onConnectClaudeAgent} aria-busy={claudeChecking}>
-                {claudeChecking ? (
+              <Button data-testid="claude-code-connect" onClick={() => void handleClaudeConnect()} disabled={actionDisabled || claudeBusy || !(claudeCanSignIn || props.onConnectClaudeAgent)} aria-busy={claudeChecking || claudeSigningIn}>
+                {claudeSigningIn ? "Waiting for sign-in…" : claudeChecking ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
                     Checking Claude Code…
                   </>
-                ) : claudeAgentConnected(props.claudeAgent) ? "Check again" : "Connect"}
+                ) : claudeCanSignIn && claudeError ? (claudeCodeMissing(claudeError) ? "Check again" : "Sign in again") : claudeAgentConnected(props.claudeAgent) ? "Check again" : "Connect"}
               </Button>
             ) : null}
           </div>

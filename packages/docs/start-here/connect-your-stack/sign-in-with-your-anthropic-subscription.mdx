@@ -44,15 +44,17 @@ To give a whole team Claude models, an admin adds Anthropic with an API key inst
 
 ## Sign in to Claude Code
 
-Do this once, in a terminal on the same computer:
+If Claude Code is already signed in on this computer, skip to the next section.
+
+If it is not, OpenWork opens the sign-in for you when you click **Connect** in the steps below. To do it yourself first, run this in a terminal on the same computer:
 
 ```bash
 claude auth login
 ```
 
-A browser tab opens. Sign in with the account that holds your Claude plan, then return to the terminal.
+Either way a browser tab opens. Sign in with the account that holds your Claude plan.
 
-OpenWork never sees this sign-in. It does not ask for your Claude email, password or any token.
+OpenWork never sees this sign-in. Claude Code runs it, and OpenWork does not ask for your Claude email, password or any token.
 
 ## Connect it in OpenWork
 
@@ -74,7 +76,7 @@ OpenWork never sees this sign-in. It does not ask for your Claude email, passwor
   ![The two ways to connect Anthropic: Claude Code and API key](/images/claude-code-choose-how.png)
 </Frame>
 
-4. The next step shows the sign-in command again, in case you have not run it yet. Click **Connect**.
+4. Click **Connect**. If Claude Code is not signed in yet, its sign-in opens in your browser and the step reads "Continue in your browser" until you finish.
 
 <Frame>
   ![The Claude Code step with the claude auth login command and the Connect button](/images/claude-code-sign-in-step.png)
@@ -98,15 +100,16 @@ OpenWork never sees this sign-in. It does not ask for your Claude email, passwor
 
 ## If the check does not pass
 
-The dialog stays open and says why. Fix it, then click **Check again**.
+The dialog stays open and says why.
 
 <Frame>
   ![The Claude Code step showing that Claude Code is not logged in, with a Check again button](/images/claude-code-not-signed-in.png)
 </Frame>
 
-- **"Claude Code is not logged in."** Run `claude auth login` in a terminal, finish the sign-in in your browser, then click **Check again**.
-- **"Claude Code is not installed."** Click **Install Claude Code**, follow Anthropic's guide, run `claude auth login`, then click **Check again**.
-- **"Couldn't confirm that Claude Code is ready."** Claude Code did not answer in time. Make sure it opens in a terminal on this computer, then click **Check again**.
+- **"Claude Code is not logged in."** Click **Sign in again** and finish the sign-in in your browser. You can also run `claude auth login` in a terminal first.
+- **"Claude Code is not installed."** Click **Install Claude Code**, follow Anthropic's guide, then click **Check again**.
+- **"Claude Code could not finish signing in."** The browser sign-in was closed or did not complete. Click **Sign in again**.
+- **"Couldn't confirm that Claude Code is ready."** Claude Code did not answer in time. Make sure it opens in a terminal on this computer, then click **Sign in again**.
 
 ## What the status means later
 
@@ -114,7 +117,7 @@ The **Claude Code** row under **Settings › AI Providers › On this device** s
 
 - **Ready to use.** OpenWork checked Claude Code and it is signed in.
 - **Not checked yet.** OpenWork has restarted and has not checked Claude Code again. You can keep using it. If something is wrong, the row changes to **Needs your sign-in**.
-- **Needs your sign-in.** Claude Code got signed out or stopped working. Run `claude auth login` in a terminal, then click **Sign in again** and **Check again**.
+- **Needs your sign-in.** Claude Code got signed out or stopped working. Click **Sign in again** on the row and again in the dialog, then finish the sign-in in your browser.
 
 ## Disconnect
 
