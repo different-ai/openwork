@@ -305,9 +305,9 @@ const feedTest = spec.world(sharedSessionUiActionsFeed, {
   needs: { commands: ["bun"] },
 });
 
-// The separate world enables the existing settledSessions org capability before
-// sign-in, via the same real Den seed API as calm-feed. Never toggle renderer
-// state or introduce a new flag to reach the Feed branch under review.
+// The separate world's bootstrap platform admin enables the existing
+// settledSessions org capability through Den before an ordinary member signs
+// in. Never toggle renderer state or introduce a new flag for this branch.
 feedTest("a member uses Feed Archive and More on the main conversation without changing a focused side chat", async ({ world, user, probe, step, evidence }) => {
   const keys = keyboard(user, probe);
   const mainUrl = new URL(`/workspace/${encodeURIComponent(world.workspace.workspaceId)}/session/${encodeURIComponent(world.main.sessionId)}`, world.app.webUrl).href;
