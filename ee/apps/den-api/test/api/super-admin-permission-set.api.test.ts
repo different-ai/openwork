@@ -74,8 +74,9 @@ test("feature off: super-admins hold every permission through the role and the S
 test("every organization gets a Super admin permission set with every permission, after Member and Admin", async () => {
   const w = await world("seed")
   const sets = await w.sets()
-  assert.deepEqual(sets.slice(0, 3).map((set) => set.kind), ["member_default", "admin_default", "super_admin_default"])
-  const superAdminSet = sets[2]
+  // Built-in sets in the order roles are listed: Billing manager sits between Admin and Super admin.
+  assert.deepEqual(sets.slice(0, 4).map((set) => set.kind), ["member_default", "admin_default", "billing_manager_default", "super_admin_default"])
+  const superAdminSet = sets[3]
   assert.equal(superAdminSet?.name, "Super admin permissions")
   assert.equal(superAdminSet?.allowedCount, PERMISSION_KEYS.length)
   assert.deepEqual(superAdminSet?.appliesTo, { kind: "super_admins", superAdminCount: 1 })

@@ -22,6 +22,7 @@ import {
   ScimUserTombstoneTable,
   SsoConnectionTable,
   SsoProviderTable,
+  PermissionSetMemberTable,
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
@@ -2179,6 +2180,16 @@ export async function removeOrganizationMember(input: {
     await tx
       .delete(TeamMemberTable)
       .where(eq(TeamMemberTable.orgMembershipId, member.id))
+
+    // A role given to the person directly ends with their membership, so it
+    // can't come back if they are invited again.
+    await tx.update(PermissionSetMemberTable)
+      .set({ removedAt: new Date() })
+      .where(and(
+        eq(PermissionSetMemberTable.organizationId, input.organizationId),
+        eq(PermissionSetMemberTable.orgMembershipId, member.id),
+        isNull(PermissionSetMemberTable.removedAt),
+      ))
 
     await tx.update(ScimGroupMemberTable)
       .set({ userId: null, orgMembershipId: null, teamMemberId: null, updatedAt: new Date() })

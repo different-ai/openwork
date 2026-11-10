@@ -4,7 +4,8 @@ import { denTypeIdColumn } from "../columns"
 import { MemberTable, OrganizationTable } from "./org"
 import { TeamTable } from "./teams"
 
-export const permissionSetDefaultKeyValues = ["member", "admin", "super-admin"] as const
+// Database order: values are only ever appended (an in-place, metadata-only change in MySQL).
+export const permissionSetDefaultKeyValues = ["member", "admin", "super-admin", "billing-manager"] as const
 export type PermissionSetDefaultKey = (typeof permissionSetDefaultKeyValues)[number]
 
 export const permissionStatusValues = ["allow", "deny"] as const
@@ -14,8 +15,9 @@ export const permissionChangeSourceValues = ["user", "seed", "reconcile", "migra
 export type PermissionChangeSource = (typeof permissionChangeSourceValues)[number]
 
 /**
- * A named bundle of permissions. `defaultKey` marks the organization's Member,
- * Admin and Super admin default sets; NULL means a team set. MySQL allows many NULLs in
+ * A named bundle of permissions. `defaultKey` marks the organization's
+ * built-in sets (Member, Admin, Super admin, Billing manager); NULL means a
+ * custom role. MySQL allows many NULLs in
  * the unique index, so an org has at most one set per default key and any
  * number of team sets. Sets are archived, never deleted.
  */
@@ -91,6 +93,31 @@ export const PermissionSetTeamTable = mysqlTable(
   ],
 )
 
+/**
+ * Gives a permission set to one person directly, without a team. Soft-removed
+ * like permission_set_team: giving the same person the same set again clears
+ * `removedAt` on the existing row. A person holds at most one set this way;
+ * the API replaces the previous one.
+ */
+export const PermissionSetMemberTable = mysqlTable(
+  "permission_set_member",
+  {
+    id: denTypeIdColumn("permissionSetMember", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    permissionSetId: denTypeIdColumn("permissionSet", "permission_set_id").notNull(),
+    orgMembershipId: denTypeIdColumn("member", "org_membership_id").notNull(),
+    createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id"),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    removedAt: timestamp("removed_at", { fsp: 3 }),
+    removedByOrgMembershipId: denTypeIdColumn("member", "removed_by_org_membership_id"),
+  },
+  (table) => [
+    index("permission_set_member_organization_id").on(table.organizationId),
+    index("permission_set_member_org_membership_id").on(table.orgMembershipId),
+    uniqueIndex("permission_set_member_set_member").on(table.permissionSetId, table.orgMembershipId),
+  ],
+)
+
 export const permissionSetRelations = relations(PermissionSetTable, ({ many, one }) => ({
   organization: one(OrganizationTable, {
     fields: [PermissionSetTable.organizationId],
@@ -102,6 +129,7 @@ export const permissionSetRelations = relations(PermissionSetTable, ({ many, one
   }),
   permissions: many(PermissionSetPermissionTable),
   teams: many(PermissionSetTeamTable),
+  members: many(PermissionSetMemberTable),
 }))
 
 export const permissionSetPermissionRelations = relations(PermissionSetPermissionTable, ({ one }) => ({
@@ -126,6 +154,21 @@ export const permissionSetTeamRelations = relations(PermissionSetTeamTable, ({ o
   }),
   createdByOrgMembership: one(MemberTable, {
     fields: [PermissionSetTeamTable.createdByOrgMembershipId],
+    references: [MemberTable.id],
+  }),
+}))
+
+export const permissionSetMemberRelations = relations(PermissionSetMemberTable, ({ one }) => ({
+  permissionSet: one(PermissionSetTable, {
+    fields: [PermissionSetMemberTable.permissionSetId],
+    references: [PermissionSetTable.id],
+  }),
+  member: one(MemberTable, {
+    fields: [PermissionSetMemberTable.orgMembershipId],
+    references: [MemberTable.id],
+  }),
+  createdByOrgMembership: one(MemberTable, {
+    fields: [PermissionSetMemberTable.createdByOrgMembershipId],
     references: [MemberTable.id],
   }),
 }))

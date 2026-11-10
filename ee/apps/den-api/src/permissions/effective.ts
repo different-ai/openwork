@@ -43,6 +43,8 @@ export type PermissionSource =
   | { kind: "member_default"; setId: string; setName: string }
   | { kind: "admin_default"; setId: string; setName: string; via: "role" | "team"; teamId?: string; teamName?: string }
   | { kind: "team"; setId: string; setName: string; teamId: string; teamName: string }
+  /** A set given to the person directly (permission_set_member): a custom role or Billing manager. */
+  | { kind: "direct"; setId: string; setName: string }
   | { kind: "code_default"; set: PermissionDefaultSetKey }
 
 /** One source and the keys it allows. A member's permissions are the union over their grants. */

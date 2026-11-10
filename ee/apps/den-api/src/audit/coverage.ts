@@ -198,7 +198,7 @@ export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>
   "microsoft-365.ts": routes("Microsoft 365 connections and external operations."),
   "models-analytics.ts": routes("Task analytics event ingestion from the desktop app."),
   "oauth-providers.ts": routes("OAuth provider configuration and authorization lifecycle."),
-  "permissions.ts": bridged(["organization.permission_set.created", "organization.permission_set.permissions_changed", "organization.permission_set.archived", "organization.permission_set.renamed", "organization.permission_set.teams_changed"], ["permission_set", "team"]),
+  "permissions.ts": bridged(["organization.permission_set.created", "organization.permission_set.permissions_changed", "organization.permission_set.archived", "organization.permission_set.renamed", "organization.permission_set.teams_changed", "organization.permission_set.members_changed"], ["permission_set", "team", "member"]),
   "plugin-system/": routes("Plugin/marketplace configuration, permissions, versions and imports, including nested modules."),
   "resources.ts": routes("Organization resource reads."),
   "scim.ts": bridged(["organization.scim.token_rotated", "organization.scim.connection_deleted", "organization.scim.reconciliation_run", "organization.scim.group_mapping_updated"], ["scim_connection"]),

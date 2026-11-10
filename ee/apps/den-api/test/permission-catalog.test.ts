@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import {
+  ASSIGNABLE_PERMISSION_DEFAULT_SET_KEYS,
   BILLING_MANAGER_PERMISSION_KEYS,
+  ROLE_PERMISSION_DEFAULT_SET_KEYS,
   PERMISSION_KEYS,
   PERMISSIONS,
   getPermissionDefinition,
@@ -122,7 +124,8 @@ test("admin defaults are exactly the old admin scope", () => {
 test("former super-admin actions are owner-only by default", () => {
   for (const key of OWNER_ONLY_KEYS) {
     assert.ok(isPermissionKey(key), key)
-    assert.deepEqual(getPermissionDefinition(key).defaultOn, [], key)
+    // Neither Member nor Admin starts with it. A built-in role given on purpose (Billing manager) may.
+    assert.deepEqual(getPermissionDefinition(key).defaultOn.filter((set) => set === "member" || set === "admin"), [], key)
     assert.equal(isPermissionOwnerOnlyByDefault(key), true, key)
   }
   assert.deepEqual([...ADMIN_SCOPE_KEYS, ...OWNER_ONLY_KEYS].sort(), [...PERMISSION_KEYS].sort())
@@ -146,6 +149,17 @@ test("admins see invoices but can't open the billing portal by default", () => {
   assert.ok(permissionDefaultKeys("admin").includes("billing_invoices.view"))
   assert.equal(isPermissionOwnerOnlyByDefault("billing_portal.use"), true)
   assert.equal(isPermissionSensitive("billing_invoices.view"), true)
+})
+
+test("Billing manager is a built-in role with exactly the billing permissions", () => {
+  assert.deepEqual([...permissionDefaultKeys("billing-manager")].sort(), ["billing.manage", "billing.view", "billing_invoices.view", "billing_portal.use", "gateway_usage.view"])
+  assert.deepEqual([...BILLING_MANAGER_PERMISSION_KEYS], permissionDefaultKeys("billing-manager"))
+  // The portal stays owner-only for admins: only the Billing manager role carries it.
+  assert.equal(isPermissionOwnerOnlyByDefault("billing_portal.use"), true)
+  assert.equal(permissionDefaultKeys("admin").includes("billing_portal.use"), false)
+  // Every built-in set except Member and Admin is reached only by being given the role.
+  assert.deepEqual([...ROLE_PERMISSION_DEFAULT_SET_KEYS], ["member", "admin", "super-admin"])
+  assert.deepEqual([...ASSIGNABLE_PERMISSION_DEFAULT_SET_KEYS], ["billing-manager", "super-admin"])
 })
 
 test("billing manager keys stay inside billing and usage", () => {
