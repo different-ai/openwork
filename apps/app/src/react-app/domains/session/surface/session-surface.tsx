@@ -4065,6 +4065,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         editing={editing}
         stopping={stopping}
         steering={steering}
+        followUpDefault={local.prefs.followUpDefault}
         submissionPreparing={preparingCloudTools || sending || autoSending}
         queuedCount={queuedItems.length}
         disabled={!archiveStateKnown || archiveHeld || model.transitionState !== "idle" || sessionModelUnavailable || queuedDrainState.phase.kind === "admission_unknown"}

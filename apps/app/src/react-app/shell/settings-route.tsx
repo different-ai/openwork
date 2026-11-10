@@ -2346,6 +2346,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onToggleAnalytics={() => {
               local.setPrefs((previous) => ({ ...previous, analyticsEnabled: !previous.analyticsEnabled }));
             }}
+            followUpDefault={local.prefs.followUpDefault}
+            onFollowUpDefaultChange={(followUpDefault) => {
+              local.setPrefs((previous) => ({ ...previous, followUpDefault }));
+            }}
             keepAwake={local.prefs.keepAwake}
             onToggleKeepAwake={() => {
               local.setPrefs((previous) => ({ ...previous, keepAwake: !previous.keepAwake }));

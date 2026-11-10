@@ -86,6 +86,8 @@ type ComposerProps = {
   editing?: boolean;
   stopping?: boolean;
   steering: boolean;
+  /** What Enter does while the agent is working; Cmd/Ctrl+Enter does the other. Defaults to queue. */
+  followUpDefault?: "queue" | "steer";
   submissionPreparing: boolean;
   submissionPreparingLabel?: string;
   queuedCount: number;
@@ -312,8 +314,9 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   }, [props.draft]);
 
   // Follow-up message UX (only relevant while the agent is busy):
-  // - Enter (and the send button) queues the message until the agent finishes.
+  // - Enter queues the message until the agent finishes.
   // - Cmd/Ctrl+Enter sends immediately (the agent adjusts mid-task, aka "steer").
+  // - Settings › Preferences can swap the two (`followUpDefault`).
   // - Escape arms a "Hit Escape again to stop the agent" prompt for 3s;
   //   a second Escape within that window stops the agent.
   const [escapeArmed, setEscapeArmed] = useState(false);
@@ -382,7 +385,8 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       editing: Boolean(current.editing),
       stopping: Boolean(current.stopping),
       submissionPreparing: current.submissionPreparing,
-      steer: options.queue,
+      modifier: options.queue,
+      followUpDefault: current.followUpDefault,
     });
     if (action === "send") void current.onSend();
     else if (action === "steer") void current.onSteer();
