@@ -23,7 +23,7 @@ import {
 import { WorkbotProactivePanel } from "./workbot-proactive-section";
 import { previewTime } from "./workbot-proactive-preview";
 import { WorkbotProactiveHealthTable } from "./workbot-proactive-health";
-import { addSourceChange, addableTo, allowAppChange, coreAppRows, makeDefaultChange, removeSourceChange, filterConnections, otherConnectionAdded, otherConnectionsRestLine, WorkbotProactiveSources } from "./workbot-proactive-sources";
+import { addSourceChange, addableTo, allowAppChange, coreAppRows, makeDefaultChange, removeSourceChange, filterConnections, SUPPORTED_APPS_LINE, supportedToAdd, otherConnectionAdded, otherConnectionsRestLine, WorkbotProactiveSources } from "./workbot-proactive-sources";
 
 const ready: WorkbotProactiveView = {
   settings: { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS, enabled: true },
@@ -420,7 +420,12 @@ test("data sources, with help: apps line up under column names, the default is a
   const html = renderToStaticMarkup(<WorkbotProactiveSources {...props} help />);
   for (const about of ["Calendar", "Email", "Team chat", "Other context"]) assert.ok(html.includes(`aria-label="About ${about}"`), about);
   const view = text(html);
-  for (const column of ["App", "Connected", "Default", "Allowed", "4 members", "Add app"]) assert.ok(view.includes(column), column);
+  for (const column of ["App", "Connected", "Default", "Allowed", "4 members"]) assert.ok(view.includes(column), column);
+  assert.ok(view.includes("Add app"));
+  // "Add app" offers only apps that serve the source: here every one is already listed, so no other connection.
+  assert.deepEqual(supportedToAdd(briefOn, "calendar"), []);
+  assert.ok(addableTo(briefOn, "calendar").length > 0, "other connections exist, and are not offered");
+  assert.match(SUPPORTED_APPS_LINE.calendar, /Google Workspace and Microsoft 365/);
   assert.ok(!view.includes("Make default"));
   assert.match(html, /<input[^>]*type="radio"/);
   assert.match(html, /aria-label="Make [^"]+ the default for Calendar"/);
