@@ -193,8 +193,8 @@ export const FEATURES = defineFeatures({
     default: false,
   },
   gatewayCursorSetup: {
-    label: "AI Gateway: Cursor setup",
-    description: "Members with an AI Gateway API key get a Set up Cursor page in Library › Models: the base URL to paste into Cursor and a short name to add for each of their models. The Gateway serves those names at /api/v1/cursor through OpenAI Chat Completions and Responses, whatever the model's provider is.",
+    label: "AI Gateway: set up Cursor and other tools",
+    description: "After creating an AI Gateway API key, members pick a tool (Cursor, OpenAI Codex, Claude Code, another tool) and get its setup steps with their key and models filled in; Library › Models also gets a Set up Cursor page. The Gateway serves Cursor's model names at /api/v1/cursor through OpenAI Chat Completions and Responses, whatever the model's provider is.",
     category: "models",
     added: "2026-11-10",
     since: "2026-11",

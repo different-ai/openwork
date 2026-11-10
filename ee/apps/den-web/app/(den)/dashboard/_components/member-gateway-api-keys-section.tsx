@@ -17,6 +17,7 @@ import { DenSelect } from "../../_components/ui/select";
 import { orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { getCursorSetupRoute } from "./cursor-setup-data";
+import { BackButton, GatewayToolPicker, GatewayToolSteps, gatewayToolName, type GatewayToolId } from "./gateway-tool-setup";
 import { ItemMenu } from "./item-list";
 import { LibraryCompactSurface } from "./library-compact";
 import {
@@ -149,7 +150,7 @@ export function MemberGatewayApiKeysSection() {
         </div>
       </section>
 
-      <CreateGatewayApiKeyDialog open={creating} baseUrl={baseUrl} onClose={() => setCreating(false)} />
+      <CreateGatewayApiKeyDialog open={creating} baseUrl={baseUrl} toolSetup={cursorSetup} onClose={() => setCreating(false)} />
     </LibraryCompactSurface>
   );
 }
@@ -188,7 +189,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
   );
 }
 
-function CreateGatewayApiKeyDialog({ open, baseUrl, onClose }: { open: boolean; baseUrl: string; onClose: () => void }) {
+function CreateGatewayApiKeyDialog({ open, baseUrl, toolSetup, onClose }: { open: boolean; baseUrl: string; toolSetup: boolean; onClose: () => void }) {
   return (
     <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <Dialog.Portal>
@@ -196,21 +197,22 @@ function CreateGatewayApiKeyDialog({ open, baseUrl, onClose }: { open: boolean; 
         <Dialog.Popup
           data-testid="gateway-api-key-dialog"
           data-ph-no-capture
-          className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-[480px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-gray-100 bg-white p-5 outline-none"
+          className={`fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-gray-100 bg-white p-5 outline-none ${toolSetup ? "max-w-[600px]" : "max-w-[480px]"}`}
         >
           {/* Mounted only while open: a closed dialog forgets the key it showed. */}
-          {open ? <CreateGatewayApiKeyForm baseUrl={baseUrl} onClose={onClose} /> : null}
+          {open ? <CreateGatewayApiKeyForm baseUrl={baseUrl} toolSetup={toolSetup} onClose={onClose} /> : null}
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
   );
 }
 
-function CreateGatewayApiKeyForm({ baseUrl, onClose }: { baseUrl: string; onClose: () => void }) {
+function CreateGatewayApiKeyForm({ baseUrl, toolSetup, onClose }: { baseUrl: string; toolSetup: boolean; onClose: () => void }) {
   const create = useCreateGatewayApiKey();
   const [name, setName] = useState("");
   const [expiryDays, setExpiryDays] = useState<number | null>(DEFAULT_GATEWAY_API_KEY_EXPIRY);
   const [created, setCreated] = useState<CreatedGatewayApiKey | null>(null);
+  const [tool, setTool] = useState<GatewayToolId | null>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -221,6 +223,41 @@ function CreateGatewayApiKeyForm({ baseUrl, onClose }: { baseUrl: string; onClos
     } catch {
       // Shown below from the mutation's error.
     }
+  }
+
+  // Feature `gatewayCursorSetup`: "Start using this key", a tool, then that tool's steps.
+  if (created && toolSetup) {
+    if (tool) {
+      return (
+        <div className="flex flex-col gap-4" data-testid="gateway-api-key-tool-steps">
+          <BackButton onClick={() => setTool(null)} />
+          <Dialog.Title className="text-[16px] font-semibold leading-6 text-gray-900">{`Set up ${gatewayToolName(tool)}`}</Dialog.Title>
+          <GatewayToolSteps tool={tool} apiKey={created.key} baseUrl={baseUrl} />
+          <div className="flex justify-end">
+            <DenButton size="sm" onClick={onClose} data-testid="gateway-api-key-done">Done</DenButton>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="flex flex-col gap-4" data-testid="gateway-api-key-start">
+        <div>
+          <Dialog.Title className="text-[16px] font-semibold leading-6 text-gray-900">Start using this key</Dialog.Title>
+          <p className="mt-1 text-[13px] text-gray-500" data-testid="gateway-api-key-created-expiry">{`${created.apiKey.name} · ${formatExpiry(created.apiKey.expiresAt)}`}</p>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[12px] font-medium text-gray-700">API key, shown once</span>
+          <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+            <code className="min-w-0 flex-1 break-all font-mono text-[12px] leading-5 text-gray-900" data-testid="gateway-api-key-secret">{created.key}</code>
+            <CopyButton value={created.key} label="Copy API key" />
+          </div>
+        </div>
+        <GatewayToolPicker onPick={setTool} />
+        <div className="flex justify-end">
+          <DenButton size="sm" variant="secondary" onClick={onClose} data-testid="gateway-api-key-done">Done</DenButton>
+        </div>
+      </div>
+    );
   }
 
   if (created) {

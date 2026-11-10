@@ -11,7 +11,7 @@ import {
   type OrganizationGatewayApiKeysView,
 } from "@openwork/types/den/gateway-api-keys";
 import { z } from "zod";
-import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { getLibraryRoute } from "../../_lib/den-org";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -30,7 +30,8 @@ const settingsViewSchema = z.object({ settings: organizationAiGatewaySettingsSch
 
 async function request<T>(orgId: string, path: string, init: RequestInit, schema: z.ZodType<T>, fallback: string): Promise<T> {
   const { response, payload } = await requestJson(path, { ...init, headers: { ...init.headers, [ORG_SCOPE_HEADER]: orgId } }, 15_000);
-  if (!response.ok) throw new Error(getErrorMessage(payload, fallback));
+  // A reauth error stays one, so runReauthableAction can open the sign-in dialog and retry.
+  if (!response.ok) throw getRequestError(payload, response, fallback);
   const parsed = schema.safeParse(payload);
   if (!parsed.success) throw new Error(fallback);
   return parsed.data;
@@ -38,7 +39,7 @@ async function request<T>(orgId: string, path: string, init: RequestInit, schema
 
 async function send(orgId: string, path: string, init: RequestInit, fallback: string): Promise<void> {
   const { response, payload } = await requestJson(path, { ...init, headers: { ...init.headers, [ORG_SCOPE_HEADER]: orgId } }, 15_000);
-  if (!response.ok) throw new Error(getErrorMessage(payload, fallback));
+  if (!response.ok) throw getRequestError(payload, response, fallback);
 }
 
 function requireOrg(orgId: string | null): string {
