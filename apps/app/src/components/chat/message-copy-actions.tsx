@@ -9,7 +9,11 @@ export function messageCopyActions(request: MessageCopyRequest, onPortableCopy?:
   if (!request.markdown) return [];
   return [{
     type: "item", id: "copy", label: "Copy", icon: <Copy className="size-4" />,
-    onSelect: async () => { if (await copyMessage(request) === "rich") onPortableCopy?.(); },
+    onSelect: async () => {
+      // Modal menus temporarily aria-hide the reply. Read its DOM only after dismissal commits.
+      if (request.enabled) await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
+      if (await copyMessage(request) === "rich") onPortableCopy?.();
+    },
   }];
 }
 

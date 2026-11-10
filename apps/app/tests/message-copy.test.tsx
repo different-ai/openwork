@@ -125,6 +125,13 @@ describe('message menus', () => {
     expect(await dispatchMenuAction(menu,'copy')).toBe(true); expect(write).toHaveBeenCalledTimes(1);
     expect(plainWrites).toEqual([]);
   });
+  test('enabled menu waits for dismissal before reading the aria-hidden background reply', async () => {
+    const r = request(); host.setAttribute('aria-hidden','true');
+    const selected = dispatchMenuAction(actions.messageCopyActions(r),'copy');
+    expect(write).not.toHaveBeenCalled(); expect(writeText).not.toHaveBeenCalled();
+    host.removeAttribute('aria-hidden');
+    expect(await selected).toBe(true); expect(write).toHaveBeenCalledTimes(1); expect(writeText).not.toHaveBeenCalled();
+  });
   test('off menu Copy keeps the exact Markdown source', async () => {
     const r = request(); r.enabled = false; r.markdown = ' **source**\n\n- exact\n';
     expect(await dispatchMenuAction(actions.messageCopyActions(r),'copy')).toBe(true); expect(plainWrites).toEqual([r.markdown]);
