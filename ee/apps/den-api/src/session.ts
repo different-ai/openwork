@@ -387,7 +387,7 @@ async function getSessionFromToken(token: string, requestContext?: SessionReques
       request_id: requestContext?.requestId,
       error,
     })
-    throw error
+    return bearerSessionValue(row)
   }
 
   await cache.auth.deleteSession(token)
