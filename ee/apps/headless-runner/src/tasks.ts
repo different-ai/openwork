@@ -125,6 +125,7 @@ export function taskProgress(rows: StoredMessage[]): TaskProgress {
   const finished = new Set<string>()
   for (const row of rows) if (row.message.role === "tool") finished.add(row.message.callId)
   let current: string | null = null
+  let lastCall: string | null = null
   let note: string | null = null
   let stepsDone = 0
   for (const row of rows) {
@@ -132,11 +133,12 @@ export function taskProgress(rows: StoredMessage[]): TaskProgress {
     if (message.role !== "assistant") continue
     if (message.text.trim()) note = oneLine(message.text, 160)
     for (const call of message.toolCalls) {
+      lastCall = callLabel(call)
       if (finished.has(call.id)) stepsDone += 1
-      current = callLabel(call)
+      else current ??= lastCall
     }
   }
-  return { current, stepsDone, note }
+  return { current: current ?? lastCall, stepsDone, note }
 }
 
 /** What the conversation knows about its tasks, so it can answer "how's the deck going?" and stop one by id. */
