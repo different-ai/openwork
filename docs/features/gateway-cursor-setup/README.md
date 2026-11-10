@@ -46,10 +46,40 @@ Shared code: `packages/types/src/den/gateway-cursor.ts`.
 
 ## What people see
 
-In **My Library › Models**, the API keys section gets a **Set up Cursor** link.
-The page (`/dashboard/library/tools/cursor`) has three steps: create an API key,
-the base URL to paste into Cursor, and one row per model with its name to copy
-(and a thinking level to choose, for models that have levels).
+**Right after creating a key** (while it can still be shown), the dialog moves
+to **Start using this key**: the key once, then a large button per tool:
+Cursor, OpenAI Codex, Claude Code and Another tool. Picking one shows that
+tool's steps with the key, URLs and model ids already filled in, each with a
+copy button; **Choose another tool** goes back. With this feature off, the
+dialog keeps showing the key and the two base URLs as before.
+
+![Start using this key](./start-using-key.png)
+
+- **Cursor:** the key, the base URL, and every model's Cursor name to copy,
+  with a thinking level for models that have levels.
+- **OpenAI Codex:** the key line for the shell, and a `~/.codex/config.toml`
+  provider (`wire_api = "responses"`) for the model chosen. Only OpenAI and
+  Azure models are offered: Codex calls the provider-less Responses endpoint.
+- **Claude Code:** `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and the model
+  variables for the model chosen. Only Anthropic, Vertex Claude and Foundry
+  models are offered.
+- **Another tool:** the key, both base URLs and every model id.
+
+![Cursor's steps](./cursor-steps.png)
+
+The Codex and Claude Code steps use today's provider-less endpoints; dedicated
+endpoints for them, like Cursor's, come later.
+
+In **My Library › Models**, each key's menu has **Set up**: the same choice of
+tools for a key that already exists. The key isn't shown again, so the steps
+say which key to use (by its prefix) and leave a place for it. With this
+feature on, the section no longer lists the base URLs: each tool's steps carry
+the ones it needs.
+
+![Set up from a key's menu](./set-up-existing-key.png)
+
+The section also links to **Set up Cursor** (`/dashboard/library/tools/cursor`): the same Cursor steps without a
+key, with a link to create one.
 
 ![Set up Cursor](./cursor-setup.png)
 

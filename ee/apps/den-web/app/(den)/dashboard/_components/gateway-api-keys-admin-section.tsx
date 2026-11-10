@@ -9,6 +9,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTable, type DenTableColumn } from "../../_components/ui/table";
+import { isReauthRequiredError } from "../../_lib/den-flow";
 import { permissionLockReason } from "../../_lib/den-org";
 import { FeatureIntroGate } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -125,13 +126,14 @@ export function GatewayApiKeysAdminSection({ canManageKeys, canManageSettings }:
           {!canManageSettings ? (
             <p className="flex items-center gap-1.5 text-[12px] text-gray-500"><LockKeyhole size={12} aria-hidden="true" />{permissionLockReason("organization.update")}</p>
           ) : null}
-          {save.error ? <p className="text-[12px] text-red-600" role="alert">{save.error.message}</p> : null}
+          {save.error && !isReauthRequiredError(save.error) ? <p className="text-[12px] text-red-600" role="alert">{save.error.message}</p> : null}
         </div>
         <DenSwitch
           aria-label={SETTING_LABEL}
           checked={enabled}
           disabled={!canManageSettings || save.isPending}
-          onChange={(next) => save.mutate({ memberApiKeys: next })}
+          // Changing a workspace setting needs a recent sign-in; the dialog opens and the change retries.
+          onChange={(next) => void runReauthableAction("save-ai-gateway-settings", async () => { await save.mutateAsync({ memberApiKeys: next }); }).catch(() => undefined)}
         />
       </DenCard>
 

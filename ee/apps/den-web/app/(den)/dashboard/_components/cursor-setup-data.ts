@@ -9,13 +9,15 @@ import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 /**
- * Set up Cursor (feature `gatewayCursorSetup`): the models the viewer can use right now, one entry
- * per model however many groups and credential sets grant it, as the AI Gateway's Cursor endpoint
- * lists them.
+ * Setting up a 3rd party tool with an AI Gateway API key (feature `gatewayCursorSetup`): the models
+ * the viewer can use right now, one entry per model however many groups and credential sets grant
+ * it, as the AI Gateway lists them.
  */
 const usableProvidersSchema = z.object({
   inferenceProviders: z.array(z.object({
     name: z.string(),
+    /** The catalog provider, such as `anthropic` or `openai`. */
+    providerId: z.string(),
     models: z.array(z.object({
       /** gwm_<group>_<credential set>_<model>: it ends with the model's own id. */
       id: z.string(),
@@ -26,27 +28,33 @@ const usableProvidersSchema = z.object({
   })),
 });
 
-export type CursorSetupModel = {
-  /** The end of the Gateway alias that names the model itself; what a Cursor name is matched on. */
+export type GatewayToolModel = {
+  /** The Gateway model id (`gwm_…`) tools send to the provider-less endpoints. */
+  alias: string;
+  /** The end of the alias that names the model itself; what a Cursor name is matched on. */
   modelId: string;
   name: string;
   providerName: string;
+  /** The catalog provider, such as `anthropic` or `openai`. */
+  providerKey: string;
   thinkingLevels: AutoRouterThinkingLevel[];
 };
 
 /** Characters of a TypeID after its prefix. */
 const MODEL_ID_LENGTH = 26;
 
-export function cursorSetupModels(payload: z.infer<typeof usableProvidersSchema>): CursorSetupModel[] {
-  const models = new Map<string, CursorSetupModel>();
+export function gatewayToolModels(payload: z.infer<typeof usableProvidersSchema>): GatewayToolModel[] {
+  const models = new Map<string, GatewayToolModel>();
   for (const provider of payload.inferenceProviders) {
     for (const model of provider.models) {
       const modelId = model.id.slice(-MODEL_ID_LENGTH);
       if (models.has(modelId)) continue;
       models.set(modelId, {
+        alias: model.id,
         modelId,
         name: model.name,
         providerName: provider.name,
+        providerKey: provider.providerId,
         thinkingLevels: autoRouterThinkingLevels(model.upstreamModelId, model.config ?? {}),
       });
     }
@@ -54,10 +62,10 @@ export function cursorSetupModels(payload: z.infer<typeof usableProvidersSchema>
   return [...models.values()].sort((a, b) => a.name.localeCompare(b.name) || a.modelId.localeCompare(b.modelId));
 }
 
-export function useCursorSetupModels(enabled: boolean) {
+export function useGatewayToolModels(enabled: boolean) {
   const { orgId } = useOrgDashboard();
   return useQuery({
-    queryKey: ["gateway-cursor-setup", "models", orgId],
+    queryKey: ["gateway-tool-setup", "models", orgId],
     enabled: enabled && Boolean(orgId),
     queryFn: async ({ signal }) => {
       if (!orgId) throw new Error("Select an organization first.");
@@ -65,9 +73,24 @@ export function useCursorSetupModels(enabled: boolean) {
       if (!response.ok) throw new Error(getErrorMessage(payload, "Your models did not load. Try again."));
       const parsed = usableProvidersSchema.safeParse(payload);
       if (!parsed.success) throw new Error("Your models did not load. Try again.");
-      return cursorSetupModels(parsed.data);
+      return gatewayToolModels(parsed.data);
     },
   });
+}
+
+/**
+ * Providers whose models answer the Gateway's provider-less endpoint each tool calls: Codex sends the
+ * Responses API, Claude Code the Anthropic Messages API. Cursor reaches every model.
+ */
+const RESPONSES_PROVIDERS = new Set(["openai", "azure"]);
+const MESSAGES_PROVIDERS = new Set(["anthropic", "google-vertex-anthropic", "microsoft-foundry"]);
+
+export function codexModels(models: readonly GatewayToolModel[]) {
+  return models.filter((model) => RESPONSES_PROVIDERS.has(model.providerKey));
+}
+
+export function claudeCodeModels(models: readonly GatewayToolModel[]) {
+  return models.filter((model) => MESSAGES_PROVIDERS.has(model.providerKey));
 }
 
 export function getCursorSetupRoute(orgSlug?: string | null): string {
