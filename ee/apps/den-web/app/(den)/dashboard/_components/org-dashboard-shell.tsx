@@ -75,13 +75,14 @@ import { useLibraryModels } from "./library-models-data";
 import { UserProfileDialog } from "./user-profile-dialog";
 import { DownloadOpenWorkButton } from "./download-openwork-button";
 import { useWorkbotEntry } from "./workbot-entry-dialog";
+import { BUILT_IN_ROLES } from "../../_lib/role-catalog";
 import { FeatureIntroHelpButton, FeatureIntroNavDot } from "../_features/feature-intros/feature-intro-help-button";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
 
 /** The sidebar only tells people whether they can manage the organization. */
 function sidebarRoleLabel(role: string): string {
-  return getOrgAccessFlags(role, false).isAdmin ? "Admin" : "Member";
+  return getOrgAccessFlags(role, false).isAdmin ? BUILT_IN_ROLES.admin.label : BUILT_IN_ROLES.member.label;
 }
 
 function OrgMark({ name }: { name: string }) {

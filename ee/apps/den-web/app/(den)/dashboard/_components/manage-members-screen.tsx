@@ -55,6 +55,7 @@ import { formatAddedDate } from "./item-dates";
 import { TeamsListHeader, TeamsListLane, TeamsListLocked, TeamsListOpenLink, TeamsListRow, teamsListColumns } from "./teams-list-row";
 import { teamOverrideSummary, useAgentPermissions } from "./agent-permissions-data";
 import { useCustomRoleTeams, usePermissionSets, useRoleGrantLocks } from "./permissions-data";
+import { BUILT_IN_ROLES, customRoleSetId, roleList, roleSetTeams } from "../../_lib/role-catalog";
 import { SUPER_ADMIN_ROLE_LOCK_REASON, TEAM_ROLE_LABELS, memberRoleOptions, parseRoleChoice, teamRole, teamRoleLabels } from "./team-roles";
 import { MemberRoleEditor, MemberRoleSelect } from "./member-role-select";
 
@@ -193,7 +194,7 @@ export function ManageMembersScreen() {
   const grantLocks = useRoleGrantLocks(orgContext?.organization.id ?? null, access.canViewPermissions ? roleSets.data ?? [] : [], orgContext?.currentMember.permissions ?? [], orgContext?.currentMember.isOwner ?? false);
   const roleTeams = (setId: string) => {
     const set = customSets.find((entry) => entry.id === setId);
-    const ids = (set?.teams.length ? set.teams : set?.team ? [set.team] : []).map((team) => team.id);
+    const ids = (set ? roleSetTeams(set) : []).map((team) => team.id);
     return (orgContext?.teams ?? []).filter((team) => ids.includes(team.id));
   };
   const roleLocks = new Map(grantLocks);
@@ -201,16 +202,25 @@ export function ManageMembersScreen() {
     const teams = roleTeams(set.id);
     if (teams.length && teams.every((team) => team.managedByScim || team.grantsOrganizationAdmin && !access.canManageAdminTeams)) roleLocks.set(set.id, "This role’s teams are managed by your identity provider or need Manage Admin teams. Ask the organization owner.");
   }
-  const memberRoles = memberRoleOptions({ canManageTeams: access.canManageTeams, customRoles: customSets.map((set) => ({ ...set, teams: set.teams.length ? set.teams : set.team ? [set.team] : [] })), lockReasons: roleLocks, adminLockReason: !access.canManageRoles ? permissionLockReason("members.update") : grantLocks.get(roleSets.data?.find((set) => set.kind === "admin_default")?.id ?? ""), superAdminLockReason: !access.canManageRoles ? permissionLockReason("members.update") : access.isOwner || access.isSuperAdmin ? null : SUPER_ADMIN_ROLE_LOCK_REASON });
+  const memberRoles = memberRoleOptions({
+    // The same list the Roles tab and the team picker show.
+    roles: roleList({ sets: access.canViewPermissions ? roleSets.data ?? [] : [], readyMade: false }),
+    showUnavailable: orgFeatureEnabled(orgContext, "readyMadeRoles"),
+    canManageTeams: access.canManageTeams,
+    lockReasons: roleLocks,
+    adminLockReason: !access.canManageRoles ? permissionLockReason("members.update") : grantLocks.get(roleSets.data?.find((set) => set.kind === "admin_default")?.id ?? ""),
+    superAdminLockReason: !access.canManageRoles ? permissionLockReason("members.update") : access.isOwner || access.isSuperAdmin ? null : SUPER_ADMIN_ROLE_LOCK_REASON,
+  });
   const inviteTeamPicker = access.canManageTeams && (orgContext?.teams.length ?? 0) > 0;
   const [inviteTeamId, setInviteTeamId] = useState("");
   const [memberRoleTeamId, setMemberRoleTeamId] = useState("");
   function chosenRole(value: string, teamId: string) {
-    const set = value.startsWith("role:") ? customSets.find((entry) => entry.id === value.slice(5)) : null;
+    const setId = customRoleSetId(value);
+    const set = setId ? customSets.find((entry) => entry.id === setId) : null;
     const teams = set ? roleTeams(set.id) : [];
     const grantable = teams.filter((team) => !team.managedByScim && (!team.grantsOrganizationAdmin || access.canManageAdminTeams));
     const selected = grantable.find((team) => team.id === teamId) ?? (teams.length === 1 ? grantable[0] : undefined);
-    return { set, teams, grantable, selected, blocked: value.startsWith("role:") && (!set || !selected || Boolean(roleLocks.get(set.id)) || !access.canManageTeams) };
+    return { set, teams, grantable, selected, blocked: setId !== null && (!set || !selected || Boolean(roleLocks.get(set.id)) || !access.canManageTeams) };
   }
   const inviteChoice = chosenRole(inviteRole, inviteTeamId);
   const editChoice = chosenRole(memberRoleDraft, memberRoleTeamId);
@@ -473,7 +483,7 @@ export function ManageMembersScreen() {
           ) : (
             <div className="grid gap-3">
               <span className="text-[14px] font-medium text-gray-700">Role</span>
-              <DenInput value="Member" readOnly disabled aria-describedby="invite-role-locked" />
+              <DenInput value={BUILT_IN_ROLES.member.label} readOnly disabled aria-describedby="invite-role-locked" />
             </div>
           )}
           {customTeamChoice(inviteRole, inviteTeamId, setInviteTeamId)}
@@ -486,7 +496,7 @@ export function ManageMembersScreen() {
                 {orgContext.teams.filter((team) => !team.managedByScim && (!team.grantsOrganizationAdmin || access.canManageAdminTeams)).map((team) => (
                   <option key={team.id} value={team.id} title={team.name}>
                     {team.name}
-                    <span className="ml-1.5 font-normal text-gray-500">{team.grantsOrganizationAdmin ? "Admin" : access.canViewPermissions ? customRoles.nameByTeam.get(team.id) ?? "Member" : ""}</span>
+                    <span className="ml-1.5 font-normal text-gray-500">{team.grantsOrganizationAdmin ? BUILT_IN_ROLES.admin.label : access.canViewPermissions ? customRoles.nameByTeam.get(team.id) ?? BUILT_IN_ROLES.member.label : ""}</span>
                   </option>
                 ))}
               </DenSelect>

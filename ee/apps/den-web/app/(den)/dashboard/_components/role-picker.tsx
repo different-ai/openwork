@@ -3,16 +3,10 @@
 import { Popover } from "@base-ui/react/popover";
 import { Check, ChevronDown, LockKeyhole, Search } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { BUILT_IN_ROLES, type RoleOption } from "../../_lib/role-catalog";
 
-export type RolePickerOption = {
-  value: string;
-  label: string;
-  caption: string | null;
-  disabled: boolean;
-  lockReason?: string | null;
-};
-
-const BUILT_IN_ROLE_VALUES: ReadonlySet<string> = new Set(["member", "admin", "super-admin"]);
+/** A picker row, as `roleOptions` builds it from the organization's one role list. */
+export type RolePickerOption = RoleOption;
 
 /** One searchable, trigger-width role menu for people and teams. */
 export function RolePicker({ value, onChange, options, label, trigger, disabled, footer, open: controlledOpen, onOpenChange, testId = "member-role" }: {
@@ -38,7 +32,7 @@ export function RolePicker({ value, onChange, options, label, trigger, disabled,
   }
   const needle = query.trim().toLowerCase();
   const matches = options.filter((option) => `${option.label} ${option.caption ?? ""}`.toLowerCase().includes(needle));
-  const builtIn = (option: RolePickerOption) => BUILT_IN_ROLE_VALUES.has(option.value);
+  const builtIn = (option: RolePickerOption) => option.group === "built_in";
   const row = (option: RolePickerOption) => (
     <button key={option.value} type="button" role="option" aria-selected={value === option.value}
       aria-disabled={option.disabled} disabled={option.disabled} title={option.lockReason ?? option.label}
@@ -55,7 +49,7 @@ export function RolePicker({ value, onChange, options, label, trigger, disabled,
   return <Popover.Root open={open} onOpenChange={changeOpen}>
     <Popover.Trigger disabled={disabled} aria-label={label} data-testid={`${testId}-change`} title={trigger ?? current?.label}
       className="flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-3 text-left text-[13px] text-gray-900 focus-visible:outline-2 focus-visible:outline-gray-400">
-      <span className="min-w-0 truncate">{trigger ?? current?.label ?? "Member"}</span><ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0 truncate">{trigger ?? current?.label ?? BUILT_IN_ROLES.member.label}</span><ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
     </Popover.Trigger>
     <Popover.Portal><Popover.Positioner side="bottom" align="start" sideOffset={8} className="z-50 max-w-[var(--available-width)]">
       <Popover.Popup data-testid={`${testId}-choice`} className="flex max-h-[var(--available-height)] w-[var(--anchor-width)] max-w-[var(--available-width)] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-lg outline-none">
