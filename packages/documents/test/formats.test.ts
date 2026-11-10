@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { buildZip, utf8Bytes } from "@openwork/workbook"
+import { buildZip, openXlsxWorkbook, utf8Bytes } from "@openwork/workbook"
 import { officeFormats, officeFileTypeSchema, nativeOfficeFormats } from "../src/office-engine"
 import { validateOfficePackage } from "../src/office-server"
 import { collaboraCommand } from "../src/collabora-controller"
@@ -47,4 +47,21 @@ test("composed editor controls can only send bounded formatting commands", () =>
   assert.throws(() => collaboraCommand({ type: "color", value: "url(https://example.com)" }, "document"))
   assert.throws(() => collaboraCommand({ type: "table", rows: 10000, columns: 3 }, "document"))
   assert.throws(() => Reflect.apply(collaboraCommand, undefined, [{ type: "action", action: "constructor" }, "document"]))
+})
+
+test("elapsed-time cells read as durations, not 1900 dates", async () => {
+  const styles = '<styleSheet><cellXfs count="4"><xf numFmtId="0"/><xf numFmtId="46"/><xf numFmtId="164"/><xf numFmtId="14"/></cellXfs><numFmts count="1"><numFmt numFmtId="164" formatCode="[mm]:ss"/></numFmts></styleSheet>'
+  const sheet = '<worksheet><sheetData><row r="1"><c r="A1" s="1"><v>1.5</v></c><c r="B1" s="2"><v>0.0625</v></c><c r="C1" s="3"><v>45000</v></c></row></sheetData></worksheet>'
+  const bytes = await buildZip([
+    { name: "xl/workbook.xml", data: utf8Bytes('<workbook><sheets><sheet name="Hours" sheetId="1"/></sheets></workbook>') },
+    { name: "xl/styles.xml", data: utf8Bytes(styles) },
+    { name: "xl/worksheets/sheet1.xml", data: utf8Bytes(sheet) },
+  ])
+  const workbook = await openXlsxWorkbook(bytes)
+  const { cells } = await workbook.readSheet(workbook.sheets[0]!)
+  const shown = Object.fromEntries(cells.map((cell) => [cell.reference, cell.displayedValue]))
+  // [h]:mm:ss shows 36 hours as 36:00:00 in Excel, not as 1900-01-01 12:00:00
+  assert.equal(shown.A1, "36:00:00")
+  assert.equal(shown.B1, "1:30:00")
+  assert.equal(shown.C1, "2023-03-15")
 })
