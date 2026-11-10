@@ -4,7 +4,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { AssistantProse } from "../src/components/markdown/assistant-prose";
-import { copyAssistantProseSelection, serializeAssistantProseRange, serializeAssistantMessageRange } from "../src/components/markdown/assistant-prose-clipboard";
+import { copyAssistantProseSelection, joinAssistantProseClipboard, serializeAssistantProseRange, serializeAssistantMessageRange } from "../src/components/markdown/assistant-prose-clipboard";
 import { FEATURES } from "../../../packages/features/src/registry";
 
 const ownedDom = !GlobalRegistrator.isRegistered;
@@ -24,7 +24,6 @@ afterEach(async () => {
 });
 afterAll(async () => { if (ownedDom) await GlobalRegistrator.unregister(); });
 
-const separator = '<p style="margin:0"><br></p>';
 function prose(html: string) {
   const root = document.createElement("div");
   root.innerHTML = html;
@@ -70,40 +69,37 @@ function result(html: string) {
 }
 
 describe("semantic selected prose and structural spacing", () => {
-  test("paragraph → list → paragraph: two separators after the list and one at other boundaries", () => {
+  test("paragraph → list → paragraph preserves blocks without presentation or padding", () => {
     const data = result('<div><p class="my-3" style="font:13px system-ui;color:red">Intro</p></div><div><ul class="list-disc"><li><p>One</p></li><li><p>Two</p></li></ul></div><div><p><strong>Expected:</strong> Result</p></div>');
-    expect(data.html).toBe('<p style="margin:0">Intro</p>' + separator + '<ul style="margin:0"><li style="margin:0"><p style="margin:0">One</p></li><li style="margin:0"><p style="margin:0">Two</p></li></ul>' + separator + separator + '<p style="margin:0"><strong>Expected:</strong> Result</p>');
+    expect(data.html).toBe('<p>Intro</p><ul><li><p>One</p></li><li><p>Two</p></li></ul><p><strong>Expected:</strong> Result</p>');
     expect(data.text).toBe("Intro\n\n• One\n• Two\n\nExpected: Result");
-    expect(data.html.split(separator)).toHaveLength(4);
-    expect(data.html).not.toMatch(/class=|font|color|data-openwork/);
+    expect(data.html).not.toMatch(/class=|style=|font|color|data-openwork|<p>\s*(?:<br>)?\s*<\/p>/);
   });
-  test.each(['ul','ol'])("top-level %s gets two HTML separators but unchanged plain text", tag => {
+  test.each(['ul','ol'])("top-level %s needs no padding before the following paragraph", tag => {
     const data = result(`<${tag}><li>First<ul><li>Nested</li></ul></li><li>Workspace menu.</li></${tag}><p><strong>Expected:</strong> gap</p><p>After</p>`);
-    expect(data.html).toContain(`</${tag}>` + separator + separator + '<p style="margin:0"><strong>Expected:</strong>');
-    expect(data.html).not.toContain('</li>' + separator);
+    expect(data.html).toBe(`<${tag}><li>First<ul><li>Nested</li></ul></li><li>Workspace menu.</li></${tag}><p><strong>Expected:</strong> gap</p><p>After</p>`);
     expect(data.text).toBe((tag==='ol'?'1. First\n  • Nested\n2. Workspace menu.':'• First\n  • Nested\n• Workspace menu.')+'\n\nExpected: gap\n\nAfter');
-    expect(data.html.endsWith('<p style="margin:0">After</p>')).toBe(true);
   });
-  test("list-at-end has no extra trailing paragraphs; escaped list text is not a list boundary", () => {
-    expect(result('<ul><li>Only</li></ul>').html.endsWith('</ul>')).toBe(true);
-    expect(result('<p><code>&lt;/ul&gt;</code></p><p>Next</p>').html).toBe('<p style="margin:0"><code>&lt;/ul&gt;</code></p>'+separator+'<p style="margin:0">Next</p>');
+  test("list-at-end has no extra trailing paragraphs; escaped list text is literal", () => {
+    expect(result('<ul><li>Only</li></ul>').html).toBe('<ul><li>Only</li></ul>');
+    expect(result('<p><code>&lt;/ul&gt;</code></p><p>Next</p>').html).toBe('<p><code>&lt;/ul&gt;</code></p><p>Next</p>');
   });
-  test("two list separators also survive a prose-group boundary", () => {
+  test("list and paragraph concatenate across a prose-group boundary without padding", () => {
     const root = prose('<div data-assistant-reply-prose><ul><li>Workspace menu.</li></ul></div><section>Tool</section><div data-assistant-reply-prose><p><strong>Expected:</strong> gap</p></div>');
     const data = serializeAssistantMessageRange(root,all(root));
-    expect(data?.html).toContain('</ul>'+separator+separator+'<p style="margin:0"><strong>Expected:</strong>');
+    expect(data?.html).toBe('<ul><li>Workspace menu.</li></ul><p><strong>Expected:</strong> gap</p>');
     expect(data?.text).toBe('• Workspace menu.\n\nExpected: gap');
   });
-  test("consecutive paragraphs have structural spacing, not a margin heuristic", () => {
+  test("consecutive paragraphs use semantic HTML and readable plain text breaks", () => {
     const data = result('<p>First</p><p>Second<br>continued</p><p>Third</p>');
     expect(data.text).toBe("First\n\nSecond\ncontinued\n\nThird");
-    expect(data.html.split(separator)).toHaveLength(3);
+    expect(data.html).toBe('<p>First</p><p>Second<br>continued</p><p>Third</p>');
   });
   test("nested and ordered lists preserve items and numbering", () => {
     const data = result('<ol start="3"><li><p>Parent</p><ul><li>Child</li><li><em>Next</em></li></ul></li><li>Last</li></ol>');
     expect(data.text).toBe("3. Parent\n  • Child\n  • Next\n4. Last");
-    expect(data.html).toContain('<ol style="margin:0" start="3">');
-    expect(data.html).not.toContain(separator);
+    expect(data.html).toContain('<ol start="3">');
+    expect(data.html).toBe('<ol start="3"><li><p>Parent</p><ul><li>Child</li><li><em>Next</em></li></ul></li><li>Last</li></ol>');
   });
   test("partial ordered list starts at the selected source item", () => {
     const root = prose('<ol start="3"><li>First</li><li>Second</li><li>Third</li></ol>');
@@ -112,17 +108,17 @@ describe("semantic selected prose and structural spacing", () => {
     range.setStart(second, 2); range.setEnd(second, second.length);
     const data = serializeAssistantProseRange(root, range);
     expect(data?.text).toBe("4. cond");
-    expect(data?.html).toBe('<ol style="margin:0" start="4"><li style="margin:0">cond</li></ol>');
+    expect(data?.html).toBe('<ol start="4"><li>cond</li></ol>');
   });
   test("partial inline selection preserves its semantic ancestors and excludes unselected words", () => {
     const root = prose('<p>Hello <strong>brave <em>new</em></strong> world</p>');
     const range = document.createRange();
     range.setStart(text(root, 'strong'), 2); range.setEnd(text(root, 'em'), 3);
-    expect(serializeAssistantProseRange(root, range)).toEqual({ html: '<p style="margin:0"><strong>ave <em>new</em></strong></p>', text: 'ave new' });
+    expect(serializeAssistantProseRange(root, range)).toEqual({ html: '<p><strong>ave <em>new</em></strong></p>', text: 'ave new' });
   });
   test("links retain href and emphasis, but no favicon or private/presentation attributes", () => {
     const data = result('<p><a href="https://example.com/docs?a=1&amp;b=2" class="link" target="_blank" rel="noreferrer" data-openwork-link-href="private"><img src="https://example.com/favicon" alt="" aria-hidden="true"><strong>Guide</strong></a> and <em>italic</em>.</p>');
-    expect(data.html).toBe('<p style="margin:0"><a href="https://example.com/docs?a=1&amp;b=2"><strong>Guide</strong></a> and <em>italic</em>.</p>');
+    expect(data.html).toBe('<p><a href="https://example.com/docs?a=1&amp;b=2"><strong>Guide</strong></a> and <em>italic</em>.</p>');
     expect(data.text).toBe('Guide (https://example.com/docs?a=1&b=2) and italic.');
   });
   test("bare links don't repeat the URL", () => {
@@ -135,7 +131,7 @@ describe("semantic selected prose and structural spacing", () => {
   });
   test("code blocks preserve literal whitespace, strip highlighting and omit generated controls", () => {
     const data = result('<div data-openwork-code-block><button data-openwork-code-copy>Copy</button><button data-openwork-code-wrap>Wrap</button><div><pre class="shiki"><code><span style="color:red">  x &lt; y</span>\n\n\tend\n</code></pre></div></div><p>After</p>');
-    expect(data.html).toBe('<pre style="margin:0"><code>  x &lt; y\n\n\tend\n</code></pre>' + separator + '<p style="margin:0">After</p>');
+    expect(data.html).toBe('<pre><code>  x &lt; y\n\n\tend\n</code></pre><p>After</p>');
     expect(data.text).toBe('  x < y\n\n\tend\n\n\nAfter');
   });
   test("inline code retains whitespace and escapes literal markup", () => {
@@ -146,8 +142,8 @@ describe("semantic selected prose and structural spacing", () => {
   test("whole tables are semantic HTML with a readable tab-separated fallback", () => {
     const data = result('<table class="table"><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>1</td><td><strong>2</strong></td></tr></tbody></table><p>After</p>');
     expect(data.text).toBe('A\tB\n1\t2\n\nAfter');
-    expect(data.html).toContain('<table style="margin:0"><thead><tr><th>A</th><th>B</th></tr></thead>');
-    expect(data.html.split(separator)).toHaveLength(2);
+    expect(data.html).toContain('<table><thead><tr><th>A</th><th>B</th></tr></thead>');
+    expect(data.html).toBe('<table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>1</td><td><strong>2</strong></td></tr></tbody></table><p>After</p>');
   });
 });
 
@@ -163,26 +159,57 @@ describe("review coverage conversions", () => {
     const data = serializeAssistantProseRange(root, all(root));
     expect(data).not.toBeNull(); expect(data?.html).not.toMatch(/svg|button|data-|class=|<mark/);
     expect(data?.html).toContain('<a href="https://github.com/different-ai/openwork/pull/7203">PR</a>');
-    expect(data?.html).not.toContain('<blockquote');
-    expect(data?.html).toContain('Quoted <em>text</em>.');
+    // This renderer/sanitizer fixture emits bare heading text; real h1–h6 nodes are covered below.
+    expect(data?.text).toStartWith('Subject\n\n');
+    expect(data?.html).toContain('<blockquote><p>Quoted <em>text</em>.</p></blockquote>');
+    expect(data?.html).toContain('<hr>');
+    expect(data?.text).toContain('> Quoted text.');
     expect(data?.text).toContain('Expected: gap');
   });
-  test.each([1, 2, 3, 4, 5, 6])("h%s becomes a bold paragraph without disabling surrounding copy", level => {
-    const data = result(`<h${level}>Thread <em>label</em></h${level}><ul><li>Item</li></ul><p><strong>Expected:</strong> gap</p>`);
-    expect(data.html).toBe('<p style="margin:0"><strong>Thread <em>label</em></strong></p>' + separator + '<ul style="margin:0"><li style="margin:0">Item</li></ul>' + separator + separator + '<p style="margin:0"><strong>Expected:</strong> gap</p>');
+  test.each([1, 2, 3, 4, 5, 6])("h%s preserves its actual level and inline formatting", level => {
+    const data = result(`<h${level} class="heading" style="margin:20px;font-size:30px;color:red" data-private="secret">Thread <em>label</em></h${level}><ul><li>Item</li></ul><p><strong>Expected:</strong> gap</p>`);
+    expect(data.html).toBe(`<h${level}>Thread <em>label</em></h${level}><ul><li>Item</li></ul><p><strong>Expected:</strong> gap</p>`);
     expect(data.text).toBe('Thread label\n\n• Item\n\nExpected: gap');
   });
-  test("horizontal rules are a single structural boundary, not extra empty blocks", () => {
+  test("horizontal rules retain semantic HTML and readable plain dividers, not padding", () => {
     const data = result('<p>First</p><hr><hr><p>After</p>');
-    expect(data.html).toBe('<p style="margin:0">First</p>' + separator + '<p style="margin:0">After</p>');
-    expect(data.text).toBe('First\n\nAfter');
+    expect(data.html).toBe('<p>First</p><hr><hr><p>After</p>');
+    expect(data.text).toBe('First\n\n---\n\n---\n\nAfter');
+    expect(result('<hr>')).toEqual({ html: '<hr>', text: '---' });
   });
-  test("strike stays semantic and quotes become portable paragraphs with inline formatting", () => {
+  test("strike and quote paragraphs stay semantic with quoted plain text boundaries", () => {
     const data = result('<p><del>Old</del> new</p><blockquote><p>Quoted <em>word</em></p><p>Next</p></blockquote>');
-    expect(data.html).toContain('<s>Old</s>');
-    expect(data.html).toContain('<p style="margin:0">Quoted <em>word</em></p>' + separator + '<p style="margin:0">Next</p>');
-    expect(data.html).not.toContain('<blockquote');
-    expect(data.text).toBe('Old new\n\nQuoted word\n\nNext');
+    expect(data.html).toBe('<p><s>Old</s> new</p><blockquote><p>Quoted <em>word</em></p><p>Next</p></blockquote>');
+    expect(data.text).toBe('Old new\n\n> Quoted word\n>\n> Next');
+  });
+  test("quote toolbar is stripped while heading, paragraphs, nested quote and rule survive", () => {
+    const data = result('<blockquote data-openwork-quote class="quote" style="color:red"><button data-openwork-quote-copy="private"><svg></svg>Copy</button>\n<h2>Quoted <strong>title</strong></h2>\n<p>First<br>continued</p>\n<blockquote><p>Nested</p><p>Again</p></blockquote>\n<hr>\n<p>Last <a href="https://example.com">link</a></p>\n</blockquote><p>Outside</p>');
+    expect(data.html).toBe('<blockquote> <h2>Quoted <strong>title</strong></h2> <p>First<br>continued</p> <blockquote><p>Nested</p><p>Again</p></blockquote> <hr> <p>Last <a href="https://example.com">link</a></p> </blockquote><p>Outside</p>');
+    expect(data.text).toBe('> Quoted title\n>\n> First\n> continued\n>\n> > Nested\n> >\n> > Again\n>\n> ---\n>\n> Last link (https://example.com)\n\nOutside');
+    expect(data.html).not.toMatch(/button|svg|private|class=|style=|data-|<p>\s*(?:<br>)?\s*<\/p>/);
+    const reparsed = document.createElement('div'); reparsed.innerHTML = data.html;
+    expect(reparsed.innerHTML).toBe(data.html);
+    expect(reparsed.querySelector('blockquote > h2 strong')?.textContent).toBe('title');
+    expect(reparsed.querySelectorAll('blockquote > p')).toHaveLength(4);
+  });
+  test("quotes preserve spaces between inline siblings and literal code", () => {
+    expect(result('<blockquote><em>One</em> <strong>two</strong></blockquote>')).toEqual({ html: '<blockquote><em>One</em> <strong>two</strong></blockquote>', text: '> One two' });
+    const data = result('<blockquote><p>Code:</p><pre><code>  first\n\n\tlast</code></pre></blockquote>');
+    expect(data.html).toBe('<blockquote><p>Code:</p><pre><code>  first\n\n\tlast</code></pre></blockquote>');
+    expect(data.text).toBe('> Code:\n>\n>   first\n>\n> \tlast');
+  });
+  test("partial quote and heading selection keeps semantic ancestors and selected text only", () => {
+    const root = prose('<blockquote><h4>Before <em>Heading</em></h4><p>Next paragraph</p></blockquote>');
+    const range = document.createRange(); range.setStart(text(root, 'em'), 2); range.setEnd(text(root, 'p'), 4);
+    expect(serializeAssistantProseRange(root, range)).toEqual({ html: '<blockquote><h4><em>ading</em></h4><p>Next</p></blockquote>', text: '> ading\n>\n> Next' });
+  });
+  test("headings and quotes remain valid in list items and table cells", () => {
+    const html = '<ul><li><h3>Item</h3><blockquote><p>Quote</p></blockquote><p>After</p></li></ul><table><tbody><tr><td><h5>Cell</h5><blockquote><p>Quoted cell</p></blockquote></td></tr></tbody></table>';
+    const data = result(html);
+    expect(data.html).toBe(html);
+    expect(data.text).toBe('• Item\n> Quote\nAfter\n\nCell\n> Quoted cell');
+    const reparsed = document.createElement('div'); reparsed.innerHTML = data.html;
+    expect(reparsed.innerHTML).toBe(html);
   });
   test.each(['javascript:alert(1)', 'ftp://example.com/file', '#section', 'https://bad host', ''])('nonportable href degrades only that label: %s', href => {
     const data = result(`<p>Before <a href="${href}"><em>Label</em></a> and <a href="https://example.com">Web</a></p><p>After</p>`);
@@ -191,7 +218,7 @@ describe("review coverage conversions", () => {
   });
   test.each(['file:///tmp/report.pdf','/tmp/report.pdf','notes/report.pdf'])('local destinations retain label and literal path: %s', path => {
     const data = result(`<p><a href="${path}"><em>Label</em></a></p>`);
-    expect(data.html).toBe(`<p style="margin:0"><em>Label</em> (<code>${path}</code>)</p>`);
+    expect(data.html).toBe(`<p><em>Label</em> (<code>${path}</code>)</p>`);
     expect(data.text).toBe(`Label (${path})`);
   });
   test.each(['mailto:user@example.com', 'tel:+15555550100'])('safe non-web href stays a link: %s', href => {
@@ -199,29 +226,29 @@ describe("review coverage conversions", () => {
   });
   test("local file label carries its path as written, never a contextual absolute expansion", () => {
     const data = result('<p>Local file: <span><a href="/Users/private/workspace/notes/copy-probe.md" data-openwork-link-href="notes/copy-probe.md"><svg></svg>Copy probe note</a><button data-openwork-link-chevron="notes/copy-probe.md" aria-label="Open with"><svg></svg></button></span>.</p>');
-    expect(data.html).toBe('<p style="margin:0">Local file: Copy probe note (<code>notes/copy-probe.md</code>).</p>');
+    expect(data.html).toBe('<p>Local file: Copy probe note (<code>notes/copy-probe.md</code>).</p>');
     expect(data.text).toBe('Local file: Copy probe note (notes/copy-probe.md).');
     expect(data.html).not.toContain('/Users/');
   });
   test.each(['copy-probe.md','notes/copy-probe.md'])('matching file label reduces to code path: %s', label => {
     const data = result(`<p><a href="notes/copy-probe.md" data-openwork-link-href="notes/copy-probe.md">${label}</a></p>`);
-    expect(data).toEqual({html:'<p style="margin:0"><code>notes/copy-probe.md</code></p>',text:'notes/copy-probe.md'});
+    expect(data).toEqual({html:'<p><code>notes/copy-probe.md</code></p>',text:'notes/copy-probe.md'});
   });
   test("encoded path remains exactly written even when filename comparison is decoded", () => {
-    expect(result('<p><a href="./notes/my%20file.txt" data-openwork-link-href="./notes/my%20file.txt">my file.txt</a></p>')).toEqual({html:'<p style="margin:0"><code>./notes/my%20file.txt</code></p>',text:'./notes/my%20file.txt'});
+    expect(result('<p><a href="./notes/my%20file.txt" data-openwork-link-href="./notes/my%20file.txt">my file.txt</a></p>')).toEqual({html:'<p><code>./notes/my%20file.txt</code></p>',text:'./notes/my%20file.txt'});
   });
   test("inline code preserves written path rather than its resolved metadata", () => {
-    expect(result('<p><code data-openwork-inline-code-path="/Users/private/notes/file.txt">notes/file.txt</code></p>')).toEqual({html:'<p style="margin:0"><code>notes/file.txt</code></p>',text:'notes/file.txt'});
+    expect(result('<p><code data-openwork-inline-code-path="/Users/private/notes/file.txt">notes/file.txt</code></p>')).toEqual({html:'<p><code>notes/file.txt</code></p>',text:'notes/file.txt'});
   });
   test("file-chip icon and Open with control are omitted; inline paths retain code", () => {
     const data = result('<p>File <span><a href="/workspace/report.pdf" data-openwork-link-href="/workspace/report.pdf"><svg><path></path></svg>report.pdf</a><button data-openwork-link-chevron="/workspace/report.pdf" aria-label="Open with"><svg></svg></button></span>, <code data-openwork-inline-code-path="/tmp/file.txt" role="button">file.txt</code>, <span data-openwork-directory-path="/tmp">folder</span>.</p><p>After</p>');
-    expect(data.html).toBe('<p style="margin:0">File <code>/workspace/report.pdf</code>, <code>file.txt</code>, folder.</p>' + separator + '<p style="margin:0">After</p>');
+    expect(data.html).toBe('<p>File <code>/workspace/report.pdf</code>, <code>file.txt</code>, folder.</p><p>After</p>');
     expect(data.text).toBe('File /workspace/report.pdf, file.txt, folder.\n\nAfter');
   });
   test("partial file label preserves selected words plus its source-written destination", () => {
     const root = prose('<p><a href="file:///tmp/file" data-openwork-link-href="file:///tmp/file"><svg></svg>report.pdf</a></p>');
     const range = document.createRange(); const label = root.querySelector('a')!.lastChild!; range.setStart(label, 2); range.setEnd(label, 6);
-    expect(serializeAssistantProseRange(root, range)).toEqual({html:'<p style="margin:0">port (<code>file:///tmp/file</code>)</p>', text:'port (file:///tmp/file)'});
+    expect(serializeAssistantProseRange(root, range)).toEqual({html:'<p>port (<code>file:///tmp/file</code>)</p>', text:'port (file:///tmp/file)'});
   });
 });
 
@@ -229,7 +256,24 @@ describe("message-level prose mapping", () => {
   function message() { return prose('<div data-assistant-reply-prose><p>First <em>answer</em></p></div><section><h2>Tool</h2><input value="private"><p>Reasoning/tool output</p></section><div data-assistant-reply-prose><p>Last <a href="https://example.com">link</a></p></div>'); }
   test("prose → activity → prose serializes prose only", () => {
     const root = message(); const range = document.createRange(); range.setStart(text(root, '[data-assistant-reply-prose] p'), 2); range.setEnd(text(root, 'a'), 3);
-    expect(serializeAssistantMessageRange(root, range)).toEqual({html:'<p style="margin:0">rst <em>answer</em></p>' + separator + '<p style="margin:0">Last <a href="https://example.com">lin</a></p>',text:'rst answer\n\nLast lin (https://example.com)'});
+    expect(serializeAssistantMessageRange(root, range)).toEqual({html:'<p>rst <em>answer</em></p><p>Last <a href="https://example.com">lin</a></p>',text:'rst answer\n\nLast lin (https://example.com)'});
+  });
+  test("cross-group headings, quotes, lists and rules keep semantics while omitting activity", () => {
+    const root = prose('<div data-assistant-reply-prose><h1>Title</h1><blockquote><p>First</p><p>Second</p></blockquote></div><section><p>Private activity</p></section><div data-assistant-reply-prose><hr><ol start="4"><li>Next</li></ol><h6>End</h6></div>');
+    expect(serializeAssistantMessageRange(root, all(root))).toEqual({
+      html: '<h1>Title</h1><blockquote><p>First</p><p>Second</p></blockquote><hr><ol start="4"><li>Next</li></ol><h6>End</h6>',
+      text: 'Title\n\n> First\n>\n> Second\n\n---\n\n4. Next\n\nEnd',
+    });
+  });
+  test("clipboard join concatenates fragments without padding and plain text with blank lines", () => {
+    expect(joinAssistantProseClipboard([])).toBeNull();
+    const first = result('<h2>Title</h2><blockquote><p>Quoted</p></blockquote>');
+    const second = result('<hr><p>After</p>');
+    expect(joinAssistantProseClipboard([first, second])).toEqual({
+      html: first.html + second.html,
+      text: 'Title\n\n> Quoted\n\n---\n\nAfter',
+    });
+    expect(joinAssistantProseClipboard([{ html: '<p>Large</p>', text: 'x'.repeat(1_000_001) }])).toBeNull();
   });
   test("nested and activity-forged markers cannot duplicate or include activity", () => {
     const root = prose('<div data-assistant-reply-prose><p>First <span data-assistant-reply-prose>word</span></p></div><section><div data-assistant-reply-prose><p>Secret tool</p></div></section><div data-assistant-reply-prose><p>Last</p></div>');
@@ -274,7 +318,7 @@ describe("review regression cases", () => {
   test("text-bearing divs preserve block boundaries", () => {
     const data = result('<div>First <em>part</em></div><div>Second</div>');
     expect(data.text).toBe('First part\n\nSecond');
-    expect(data.html).toBe('<p style="margin:0">First <em>part</em></p>' + separator + '<p style="margin:0">Second</p>');
+    expect(data.html).toBe('<p>First <em>part</em></p><p>Second</p>');
   });
   test("paragraphs in a table cell retain text boundaries", () => {
     expect(result('<table><tbody><tr><td><p>First</p><p>Second</p></td><td>Other</td></tr></tbody></table>').text).toBe('First\nSecond\tOther');
@@ -288,6 +332,28 @@ describe("review regression cases", () => {
     '<li>Orphan item</li>',
   ])("ambiguous structure/numbering falls back: %s", html => {
     const root = prose(html); expect(serializeAssistantProseRange(root, all(root))).toBeNull();
+  });
+  test.each(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 's', 'a', 'code', 'p'])("invalid block nesting inside %s stays native rather than emitting malformed HTML", tag => {
+    // Construct directly: HTML parsers may repair invalid source before the serializer sees it.
+    const root = prose(''); const outer = document.createElement(tag);
+    const quote = document.createElement('blockquote'); quote.innerHTML = '<p>Nested block</p>';
+    outer.append(quote); root.append(outer);
+    expect(serializeAssistantProseRange(root, all(root))).toBeNull();
+  });
+  test.each(['h2', 'p', 'ul', 'pre'])("invalid %s block nested in a heading stays native", tag => {
+    const root = prose(''); const heading = document.createElement('h1');
+    const block = document.createElement(tag); block.textContent = 'Nested'; heading.append(block); root.append(heading);
+    expect(serializeAssistantProseRange(root, all(root))).toBeNull();
+  });
+  test.each(['li', 'td', 'tr', 'thead'])("orphan %s inside a quote stays native", tag => {
+    const root = prose(''); const quote = document.createElement('blockquote');
+    const orphan = document.createElement(tag); orphan.textContent = 'Orphan'; quote.append(orphan); root.append(quote);
+    expect(serializeAssistantProseRange(root, all(root))).toBeNull();
+  });
+  test("copying a generated quote toolbar control stays native", () => {
+    const root = prose('<blockquote data-openwork-quote><button data-openwork-quote-copy="private">Copy</button><p>Quote</p></blockquote>');
+    const range = document.createRange(); range.selectNodeContents(root.querySelector('button')!);
+    expect(serializeAssistantProseRange(root, range)).toBeNull();
   });
   test("visually complete table text without enclosing table boundaries remains conservative", () => {
     const root = prose('<table><tbody><tr><td>First</td><td>Last</td></tr></tbody></table>');

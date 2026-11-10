@@ -4,6 +4,7 @@ import { localPathName, parseLocalPathReference } from "@/react-app/domains/sess
 export type AssistantProseClipboard = { html: string; text: string };
 
 type Tag = "p" | "ul" | "ol" | "li" | "strong" | "em" | "s" | "hr" | "a" | "code" | "pre" | "br"
+  | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote"
   | "table" | "thead" | "tbody" | "tfoot" | "tr" | "th" | "td";
 type Content = { kind: "text"; value: string } | {
   kind: "element";
@@ -15,23 +16,25 @@ type Content = { kind: "text"; value: string } | {
 
 const TAGS = new Set<string>([
   "p", "ul", "ol", "li", "strong", "em", "s", "hr", "a", "code", "pre", "br",
+  "h1", "h2", "h3", "h4", "h5", "h6", "blockquote",
   "table", "thead", "tbody", "tfoot", "tr", "th", "td",
 ]);
-const BLOCKS = new Set<Tag>(["p", "ul", "ol", "li", "pre", "table", "hr"]);
+const HEADINGS = new Set<Tag>(["h1", "h2", "h3", "h4", "h5", "h6"]);
+const BLOCKS = new Set<Tag>(["p", "ul", "ol", "li", "pre", "table", "hr", "blockquote", ...HEADINGS]);
 const INLINE = new Set<Tag>(["strong", "em", "s", "a", "code", "br"]);
 const isInline = (node: Content) => node.kind === "text" || INLINE.has(node.tag);
 const meaningful = (node: Content) => node.kind !== "text" || Boolean(node.value.trim());
 
 function validateChildren(tag: Tag, children: Content[]) {
   const content = children.filter(meaningful);
-  if (tag === "p" || INLINE.has(tag)) {
+  if (tag === "p" || HEADINGS.has(tag) || INLINE.has(tag)) {
     if (!content.every(isInline)) return fail();
   } else if (tag === "ul" || tag === "ol") {
     if (!content.every(node => node.kind === "element" && node.tag === "li")) return fail();
   } else if (tag === "table" || tag === "thead" || tag === "tbody" || tag === "tfoot" || tag === "tr") {
     const allowed = tag === "table" ? ["thead", "tbody", "tfoot", "tr"] : tag === "tr" ? ["th", "td"] : ["tr"];
     if (!content.every(node => node.kind === "element" && allowed.includes(node.tag))) return fail();
-  } else if (tag !== "pre" && !content.every(node => isInline(node) || (node.kind === "element" && ["p", "ul", "ol", "pre", "table", "hr"].includes(node.tag)))) {
+  } else if (tag !== "pre" && !content.every(node => isInline(node) || (node.kind === "element" && BLOCKS.has(node.tag) && node.tag !== "li"))) {
     return fail();
   }
 }
@@ -41,23 +44,12 @@ const ATOMIC = [
   "[data-openwork-untrusted-reference]", "[data-openwork-mermaid]", "[data-openwork-image]",
 ].join(",");
 const EDITABLE = 'input,textarea,select,button,[contenteditable]:not([contenteditable="false"])';
-const SEPARATOR = '<p style="margin:0"><br></p>';
 
-function joinHtmlBlocks(blocks: readonly string[]): string {
-  return blocks.map((html, index) => {
-    if (index === 0) return html;
-    // Only our serialized top-level blocks enter here; escaped code cannot look like a closing list tag.
-    const previous = blocks[index - 1]!;
-    const afterList = previous.endsWith("</ul>") || previous.endsWith("</ol>");
-    return SEPARATOR.repeat(afterList ? 2 : 1) + html;
-  }).join("");
-}
-
-/** Keep the same boundary rule across separately rendered prose groups and message actions. */
+/** Preserve semantic block boundaries without adding presentation or empty padding paragraphs. */
 export function joinAssistantProseClipboard(pieces: readonly AssistantProseClipboard[]): AssistantProseClipboard | null {
   if (!pieces.length) return null;
   const text = pieces.map(piece => piece.text).join("\n\n");
-  return text.length > 1_000_000 ? null : { html: joinHtmlBlocks(pieces.map(piece => piece.html)), text };
+  return text.length > 1_000_000 ? null : { html: pieces.map(piece => piece.html).join(""), text };
 }
 
 function isTag(tag: string): tag is Tag { return TAGS.has(tag); }
@@ -96,30 +88,51 @@ function codeText(nodes: Content[]): string {
 function htmlFor(node: Content): string {
   if (node.kind === "text") return escape(node.value);
   if (node.tag === "br") return "<br>";
-  if (node.tag === "hr") return SEPARATOR;
-  const margin = BLOCKS.has(node.tag) ? ' style="margin:0"' : "";
+  if (node.tag === "hr") return "<hr>";
   const href = node.href ? ` href="${escape(node.href)}"` : "";
   const start = node.tag === "ol" && node.start !== undefined && node.start !== 1 ? ` start="${node.start}"` : "";
-  return `<${node.tag}${margin}${href}${start}>${node.children.map(htmlFor).join("")}</${node.tag}>`;
+  return `<${node.tag}${href}${start}>${node.children.map(htmlFor).join("")}</${node.tag}>`;
 }
 function textFor(node: Content, depth = 0): string {
   if (node.kind === "text") return node.value;
   if (node.tag === "br") return "\n";
-  if (node.tag === "hr") return "";
+  if (node.tag === "hr") return "---";
   if (node.tag === "pre" || node.tag === "code") return codeText(node.children);
+  if (node.tag === "blockquote") {
+    // Keep paragraph boundaries (including blank quoted lines) and every nested quote level.
+    const paragraphs: string[] = [];
+    let inline = "";
+    const flush = () => {
+      if (inline.trim()) paragraphs.push(inline);
+      inline = "";
+    };
+    for (const child of node.children) {
+      if (child.kind === "element" && BLOCKS.has(child.tag)) {
+        flush();
+        paragraphs.push(textFor(child, depth));
+      } else {
+        inline += textFor(child, depth);
+      }
+    }
+    flush();
+    return paragraphs.join("\n\n").split("\n").map(line => line ? `> ${line}` : ">").join("\n");
+  }
   if (node.tag === "ul" || node.tag === "ol") {
     let index = node.start ?? 1;
     return node.children.filter(child => child.kind === "element" && child.tag === "li").map(child => {
       const marker = node.tag === "ol" ? `${index++}.` : "•";
       if (child.kind !== "element") return fail();
       let line = "";
+      let previousBlock = false;
       for (const content of child.children) {
+        const block = content.kind === "element" && BLOCKS.has(content.tag);
         if (content.kind === "element" && (content.tag === "ul" || content.tag === "ol")) {
           line = line.trimEnd() + "\n" + textFor(content, depth + 1);
         } else {
-          if (content.kind === "element" && content.tag === "p" && line && !line.endsWith("\n")) line += "\n";
+          if ((block || previousBlock) && line && !line.endsWith("\n")) line += "\n";
           line += textFor(content, depth);
         }
+        previousBlock = block;
       }
       return `${"  ".repeat(depth)}${marker} ${line.trim()}`;
     }).join("\n");
@@ -181,9 +194,7 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
         return walk(pre, true);
       }
       const sourceTag = node.tagName.toLowerCase();
-      const heading = /^h[1-6]$/.test(sourceTag);
-      // Live Slack import dropped rich formatting for the quote variant; keep its blocks as paragraphs.
-      const tag = heading ? "p" : sourceTag === "blockquote" ? "div" : sourceTag === "del" ? "s" : sourceTag === "mark" && node.getAttribute("data-search-highlight") === "true" ? "span" : sourceTag;
+      const tag = sourceTag === "del" ? "s" : sourceTag === "mark" && node.getAttribute("data-search-highlight") === "true" ? "span" : sourceTag;
       if (node.matches("button[data-openwork-quote-copy]") && node.parentElement?.matches("blockquote[data-openwork-quote]")) return [];
       // Only the renderer's paired file-chip affordance and its icon are decorations.
       if (node.matches("button[data-openwork-link-chevron]")) {
@@ -200,8 +211,7 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
       if (tag === "li" && node.hasAttribute("value")) return fail();
       if (tag === "ol" && (node.hasAttribute("reversed") || (node.hasAttribute("type") && node.getAttribute("type") !== "1"))) return fail();
       const parts = [...node.childNodes].map(source => ({ source, content: walk(source, literal || tag === "pre" || tag === "code") }));
-      let children = parts.flatMap(part => part.content);
-      if (heading) children = [element("strong", children)];
+      const children = parts.flatMap(part => part.content);
       if (tag === "div") {
         const content = children.filter(meaningful);
         if (!content.length) return [];
@@ -255,7 +265,6 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
       inline = [];
     };
     for (const node of selected) {
-      if (node.kind === "element" && node.tag === "hr") { flush(); continue; }
       if (node.kind === "element" && BLOCKS.has(node.tag)) {
         if (node.tag === "li") return fail();
         flush(); blocks.push(node);
@@ -267,7 +276,7 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
     flush();
     const text = blocks.map(node => textFor(node)).join("\n\n");
     if (!text.trim() || text.length > 1_000_000) return null;
-    return { html: joinHtmlBlocks(blocks.map(htmlFor)), text };
+    return { html: blocks.map(htmlFor).join(""), text };
   } catch {
     return null;
   }
