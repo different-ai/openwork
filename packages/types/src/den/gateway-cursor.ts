@@ -1,4 +1,4 @@
-import { AUTO_ROUTER_THINKING_LEVELS, type AutoRouterThinkingLevel } from "./auto-router";
+import { AUTO_ROUTER_THINKING_LEVELS, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router";
 
 /**
  * Cursor through the AI Gateway (feature `gatewayCursorSetup`).
