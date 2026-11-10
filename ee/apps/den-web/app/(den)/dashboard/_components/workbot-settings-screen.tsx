@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Lock } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import { WORKBOT_MAX_STEPS_CHOICES, type WorkbotModelTest, type WorkbotSettings } from "@openwork/types/den/workbot-settings";
+import type { WorkbotModelTest, WorkbotSettings } from "@openwork/types/den/workbot-settings";
 import {
   getBrandAppearanceRoute,
   getMcpConnectionsRoute,
@@ -23,6 +23,7 @@ import { DenSkeleton } from "../../_components/ui/skeleton";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { effectiveWorkbotModel, isWorkbotModelListed, workbotDisplayName, workbotModelName, workbotModelOptions } from "./workbot-model-options";
 import { useSaveWorkbotModel, useSaveWorkbotStepLimit, useTestWorkbotDefaultModel, useWorkbotSettings } from "./workbot-settings-data";
+import { STEP_LIMIT_HELP, stepLimitChoices, stepLimitLabel, stepLimitValue } from "./workbot-step-limit-options";
 import { useWorkbotTeamSettings } from "./workbot-team-settings-data";
 import { workbotTeamsOverridingCount, workbotTeamsOverridingLabel } from "./workbot-team-settings-presentation";
 import { WorkbotProactiveSection } from "./workbot-proactive-section";
@@ -50,26 +51,6 @@ function modelTestLabel(result: WorkbotModelTest | null | undefined): string {
     busy: "Another test is running. Try again shortly.",
   };
   return messages[result.errorCode];
-}
-
-const STEP_LIMIT_HELP = "How many steps Workbot can take on one request before it stops and asks for a smaller piece.";
-
-/** A step limit as the select's value and its label: null is the deployment's default, 0 is no limit. */
-function stepLimitValue(maxSteps: number | null): string {
-  return maxSteps === null ? "default" : String(maxSteps);
-}
-
-function stepLimitLabel(maxSteps: number | null): string {
-  if (maxSteps === null) return "Default";
-  if (maxSteps === 0) return "No limit";
-  return `${maxSteps.toLocaleString("en-US")} ${maxSteps === 1 ? "step" : "steps"}`;
-}
-
-/** The limits offered, plus the saved one when it isn't among them (set through the API), so the select never hides it. */
-function stepLimitChoices(saved: number | null): (number | null)[] {
-  const numbers: number[] = [...WORKBOT_MAX_STEPS_CHOICES];
-  if (saved !== null && saved !== 0 && !numbers.includes(saved)) numbers.push(saved);
-  return [null, ...numbers.sort((left, right) => left - right), 0];
 }
 
 function errorMessage(error: unknown, fallback: string): string {

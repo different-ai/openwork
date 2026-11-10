@@ -120,8 +120,9 @@ const sessionSchema = z.object({
    */
   model: z.string().nullable().optional(),
   /**
-   * Model calls Workbot may make on one request (`workbotStepLimit`): a number, 0 for no limit, or null for the
-   * runner's own limit, which also clears a limit the person's chats were given earlier. Omitted, as by older Dens,
+   * Model calls Workbot may make on one request (`workbotStepLimit`; the member's team's when it sets one and
+   * `workbotTeamSettings` is on): a number, 0 for no limit, or null for the runner's own limit, which also clears
+   * a limit the person's chats were given earlier. Omitted, as by older Dens,
    * Workbot sends the runner nothing about it.
    */
   maxSteps: workbotMaxStepsSchema.nullable().optional(),
@@ -517,8 +518,9 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         quietCalendar: features.workbotQuietCalendar,
         commandPalette: true,
         model,
-        // Off with a limit still saved: null, so chats that were given the limit go back to the runner's own.
-        ...(features.workbotStepLimit ? { maxSteps: savedMaxSteps } : savedMaxSteps !== null ? { maxSteps: null } : {}),
+        // On: the member's limit, their team's when it sets one. Off with a limit still saved, for everyone or by
+        // the member's team: null, so chats that were given the limit go back to the runner's own.
+        ...(features.workbotStepLimit ? { maxSteps: workbot.maxSteps } : savedMaxSteps !== null || workbot.maxStepsFrom.kind === "team" ? { maxSteps: null } : {}),
         gatewayModels: true,
         stepTurns: true,
         sessionCells: true,

@@ -1,9 +1,11 @@
+import { workbotMaxStepsSchema } from "@openwork/types/den/workbot-settings"
 import { z } from "zod"
 
 /**
  * Workbot settings chosen by organization admins for one team (Den › Members ›
  * Teams › a team › Workbot), on top of the organization's own: the default
- * model, Workbot's name, and whether Workbot is on at all. Available while the
+ * model, Workbot's name, whether Workbot is on at all, and its step limit
+ * (only while `workbotStepLimit` is on too). Available while the
  * `workbotTeamSettings` feature is on.
  *
  * A team stores only what it overrides. In its settings a key that is absent
@@ -26,6 +28,8 @@ export const WORKBOT_TEAM_NAME_MAX_LENGTH = 40
 /** A headless runner model id, or null for the deployment's default model (as for the organization). */
 const workbotTeamModelSchema = z.string().trim().min(1).max(255).nullable()
 const workbotTeamNameSchema = z.string().trim().min(1).max(WORKBOT_TEAM_NAME_MAX_LENGTH)
+/** Model calls per request: 0 is no limit, null the deployment's default (as for the organization). */
+const workbotTeamMaxStepsSchema = workbotMaxStepsSchema.nullable()
 
 /**
  * What a team's row holds. Unknown keys are kept, so a server that does not
@@ -36,8 +40,9 @@ export const workbotTeamStoredSettingsSchema = z.looseObject({
   model: workbotTeamModelSchema.optional().catch(undefined),
   name: workbotTeamNameSchema.optional().catch(undefined),
   enabled: z.boolean().optional().catch(undefined),
+  maxSteps: workbotTeamMaxStepsSchema.optional().catch(undefined),
 })
-export type WorkbotTeamStoredSettings = { model?: string | null; name?: string; enabled?: boolean }
+export type WorkbotTeamStoredSettings = { model?: string | null; name?: string; enabled?: boolean; maxSteps?: number | null }
 
 /** A team's overrides from its stored settings; nothing when they cannot be read. */
 export function readWorkbotTeamSettings(value: unknown): WorkbotTeamStoredSettings {
@@ -55,6 +60,7 @@ export function readWorkbotTeamSettings(value: unknown): WorkbotTeamStoredSettin
     ...(parsed.data.model !== undefined ? { model: parsed.data.model } : {}),
     ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
     ...(parsed.data.enabled !== undefined ? { enabled: parsed.data.enabled } : {}),
+    ...(parsed.data.maxSteps !== undefined ? { maxSteps: parsed.data.maxSteps } : {}),
   }
 }
 
@@ -108,12 +114,20 @@ export const workbotTeamEnabledSettingSchema = z
   .meta({ ref: "WorkbotTeamEnabledSetting" })
 export type WorkbotTeamEnabledSetting = z.infer<typeof workbotTeamEnabledSettingSchema>
 
+/** A team's step limit: the organization's, or its own (0 is no limit, null the deployment's default). */
+export const workbotTeamMaxStepsSettingSchema = z
+  .discriminatedUnion("inherit", [inheritSchema, z.strictObject({ inherit: z.literal(false), value: workbotTeamMaxStepsSchema })])
+  .meta({ ref: "WorkbotTeamMaxStepsSetting" })
+export type WorkbotTeamMaxStepsSetting = z.infer<typeof workbotTeamMaxStepsSettingSchema>
+
 /** One team's change. A setting left out is kept as it is. */
 export const workbotTeamSettingsWriteSchema = z
   .strictObject({
     model: workbotTeamModelSettingSchema.optional(),
     name: workbotTeamNameSettingSchema.optional(),
     enabled: workbotTeamEnabledSettingSchema.optional(),
+    /** Needs `workbotStepLimit` as well. */
+    maxSteps: workbotTeamMaxStepsSettingSchema.optional(),
   })
   .meta({ ref: "WorkbotTeamSettingsWrite" })
 export type WorkbotTeamSettingsWrite = z.infer<typeof workbotTeamSettingsWriteSchema>
@@ -135,6 +149,8 @@ export const workbotTeamSettingsTeamSchema = z
     model: workbotTeamModelSettingSchema,
     name: workbotTeamNameSettingSchema,
     enabled: workbotTeamEnabledSettingSchema,
+    /** Present only while `workbotStepLimit` is on. */
+    maxSteps: workbotTeamMaxStepsSettingSchema.optional(),
     /**
      * Members of this team who are also on another team that overrides a
      * setting differently; they get the organization's value for it.
@@ -148,9 +164,15 @@ export const workbotTeamSettingsViewSchema = z
   .object({
     /**
      * The organization's values, which teams without their own use: null is the deployment's default model, or no
-     * name set; `enabled` is whether Workbot is on for everyone.
+     * name set; `enabled` is whether Workbot is on for everyone; `maxSteps` is the step limit (0 is no limit, null
+     * the deployment's default), present only while `workbotStepLimit` is on.
      */
-    organization: z.object({ model: z.string().nullable(), name: z.string().nullable(), enabled: z.boolean() }),
+    organization: z.object({
+      model: z.string().nullable(),
+      name: z.string().nullable(),
+      enabled: z.boolean(),
+      maxSteps: workbotTeamMaxStepsSchema.optional(),
+    }),
     teams: z.array(workbotTeamSettingsTeamSchema),
     /** Whether the caller can change them (inference.manage). */
     canEdit: z.boolean(),
@@ -166,6 +188,7 @@ export function applyWorkbotTeamSettingsWrite(stored: Record<string, unknown>, w
   if (readable.model === undefined) delete next.model
   if (readable.name === undefined) delete next.name
   if (readable.enabled === undefined) delete next.enabled
+  if (readable.maxSteps === undefined) delete next.maxSteps
   if (write.model) {
     if (write.model.inherit) delete next.model
     else next.model = write.model.value
@@ -177,6 +200,10 @@ export function applyWorkbotTeamSettingsWrite(stored: Record<string, unknown>, w
   if (write.enabled) {
     if (write.enabled.inherit) delete next.enabled
     else next.enabled = write.enabled.value
+  }
+  if (write.maxSteps) {
+    if (write.maxSteps.inherit) delete next.maxSteps
+    else next.maxSteps = write.maxSteps.value
   }
   return next
 }
@@ -190,6 +217,7 @@ export type ResolvedWorkbotTeamSettings = {
   model: { value: string | null; from: WorkbotSettingSource }
   name: { value: string | null; from: WorkbotSettingSource }
   enabled: { value: boolean; from: WorkbotSettingSource }
+  maxSteps: { value: number | null; from: WorkbotSettingSource }
 }
 
 function resolveSetting<T>(organization: T, overrides: ReadonlyArray<{ name: string; value: T }>): { value: T; from: WorkbotSettingSource } {
@@ -204,7 +232,7 @@ function resolveSetting<T>(organization: T, overrides: ReadonlyArray<{ name: str
  * file). `teams` are the member's teams; their order does not matter.
  */
 export function resolveWorkbotTeamSettings(input: {
-  organization: { model: string | null; name: string | null; enabled: boolean }
+  organization: { model: string | null; name: string | null; enabled: boolean; maxSteps: number | null }
   teams: ReadonlyArray<{ name: string; settings: WorkbotTeamStoredSettings }>
 }): ResolvedWorkbotTeamSettings {
   return {
@@ -219,6 +247,10 @@ export function resolveWorkbotTeamSettings(input: {
     enabled: resolveSetting(
       input.organization.enabled,
       input.teams.flatMap((team) => team.settings.enabled !== undefined ? [{ name: team.name, value: team.settings.enabled }] : []),
+    ),
+    maxSteps: resolveSetting(
+      input.organization.maxSteps,
+      input.teams.flatMap((team) => team.settings.maxSteps !== undefined ? [{ name: team.name, value: team.settings.maxSteps }] : []),
     ),
   }
 }
@@ -243,10 +275,12 @@ export function countWorkbotTeamConflicts(input: {
     const models = settings.flatMap((entry) => entry.model !== undefined ? [entry.model] : [])
     const names = settings.flatMap((entry) => entry.name !== undefined ? [entry.name] : [])
     const switches = settings.flatMap((entry) => entry.enabled !== undefined ? [entry.enabled] : [])
+    const limits = settings.flatMap((entry) => entry.maxSteps !== undefined ? [entry.maxSteps] : [])
     if (
       models.some((model) => model !== models[0])
       || names.some((name) => name !== names[0])
       || switches.some((enabled) => enabled !== switches[0])
+      || limits.some((maxSteps) => maxSteps !== limits[0])
     ) conflicted.add(memberId)
   }
   const counts = new Map<string, number>(input.teams.map((team) => [team.teamId, 0]))

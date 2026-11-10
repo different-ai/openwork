@@ -9,6 +9,7 @@ import { DenCard } from "../../_components/ui/card";
 import { DenCombobox } from "../../_components/ui/combobox";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
+import { DenSelect } from "../../_components/ui/select";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenSwitch } from "../../_components/ui/switch";
 import { getBrandAppearanceRoute, getOrgAccessFlags, orgFeatureEnabled, type DenOrgContext } from "../../_lib/den-org";
@@ -16,7 +17,8 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ConflictLine, ReadOnlyNotice, SavedUndoLine, ScopeChip, SettingRow, UseEveryonesButton } from "./scoped-setting";
 import type { TeamScope } from "./team-scope";
 import { workbotDisplayName } from "./workbot-model-options";
-import { useSaveWorkbotModel, useWorkbotSettings } from "./workbot-settings-data";
+import { useSaveWorkbotModel, useSaveWorkbotStepLimit, useWorkbotSettings } from "./workbot-settings-data";
+import { STEP_LIMIT_HELP, stepLimitChoices, stepLimitLabel, stepLimitValue } from "./workbot-step-limit-options";
 import { useSaveWorkbotEveryoneSettings, useSaveWorkbotTeamSettings, useWorkbotTeamSettings } from "./workbot-team-settings-data";
 import {
   WORKBOT_CONFLICT_SETTING,
@@ -31,8 +33,10 @@ import {
   workbotTeamNameToSave,
   workbotTeamRow,
   workbotTeamSavedMessage,
+  workbotTeamStepLimit,
   workbotTeamsChanged,
   workbotTeamsOnCount,
+  type WorkbotEveryoneChange,
 } from "./workbot-team-settings-presentation";
 
 type TeamSettingsQuery = ReturnType<typeof useWorkbotTeamSettings>;
@@ -52,8 +56,9 @@ function errorMessage(error: unknown, fallback: string): string {
 
 /**
  * Members › Teams › Everyone (or a team) › Workbot: whether Workbot is on, the
- * model it starts on and the name it goes by. Everyone's page holds the values
- * every team follows until it changes one for its own members.
+ * model it starts on, its step limit (while the step limit is on) and the name
+ * it goes by. Everyone's page holds the values every team follows until it
+ * changes one for its own members.
  */
 export function WorkbotPanel({ scope }: { scope: TeamScope }) {
   const { orgContext, orgId: scopedOrgId, orgSlug } = useOrgDashboard();
@@ -145,24 +150,54 @@ function WorkbotModelPicker({ saved, settings, disabled, onPick }: {
   );
 }
 
-type EveryoneChange = { enabled: boolean } | { model: string | null };
+/** The step limit in use, saved as soon as another is picked. `saved` null is the deployment's default. */
+function WorkbotStepLimitSelect({ labelId, saved, disabled, onPick }: {
+  labelId: string;
+  saved: number | null;
+  disabled: boolean;
+  onPick: (maxSteps: number | null) => void;
+}) {
+  const choices = stepLimitChoices(saved);
+  return (
+    <div className="w-40" title={STEP_LIMIT_HELP} data-testid="team-workbot-step-limit">
+      <DenSelect
+        aria-labelledby={labelId}
+        menuWidth="trigger"
+        value={stepLimitValue(saved)}
+        disabled={disabled}
+        onChange={(event) => {
+          const choice = choices.find((entry) => stepLimitValue(entry) === event.target.value);
+          if (choice !== undefined && choice !== saved) onPick(choice);
+        }}
+      >
+        {choices.map((choice) => (
+          <option key={stepLimitValue(choice)} value={stepLimitValue(choice)}>{stepLimitLabel(choice)}</option>
+        ))}
+      </DenSelect>
+    </div>
+  );
+}
 
-/** Everyone: Workbot on or off and its default model, saved on change. The name is the organization's brand name. */
+/** Everyone: Workbot on or off, its default model and its step limit, saved on change. The name is the organization's brand name. */
 function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit }: RowsProps & { scope: TeamScope; orgSlug: string | null }) {
-  const ids = { enabled: useId(), model: useId(), name: useId() };
+  const ids = { enabled: useId(), model: useId(), maxSteps: useId(), name: useId() };
   const saveEveryone = useSaveWorkbotEveryoneSettings(orgId);
   const saveModel = useSaveWorkbotModel(orgId);
+  const saveStepLimit = useSaveWorkbotStepLimit(orgId);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [saved, setSaved] = useState<{ change: EveryoneChange; undo: EveryoneChange } | null>(null);
-  const pending = saveEveryone.isPending || saveModel.isPending;
+  const [saved, setSaved] = useState<{ change: WorkbotEveryoneChange; undo: WorkbotEveryoneChange } | null>(null);
+  const pending = saveEveryone.isPending || saveModel.isPending || saveStepLimit.isPending;
   const data = view.data;
   const settings = models.data;
+  // Absent while the step limit isn't on: no row.
+  const everyonesMaxSteps = data?.organization.maxSteps;
 
-  async function store(change: EveryoneChange, undo: EveryoneChange) {
+  async function store(change: WorkbotEveryoneChange, undo: WorkbotEveryoneChange) {
     setSaveError(null);
     setSaved(null);
     try {
       if ("enabled" in change) await saveEveryone.mutateAsync(change);
+      else if ("maxSteps" in change) await saveStepLimit.mutateAsync(change.maxSteps);
       else await saveModel.mutateAsync(change.model);
       setSaved({ change, undo });
     } catch (error) {
@@ -203,6 +238,18 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit 
             </>
           )}
         </SettingRow>
+        {data && everyonesMaxSteps !== undefined ? (
+          <SettingRow label="Step limit" labelId={ids.maxSteps}>
+            <ScopeChip scope={scope} changed={false} changedTeams={workbotTeamsChanged(data, "maxSteps")} />
+            {/* The same value and save as Manage › Workbot. The pick shows while it saves. */}
+            <WorkbotStepLimitSelect
+              labelId={ids.maxSteps}
+              saved={saveStepLimit.isPending && saveStepLimit.variables !== undefined ? saveStepLimit.variables : everyonesMaxSteps}
+              disabled={!canEdit || pending}
+              onPick={(maxSteps) => void store({ maxSteps }, { maxSteps: everyonesMaxSteps })}
+            />
+          </SettingRow>
+        ) : null}
         <SettingRow label="Name" labelId={ids.name}>
           {view.isError ? <Unavailable /> : !data ? <FieldSkeleton className="w-40" /> : (
             <>
@@ -229,7 +276,7 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit 
 
 /** A team: each row shows Everyone's value until the team changes it, and "Use Everyone's" takes it back. */
 function TeamWorkbotSettings({ scope, orgId, view, models, canEdit }: RowsProps & { scope: Extract<TeamScope, { kind: "team" }> }) {
-  const ids = { enabled: useId(), model: useId(), name: useId() };
+  const ids = { enabled: useId(), model: useId(), maxSteps: useId(), name: useId() };
   const save = useSaveWorkbotTeamSettings(orgId);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ change: WorkbotTeamSettingsWrite; undo: WorkbotTeamSettingsWrite } | null>(null);
@@ -239,6 +286,8 @@ function TeamWorkbotSettings({ scope, orgId, view, models, canEdit }: RowsProps 
   const data = view.data;
   const settings = models.data;
   const row = data ? workbotTeamRow(data, scope) : null;
+  // Null while the step limit isn't on: no row.
+  const stepLimit = data && row ? workbotTeamStepLimit(data, row) : null;
   const disabled = !canEdit || save.isPending;
   const shownName = row && !row.name.inherit ? row.name.value : workbotDisplayName(data?.organization.name);
   const nameToSave = nameDraft === null ? null : workbotTeamNameToSave(nameDraft, shownName);
@@ -303,6 +352,20 @@ function TeamWorkbotSettings({ scope, orgId, view, models, canEdit }: RowsProps 
             </>
           )}
         </SettingRow>
+        {stepLimit ? (
+          <SettingRow label="Step limit" labelId={ids.maxSteps}>
+            <ScopeChip scope={scope} changed={!stepLimit.setting.inherit} />
+            {canEdit && !stepLimit.setting.inherit ? (
+              <UseEveryonesButton settingLabel="Step limit" disabled={save.isPending} onClick={() => void store({ maxSteps: { inherit: true } }, { maxSteps: stepLimit.setting })} />
+            ) : null}
+            <WorkbotStepLimitSelect
+              labelId={ids.maxSteps}
+              saved={stepLimit.value}
+              disabled={disabled}
+              onPick={(value) => void store({ maxSteps: { inherit: false, value } }, { maxSteps: stepLimit.setting })}
+            />
+          </SettingRow>
+        ) : null}
         <SettingRow label="Name" labelId={ids.name}>
           {view.isError ? <Unavailable /> : !data || !row ? <FieldSkeleton className="w-64" /> : (
             <>
