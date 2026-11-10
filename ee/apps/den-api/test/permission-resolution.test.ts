@@ -155,7 +155,7 @@ test("the owner holds every catalog key", () => {
 })
 
 test("super admin is a default permission set that starts with every catalog key", () => {
-  assert.deepEqual([...PERMISSION_DEFAULT_SET_KEYS], ["member", "admin", "super-admin"])
+  assert.deepEqual([...PERMISSION_DEFAULT_SET_KEYS], ["member", "admin", "billing-manager", "super-admin"])
   assert.deepEqual([...permissionDefaultKeys("super-admin")].sort(), [...PERMISSION_KEYS].sort())
   for (const key of PERMISSION_KEYS) {
     assert.equal(isPermissionDefaultOn(PERMISSIONS[key], "super-admin"), true, key)

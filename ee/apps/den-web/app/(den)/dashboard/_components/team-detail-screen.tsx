@@ -21,7 +21,7 @@ import { WorkbotPanel, workbotTabVisible } from "./team-workbot-panel";
 import { OrgMemberIdentity } from "./org-member-identity";
 import { SharedTeamRolePanel } from "./shared-team-role-panel";
 import { MemberTeamRoles } from "./member-team-roles";
-import { useCustomRoleTeams } from "./permissions-data";
+import { useOrganizationRoles } from "./permissions-data";
 import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen, type FeatureIntroKey } from "../_features/feature-intros";
 import type { TeamDetailFacts } from "../_features/feature-intros/intros/team-detail";
 import { useAiGatewayIntroFacts } from "./ai-gateway-intro-facts";
@@ -58,7 +58,7 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
   // Revoking a team's plugin grant needs manager access to the plugin (`sharing.manage_all`).
   const canRevokeAccess = viewerAccess?.canManageAllShared ?? false;
   // Members list each person's team roles the same way the Members page does.
-  const customRoles = useCustomRoleTeams(orgId, Boolean(orgContext) && (viewerAccess?.canViewPermissions ?? false));
+  const organizationRoles = useOrganizationRoles(orgId, Boolean(orgContext) && (viewerAccess?.canViewPermissions ?? false));
   // The team's Agents tab holds what it changes from Everyone.
   const showAgents = agentsTabVisible(orgContext);
   // Open websites moves from Agents to its own Browser tab, and
@@ -174,7 +174,7 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
                   <div key={member.id} className="px-6 py-4">
                     <OrgMemberIdentity member={member} />
                     {orgContext ? (
-                      <MemberTeamRoles member={member} teams={orgContext.teams} customTeamIds={customRoles.teamIds} customRoleNameByTeam={customRoles.nameByTeam} exceptTeamId={teamId} />
+                      <MemberTeamRoles member={member} teams={orgContext.teams} setIdByTeam={organizationRoles.setIdByTeam} roles={organizationRoles.roles} exceptTeamId={teamId} />
                     ) : member.adminTeams.length > 0 ? (
                       <p className="mt-2 text-[12px] text-gray-500">Admin via {member.adminTeams.map((entry) => entry.name).join(", ")}</p>
                     ) : null}

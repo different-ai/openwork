@@ -133,7 +133,7 @@ const apiC = den.as(owner, orgC.orgId)
 
 // A: two features on for the organization, one turned off, one on for everyone, one only for its owner.
 for (const key of ["googleDrivePdfText", "nativeDictation"]) assert.equal((await den.setFeature(orgA.orgId, key, true)).status, 200, key)
-assert.equal((await den.setFeature(orgA.orgId, "readyMadeRoles", false)).status, 200)
+assert.equal((await den.setFeature(orgA.orgId, "superAdminPermissionSet", false)).status, 200)
 await ok(den.asPlatformAdmin("PUT", "/v1/admin/features/featureIntros", { enabled: true }), "on for everyone")
 await ok(den.asPlatformAdmin("PUT", `/v1/admin/organizations/${orgA.orgId}/members/${orgA.owner.memberId}/capabilities`, { capabilities: { agentQuestions: true } }), "member override")
 await ok(apiA("POST", "/v1/org/web-origins", { origin: "https://features-source.example.com" }), "web origin")
@@ -185,7 +185,7 @@ test("import by a platform admin turns the missing features on; unknown, unavail
   assert.equal(features.workbotDocuments, false)
   assert.equal(features.claudeAgentProvider, false)
   assert.equal(features.agentQuestions, false, "member overrides never travel")
-  assert.equal(features.readyMadeRoles, false)
+  assert.equal(features.superAdminPermissionSet, false)
   // The same override /admin sets, with its history: who turned it on.
   const history = await db.select().from(FeatureChangeTable).where(and(eq(FeatureChangeTable.organization_id, orgB.orgId), eq(FeatureChangeTable.scope, "organization")))
   const imported = history.filter((row) => row.feature_key !== "configBlobs").map((row) => [row.feature_key, row.action, row.changed_by_user_id]).sort()

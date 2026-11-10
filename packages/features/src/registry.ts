@@ -378,17 +378,6 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
-  readyMadeRoles: {
-    label: "Ready-made roles and one role list",
-    description: "Members › Roles lists ready-made roles to add, starting with Billing manager. Create role can start from Member, Admin, Billing manager or everything the owner can do. The role pickers for people and teams list every role, with a lock and the reason on roles that can't be given there. Off: Create role starts empty and pickers leave those roles out.",
-    category: "administration",
-    added: "2026-11-10",
-    since: "2026-11",
-    author: "benjaminshafii",
-    docs: "docs/features/ready-made-roles/README.md",
-    deployments: everywhere,
-    default: false,
-  },
   nativeDictation: {
     label: "Native dictation",
     description: "Dictate editable prompts in OpenWork and Workbot using native desktop dictation or live browser speech recognition.",

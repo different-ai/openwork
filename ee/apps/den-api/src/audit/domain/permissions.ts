@@ -3,7 +3,7 @@ import type { AuditChangeEventInput } from "../request-capture.js"
 import { auditChangeEvent, auditText, auditTime, organizationParent, relatedResource, targetResource, type AuditSnapshot } from "./snapshot.js"
 
 // permission_set.created / permission_set.permissions_changed / permission_set.archived /
-// permission_set.renamed / permission_set.teams_changed (legacy organization.permission_set.*). Permission keys are listed as sorted
+// permission_set.renamed / permission_set.teams_changed / permission_set.members_changed (legacy organization.permission_set.*). Permission keys are listed as sorted
 // string arrays, never used as snapshot keys.
 
 export type PermissionSetAuditRow = Pick<typeof PermissionSetTable.$inferSelect, "id" | "name" | "defaultKey" | "createdAt" | "archivedAt">
@@ -14,6 +14,8 @@ export type PermissionSetAuditState = {
   teamId: string | null
   /** Every team the set applies to (Shared roles); left out before a set could have several. */
   teamIds?: readonly string[]
+  /** People the set is given to directly; left out when the event is not about them. */
+  memberIds?: readonly string[]
   allowedKeys: readonly string[]
 }
 
@@ -25,10 +27,11 @@ function serializePermissionSet(state: PermissionSetAuditState): AuditSnapshot {
   return {
     id: state.set.id,
     name: auditText(state.set.name),
-    // Same kinds as the permissions API: member_default, admin_default, super_admin_default, team.
+    // Same kinds as the permissions API: member_default, admin_default, billing_manager_default, super_admin_default, team.
     kind: state.set.defaultKey === null ? "team" : `${state.set.defaultKey.replace("-", "_")}_default`,
     teamId: state.teamId,
     ...(state.teamIds ? { teamIds: [...state.teamIds].sort() } : {}),
+    ...(state.memberIds ? { memberIds: [...state.memberIds].sort() } : {}),
     allowed: keyList(state.allowedKeys),
     createdAt: auditTime(state.set.createdAt),
     archivedAt: auditTime(state.set.archivedAt),
@@ -84,6 +87,27 @@ export function permissionSetTeamsChangedEvent(
   return auditChangeEvent({
     action: "permission_set.teams_changed",
     resources: resources(organizationId, after, delta.removed),
+    before: serializePermissionSet(before),
+    after: serializePermissionSet(after),
+    annotations: { added: [...delta.added].sort(), removed: [...delta.removed].sort() },
+  })
+}
+
+/** People gained or lost the role directly; `added` / `removed` annotate the event. */
+export function permissionSetMembersChangedEvent(
+  organizationId: string,
+  before: PermissionSetAuditState,
+  after: PermissionSetAuditState,
+  delta: { added: readonly string[]; removed: readonly string[] },
+): AuditChangeEventInput | null {
+  const memberIds = [...new Set([...(after.memberIds ?? []), ...delta.removed])]
+  return auditChangeEvent({
+    action: "permission_set.members_changed",
+    resources: [
+      targetResource("permission_set", after.set.id, after.set.name),
+      ...memberIds.map((memberId) => relatedResource("member", memberId)),
+      organizationParent(organizationId),
+    ],
     before: serializePermissionSet(before),
     after: serializePermissionSet(after),
     annotations: { added: [...delta.added].sort(), removed: [...delta.removed].sort() },

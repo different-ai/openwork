@@ -1,5 +1,4 @@
 import {
-  BILLING_MANAGER_PERMISSION_KEYS,
   PERMISSION_KEYS,
   getPermissionDefinition,
   permissionDefaultKeys,
@@ -13,28 +12,29 @@ import {
  * Every screen that names, lists or offers a role reads it from here: the
  * Roles tab, the role pickers for people and for teams, Create role's
  * starting points, and the labels on people, teams and permission sets. To
- * add a built-in or ready-made role, add it here; `roleList` and
- * `roleOptions` then carry it to every screen in the same order with the same
- * words, and the compiler asks for anything a screen has to decide about it.
+ * add a built-in role, add it here; `roleList` and `roleOptions` then carry it
+ * to every screen in the same order with the same words, and the compiler
+ * asks for anything a screen has to decide about it.
  *
- * Three kinds of role:
+ * A role is one thing, given the same way to a person or to a team:
  *
- *   built-in    Member, Admin, Super admin, Owner. Always exist.
- *   custom      a named permission set the organization made (kind "team"),
- *               given to people through teams.
- *   ready-made  a custom role we suggest, with its name and permissions
- *               filled in (Billing manager). It becomes a custom role when
- *               someone creates it.
+ *   built-in  Member, Admin, Billing manager, Super admin, Owner. Every
+ *             organization has them; they keep their names.
+ *   custom    a named permission set the organization made.
+ *
+ * How a role is stored differs (an organization role, the Admin team switch,
+ * or a link to its permission set), and `team-roles.ts` turns a choice into
+ * those calls. No screen needs to know which.
  */
 
 /** Kinds of permission set the API returns (ee/apps/den-api/src/routes/org/permissions.ts). */
-export type RoleSetKind = "member_default" | "admin_default" | "super_admin_default" | "team";
+export type RoleSetKind = "member_default" | "admin_default" | "billing_manager_default" | "super_admin_default" | "team";
 
 /** Who a role picker is choosing for. */
 export type RoleHolder = "person" | "team";
 
 /** Built-in roles, in the order every screen lists them. */
-export const BUILT_IN_ROLE_IDS = ["member", "admin", "super-admin", "owner"] as const;
+export const BUILT_IN_ROLE_IDS = ["member", "admin", "billing-manager", "super-admin", "owner"] as const;
 
 export type BuiltInRoleId = (typeof BUILT_IN_ROLE_IDS)[number];
 
@@ -46,7 +46,7 @@ export type BuiltInRole = {
   setKind: Exclude<RoleSetKind, "team"> | null;
   /** The default set key behind `setKind`, for catalog defaults. */
   defaultSet: PermissionDefaultSetKey | null;
-  /** Why the role can't be picked for a person or for a team. Absent when it can. */
+  /** Why the role can never be picked for a person or for a team. Absent when it can. */
   notGivenTo: Partial<Record<RoleHolder, string>>;
 };
 
@@ -65,12 +65,19 @@ export const BUILT_IN_ROLES: Record<BuiltInRoleId, BuiltInRole> = {
     defaultSet: "admin",
     notGivenTo: {},
   },
+  "billing-manager": {
+    label: "Billing manager",
+    summary: "See plan, usage and invoices, and manage payment details",
+    setKind: "billing_manager_default",
+    defaultSet: "billing-manager",
+    notGivenTo: {},
+  },
   "super-admin": {
     label: "Super admin",
     summary: "Everything the owner can do, except delete the organization",
     setKind: "super_admin_default",
     defaultSet: "super-admin",
-    notGivenTo: { team: "Given to people, not teams." },
+    notGivenTo: {},
   },
   owner: {
     label: "Owner",
@@ -83,6 +90,12 @@ export const BUILT_IN_ROLES: Record<BuiltInRoleId, BuiltInRole> = {
     },
   },
 };
+
+/**
+ * Why a team can't be given Super admin in an organization whose Super admin
+ * permissions aren't a set yet: there is nothing to give the team.
+ */
+export const SUPER_ADMIN_TEAM_UNAVAILABLE_REASON = "Given to people, not teams.";
 
 /** The built-in role a permission set is, or null for a custom role's set. */
 export function builtInRoleForSetKind(kind: RoleSetKind): BuiltInRoleId | null {
@@ -101,33 +114,8 @@ export function roleSetKindRank(kind: RoleSetKind): number {
   return id ? BUILT_IN_ROLE_IDS.indexOf(id) : BUILT_IN_ROLE_IDS.length;
 }
 
-/** Ready-made roles, in the order they are offered. */
-export const READY_MADE_ROLE_IDS = ["billing"] as const;
-
-export type ReadyMadeRoleId = (typeof READY_MADE_ROLE_IDS)[number];
-
-export type ReadyMadeRole = {
-  /** The name the custom role gets. */
-  label: string;
-  summary: string;
-  /** The permissions it starts with, before limiting to what its creator holds. */
-  keys: readonly PermissionKey[];
-};
-
-export const READY_MADE_ROLES: Record<ReadyMadeRoleId, ReadyMadeRole> = {
-  billing: {
-    label: "Billing manager",
-    summary: "See plan, usage and invoices, and manage payment details",
-    keys: BILLING_MANAGER_PERMISSION_KEYS,
-  },
-};
-
-export function isReadyMadeRoleId(value: string): value is ReadyMadeRoleId {
-  return READY_MADE_ROLE_IDS.some((id) => id === value);
-}
-
-/** Where Create role can start: a built-in role's permissions, a ready-made role, or everything. */
-export const ROLE_STARTS = ["member", "admin", ...READY_MADE_ROLE_IDS, "everything"] as const;
+/** Where Create role can start: a built-in role's permissions, or everything. */
+export const ROLE_STARTS = ["member", "admin", "billing-manager", "everything"] as const;
 
 export type RoleStart = (typeof ROLE_STARTS)[number];
 
@@ -136,15 +124,12 @@ export function isRoleStart(value: string): value is RoleStart {
 }
 
 export function roleStartLabel(start: RoleStart): string {
-  if (start === "everything") return "Everything the owner can do";
-  return isReadyMadeRoleId(start) ? READY_MADE_ROLES[start].label : BUILT_IN_ROLES[start].label;
+  return start === "everything" ? "Everything the owner can do" : BUILT_IN_ROLES[start].label;
 }
 
 /** Every permission a starting point turns on, whoever is creating the role. */
 export function roleStartAllKeys(start: RoleStart): readonly PermissionKey[] {
-  if (start === "everything") return PERMISSION_KEYS;
-  if (isReadyMadeRoleId(start)) return READY_MADE_ROLES[start].keys;
-  return permissionDefaultKeys(start);
+  return start === "everything" ? PERMISSION_KEYS : permissionDefaultKeys(start);
 }
 
 /** The permissions a new role starts with, limited to what the person creating it holds. */
@@ -171,6 +156,8 @@ export type RoleSetLike = {
   allowedCount: number;
   team: TeamReference | null;
   teams: readonly TeamReference[];
+  /** People given the set directly, without a team. Older servers don't send it. */
+  directMemberIds?: readonly string[];
 };
 
 /** The teams a set applies to. Older responses only carry `team`. */
@@ -183,9 +170,14 @@ export function roleTeamNames(teams: readonly { name: string | null }[]): string
   return teams.map((team) => team.name ?? "A deleted team").join(", ");
 }
 
-/** "On Sales, Engineering", or "No teams yet". */
-export function roleTeamsCaption(teams: readonly { name: string | null }[]): string {
-  return teams.length > 0 ? `On ${roleTeamNames(teams)}` : "No teams yet";
+/** "3 permissions". */
+export function permissionCountLabel(count: number): string {
+  return `${count} ${count === 1 ? "permission" : "permissions"}`;
+}
+
+/** Who holds a role, as lists say it: "2 people, Finance", or "Nobody yet". */
+export function roleHeldByLabel(people: number, teamNames: readonly string[]): string {
+  return [people > 0 ? `${people} ${people === 1 ? "person" : "people"}` : null, ...teamNames].filter(Boolean).join(", ") || "Nobody yet";
 }
 
 /** A picker value for a custom role. Built-in roles use their id. */
@@ -213,6 +205,10 @@ export type RoleListEntry =
       summary: string;
       /** The role's permission set, when the organization has one and the person can see it. */
       setId: string | null;
+      /** Teams given the role by link (Billing manager, Super admin). Admin teams are a switch on the team. */
+      teams: TeamReference[];
+      /** People given the role by link (Billing manager). Admins and super admins hold an organization role. */
+      directMemberIds: string[];
     }
   | {
       kind: "custom";
@@ -221,46 +217,57 @@ export type RoleListEntry =
       setId: string;
       allowedCount: number;
       teams: TeamReference[];
-    }
-  | {
-      kind: "ready_made";
-      value: `ready:${ReadyMadeRoleId}`;
-      id: ReadyMadeRoleId;
-      label: string;
-      summary: string;
+      directMemberIds: string[];
     };
-
-function sameRoleName(left: string, right: string): boolean {
-  return left.trim().toLocaleLowerCase() === right.trim().toLocaleLowerCase();
-}
 
 /**
  * Every role of an organization, in the one order every screen uses:
- * built-in roles, then custom roles as the API lists them, then (with
- * `readyMade`) the ready-made roles nobody has created yet. A ready-made role
- * counts as created once a custom role has its name.
+ * built-in roles, then custom roles as the API lists them.
  */
-export function roleList(input: { sets: readonly RoleSetLike[]; readyMade: boolean }): RoleListEntry[] {
+export function roleList(input: { sets: readonly RoleSetLike[] }): RoleListEntry[] {
   const builtIn = BUILT_IN_ROLE_IDS.map((id): RoleListEntry => {
     const role = BUILT_IN_ROLES[id];
     const set = role.setKind ? input.sets.find((entry) => entry.kind === role.setKind) : undefined;
-    return { kind: "built_in", value: id, id, label: role.label, summary: role.summary, setId: set?.id ?? null };
+    return {
+      kind: "built_in",
+      value: id,
+      id,
+      label: role.label,
+      summary: role.summary,
+      setId: set?.id ?? null,
+      teams: set ? roleSetTeams(set) : [],
+      directMemberIds: [...(set?.directMemberIds ?? [])],
+    };
   });
-  const customSets = input.sets.filter((set) => set.kind === "team");
-  const custom = customSets.map((set): RoleListEntry => ({
+  const custom = input.sets.filter((set) => set.kind === "team").map((set): RoleListEntry => ({
     kind: "custom",
     value: customRoleValue(set.id),
     label: set.name,
     setId: set.id,
     allowedCount: set.allowedCount,
     teams: roleSetTeams(set),
+    directMemberIds: [...(set.directMemberIds ?? [])],
   }));
-  const readyMade = input.readyMade
-    ? READY_MADE_ROLE_IDS
-      .filter((id) => !customSets.some((set) => sameRoleName(set.name, READY_MADE_ROLES[id].label)))
-      .map((id): RoleListEntry => ({ kind: "ready_made", value: `ready:${id}`, id, label: READY_MADE_ROLES[id].label, summary: READY_MADE_ROLES[id].summary }))
-    : [];
-  return [...builtIn, ...custom, ...readyMade];
+  return [...builtIn, ...custom];
+}
+
+/** The role a picker value names, or null when the organization has no such role. */
+export function roleForValue(roles: readonly RoleListEntry[], value: string): RoleListEntry | null {
+  return roles.find((role) => role.value === value) ?? null;
+}
+
+/**
+ * Why a role can't be given to that holder in this organization, or null
+ * when it can. Roles that are a permission set given by link need that set:
+ * Billing manager for anyone, Super admin for a team.
+ */
+export function roleUnavailableReason(entry: RoleListEntry, holder: RoleHolder): string | null {
+  if (entry.kind === "custom") return null;
+  const never = BUILT_IN_ROLES[entry.id].notGivenTo[holder];
+  if (never) return never;
+  if (entry.id === "super-admin" && holder === "team" && entry.setId === null) return SUPER_ADMIN_TEAM_UNAVAILABLE_REASON;
+  if (entry.id === "billing-manager" && entry.setId === null) return "Needs View permissions. Ask the organization owner.";
+  return null;
 }
 
 /** One row of a role picker. */
@@ -275,33 +282,25 @@ export type RoleOption = {
 };
 
 /**
- * The rows of a role picker, for a person or for a team, from the same list
- * the Roles tab shows.
- *
- * A built-in role that can't be given to that holder (Super admin to a team,
- * Owner to anyone) is listed locked with the reason when `showUnavailable`
- * is set, and left out otherwise. Ready-made roles aren't listed: they can be
- * given once they are created. `lockReason` adds the caller's own locks (missing
- * permissions, identity-provider teams).
+ * The rows of a role picker, for a person or for a team: every role the Roles
+ * tab shows, in the same order. A role that can't be given to that holder is
+ * listed locked with the reason, never left out. `lockReason` adds the
+ * caller's own locks (missing permissions, identity-provider teams).
  */
 export function roleOptions(input: {
   roles: readonly RoleListEntry[];
   holder: RoleHolder;
-  showUnavailable: boolean;
-  lockReason?: (entry: Exclude<RoleListEntry, { kind: "ready_made" }>) => string | null | undefined;
+  lockReason?: (entry: RoleListEntry) => string | null | undefined;
 }): RoleOption[] {
-  const options: RoleOption[] = [];
-  for (const entry of input.roles) {
-    if (entry.kind === "ready_made") continue;
-    if (entry.kind === "built_in") {
-      const unavailable = BUILT_IN_ROLES[entry.id].notGivenTo[input.holder] ?? null;
-      if (unavailable !== null && !input.showUnavailable) continue;
-      const lockReason = unavailable ?? input.lockReason?.(entry) ?? null;
-      options.push({ value: entry.value, label: entry.label, caption: entry.summary, group: "built_in", disabled: lockReason !== null, lockReason });
-      continue;
-    }
-    const lockReason = input.lockReason?.(entry) ?? null;
-    options.push({ value: entry.value, label: entry.label, caption: roleTeamsCaption(entry.teams), group: "custom", disabled: lockReason !== null, lockReason });
-  }
-  return options;
+  return input.roles.map((entry) => {
+    const lockReason = roleUnavailableReason(entry, input.holder) ?? input.lockReason?.(entry) ?? null;
+    return {
+      value: entry.value,
+      label: entry.label,
+      caption: entry.kind === "built_in" ? entry.summary : permissionCountLabel(entry.allowedCount),
+      group: entry.kind === "built_in" ? "built_in" : "custom",
+      disabled: lockReason !== null,
+      lockReason,
+    };
+  });
 }

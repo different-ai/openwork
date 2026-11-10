@@ -81,6 +81,7 @@ import {
   OrgSubscriptionTable,
   PermissionSetPermissionTable,
   PermissionSetTable,
+  PermissionSetMemberTable,
   PermissionSetTeamTable,
   PluginAccessGrantTable,
   PluginConfigObjectTable,
@@ -615,6 +616,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(OrganizationRoleTable).where(eq(OrganizationRoleTable.organizationId, organizationId))
         // Permission rows are append-only; organization erasure is the one sanctioned hard delete.
         await tx.delete(PermissionSetTeamTable).where(eq(PermissionSetTeamTable.organizationId, organizationId))
+        await tx.delete(PermissionSetMemberTable).where(eq(PermissionSetMemberTable.organizationId, organizationId))
         await tx.delete(PermissionSetPermissionTable).where(eq(PermissionSetPermissionTable.organizationId, organizationId))
         await tx.delete(PermissionSetTable).where(eq(PermissionSetTable.organizationId, organizationId))
 

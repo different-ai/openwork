@@ -253,6 +253,8 @@ export function permissionSourceLabel(source: PermissionSource): string {
         : `${source.setName} (via ${source.teamName ?? "an admin"} team)`
     case "team":
       return `${source.setName} (via ${source.teamName} team)`
+    case "direct":
+      return `${source.setName} (given directly)`
     case "code_default":
       return `${PERMISSION_DEFAULT_SET_LABELS[source.set]} permissions (default)`
   }

@@ -20,6 +20,7 @@ import {
 } from "./permission-states"
 import {
   MemberTable,
+  PermissionSetMemberTable,
   PermissionSetPermissionTable,
   PermissionSetTable,
   PermissionSetTeamTable,
@@ -59,6 +60,7 @@ type MemberId = typeof MemberTable.$inferSelect.id
 export const DEFAULT_PERMISSION_SET_NAMES: Readonly<Record<PermissionDefaultSetKey, string>> = {
   member: "Member permissions",
   admin: "Admin permissions",
+  "billing-manager": "Billing manager permissions",
   "super-admin": "Super admin permissions",
 }
 
@@ -83,6 +85,8 @@ export type DefaultPermissionSets = Record<PermissionDefaultSetKey, PermissionSe
 export type ActiveTeamPermissionSet = {
   permissionSetId: PermissionSetId
   permissionSetName: string
+  /** Set when the team holds a built-in set (Billing manager, Super admin) instead of a custom role. */
+  defaultKey: PermissionDefaultSetKey | null
   teamId: TeamId
   teamName: string
 }
@@ -171,7 +175,7 @@ export async function getDefaultPermissionSets(
     .from(PermissionSetTable)
     .where(and(eq(PermissionSetTable.organizationId, organizationId), isNotNull(PermissionSetTable.defaultKey)))
   const rows = options.lock ? await query.for(options.lock) : await query
-  const result: Record<PermissionDefaultSetKey, PermissionSetSummary | null> = { member: null, admin: null, "super-admin": null }
+  const result: Record<PermissionDefaultSetKey, PermissionSetSummary | null> = { member: null, admin: null, "billing-manager": null, "super-admin": null }
   for (const row of rows) {
     if (row.defaultKey) result[row.defaultKey] = row
   }
@@ -280,6 +284,7 @@ export async function listActiveTeamPermissionSetsForTeams(
     const query = database.select({
       permissionSetId: PermissionSetTable.id,
       permissionSetName: PermissionSetTable.name,
+      defaultKey: PermissionSetTable.defaultKey,
       teamId: TeamTable.id,
       teamName: TeamTable.name,
     })
@@ -302,6 +307,47 @@ export async function listActiveTeamPermissionSetsForTeams(
     result.push(...(options.lock ? await query.for(options.lock) : await query))
   }
   return result
+}
+
+export type ActiveMemberPermissionSet = {
+  permissionSetId: PermissionSetId
+  permissionSetName: string
+  defaultKey: PermissionDefaultSetKey | null
+}
+
+/**
+ * Permission sets given to one person directly (permission_set_member): the
+ * link is not removed, the set is not archived and the person is still an
+ * active member. `lock: "share"` reads the latest committed links inside a
+ * transaction.
+ */
+export async function listActiveMemberPermissionSets(
+  database: PermissionDatabase,
+  input: { organizationId: OrganizationId; memberId: MemberId; lock?: "share" },
+): Promise<ActiveMemberPermissionSet[]> {
+  const query = database.select({
+    permissionSetId: PermissionSetTable.id,
+    permissionSetName: PermissionSetTable.name,
+    defaultKey: PermissionSetTable.defaultKey,
+  })
+    .from(PermissionSetMemberTable)
+    .innerJoin(PermissionSetTable, and(
+      eq(PermissionSetTable.id, PermissionSetMemberTable.permissionSetId),
+      eq(PermissionSetTable.organizationId, PermissionSetMemberTable.organizationId),
+    ))
+    .innerJoin(MemberTable, and(
+      eq(MemberTable.id, PermissionSetMemberTable.orgMembershipId),
+      eq(MemberTable.organizationId, PermissionSetMemberTable.organizationId),
+      isNull(MemberTable.removedAt),
+    ))
+    .where(and(
+      eq(PermissionSetMemberTable.organizationId, input.organizationId),
+      eq(PermissionSetMemberTable.orgMembershipId, input.memberId),
+      isNull(PermissionSetMemberTable.removedAt),
+      isNull(PermissionSetTable.archivedAt),
+    ))
+    .orderBy(asc(PermissionSetMemberTable.createdAt), asc(PermissionSetMemberTable.id))
+  return input.lock ? await query.for(input.lock) : await query
 }
 
 export type AuthoritativeTeamMembership = {

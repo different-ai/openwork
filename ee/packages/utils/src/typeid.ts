@@ -125,6 +125,7 @@ export const idTypesMapNameToPrefix = {
   permissionSet: "pms",
   permissionSetPermission: "psp",
   permissionSetTeam: "pst",
+  permissionSetMember: "psm",
   capabilityUsageEvent: "cue",
   capabilityUsageRollup: "cur",
   agentPermissionPolicy: "agp",

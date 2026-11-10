@@ -8,7 +8,10 @@ import { BUILT_IN_ROLES, type RoleOption } from "../../_lib/role-catalog";
 /** A picker row, as `roleOptions` builds it from the organization's one role list. */
 export type RolePickerOption = RoleOption;
 
-/** One searchable, trigger-width role menu for people and teams. */
+/**
+ * One searchable role menu for people and teams. As wide as its button, and
+ * never too narrow to read a role's one-line summary.
+ */
 export function RolePicker({ value, onChange, options, label, trigger, disabled, footer, open: controlledOpen, onOpenChange, testId = "member-role" }: {
   value: string;
   onChange: (value: string) => void;
@@ -41,7 +44,7 @@ export function RolePicker({ value, onChange, options, label, trigger, disabled,
       className={`flex w-full min-w-0 items-center gap-3 rounded-lg px-3 py-2 text-left disabled:cursor-not-allowed ${value === option.value ? "bg-gray-100" : "hover:bg-gray-50"}`}>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-medium text-gray-900" title={option.label}>{option.label}</span>
-        {option.lockReason || option.caption ? <span className="block truncate text-[12px] text-gray-500" title={option.lockReason ?? option.caption ?? undefined}>{option.lockReason ?? option.caption}</span> : null}
+        {option.lockReason || option.caption ? <span className="line-clamp-2 text-[12px] leading-snug text-gray-500" title={option.lockReason ?? option.caption ?? undefined}>{option.lockReason ?? option.caption}</span> : null}
       </span>
       {option.disabled ? <LockKeyhole className="h-3.5 w-3.5 shrink-0 text-gray-500" aria-hidden /> : value === option.value ? <Check className="h-4 w-4 shrink-0" aria-hidden /> : null}
     </button>
@@ -52,7 +55,7 @@ export function RolePicker({ value, onChange, options, label, trigger, disabled,
       <span className="min-w-0 truncate">{trigger ?? current?.label ?? BUILT_IN_ROLES.member.label}</span><ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
     </Popover.Trigger>
     <Popover.Portal><Popover.Positioner side="bottom" align="start" sideOffset={8} className="z-50 max-w-[var(--available-width)]">
-      <Popover.Popup data-testid={`${testId}-choice`} className="flex max-h-[var(--available-height)] w-[var(--anchor-width)] max-w-[var(--available-width)] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-lg outline-none">
+      <Popover.Popup data-testid={`${testId}-choice`} className="flex max-h-[var(--available-height)] w-[var(--anchor-width)] min-w-[min(280px,var(--available-width))] max-w-[var(--available-width)] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-lg outline-none">
         <Popover.Title className="sr-only">{label}</Popover.Title>
         <label className="flex h-9 shrink-0 items-center gap-2 rounded-lg border border-gray-200 px-3 focus-within:border-gray-400">
           <Search className="h-3.5 w-3.5 shrink-0 text-gray-500" aria-hidden />
