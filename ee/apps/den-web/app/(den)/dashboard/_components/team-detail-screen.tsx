@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode, useEffect, useState } from "react";
 import { ArrowLeft, Laptop, Compass, KeyRound, Layers, MessageCircle, ScrollText, ShieldCheck, SquareTerminal, Users } from "lucide-react";
-import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
+import type { TabItem } from "../../_components/ui/tabs";
 import { getMembersRoute, getMembersTeamsRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
 import { DesktopSuggestionsPanel } from "./desktop-suggestions-panel";
@@ -16,6 +16,7 @@ import { directoryAccess } from "./gateway-directory-data";
 import { useGatewayAccessProviders } from "./gateway-subject-access-data";
 import { PromptsPanel, promptsTabVisible } from "./prompts-panel";
 import { teamScopeOf } from "./team-scope";
+import { TeamSections, teamPageWidthClass, teamSectionsSidebarEnabled } from "./team-sections";
 import { WorkbotPanel, workbotTabVisible } from "./team-workbot-panel";
 import { OrgMemberIdentity } from "./org-member-identity";
 import { SharedTeamRolePanel } from "./shared-team-role-panel";
@@ -69,6 +70,8 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
   const showPrompts = promptsTabVisible(orgContext);
   // What the team changes from Everyone's Workbot settings, with settings per team on.
   const showWorkbot = workbotTabVisible(orgContext);
+  // The sections in a sidebar on the left instead of a row of tabs.
+  const sidebar = teamSectionsSidebarEnabled(orgContext);
   const [chosenTab, setChosenTab] = useState<TeamDetailTab | null>(initialTab);
   const defaultTab: TeamDetailTab = "role";
   // The tab is in the address (?tab=agents), so a reload or a shared link opens it again.
@@ -126,7 +129,7 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
     ];
 
   return (
-    <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
+    <div className={`mx-auto ${teamPageWidthClass(sidebar)} px-6 py-8 md:px-8`}>
       <div className="mb-6 flex items-center justify-between gap-4">
         <Link
           href={getMembersTeamsRoute(orgSlug)}
@@ -146,14 +149,12 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
         </span>
       </header>
 
-      <UnderlineTabs
-        className="mt-6"
+      <TeamSections
+        sidebar={sidebar}
         tabs={tabs.map((item) => ({ ...item, unseen: introUnseen(TEAM_DETAIL_TAB_INTROS[item.value]) }))}
         activeTab={activeTab}
         onChange={setActiveTab}
-      />
-
-      <div className="mt-6">
+      >
         {activeTab === "role" && team ? (
           <div role="tabpanel" aria-label="Role">
             <TeamTabIntro tab="role" facts={teamFacts}><SharedTeamRolePanel team={team} /></TeamTabIntro>
@@ -224,7 +225,7 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
             </TeamTabIntro>
           </div>
         ) : null}
-      </div>
+      </TeamSections>
     </div>
   );
 }

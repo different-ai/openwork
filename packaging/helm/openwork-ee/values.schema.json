@@ -271,6 +271,16 @@
               ],
               "description": "Den: Auth & Security settings: Settings shows one Auth & Security page with Single sign-on (SSO) and User provisioning (SCIM) tabs instead of separate SSO and SCIM pages; old SSO and SCIM links open the matching tab. Turning it off restores the separate pages. Renders DEN_FEATURE_AUTH_SECURITY_SETTINGS."
             },
+            "teamSettingsSidebar": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Den: team sections in a sidebar: On Members › Teams, a team's page and Everyone's page list their sections (Role, Members, Access, Agents, Browser, Models, Workbot, Prompts, Desktop) in a grouped sidebar on the left instead of a row of tabs across the top. Turning it off restores the tabs. Renders DEN_FEATURE_TEAM_SETTINGS_SIDEBAR."
+            },
             "sessionSecuritySettings": {
               "enum": [
                 "",
@@ -300,6 +310,16 @@
                 false
               ],
               "description": "Super admin permission set: Super admins get their permissions from an editable Super admin role, seeded with every permission, beside Member and Admin. Off: super admins hold every permission and the role is hidden. Renders DEN_FEATURE_SUPER_ADMIN_PERMISSION_SET."
+            },
+            "readyMadeRoles": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Ready-made roles and one role list: Members › Roles lists ready-made roles to add, starting with Billing manager. Create role can start from Member, Admin, Billing manager or everything the owner can do. The role pickers for people and teams list every role, with a lock and the reason on roles that can't be given there. Off: Create role starts empty and pickers leave those roles out. Renders DEN_FEATURE_READY_MADE_ROLES."
             },
             "nativeDictation": {
               "enum": [

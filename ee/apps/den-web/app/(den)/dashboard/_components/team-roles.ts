@@ -1,4 +1,14 @@
-import { BILLING_MANAGER_PERMISSION_KEYS, PERMISSION_KEYS, isPermissionKey, permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions";
+import { PERMISSION_KEYS, isPermissionKey, type PermissionKey } from "@openwork/types/den/permissions";
+import {
+  BUILT_IN_ROLES,
+  builtInRoleForSetKind,
+  customRoleSetId,
+  customRoleValue,
+  roleOptions,
+  type RoleListEntry,
+  type RoleOption,
+  type RoleSetKind,
+} from "../../_lib/role-catalog";
 
 /**
  * Team roles: the one-role-per-team view of what already exists in Den.
@@ -25,25 +35,18 @@ export function teamRole(state: TeamRoleState): TeamRole {
   return state.customSetId ? "custom" : "member";
 }
 
+/** Role names and summaries come from the role catalog (_lib/role-catalog.ts), never from a screen. */
 export const TEAM_ROLE_LABELS: Record<TeamRole, string> = {
-  member: "Member",
-  admin: "Admin",
+  member: BUILT_IN_ROLES.member.label,
+  admin: BUILT_IN_ROLES.admin.label,
   custom: "Custom",
 };
 
-export const SUPER_ADMIN_ROLE_LABEL = "Super admin";
-
-/** What the built-in Super admin role is for, in one line. */
-export const SUPER_ADMIN_ROLE_SUMMARY = "Everything the owner can do, except delete the organization";
-
 export const SUPER_ADMIN_ROLE_LOCK_REASON = "Only the owner or a super admin can make someone a super admin.";
 
-/** What the built-in Admin role is for, in one line. */
-export const ADMIN_ROLE_SUMMARY = "Invite people, manage teams, and run connections and models";
-
 export const TEAM_ROLE_DESCRIPTIONS: Record<TeamRole, string> = {
-  member: "Nothing beyond what everyone can do",
-  admin: `${ADMIN_ROLE_SUMMARY}, like every admin`,
+  member: BUILT_IN_ROLES.member.summary,
+  admin: `${BUILT_IN_ROLES.admin.summary}, like every admin`,
   custom: "Choose exactly what people in this team can do",
 };
 
@@ -59,35 +62,6 @@ export const EVERYONE_CAN: readonly string[] = [
   "Share what they made with people and teams",
   "Use the models and providers given to them",
 ];
-
-export type RoleStart = "member" | "admin" | "billing" | "everything";
-
-/** What the Billing manager starting point is for, in one line. */
-export const BILLING_MANAGER_ROLE_SUMMARY = "See plan, usage and invoices, and manage payment details";
-
-export const ROLE_START_LABELS: Record<RoleStart, string> = {
-  member: "Member",
-  admin: "Admin",
-  billing: "Billing manager",
-  everything: "Everything the owner can do",
-};
-
-export const ROLE_START_DESCRIPTIONS: Record<RoleStart, string> = {
-  member: TEAM_ROLE_DESCRIPTIONS.member,
-  admin: ADMIN_ROLE_SUMMARY,
-  billing: BILLING_MANAGER_ROLE_SUMMARY,
-  everything: "Every permission you can give",
-};
-
-/** The permissions a new role starts with, limited to what the person creating it holds. */
-export function roleStartKeys(start: RoleStart, held: ReadonlySet<string>): PermissionKey[] {
-  const keys = start === "everything"
-    ? [...PERMISSION_KEYS]
-    : start === "billing"
-      ? [...BILLING_MANAGER_PERMISSION_KEYS]
-      : permissionDefaultKeys(start);
-  return keys.filter((key) => held.has(key));
-}
 
 export type TeamRoleStep =
   | { kind: "set-admin"; value: boolean }
@@ -124,7 +98,7 @@ export function teamRoleSteps(current: TeamRoleState, next: TeamRole, adminKeys:
  * the screen.
  */
 export type RoleSetLike = {
-  kind: "member_default" | "admin_default" | "super_admin_default" | "team";
+  kind: RoleSetKind;
   name: string;
   team: { id: string; name: string | null } | null;
 };
@@ -135,10 +109,8 @@ export type RoleSetLike = {
  * between teams (sharedRoles).
  */
 export function roleName(set: RoleSetLike): string {
-  if (set.kind === "member_default") return TEAM_ROLE_LABELS.member;
-  if (set.kind === "admin_default") return TEAM_ROLE_LABELS.admin;
-  if (set.kind === "super_admin_default") return SUPER_ADMIN_ROLE_LABEL;
-  return set.name;
+  const builtIn = builtInRoleForSetKind(set.kind);
+  return builtIn ? BUILT_IN_ROLES[builtIn].label : set.name;
 }
 
 /** "Built-in role" or "Custom role", for captions next to a role's name. */
@@ -159,11 +131,11 @@ export type PermissionSourceLike = {
 export function permissionSourceRoleLabel(source: PermissionSourceLike): string {
   switch (source.kind) {
     case "owner":
-      return "Owner";
+      return BUILT_IN_ROLES.owner.label;
     // "super_admin" is what servers sent before Super admin became a permission set.
     case "super_admin":
     case "super_admin_default":
-      return SUPER_ADMIN_ROLE_LABEL;
+      return BUILT_IN_ROLES["super-admin"].label;
     case "member_default":
       return TEAM_ROLE_LABELS.member;
     case "admin_default":
@@ -172,7 +144,7 @@ export function permissionSourceRoleLabel(source: PermissionSourceLike): string 
       if (source.setName) return source.teamName ? `${source.setName} via ${source.teamName}` : source.setName;
       return source.teamName ?? source.label;
     case "code_default":
-      if (source.set === "super-admin") return SUPER_ADMIN_ROLE_LABEL;
+      if (source.set === "super-admin") return BUILT_IN_ROLES["super-admin"].label;
       return source.set === "admin" ? TEAM_ROLE_LABELS.admin : TEAM_ROLE_LABELS.member;
     default:
       return source.label;
@@ -213,47 +185,39 @@ export function parseRoleChoice(value: string): { role: "member" | "admin" | "su
   return { role: value === "super-admin" ? "super-admin" : value === "admin" ? "admin" : "member", teamId: null };
 }
 
-export type MemberRoleOption = {
-  value: RoleChoiceValue;
-  label: string;
-  /** "Custom role" next to a custom role's name, null for built-in roles. */
-  caption: string | null;
-  disabled: boolean;
-  lockReason?: string | null;
-};
+/** One row of the Invite and Edit role pickers. */
+export type MemberRoleOption = RoleOption;
 
 /**
- * The roles a person can be given directly, for both Invite and Edit role.
+ * The roles a person can be given directly, for both Invite and Edit role,
+ * from the organization's one role list (`roleList`).
  *
- * Member and Admin always. With teamRoles each custom role is listed by its
- * team. With sharedRoles it is listed once by permission-set name, including
- * roles with no teams. The caller resolves its team choice before saving;
+ * Built-in roles first, then each custom role once by name, including roles
+ * with no teams. The caller resolves a custom role's team before saving;
  * custom roles always keep the person's organization role Member.
  */
 export function memberRoleOptions(input: {
+  roles: readonly RoleListEntry[];
   canManageTeams: boolean;
-  customRoles?: readonly { id: string; name: string; teams: readonly { id: string; name: string | null }[] }[];
+  /** List roles a person can't be given (Owner) with a lock and the reason. */
+  showUnavailable?: boolean;
+  /** Why the person can't give a custom role, by permission set id. */
   lockReasons?: ReadonlyMap<string, string | null>;
   adminLockReason?: string | null;
   /** Why the person can't give the super-admin role: only the owner and super-admins can. */
   superAdminLockReason?: string | null;
 }): MemberRoleOption[] {
-  const builtIn: MemberRoleOption[] = [
-    { value: "member", label: TEAM_ROLE_LABELS.member, caption: null, disabled: false },
-    { value: "admin", label: TEAM_ROLE_LABELS.admin, caption: null, disabled: Boolean(input.adminLockReason), lockReason: input.adminLockReason },
-    {
-      value: "super-admin",
-      label: SUPER_ADMIN_ROLE_LABEL,
-      caption: SUPER_ADMIN_ROLE_SUMMARY,
-      disabled: Boolean(input.superAdminLockReason ?? input.adminLockReason),
-      lockReason: input.superAdminLockReason ?? input.adminLockReason,
+  return roleOptions({
+    roles: input.roles,
+    holder: "person",
+    showUnavailable: input.showUnavailable ?? false,
+    lockReason: (entry) => {
+      if (entry.kind === "custom") return !input.canManageTeams ? "Needs Manage teams. Ask the organization owner." : input.lockReasons?.get(entry.setId);
+      if (entry.id === "admin") return input.adminLockReason;
+      if (entry.id === "super-admin") return input.superAdminLockReason ?? input.adminLockReason;
+      return null;
     },
-  ];
-  return [...builtIn, ...(input.customRoles ?? []).map((role): MemberRoleOption => {
-    const lockReason = !input.canManageTeams ? "Needs Manage teams. Ask the organization owner." : input.lockReasons?.get(role.id) ?? null;
-    return { value: `role:${role.id}`, label: role.name, caption: role.teams.length ? `On ${role.teams.map((team) => team.name ?? "A deleted team").join(", ")}` : "No teams yet", disabled: lockReason !== null, lockReason };
-  })];
-
+  });
 }
 
 export type TeamRoleAbilities = {
@@ -344,4 +308,41 @@ export function sharedTeamRoleLockReason(current: SharedTeamRoleState, next: Sha
     }
   }
   return null;
+}
+
+/** The picker value of a team's role: the built-in role's id, or the custom role's value. */
+export function sharedTeamRoleValue(role: SharedTeamRole): string {
+  return role.kind === "custom" ? customRoleValue(role.setId) : role.kind;
+}
+
+/** The team role a picker value names, or null for a role teams can't have. */
+export function sharedTeamRoleFromValue(value: string): SharedTeamRole | null {
+  const setId = customRoleSetId(value);
+  if (setId) return { kind: "custom", setId };
+  return value === "member" || value === "admin" ? { kind: value } : null;
+}
+
+/**
+ * The roles a team can be given, from the organization's one role list
+ * (`roleList`), each locked with the permission the change needs. The team's
+ * current role is never locked.
+ */
+export function teamRoleOptions(input: {
+  roles: readonly RoleListEntry[];
+  state: SharedTeamRoleState;
+  abilities: TeamRoleAbilities;
+  /** List roles a team can't have (Super admin, Owner) with a lock and the reason. */
+  showUnavailable?: boolean;
+}): RoleOption[] {
+  const current = sharedTeamRole(input.state);
+  return roleOptions({
+    roles: input.roles,
+    holder: "team",
+    showUnavailable: input.showUnavailable ?? false,
+    lockReason: (entry) => {
+      const role = sharedTeamRoleFromValue(entry.value);
+      if (!role) return "Teams can't have this role.";
+      return sameSharedTeamRole(role, current) ? null : sharedTeamRoleLockReason(input.state, role, input.abilities);
+    },
+  });
 }
