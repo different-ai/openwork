@@ -9,6 +9,7 @@ import {
   type DesktopPolicyDocumentWrite,
 } from "@openwork/types/den/desktop-policies";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
+import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 
 export type DenDesktopPolicyRole = "owner" | "admin" | "member";
 
@@ -154,6 +155,11 @@ export function parseDesktopPolicyList(payload: unknown) {
   };
 }
 
+/** Names the organization on screen on a request, as the dashboard's other data hooks do. */
+export function orgScopeHeaders(orgId: string | null | undefined): Record<string, string> {
+  return orgId ? { [ORG_SCOPE_HEADER]: orgId } : {};
+}
+
 export function useOrgDesktopPolicies(orgId: string | null) {
   const [definitions, setDefinitions] = useState<DesktopPolicyDefinition[]>([]);
   const [desktopPolicies, setDesktopPolicies] = useState<DenDesktopPolicy[]>([]);
@@ -170,7 +176,7 @@ export function useOrgDesktopPolicies(orgId: string | null) {
     setBusy(true);
     setError(null);
     try {
-      const { response, payload } = await requestJson("/v1/desktop-policies", { method: "GET" }, 12000);
+      const { response, payload } = await requestJson("/v1/desktop-policies", { method: "GET", headers: orgScopeHeaders(orgId) }, 12000);
       if (!response.ok) {
         throw new Error(getErrorMessage(payload, `Failed to load desktop policies (${response.status}).`));
       }
@@ -191,10 +197,10 @@ export function useOrgDesktopPolicies(orgId: string | null) {
   return { definitions, desktopPolicies, busy, error, reloadPolicies };
 }
 
-export async function createDesktopPolicy(input: DesktopPolicyPayload) {
+export async function createDesktopPolicy(input: DesktopPolicyPayload, orgId?: string | null) {
   const { response, payload } = await requestJson("/v1/desktop-policies", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...orgScopeHeaders(orgId), "content-type": "application/json" },
     body: JSON.stringify(input),
   }, 12000);
   if (!response.ok) {
@@ -203,10 +209,10 @@ export async function createDesktopPolicy(input: DesktopPolicyPayload) {
   }
 }
 
-export async function updateDesktopPolicy(policyId: string, input: DesktopPolicyPayload) {
+export async function updateDesktopPolicy(policyId: string, input: DesktopPolicyPayload, orgId?: string | null) {
   const { response, payload } = await requestJson(`/v1/desktop-policies/${encodeURIComponent(policyId)}`, {
     method: "PATCH",
-    headers: { "content-type": "application/json" },
+    headers: { ...orgScopeHeaders(orgId), "content-type": "application/json" },
     body: JSON.stringify(input),
   }, 12000);
   if (!response.ok) {

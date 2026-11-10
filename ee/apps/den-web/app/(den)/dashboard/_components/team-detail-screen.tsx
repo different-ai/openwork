@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode, useEffect, useState } from "react";
 import { ArrowLeft, Laptop, Compass, KeyRound, Layers, MessageCircle, ScrollText, ShieldCheck, SquareTerminal, Users } from "lucide-react";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
-import { getMembersRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getMembersRoute, getMembersTeamsRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
 import { DesktopSuggestionsPanel } from "./desktop-suggestions-panel";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -129,7 +129,7 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
     <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
       <div className="mb-6 flex items-center justify-between gap-4">
         <Link
-          href={getMembersRoute(orgSlug)}
+          href={getMembersTeamsRoute(orgSlug)}
           className="inline-flex items-center gap-1.5 text-[13px] text-gray-500 transition hover:text-gray-700"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -161,7 +161,7 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
         ) : null}
 
         {activeTab === "overview" ? (
-          <div role="tabpanel" aria-label="Overview">
+          <div role="tabpanel" aria-label="Members">
             <TeamTabIntro tab="overview" facts={teamFacts}>
             {teamMembers.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
