@@ -26,6 +26,7 @@ import {
   getAuditLogsRoute,
   getBrandAppearanceRoute,
   getBillingRoute,
+  getConfigRoute,
   getCustomLlmProvidersRoute,
   getDiagnosticsRoute,
   getDeploymentsRoute,
@@ -290,6 +291,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   ) {
     return "Advanced";
   }
+  if (pathname.startsWith(getConfigRoute(orgSlug))) {
+    return "Config";
+  }
   if (pathname.startsWith(getDeploymentsRoute(orgSlug))) {
     return "Deployments";
   }
@@ -477,6 +481,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
     managedDeployments: orgFeatureEnabled(orgContext, "managedDeployments"),
     authSecuritySettings: orgFeatureEnabled(orgContext, "authSecuritySettings"),
+    configBlobs: orgFeatureEnabled(orgContext, "configBlobs"),
     canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
 
     desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),

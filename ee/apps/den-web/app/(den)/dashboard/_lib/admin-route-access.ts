@@ -4,6 +4,7 @@ import {
   getAiGatewayRoute,
   getApiKeysRoute,
   getBillingRoute,
+  getConfigRoute,
   getCustomLlmProvidersRoute,
   getAnalyticsRoute,
   getDeploymentsRoute,
@@ -92,6 +93,8 @@ const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
     needs: ["sharing.manage_all", "connectors.manage", "plugins.import"],
   },
   { prefix: getImportPluginRoute(), allowed: (access) => access.canImportPlugins, needs: ["plugins.import"] },
+  // Config import/export changes organization settings; each area is also checked by the API.
+  { prefix: getConfigRoute(), allowed: (access) => access.canManageSettings, needs: ["organization.update"] },
   { prefix: getToolTesterRoute(), allowed: (access) => access.canManageConnections, needs: ["connections.manage"] },
 ];
 

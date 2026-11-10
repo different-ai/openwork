@@ -416,7 +416,7 @@ const router = new Hono<{ Bindings: CellEnv }>()
 // A WebSocket upgrade is left as it is: it is not a document, and its response cannot be rebuilt.
 router.use("*", async (c, next) => {
   await next()
-  if (c.res.status !== 101) c.header("X-Robots-Tag", "noindex, nofollow")
+  if (c.res.status !== 101) c.header("X-Robots-Tag", "noindex, nofollow, noarchive")
 })
 router.get("/health", (c) => c.json({ ok: true }))
 // Cell-to-cell routes are only for cells: never reachable from outside, whatever the request carries.

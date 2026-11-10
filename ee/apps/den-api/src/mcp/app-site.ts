@@ -1,5 +1,6 @@
 import { env } from "../env.js"
 import { isPublicMcpAppSite } from "../mcp-apps.js"
+import { NO_INDEX } from "../public-response-headers.js"
 
 /**
  * A browser opening an App's MCP URL: a GET that asks for HTML and carries no
@@ -166,7 +167,7 @@ const SITE_CSP = [
 ].join("; ")
 
 function sitePage(mode: "public" | "member"): string {
-  return `<!doctype html><html lang="en" data-mode="${mode}" data-sign-in="${escapeAttribute(env.webUrl)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>OpenWork App</title><style>html,body{margin:0;height:100%}body{font:15px system-ui,sans-serif;color-scheme:light dark}#app{display:block;width:100%;height:100%;border:0}#status{margin:0;padding:24px}</style></head><body><p id="status" role="status">Opening…</p><iframe id="app" title="App" sandbox="allow-scripts allow-forms" hidden></iframe><script>${SITE_SCRIPT}</script></body></html>`
+  return `<!doctype html><html lang="en" data-mode="${mode}" data-sign-in="${escapeAttribute(env.webUrl)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="${NO_INDEX}"><title>OpenWork App</title><style>html,body{margin:0;height:100%}body{font:15px system-ui,sans-serif;color-scheme:light dark}#app{display:block;width:100%;height:100%;border:0}#status{margin:0;padding:24px}</style></head><body><p id="status" role="status">Opening…</p><iframe id="app" title="App" sandbox="allow-scripts allow-forms" hidden></iframe><script>${SITE_SCRIPT}</script></body></html>`
 }
 
 /** Sent by the page on its signed-in requests, so the App's server refuses an App that was not made a site. */
@@ -192,6 +193,7 @@ export async function appSiteResponse(input: { appIdOrName: string; publicOnly: 
       "cache-control": "no-store",
       "referrer-policy": "no-referrer",
       "x-content-type-options": "nosniff",
+      "x-robots-tag": NO_INDEX,
     },
   })
 }

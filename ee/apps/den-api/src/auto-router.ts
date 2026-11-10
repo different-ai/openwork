@@ -283,6 +283,8 @@ export async function saveAutoRouter(input: {
   memberId: MemberId
   routerId?: string
   write: AutoRouterWrite
+  /** For a create: use this id (a config-blob import reusing its source id); the caller checked it is free. */
+  createId?: AutoRouterId
 }): Promise<AutoRouterId | null> {
   return db.transaction(async (tx) => {
     await lockOrganization(tx, input.organizationId)
@@ -296,7 +298,7 @@ export async function saveAutoRouter(input: {
       await tx.update(AutoRouterTable).set({ name: input.write.name, updatedByOrgMemberId: input.memberId }).where(eq(AutoRouterTable.id, routerId))
       await deleteRouterModels(tx, routerId)
     } else {
-      routerId = createDenTypeId("autoRouter")
+      routerId = input.createId ?? createDenTypeId("autoRouter")
       await tx.insert(AutoRouterTable).values({
         id: routerId,
         organizationId: input.organizationId,

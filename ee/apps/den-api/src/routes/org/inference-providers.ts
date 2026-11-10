@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto"
 import { and, desc, eq, gt, inArray, isNull } from "@openwork-ee/den-db/drizzle"
-import { AuthSessionTable, GatewayCredentialSetTable, GatewayLiteLlmIssuedKeyTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, LlmProviderAccessTable, LlmProviderMemberCredentialTable, LlmProviderModelTable, LlmProviderTable, MemberTable } from "@openwork-ee/den-db/schema"
+import { AuthSessionTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, LlmProviderAccessTable, LlmProviderMemberCredentialTable, LlmProviderModelTable, LlmProviderTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, GATEWAY_PROVIDER_CREDENTIAL_MODES, GATEWAY_PROVIDER_CREDENTIAL_STATUSES, GATEWAY_PROVIDER_STATUSES, type GatewayAccessGrantWrite, type GatewayProviderConnectResponse, type GatewayProviderSummary } from "@openwork/types/den/gateway"
 import { GATEWAY_MEMBER_SIGN_IN_METHODS, gatewayAwsSsoSettingsSchema, gatewayMemberConnectionsResponseSchema } from "@openwork/types/den/inference"
@@ -22,7 +22,7 @@ import { gatewayMemberConnections } from "../../llm/gateway-member-connections.j
 import { requestGatewayProviderTest } from "../../llm/gateway-provider-test.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import { GatewayWriteError, normalizeCredential, reusableAwsCredential, enableGatewayGroupModels, gatewayCatalog, effectiveGatewaySummaryGrants, gatewayGrantSummary, gatewaySummary, readGatewaySummaries, refreshGatewayCatalog, resolveGatewayCatalog, trustedProviderCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
-import { buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "../../llm/inference-provider-config.js"
+import { buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, readProviderConfigNpm, upstreamBaseUrlSettingError } from "../../llm/inference-provider-config.js"
 import { buildGoogleAuthorizeUrl, exchangeGoogleAuthorizationCode, googleOAuthClientBinding, googleOAuthNonce, readGoogleOAuthAttempt, revokeGoogleToken, verifyGoogleIdentity } from "../../llm/inference-provider-google-oauth.js"
 import { buildMicrosoftAuthorizeUrl, exchangeMicrosoftAuthorizationCode, microsoftOAuthNonce, verifyMicrosoftIdentity } from "../../llm/inference-provider-microsoft-oauth.js"
 import { gatewayMemberSignInMethod, memberSignInBinding, memberSignInBrand, memberSignInConfigurationError, readAwsSsoSettings, type GatewayMemberSignInMethod } from "../../llm/gateway-member-sign-in.js"
@@ -33,7 +33,7 @@ import { isMigrationSourceLockConflict } from "../../llm/inference-provider-migr
 import { getModelsDevProvider } from "../../llm/models-dev.js"
 import { LiteLlmError, createLiteLlmClient, normalizeLiteLlmBaseUrl } from "../../llm/litellm.js"
 import { liteLlmCatalogProvider } from "../../llm/litellm-settings.js"
-import { deleteLiteLlmIssuedKeys, liteLlmMemberIssueStatus, provisionLiteLlmMember, pruneLiteLlmIssuedKeys, reconcileLiteLlmIssuedKeys, scheduleLiteLlmProvisioning } from "../../llm/litellm-issued.js"
+import { liteLlmMemberIssueStatus, provisionLiteLlmMember, pruneLiteLlmIssuedKeys, reconcileLiteLlmIssuedKeys, scheduleLiteLlmProvisioning } from "../../llm/litellm-issued.js"
 import { applyLiteLlmSync, connectLiteLlmMemberKey, createLiteLlmProvider, liteLlmAdminKey, updateLiteLlmIssueSettings, disconnectLiteLlmMember, emptySettings, liteLlmEndpoints, liteLlmErrorResponse, liteLlmMemberSet, planLiteLlmCatalog, planLiteLlmSync, pruneLiteLlmAssignments, readLiteLlmSettings, recordLiteLlmSyncError, replaceLiteLlmSyncKey, verifyLiteLlmKey } from "../../llm/litellm-sync.js"
 import { LITELLM_PROVIDER_ID, isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
 import { decodeProviderCredential, readProviderEnvNames, runtimeProviderEnvNames } from "../../llm/provider-credentials.js"
@@ -47,13 +47,14 @@ import { registerOrgGatewayUsageRoutes } from "./gateway-usage.js"
 import { registerOrgGatewayUsageLimitRoutes } from "./gateway-usage-limits.js"
 import { registerOrgProviderInventoryRoutes } from "./provider-inventory.js"
 import { credentialPromptSchema } from "@openwork/types/den/credential-prompt"
-import { GatewayProviderUsageLimitsError, GatewayUsageError, lockUsageOrganization, settleGatewayProviderUsageLimits } from "@openwork-ee/den-db/gateway-usage-limits"
+import { GatewayProviderUsageLimitsError, GatewayUsageError, lockUsageOrganization } from "@openwork-ee/den-db/gateway-usage-limits"
 import { GATEWAY_PROVIDER_HAS_USAGE_LIMITS, GATEWAY_PROVIDER_REMOVAL_LIMIT_ACTIONS, gatewayProviderHasUsageLimitsSchema, type GatewayProviderRemovalLimitChoice } from "@openwork/types/den/gateway-usage-limits"
 import { credentialPromptResponseFields, gatewayCredentialShape, gatewayProviderCredentialPrompt, gatewayUpstreamDestination } from "../../credential-prompt.js"
 import { requireFeature } from "../../features.js"
 import { GATEWAY_CUSTOM_PROVIDER_ID, gatewayCustomCreateRequestSchema, gatewayCustomDiscoverRequestSchema, gatewayCustomDiscoverResponseSchema, gatewayCustomProviderStatusSchema, gatewayCustomTestRequestSchema, gatewayCustomTestResponseSchema, gatewayCustomTestStep, gatewayCustomUpdateRequestSchema, isGatewayCustomProviderId, type GatewayCustomModel, type GatewayCustomProviderSettings, type GatewayCustomTestResponse } from "@openwork/types/den/gateway-custom-providers"
 import { discoverCustomProviderModels } from "../../llm/custom-provider-discovery.js"
 import { checkCustomBaseUrl, customCatalogProvider, customProviderConfig, readCustomProviderSettings, sameCustomOrigin } from "../../llm/gateway-custom-provider.js"
+import { gatewayProviderSettingsSchema, patchGatewayProvider, removeGatewayAccessGrant, removeGatewayCredentialSet, removeGatewayModelGroup, removeGatewayProvider } from "../../llm/gateway-provider-writes.js"
 
 const paramsSchema = idParamSchema("inferenceProviderId", "inferenceProvider")
 const groupParams = paramsSchema.extend(idParamSchema("groupId", "gatewayModelGroup").shape)
@@ -80,7 +81,7 @@ const audienceSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("member"), memberId: denTypeIdSchema("member") }).strict(),
 ])
 const grantWrite = z.object({ modelGroupId: denTypeIdSchema("gatewayModelGroup"), credentialSetId: denTypeIdSchema("gatewayCredentialSet"), audience: audienceSchema }).strict()
-const settingsSchema = z.object({ project: z.string().trim().max(255).optional(), location: z.string().trim().max(63).optional(), resourceName: z.string().trim().max(63).optional(), apiVersion: z.string().trim().max(64).optional(), region: z.string().trim().max(63).optional(), upstreamBaseUrl: z.string().trim().max(2048).optional() }).strict()
+const settingsSchema = gatewayProviderSettingsSchema
 const legacyFields = { credentialMode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES).optional(), credential: credentialSchema.optional(), apiKeys: apiKeysSchema.optional(), ...oauthFields, allMembers: z.boolean().optional(), memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() }
 const universeSchema = modelIdsSchema.describe("Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.")
 const reuseCredentialFromSchema = denTypeIdSchema("inferenceProvider").describe("Amazon Bedrock only: copy the organization AWS keys of another Amazon Bedrock provider in this organization, server-side. Mutually exclusive with credential and apiKeys.")
@@ -637,30 +638,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       }
       const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
       const trusted = await trustedProviderCatalog(before)
-      const provider = await providerTransaction(c, async (tx, existing) => {
-        if (input.providerId !== undefined && input.providerId !== existing.provider_id) throw new GatewayWriteError(409, "provider_identity_immutable", "Create a separate provider rather than moving existing groups and credentials to another catalog provider.")
-        if (!trusted || trusted.id !== existing.provider_id || trusted.npm !== readProviderConfigNpm(existing.provider_config)) throw new GatewayWriteError(400, "provider_requires_configuration")
-        const config = existing.provider_config
-        if (input.settings !== undefined) {
-          const persisted: Record<string, unknown> = settingsSchema.parse(publicProviderSettings(existing.settings))
-          validateGatewaySettings(config, { ...persisted, ...input.settings })
-          if (Object.entries(input.settings).some(([key, value]) => value !== persisted[key])) {
-            throw isGatewayCustomProviderId(existing.provider_id)
-              ? new GatewayWriteError(409, "provider_destination_immutable", "Change a custom provider's API address with PATCH /v1/inference-providers/{inferenceProviderId}/custom (the custom provider edit), which also asks for the key again for another host.")
-              : new GatewayWriteError(409, "provider_destination_immutable", "Create a separate provider to change the upstream account or destination. Existing credentials cannot be relocated.")
-          }
-        }
-        const modelIds = input.modelIds === undefined ? existing.model_ids : [...new Set(input.modelIds)]
-        const catalog = resolveGatewayCatalog(trusted, modelIds, config, input.modelIds !== undefined)
-        if (input.status === "disabled" && existing.status === "active") await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.gateway_provider_id, existing.id))
-        const name = input.name ?? existing.name
-        // A custom provider's display name also lives in provider_config.name (what members and the desktop read).
-        const providerConfig = isGatewayCustomProviderId(existing.provider_id) && name !== readProviderConfigName(config) ? { ...config, name } : config
-        const provider: GatewayProvider = { ...existing, name, provider_config: providerConfig, model_ids: modelIds, status: input.status ?? existing.status, updated_at: new Date() }
-        await writeGatewayModels(tx, provider, catalog.models)
-        await tx.update(GatewayProviderTable).set({ name: provider.name, ...(providerConfig === config ? {} : { provider_config: providerConfig }), model_ids: modelIds, status: provider.status, updated_at: provider.updated_at }).where(eq(GatewayProviderTable.id, provider.id))
-        return provider
-      })
+      const provider = await providerTransaction(c, (tx, existing) => patchGatewayProvider(tx, existing, trusted, input))
       return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }) })
     } catch (error) { return respond(c, error) }
   })
@@ -729,13 +707,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     try {
       const params = c.req.valid("param")
       await providerTransaction(c, async (tx, provider) => {
-        const id = normalizeDenTypeId("gatewayModelGroup", params.groupId)
-        const [group] = await tx.select().from(GatewayModelGroupTable).where(and(eq(GatewayModelGroupTable.id, id), eq(GatewayModelGroupTable.gateway_provider_id, provider.id)))
-        if (!group) throw new GatewayWriteError(404, "model_group_not_found")
-        const [grant] = await tx.select({ id: GatewayProviderAccessTable.id }).from(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.model_group_id, id)).limit(1)
-        if (grant) throw new GatewayWriteError(409, "model_group_in_use", "Delete referencing access grants first.")
-        await tx.delete(GatewayModelGroupModelTable).where(eq(GatewayModelGroupModelTable.model_group_id, id))
-        await tx.delete(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.id, id))
+        await removeGatewayModelGroup(tx, provider, normalizeDenTypeId("gatewayModelGroup", params.groupId))
         await touch(tx, provider)
       })
       return c.body(null, 204)
@@ -790,17 +762,9 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     try {
       const params = c.req.valid("param")
       const credentials = await providerTransaction(c, async (tx, provider) => {
-        const id = normalizeDenTypeId("gatewayCredentialSet", params.credentialSetId)
-        const [set] = await tx.select().from(GatewayCredentialSetTable).where(and(eq(GatewayCredentialSetTable.id, id), eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))).for("update")
-        if (!set) throw new GatewayWriteError(404, "credential_set_not_found")
-        const [grant] = await tx.select({ id: GatewayProviderAccessTable.id }).from(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.credential_set_id, id)).limit(1)
-        if (grant) throw new GatewayWriteError(409, "credential_set_in_use", "Delete referencing access grants first.")
-        await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.credential_set_id, id))
-        const rows = await tx.select().from(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.credential_set_id, id)).for("update")
-        await tx.delete(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.credential_set_id, id))
-        await tx.delete(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, id))
+        const rows = await removeGatewayCredentialSet(tx, provider, normalizeDenTypeId("gatewayCredentialSet", params.credentialSetId))
         await touch(tx, provider)
-        return rows.filter((row) => row.status !== "revoked")
+        return rows
       })
       await revokeUpstreamCredentials(credentials)
       return c.body(null, 204)
@@ -850,13 +814,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       try {
         const params = c.req.valid("param")
         await providerTransaction(c, async (tx, provider) => {
-          const id = normalizeDenTypeId("inferenceProviderAccess", params.grantId)
-          const [grant] = await tx.select().from(GatewayProviderAccessTable).where(and(eq(GatewayProviderAccessTable.id, id), eq(GatewayProviderAccessTable.gateway_provider_id, provider.id)))
-          if (!grant) throw new GatewayWriteError(404, "access_grant_not_found")
-          // Callback reauthorization rejects lost set access while preserving consent through other grants.
-          await tx.delete(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.id, id))
-          await pruneLiteLlmAssignments(tx, provider)
-          if (isLiteLlmProviderId(provider.provider_id)) await pruneLiteLlmIssuedKeys(tx, provider)
+          await removeGatewayAccessGrant(tx, provider, normalizeDenTypeId("inferenceProviderAccess", params.grantId))
           await touch(tx, provider)
         })
         return c.body(null, 204)
@@ -870,29 +828,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const query = c.req.valid("query")
       const choice: GatewayProviderRemovalLimitChoice | undefined = query.usageLimits === "archive" ? { action: "archive" }
         : query.usageLimits === "move" && query.moveUsageLimitsTo ? { action: "move", providerId: query.moveUsageLimitsTo } : undefined
-      const credentials = await providerTransaction(c, async (tx, provider) => {
-        // Usage limits scoped to this provider are moved or archived first, so a missing choice
-        // stops the request before anything is deleted here or in LiteLLM.
-        await settleGatewayProviderUsageLimits(tx, { organizationId: actor.organization.id, memberId: actor.currentMember.id }, provider.id, choice)
-        // Keys OpenWork created in LiteLLM go first, while the admin key is still stored. This runs
-        // inside the transaction, after providerTransaction has locked the caller's member row and
-        // re-checked the permission, so a concurrent membership removal or revocation stops the
-        // request before any external key is deleted.
-        if (isLiteLlmProviderId(provider.provider_id)) await deleteLiteLlmIssuedKeys(provider)
-        await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.gateway_provider_id, provider.id))
-        await tx.delete(GatewayLiteLlmIssuedKeyTable).where(eq(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, provider.id))
-        const credentials = await tx.select().from(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.gateway_provider_id, provider.id)).for("update")
-        const groups = await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.gateway_provider_id, provider.id))
-        if (groups.length) await tx.delete(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id)))
-        await tx.delete(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id))
-        await tx.delete(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.gateway_provider_id, provider.id))
-        await tx.delete(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))
-        await tx.delete(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.gateway_provider_id, provider.id))
-        await tx.delete(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
-        await tx.delete(GatewayProviderTable).where(eq(GatewayProviderTable.id, provider.id))
-        // Request logs and rollups deliberately retain historical resource IDs.
-        return credentials.filter((row) => row.status !== "revoked")
-      }, { lockOrganization: true })
+      const credentials = await providerTransaction(c, (tx, provider) => removeGatewayProvider(tx, provider, { organizationId: actor.organization.id, memberId: actor.currentMember.id }, choice), { lockOrganization: true })
       await revokeUpstreamCredentials(credentials)
       return c.body(null, 204)
     } catch (error) {
@@ -1434,10 +1370,6 @@ async function customRateLimit(actor: Actor, prefix: string): Promise<number | n
     if (retryAfterSeconds !== null) return retryAfterSeconds
   }
   return null
-}
-
-function readProviderConfigName(config: Record<string, unknown>): string | null {
-  return typeof config.name === "string" ? config.name : null
 }
 
 function customBaseUrl(input: string): string {

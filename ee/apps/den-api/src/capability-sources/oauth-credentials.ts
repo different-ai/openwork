@@ -140,6 +140,8 @@ export async function upsertOrgOAuthClient(input: {
   clientSecret?: string | null
   extra?: Record<string, unknown> | null
   createdByOrgMembershipId: OrgMembershipId
+  /** Id for a newly inserted row (config-blob imports; the caller checked it is free). Ignored on update. */
+  id?: DenTypeId<"orgOAuthClient">
 }): Promise<OrgOAuthClientRow> {
   // primary: decides update vs insert and reads back the row written here.
   const existing = await readOrgOAuthClient(input.organizationId, input.providerId, db.$primary)
@@ -155,7 +157,7 @@ export async function upsertOrgOAuthClient(input: {
     return (await readOrgOAuthClient(input.organizationId, input.providerId, db.$primary))!
   }
 
-  const id = createDenTypeId("orgOAuthClient")
+  const id = input.id ?? createDenTypeId("orgOAuthClient")
   await db.insert(OrgOAuthClientTable).values({
     id,
     organizationId: input.organizationId,

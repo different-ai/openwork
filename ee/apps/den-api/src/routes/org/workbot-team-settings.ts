@@ -36,6 +36,32 @@ function stepLimitOn(organizationId: string, userId: string): Promise<boolean> {
   return organizationFeatureEnabled(organizationId, "workbotStepLimit", { userId })
 }
 
+/**
+ * The route's model check for a team's own model: the caller's supported, credential-ready models only, and the
+ * managed starter saved as Default (null), as for the organization. Shared with the config-blob area.
+ */
+export async function checkWorkbotTeamModel(input: { organizationId: DenTypeId<"organization">; userId: string; model: string }) {
+  const catalog = await workbotModelCatalog({ organizationId: input.organizationId, userId: input.userId }).catch(() => null)
+  // Selecting the managed starter means Default, as for the organization.
+  const model = isWorkbotManagedLuna(input.model) && input.model === catalog?.defaultModel ? null : input.model
+  return { choice: checkWorkbotModelChoice(model, catalog), model }
+}
+
+/** Saves one team's change; a concurrent first save of the same team created the row, so the change is applied to it. */
+export async function saveWorkbotTeamSettingsChange(input: Parameters<typeof saveWorkbotTeamSettings>[0]): Promise<void> {
+  try {
+    await saveWorkbotTeamSettings(input)
+  } catch (error) {
+    if (!isDuplicateEntry(error)) throw error
+    await saveWorkbotTeamSettings(input)
+  }
+}
+
+/** Turns Workbot on or off for everyone whose teams do not say otherwise (organization metadata `workbot.enabled`). */
+export async function saveWorkbotEnabledForEveryone(organizationId: DenTypeId<"organization">, enabled: boolean): Promise<void> {
+  await updateOrganizationMetadata(organizationId, (current) => withWorkbotEnabled(current, enabled))
+}
+
 async function settingsView(c: PermissionRouteContext, organizationId: DenTypeId<"organization">, stepLimit: boolean) {
   return { ...await listWorkbotTeamSettings(organizationId, { stepLimit }), canEdit: await hasPermission(c, "inference.manage") }
 }
@@ -104,22 +130,12 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       if (change.maxSteps && !stepLimit) return c.json({ error: "invalid_request" as const, message: "Workbot's step limit isn't on for this organization.", details: [] }, 400)
       if (change.model && !change.model.inherit && change.model.value !== null) {
         // The same check as the organization's default model, against the caller's own models.
-        const catalog = await workbotModelCatalog({ organizationId, userId: context.currentMember.userId }).catch(() => null)
-        // Selecting the managed starter means Default, as for the organization.
-        const model = isWorkbotManagedLuna(change.model.value) && change.model.value === catalog?.defaultModel ? null : change.model.value
-        const choice = checkWorkbotModelChoice(model, catalog)
+        const { choice, model } = await checkWorkbotTeamModel({ organizationId, userId: context.currentMember.userId, model: change.model.value })
         if (choice === "runner_unavailable") return c.json({ error: "workbot_runner_unavailable" as const, message: RUNNER_UNAVAILABLE_MESSAGE }, 503)
         if (choice === "unknown_model") return c.json({ error: "unknown_model" as const, message: UNKNOWN_MODEL_MESSAGE }, 400)
         change = { ...change, model: { inherit: false, value: model } }
       }
-      const write = () => saveWorkbotTeamSettings({ organizationId, teamId, change, updatedByOrgMemberId: context.currentMember.id })
-      try {
-        await write()
-      } catch (error) {
-        // A concurrent first save of the same team created the row; apply the change to it.
-        if (!isDuplicateEntry(error)) throw error
-        await write()
-      }
+      await saveWorkbotTeamSettingsChange({ organizationId, teamId, change, updatedByOrgMemberId: context.currentMember.id })
       return c.json(await settingsView(c, organizationId, stepLimit))
     },
   )
@@ -148,7 +164,7 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       const context = c.get("organizationContext")
       const organizationId = context.organization.id
       const { enabled } = c.req.valid("json")
-      if (enabled !== undefined) await updateOrganizationMetadata(organizationId, (current) => withWorkbotEnabled(current, enabled))
+      if (enabled !== undefined) await saveWorkbotEnabledForEveryone(organizationId, enabled)
       return c.json(await settingsView(c, organizationId, await stepLimitOn(organizationId, context.currentMember.userId)))
     },
   )

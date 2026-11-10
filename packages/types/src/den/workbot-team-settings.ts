@@ -26,10 +26,10 @@ import { z } from "zod"
 export const WORKBOT_TEAM_NAME_MAX_LENGTH = 40
 
 /** A headless runner model id, or null for the deployment's default model (as for the organization). */
-const workbotTeamModelSchema = z.string().trim().min(1).max(255).nullable()
-const workbotTeamNameSchema = z.string().trim().min(1).max(WORKBOT_TEAM_NAME_MAX_LENGTH)
+export const workbotTeamModelSchema = z.string().trim().min(1).max(255).nullable()
+export const workbotTeamNameSchema = z.string().trim().min(1).max(WORKBOT_TEAM_NAME_MAX_LENGTH)
 /** Model calls per request: 0 is no limit, null the deployment's default (as for the organization). */
-const workbotTeamMaxStepsSchema = workbotMaxStepsSchema.nullable()
+export const workbotTeamMaxStepsSchema = workbotMaxStepsSchema.nullable()
 
 /**
  * What a team's row holds. Unknown keys are kept, so a server that does not

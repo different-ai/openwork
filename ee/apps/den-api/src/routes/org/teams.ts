@@ -167,7 +167,15 @@ function heldInTransaction(actor: MemberPermissions, keys: readonly PermissionKe
   return missing ? permissionDeniedResponse(missing) : null
 }
 
-async function createTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof createTeamSchema>, externalKey?: string) {
+export type CreateTeamInput = z.infer<typeof createTeamSchema>
+export type UpdateTeamInput = z.infer<typeof updateTeamSchema>
+
+/**
+ * Exported for config-blob imports (src/config-blobs/areas/members-teams.ts),
+ * which call it with an in-process route context. `options.teamId` reuses a
+ * known-free id for the new team (config blobs reuse source ids); routes omit it.
+ */
+export async function createTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, input: CreateTeamInput, externalKey?: string, options: { teamId?: TeamId } = {}) {
   return withOrganizationTeamMutation(payload.organization.id, async (tx) => {
   if (input.grantsOrganizationAdmin !== undefined) {
     const rolePermission = await requirePermission(c, "teams.manage_admin")
@@ -212,7 +220,7 @@ async function createTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     return c.json({ error: "team_exists", message: "That team already exists in this organization." }, 409)
   }
 
-  const teamId = createDenTypeId("team")
+  const teamId = options.teamId ?? createDenTypeId("team")
   const now = new Date()
 
     await tx.insert(TeamTable).values({
@@ -261,7 +269,7 @@ async function affectedTeamUsageMembers(tx: TeamMutationTransaction, organizatio
   return [...new Set([...addedIds, ...old.flatMap((row) => row.id ? [row.id] : [])])]
 }
 
-async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof updateTeamSchema>) {
+export async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: UpdateTeamInput) {
   return withOrganizationMembershipUsageMutation(payload.organization.id, async (tx) => {
   let teamId: TeamId
   try {
@@ -372,10 +380,24 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     await tx.update(TeamTable).set({ name: nextName, updatedAt, grantsOrganizationAdmin: input.grantsOrganizationAdmin }).where(eq(TeamTable.id, team.id))
 
     if (memberIds) {
-      await tx.delete(TeamMemberTable).where(eq(TeamMemberTable.teamId, team.id))
-      if (memberIds.length > 0) {
+      // Only the memberships that change are written: people who stay keep their row
+      // (and its createdAt), so adding or removing one person touches one row.
+      const stored = await tx
+        .select({ id: TeamMemberTable.id, memberId: TeamMemberTable.orgMembershipId })
+        .from(TeamMemberTable)
+        .where(eq(TeamMemberTable.teamId, team.id))
+      const wanted = new Set<MemberId | null>(memberIds)
+      const kept = new Set<MemberId | null>()
+      const removedRows = stored.filter((row) => {
+        if (!wanted.has(row.memberId) || kept.has(row.memberId)) return true
+        kept.add(row.memberId)
+        return false
+      }).map((row) => row.id)
+      if (removedRows.length > 0) await tx.delete(TeamMemberTable).where(inArray(TeamMemberTable.id, removedRows))
+      const addedMemberIds = [...new Set(memberIds)].filter((memberId) => !kept.has(memberId))
+      if (addedMemberIds.length > 0) {
         await tx.insert(TeamMemberTable).values(
-          memberIds.map((memberId) => ({
+          addedMemberIds.map((memberId) => ({
             id: createDenTypeId("teamMember"),
             teamId: team.id,
             orgMembershipId: memberId,
@@ -398,7 +420,7 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   }, (tx) => input.memberIds === undefined ? Promise.resolve([]) : affectedTeamUsageMembers(tx, payload.organization.id, rawId, input.memberIds))
 }
 
-async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
+export async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
   return withOrganizationMembershipUsageMutation(payload.organization.id, async (tx) => {
   let teamId: TeamId
   try {

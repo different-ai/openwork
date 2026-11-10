@@ -479,6 +479,14 @@
       "development": "./src/den/service-readiness.ts",
       "default": "./src/den/service-readiness.ts"
     },
+    "./den/config-blobs": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/config-blobs.d.ts",
+        "default": "./src/den/config-blobs.ts"
+      },
+      "development": "./src/den/config-blobs.ts",
+      "default": "./src/den/config-blobs.ts"
+    },
     "./den/billing-invoices": {
       "types": {
         "openwork-build": "./dist/types/src/den/billing-invoices.d.ts",

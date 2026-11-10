@@ -47,6 +47,11 @@ check fails the client gets `This App is not available.`, the same for every
 reason. Turning the feature off stops every public App on the next request;
 turning it back on brings them back.
 
+## Search engines
+
+Every answer at a public App URL is sent with `X-Robots-Tag: noindex,
+nofollow, noarchive`, so search engines do not list the URL.
+
 ## Limits
 
 Requests are `POST` only with bodies up to 64 KiB. There is no per-visitor

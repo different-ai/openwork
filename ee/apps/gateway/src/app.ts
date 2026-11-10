@@ -25,7 +25,7 @@ const app = new Hono();
 // A WebSocket upgrade is left as it is: it is not a document, and its response cannot be rebuilt.
 app.use("*", async (c, next) => {
   await next();
-  if (c.res.status !== 101) c.header("X-Robots-Tag", "noindex, nofollow");
+  if (c.res.status !== 101) c.header("X-Robots-Tag", "noindex, nofollow, noarchive");
 });
 
 function healthPath(path: string) {

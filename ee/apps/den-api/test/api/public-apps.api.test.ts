@@ -130,7 +130,7 @@ test("unknown ids, other methods and oversized requests are refused", async () =
 
 test("every answer under /mcp/public tells search engines not to index it", async () => {
   const app = await createApp("Open day", { public: true })
-  const noIndex = (call: Call, why: string) => assert.equal(call.headers.get("x-robots-tag"), "noindex, nofollow", why)
+  const noIndex = (call: Call, why: string) => assert.equal(call.headers.get("x-robots-tag"), "noindex, nofollow, noarchive", why)
 
   noIndex((await anonymous(app.appId, "tools/list")).call, "a served App")
   noIndex((await anonymous("no-such-app", "tools/list")).call, "a refused App")
