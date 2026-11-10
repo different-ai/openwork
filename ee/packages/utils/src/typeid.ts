@@ -111,6 +111,7 @@ export const idTypesMapNameToPrefix = {
   inferenceRequestLog: "irl",
   inferenceUsageRollup: "iur",
   gatewayKey: "gky",
+  gatewayApiKey: "gak",
   gatewayModelGroup: "gmg",
   gatewayModelGroupModel: "gmm",
   gatewayCredentialSet: "gcs",

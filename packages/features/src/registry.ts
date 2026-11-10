@@ -181,6 +181,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  gatewayMemberApiKeys: {
+    label: "AI Gateway: API keys for 3rd party tools",
+    description: "Admins allow members, in Settings, to create their own AI Gateway API keys and use the Gateway's models from 3rd party tools and harnesses. Members manage their keys in Library › Models; admins see and revoke every key in AI Gateway › API Keys.",
+    category: "models",
+    added: "2026-11-09",
+    since: "2026-11",
+    author: "OmarMcAdam",
+    docs: "docs/features/gateway-member-api-keys/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   plainFreeModel: {
     label: "Desktop: OpenWork Free listed like any other model",
     description: "The free model shows in the model picker under its own name (GPT-6 Luna) with the same row as every other model, stays selectable when its usage limit is used up, and the limit message appears in the chat after sending.",

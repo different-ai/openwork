@@ -57,7 +57,7 @@ function app(settings: Record<string, unknown>, cost: Record<string, number> | n
   const row = accessRow(cost)
   const api = new Hono<{ Variables: InferenceAuthVariables & OrganizationVariables }>()
   api.use("*", async (c, next) => {
-    c.set("inference", { kind: "gateway", organizationId, orgMembershipId, gatewayKeyId })
+    c.set("inference", { kind: "gateway", organizationId, orgMembershipId, keySource: "member", gatewayKeyId })
     c.set("openworkRequestId", "owr_fixture")
     c.set("organization", { id: organizationId, metadata: null })
     await next()

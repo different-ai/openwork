@@ -17,6 +17,7 @@ import {
   getLibraryLlmProviderRoute,
   getLibraryRoute,
   getYourConnectionsRoute,
+  orgFeatureEnabled,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FilterInput, ItemMenu, ItemPanel, removeEntry } from "./item-list";
@@ -47,6 +48,7 @@ import { matchesModelQuery } from "./library-models";
 import { useLibraryModels, useModelSignIn } from "./library-models-data";
 import { LibraryModelRow } from "./library-models-ui";
 import { MemberApiKeyDialog } from "./member-api-key-dialog";
+import { MemberGatewayApiKeysSection } from "./member-gateway-api-keys-section";
 import { useDenToast } from "./den-toast";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
 import { pluginQueryKeys } from "./plugin-data";
@@ -204,6 +206,7 @@ function LibraryContent() {
   const personal = useOrgLlmProviders(filter === "models" || introsEnabled ? orgContext?.organization.id ?? null : null);
   const personalProviders = personal.llmProviders.filter(provider => provider.source !== "openwork" && provider.createdByOrgMembershipId === orgContext?.currentMember.id);
   const addKeyHref = `${getLibraryRoute(orgSlug)}/model-providers/new`;
+  const gatewayApiKeysEnabled = orgFeatureEnabled(orgContext, "gatewayMemberApiKeys");
   const onlyNeedsSignIn = parseNeedsSignIn(searchParams.get("status"));
   const personalRows = personalProviders.filter(provider => !onlyNeedsSignIn && provider.name.toLowerCase().includes(query.trim().toLowerCase()));
 
@@ -338,6 +341,8 @@ function LibraryContent() {
               </div>
             ) : null}
           </div>
+
+          {filter === "models" && gatewayApiKeysEnabled ? <MemberGatewayApiKeysSection /> : null}
 
           {filter === "all" || filter === "workflows"
             ? listBody

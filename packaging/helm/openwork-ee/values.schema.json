@@ -131,6 +131,16 @@
               ],
               "description": "AI Gateway: custom OpenAI-compatible providers: Admins add any OpenAI-compatible provider to AI Gateway with a name, an API URL and one key, pick its models (fetched from the provider and matched to models.dev), test one, then save and edit it later. Renders DEN_FEATURE_GATEWAY_CUSTOM_PROVIDERS."
             },
+            "gatewayMemberApiKeys": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "AI Gateway: API keys for 3rd party tools: Admins allow members, in Settings, to create their own AI Gateway API keys and use the Gateway's models from 3rd party tools and harnesses. Members manage their keys in Library › Models; admins see and revoke every key in AI Gateway › API Keys. Renders DEN_FEATURE_GATEWAY_MEMBER_API_KEYS."
+            },
             "plainFreeModel": {
               "enum": [
                 "",

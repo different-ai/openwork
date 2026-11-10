@@ -47,6 +47,7 @@ import {
   InferenceOrgLimitPolicyTable,
   InferenceOrgUpstreamProviderKeyTable,
   InferenceOrgUsageBucketTable,
+  GatewayApiKeyTable,
   GatewayKeyTable,
   GatewayCredentialSetTable,
   GatewayLiteLlmIssuedKeyTable,
@@ -584,6 +585,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(GatewayUsageRollupTable).where(eq(GatewayUsageRollupTable.organization_id, organizationId))
         await tx.delete(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, organizationId))
         await tx.delete(GatewayKeyTable).where(eq(GatewayKeyTable.organization_id, organizationId))
+        await tx.delete(GatewayApiKeyTable).where(eq(GatewayApiKeyTable.organization_id, organizationId))
 
         const llmProviderIds = (await tx
           .select({ id: LlmProviderTable.id })

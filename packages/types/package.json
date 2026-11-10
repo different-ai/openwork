@@ -519,6 +519,14 @@
       "development": "./src/den/sandbox-organizations.ts",
       "default": "./src/den/sandbox-organizations.ts"
     },
+    "./den/gateway-api-keys": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/gateway-api-keys.d.ts",
+        "default": "./src/den/gateway-api-keys.ts"
+      },
+      "development": "./src/den/gateway-api-keys.ts",
+      "default": "./src/den/gateway-api-keys.ts"
+    },
     "./den/automation-settings": {
       "types": {
         "openwork-build": "./dist/types/src/den/automation-settings.d.ts",

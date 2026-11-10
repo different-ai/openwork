@@ -112,7 +112,7 @@ test("a custom provider address is only tested when the operator allowlisted it"
 function routeApp(deps: ProviderTestDependencies) {
   const app = new Hono<ProviderTestEnv>()
   app.use("*", async (c, next) => {
-    const identity: ProviderTestEnv["Variables"]["inference"] = { kind: "gateway", organizationId: "org_fixture", orgMembershipId: "om_fixture", gatewayKeyId: "gky_fixture" }
+    const identity: ProviderTestEnv["Variables"]["inference"] = { kind: "gateway", organizationId: "org_fixture", orgMembershipId: "om_fixture", keySource: "member", gatewayKeyId: "gky_fixture" }
     c.set("inference", identity)
     await next()
   })
