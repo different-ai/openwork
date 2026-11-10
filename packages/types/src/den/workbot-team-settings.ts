@@ -1,12 +1,20 @@
+import {
+  agentTemplateContentSchema,
+  readStoredWorkbotProactiveSettings,
+  workbotProactiveViewSchema,
+  type AgentTemplateContent,
+  type WorkbotProactiveSettings,
+} from "@openwork/types/den/workbot-proactive"
 import { workbotMaxStepsSchema } from "@openwork/types/den/workbot-settings"
 import { z } from "zod"
 
 /**
  * Workbot settings chosen by organization admins for one team (Den › Members ›
  * Teams › a team › Workbot), on top of the organization's own: the default
- * model, Workbot's name, whether Workbot is on at all, and its step limit
- * (only while `workbotStepLimit` is on too). Available while the
- * `workbotTeamSettings` feature is on.
+ * model, Workbot's name, whether Workbot is on at all, its step limit
+ * (only while `workbotStepLimit` is on too) and the policy for its members'
+ * agents (`agent`, only while `workbotProactive` is on too). Available while
+ * the `workbotTeamSettings` feature is on.
  *
  * A team stores only what it overrides. In its settings a key that is absent
  * means "use the organization's"; a key that is present is the team's own
@@ -42,7 +50,58 @@ export const workbotTeamStoredSettingsSchema = z.looseObject({
   enabled: z.boolean().optional().catch(undefined),
   maxSteps: workbotTeamMaxStepsSchema.optional().catch(undefined),
 })
-export type WorkbotTeamStoredSettings = { model?: string | null; name?: string; enabled?: boolean; maxSteps?: number | null }
+export type WorkbotTeamStoredSettings = { model?: string | null; name?: string; enabled?: boolean; maxSteps?: number | null; agent?: WorkbotTeamAgent }
+
+/**
+ * A team's own policy for its members' agents, one unit: everything the
+ * organization keeps under `workbot.proactive` (on/off, hours, limits, sources,
+ * brief) and the "Your agent" template. `version` counts the team's template
+ * saves and `versionId` names the current one, as the organization's template
+ * versions do; neither is part of what two teams are compared on.
+ */
+export type WorkbotTeamAgent = {
+  settings: WorkbotProactiveSettings
+  template: AgentTemplateContent & { version: number; versionId: string | null }
+}
+
+const workbotTeamAgentTemplateSchema = agentTemplateContentSchema.extend({
+  version: z.number().int().min(1).optional().catch(undefined),
+  versionId: z.string().min(1).max(64).nullable().optional().catch(undefined),
+})
+
+/**
+ * A team's own members'-agents policy from its row (`agent`). The policy is
+ * read field by field like the organization's; without a policy or a readable
+ * template the team follows the organization's.
+ */
+export function readWorkbotTeamAgent(value: unknown): WorkbotTeamAgent | undefined {
+  if (!isRecord(value) || !isRecord(value.settings)) return undefined
+  const template = workbotTeamAgentTemplateSchema.safeParse(value.template)
+  if (!template.success) return undefined
+  const { version, versionId, ...content } = template.data
+  return { settings: readStoredWorkbotProactiveSettings(value.settings), template: { ...content, version: version ?? 1, versionId: versionId ?? null } }
+}
+
+/** Keys in order; a group with nothing in it reads the same as one that was never saved. Lists keep their order. */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`
+  if (!isRecord(value)) return JSON.stringify(value) ?? "null"
+  const entries = Object.keys(value).sort().flatMap((key) => {
+    const text = value[key] === undefined ? "{}" : stableJson(value[key])
+    return text === "{}" ? [] : [`${JSON.stringify(key)}:${text}`]
+  })
+  return `{${entries.join(",")}}`
+}
+
+/**
+ * What two teams' members'-agents policies are compared on: the same policy
+ * and template give the same text, whatever the order of their keys and
+ * whether an empty group was saved or left out. Template versions are left out.
+ */
+export function workbotTeamAgentKey(agent: WorkbotTeamAgent): string {
+  const { responsibilities, instructions } = agent.template
+  return stableJson({ settings: agent.settings, template: { responsibilities, instructions } })
+}
 
 /** A team's overrides from its stored settings; nothing when they cannot be read. */
 export function readWorkbotTeamSettings(value: unknown): WorkbotTeamStoredSettings {
@@ -56,11 +115,13 @@ export function readWorkbotTeamSettings(value: unknown): WorkbotTeamStoredSettin
   }
   const parsed = workbotTeamStoredSettingsSchema.safeParse(stored)
   if (!parsed.success) return {}
+  const agent = readWorkbotTeamAgent(parsed.data.agent)
   return {
     ...(parsed.data.model !== undefined ? { model: parsed.data.model } : {}),
     ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
     ...(parsed.data.enabled !== undefined ? { enabled: parsed.data.enabled } : {}),
     ...(parsed.data.maxSteps !== undefined ? { maxSteps: parsed.data.maxSteps } : {}),
+    ...(agent ? { agent } : {}),
   }
 }
 
@@ -120,6 +181,12 @@ export const workbotTeamMaxStepsSettingSchema = z
   .meta({ ref: "WorkbotTeamMaxStepsSetting" })
 export type WorkbotTeamMaxStepsSetting = z.infer<typeof workbotTeamMaxStepsSettingSchema>
 
+/**
+ * A team's members'-agents policy can only be sent back to the organization's
+ * here; its own policy is saved through the team's agent route.
+ */
+export const workbotTeamAgentInheritSchema = inheritSchema.meta({ ref: "WorkbotTeamAgentInherit" })
+
 /** One team's change. A setting left out is kept as it is. */
 export const workbotTeamSettingsWriteSchema = z
   .strictObject({
@@ -128,6 +195,8 @@ export const workbotTeamSettingsWriteSchema = z
     enabled: workbotTeamEnabledSettingSchema.optional(),
     /** Needs `workbotStepLimit` as well. */
     maxSteps: workbotTeamMaxStepsSettingSchema.optional(),
+    /** Needs `workbotProactive` as well. */
+    agent: workbotTeamAgentInheritSchema.optional(),
   })
   .meta({ ref: "WorkbotTeamSettingsWrite" })
 export type WorkbotTeamSettingsWrite = z.infer<typeof workbotTeamSettingsWriteSchema>
@@ -152,6 +221,12 @@ export const workbotTeamSettingsTeamSchema = z
     /** Present only while `workbotStepLimit` is on. */
     maxSteps: workbotTeamMaxStepsSettingSchema.optional(),
     /**
+     * Present only while `workbotProactive` is on: whether the team follows the
+     * organization's policy for members' agents, and whether agents are on
+     * under the policy the team has now (its own, or the organization's).
+     */
+    agent: z.object({ inherit: z.boolean(), enabled: z.boolean() }).optional(),
+    /**
      * Members of this team who are also on another team that overrides a
      * setting differently; they get the organization's value for it.
      */
@@ -165,13 +240,15 @@ export const workbotTeamSettingsViewSchema = z
     /**
      * The organization's values, which teams without their own use: null is the deployment's default model, or no
      * name set; `enabled` is whether Workbot is on for everyone; `maxSteps` is the step limit (0 is no limit, null
-     * the deployment's default), present only while `workbotStepLimit` is on.
+     * the deployment's default), present only while `workbotStepLimit` is on; `agentEnabled` is whether members'
+     * agents are on for everyone, present only while `workbotProactive` is on.
      */
     organization: z.object({
       model: z.string().nullable(),
       name: z.string().nullable(),
       enabled: z.boolean(),
       maxSteps: workbotTeamMaxStepsSchema.optional(),
+      agentEnabled: z.boolean().optional(),
     }),
     teams: z.array(workbotTeamSettingsTeamSchema),
     /** Whether the caller can change them (inference.manage). */
@@ -179,6 +256,14 @@ export const workbotTeamSettingsViewSchema = z
   })
   .meta({ ref: "WorkbotTeamSettings" })
 export type WorkbotTeamSettingsView = z.infer<typeof workbotTeamSettingsViewSchema>
+
+/**
+ * `GET` / `PUT /v1/org/workbot-settings/teams/{teamId}/agent`: the policy for
+ * one team's members' agents, in the organization's own view. `inherit` says
+ * the team has none of its own and the values shown are the organization's.
+ */
+export const workbotTeamAgentViewSchema = workbotProactiveViewSchema.extend({ inherit: z.boolean() }).meta({ ref: "WorkbotTeamAgentSettings" })
+export type WorkbotTeamAgentView = z.infer<typeof workbotTeamAgentViewSchema>
 
 /** The stored settings after one change; an empty result means the team overrides nothing. */
 export function applyWorkbotTeamSettingsWrite(stored: Record<string, unknown>, write: WorkbotTeamSettingsWrite): Record<string, unknown> {
@@ -189,6 +274,7 @@ export function applyWorkbotTeamSettingsWrite(stored: Record<string, unknown>, w
   if (readable.name === undefined) delete next.name
   if (readable.enabled === undefined) delete next.enabled
   if (readable.maxSteps === undefined) delete next.maxSteps
+  if (readable.agent === undefined || write.agent) delete next.agent
   if (write.model) {
     if (write.model.inherit) delete next.model
     else next.model = write.model.value
@@ -218,6 +304,8 @@ export type ResolvedWorkbotTeamSettings = {
   name: { value: string | null; from: WorkbotSettingSource }
   enabled: { value: boolean; from: WorkbotSettingSource }
   maxSteps: { value: number | null; from: WorkbotSettingSource }
+  /** The teams' own policy for members' agents; null is the organization's. */
+  agent: { value: WorkbotTeamAgent | null; from: WorkbotSettingSource }
 }
 
 function resolveSetting<T>(organization: T, overrides: ReadonlyArray<{ name: string; value: T }>): { value: T; from: WorkbotSettingSource } {
@@ -225,6 +313,20 @@ function resolveSetting<T>(organization: T, overrides: ReadonlyArray<{ name: str
   if (!first) return { value: organization, from: { kind: "organization", teamConflict: false } }
   if (overrides.some((team) => team.value !== first.value)) return { value: organization, from: { kind: "organization", teamConflict: true } }
   return { value: first.value, from: { kind: "team", teamNames: overrides.map((team) => team.name).sort((left, right) => left.localeCompare(right)) } }
+}
+
+/**
+ * One member's policy for their agent, by the same rule as every other
+ * setting. Teams agree when their policy and template are the same
+ * (workbotTeamAgentKey); null is the organization's.
+ */
+export function resolveWorkbotTeamAgent(teams: ReadonlyArray<{ name: string; settings: WorkbotTeamStoredSettings }>): ResolvedWorkbotTeamSettings["agent"] {
+  const own = teams.flatMap((team) => team.settings.agent ? [{ name: team.name, agent: team.settings.agent, value: workbotTeamAgentKey(team.settings.agent) }] : [])
+  const resolved = resolveSetting<string | null>(null, own)
+  if (resolved.from.kind !== "team") return { value: null, from: resolved.from }
+  // The same content in every team; the template version recorded is the first team's by name.
+  const [first] = [...own].sort((left, right) => left.name.localeCompare(right.name))
+  return { value: first?.agent ?? null, from: resolved.from }
 }
 
 /**
@@ -252,6 +354,7 @@ export function resolveWorkbotTeamSettings(input: {
       input.organization.maxSteps,
       input.teams.flatMap((team) => team.settings.maxSteps !== undefined ? [{ name: team.name, value: team.settings.maxSteps }] : []),
     ),
+    agent: resolveWorkbotTeamAgent(input.teams),
   }
 }
 
@@ -263,8 +366,9 @@ export function countWorkbotTeamConflicts(input: {
   teams: ReadonlyArray<{ teamId: string; settings: WorkbotTeamStoredSettings }>
   memberships: ReadonlyArray<{ teamId: string; memberId: string }>
 }): Map<string, number> {
-  const settingsByTeam = new Map(input.teams.map((team) => [team.teamId, team.settings]))
-  const overridesByMember = new Map<string, WorkbotTeamStoredSettings[]>()
+  // Compared as text, built once per team rather than once per membership.
+  const settingsByTeam = new Map(input.teams.map((team) => [team.teamId, { ...team.settings, agentKey: team.settings.agent ? workbotTeamAgentKey(team.settings.agent) : undefined }]))
+  const overridesByMember = new Map<string, (WorkbotTeamStoredSettings & { agentKey: string | undefined })[]>()
   for (const membership of input.memberships) {
     const settings = settingsByTeam.get(membership.teamId)
     if (!settings) continue
@@ -276,11 +380,13 @@ export function countWorkbotTeamConflicts(input: {
     const names = settings.flatMap((entry) => entry.name !== undefined ? [entry.name] : [])
     const switches = settings.flatMap((entry) => entry.enabled !== undefined ? [entry.enabled] : [])
     const limits = settings.flatMap((entry) => entry.maxSteps !== undefined ? [entry.maxSteps] : [])
+    const agents = settings.flatMap((entry) => entry.agentKey !== undefined ? [entry.agentKey] : [])
     if (
       models.some((model) => model !== models[0])
       || names.some((name) => name !== names[0])
       || switches.some((enabled) => enabled !== switches[0])
       || limits.some((maxSteps) => maxSteps !== limits[0])
+      || agents.some((agent) => agent !== agents[0])
     ) conflicted.add(memberId)
   }
   const counts = new Map<string, number>(input.teams.map((team) => [team.teamId, 0]))

@@ -132,13 +132,15 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     return { status: "skipped", reason: reason === "quiet_hours" ? "outside_hours" : reason }
   }
 
-  const settings = await deps.settings(organizationId)
+  // The member's policy, brief and template: their team's own when it has one, else the organization's.
+  const own = deps.teamPolicy ? await deps.teamPolicy({ organizationId, memberId }) : null
+  const settings = own?.settings ?? await deps.settings(organizationId)
   if (!settings.enabled) return skip("off", now + HOUR_MS)
   const userId = await deps.user(organizationId, memberId)
   if (!userId || !(await deps.allowed(organizationId, userId))) return skip("not_allowed", now + HOUR_MS)
   if (!memberAgentOn(row, settings)) return skip("opted_out", now + 6 * HOUR_MS)
 
-  const template = await deps.template(organizationId)
+  const template = own?.template ?? await deps.template(organizationId)
   const brief = resolveAgentBrief(settings, template)
   const limits = memberLimits(settings, row.overrides, brief)
   const rhythm = memberRhythm(limits, brief)

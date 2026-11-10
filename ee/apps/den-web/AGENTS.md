@@ -20,6 +20,8 @@ reference.
 - **Read-only (`ReadOnlyNotice`):** keep the controls visible but disabled, with one notice at the top of the panel:
   a lock and "Read only. {reason}" from `permissionLockReason(...)`.
 - **Everyone's value is edited on Everyone's page.** Other pages that show it link there.
+- **A whole section a team can change as one unit** (Members' agents on the Workbot tab): put the chip and "Use
+  Everyone's" on the section heading, not on each control, and keep each control's own save behaviour inside it.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

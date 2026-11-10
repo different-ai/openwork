@@ -915,7 +915,12 @@ function metadataRecord(metadata: unknown): Record<string, unknown> {
 /** The saved policy, field by field: an unreadable field falls back to its default, never the whole set. */
 export function readWorkbotProactiveSettings(metadata: unknown): WorkbotProactiveSettings {
   const workbot = metadataRecord(metadata).workbot
-  const stored = isRecord(workbot) && isRecord(workbot.proactive) ? workbot.proactive : {}
+  return readStoredWorkbotProactiveSettings(isRecord(workbot) ? workbot.proactive : undefined)
+}
+
+/** A policy as it is stored (the organization's under `workbot.proactive`, or a team's own), read the same way. */
+export function readStoredWorkbotProactiveSettings(value: unknown): WorkbotProactiveSettings {
+  const stored = isRecord(value) ? value : {}
   const merged: Record<string, unknown> = { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS }
   for (const [key, schema] of Object.entries(workbotProactiveFieldsSchema.shape)) {
     if (key === "brief") continue

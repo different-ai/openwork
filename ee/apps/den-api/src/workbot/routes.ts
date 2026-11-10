@@ -14,7 +14,6 @@ import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token
 import { mintHeadlessTurnCredentials } from "../headless-runner/resume-grants.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
 import { workbotTurnLimitScopes } from "../mcp/workbot-turn-limits.js"
-import { readWorkbotProactiveSettings } from "@openwork/types/den/workbot-proactive"
 import { jsonResponse, unauthorizedSchema } from "../openapi.js"
 import { getOrganizationFeatures, type FeatureMap } from "../features.js"
 import { jsonValidator, tokenRoute } from "../middleware/index.js"
@@ -29,7 +28,7 @@ import { readWorkbotMaxSteps, WORKBOT_DEFAULT_MODEL_ID, workbotMaxStepsSchema, w
 import { getMemberInferenceAccess, organizationAllowsManagedModels } from "../inference.js"
 import { organizationHasOngoingInferenceSubscription } from "../stripe-billing.js"
 import { cloudAgentModelCatalog } from "./model.js"
-import { resolveMemberWorkbotSettings, type MemberWorkbotSettings } from "./team-settings.js"
+import { memberAgentSettings, resolveMemberWorkbotSettings, type MemberWorkbotSettings } from "./team-settings.js"
 import { headlessModelAccessSchema } from "@openwork-ee/headless-protocol"
 import { CloudAgentGatewayAccessError } from "./gateway-model.js"
 import { workbotIncludedDefaultModel, workbotManagedLunaState, workbotUsesManagedDefault } from "./managed-luna.js"
@@ -817,7 +816,8 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         }
         // Credential minting still reauthorizes the exact model for this member on every turn.
         // "Not allowed" in the admin's Workbot settings covers the chat as well as Workbot's own checks.
-        const scopes = features.workbotProactive ? workbotTurnLimitScopes(readWorkbotProactiveSettings(organization.metadata).sources) : []
+        // The member's own policy: their team's when it has one (already resolved with their Workbot settings).
+        const scopes = features.workbotProactive ? workbotTurnLimitScopes(memberAgentSettings(resolved.workbot, organization.metadata).sources) : []
         const { token, resumeGrant, modelAccess, indexCapability } = await mintHeadlessTurnCredentials({
           ...principal, ttlMs, readOnly, sessionId, messageId, model, indexKind: "workbot", memberId: resolved.memberId,
           ...(scopes.length ? { scopes } : {}),

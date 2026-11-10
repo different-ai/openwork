@@ -1,14 +1,25 @@
-import { and, asc, eq, inArray } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, inArray, sql } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable, TeamMemberTable, TeamTable, WorkbotTeamSettingTable } from "@openwork-ee/den-db/schema"
-import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, isDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import {
+  mergeAgentTemplate,
+  mergeWorkbotProactiveSettings,
+  readWorkbotProactiveSettings,
+  type AgentTemplateContent,
+  type WorkbotProactiveSettings,
+  type WorkbotProactiveSettingsInput,
+} from "@openwork/types/den/workbot-proactive"
 import { readWorkbotMaxSteps, readWorkbotModel } from "@openwork/types/den/workbot-settings"
 import {
   applyWorkbotTeamSettingsWrite,
   countWorkbotTeamConflicts,
   readWorkbotEnabled,
+  readWorkbotTeamAgent,
   readWorkbotTeamSettings,
+  resolveWorkbotTeamAgent,
   resolveWorkbotTeamSettings,
   type WorkbotSettingSource,
+  type WorkbotTeamAgent,
   type WorkbotTeamStoredSettings,
   type WorkbotTeamSettingsView,
   type WorkbotTeamSettingsWrite,
@@ -17,6 +28,7 @@ import { cache } from "../cache.js"
 import { db } from "../db.js"
 import { organizationFeatureEnabled } from "../features.js"
 import { listTeamsForMember } from "../member-teams.js"
+import { readAgentTemplate, type AgentTemplateVersion } from "../workbot-proactive/template.js"
 
 /**
  * A team's own Workbot default model and name (the `workbotTeamSettings` feature), on top of the organization's
@@ -25,6 +37,10 @@ import { listTeamsForMember } from "../member-teams.js"
  * to Workbot, the Slack assistant, their cloud Automations and Your agent. With the feature off the rows are kept
  * and ignored. A team's step limit also needs `workbotStepLimit`: without it the value is kept, hidden from
  * admins and not counted in conflicts.
+ *
+ * A team can also have its own policy for its members' agents (`agent`, with `workbotProactive`): the whole of the
+ * organization's policy and its "Your agent" template, kept together in the team's row. Every reader that acts
+ * for one member asks `resolveMemberAgentPolicy`; readers that only know the organization keep its policy.
  */
 
 type OrganizationId = DenTypeId<"organization">
@@ -66,11 +82,17 @@ function withoutMaxSteps<T extends { maxSteps?: number | null }>(settings: T): O
   return rest
 }
 
+function withoutAgent<T extends { agent?: WorkbotTeamAgent }>(settings: T): Omit<T, "agent"> {
+  const { agent: _hidden, ...rest } = settings
+  return rest
+}
+
 /**
  * The organization's values and every team's overrides, teams by name, with each team's size and conflicts.
  * `stepLimit` is whether `workbotStepLimit` is on: off, the step limit is left out and its conflicts don't count.
+ * `agents` is the same for members' agents (`workbotProactive` on a deployment with Workbot).
  */
-export async function listWorkbotTeamSettings(organizationId: OrganizationId, options: { stepLimit: boolean }): Promise<Omit<WorkbotTeamSettingsView, "canEdit">> {
+export async function listWorkbotTeamSettings(organizationId: OrganizationId, options: { stepLimit: boolean; agents: boolean }): Promise<Omit<WorkbotTeamSettingsView, "canEdit">> {
   // Primary: every save answers with this view of the row it just wrote. Admin-only and rare.
   const [organizations, rows, teams] = await Promise.all([
     db.$primary.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId)).limit(1),
@@ -87,13 +109,17 @@ export async function listWorkbotTeamSettings(organizationId: OrganizationId, op
       .where(inArray(TeamMemberTable.teamId, teams.map((team) => team.id)))
     : []
   const memberships = membershipRows.flatMap((row) => row.memberId ? [{ teamId: row.teamId, memberId: row.memberId }] : [])
-  const shown = (settings: WorkbotTeamStoredSettings): WorkbotTeamStoredSettings => options.stepLimit ? settings : withoutMaxSteps(settings)
+  const shown = (settings: WorkbotTeamStoredSettings): WorkbotTeamStoredSettings => {
+    const limited = options.stepLimit ? settings : withoutMaxSteps(settings)
+    return options.agents ? limited : withoutAgent(limited)
+  }
   const byTeam = new Map(rows.map((row) => [row.teamId, shown(readWorkbotTeamSettings(row.settings))] as const))
   const teamSettings = teams.map((team) => ({ teamId: team.id, settings: byTeam.get(team.id) ?? {} }))
   const conflicts = countWorkbotTeamConflicts({ teams: teamSettings, memberships })
   const organization = organizationWorkbotSettings(organizations[0]?.metadata)
+  const agentEnabled = options.agents ? readWorkbotProactiveSettings(organizations[0]?.metadata).enabled : false
   return {
-    organization: options.stepLimit ? organization : withoutMaxSteps(organization),
+    organization: { ...(options.stepLimit ? organization : withoutMaxSteps(organization)), ...(options.agents ? { agentEnabled } : {}) },
     teams: teams.map((team) => {
       const settings = byTeam.get(team.id) ?? {}
       return {
@@ -104,6 +130,7 @@ export async function listWorkbotTeamSettings(organizationId: OrganizationId, op
         name: settings.name !== undefined ? { inherit: false as const, value: settings.name } : { inherit: true as const },
         enabled: settings.enabled !== undefined ? { inherit: false as const, value: settings.enabled } : { inherit: true as const },
         ...(options.stepLimit ? { maxSteps: settings.maxSteps !== undefined ? { inherit: false as const, value: settings.maxSteps } : { inherit: true as const } } : {}),
+        ...(options.agents ? { agent: { inherit: !settings.agent, enabled: settings.agent ? settings.agent.settings.enabled : agentEnabled } } : {}),
         conflictingMemberCount: conflicts.get(team.id) ?? 0,
       }
     }),
@@ -155,6 +182,102 @@ export async function saveWorkbotTeamSettings(input: {
   })
 }
 
+/** A team's stored template as the version a member's agent records having run. */
+function teamAgentTemplate(agent: WorkbotTeamAgent): AgentTemplateVersion {
+  const { versionId, ...template } = agent.template
+  return { ...template, versionId: isDenTypeId("configObjectVersion", versionId) ? versionId : null }
+}
+
+/** A policy for members' agents with its template: the organization's, or one team's own. */
+export type AgentPolicy = { settings: WorkbotProactiveSettings; template: AgentTemplateVersion }
+
+/** The organization's policy and template now: what a team without its own follows, and what its first save copies. */
+export async function readEveryoneAgentPolicy(organizationId: OrganizationId): Promise<AgentPolicy> {
+  // Primary: a team's first save starts from these, possibly right after an admin changed them.
+  const [organization] = await db.$primary.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId)).limit(1)
+  return { settings: readWorkbotProactiveSettings(organization?.metadata), template: await readAgentTemplate(organizationId, db.$primary) }
+}
+
+/** A team's own policy for its members' agents; null when it follows the organization's. */
+export async function readTeamAgentPolicy(organizationId: OrganizationId, teamId: TeamId): Promise<AgentPolicy | null> {
+  // Primary: the admin page reads back what it just saved.
+  const [row] = await db.$primary
+    .select({ settings: WorkbotTeamSettingTable.settings })
+    .from(WorkbotTeamSettingTable)
+    .where(and(eq(WorkbotTeamSettingTable.organizationId, organizationId), eq(WorkbotTeamSettingTable.teamId, teamId)))
+    .limit(1)
+  const agent = readWorkbotTeamSettings(row?.settings).agent
+  return agent ? { settings: agent.settings, template: teamAgentTemplate(agent) } : null
+}
+
+/**
+ * Applies an admin's change to a team's policy for its members' agents, merged like the organization's. A team
+ * that followed the organization starts from `everyone` (the organization's policy and template now), and this
+ * save makes the copy its own. Null when the result is invalid (a workday that ends before it starts); nothing
+ * is saved then.
+ *
+ * The template lives in the row with the policy, so the two are saved and removed together. Each save that
+ * changes the template adds one to its version and names it with a new id, as the organization's versions do.
+ */
+export async function saveTeamAgentPolicy(input: {
+  organizationId: OrganizationId
+  teamId: TeamId
+  change: WorkbotProactiveSettingsInput
+  everyone: { settings: WorkbotProactiveSettings; template: AgentTemplateContent }
+  updatedByOrgMemberId: MemberId
+}): Promise<AgentPolicy | null> {
+  const now = new Date()
+  return db.transaction(async (tx) => {
+    const scope = and(eq(WorkbotTeamSettingTable.organizationId, input.organizationId), eq(WorkbotTeamSettingTable.teamId, input.teamId))
+    const [existing] = await tx
+      .select({ id: WorkbotTeamSettingTable.id, settings: WorkbotTeamSettingTable.settings })
+      .from(WorkbotTeamSettingTable)
+      .where(scope)
+      .limit(1)
+      .for("update")
+    const stored = isRecord(existing?.settings) ? existing.settings : {}
+    const own = readWorkbotTeamAgent(stored.agent)
+    const settings = mergeWorkbotProactiveSettings(own?.settings ?? input.everyone.settings, input.change)
+    if (!settings) return null
+    const { responsibilities, instructions } = own?.template ?? input.everyone.template
+    const edited = mergeAgentTemplate({ responsibilities, instructions }, input.change)
+    const template = own && !edited
+      ? own.template
+      : { ...(edited ?? { responsibilities, instructions }), version: (own?.template.version ?? 0) + 1, versionId: createDenTypeId("configObjectVersion") }
+    const agent: WorkbotTeamAgent = { settings, template }
+    const next = { ...stored, agent }
+    if (existing) {
+      await tx
+        .update(WorkbotTeamSettingTable)
+        .set({ settings: next, updatedByOrgMemberId: input.updatedByOrgMemberId, updatedAt: now })
+        .where(eq(WorkbotTeamSettingTable.id, existing.id))
+    } else {
+      await tx.insert(WorkbotTeamSettingTable).values({
+        id: createDenTypeId("workbotTeamSetting"),
+        organizationId: input.organizationId,
+        teamId: input.teamId,
+        settings: next,
+        updatedByOrgMemberId: input.updatedByOrgMemberId,
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
+    return { settings, template: teamAgentTemplate(agent) }
+  })
+}
+
+/**
+ * Organizations where at least one team turned its members' agents on, for the agents' discovery: one query over
+ * the team rows. The caller checks each organization's features; with `workbotTeamSettings` off they are ignored.
+ */
+export async function listOrganizationsWithTeamAgents(): Promise<OrganizationId[]> {
+  const rows = await db
+    .selectDistinct({ organizationId: WorkbotTeamSettingTable.organizationId })
+    .from(WorkbotTeamSettingTable)
+    .where(sql`JSON_UNQUOTE(JSON_EXTRACT(${WorkbotTeamSettingTable.settings}, '$.agent.settings.enabled')) = 'true'`)
+  return rows.map((row) => row.organizationId)
+}
+
 /** Removes a team's settings inside the transaction that deletes the team. */
 export async function deleteTeamWorkbotSettings(database: Database, teamId: TeamId): Promise<void> {
   await database.delete(WorkbotTeamSettingTable).where(eq(WorkbotTeamSettingTable.teamId, teamId))
@@ -179,6 +302,9 @@ export type MemberWorkbotSettings = {
   nameFrom: WorkbotSettingSource
   enabledFrom: WorkbotSettingSource
   maxStepsFrom: WorkbotSettingSource
+  /** The member's teams' own policy for members' agents; null is the organization's (`resolveMemberAgentPolicy`). */
+  agent: WorkbotTeamAgent | null
+  agentFrom: WorkbotSettingSource
 }
 
 export type MemberWorkbotSettingsInput = {
@@ -199,6 +325,8 @@ export type MemberWorkbotSettingsDeps = {
   memberId: (organizationId: OrganizationId, userId: string) => Promise<string | null>
   teams: (member: { organizationId: OrganizationId; memberId: MemberId }) => Promise<ReadonlyArray<{ id: string; name: string }>>
   rows: (organizationId: OrganizationId, teamIds: readonly string[]) => Promise<ReadonlyArray<{ teamId: string; settings: unknown }>>
+  /** The organization's "Your agent" template, read only for a member who follows the organization's policy. */
+  template: (organizationId: OrganizationId) => Promise<AgentTemplateVersion>
 }
 
 const liveDeps: MemberWorkbotSettingsDeps = {
@@ -217,6 +345,24 @@ const liveDeps: MemberWorkbotSettingsDeps = {
       eq(WorkbotTeamSettingTable.organizationId, organizationId),
       inArray(WorkbotTeamSettingTable.teamId, teamIds.map((teamId) => normalizeDenTypeId("team", teamId))),
     )),
+  template: (organizationId) => readAgentTemplate(organizationId),
+}
+
+type MemberTeams = { featureOn: boolean; teams: ReadonlyArray<{ name: string; settings: WorkbotTeamStoredSettings }> }
+
+/**
+ * The member's teams with what each overrides: the one read every resolution here shares. No teams when the
+ * feature is off (nothing is read then), the member cannot be found, or none of their teams has a row.
+ */
+async function readMemberTeams(organizationId: OrganizationId, input: MemberWorkbotSettingsInput, deps: MemberWorkbotSettingsDeps): Promise<MemberTeams> {
+  if (!(input.featureOn ?? await deps.featureOn(organizationId, input.userId ?? null))) return { featureOn: false, teams: [] }
+  const memberId = input.memberId ?? (input.userId ? await deps.memberId(organizationId, input.userId) : null)
+  if (!memberId) return { featureOn: true, teams: [] }
+  const teams = await deps.teams({ organizationId, memberId: normalizeDenTypeId("member", memberId) })
+  if (teams.length === 0) return { featureOn: true, teams: [] }
+  const rows = await deps.rows(organizationId, teams.map((team) => team.id))
+  if (rows.length === 0) return { featureOn: true, teams: [] }
+  return { featureOn: true, teams: teams.map((team) => ({ name: team.name, settings: readWorkbotTeamSettings(rows.find((row) => row.teamId === team.id)?.settings) })) }
 }
 
 /**
@@ -241,20 +387,15 @@ export async function resolveMemberWorkbotSettings(
     nameFrom: { kind: "organization", teamConflict: false },
     enabledFrom: { kind: "organization", teamConflict: false },
     maxStepsFrom: { kind: "organization", teamConflict: false },
+    agent: null,
+    agentFrom: { kind: "organization", teamConflict: false },
   }
   try {
+    const { featureOn, teams } = await readMemberTeams(organizationId, input, deps)
     // The switch belongs to the feature: off, nobody loses Workbot to a value saved while it was on.
-    if (!(input.featureOn ?? await deps.featureOn(organizationId, input.userId ?? null))) return { ...fromOrganization, enabled: true }
-    const memberId = input.memberId ?? (input.userId ? await deps.memberId(organizationId, input.userId) : null)
-    if (!memberId) return fromOrganization
-    const teams = await deps.teams({ organizationId, memberId: normalizeDenTypeId("member", memberId) })
+    if (!featureOn) return { ...fromOrganization, enabled: true }
     if (teams.length === 0) return fromOrganization
-    const rows = await deps.rows(organizationId, teams.map((team) => team.id))
-    if (rows.length === 0) return fromOrganization
-    const resolved = resolveWorkbotTeamSettings({
-      organization,
-      teams: teams.map((team) => ({ name: team.name, settings: readWorkbotTeamSettings(rows.find((row) => row.teamId === team.id)?.settings) })),
-    })
+    const resolved = resolveWorkbotTeamSettings({ organization, teams })
     return {
       model: resolved.model.value,
       name: resolved.name.value,
@@ -264,9 +405,69 @@ export async function resolveMemberWorkbotSettings(
       nameFrom: resolved.name.from,
       enabledFrom: resolved.enabled.from,
       maxStepsFrom: resolved.maxSteps.from,
+      agent: resolved.agent.value,
+      agentFrom: resolved.agent.from,
     }
   } catch (error) {
     console.warn("[workbot-team-settings] could not resolve a member's team settings", error instanceof Error ? error.message : error)
     return fromOrganization
+  }
+}
+
+/** The policy for one member's agent, with its template and whose it is. */
+export type MemberAgentPolicy = AgentPolicy & {
+  /** The teams whose own policy this is, or the organization (also when the member's teams hold different ones). */
+  from: WorkbotSettingSource
+}
+
+/** What a member's teams say about their agent: part of `MemberWorkbotSettings`, or read on its own. */
+export type MemberTeamAgent = Pick<MemberWorkbotSettings, "agent" | "agentFrom">
+
+/**
+ * The member's teams' own policy for their agent, without reading the organization's: null agent when the feature
+ * is off (nothing is read), no team of theirs has its own, their teams differ, or a read fails. Never throws.
+ */
+export async function resolveMemberTeamAgent(input: MemberWorkbotSettingsInput, suppliedDeps: Partial<MemberWorkbotSettingsDeps> = {}): Promise<MemberTeamAgent> {
+  const deps = { ...liveDeps, ...suppliedDeps }
+  try {
+    const { teams } = await readMemberTeams(normalizeDenTypeId("organization", input.organizationId), input, deps)
+    const resolved = resolveWorkbotTeamAgent(teams)
+    return { agent: resolved.value, agentFrom: resolved.from }
+  } catch (error) {
+    console.warn("[workbot-team-settings] could not resolve a member's team agent policy", error instanceof Error ? error.message : error)
+    return { agent: null, agentFrom: { kind: "organization", teamConflict: false } }
+  }
+}
+
+/** A team policy as the agent runs it; null when the member follows the organization's. */
+export function teamAgentPolicy(team: MemberTeamAgent): MemberAgentPolicy | null {
+  return team.agent ? { settings: team.agent.settings, template: teamAgentTemplate(team.agent), from: team.agentFrom } : null
+}
+
+/** The policy alone, for a caller that holds the member's Workbot settings and the organization: nothing is read. */
+export function memberAgentSettings(team: MemberTeamAgent, metadata: unknown): WorkbotProactiveSettings {
+  return team.agent?.settings ?? readWorkbotProactiveSettings(metadata)
+}
+
+/**
+ * The policy and "Your agent" template one member's agent follows: their teams' own when they have one and agree
+ * (policy, sources, brief and template together), otherwise the organization's. With `workbotTeamSettings` off
+ * this is the organization's and no team is read; so is a member whose teams differ or cannot be read.
+ *
+ * `workbot` is the member's settings when the caller already resolved them, so their teams are read once.
+ */
+export async function resolveMemberAgentPolicy(
+  input: MemberWorkbotSettingsInput & { workbot?: MemberTeamAgent },
+  suppliedDeps: Partial<MemberWorkbotSettingsDeps> = {},
+): Promise<MemberAgentPolicy> {
+  const deps = { ...liveDeps, ...suppliedDeps }
+  const organizationId = normalizeDenTypeId("organization", input.organizationId)
+  const team = input.workbot ?? await resolveMemberTeamAgent(input, deps)
+  const own = teamAgentPolicy(team)
+  if (own) return own
+  return {
+    settings: readWorkbotProactiveSettings(input.organization ? input.organization.metadata : await deps.metadata(organizationId)),
+    template: await deps.template(organizationId),
+    from: team.agentFrom,
   }
 }

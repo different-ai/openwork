@@ -10,6 +10,7 @@ import {
 } from "@openwork/types/den/workbot-proactive";
 import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
+import type { AgentPolicyScope } from "./workbot-agent-scope";
 import { useAgentConnectionTools } from "./workbot-proactive-data";
 
 /**
@@ -17,6 +18,7 @@ import { useAgentConnectionTools } from "./workbot-proactive-data";
  * a disclosure (DESIGN.md S3) with one compact row per tool (S2): its name, why it is or isn't allowed, and a switch
  * for the admin's choice. A tool no admin can allow (its provider marks it destructive, or one of Den's own operations
  * that changes things) keeps its row with a lock and the reason (P4). Agents only ever call the allowed ones.
+ * The same rows show a team's choices on its Workbot tab (`scope`).
  */
 
 /** "3 read tools", "1 read tool", "No read tools". */
@@ -66,15 +68,17 @@ function ToolRow({ tool, connectionId, disabled, onChange }: { tool: AgentToolDe
 }
 
 /** The tools of one connection, behind a disclosure. Listed once, when the row mounts, so the summary has its count. */
-export function AgentConnectionTools({ orgId, connectionId, name, connectHref, disabled, onChange }: {
+export function AgentConnectionTools({ orgId, scope, connectionId, name, connectHref, disabled, onChange }: {
   orgId: string;
+  /** Whose choices: Everyone's, or one team's. */
+  scope?: AgentPolicyScope;
   connectionId: string;
   name: string;
   connectHref: string;
   disabled: boolean;
   onChange: (change: AgentSourcesPolicyInput) => void;
 }) {
-  const query = useAgentConnectionTools(orgId, connectionId);
+  const query = useAgentConnectionTools(orgId, connectionId, true, scope);
   return <ConnectionToolsDisclosure view={query.data} failed={query.isError} name={name} connectionId={connectionId} connectHref={connectHref} disabled={disabled} onChange={onChange} />;
 }
 

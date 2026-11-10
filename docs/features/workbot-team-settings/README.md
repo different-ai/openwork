@@ -175,3 +175,112 @@ write schema and the organization metadata; `ee/apps/den-api/test/api/workbot-te
 `PUT /v1/org/workbot-settings/everyone` (permissions, invalid bodies, feature off), what the session and every
 other `/v1/workbot/` route answer a member with Workbot off, a team on while the organization is off, two teams
 that differ, the readiness field, My agent, `request_check` and the worker's per-member check.
+
+## Members' agents per team
+
+The same feature adds a fifth group, `agent`: the policy for members' agents ("Your agent",
+`docs/features/workbot-proactive`). Today that policy is organization-wide. With `workbotTeamSettings` and
+`workbotProactive` both on, a team either follows Everyone's policy or has **its own complete one**.
+
+### What a team's own policy covers
+
+Everything Manage › Workbot sets for members' agents, as one unit: on or off, working days and hours, the daily
+limit, whether members start opted in, the destination, what agents may read (`sources`, with the allowed and
+default connections and, with `workbotAgentBrief`, the per-tool choices), the brief and its rhythm (with
+`workbotAgentBrief`), and the "Your agent" template (responsibilities and instructions). A team cannot override
+one field and follow Everyone for the rest: its first save copies Everyone's policy and template as they are at
+that moment, and from then on the team no longer follows Everyone's changes. Members' own choices (on or off,
+snooze, mutes, their sources and lines) are kept and apply inside whichever policy they are under.
+
+- `GET /v1/org/workbot-settings/teams/{teamId}/agent`: the same view as `GET /v1/org/workbot-settings/proactive`
+  plus `inherit`. While the team follows Everyone it returns Everyone's policy and template with `inherit: true`,
+  so the controls can show them. View OpenWork Models settings or Manage OpenWork Models.
+- `PUT /v1/org/workbot-settings/teams/{teamId}/agent`: the same body and the same checks as
+  `PUT /v1/org/workbot-settings/proactive` (a sources change is checked against the organization's connections in
+  the same way, so a team's policy never reads a connection the organization's checks would refuse; `brief`
+  answers 400 while `workbotAgentBrief` is off). The change is merged onto the team's own policy, or onto
+  Everyone's for a team that had none. Manage OpenWork Models.
+- `PUT /v1/org/workbot-settings/teams/{teamId}` with `{ "agent": { "inherit": true } }` removes the team's own
+  policy; it accepts nothing else for `agent`.
+- `GET /v1/org/workbot-settings/teams/{teamId}/agent/sources/{connectionId}/tools`: a connection's tools under the
+  team's per-tool choices (the organization's route answers for Everyone's policy only).
+- `GET /v1/org/workbot-settings/teams` adds `organization.agentEnabled` and, per team,
+  `agent: { inherit, enabled }`, both only while `workbotProactive` is on. `enabled` is whether agents are on
+  under the policy the team has now.
+
+The policy and the template are stored together in the team's `workbot_team_setting` row (`settings.agent`), so
+they are saved, removed and deleted with the team as one. The template keeps the organization's version
+semantics without a config object per team: `version` starts at 1 when the team's own policy is created and each
+save that changes responsibilities or instructions adds one and gives it a new `versionId`, which is what
+`agent_instance.template_version_id` records for a member who ran it.
+
+### A member on several teams
+
+The same rule as every other setting, applied to the whole policy:
+
+1. None of the member's teams has its own policy: Everyone's applies.
+2. The teams that have one all hold the same policy and template: it applies. Two policies are the same when
+   their content is, whatever the order they were saved in; template versions are not compared.
+3. They hold different ones: Everyone's applies. Such members count in `conflictingMemberCount`.
+
+Den resolves it in one place, `resolveMemberAgentPolicy` (`ee/apps/den-api/src/workbot/team-settings.ts`), from
+the same team read as the member's other Workbot settings. Everything that acts for one member uses it: each
+wake of their agent (today's agent and the brief's check), My agent (`GET`/`PUT /v1/me/agent`), the agent's
+`request_check` tool, and the sources "Not allowed" for chat turns (`POST /v1/workbot/run-token`). A member only
+ever gets their own teams' policy or Everyone's. Still Everyone's: `GET`/`PUT /v1/org/workbot-settings/proactive`
+and its tools route, the health counters, connected-member counts and feature outcomes.
+
+### Discovery
+
+The agents' worker gives an agent to the active members of organizations where Everyone's policy is on (as
+before), and, with one more query over the team rows, of organizations that have `workbotTeamSettings` on and at
+least one team whose own policy is on. So a team can pilot agents while they are off for everyone. Each member's
+own policy then decides every wake, exactly as Everyone's switch does: a member whose policy is off gets no
+check, no brief and no message. Daily limits, counters, health rows and told-once records stay per member and
+per organization.
+
+### In Den web
+
+Under the rows of the Workbot tab, a **Members' agents** section, shown only while the list carries `agent`
+(`workbotProactive` on, on a deployment with Workbot). It is the section Manage › Workbot shows (the switch,
+where messages go, hours and limits, the brief or the message types, "What agents read" and, with
+`workbotAgentBrief`, "Tools agents may use"), bound to a scope: the same components and hooks read and save
+Everyone's policy or one team's (`workbot-agent-scope.ts` maps a scope to its routes and query keys; a team's keys
+sit under Everyone's, so a change to Everyone's policy refreshes the teams that follow it).
+
+- **A team's page**: the heading carries the chip, "From Everyone" or "Changed for {team}". The controls show
+  Everyone's settings until one is changed; that change is saved to the team's route and gives the team its own
+  copy of all of them. Each control saves the way it does on Manage › Workbot. "Use Everyone's", beside the chip
+  while the team has its own, removes the copy without a confirmation and shows "Saved. This team uses Everyone's
+  settings for members' agents." with Undo. Undo saves the team's settings back: what it had, written as a change
+  to Everyone's current policy (`agentPolicyRestoreChange`), so every choice returns; only the template's version
+  count starts again. The switch reads "Agents for this team".
+- **Everyone's page**: the same section for Everyone's policy, the same value and save as Manage › Workbot, with
+  "Changed for {team}" or "Changed for N teams" when teams have their own, and a link to the last 7 days on
+  Manage › Workbot. That table counts every member whatever their team, so it stays there.
+- The line about members on teams with different settings now counts members' agents too. "N teams have their own
+  Workbot settings" on Manage › Workbot counts a team that has only its own members' agents.
+
+Without Manage OpenWork Models the section's controls are disabled, under the tab's one "Read only" notice. With
+`workbotTeamSettings` off there is no section and no request for it, and Manage › Workbot is unchanged.
+
+### Turning the feature off
+
+Team policies are **kept but ignored**: with `workbotTeamSettings` off the team rows are not read, discovery no
+longer counts them, and every member is back on Everyone's policy at their next wake (and on their next My agent
+request). The team routes answer 404 `feature_disabled`. Turning it back on restores the saved policies. With
+`workbotProactive` off the team's policy is kept, hidden from the list and not counted in conflicts, and
+`agent` on the team's change answers 400.
+
+### Verification
+
+`ee/apps/den-api/test/workbot-team-settings.test.ts` covers the stored shape, what makes two policies the same,
+resolution, conflicts, the change schema and `resolveMemberAgentPolicy` with its fallbacks;
+`test/workbot-proactive.test.ts` and `test/workbot-agent-brief.test.ts` cover the wake under a team's policy;
+`test/api/workbot-team-settings.api.test.ts` covers the routes (following Everyone, the first save, the same
+refusals as the organization's route, `inherit`, permissions, both features off), My agent for a member of a team
+with its own policy and of two teams that differ, discovery through a team's row, and the worker's wake decision.
+In Den web, `workbot-proactive-section.test.tsx` covers a scope's routes and query keys, the team's switch label
+and the Undo change (merged onto Everyone's policy it gives the team's back);
+`workbot-team-settings-presentation.test.ts` covers when the section shows, its chip, the counts and the lines
+after "Use Everyone's" and its Undo.

@@ -16,12 +16,14 @@ import { DenButton } from "../../_components/ui/button";
 import { DenSelect } from "../../_components/ui/select";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
+import { agentsSwitchLabel, type AgentPolicyScope } from "./workbot-agent-scope";
 
 /**
  * Manage › Workbot › Members' agents with Your agent's brief (`workbotAgentBrief`): one rhythm ("Check every 2 hours,
  * 8 AM–7 PM, weekdays"), the daily limit, the extra checks agents may ask for, and what to tell people as one text
  * the agents read. Replaces the four message types, the meeting lead time and the organization instructions, which
  * are carried into the text until an admin saves it. Where messages go and what agents read stay as they are.
+ * A team's Workbot tab shows the same rows for the team's policy (`scope`).
  */
 
 export function hourLabel(hour: number) {
@@ -107,6 +109,7 @@ export function WorkbotAgentBriefPanel({
   saving,
   onChange,
   connectorsHref,
+  scope = { kind: "everyone" },
 }: {
   view: WorkbotProactiveView;
   brief: AgentBriefView;
@@ -114,8 +117,11 @@ export function WorkbotAgentBriefPanel({
   saving: boolean;
   onChange: (change: WorkbotProactiveSettingsInput) => void;
   connectorsHref: string;
+  /** Whose policy the rows show: Everyone's, or one team's. */
+  scope?: AgentPolicyScope;
 }) {
   const ids = { destination: useId(), rhythm: useId(), cap: useId(), extra: useId(), members: useId() };
+  const switchLabel = agentsSwitchLabel(scope);
   const { settings, slackReady, runnerReady } = view;
   const locked = !canManage || saving;
   const switchNote = !runnerReady
@@ -128,8 +134,8 @@ export function WorkbotAgentBriefPanel({
 
   return (
     <div className="divide-y divide-gray-100 overflow-hidden rounded-2xl border border-gray-100 bg-white" data-testid="workbot-proactive-panel" data-mode="brief">
-      <Row label="Agents for everyone" testId="workbot-proactive-enabled" note={switchNote}>
-        <DenSwitch aria-label="Agents for everyone" checked={settings.enabled} disabled={locked || (Boolean(switchNote) && !settings.enabled)} onChange={(enabled) => onChange({ enabled })} />
+      <Row label={switchLabel} testId="workbot-proactive-enabled" note={switchNote}>
+        <DenSwitch aria-label={switchLabel} checked={settings.enabled} disabled={locked || (Boolean(switchNote) && !settings.enabled)} onChange={(enabled) => onChange({ enabled })} />
       </Row>
 
       <Row

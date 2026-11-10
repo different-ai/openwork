@@ -24,7 +24,7 @@ import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, queryValidator, type OrganizationContextVariables } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { cameThroughConnect, type AuthContextVariables } from "../../session.js"
-import { agentBriefAllowed, readProactiveSettings } from "../../workbot-proactive/access.js"
+import { agentBriefAllowed } from "../../workbot-proactive/access.js"
 import { carriedMemberLines, memberBriefLines, memberNextChecks, memberRhythm } from "../../workbot-proactive/brief.js"
 import { memberAgentCheck } from "../../workbot-proactive/checks.js"
 import { destinationBlock } from "../../workbot-proactive/deliver.js"
@@ -54,9 +54,9 @@ import { sourceReadToolCounts } from "../../workbot-proactive/agent-tools.js"
 import { getCatalog } from "../../mcp/index.js"
 import type { McpToolOperation } from "../../mcp/catalog.js"
 import { nativeOperations } from "../../mcp/native-capabilities.js"
-import { readAgentTemplate, type AgentTemplateVersion } from "../../workbot-proactive/template.js"
+import type { AgentTemplateVersion } from "../../workbot-proactive/template.js"
 import { workbotOrigin } from "../../workbot/config.js"
-import { resolveMemberWorkbotSettings } from "../../workbot/team-settings.js"
+import { resolveMemberAgentPolicy, resolveMemberWorkbotSettings, type AgentPolicy, type MemberTeamAgent } from "../../workbot/team-settings.js"
 
 /** How long the page waits for a connection's tools before saying nothing about them (the tool cache answers most). */
 const PAGE_TOOLS_DEADLINE_MS = 4_000
@@ -99,12 +99,12 @@ function nextScheduledCheck(row: NonNullable<ViewRow>, settings: WorkbotProactiv
 }
 
 /**
- * The organization's brief settings when `workbotAgentBrief` is on for this member (null keeps today's agent), and the
- * template they are carried over from.
+ * The brief settings of the member's policy (their team's own, else the organization's) when `workbotAgentBrief` is
+ * on for this member (null keeps today's agent), and the template they are carried over from.
  */
-async function agentSetup(member: MemberContext, settings: WorkbotProactiveSettings): Promise<{ template: AgentTemplateVersion; brief: AgentBriefPolicy | null }> {
-  const [template, briefOn] = await Promise.all([readAgentTemplate(member.organizationId), agentBriefAllowed(member.organizationId, member.userId)])
-  return { template, brief: briefOn ? resolveAgentBrief(settings, template) : null }
+async function agentSetup(member: MemberContext, policy: AgentPolicy): Promise<{ template: AgentTemplateVersion; brief: AgentBriefPolicy | null }> {
+  const briefOn = await agentBriefAllowed(member.organizationId, member.userId)
+  return { template: policy.template, brief: briefOn ? resolveAgentBrief(policy.settings, policy.template) : null }
 }
 
 async function memberAgentView(input: {
@@ -218,17 +218,19 @@ function disabled(feature: string): { error: "feature_disabled"; feature: string
 }
 
 type MemberContext = { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user"> }
+/** The member with what their own teams say about their agent, so their policy is resolved without reading teams again. */
+type AgentMember = MemberContext & { workbot: MemberTeamAgent }
 
 export function registerMeAgentRoutes<T extends { Variables: AuthContextVariables & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
   /** The signed-in member, or why the route is off for them. */
-  const memberOf = async (context: OrganizationContextVariables["organizationContext"] | undefined): Promise<MemberContext | { error: "workbot" | "workbotProactive" }> => {
+  const memberOf = async (context: OrganizationContextVariables["organizationContext"] | undefined): Promise<AgentMember | { error: "workbot" | "workbotProactive" }> => {
     if (!context || workbotOrigin() === null) return { error: "workbot" }
     const userId = context.currentMember.userId
     if (!userId) return { error: "workbotProactive" }
     const member = { organizationId: context.organization.id, memberId: context.currentMember.id, userId }
     // Workbot turned off for this member (workbotTeamSettings) is Workbot not being there for them: no agent either.
     const workbot = await resolveMemberWorkbotSettings({ ...member, organization: context.organization, featureOn: context.features.workbotTeamSettings })
-    return workbot.enabled ? member : { error: "workbot" }
+    return workbot.enabled ? { ...member, workbot: { agent: workbot.agent, agentFrom: workbot.agentFrom } } : { error: "workbot" }
   }
 
   app.get(
@@ -250,8 +252,9 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
       const member = await memberOf(c.get("organizationContext"))
       if ("error" in member) return c.json(disabled(member.error), 404)
       c.header("Cache-Control", "no-store")
-      const settings = await readProactiveSettings(member.organizationId)
-      return c.json(await memberAgentView({ ...member, settings, row: await readAgentInstance(member.memberId), ...(await agentSetup(member, settings)), catalog: () => getCatalog(app as unknown as Hono, c.env) }))
+      // Only ever the caller's own teams' policy, or the organization's.
+      const policy = await resolveMemberAgentPolicy(member)
+      return c.json(await memberAgentView({ ...member, settings: policy.settings, row: await readAgentInstance(member.memberId), ...(await agentSetup(member, policy)), catalog: () => getCatalog(app as unknown as Hono, c.env) }))
     },
   )
 
@@ -306,8 +309,9 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
       if ("error" in member) return c.json(disabled(member.error), 404)
       c.header("Cache-Control", "no-store")
       const input = c.req.valid("json")
-      const settings = await readProactiveSettings(member.organizationId)
-      const setup = await agentSetup(member, settings)
+      const policy = await resolveMemberAgentPolicy(member)
+      const settings = policy.settings
+      const setup = await agentSetup(member, policy)
       const now = Date.now()
 
       // On, snooze stay as before; everything else (mutes too) is logged with where it came from, so it can be undone.

@@ -6,7 +6,7 @@ import { db } from "../db.js"
 import { getOrganizationFeatures, organizationFeatureEnabled } from "../features.js"
 import { headlessRunnerConfig } from "../headless-runner/client.js"
 import { workbotOrigin } from "../workbot/config.js"
-import { resolveMemberWorkbotSettings } from "../workbot/team-settings.js"
+import { listOrganizationsWithTeamAgents, resolveMemberWorkbotSettings } from "../workbot/team-settings.js"
 
 /**
  * Who has an agent, and where its messages can go. Three switches, all required: the `workbotProactive` feature
@@ -15,6 +15,9 @@ import { resolveMemberWorkbotSettings } from "../workbot/team-settings.js"
  *
  * For one member there is a fourth while `workbotTeamSettings` is on: Workbot itself, which an admin can turn off
  * for everyone or for a team. A member without Workbot gets no check, brief or message from their agent.
+ *
+ * The organization's switch is its policy (`readProactiveSettings`). A team can have its own policy while
+ * `workbotTeamSettings` is on; whatever acts for one member reads theirs with `resolveMemberAgentPolicy`.
  */
 
 export async function proactiveAllowed(organizationId: string, userId?: string) {
@@ -47,16 +50,25 @@ export function proactiveRunnerReady(env: Record<string, string | undefined> = p
   return headlessRunnerConfig(env) !== null
 }
 
-/** Active members of organizations that turned their agent on: the ones who get one. */
+/**
+ * Active members of organizations where agents are on: for everyone, or, while `workbotTeamSettings` is on, for at
+ * least one team. They are the ones who get an agent; each member's own policy then decides whether it is woken.
+ */
 export async function listAgentCandidates(): Promise<{ organizationId: DenTypeId<"organization">; memberIds: DenTypeId<"member">[] }[]> {
   if (workbotOrigin() === null) return []
-  const organizations = await db
+  const everyone = await db
     .select({ id: OrganizationTable.id })
     .from(OrganizationTable)
     .where(sql`JSON_UNQUOTE(JSON_EXTRACT(${OrganizationTable.metadata}, '$.workbot.proactive.enabled')) = 'true'`)
+  // One more query: organizations where agents are off for everyone and on for a team. A failed read finds none.
+  const found = new Set(everyone.map((organization) => organization.id))
+  const teamsOnly = (await listOrganizationsWithTeamAgents().catch(() => [])).filter((id) => !found.has(id))
+  const organizations = [...everyone.map((organization) => ({ id: organization.id, teamsOnly: false })), ...teamsOnly.map((id) => ({ id, teamsOnly: true }))]
   const candidates: { organizationId: DenTypeId<"organization">; memberIds: DenTypeId<"member">[] }[] = []
   for (const organization of organizations) {
     if (!(await proactiveAllowed(organization.id))) continue
+    // A team's policy counts only while the feature is on; off, it is kept and ignored.
+    if (organization.teamsOnly && !(await organizationFeatureEnabled(organization.id, "workbotTeamSettings"))) continue
     const members = await db
       .select({ id: MemberTable.id })
       .from(MemberTable)
