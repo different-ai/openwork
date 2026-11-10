@@ -37,7 +37,7 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 type ReadyAccess = Extract<PermissionsAccess, { state: "ready" }>;
 
-/** Create a named role and give it to teams. `requestedStart` is the address's `?start=`, e.g. "billing". */
+/** Create a named role and give it to people and teams. `requestedStart` is the address's `?start=`, e.g. "billing-manager". */
 export function RoleNewScreen({ requestedStart = null }: { requestedStart?: string | null }) {
   const permissions = usePermissionsAccess();
 
