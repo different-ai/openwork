@@ -143,6 +143,19 @@ export function otherPolicy(view: SourcesView, option: AgentOtherSourceConnectio
   return view.settings.sources.connections[option.id] ?? option.policy ?? "members";
 }
 
+/**
+ * With help on, Other context lists only the connections an admin set (or the server holds back), not every
+ * connection: the rest are up to each member, and "Add connector" brings one into the list.
+ */
+export function otherConnectionAdded(view: SourcesView, option: AgentOtherSourceConnection): boolean {
+  return view.settings.sources.connections[option.id] !== undefined || (option.policy ?? "members") !== "members";
+}
+
+/** "58 other connections are up to each member.", "1 other connection is up to each member." */
+export function otherConnectionsRestLine(count: number): string {
+  return count === 1 ? "1 other connection is up to each member." : `${count} other connections are up to each member.`;
+}
+
 /** "12 connections", "1 connection". */
 export function connectionCount(count: number): string {
   return `${count} connection${count === 1 ? "" : "s"}`;
@@ -210,12 +223,16 @@ export function filterConnections<T extends { name: string }>(connections: reado
   return query ? connections.filter((connection) => connection.name.toLowerCase().includes(query)) : [...connections];
 }
 
-function AddSource({ slot, options, disabled, onPick, label = "Add source" }: { slot: AgentSourceSlot; options: AgentSourceOption[]; disabled: boolean; onPick: (option: AgentSourceOption) => void; label?: string }) {
+function AddSource<Option extends Pick<AgentSourceOption, "id" | "name" | "url">>({ slot, options, disabled, onPick, label = "Add source" }: { slot: AgentSourceSlot; options: Option[]; disabled: boolean; onPick: (option: Option) => void; label?: string }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
+  // A long list gets a box to find one by name.
+  const searchable = options.length > FILTER_FROM;
+  const shown = searchable ? filterConnections(options, query) : options;
   return (
-    <DenDropdownRoot open={open} onOpenChange={setOpen}>
+    <DenDropdownRoot open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery(""); }}>
       <DenDropdownTrigger ref={triggerRef} type="button" disabled={disabled} aria-label={`Add source to ${SLOT_LABEL[slot]}`}
         data-testid={`workbot-source-add-${slot}`}
         className="flex min-h-[40px] items-center gap-2 rounded-lg pl-14 pr-6 text-left text-[13px] font-medium text-gray-700 outline-hidden hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-gray-900/5 disabled:cursor-not-allowed disabled:opacity-60">
@@ -224,9 +241,15 @@ function AddSource({ slot, options, disabled, onPick, label = "Add source" }: { 
       </DenDropdownTrigger>
       {open ? (
         <DenDropdownPopup anchor={triggerRef} popupRef={popupRef}>
+          {searchable ? (
+            <div className="border-b border-gray-100 p-2">
+              <DenInput type="search" icon={Search} autoFocus aria-label="Find a connection" placeholder="Find a connection" value={query} onChange={(event) => setQuery(event.target.value)} />
+            </div>
+          ) : null}
           <div className={denDropdownListClass} role="menu" aria-label={`Connections to add to ${SLOT_LABEL[slot]}`}>
             {options.length === 0 ? <p className="px-3 py-2.5 text-[13px] text-gray-500">Every connection is already here.</p> : null}
-            {options.map((option) => (
+            {options.length > 0 && shown.length === 0 ? <p className="px-3 py-2.5 text-[13px] text-gray-500">No connections match</p> : null}
+            {shown.map((option) => (
               <button key={option.id} type="button" role="menuitem" aria-label={option.name} className={`${denDropdownRowBaseClass} ${denDropdownRowIdleClass} items-center justify-start`}
                 onClick={() => {
                   setOpen(false);
@@ -346,7 +369,10 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
 
   // With the brief: every connection, each with its policy and its tools; nothing to add or remove.
   const everyConnectionRows = () => {
-    const all = connections?.other ?? [];
+    const everything = connections?.other ?? [];
+    // With help on: only the connections that were added; the rest are behind "Add connector".
+    const all = help ? everything.filter((option) => otherConnectionAdded(view, option)) : everything;
+    const rest = help ? everything.filter((option) => !otherConnectionAdded(view, option)) : [];
     const filtering = help && all.length > FILTER_FROM;
     const every = filtering ? filterConnections(all, filter) : all;
     return (
@@ -357,7 +383,7 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
               onChange={(event) => setFilter(event.target.value)} />
           </div>
         ) : null}
-        {all.length === 0 ? <p className="py-2 pl-14 pr-6 text-[13px] text-gray-500" data-testid="workbot-source-other-empty">No connections</p> : null}
+        {everything.length === 0 ? <p className="py-2 pl-14 pr-6 text-[13px] text-gray-500" data-testid="workbot-source-other-empty">No connections</p> : null}
         {all.length > 0 && every.length === 0 ? <p className="py-2 pl-14 pr-6 text-[13px] text-gray-500" data-testid="workbot-source-other-no-match">No connections match</p> : null}
         {every.map((option) => {
           const policy = otherPolicy(view, option);
@@ -371,12 +397,24 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
                 </span>
                 <span className="flex min-w-0 flex-wrap items-center justify-end gap-3">
                   <PolicySelect label={option.name} value={policy} disabled={locked} onChange={(next) => save({ connections: { [option.id]: next } })} />
+                  {help && view.settings.sources.connections[option.id] !== undefined ? (
+                    <DenButton variant="ghost" size="xs" disabled={locked} aria-label={`Remove ${option.name} from ${SLOT_LABEL.other}`}
+                      onClick={() => save({ connections: { [option.id]: null } })}>
+                      Remove
+                    </DenButton>
+                  ) : null}
                 </span>
               </div>
               {policy !== "off" ? toolsOf(option) : null}
             </div>
           );
         })}
+        {help && rest.length > 0 ? (
+          <>
+            <AddSource slot="other" label="Add connector" options={rest} disabled={locked} onPick={(option) => save({ connections: { [option.id]: "members" } })} />
+            <p className="pb-2 pl-14 pr-6 text-[12px] text-gray-500" data-testid="workbot-source-other-rest">{otherConnectionsRestLine(rest.length)}</p>
+          </>
+        ) : null}
       </>
     );
   };
@@ -442,7 +480,7 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
                 <span className="text-[13px] font-medium text-gray-900">Other context</span>
                 {help ? <HelpTip label="Other context">{`${AGENT_SOURCE_HELP.other} ${AGENT_SOURCE_HELP.policy}`}</HelpTip> : null}
               </span>
-              {anyConnector ? <span className="text-[12px] text-gray-500" data-testid="workbot-source-others-count">{connectionCount(connections.other.length)}</span> : null}
+              {anyConnector ? <span className="text-[12px] text-gray-500" data-testid="workbot-source-others-count">{help ? `${connections.other.filter((option) => otherConnectionAdded(view, option)).length} of ${connectionCount(connections.other.length)}` : connectionCount(connections.other.length)}</span> : null}
             </div>
             {anyConnector ? everyConnectionRows() : otherRows()}
           </div>

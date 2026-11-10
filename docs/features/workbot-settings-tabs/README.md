@@ -107,3 +107,19 @@ Both places show the single page again on the next load. Nothing is stored.
   button is gone.
 - **Other context**: with more than 8 connections, a "Find a connection"
   box filters the list by name.
+
+## Agent instructions, example and Add connector
+
+- **Tooltips**: the "i" opens on hover after a short pause, on keyboard
+  focus, and on a click or tap. Before, it waited 600 ms on hover and a
+  click closed it, so clicking an "i" showed nothing.
+- **Agent instructions** (was "What to tell people"): the text shows as
+  text with an **Edit** button. Edit opens the box with Reset to default,
+  Cancel and Save instructions; nothing saves until Save.
+- **Example conversation** (was "Preview"): the agent's message, a member's
+  question and the agent's answer. Sample text with fictional names.
+- **Other context**: lists only the connections an admin added, each with
+  its setting, its tools and Remove. **Add connector** opens a searchable
+  list of the rest; a line under it says how many other connections are up
+  to each member. Adding one saves it as "Members choose" (what it already
+  was); Remove puts it back to that default.
