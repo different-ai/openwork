@@ -115,7 +115,8 @@ export async function remoteDesktopDeviceLogin(seed: Seed) {
     if (!result.response.ok) throw new Error(`Read own session count: HTTP ${result.response.status}`);
     // Better Auth's session records can contain credentials. Only the count is
     // returned from this closure; never include response content in errors.
-    return rows(result.body).length;
+    if (!Array.isArray(result.body) || result.body.length === 0) throw new Error("Own session list must contain the live approving session.");
+    return result.body.length;
   };
   const defaultEnabled = await publicFeatures();
   const second = await seed.api(den.admin, "/v1/org", { method: "POST", body: JSON.stringify({ name: "Device workspace B" }) });
