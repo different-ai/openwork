@@ -1,7 +1,7 @@
 import { AUTO_ROUTER_THINKING_LEVELS, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router";
 
 /**
- * Cursor through the AI Gateway (feature `gatewayCursorSetup`).
+ * Cursor through the AI Gateway (feature `gatewayMemberApiKeys`).
  *
  * Cursor reaches other models only by overriding its OpenAI API key and base URL, and each model is
  * added by typing one string that is both its id and the name Cursor shows. A Gateway model id

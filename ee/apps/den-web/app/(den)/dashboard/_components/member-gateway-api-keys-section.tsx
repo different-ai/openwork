@@ -15,7 +15,6 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
-import { orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { getCursorSetupRoute } from "./cursor-setup-data";
 import { BackButton, GatewayToolPicker, GatewayToolSteps, gatewayToolName, type GatewayToolId } from "./gateway-tool-setup";
@@ -42,8 +41,7 @@ import {
 export function MemberGatewayApiKeysSection() {
   const keys = useMyGatewayApiKeys(true);
   const revoke = useRevokeGatewayApiKey("mine");
-  const { orgSlug, orgContext } = useOrgDashboard();
-  const cursorSetup = orgFeatureEnabled(orgContext, "gatewayCursorSetup");
+  const { orgSlug } = useOrgDashboard();
   const [creating, setCreating] = useState(false);
   /** The key "Set up" was chosen for: the tool choice again, without the key, which can't be shown twice. */
   const [settingUp, setSettingUp] = useState<GatewayApiKey | null>(null);
@@ -79,11 +77,9 @@ export function MemberGatewayApiKeysSection() {
             <a href={GATEWAY_API_KEYS_DOCS_URL} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "ghost", size: "sm" })} data-testid="gateway-api-keys-docs">
               How to use
             </a>
-            {cursorSetup ? (
-              <DenButton size="sm" variant="ghost" href={getCursorSetupRoute(orgSlug)} data-testid="gateway-api-keys-cursor-setup">
-                Set up Cursor
-              </DenButton>
-            ) : null}
+            <DenButton size="sm" variant="ghost" href={getCursorSetupRoute(orgSlug)} data-testid="gateway-api-keys-cursor-setup">
+              Set up Cursor
+            </DenButton>
             {enabled ? (
               <DenButton size="sm" variant="secondary" icon={Plus} onClick={() => setCreating(true)} data-testid="gateway-api-keys-create">
                 Create key
@@ -125,7 +121,7 @@ export function MemberGatewayApiKeysSection() {
                 <span className="flex justify-end opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 has-[[data-popup-open]]:opacity-100 [@media(hover:none)]:opacity-100">
                   <ItemMenu
                     label={`Actions for ${apiKey.name}`}
-                    entries={[...(cursorSetup ? [{ label: "Set up", onSelect: () => setSettingUp(apiKey) }] : []), {
+                    entries={[{ label: "Set up", onSelect: () => setSettingUp(apiKey) }, {
                       label: "Revoke",
                       destructive: true,
                       confirm: {
@@ -142,33 +138,12 @@ export function MemberGatewayApiKeysSection() {
           </div>
         )}
 
-        {/* With tool setup (feature `gatewayCursorSetup`) the URLs live in each tool's steps. */}
-        {cursorSetup ? null : <div className="flex flex-col pt-1">
-          {baseUrls(baseUrl).map((entry) => (
-            <div key={entry.label} className="flex min-h-9 items-center gap-2 px-2 text-[12px] text-[var(--dls-text-secondary)]">
-              <span className="w-36 shrink-0">{entry.label}</span>
-              <code className="min-w-0 truncate font-mono text-[12px] text-[var(--dls-text-primary)]" data-testid={`gateway-api-keys-base-url-${entry.id}`}>{entry.url}</code>
-              <CopyButton value={entry.url} label={`Copy ${entry.label}`} />
-            </div>
-          ))}
-        </div>}
       </section>
 
-      <CreateGatewayApiKeyDialog open={creating} baseUrl={baseUrl} toolSetup={cursorSetup} onClose={() => setCreating(false)} />
+      <CreateGatewayApiKeyDialog open={creating} baseUrl={baseUrl} onClose={() => setCreating(false)} />
       <SetUpGatewayApiKeyDialog apiKey={settingUp} baseUrl={baseUrl} onClose={() => setSettingUp(null)} />
     </LibraryCompactSurface>
   );
-}
-
-/**
- * Where tools point: OpenAI compatible tools take the URL with /v1 (they add /chat/completions or
- * /responses); Anthropic tools take it without (they add /v1/messages).
- */
-function baseUrls(baseUrl: string) {
-  return [
-    { id: "openai", label: "OpenAI base URL", url: baseUrl },
-    { id: "anthropic", label: "Anthropic base URL", url: baseUrl.replace(/\/v1\/?$/, "") },
-  ];
 }
 
 function CopyButton({ value, label }: { value: string; label: string }) {
@@ -194,7 +169,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
   );
 }
 
-function CreateGatewayApiKeyDialog({ open, baseUrl, toolSetup, onClose }: { open: boolean; baseUrl: string; toolSetup: boolean; onClose: () => void }) {
+function CreateGatewayApiKeyDialog({ open, baseUrl, onClose }: { open: boolean; baseUrl: string; onClose: () => void }) {
   return (
     <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <Dialog.Portal>
@@ -202,17 +177,17 @@ function CreateGatewayApiKeyDialog({ open, baseUrl, toolSetup, onClose }: { open
         <Dialog.Popup
           data-testid="gateway-api-key-dialog"
           data-ph-no-capture
-          className={`fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-gray-100 bg-white p-5 outline-none ${toolSetup ? "max-w-[600px]" : "max-w-[480px]"}`}
+          className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[600px] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-gray-100 bg-white p-5 outline-none"
         >
           {/* Mounted only while open: a closed dialog forgets the key it showed. */}
-          {open ? <CreateGatewayApiKeyForm baseUrl={baseUrl} toolSetup={toolSetup} onClose={onClose} /> : null}
+          {open ? <CreateGatewayApiKeyForm baseUrl={baseUrl} onClose={onClose} /> : null}
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
   );
 }
 
-function CreateGatewayApiKeyForm({ baseUrl, toolSetup, onClose }: { baseUrl: string; toolSetup: boolean; onClose: () => void }) {
+function CreateGatewayApiKeyForm({ baseUrl, onClose }: { baseUrl: string; onClose: () => void }) {
   const create = useCreateGatewayApiKey();
   const [name, setName] = useState("");
   const [expiryDays, setExpiryDays] = useState<number | null>(DEFAULT_GATEWAY_API_KEY_EXPIRY);
@@ -229,8 +204,8 @@ function CreateGatewayApiKeyForm({ baseUrl, toolSetup, onClose }: { baseUrl: str
     }
   }
 
-  // Feature `gatewayCursorSetup`: "Start using this key", a tool, then that tool's steps.
-  if (created && toolSetup) {
+  // "Start using this key", a tool, then that tool's steps.
+  if (created) {
     return (
       <GatewayToolFlow
         title="Start using this key"
@@ -248,39 +223,6 @@ function CreateGatewayApiKeyForm({ baseUrl, toolSetup, onClose }: { baseUrl: str
         baseUrl={baseUrl}
         onClose={onClose}
       />
-    );
-  }
-
-  if (created) {
-    return (
-      <>
-        <Dialog.Title className="text-[16px] font-semibold leading-6 text-gray-900">{created.apiKey.name} is ready</Dialog.Title>
-        <p className="mt-1 text-[13px] text-gray-500" data-testid="gateway-api-key-created-expiry">{formatExpiry(created.apiKey.expiresAt)}</p>
-        <div className="mt-4 flex flex-col gap-3">
-          <div className="flex flex-col gap-1.5">
-            <span className="text-[12px] font-medium text-gray-700">API key, shown once</span>
-            <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-              <code className="min-w-0 flex-1 break-all font-mono text-[12px] leading-5 text-gray-900" data-testid="gateway-api-key-secret">{created.key}</code>
-              <CopyButton value={created.key} label="Copy API key" />
-            </div>
-          </div>
-          {baseUrls(baseUrl).map((entry) => (
-            <div key={entry.label} className="flex flex-col gap-1.5">
-              <span className="text-[12px] font-medium text-gray-700">{entry.label}</span>
-              <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-                <code className="min-w-0 flex-1 break-all font-mono text-[12px] leading-5 text-gray-900">{entry.url}</code>
-                <CopyButton value={entry.url} label={`Copy ${entry.label}`} />
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="mt-5 flex items-center justify-between gap-2">
-          <a href={GATEWAY_API_KEYS_DOCS_URL} target="_blank" rel="noreferrer" className="text-[12px] text-gray-600 underline underline-offset-4 hover:text-gray-900">
-            How to use
-          </a>
-          <DenButton size="sm" onClick={onClose} data-testid="gateway-api-key-done">Done</DenButton>
-        </div>
-      </>
     );
   }
 
@@ -327,7 +269,7 @@ function CreateGatewayApiKeyForm({ baseUrl, toolSetup, onClose }: { baseUrl: str
 }
 
 /**
- * A tool, then its steps (feature `gatewayCursorSetup`). Right after creation `apiKey` is the key; from
+ * A tool, then its steps. Right after creation `apiKey` is the key; from
  * "Set up" it is null, since a key is shown once, and the steps leave a place for it.
  */
 function GatewayToolFlow({ title, subtitle, keyBlock, apiKey, baseUrl, onClose }: {

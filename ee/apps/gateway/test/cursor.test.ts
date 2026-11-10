@@ -1,4 +1,4 @@
-// Cursor through the AI Gateway (feature gatewayCursorSetup): one OpenAI-compatible base URL that
+// Cursor through the AI Gateway (feature gatewayMemberApiKeys): one OpenAI-compatible base URL that
 // serves every model the member can use, under names a person can type into Cursor.
 import assert from "node:assert/strict"
 import { test } from "node:test"

@@ -10,13 +10,13 @@ import { ItemHeader, ItemPage } from "./item-header";
 import { ItemPanel } from "./item-list";
 
 /**
- * Library › Models › Set up Cursor (feature `gatewayCursorSetup`): what to paste into Cursor's
+ * Library › Models › Set up Cursor (feature `gatewayMemberApiKeys`): what to paste into Cursor's
  * settings, with every model's Cursor name to copy. The key itself is only shown when it is created,
  * so this page links to creating one.
  */
 export function CursorSetupScreen() {
   const { orgSlug, orgContext } = useOrgDashboard();
-  const available = orgFeatureEnabled(orgContext, "gatewayMemberApiKeys") && orgFeatureEnabled(orgContext, "gatewayCursorSetup");
+  const available = orgFeatureEnabled(orgContext, "gatewayMemberApiKeys");
   const keys = useMyGatewayApiKeys(available);
   const back = { href: `${getLibraryRoute(orgSlug)}?show=models`, label: "My Library" };
 

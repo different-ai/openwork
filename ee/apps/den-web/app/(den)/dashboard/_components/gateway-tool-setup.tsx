@@ -11,7 +11,7 @@ import { claudeCodeModels, codexModels, useGatewayToolModels, type GatewayToolMo
 import { GATEWAY_API_KEYS_DOCS_URL } from "./gateway-api-keys-data";
 
 /**
- * Setting up a 3rd party tool with an AI Gateway API key (feature `gatewayCursorSetup`): a choice of
+ * Setting up a 3rd party tool with an AI Gateway API key (feature `gatewayMemberApiKeys`): a choice of
  * tools, then what to paste where for the one picked. Used right after a key is created, while it can
  * still be shown, and on Set up Cursor without a key.
  */
@@ -68,7 +68,7 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
   async function copy() {
     try {
       await navigator.clipboard.writeText(value);
-      markFeatureUsed("gatewayCursorSetup");
+      markFeatureUsed("gatewayMemberApiKeys");
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {

@@ -1,11 +1,11 @@
-# AI Gateway: Cursor setup
+# AI Gateway: setting up Cursor and other tools
 
-- **Feature key:** `gatewayCursorSetup`
+- **Feature key:** `gatewayMemberApiKeys` (part of AI Gateway API keys; see
+  `docs/features/gateway-member-api-keys/README.md`)
 - **Deployments:** cloud and self-hosted, off by default
 - **Author:** OmarMcAdam
 - **Public docs:** `packages/docs/ai-gateway/cursor.mdx`
-- **Needs:** `gatewayMemberApiKeys` on, and the organization's **Allow 3rd party
-  tools & harnesses** setting on (see `docs/features/gateway-member-api-keys`)
+- **Needs:** the organization's **Allow 3rd party tools & harnesses** setting on
 
 Members use the models their organization gives them inside Cursor.
 
@@ -50,8 +50,7 @@ Shared code: `packages/types/src/den/gateway-cursor.ts`.
 to **Start using this key**: the key once, then a large button per tool:
 Cursor, OpenAI Codex, Claude Code and Another tool. Picking one shows that
 tool's steps with the key, URLs and model ids already filled in, each with a
-copy button; **Choose another tool** goes back. With this feature off, the
-dialog keeps showing the key and the two base URLs as before.
+copy button; **Choose another tool** goes back.
 
 ![Start using this key](./start-using-key.png)
 
@@ -72,9 +71,8 @@ endpoints for them, like Cursor's, come later.
 
 In **My Library › Models**, each key's menu has **Set up**: the same choice of
 tools for a key that already exists. The key isn't shown again, so the steps
-say which key to use (by its prefix) and leave a place for it. With this
-feature on, the section no longer lists the base URLs: each tool's steps carry
-the ones it needs.
+say which key to use (by its prefix) and leave a place for it. The section
+doesn't list the base URLs: each tool's steps carry the ones it needs.
 
 ![Set up from a key's menu](./set-up-existing-key.png)
 
@@ -109,11 +107,11 @@ key, with a link to create one.
 
 ## Turning it off
 
-The kill switch makes `/api/v1/cursor/*` answer `404 not_found` within 15
-seconds and removes the link and the page. Nothing is stored for this feature,
-so nothing is lost: keys and the other Gateway endpoints are unaffected, and
-the model names people already added to Cursor work again when it is turned
-back on.
+Turning off `gatewayMemberApiKeys` (or the organization setting) stops member
+keys at the Gateway, and `/api/v1/cursor/*` answers `404 not_found` within 15
+seconds. The setup screens go with the API keys section. Nothing else is stored
+for Cursor, so the model names people added to Cursor work again when it is
+turned back on.
 
 ## What to watch
 

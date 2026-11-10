@@ -105,7 +105,7 @@ export type GatewayDependencies = {
   autoRouterReasoning: ReasoningStore
   /** Whether a TypeSafe key is configured; without one Smart is off. */
   autoRouterRoutingConfigured: boolean
-  /** Whether the Cursor endpoint (feature `gatewayCursorSetup`) is on for an organization. */
+  /** Whether the Cursor endpoint (feature `gatewayMemberApiKeys`) is on for an organization. */
   cursorEnabled: (organizationId: string) => Promise<boolean>
 }
 
@@ -1254,7 +1254,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     c.header("cache-control", "no-store")
     return c.json(listGatewayModels(await dependencies.loadMemberGatewayAccess(identity)))
   })
-  // Cursor (feature `gatewayCursorSetup`): every model as Chat Completions under names a person can type.
+  // Cursor (feature `gatewayMemberApiKeys`): every model as Chat Completions under names a person can type.
   const cursorOff = () => gatewayError(404, "not_found", "The Cursor endpoint is not available for this organization.")
   api.get(cursorModelsPath, async (c) => {
     const identity = c.get("inference")
