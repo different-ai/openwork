@@ -1,8 +1,8 @@
 # Workbot Documents: video and audio
 
-Feature: `workbotDocumentMedia` · Cloud and self-hosted · Default **off** · Author: @reachjalil. Requires `workbotDocuments`.
+Part of `workbotDocuments` (it had its own flag, `workbotDocumentMedia`, until it was folded in) · Cloud and self-hosted · Author: @reachjalil.
 
-Documents lists every file in a person's Drive and OneDrive, but a video or audio file opened to "No inline preview is available" with a link to the original. With this on, the file plays in its tab.
+Documents lists every file in a person's Drive and OneDrive, but a video or audio file opened to "No inline preview is available" with a link to the original. Now the file plays in its tab.
 
 ![A video playing in its Documents tab](video-in-documents.jpg)
 
@@ -23,8 +23,8 @@ Only the listed video and audio types are served this way, under their own media
 
 ## Try it
 
-Turn the flag on for a test organization in `/admin` → organization → Features, open Workbot → Documents, and open a video from Drive or OneDrive. Drag the player's position to check seeking.
+Turn `workbotDocuments` on for a test organization in `/admin` → organization → Features, open Workbot → Documents, and open a video from Drive or OneDrive. Drag the player's position to check seeking.
 
 ## Turning it off
 
-Video and audio files go back to "No inline preview is available" with the link to the original, and Den refuses their bytes again. A player already open stops loading further parts of its file. Nothing is stored.
+Turning off `workbotDocuments` turns off Documents as a whole. Video and audio files go back to "No inline preview is available" with the link to the original, and Den refuses their bytes again. A player already open stops loading further parts of its file. Nothing is stored.

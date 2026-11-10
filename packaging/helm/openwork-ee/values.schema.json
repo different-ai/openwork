@@ -369,7 +369,7 @@
                 true,
                 false
               ],
-              "description": "Workbot Documents: Members browse recent Google Drive files and folders in Workbot, open documents in tabs, and save supported text and spreadsheet edits to Drive. Renders DEN_FEATURE_WORKBOT_DOCUMENTS."
+              "description": "Workbot Documents: Members browse recent Google Drive files and folders in Workbot, open documents in tabs, play video and audio files in the tab, and save supported text and spreadsheet edits to Drive. Renders DEN_FEATURE_WORKBOT_DOCUMENTS."
             },
             "workbotDocumentEditing": {
               "enum": [
@@ -380,16 +380,6 @@
                 false
               ],
               "description": "Workbot Documents: editing: Members choose Edit from a document preview. Full Office editing starts their Cloud workspace only when requested. Requires Workbot Documents. Renders DEN_FEATURE_WORKBOT_DOCUMENT_EDITING."
-            },
-            "workbotDocumentMedia": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Workbot Documents: video and audio: Members play video and audio files from Drive and OneDrive in the document's tab, with seeking, instead of only a link to the original. Requires Workbot Documents. Renders DEN_FEATURE_WORKBOT_DOCUMENT_MEDIA."
             },
             "workbotWorkspaceAssistant": {
               "enum": [

@@ -153,7 +153,7 @@ export function registerGoogleDocumentEditorRoutes<T extends { Variables: OrgRou
         }
         return c.json({ ...common, kind: "text", text: new TextDecoder("utf-8", { fatal: true }).decode(bytes) })
       }
-      const playable = c.get("organizationContext")!.features.workbotDocumentMedia ? documentMediaKind(file.mimeType) : null
+      const playable = documentMediaKind(file.mimeType)
       return c.json({ ...common, kind: "preview", mimeType: file.mimeType, canEdit: false, ...(playable ? { media: playable } : {}), ...(file.mimeType === SLIDES ? { notice: "Preview only. Open in Google Slides to edit; changes stay in the original presentation." } : {}) })
     } catch (error) {
       // A limited reader must not force an Office startup or hide the explicit Edit action.
@@ -215,7 +215,7 @@ export function registerGoogleDocumentEditorRoutes<T extends { Variables: OrgRou
     const slides = meta.file.mimeType === SLIDES
     // Video and audio go to the browser's own player one byte range at a time, so it can start early and seek.
     const playable = documentMediaKind(meta.file.mimeType)
-    if (playable && c.get("organizationContext")?.features.workbotDocumentMedia) {
+    if (playable) {
       const size = Number(meta.file.size)
       const range = documentMediaRange(c.req.header("range"), size)
       if (!range) return documentMediaUnsatisfiable(size)
