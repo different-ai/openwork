@@ -6,8 +6,6 @@ import { builtAppSummary } from "@/react-app/domains/apps/built-mcp-app-model"
 import { AppBuilderStep } from "./app-builder-step"
 import * as React from "react"
 import {
-  Check,
-  Copy,
   Download,
   FileIcon,
   FolderOpen,
@@ -32,6 +30,9 @@ import { isElectronRuntime } from "@/app/lib/runtime-env"
 import { markFeatureUsed } from "@/app/lib/den"
 import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature"
 import { AssistantProse } from "@/components/markdown/assistant-prose"
+import { copyAssistantProseSelection } from "@/components/markdown/assistant-prose-clipboard"
+import { MessageCopyButton, messageCopyActions } from "./message-copy-actions"
+import type { MessageCopyRequest } from "./message-clipboard"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { t } from "@/i18n"
 import { useOpenTargets } from "@/lib/target-provider"
@@ -622,44 +623,19 @@ function FileMessage({ part, tone }: FileMessageProps) {
   )
 }
 
-interface CopyMessageButtonProps {
-  messages: UIMessage[]
-}
+// React refs keep copy scoped to this reply/pane, never a document-wide attribute search.
+const RenderedReplyProseContext = React.createContext<Map<HTMLElement, string> | null>(null)
+const recordPortableCopy = () => markFeatureUsed("assistantProseClipboard")
 
-function CopyMessageButton({ messages }: CopyMessageButtonProps) {
-  const [copied, setCopied] = React.useState(false)
-  const text = React.useMemo(() => getMessagesText(messages), [messages])
-
-  const onCopy = React.useCallback(async () => {
-    if (!text) {
-      return
-    }
-
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // ignore clipboard failures
-    }
-  }, [text])
-
-  if (!text) {
-    return null
+function messageCopyRequest(messages: UIMessage[], enabled: boolean, prose: Map<HTMLElement, string> | null): MessageCopyRequest {
+  return {
+    markdown: getMessagesText(messages),
+    source: messages.flatMap(message => message.parts.flatMap(part => part.type === "text" ? [part.text] : [])).join(""),
+    enabled,
+    getProse: messages.every(message => message.role === "assistant") && prose
+      ? () => [...prose].map(([element, source]) => ({ element, source }))
+      : undefined,
   }
-
-  return (
-    <MessageAction tooltip={copied ? "Copied!" : "Copy"}>
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label="Copy message"
-        onClick={() => void onCopy()}
-      >
-        {copied ? <Check /> : <Copy />}
-      </Button>
-    </MessageAction>
-  )
 }
 
 type AssistantMessageProps = {
@@ -676,6 +652,7 @@ const AssistantMessage = React.memo(
     const { showThinking, highlightQuery } = useMessageList()
     const computerHistory = React.useContext(ComputerHistoryContext)
     const portableCopy = useDesktopFeature("assistantProseClipboard")
+    const renderedProse = React.useContext(RenderedReplyProseContext)
     const assistantRenderGroups = React.useMemo(
       () => {
         const groups = getAssistantRenderGroups(withoutComputerHistory(message.parts, computerHistory), showThinking)
@@ -704,6 +681,11 @@ const AssistantMessage = React.memo(
                     markdown
                     sessionReferences
                     githubReferences
+                    onRenderedMarkdown={(element, source) => {
+                      if (!renderedProse) return
+                      renderedProse.set(element, source)
+                      return () => { renderedProse.delete(element) }
+                    }}
                     isStreaming={isStreaming}
                     highlightQuery={highlightQuery}
                   >
@@ -993,6 +975,8 @@ const UserMessage = React.memo(
       onOpenTarget(target)
     }
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
+    const portableCopy = useDesktopFeature("assistantProseClipboard")
+    const copyRequest = messageCopyRequest([message], portableCopy, null)
     // Edit puts every chip back in the composer as the same chip.
     const editMessage = () => {
       const draft = composerDraftFromSentParts(message.parts)
@@ -1006,7 +990,7 @@ const UserMessage = React.memo(
     // Same actions, in the same order, as the buttons below the bubble.
     const menuActions: MenuAction[] = []
     if (messageText) menuActions.push(
-      { type: "item", id: "copy", label: "Copy", icon: <Copy className="size-4" />, onSelect: () => navigator.clipboard.writeText(messageText) },
+      ...messageCopyActions(copyRequest, recordPortableCopy),
       { type: "item", id: "edit", label: "Edit message", icon: <Pencil className="size-4" />, disabled: readOnly || Boolean(wall), onSelect: editMessage },
     )
     if (!wall) menuActions.push(
@@ -1073,7 +1057,7 @@ const UserMessage = React.memo(
                     className="flex items-center gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100"
                   >
                     <MessageTimestamp message={message} className="mr-1.5" />
-                    <CopyMessageButton messages={[message]} />
+                    <MessageCopyButton request={copyRequest} onPortableCopy={recordPortableCopy} />
                     {messageText ? (
                       <MessageAction tooltip="Edit message">
                         <Button
@@ -1550,6 +1534,8 @@ function MessageGroup({
   newestAppCallIds,
 }: AssistantMessageGroupProps) {
   const { onForkAtMessage, forkingMessageId, showThinking, readOnly, getConnectionDecision, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName, sessionId } = useMessageList()
+  const portableCopy = useDesktopFeature("assistantProseClipboard")
+  const renderedProse = React.useRef(new Map<HTMLElement, string>()).current
   const connectionCardParts = React.useMemo(() => connectionCardPartIds(items, getConnectionDecision), [items, getConnectionDecision])
   const newestAppCalls = React.useMemo(() => new Set(newestAppCallIds.split("\n")), [newestAppCallIds])
   const lastItem = items[items.length - 1]
@@ -1601,11 +1587,12 @@ function MessageGroup({
   const lastTextMessage = items.findLast(item => getLastTextPart(item.message))
   // Same actions, in the same order, as the buttons below the reply, and only
   // once those buttons show (a finished reply with text).
-  const replyText = getMessagesText(renderableItems.map((item) => item.message))
+  const copyRequest = messageCopyRequest(renderableItems.map(item => item.message), portableCopy, renderedProse)
+  const replyText = copyRequest.markdown
   const replyMenuActions: MenuAction[] = []
   if (lastTextMessage && !isStreaming) {
     if (replyText) replyMenuActions.push(
-      { type: "item", id: "copy", label: "Copy", icon: <Copy className="size-4" />, onSelect: () => navigator.clipboard.writeText(replyText) },
+      ...messageCopyActions(copyRequest, recordPortableCopy),
     )
     if (lastRealItem && onForkAtMessage) replyMenuActions.push(
       { type: "item", id: "branch", label: forkingMessageId === lastRealItem.message.id ? "Branching..." : "Branch in new chat", icon: <Split className="size-4 rotate-90" />, disabled: Boolean(forkingMessageId), onSelect: () => onForkAtMessage(lastRealItem.message.id) },
@@ -1782,12 +1769,15 @@ function MessageGroup({
       <PinnedRemoteThreadsContext.Provider value={pinnedRemoteIds}>
       <ConnectionCardPartsContext.Provider value={connectionCardParts}>
       <ComputerHistoryContext.Provider value={computerHistory}>
+      <RenderedReplyProseContext.Provider value={renderedProse}>
       <ActionContextMenu
         actions={replyMenuActions}
         contentClassName="w-56"
         // Override Trigger's select-none so replies stay selectable and copyable.
         className="!select-text"
-        render={<div className="flex flex-col gap-2 group/message-group !select-text" style={{ userSelect: "text" }} />}
+        render={<div className="flex flex-col gap-2 group/message-group !select-text" style={{ userSelect: "text" }} onCopy={portableCopy ? event => {
+          if (copyAssistantProseSelection(event.nativeEvent, event.currentTarget, true, true, [...renderedProse.keys()])) recordPortableCopy()
+        } : undefined} />}
       >
       {/* The scroll area keeps the same 8px rhythm the parts inside a single
           message use, so a step row is spaced identically whether or not a
@@ -1844,7 +1834,7 @@ function MessageGroup({
         <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 md:px-8">
           <div className={cn("flex items-center gap-2 transition-opacity duration-150 ease-out motion-reduce:transition-none group-hover/message-group:opacity-100 group-focus-within/message-group:opacity-100 pointer-coarse:opacity-100", forkingMessageId && forkingMessageId === lastRealItem?.message.id ? "opacity-100" : "opacity-0")}>
           <MessageActions data-testid="reply-actions" className="flex gap-0">
-            <CopyMessageButton messages={renderableItems.map((item) => item.message)} />
+            <MessageCopyButton request={copyRequest} onPortableCopy={recordPortableCopy} />
             {lastRealItem && onForkAtMessage ? (
               <>
                 <MessageAction tooltip={forkingMessageId === lastRealItem.message.id ? "Branching..." : "Branch in new chat"}>
@@ -1881,6 +1871,7 @@ function MessageGroup({
         </div>
       )}
       </ActionContextMenu>
+      </RenderedReplyProseContext.Provider>
       </ComputerHistoryContext.Provider>
       </ConnectionCardPartsContext.Provider>
       </PinnedRemoteThreadsContext.Provider>

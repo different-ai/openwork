@@ -282,12 +282,26 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
   }
 }
 
+/** Shared assembly for selected-copy and whole-message actions; not another converter. */
+export function joinAssistantProseClipboard(pieces: readonly AssistantProseClipboard[]): AssistantProseClipboard | null {
+  if (!pieces.length) return null;
+  const text = pieces.map(piece => piece.text).join("\n\n");
+  return text.length > 1_000_000 ? null : { html: pieces.map(piece => piece.html).join(SEPARATOR), text };
+}
+
 /** One message may interleave prose and activity. Only marked prose contributes. */
 export function serializeAssistantMessageRange(root: HTMLElement, range: Range): AssistantProseClipboard | null {
+  // Only React-owned direct children are provenance. Raw Markdown/tool HTML may forge attributes deeper down.
+  const groups = [...root.children].filter((node): node is HTMLElement => node instanceof HTMLElement && node.hasAttribute("data-assistant-reply-prose"));
+  return serializeAssistantProseGroupsRange(root, range, groups);
+}
+
+/** A reply may span physical/split messages; callers supply trusted React refs, not a selector. */
+export function serializeAssistantProseGroupsRange(root: HTMLElement, range: Range, prose: readonly HTMLElement[]): AssistantProseClipboard | null {
   try {
     if (range.collapsed || !root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
-    // Only React-owned direct children are provenance. Raw Markdown/tool HTML may forge attributes deeper down.
-    const groups = [...root.children].filter((node): node is HTMLElement => node instanceof HTMLElement && node.hasAttribute("data-assistant-reply-prose"));
+    const groups = [...prose].sort((a, b) => a === b ? 0 : a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
+    if (groups.some(group => !root.contains(group))) return null;
     const inProse = (node: Node) => node === root || groups.some(group => group.contains(node));
     // A selection starting/ending in tool UI is still native. Activity between prose endpoints is omitted.
     if (!inProse(range.startContainer) || !inProse(range.endContainer)) return null;
@@ -315,13 +329,15 @@ type ProseCopyEvent = {
 };
 
 /** No cancellation until both complete formats have been built and written. */
-export function copyAssistantProseSelection(event: ProseCopyEvent, root: HTMLElement, enabled: boolean, grouped = false): boolean {
+export function copyAssistantProseSelection(event: ProseCopyEvent, root: HTMLElement, enabled: boolean, grouped = false, proseGroups?: readonly HTMLElement[]): boolean {
   if (!enabled || event.defaultPrevented || !event.clipboardData) return false;
   try {
     if (event.target instanceof Element && event.target.closest(EDITABLE)) return false;
     const selection = root.ownerDocument.getSelection();
     if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) return false;
-    const data = (grouped ? serializeAssistantMessageRange : serializeAssistantProseRange)(root, selection.getRangeAt(0));
+    const range = selection.getRangeAt(0);
+    const data = proseGroups ? serializeAssistantProseGroupsRange(root, range, proseGroups)
+      : (grouped ? serializeAssistantMessageRange : serializeAssistantProseRange)(root, range);
     if (!data) return false;
     event.clipboardData.setData("text/html", data.html);
     event.clipboardData.setData("text/plain", data.text);
