@@ -282,13 +282,6 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
   }
 }
 
-/** Shared assembly for selected-copy and whole-message actions; not another converter. */
-export function joinAssistantProseClipboard(pieces: readonly AssistantProseClipboard[]): AssistantProseClipboard | null {
-  if (!pieces.length) return null;
-  const text = pieces.map(piece => piece.text).join("\n\n");
-  return text.length > 1_000_000 ? null : { html: pieces.map(piece => piece.html).join(SEPARATOR), text };
-}
-
 /** One message may interleave prose and activity. Only marked prose contributes. */
 export function serializeAssistantMessageRange(root: HTMLElement, range: Range): AssistantProseClipboard | null {
   // Only React-owned direct children are provenance. Raw Markdown/tool HTML may forge attributes deeper down.
