@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { feedRowRange } from "../src/react-app/domains/session/sidebar/virtual-feed-rows";
+import { feedListOffset, feedRowRange } from "../src/react-app/domains/session/sidebar/virtual-feed-rows";
 
 const viewport = { startIndex: 100, endIndex: 110, overscan: 6, count: 10_000 };
 
@@ -28,5 +28,13 @@ describe("Feed mounted range", () => {
 
   test("deduplicates retained rows that are already in the viewport", () => {
     expect(feedRowRange(viewport, 100, 101)).toEqual(feedRowRange(viewport, -1, -1));
+  });
+});
+
+describe("Feed list offset", () => {
+  test("is how far the list has scrolled past the sidebar top, read from live positions", () => {
+    expect(feedListOffset(100, 364)).toBe(-264);
+    // Content above the list shrank by 700px without a scroll: the offset follows the list.
+    expect(feedListOffset(100, -336)).toBe(436);
   });
 });
