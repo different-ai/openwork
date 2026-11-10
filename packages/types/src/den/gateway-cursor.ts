@@ -93,3 +93,26 @@ export function matchCursorModel<T extends { name: string; modelId: string }>(pa
   if (byName.length === 1 && byName[0]) return { kind: "found", model: byName[0] };
   return { kind: "ambiguous" };
 }
+
+/**
+ * Claude Code through the AI Gateway (feature `gatewayMemberApiKeys`) uses the same names, with no
+ * thinking level (Claude Code sends its own) and `[1m]` on models with a 1M token context window:
+ * Claude Code assumes 200k otherwise and compacts early.
+ */
+export const CLAUDE_CODE_BASE_URL_PATH = "/claude-code";
+export const CLAUDE_CODE_LONG_CONTEXT = 1_000_000;
+
+/** `https://gateway.example/api/v1` becomes `https://gateway.example/api/v1/claude-code` (ANTHROPIC_BASE_URL). */
+export function claudeCodeBaseUrl(gatewayApiBaseUrl: string): string {
+  return `${gatewayApiBaseUrl.replace(/\/+$/, "")}${CLAUDE_CODE_BASE_URL_PATH}`;
+}
+
+export function claudeCodeModelName(input: { name: string; modelId: string; contextWindow?: number | null }): string {
+  const base = cursorModelName({ name: input.name, modelId: input.modelId });
+  return (input.contextWindow ?? 0) >= CLAUDE_CODE_LONG_CONTEXT ? `${base}[1m]` : base;
+}
+
+/** Reads a name Claude Code sends, dropping its `[1m]`-style context marker. */
+export function parseClaudeCodeModelName(value: unknown): ParsedCursorModelName | null {
+  return typeof value === "string" ? parseCursorModelName(value.replace(/\[[^\]]*\]\s*$/, "")) : null;
+}

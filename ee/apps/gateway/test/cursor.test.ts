@@ -100,7 +100,7 @@ function app(rows: GatewayMemberAccessRow[], options: { enabled?: boolean } = {}
     loadProviderCredential: async () => credential,
     catalog: createProviderCatalog({ anthropic: { npm: "@ai-sdk/anthropic", env: [] } }),
     autoRouterReasoning: createMemoryReasoningStore(),
-    cursorEnabled: async () => options.enabled ?? true,
+    toolEndpointsEnabled: async () => options.enabled ?? true,
     now: () => now,
   })
   const chat = (model: string, extra: Record<string, unknown> = {}, path = "/api/v1/cursor/chat/completions") => api.request(path, {

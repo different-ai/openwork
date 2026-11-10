@@ -72,6 +72,7 @@ import { handleAutoRequest } from "./auto-router/handler.js"
 import { createJevClient, type AskJev } from "./auto-router/jev.js"
 import { createDbReasoningStore, type ReasoningStore } from "./auto-router/reasoning-store.js"
 import { cursorApiPaths, cursorModels, cursorModelsPath, cursorPathPrefix, handleCursorChat, listCursorModels, type CursorApi } from "./cursor.js"
+import { claudeCodeCountTokens, claudeCodeCountTokensPath, claudeCodeError, claudeCodeMessagesPath, claudeCodeModelsPath, claudeCodePathPrefix, handleClaudeCodeMessages, listClaudeCodeModels } from "./claude-code.js"
 
 export type { GatewayCredential, GatewayProvider } from "./provider-credentials.js"
 
@@ -105,8 +106,8 @@ export type GatewayDependencies = {
   autoRouterReasoning: ReasoningStore
   /** Whether a TypeSafe key is configured; without one Smart is off. */
   autoRouterRoutingConfigured: boolean
-  /** Whether the Cursor endpoint (feature `gatewayMemberApiKeys`) is on for an organization. */
-  cursorEnabled: (organizationId: string) => Promise<boolean>
+  /** Whether the Cursor and Claude Code endpoints (feature `gatewayMemberApiKeys`) are on for an organization. */
+  toolEndpointsEnabled: (organizationId: string) => Promise<boolean>
 }
 
 export type GatewayRouteDependencies =
@@ -819,7 +820,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }),
     autoRouterReasoning: input.autoRouterReasoning ?? createDbReasoningStore(),
     autoRouterRoutingConfigured: input.autoRouterRoutingConfigured ?? Boolean(env.autoRouter.typesafeApiKey),
-    cursorEnabled: input.cursorEnabled ?? (async (organizationId) => (await import("./keys.js")).cursorEndpointEnabled(organizationId)),
+    toolEndpointsEnabled: input.toolEndpointsEnabled ?? (async (organizationId) => (await import("./keys.js")).toolEndpointsEnabled(organizationId)),
   }
 
   // `target` is set by the provider-less routes, which pick the provider from the model alias.
@@ -1259,7 +1260,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
   api.get(cursorModelsPath, async (c) => {
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
-    if (!await dependencies.cursorEnabled(identity.organizationId)) return cursorOff()
+    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return cursorOff()
     c.header("cache-control", "no-store")
     return c.json(listCursorModels(cursorModels(await dependencies.loadMemberGatewayAccess(identity), dependencies.catalog)))
   })
@@ -1268,7 +1269,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
     const requestId = c.get("openworkRequestId")
     const finish = (response: Response) => { response.headers.set("x-openwork-request-id", requestId); return response }
-    if (!await dependencies.cursorEnabled(identity.organizationId)) return finish(cursorOff())
+    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return finish(cursorOff())
     let body: unknown
     try {
       body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await readBoundedBody(c.req.raw)))
@@ -1292,6 +1293,52 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
   }
   for (const [path, cursorApi] of Object.entries(cursorApiPaths)) api.post(path, (c) => cursorChat(c, cursorApi))
   api.all(`${cursorPathPrefix}/*`, (c) => gatewayError(404, "not_found", `Unsupported Cursor route: ${c.req.method} ${c.req.path}.`))
+  // Claude Code (feature `gatewayMemberApiKeys`): every model as Anthropic Messages, under names a person can set.
+  const claudeCodeOff = () => claudeCodeError(404, "not_found_error", "The Claude Code endpoint is not available for this organization.")
+  api.get(claudeCodeModelsPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
+    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return claudeCodeOff()
+    c.header("cache-control", "no-store")
+    return c.json(listClaudeCodeModels(cursorModels(await dependencies.loadMemberGatewayAccess(identity), dependencies.catalog)))
+  })
+  const claudeCodeBody = async (c: Context<GatewayEnv>): Promise<JsonObject | Response> => {
+    try {
+      const body: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await readBoundedBody(c.req.raw)))
+      return isJsonObject(body) ? body : claudeCodeError(400, "invalid_request_error", "The request body must be a JSON object.")
+    } catch (error) {
+      if (error instanceof RequestBodyLimitError) return claudeCodeError(413, "request_too_large", "The request is larger than the gateway accepts.")
+      return claudeCodeError(400, "invalid_request_error", "The request body must be JSON.")
+    }
+  }
+  api.post(claudeCodeCountTokensPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
+    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return claudeCodeOff()
+    const body = await claudeCodeBody(c)
+    return body instanceof Response ? body : c.json(claudeCodeCountTokens(body))
+  })
+  api.post(claudeCodeMessagesPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
+    const requestId = c.get("openworkRequestId")
+    const finish = (response: Response) => { response.headers.set("x-openwork-request-id", requestId); return response }
+    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return finish(claudeCodeOff())
+    const body = await claudeCodeBody(c)
+    if (body instanceof Response) return finish(body)
+    return finish(await handleClaudeCodeMessages({
+      request: c.req.raw,
+      body,
+      identity,
+      dependencies: {
+        loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
+        catalog: dependencies.catalog,
+        reasoningStore: dependencies.autoRouterReasoning,
+        forward: (target) => handleGatewayRequest(c, target),
+      },
+    }))
+  })
+  api.all(`${claudeCodePathPrefix}/*`, (c) => claudeCodeError(404, "not_found_error", `Unsupported Claude Code route: ${c.req.method} ${c.req.path}.`))
   // Provider-less invocation: the body's gwm_ alias names the provider. Models keys fall through.
   for (const [path, endpoint] of Object.entries(gatewayModelEndpoints)) {
     api.post(path, async (c, next) => {

@@ -1,13 +1,13 @@
 "use client";
 
 import { AUTO_ROUTER_THINKING_LABELS, autoRouterThinkingLevelSchema, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router";
-import { cursorBaseUrl, cursorModelName } from "@openwork/types/den/gateway-cursor";
+import { CLAUDE_CODE_LONG_CONTEXT, claudeCodeBaseUrl, claudeCodeModelName, cursorBaseUrl, cursorModelName } from "@openwork/types/den/gateway-cursor";
 import { Check, ChevronLeft, ChevronRight, Copy } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenSelect } from "../../_components/ui/select";
 import { markFeatureUsed } from "../../_lib/feature-usage";
-import { claudeCodeModels, codexModels, useGatewayToolModels, type GatewayToolModel } from "./cursor-setup-data";
+import { claudeModelId, codexModels, useGatewayToolModels, type GatewayToolModel } from "./cursor-setup-data";
 import { GATEWAY_API_KEYS_DOCS_URL } from "./gateway-api-keys-data";
 
 /**
@@ -23,11 +23,12 @@ type GatewayTool = { id: GatewayToolId; name: string; slug?: string; serviceUrl?
 export const GATEWAY_TOOLS: readonly GatewayTool[] = [
   { id: "cursor", name: "Cursor", slug: "cursor", serviceUrl: "https://cursor.com", line: "Every model, in Cursor's chat and agent" },
   { id: "codex", name: "OpenAI Codex", slug: "openai", serviceUrl: "https://openai.com", line: "OpenAI models, in the Codex CLI" },
-  { id: "claude-code", name: "Claude Code", slug: "claude", serviceUrl: "https://claude.com", line: "Claude models, in Claude Code" },
+  { id: "claude-code", name: "Claude Code", slug: "claude", serviceUrl: "https://claude.com", line: "Every model, in Claude Code" },
   { id: "other", name: "Another tool", line: "Any OpenAI or Anthropic compatible tool" },
 ];
 
 export const CURSOR_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/cursor";
+export const CLAUDE_CODE_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/claude-code";
 
 /** The large choice of tools under "Start using this key". */
 export function GatewayToolPicker({ onPick }: { onPick: (tool: GatewayToolId) => void }) {
@@ -274,39 +275,98 @@ export function CodexSteps({ apiKey, baseUrl }: { apiKey: string | null; baseUrl
   );
 }
 
-/** Claude Code: its Anthropic base URL, token and model environment variables. */
+function claudeCodeName(model: GatewayToolModel) {
+  return claudeCodeModelName({ name: model.name, modelId: model.modelId, contextWindow: model.contextWindow });
+}
+
+/** The best first choice for Claude Code's main model: a Claude Opus or Sonnet when there is one. */
+function preferredMain(models: readonly GatewayToolModel[]) {
+  return models.find((model) => /opus/i.test(model.name)) ?? models.find((model) => /sonnet/i.test(model.name)) ?? models.find((model) => claudeModelId(model)) ?? models[0] ?? null;
+}
+
+function preferredFast(models: readonly GatewayToolModel[]) {
+  return models.find((model) => /haiku/i.test(model.name)) ?? models.find((model) => /mini|flash|nano|small/i.test(model.name)) ?? null;
+}
+
+/**
+ * `.claude/settings.local.json` for a project: the Gateway's Claude Code endpoint and key, the main
+ * model for Claude Code's Opus and Sonnet slots (and subagents), and the fast model for its Haiku
+ * slot. Claude models are also mapped to Claude Code's own ids so it knows their limits and
+ * features; another model gets its context window spelled out.
+ */
+export function claudeCodeSettings(input: { apiKey: string | null; baseUrl: string; main: GatewayToolModel; fast: GatewayToolModel }) {
+  const main = claudeCodeName(input.main);
+  const fast = claudeCodeName(input.fast);
+  const env: Record<string, string> = {
+    ANTHROPIC_BASE_URL: claudeCodeBaseUrl(input.baseUrl),
+    ANTHROPIC_AUTH_TOKEN: input.apiKey ?? "<your API key>",
+    ANTHROPIC_API_KEY: "",
+    ANTHROPIC_DEFAULT_OPUS_MODEL: main,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: main,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: fast,
+    CLAUDE_CODE_SUBAGENT_MODEL: main,
+    CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+  };
+  const context = input.main.contextWindow;
+  if (!claudeModelId(input.main) && context && context !== 200_000 && context < CLAUDE_CODE_LONG_CONTEXT) env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(context);
+  const overrides: Record<string, string> = {};
+  for (const [model, name] of [[input.main, main], [input.fast, fast]] as const) {
+    const id = claudeModelId(model);
+    if (id) overrides[id] = name;
+  }
+  return JSON.stringify({ env, ...(Object.keys(overrides).length ? { modelOverrides: overrides } : {}) }, null, 2);
+}
+
+function ModelChoice({ label, models, value, onChange }: { label: string; models: readonly GatewayToolModel[]; value: GatewayToolModel; onChange: (modelId: string) => void }) {
+  return (
+    <label className="flex min-w-0 flex-1 flex-col gap-1">
+      <span className="text-[12px] text-gray-500">{label}</span>
+      <DenSelect value={value.modelId} aria-label={label} onChange={(event) => onChange(event.target.value)}>
+        {models.map((entry) => <option key={entry.modelId} value={entry.modelId}>{`${entry.name} · ${entry.providerName}`}</option>)}
+      </DenSelect>
+    </label>
+  );
+}
+
+/** Claude Code: a project settings file that points it at the Gateway's Claude Code endpoint. */
 export function ClaudeCodeSteps({ apiKey, baseUrl }: { apiKey: string | null; baseUrl: string }) {
   const models = useGatewayToolModels(true);
-  const usable = claudeCodeModels(models.data ?? []);
-  const anthropicBaseUrl = baseUrl.replace(/\/v1\/?$/, "");
+  const list = models.data ?? [];
+  const [mainId, setMainId] = useState<string | null>(null);
+  const [fastId, setFastId] = useState<string | null>(null);
+  const main = list.find((model) => model.modelId === mainId) ?? preferredMain(list);
+  const fast = list.find((model) => model.modelId === fastId) ?? preferredFast(list) ?? main;
   return (
     <div className="flex flex-col gap-4" data-testid="gateway-tool-claude-code">
       <ol className="flex flex-col gap-4">
         <SetupStep
           number={1}
           field={(
-            <ModelSnippet models={usable} loading={models.isLoading} error={models.error} empty="None of your models can be used in Claude Code yet: it needs Claude models.">
-              {(model) => model ? (
-                <CopyField
-                  multiline
-                  label="Copy the Claude Code settings"
-                  testId="gateway-tool-claude-code-env"
-                  value={[
-                    `export ANTHROPIC_BASE_URL="${anthropicBaseUrl}"`,
-                    `export ANTHROPIC_AUTH_TOKEN="${apiKey ?? "<your API key>"}"`,
-                    `export ANTHROPIC_MODEL="${model.alias}"`,
-                    `export ANTHROPIC_DEFAULT_HAIKU_MODEL="${model.alias}"`,
-                  ].join("\n")}
-                />
+            <div className="flex flex-col gap-2">
+              <ModelsState loading={models.isLoading} error={models.error} empty={models.data && list.length === 0 ? "Your organization hasn't given you any models yet." : null} />
+              {main && fast ? (
+                <>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <ModelChoice label="Main model" models={list} value={main} onChange={setMainId} />
+                    <ModelChoice label="Fast model" models={list} value={fast} onChange={setFastId} />
+                  </div>
+                  <CopyField multiline label="Copy the Claude Code settings" testId="gateway-tool-claude-code-settings" value={claudeCodeSettings({ apiKey, baseUrl, main, fast })} />
+                </>
               ) : null}
-            </ModelSnippet>
+            </div>
           )}
         >
-          Add these to your shell profile (for example <Strong>~/.zshrc</Strong>), then open a new terminal:
+          In your project folder, create <Strong>.claude/settings.local.json</Strong> with this. It holds your key, so keep it out of git.
         </SetupStep>
-        <SetupStep number={2}>Run <Strong>claude</Strong>. It uses the model you chose for every request.</SetupStep>
+        <SetupStep number={2} field={<CopyField value="claude" label="Copy the command" />}>
+          Start Claude Code in that folder. Using it on this computer for the first time? Start it once with <Strong>ANTHROPIC_AUTH_TOKEN=&quot;&lt;your key&gt;&quot; claude</Strong> so it skips the Anthropic sign-in.
+        </SetupStep>
+        <SetupStep number={3}>
+          Run <Strong>/status</Strong>: it should show the OpenWork base URL. If it shows a Claude account instead, run <Strong>/logout</Strong> and start Claude Code again. <Strong>/model</Strong> switches between your models.
+        </SetupStep>
       </ol>
-      <DocsLink href={GATEWAY_API_KEYS_DOCS_URL} />
+      <p className="text-[12px] leading-4 text-gray-500">Claude Code works best with Claude models. Other models work too, through the same settings.</p>
+      <DocsLink href={CLAUDE_CODE_DOCS_URL} />
     </div>
   );
 }

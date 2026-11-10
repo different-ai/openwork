@@ -137,6 +137,11 @@ before running the new runtime. Do not deploy it against the old table names.
   resolved against the member's grants (id ending, then slug), the request is
   translated to the model's own protocol and run through the same provider
   handler, and the response returns in the API it came in on. Off is 404.
+- Claude Code (same feature): `GET /api/v1/claude-code/v1/models`,
+  `POST /api/v1/claude-code/v1/messages` and `/v1/messages/count_tokens` accept
+  only `ow_gw_` keys and answer in Anthropic's shapes. Same names as Cursor, with
+  `[1m]` on 1M models; Messages providers get the request as it is, others are
+  translated through Chat Completions and back.
   See `docs/features/gateway-cursor-setup/README.md`.
 - Requests resolve configured provider model rows and active group/set grants.
   Explicit aliases constrain candidates before member > team > organization
