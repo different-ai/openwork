@@ -187,6 +187,7 @@ export type DenOrgAccessFlags = {
   canManageBilling: boolean;
   /** `billing_portal.use`: payment details, invoices, change or cancel the subscription. */
   canOpenBillingPortal: boolean;
+  canViewInvoices: boolean;
   /** `audit.view` */
   canViewAuditLogs: boolean;
   /** `audit.manage`: turn audit capture on or off. */
@@ -744,6 +745,7 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
     canViewBilling: can("billing.view"),
     canManageBilling: can("billing.manage"),
     canOpenBillingPortal: can("billing_portal.use"),
+    canViewInvoices: can("billing_invoices.view"),
     canViewAuditLogs: can("audit.view"),
     canManageAuditCapture: can("audit.manage"),
     canViewModelsSettings: can("inference.view"),

@@ -470,13 +470,15 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         200: jsonResponse("Invoices returned successfully.", billingInvoicesResponseSchema.meta({ ref: "OrgStripeInvoicesResponse" })),
         400: jsonResponse("The query was invalid.", z.object({ error: z.literal("invalid_request") }).passthrough()),
         401: jsonResponse("The caller must be signed in to see invoices.", unauthorizedSchema),
-        403: jsonResponse("The caller needs the Open the billing portal permission and a recent sign-in.", forbiddenSchema),
+        403: jsonResponse("The caller needs the View invoices permission and a recent sign-in.", forbiddenSchema),
         503: jsonResponse("This deployment does not sell anything through Stripe.", billingNotConfiguredSchema),
       },
     }),
-    // Invoices carry the billing address and payment details, so they need the
-    // same permission as the portal, where they were the only way to see them.
-    orgPermissionRoute("billing_portal.use"),
+    // Read-only invoices have their own permission (billing_invoices.view: on
+    // for admins, sensitive because invoices carry the billing address), so
+    // people can see them without the portal, which can change payment details
+    // and cancel the subscription.
+    orgPermissionRoute("billing_invoices.view"),
     async (c) => {
       const parsed = billingInvoicesQuerySchema.safeParse({
         limit: c.req.query("limit"),

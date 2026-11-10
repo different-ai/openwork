@@ -1,4 +1,4 @@
-import { PERMISSION_KEYS, isPermissionKey, permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions";
+import { BILLING_MANAGER_PERMISSION_KEYS, PERMISSION_KEYS, isPermissionKey, permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions";
 
 /**
  * Team roles: the one-role-per-team view of what already exists in Den.
@@ -60,23 +60,32 @@ export const EVERYONE_CAN: readonly string[] = [
   "Use the models and providers given to them",
 ];
 
-export type RoleStart = "member" | "admin" | "everything";
+export type RoleStart = "member" | "admin" | "billing" | "everything";
+
+/** What the Billing manager starting point is for, in one line. */
+export const BILLING_MANAGER_ROLE_SUMMARY = "See plan, usage and invoices, and manage payment details";
 
 export const ROLE_START_LABELS: Record<RoleStart, string> = {
   member: "Member",
   admin: "Admin",
+  billing: "Billing manager",
   everything: "Everything the owner can do",
 };
 
 export const ROLE_START_DESCRIPTIONS: Record<RoleStart, string> = {
   member: TEAM_ROLE_DESCRIPTIONS.member,
   admin: ADMIN_ROLE_SUMMARY,
+  billing: BILLING_MANAGER_ROLE_SUMMARY,
   everything: "Every permission you can give",
 };
 
 /** The permissions a new role starts with, limited to what the person creating it holds. */
 export function roleStartKeys(start: RoleStart, held: ReadonlySet<string>): PermissionKey[] {
-  const keys = start === "everything" ? [...PERMISSION_KEYS] : permissionDefaultKeys(start);
+  const keys = start === "everything"
+    ? [...PERMISSION_KEYS]
+    : start === "billing"
+      ? [...BILLING_MANAGER_PERMISSION_KEYS]
+      : permissionDefaultKeys(start);
   return keys.filter((key) => held.has(key));
 }
 

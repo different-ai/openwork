@@ -202,9 +202,10 @@ export function BillingDashboardScreen() {
   );
   const canManageBillingSettings = access.canManageBilling;
   const canOpenPortal = access.canOpenBillingPortal;
+  const canViewInvoices = access.canViewInvoices;
   const billingLockNotice = [
     canManageBillingSettings ? null : `Starting a subscription is locked. ${permissionLockReason("billing.manage")}`,
-    canOpenPortal ? null : `Payment details, invoices and cancelling are locked. ${permissionLockReason("billing_portal.use")}`,
+    canOpenPortal ? null : `Payment details and cancelling are locked. ${permissionLockReason("billing_portal.use")}`,
   ].filter((line): line is string => line !== null).join(" ");
 
   async function refreshStripeBilling(quiet = false) {
@@ -636,7 +637,7 @@ export function BillingDashboardScreen() {
           <div className="flex items-center gap-3 border-t border-gray-200 px-4 py-3" data-testid="billing-invoices-row">
             <div className="w-9 shrink-0" />
             <p className="min-w-0 flex-1 text-[14px] font-medium text-gray-950">Invoices</p>
-            {canOpenPortal ? (
+            {canViewInvoices ? (
               <DenButton variant="secondary" size="sm" onClick={() => router.push(getBillingInvoicesRoute(activeOrg?.slug))}>
                 View invoices
               </DenButton>
@@ -644,7 +645,7 @@ export function BillingDashboardScreen() {
               // Locked, with why and who can change it (P4, C5).
               <span className="inline-flex items-center gap-1.5 text-[13px] text-gray-500">
                 <LockKeyhole className="size-3.5" strokeWidth={1.5} aria-hidden="true" />
-                {permissionLockReason("billing_portal.use")}
+                {permissionLockReason("billing_invoices.view")}
               </span>
             )}
           </div>
