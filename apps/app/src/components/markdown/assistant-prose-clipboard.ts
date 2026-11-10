@@ -1,7 +1,7 @@
 /** Portable selection copy for supported assistant prose, never arbitrary UI. */
 export type AssistantProseClipboard = { html: string; text: string };
 
-type Tag = "p" | "ul" | "ol" | "li" | "strong" | "em" | "s" | "blockquote" | "hr" | "a" | "code" | "pre" | "br"
+type Tag = "p" | "ul" | "ol" | "li" | "strong" | "em" | "s" | "hr" | "a" | "code" | "pre" | "br"
   | "table" | "thead" | "tbody" | "tfoot" | "tr" | "th" | "td";
 type Content = { kind: "text"; value: string } | {
   kind: "element";
@@ -12,10 +12,10 @@ type Content = { kind: "text"; value: string } | {
 };
 
 const TAGS = new Set<string>([
-  "p", "ul", "ol", "li", "strong", "em", "s", "blockquote", "hr", "a", "code", "pre", "br",
+  "p", "ul", "ol", "li", "strong", "em", "s", "hr", "a", "code", "pre", "br",
   "table", "thead", "tbody", "tfoot", "tr", "th", "td",
 ]);
-const BLOCKS = new Set<Tag>(["p", "ul", "ol", "li", "pre", "table", "blockquote", "hr"]);
+const BLOCKS = new Set<Tag>(["p", "ul", "ol", "li", "pre", "table", "hr"]);
 const INLINE = new Set<Tag>(["strong", "em", "s", "a", "code", "br"]);
 const isInline = (node: Content) => node.kind === "text" || INLINE.has(node.tag);
 const meaningful = (node: Content) => node.kind !== "text" || Boolean(node.value.trim());
@@ -29,7 +29,7 @@ function validateChildren(tag: Tag, children: Content[]) {
   } else if (tag === "table" || tag === "thead" || tag === "tbody" || tag === "tfoot" || tag === "tr") {
     const allowed = tag === "table" ? ["thead", "tbody", "tfoot", "tr"] : tag === "tr" ? ["th", "td"] : ["tr"];
     if (!content.every(node => node.kind === "element" && allowed.includes(node.tag))) return fail();
-  } else if (tag !== "pre" && !content.every(node => isInline(node) || (node.kind === "element" && ["p", "ul", "ol", "pre", "table", "blockquote", "hr"].includes(node.tag)))) {
+  } else if (tag !== "pre" && !content.every(node => isInline(node) || (node.kind === "element" && ["p", "ul", "ol", "pre", "table", "hr"].includes(node.tag)))) {
     return fail();
   }
 }
@@ -70,7 +70,6 @@ function htmlFor(node: Content): string {
   if (node.kind === "text") return escape(node.value);
   if (node.tag === "br") return "<br>";
   if (node.tag === "hr") return SEPARATOR;
-  if (node.tag === "blockquote") return `<blockquote style="margin:0">${node.children.filter(meaningful).filter(child => child.kind !== "element" || child.tag !== "hr").map(htmlFor).join(SEPARATOR)}</blockquote>`;
   const margin = BLOCKS.has(node.tag) ? ' style="margin:0"' : "";
   const href = node.href ? ` href="${escape(node.href)}"` : "";
   const start = node.tag === "ol" && node.start !== undefined && node.start !== 1 ? ` start="${node.start}"` : "";
@@ -80,7 +79,6 @@ function textFor(node: Content, depth = 0): string {
   if (node.kind === "text") return node.value;
   if (node.tag === "br") return "\n";
   if (node.tag === "hr") return "";
-  if (node.tag === "blockquote") return node.children.filter(meaningful).filter(child => child.kind !== "element" || child.tag !== "hr").map(child => textFor(child, depth)).join("\n\n").split("\n").map(line => `> ${line}`).join("\n");
   if (node.tag === "pre" || node.tag === "code") return codeText(node.children);
   if (node.tag === "ul" || node.tag === "ol") {
     let index = node.start ?? 1;
@@ -157,7 +155,8 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
       }
       const sourceTag = node.tagName.toLowerCase();
       const heading = /^h[1-6]$/.test(sourceTag);
-      const tag = heading ? "p" : sourceTag === "del" ? "s" : sourceTag === "mark" && node.getAttribute("data-search-highlight") === "true" ? "span" : sourceTag;
+      // Live Slack import dropped rich formatting for the quote variant; keep its blocks as paragraphs.
+      const tag = heading ? "p" : sourceTag === "blockquote" ? "div" : sourceTag === "del" ? "s" : sourceTag === "mark" && node.getAttribute("data-search-highlight") === "true" ? "span" : sourceTag;
       if (node.matches("button[data-openwork-quote-copy]") && node.parentElement?.matches("blockquote[data-openwork-quote]")) return [];
       // Only the renderer's paired file-chip affordance and its icon are decorations.
       if (node.matches("button[data-openwork-link-chevron]")) {
@@ -176,10 +175,6 @@ export function serializeAssistantProseRange(root: HTMLElement, range: Range): A
       const parts = [...node.childNodes].map(source => ({ source, content: walk(source, literal || tag === "pre" || tag === "code") }));
       let children = parts.flatMap(part => part.content);
       if (heading) children = [element("strong", children)];
-      if (tag === "blockquote") {
-        if (children.every(isInline)) children = [element("p", children)];
-        else if (!children.filter(meaningful).every(child => child.kind === "element" && BLOCKS.has(child.tag))) return fail();
-      }
       if (tag === "div") {
         const content = children.filter(meaningful);
         if (!content.length) return [];

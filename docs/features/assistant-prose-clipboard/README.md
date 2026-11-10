@@ -12,17 +12,17 @@ The existing feature resolver reads organization/member or signed-out deployment
 
 ## Portable content
 
-The serializer rebuilds paragraphs, lists, emphasis, strike, safe links, literal code/pre, blockquotes and simple tables. App classes, fonts, colors, private attributes and decorative favicons/GitHub glyphs are omitted; search highlights retain their words without highlight markup.
+The serializer rebuilds paragraphs, lists, emphasis, strike, safe links, literal code/pre and simple tables. App classes, fonts, colors, private attributes and decorative favicons/GitHub glyphs are omitted; search highlights retain their words without highlight markup.
 
 - `h1`–`h6` become bold paragraphs; Slack has no heading format.
 - `hr` becomes a structural boundary, coalesced with the normal boundary between blocks.
-- `del` becomes `s`; blockquotes retain semantic `blockquote` markup.
+- `del` becomes `s`. Blockquotes become plain paragraphs, preserving their inline formatting and block boundaries: the semantic quote variant lost rich formatting in the live Slack check, while the paragraph control retained it.
 - Local file chips retain their selected label without the icon or Open with control. Inline code paths remain `code`.
 - HTTP/HTTPS/mailto/tel destinations remain links. Missing, invalid, local or other-scheme destinations degrade only that link to its selected label; surrounding content still copies.
 
 Blocks use only `style="margin:0"`. Exactly one `<p style="margin:0"><br></p>` separates top-level blocks. No separators are inserted inside lists or table rows. This avoids relying on margins/layout guesses in Quill-like importers; it is not a universal cross-application guarantee.
 
-Plain text has blank lines between blocks, list markers/source numbering, literal code whitespace, tab-separated table cells, quoted lines and `label (url)` links. Bare-URL labels are not repeated. This is readable text, not a Markdown-source export.
+Plain text has blank lines between blocks, list markers/source numbering, literal code whitespace, tab-separated table cells, quote text as paragraphs and `label (url)` links. Bare-URL labels are not repeated. This is readable text, not a Markdown-source export.
 
 ## Native fallback
 
@@ -39,9 +39,9 @@ Turning the feature off removes interception on the next state refresh. Stored c
 ## Verification
 
 - `bun test apps/app/tests/assistant-prose-clipboard.test.tsx`: unit/DOM/React coverage includes actual Markdown rendering plus GitHub/search decoration, conversions, grouped selection boundaries, forged markers, image-only groups and native fallback. Synthetic React events alone are not keyboard proof.
-- Separate isolated headless-shell proof uses trusted Meta+C through the actual grouped React component on the captured reply and heading/file/quote variant. Generated payloads and local Quill imports check gaps, italics, links, code and blockquotes. The private browser uses verified mock-keychain/basic-password-store flags and private HOME/XDG/profile; no normal account browser is used.
+- Separate isolated headless-shell proof uses trusted Meta+C through the actual grouped React component on the captured reply and heading/file/quote variant. Generated payloads and local Quill imports check gaps, italics, links, code and flattened quote content. The private browser uses verified mock-keychain/basic-password-store flags and private HOME/XDG/profile; no normal account browser is used.
 - Run app typecheck, feature tests and `features:check` on the rebased head. Results, live paste receipts and unrelated CI findings are recorded with the review evidence, not interpreted as compatibility guarantees.
 
-Live self-DM validation (2026-11-09) is **not green**: the [captured reply](https://differentai.slack.com/archives/D0BSDT6QZLJ/p1794281028266079) retained italic/link formatting but its readback has no explicit blank line before Expected. The [heading/file/quote variant](https://differentai.slack.com/archives/D0BSDT6QZLJ/p1794281053425259) retained paragraph gaps and file labels, but read back as plain text without rich emphasis/linked labels. This conflicts with the passing local Quill import; the cause is not established. Native screenshot verification was unavailable, so do not infer pixel-layout acceptance from API text.
+Live self-DM validation (2026-11-09): the [captured reply](https://differentai.slack.com/archives/D0BSDT6QZLJ/p1794281028266079) retained italic/link formatting; Guillaume visually confirmed its gap before Expected. The first [heading/file/semantic-quote variant](https://differentai.slack.com/archives/D0BSDT6QZLJ/p1794281053425259) imported as plain text, confirmed by Guillaume. After flattening quotes, [the follow-up](https://differentai.slack.com/archives/D0BSDT6QZLJ/p1794281336615669) retains bold headings, italic/link labels, file text, inline code and formatted quote content in Slack readback. Guillaume visually confirmed its Expected gap, other paragraph gaps and formatting are correct. The passing local Quill simulation did not predict the initial quote import failure. Native screenshot verification was unavailable; formatted API text alone is not pixel-layout evidence.
 
 Gmail, Google Docs and Notion are untested. No merge, release or rollout is authorized by this document. Do not log real clipboard contents or introduce a global copy listener for diagnostics.

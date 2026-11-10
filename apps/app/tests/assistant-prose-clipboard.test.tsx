@@ -146,7 +146,8 @@ describe("review coverage conversions", () => {
     const data = serializeAssistantProseRange(root, all(root));
     expect(data).not.toBeNull(); expect(data?.html).not.toMatch(/svg|button|data-|class=|<mark/);
     expect(data?.html).toContain('<a href="https://github.com/different-ai/openwork/pull/7203">PR</a>');
-    expect(data?.html).toContain('<blockquote style="margin:0">');
+    expect(data?.html).not.toContain('<blockquote');
+    expect(data?.html).toContain('Quoted <em>text</em>.');
     expect(data?.text).toContain('Expected: gap');
   });
   test.each([1, 2, 3, 4, 5, 6])("h%s becomes a bold paragraph without disabling surrounding copy", level => {
@@ -159,11 +160,12 @@ describe("review coverage conversions", () => {
     expect(data.html).toBe('<p style="margin:0">First</p>' + separator + '<p style="margin:0">After</p>');
     expect(data.text).toBe('First\n\nAfter');
   });
-  test("strike and blockquotes remain semantic", () => {
+  test("strike stays semantic and quotes become portable paragraphs with inline formatting", () => {
     const data = result('<p><del>Old</del> new</p><blockquote><p>Quoted <em>word</em></p><p>Next</p></blockquote>');
     expect(data.html).toContain('<s>Old</s>');
-    expect(data.html).toContain('<blockquote style="margin:0"><p style="margin:0">Quoted <em>word</em></p>' + separator + '<p style="margin:0">Next</p></blockquote>');
-    expect(data.text).toBe('Old new\n\n> Quoted word\n> \n> Next');
+    expect(data.html).toContain('<p style="margin:0">Quoted <em>word</em></p>' + separator + '<p style="margin:0">Next</p>');
+    expect(data.html).not.toContain('<blockquote');
+    expect(data.text).toBe('Old new\n\nQuoted word\n\nNext');
   });
   test.each(['javascript:alert(1)', 'ftp://example.com/file', 'file:///tmp/report.pdf', '/tmp/report.pdf', '#section', 'https://bad host', ''])('nonportable href degrades only that label: %s', href => {
     const data = result(`<p>Before <a href="${href}"><em>Label</em></a> and <a href="https://example.com">Web</a></p><p>After</p>`);
