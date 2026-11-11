@@ -156,7 +156,7 @@ export function AutomationsScreen() {
           ))}
           {shared.length > 0 ? (
             <section className="mt-6" data-automations-shared>
-              <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-gray-400">Shared with my teams</h2>
+              <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-gray-500">Shared with my teams</h2>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 {shared.map((item) => (
                   <AutomationCard key={item.automation.id} item={item} shared onOpen={() => setQuery(item.automation.id)} />
