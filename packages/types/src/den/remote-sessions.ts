@@ -5,7 +5,7 @@ import {
   remoteSessionPendingSummarySchema,
   remoteSessionWaitingForSchema,
   type RemoteSessionAccessMode,
-} from "../automations"
+} from "@openwork/types/automations"
 
 /**
  * Sessions across a member's computers (feature `remoteSessionAccess`).

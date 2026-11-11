@@ -68,6 +68,10 @@ test("a source-served export with an import Node can't resolve fails the build; 
   }
 })
 
+test("the remote-session contract loads in production Node without development resolution or a TypeScript loader", () => {
+  assert.deepEqual(unloadableSourceExports(["@openwork/types/den/remote-sessions"]), [])
+})
+
 test("the checked modules see none of the build's environment, so they can't read its secrets", () => {
   assert.deepEqual(sourceExportCheckEnv({ PATH: "/usr/bin", SENTRY_AUTH_TOKEN: "secret", NODE_OPTIONS: "--require x", HOME: "/root" }), process.platform === "win32" ? {} : { PATH: "/usr/bin" })
   const { root, dist } = fixture()
