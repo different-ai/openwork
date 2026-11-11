@@ -128,6 +128,7 @@ import { ComposerSubagentTracker, currentTurnSubagentParts, useComposerRemoteTas
 import { ComposerBackgroundTasks } from "@/react-app/domains/session/surface/composer/composer-background-tasks";
 import { sessionBackgroundShells, settleBackgroundShell, useBackgroundShellStore } from "@/react-app/domains/session/status/background-shell-store";
 import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
+import { useFollowUpSuggestion } from "./composer/use-follow-up-suggestion";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
 import { deriveOpenTargets, deriveSessionFileEvidence, sameOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
@@ -2277,6 +2278,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[props.workspaceId]?.running);
   const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
   const composerBackgroundTasksEnabled = useDesktopFeature("composerBackgroundTasks");
+  const followUpSuggestionsEnabled = useDesktopFeature("followUpSuggestions");
+  const followUpSuggestion = useFollowUpSuggestion({
+    enabled: followUpSuggestionsEnabled && !archived && !snapshot?.session.parentID,
+    client: opencodeClient,
+    sessionId: props.sessionId,
+    messages: renderedMessages,
+    settled: !composerBusy && !error && !props.activePermission && !props.activeQuestion && queuedItems.length === 0,
+    model: sessionModel.selectedModel,
+  });
   const backgroundTasksShown = composerBackgroundTasksEnabled && backgroundShells.length > 0 && !archived;
 
   useEffect(() => {
@@ -4122,6 +4132,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         searchFiles={props.searchFiles}
         onInsertMention={handleInsertMention}
         inputHistory={inputHistory}
+        followUpSuggestion={followUpSuggestion}
         onPasteText={handlePasteText}
         onUnsupportedFileLinks={handleUnsupportedFileLinks}
         pastedText={pasteParts}

@@ -291,6 +291,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  followUpSuggestions: {
+    label: "Desktop: suggested follow-ups",
+    description: "After a reply finishes, the empty message box can show a suggested next message in gray. Tab fills it in; typing anything else ignores it. A small model writes the suggestion, and nothing shows when it has no clear next step to offer.",
+    category: "experience",
+    added: "2026-11-11",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/follow-up-suggestions/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   steadyLiveTurn: {
     label: "Desktop: steady chat while a reply runs",
     description: "While a reply runs, its steps and messages stay in the order they arrive and the chat keeps its place: nothing jumps and no empty gap opens between steps. The steps fold into “Worked for…” once the reply finishes. Turning this off restores the previous live layout.",

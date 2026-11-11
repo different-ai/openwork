@@ -2303,6 +2303,32 @@ function unsupportedResult<T>(baseUrl: string, operation: string, message?: stri
   };
 }
 
+/** Model families the engine writes chat titles with, in its order (OpenCode `Model.small`). */
+const SMALL_MODEL_FAMILIES = ["gpt-luna", "gemini-flash-lite", "gemini-flash", "claude-haiku"];
+const LOW_EFFORT_VARIANTS = ["none", "minimal", "low"];
+
+/**
+ * The model the engine would title a chat on `chat` with, from native
+ * `/api/model` rows: the provider's small model, else the chat's own model.
+ * Either one runs at its lowest effort when it has one.
+ */
+export function smallModelRef(
+  models: readonly unknown[],
+  chat: { providerID: string; modelID: string },
+): { providerID: string; id: string; variant?: string } {
+  const provider = models.filter((model): model is Record<string, unknown> =>
+    isRecord(model) && readString(model, "providerID") === chat.providerID);
+  const text = (model: Record<string, unknown>, direction: "input" | "output") =>
+    stringArray(readRecord(model, "capabilities")?.[direction]).some((kind) => kind.startsWith("text"));
+  const usable = provider.filter((model) =>
+    readString(model, "status") === "active" && text(model, "input") && text(model, "output"));
+  const picked = SMALL_MODEL_FAMILIES.map((family) => usable.find((model) => readString(model, "family") === family)).find(Boolean)
+    ?? provider.find((model) => readString(model, "id") === chat.modelID);
+  const variants = (Array.isArray(picked?.variants) ? picked.variants : []).flatMap((variant) => readString(variant, "id") ?? []);
+  const variant = LOW_EFFORT_VARIANTS.find((candidate) => variants.includes(candidate));
+  return { providerID: chat.providerID, id: readString(picked, "id") ?? chat.modelID, ...(variant ? { variant } : {}) };
+}
+
 export function isOpencodeV2BaseUrl(baseUrl: string): boolean {
   try {
     return new URL(baseUrl).pathname.replace(/\/+$/, "").endsWith("/opencode2");
@@ -3079,6 +3105,27 @@ export function createClientV2(
     });
   };
 
+  /**
+   * One stateless generation outside any chat, on the small model the engine
+   * would title a chat on `model` with (see smallModelRef). Nothing is added
+   * to a chat's history.
+   */
+  const generateWithSmallModel = async (
+    parameters: { prompt: string; model: { providerID: string; modelID: string } },
+    options?: RequestOptions,
+  ): Promise<FieldsResult<{ text: string }>> => {
+    const models = await request("GET", "/api/model", undefined, options?.signal);
+    if (!models.response.ok) return failedResult(models);
+    const result = await request(
+      "POST",
+      "/api/experimental/generate",
+      { prompt: parameters.prompt, model: smallModelRef(responseItems(models.payload), parameters.model) },
+      options?.signal,
+    );
+    const text = result.response.ok ? readString(responseData(result.payload), "text") : undefined;
+    return text === undefined ? failedResult(result) : successfulResult(result, { text });
+  };
+
   const adapter = {
     global: {
       health: async (options?: RequestOptions): Promise<FieldsResult<{ healthy: boolean; version: string }>> => {
@@ -3234,6 +3281,7 @@ export function createClientV2(
   const client = Object.assign(compatibilityClient, {
     listRunningShells,
     removeBackgroundShell,
+    generateWithSmallModel,
     listSessionsPage: session.list, listMessagesPage: session.messages,
     listSessionQuestions: (parameters: SessionParameters, options?: RequestOptions) => listQuestions(parameters, options),
     replySessionQuestion: (parameters: SessionParameters & { requestID: string; answers: string[][] }, options?: RequestOptions) =>
