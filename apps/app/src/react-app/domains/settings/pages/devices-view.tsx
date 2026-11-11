@@ -15,7 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ChevronRight, MoreHorizontal } from "lucide-react";
+import { ChevronRight, Cloud, Laptop, MoreHorizontal } from "lucide-react";
 import { useAutomationsDenContext, type AutomationsDenContext } from "../../automations/use-automations";
 import { useDesktopFeature } from "../../session/status/use-desktop-feature";
 import { useThisDeviceId } from "../../devices/this-device-store";
@@ -64,8 +64,9 @@ function DeviceRow({ device, context, thisDevice, onAction }: { device: RemoteDe
   const detail = useRemoteDeviceDetailQuery(context, device.id, open);
   return <div className="border-b border-border py-3" data-testid="device-row">
     <div className="flex items-center gap-3">
+      {device.kind === "desktop" ? <Laptop aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.5} /> : <Cloud aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.5} />}
       <div className="min-w-0 flex-1"><div className="truncate text-sm font-medium">{device.label}{thisDevice ? <span className="ml-2 font-normal text-muted-foreground">This computer</span> : null}</div><div className="text-xs text-muted-foreground">{remoteDeviceTypeLabel(device)}{device.access === "shared" ? " — Shared with your organization" : ""}</div></div>
-      <span role="status" className="shrink-0 text-sm text-muted-foreground">{REMOTE_DEVICE_AVAILABILITY_LABELS[device.availability]}</span>
+      <span role="status" className={`flex shrink-0 items-center gap-1.5 text-sm ${device.availability === "online" ? "text-green-11" : device.availability === "needs_setup" ? "text-amber-11" : "text-muted-foreground"}`}><span aria-hidden className="size-1.5 rounded-full bg-current" />{REMOTE_DEVICE_AVAILABILITY_LABELS[device.availability]}</span>
       <div className="w-8 shrink-0">{device.canRename || device.canRemove ? <DropdownMenu><DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" aria-label={`Manage ${device.label}`} />}><MoreHorizontal className="size-4" /></DropdownMenuTrigger><DropdownMenuContent align="end">{device.canRename ? <DropdownMenuItem onClick={() => onAction({ kind: "rename", device })}>Rename</DropdownMenuItem> : null}{device.canRemove ? <DropdownMenuItem onClick={() => onAction({ kind: "remove", device })}>Remove</DropdownMenuItem> : null}</DropdownMenuContent></DropdownMenu> : null}</div>
     </div>
     {device.statusDetail ? <p className="mt-1 text-sm text-muted-foreground">{device.statusDetail}</p> : null}
