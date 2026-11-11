@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AGENT_CHECK_REQUEST_WHY_MAX, type AgentHourWindow } from "@openwork/types/den/workbot-proactive"
+import { AGENT_CHECK_GATE_SKIP_AT_DEFAULT, AGENT_CHECK_REQUEST_WHY_MAX, AGENT_SEND_CHECK_HOLD_AT_DEFAULT, type AgentHourWindow } from "@openwork/types/den/workbot-proactive"
 import {
   AGENT_QUIET_REPLY,
   agentLedgerKey,
@@ -653,8 +653,8 @@ export const AGENT_BRIEF_MESSAGE_LIMIT = 1_000
  */
 export const AGENT_CHECK_GATE_MAX_SKIPS = 2
 export const AGENT_CHECK_GATE_MAX_ITEMS = 15
-/** The check is skipped only when the model puts "could any of this matter?" at or below this. */
-export const AGENT_CHECK_GATE_SKIP_AT = 0.2
+/** The check is skipped only when the model puts "could any of this matter?" at or below this, unless the policy sets its own. */
+export const AGENT_CHECK_GATE_SKIP_AT = AGENT_CHECK_GATE_SKIP_AT_DEFAULT
 const GATE_BRIEF_MAX = 6_000
 
 export type AgentEmailCategory = "promotions" | "social" | "updates" | "forums"
@@ -735,22 +735,25 @@ export function planCheckGate(input: { occasion: AgentCheckOccasion["kind"]; ski
 
 export type AgentCheckGateVerdict = { kind: "run"; why: "may_matter" | "no_answer" } | { kind: "skip"; why: "routine" }
 
-/** Den's rule over the model's answer: skip only when it is confident nothing could matter; anything unreadable runs. */
-export function decideCheckGate(answers: unknown): AgentCheckGateVerdict {
+/**
+ * Den's rule over the model's answer: skip only when it is confident nothing could matter (`skipAt`, the policy's own
+ * threshold or the default); anything unreadable runs.
+ */
+export function decideCheckGate(answers: unknown, skipAt: number = AGENT_CHECK_GATE_SKIP_AT): AgentCheckGateVerdict {
   const answer = typeof answers === "object" && answers !== null && "needed" in answers ? answers.needed : null
   if (typeof answer !== "object" || answer === null || !("type" in answer) || answer.type !== "boolean" || !("probability" in answer)) return { kind: "run", why: "no_answer" }
   const { probability } = answer
   if (typeof probability !== "number" || !(probability >= 0 && probability <= 1)) return { kind: "run", why: "no_answer" }
-  return probability <= AGENT_CHECK_GATE_SKIP_AT ? { kind: "skip", why: "routine" } : { kind: "run", why: "may_matter" }
+  return probability <= skipAt ? { kind: "skip", why: "routine" } : { kind: "run", why: "may_matter" }
 }
 
 // ---- The send check (`workbotAgentSendCheck`) ------------------------------------------------------------------------
 
 /**
- * How sure the check model must be before Den holds a message. High on purpose: holding a message the member needed
- * costs more than sending one they didn't.
+ * How sure the check model must be before Den holds a message, unless the policy sets its own. High on purpose:
+ * holding a message the member needed costs more than sending one they didn't.
  */
-export const AGENT_SEND_CHECK_HOLD_AT = 0.8
+export const AGENT_SEND_CHECK_HOLD_AT = AGENT_SEND_CHECK_HOLD_AT_DEFAULT
 const SEND_CHECK_BRIEF_MAX = 6_000
 const SEND_CHECK_TOLD_MAX = 12
 const SEND_CHECK_TOLD_TEXT_MAX = 600
@@ -820,10 +823,10 @@ function sendCheckProbability(answers: unknown, id: "skip" | "repeat"): number |
  * it out, or that it only repeats what was told today. An update about something already told is never a repeat.
  * Anything unreadable sends the message, as without the check.
  */
-export function decideSendCheck(answers: unknown, message: { update: boolean }): AgentSendCheckVerdict {
+export function decideSendCheck(answers: unknown, message: { update: boolean }, holdAt: number = AGENT_SEND_CHECK_HOLD_AT): AgentSendCheckVerdict {
   const skip = sendCheckProbability(answers, "skip")
-  if (skip !== null && skip >= AGENT_SEND_CHECK_HOLD_AT) return { kind: "hold", reason: "brief" }
+  if (skip !== null && skip >= holdAt) return { kind: "hold", reason: "brief" }
   const repeat = sendCheckProbability(answers, "repeat")
-  if (!message.update && repeat !== null && repeat >= AGENT_SEND_CHECK_HOLD_AT) return { kind: "hold", reason: "repeat" }
+  if (!message.update && repeat !== null && repeat >= holdAt) return { kind: "hold", reason: "repeat" }
   return { kind: "send" }
 }

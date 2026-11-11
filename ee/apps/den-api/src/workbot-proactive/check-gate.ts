@@ -26,7 +26,8 @@ const HOUR_MS = 3_600_000
 const CALENDAR_AHEAD_MS = 48 * HOUR_MS
 
 export type AgentCheckGateAnswer = { verdict: AgentCheckGateVerdict; durationMs: number; inputTokens: number | null }
-export type AgentCheckGateModel = (request: AgentCheckGateRequest) => Promise<AgentCheckGateAnswer>
+/** `skipAt`: the policy's own threshold; left out, the default. */
+export type AgentCheckGateModel = (request: AgentCheckGateRequest, skipAt?: number) => Promise<AgentCheckGateAnswer>
 
 export type AgentCheckGate = {
   /** What reached the member's Gmail since `since`, through exactly this connection. */
@@ -79,8 +80,8 @@ export async function peekArrivals(input: {
 
 /** The gate's question to the evaluation model; no usable answer runs the check, exactly as without the gate. */
 export function createCheckGateModel(model: EvaluationModel): AgentCheckGateModel {
-  return async (request) => {
+  return async (request, skipAt) => {
     const answer = await model(request)
-    return { verdict: decideCheckGate(answer.answers), durationMs: answer.durationMs, inputTokens: answer.inputTokens }
+    return { verdict: decideCheckGate(answer.answers, skipAt), durationMs: answer.durationMs, inputTokens: answer.inputTokens }
   }
 }

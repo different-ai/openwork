@@ -103,7 +103,7 @@ type Harness = {
   /** Connections whose tools the wake listed. */
   listed: string[]
   /** The check gate: each look at the member's mail, and each question put to the evaluation model. */
-  gate: { looks: { connectionId: string; since: number }[]; asked: AgentCheckGateRequest[] }
+  gate: { looks: { connectionId: string; since: number }[]; asked: AgentCheckGateRequest[]; skipAt: (number | undefined)[] }
   /** What the send check was asked, one entry per message. */
   sendChecks: AgentSendCheckInput[]
 }
@@ -132,7 +132,7 @@ function harness(input: {
   /** The send check's verdict per message; null: the feature is off for the member or the deployment has no key. */
   sendCheck?: ((call: AgentSendCheckInput) => AgentSendCheckVerdict) | null
 }) {
-  const h: Harness = { clock: MORNING, row: agentRow(input.row), checks: [], messageTurns: [], ended: [], delivered: [], ledger: new Map(), records: [], counters: [], settles: [], requests: [], briefOn: input.briefOn ?? [], gate: { looks: [], asked: [] }, sendChecks: [], listed: [] }
+  const h: Harness = { clock: MORNING, row: agentRow(input.row), checks: [], messageTurns: [], ended: [], delivered: [], ledger: new Map(), records: [], counters: [], settles: [], requests: [], briefOn: input.briefOn ?? [], gate: { looks: [], asked: [], skipAt: [] }, sendChecks: [], listed: [] }
   const checks = [...(input.checks ?? ["NO_FINDINGS"])]
   const replies = [...(input.replies ?? ["NO_REPLY"])]
   let briefCalls = 0
@@ -221,8 +221,9 @@ function harness(input: {
             h.gate.looks.push({ connectionId: look.connectionId, since: look.since })
             return typeof gate.mail === "function" ? gate.mail() : gate.mail ?? { kind: "ok", messages: [], more: false }
           },
-          model: model ? async (request) => {
+          model: model ? async (request, skipAt) => {
             h.gate.asked.push(request)
+            h.gate.skipAt.push(skipAt)
             return { verdict: model(request), durationMs: 35, inputTokens: 240 }
           } : null,
         }
@@ -475,6 +476,18 @@ describe("the send check: each message is read once more before it is sent (work
     assert.deepEqual(h.records.map((record) => record.reason), ["sent"])
   })
 
+  test("the threshold is the policy's own when an admin set one, else the default", async () => {
+    const own = harness({ settings: { sendCheck: true, sendCheckThreshold: 0.6 }, checks: twoFindings, replies: [messages(SOW)], sendCheck: () => ({ kind: "send" }) })
+    await own.run()
+    assert.deepEqual(own.h.sendChecks.map((call) => call.holdAt), [0.6])
+    const standard = harness({ settings: { sendCheck: true }, checks: twoFindings, replies: [messages(SOW)], sendCheck: () => ({ kind: "send" }) })
+    await standard.run()
+    assert.deepEqual(standard.h.sendChecks.map((call) => call.holdAt), [undefined])
+    const check = createAgentSendCheck(createEvaluationModel({ apiKey: "synthetic-gateway-key", fetch: async () => Response.json({ answers: { skip: { type: "boolean", probability: 0.7 }, repeat: { type: "boolean", probability: 0.1 } } }) }))
+    const input = { brief: "Never tell me about newsletters.", message: NEWSLETTER.text, update: false, toldToday: [] }
+    assert.deepEqual([(await check(input)).verdict.kind, (await check({ ...input, holdAt: 0.6 })).verdict.kind], ["send", "hold"])
+  })
+
   test("everything held because the brief says so is a quiet check; everything held as a repeat is already told", async () => {
     const brief = harness({ settings: { sendCheck: true }, checks: twoFindings, replies: [messages(NEWSLETTER)], sendCheck: () => ({ kind: "hold", reason: "brief" }) })
     assert.deepEqual(await brief.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "nothing_new" })
@@ -589,6 +602,18 @@ describe("the check gate: a scheduled check runs only when something that could 
       assert.equal(h.checks.length, 2)
       assert.equal(state(h).skips, 0)
     }
+  })
+
+  test("the threshold is the policy's own when an admin set one, else the default", async () => {
+    const own = await afterMorning({ settings: { checkGate: true, checkGateThreshold: 0.4 }, connections: [GOOGLE], checkGate: { mail: mail(NEWSLETTER), model: () => ({ kind: "skip", why: "routine" }) } })
+    await own.run()
+    assert.deepEqual(own.h.gate.skipAt, [0.4])
+    const standard = await afterMorning({ ...gateOn, checkGate: { mail: mail(NEWSLETTER), model: () => ({ kind: "skip", why: "routine" }) } })
+    await standard.run()
+    assert.deepEqual(standard.h.gate.skipAt, [undefined])
+    const model = createCheckGateModel(createEvaluationModel({ apiKey: "synthetic-gateway-key", fetch: async () => Response.json({ answers: { needed: { type: "boolean", probability: 0.3 } } }) }))
+    const request: AgentCheckGateRequest = { state: { brief: "", arrivals: [] }, questions: { needed: { type: "boolean", instructions: "Could any arrival matter?" } } }
+    assert.deepEqual([(await model(request)).verdict.kind, (await model(request, 0.4)).verdict.kind], ["run", "skip"])
   })
 
   test("a meeting that changed since the last look is an arrival too", async () => {

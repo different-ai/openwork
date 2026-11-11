@@ -8,7 +8,8 @@ import type { EvaluationModel } from "./evaluation-model.js"
  * exactly as without the check.
  */
 
-export type AgentSendCheckInput = { brief: string; message: string; update: boolean; toldToday: readonly string[] }
+/** `holdAt`: the policy's own threshold; left out, the default. */
+export type AgentSendCheckInput = { brief: string; message: string; update: boolean; toldToday: readonly string[]; holdAt?: number }
 export type AgentSendCheckResult = {
   verdict: AgentSendCheckVerdict
   /** `unavailable`: the model gave no usable answer, so the message is sent. */
@@ -22,7 +23,7 @@ export function createAgentSendCheck(model: EvaluationModel): AgentSendCheck {
   return async (input) => {
     const answer = await model(agentSendCheckRequest(input))
     return {
-      verdict: answer.answers ? decideSendCheck(answer.answers, input) : { kind: "send" },
+      verdict: answer.answers ? decideSendCheck(answer.answers, input, input.holdAt) : { kind: "send" },
       status: answer.answers ? "answered" : "unavailable",
       durationMs: answer.durationMs,
       inputTokens: answer.inputTokens,

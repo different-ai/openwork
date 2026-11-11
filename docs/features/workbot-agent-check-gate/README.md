@@ -32,7 +32,7 @@ a scheduled check is due
   nothing arrived                                                      ─▶ skip
   otherwise, with DEN_AGENT_EVALUATION_API_KEY: one question to the evaluation model
        "could any arrival be something the brief asks about, or need the person soon?"
-       probability ≤ 0.2 ─▶ skip        anything else, or no answer ─▶ run
+       probability ≤ the threshold (0.2 by default) ─▶ skip        anything else, or no answer ─▶ run
   without the key                                                      ─▶ run
 ```
 
@@ -40,7 +40,11 @@ a scheduled check is due
   `readMemberGmailArrivals` (a list, then headers and labels; never a body, sent mail, drafts, spam or trash) and the
   calendar read the check already makes. `ee/apps/den-api/src/workbot-proactive/check-gate.ts`.
 - **The rules** are plain code in `packages/automations/src/proactive-brief.ts` (`checkGateApplies`, `planCheckGate`,
-  `decideCheckGate`). The model is asked to answer "true" when unsure, and the check is skipped only at 0.2 or below.
+  `decideCheckGate`). The model is asked to answer "true" when unsure, and the check is skipped only at or below the
+  threshold.
+- **The threshold** is the policy's own (`settings.checkGateThreshold`), 0.2 until an admin changes it. With the switch
+  on, Manage › Workbot shows "Skip only when the chance new mail matters is at most" with 5% to 50%; the API takes
+  any value from 0.01 to 0.99. Lower runs the agent more often; higher skips more.
 - **The evaluation model** is `typesafe-ai/jev` through Vercel AI Gateway: it answers one yes-or-no question with a
   probability and generates no text. One attempt, a 4 second limit, no retries, no redirects, and the request asks the
   provider to keep nothing.
@@ -61,8 +65,9 @@ gate never skips for that member. `workbot_agent_check_gate` logs say how often 
 
 1. The feature, for the organization or member (`/admin` › Features).
 2. The switch **Skip checks when nothing new arrived** in Manage › Workbot (Schedule group; also on a team's own
-   policy). Off by default. `PUT /v1/org/workbot-settings/proactive` takes `checkGate: boolean`; the view has
-   `settings.checkGate` and `checkGate: { model }` while the feature is on.
+   policy). Off by default. `PUT /v1/org/workbot-settings/proactive` takes `checkGate: boolean` and
+   `checkGateThreshold: number`; the view has `settings.checkGate`, `settings.checkGateThreshold` and `checkGate: { model }`
+   while the feature is on.
 3. Optional: `DEN_AGENT_EVALUATION_API_KEY` on den-api, a Vercel AI Gateway key that can call `typesafe-ai/jev`.
    Without it only "nothing arrived" skips a check.
 
@@ -85,4 +90,5 @@ brief alone. A member's count of skipped checks stays in their agent's state and
   `run:unknown_source` is members the gate can't help yet; `run:no_answer` means the key or the provider is failing.
 - `workbot_agent_step_usage` for `step: check`: fewer rows per member per day is the saving.
 - Missed items: a member told late about something that arrived during a skipped stretch. The two-in-a-row limit
-  bounds the delay to about two rhythm slots. The 0.2 threshold has not been measured on the replay days yet.
+  bounds the delay to about two rhythm slots. The default threshold has not been measured on the replay days yet,
+  which is why it can be changed without a deploy.

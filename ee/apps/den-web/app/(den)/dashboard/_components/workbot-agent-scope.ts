@@ -128,7 +128,7 @@ function restoreBrief(team: WorkbotProactiveView, everyone: WorkbotProactiveView
  * starts again; nothing else is lost.
  */
 export function agentPolicyRestoreChange(team: WorkbotProactiveView, everyone: WorkbotProactiveView): WorkbotProactiveSettingsInput {
-  const { enabled, leadMinutes, workingDays, startHour, endHour, dailyCap, membersStart, destination, checkGate, sendCheck } = team.settings;
+  const { enabled, leadMinutes, workingDays, startHour, endHour, dailyCap, membersStart, destination, checkGate, checkGateThreshold, sendCheck, sendCheckThreshold } = team.settings;
   const brief = restoreBrief(team, everyone);
   return {
     enabled,
@@ -141,7 +141,9 @@ export function agentPolicyRestoreChange(team: WorkbotProactiveView, everyone: W
     destination,
     // Each only while the server offers it; otherwise it refuses the field.
     ...(team.checkGate && checkGate !== undefined ? { checkGate } : {}),
+    ...(team.checkGate && checkGateThreshold !== undefined ? { checkGateThreshold } : {}),
     ...(team.sendCheck && sendCheck !== undefined ? { sendCheck } : {}),
+    ...(team.sendCheck && sendCheckThreshold !== undefined ? { sendCheckThreshold } : {}),
     sources: restoreSources(team.settings.sources, everyone.settings.sources),
     ...(brief ? { brief } : {}),
     responsibilities: { ...team.template.responsibilities },

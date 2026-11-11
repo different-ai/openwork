@@ -284,7 +284,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
       calendar: (read) => deps.calendar({ organizationId, orgMembershipId: memberId, connectionId: read.connectionId, timeMin: iso(read.timeMin), timeMax: iso(read.timeMax) }),
     })
     const plan = planCheckGate({ occasion: occasion.kind, skips, peek, brief: briefText })
-    const answer = plan.kind === "ask" && gate.model ? await gate.model(plan.request) : null
+    const answer = plan.kind === "ask" && gate.model ? await gate.model(plan.request, settings.checkGateThreshold) : null
     const skip = plan.kind === "skip" ? plan.why : answer?.verdict.kind === "skip" ? answer.verdict.why : null
     // Counts and timings only: never a sender, a subject or the model's answer.
     appLogger.info("workbot_agent_check_gate", {
@@ -398,7 +398,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
         let heldForBrief = 0
         if (sendCheck) {
           const toldToday = agentToldToday({ conversation: conversation ?? [], sent: state.sent, since: zonedDayStart(now, timeZone) })
-          const checked = await Promise.all(reply.messages.map((message) => sendCheck({ brief: briefText, message: message.text, update: message.update, toldToday })))
+          const checked = await Promise.all(reply.messages.map((message) => sendCheck({ brief: briefText, message: message.text, update: message.update, toldToday, holdAt: settings.sendCheckThreshold })))
           messages = reply.messages.filter((_, index) => checked[index]?.verdict.kind !== "hold")
           heldForBrief = checked.filter((result) => result.verdict.kind === "hold" && result.verdict.reason === "brief").length
           // Counts and timings only: never the message, the brief or the model's answer.

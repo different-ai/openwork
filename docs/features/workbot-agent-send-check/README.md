@@ -28,7 +28,8 @@ step 2 wrote {messages} ─▶ for each message: one request to the check model
                              state:     the brief (organization + member lines), the message, what was told today
                              questions: skip?   does the brief say to leave this out, with no exception applying
                                         repeat? does it only repeat something told today, with nothing new
-                           ─▶ Den's rule (decideSendCheck): hold at probability ≥ 0.8; an update is never a repeat
+                           ─▶ Den's rule (decideSendCheck): hold at probability ≥ the threshold (0.8 by default);
+                              an update is never a repeat
                            ─▶ Den's hard limits (decideBriefDelivery) ─▶ a Workbot DM per message, as today
 ```
 
@@ -36,8 +37,11 @@ step 2 wrote {messages} ─▶ for each message: one request to the check model
   with a probability and generates no text. One attempt per message, a 4 second limit, no retries, no redirects, and
   the request asks the provider to keep nothing (`zeroDataRetention`). `ee/apps/den-api/src/workbot-proactive/send-check.ts`.
 - **The rule** is plain code in `packages/automations/src/proactive-brief.ts` (`agentSendCheckRequest`,
-  `decideSendCheck`, `agentToldToday`). The threshold is high on purpose: holding a message the member needed costs
-  more than sending one they didn't. An `update: true` message is never held as a repeat.
+  `decideSendCheck`, `agentToldToday`). An `update: true` message is never held as a repeat.
+- **The threshold** is the policy's own (`settings.sendCheckThreshold`), 0.8 until an admin changes it: high on purpose,
+  because holding a message the member needed costs more than sending one they didn't. With the switch on, Manage ›
+  Workbot shows "Hold a message only when at least this sure" with 60% to 95%; the API takes any value from 0.01 to
+  0.99. Higher sends more messages; lower holds more.
 - **What was told today** is the agent's own messages in the member's Workbot DM since the start of their day (the DM
   read step 2 already makes), plus the first sentence of anything Den sent today that the read missed.
 - **A held message** is not recorded in the ledger. If the next check finds the same thing, it is checked again.
@@ -52,8 +56,8 @@ Three things, all required:
 2. `DEN_AGENT_EVALUATION_API_KEY` on den-api: a Vercel AI Gateway key that can call `typesafe-ai/jev`. Without it the
    switch is shown locked with "Not set up on this deployment. Ask your deployment administrator." (DESIGN.md P4).
 3. The switch **Check each message before sending** in Manage › Workbot (Messages group; also on a team's own policy).
-   Off by default. `PUT /v1/org/workbot-settings/proactive` takes `sendCheck: boolean`; the view has
-   `settings.sendCheck` and `sendCheck: { ready }` while the feature is on.
+   Off by default. `PUT /v1/org/workbot-settings/proactive` takes `sendCheck: boolean` and `sendCheckThreshold: number`;
+   the view has `settings.sendCheck`, `settings.sendCheckThreshold` and `sendCheck: { ready }` while the feature is on.
 
 ## Data
 
@@ -79,8 +83,8 @@ AI_GATEWAY_API_KEY=… JEV_AI_GATEWAY_API_KEY=… pnpm --dir evals agent:brief-r
 The check uses its own `JEV_AI_GATEWAY_API_KEY`, never the replay model's key, which may belong to another endpoint.
 
 Compare the report with a run without `--send-check`: unwanted interruptions should drop while missed items stay
-where they were. `runs.json` lists what each check held and why. The 0.8 threshold has not been tuned on those days
-yet.
+where they were. `runs.json` lists what each check held and why. The default threshold has not been tuned on those
+days yet, which is why it can be changed without a deploy.
 
 ## What to watch
 

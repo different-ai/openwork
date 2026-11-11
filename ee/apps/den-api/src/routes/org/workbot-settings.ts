@@ -171,18 +171,19 @@ export async function saveWorkbotDefaultModel(input: { organizationId: DenTypeId
   return { choice: "ok" as const, model: readWorkbotModel(metadata), maxSteps: readWorkbotMaxSteps(metadata), catalog }
 }
 
-/** Why a change to the check gate's switch is refused, or null: the feature (with the brief) is off for the caller. */
+/** Why a change to the check gate's switch or threshold is refused, or null: the feature (with the brief) is off for the caller. */
 export function refusedCheckGateChange(requested: WorkbotProactiveSettingsInput, allowed: boolean): string | null {
-  return requested.checkGate !== undefined && !allowed ? "Skipping checks when nothing new arrived isn't on for this organization." : null
+  const touched = requested.checkGate !== undefined || requested.checkGateThreshold !== undefined
+  return touched && !allowed ? "Skipping checks when nothing new arrived isn't on for this organization." : null
 }
 
 /**
- * Why a change to the send check's switch is refused, or null: the feature (with the brief) is off for the caller, or
- * it is being turned on where the deployment has no key for the evaluation model. With the feature on, turning it off
- * works whether or not the deployment has the key.
+ * Why a change to the send check's switch or threshold is refused, or null: the feature (with the brief) is off for
+ * the caller, or it is being turned on where the deployment has no key for the evaluation model. With the feature on,
+ * turning it off works whether or not the deployment has the key.
  */
 export function refusedSendCheckChange(requested: WorkbotProactiveSettingsInput, allowed: boolean, ready = agentEvaluationModelReady()): string | null {
-  if (requested.sendCheck === undefined) return null
+  if (requested.sendCheck === undefined && requested.sendCheckThreshold === undefined) return null
   if (!allowed) return "Checking each message before sending isn't on for this organization."
   return requested.sendCheck && !ready ? "This deployment can't check messages yet. Ask your deployment administrator." : null
 }

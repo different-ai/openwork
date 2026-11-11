@@ -370,6 +370,7 @@ describe("the check gate: is this scheduled check worth running?", () => {
     assert.deepEqual(decideCheckGate(answer(0.02)), { kind: "skip", why: "routine" })
     assert.deepEqual(decideCheckGate(answer(0.21)), { kind: "run", why: "may_matter" })
     assert.deepEqual(decideCheckGate(answer(0.97)), { kind: "run", why: "may_matter" })
+    assert.deepEqual([decideCheckGate(answer(0.35), 0.4), decideCheckGate(answer(0.15), 0.1)], [{ kind: "skip", why: "routine" }, { kind: "run", why: "may_matter" }], "the policy's own threshold")
     for (const unreadable of [null, "skip", [], {}, { needed: 0.01 }, answer("0.01"), answer(-0.1), answer(Number.NaN), { needed: { type: "choice", probability: 0.01 } }]) {
       assert.deepEqual(decideCheckGate(unreadable), { kind: "run", why: "no_answer" })
     }
@@ -413,6 +414,7 @@ describe("the send check: Den's rule over a fast model's two answers", () => {
     assert.deepEqual(decideSendCheck(answers(AGENT_SEND_CHECK_HOLD_AT, 0.99), { update: false }), { kind: "hold", reason: "brief" })
     assert.deepEqual(decideSendCheck(answers(0.2, AGENT_SEND_CHECK_HOLD_AT), { update: false }), { kind: "hold", reason: "repeat" })
     assert.deepEqual(decideSendCheck(answers(0.79, 0.79), { update: false }), { kind: "send" })
+    assert.deepEqual([decideSendCheck(answers(0.65, 0), { update: false }, 0.6), decideSendCheck(answers(0.85, 0.85), { update: false }, 0.9)], [{ kind: "hold", reason: "brief" }, { kind: "send" }], "the policy's own threshold")
   })
 
   test("an update about something already told is never a repeat, but the brief still applies to it", () => {
