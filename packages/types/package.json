@@ -333,7 +333,9 @@
         "default": "./src/den/device-provider-share.ts"
       },
       "development": "./src/den/device-provider-share.ts",
-      "default": "./src/den/device-provider-share.ts"
+      "bun": "./src/den/device-provider-share.ts",
+      "browser": "./src/den/device-provider-share.ts",
+      "default": "./dist/den/device-provider-share.js"
     },
     "./den/gateway-custom-providers": {
       "types": {
