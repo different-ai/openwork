@@ -1,7 +1,7 @@
 "use client";
 
 import { AUTO_ROUTER_THINKING_LABELS, autoRouterThinkingLevelSchema, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router";
-import { CLAUDE_CODE_LONG_CONTEXT, claudeCodeBaseUrl, claudeCodeModelName, codexBaseUrl, cursorBaseUrl, cursorModelName } from "@openwork/types/den/gateway-cursor";
+import { CLAUDE_CODE_LONG_CONTEXT, claudeCodeBaseUrl, claudeCodeModelName, claudeDesktopListsModel, codexBaseUrl, cursorBaseUrl, cursorModelName } from "@openwork/types/den/gateway-cursor";
 import { Check, ChevronLeft, ChevronRight, Copy } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
@@ -16,7 +16,7 @@ import { GATEWAY_API_KEYS_DOCS_URL } from "./gateway-api-keys-data";
  * still be shown, and on Set up Cursor without a key.
  */
 
-export type GatewayToolId = "cursor" | "codex" | "codex-app" | "claude-code" | "other";
+export type GatewayToolId = "cursor" | "codex" | "codex-app" | "claude-code" | "claude-desktop" | "other";
 
 type GatewayTool = { id: GatewayToolId; name: string; slug?: string; serviceUrl?: string; line: string };
 
@@ -25,6 +25,7 @@ export const GATEWAY_TOOLS: readonly GatewayTool[] = [
   { id: "codex", name: "OpenAI Codex", slug: "openai", serviceUrl: "https://openai.com", line: "Every model, in the Codex CLI" },
   { id: "codex-app", name: "Codex app", slug: "openai", serviceUrl: "https://openai.com", line: "Every model, in Codex in the ChatGPT app" },
   { id: "claude-code", name: "Claude Code", slug: "claude", serviceUrl: "https://claude.com", line: "Every model, in Claude Code" },
+  { id: "claude-desktop", name: "Claude Desktop", slug: "claude", serviceUrl: "https://claude.com", line: "Your Claude models, in the Claude app" },
   { id: "other", name: "Another tool", line: "Any OpenAI or Anthropic compatible tool" },
 ];
 
@@ -32,6 +33,7 @@ export const CURSOR_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/cursor"
 export const CLAUDE_CODE_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/claude-code";
 export const CODEX_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/codex";
 export const CODEX_APP_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/codex-desktop";
+export const CLAUDE_DESKTOP_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/claude-desktop";
 
 /** The large choice of tools under "Start using this key". */
 export function GatewayToolPicker({ onPick }: { onPick: (tool: GatewayToolId) => void }) {
@@ -460,6 +462,55 @@ export function ClaudeCodeSteps({ apiKey, baseUrl }: { apiKey: string | null; ba
   );
 }
 
+/**
+ * Claude Desktop in Gateway mode: its third-party inference settings point at the Gateway's Claude
+ * Code endpoint with the key. Its model picker lists only Claude models, so the last step names the
+ * ones this person will see.
+ */
+export function ClaudeDesktopSteps({ apiKey, baseUrl }: { apiKey: string | null; baseUrl: string }) {
+  const models = useGatewayToolModels(true);
+  const shown = (models.data ?? []).filter((model) => claudeDesktopListsModel(claudeCodeName(model)));
+  return (
+    <div className="flex flex-col gap-4" data-testid="gateway-tool-claude-desktop">
+      <ol className="flex flex-col gap-4">
+        <SetupStep number={1}>In Claude Desktop, open <Strong>Help › Troubleshooting › Enable Developer Mode</Strong>. You don&apos;t need to sign in.</SetupStep>
+        <SetupStep number={2}>Open <Strong>Developer › Configure Third-Party Inference…</Strong> and set <Strong>Connection</Strong> to <Strong>Gateway</Strong>.</SetupStep>
+        <SetupStep
+          number={3}
+          field={(
+            <div className="flex flex-col gap-2">
+              <CopyField value={claudeCodeBaseUrl(baseUrl)} label="Copy Gateway base URL" testId="gateway-tool-claude-desktop-base-url" />
+              <CopyField value={apiKey ?? "<your API key>"} label="Copy Gateway API key" testId="gateway-tool-claude-desktop-api-key" />
+            </div>
+          )}
+        >
+          Set <Strong>Credential kind</Strong> to <Strong>Static API key</Strong>, <Strong>Gateway auth scheme</Strong> to <Strong>bearer</Strong>, and paste the <Strong>Gateway base URL</Strong> and <Strong>Gateway API key</Strong>. Leave the sign-in (OIDC) fields empty.
+        </SetupStep>
+        <SetupStep number={4}>
+          Select <Strong>Apply Changes</Strong>, then <Strong>Relaunch now</Strong>. If Claude asks how to continue, choose <Strong>Continue with Gateway</Strong>.
+        </SetupStep>
+        <SetupStep
+          number={5}
+          field={(
+            <div className="flex flex-col gap-2" data-testid="gateway-tool-claude-desktop-models">
+              <ModelsState
+                loading={models.isLoading}
+                error={models.error}
+                empty={models.data && shown.length === 0 ? "Claude Desktop only lists Claude models, and your organization hasn't given you one yet." : null}
+              />
+              {shown.length > 0 ? <p className="text-[13px] text-gray-900">{shown.map((model) => model.name).join(", ")}</p> : null}
+            </div>
+          )}
+        >
+          Pick one of these in the model picker under the message box:
+        </SetupStep>
+      </ol>
+      <p className="text-[12px] leading-4 text-gray-500">Claude Desktop shows only Claude models. Use Claude Code, Cursor or Codex for your other models.</p>
+      <DocsLink href={CLAUDE_DESKTOP_DOCS_URL} />
+    </div>
+  );
+}
+
 /** Any other tool: the key and both base URLs, with each model's id. */
 export function OtherToolSteps({ apiKey, baseUrl }: { apiKey: string | null; baseUrl: string }) {
   const models = useGatewayToolModels(true);
@@ -495,6 +546,7 @@ export function GatewayToolSteps({ tool, apiKey, baseUrl }: { tool: GatewayToolI
     case "codex": return <CodexSteps apiKey={apiKey} baseUrl={baseUrl} />;
     case "codex-app": return <CodexAppSteps apiKey={apiKey} baseUrl={baseUrl} />;
     case "claude-code": return <ClaudeCodeSteps apiKey={apiKey} baseUrl={baseUrl} />;
+    case "claude-desktop": return <ClaudeDesktopSteps apiKey={apiKey} baseUrl={baseUrl} />;
     case "other": return <OtherToolSteps apiKey={apiKey} baseUrl={baseUrl} />;
   }
 }

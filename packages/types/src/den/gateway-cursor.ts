@@ -118,6 +118,20 @@ export function parseClaudeCodeModelName(value: unknown): ParsedCursorModelName 
 }
 
 /**
+ * Claude Desktop in Gateway mode (feature `gatewayMemberApiKeys`) uses the Claude Code endpoint as its
+ * Gateway base URL, but its model picker keeps only ids that name a Claude model: one with claude,
+ * opus, sonnet or haiku in it and no other model family (gpt, gemini, deepseek...). This mirrors that
+ * check (Claude Desktop 5.x) on the name Claude Code uses, so setup can say which models it shows.
+ */
+const CLAUDE_DESKTOP_CLAUDE_WORDS = /claude|opus|sonnet|haiku|anthropic/;
+const CLAUDE_DESKTOP_OTHER_FAMILIES = /deepseek|gemini|gemma|glm|gpt|grok|kimi|llama|minimax|mistral|mixtral|moonshot|nemotron|openai|qwen|codex|ernie|hunyuan|doubao|nova-|phi-|yi-/;
+
+export function claudeDesktopListsModel(claudeCodeName: string): boolean {
+  const name = claudeCodeName.toLowerCase();
+  return CLAUDE_DESKTOP_CLAUDE_WORDS.test(name) && !CLAUDE_DESKTOP_OTHER_FAMILIES.test(name);
+}
+
+/**
  * The Codex CLI through the AI Gateway (feature `gatewayMemberApiKeys`) uses the same names with no
  * thinking level: Codex sends its own (`model_reasoning_effort`). A level in the name still wins.
  */
