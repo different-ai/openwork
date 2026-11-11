@@ -10,7 +10,7 @@ use [per-member credential bindings](/cloud/share-with-your-team/per-member-llm-
 
 ## Before you start
 
-- Have permission to create or edit organization providers, plus the gateway's base URL and model IDs.
+- Have permission to create and edit organization providers, and delete one if needed, plus the gateway's base URL and model IDs.
 - Give each user their own inference key and confirm your policy permits local credential storage.
 - Use a custom provider with one credential variable. Choose a name no other provider uses.
 
@@ -30,8 +30,12 @@ use [per-member credential bindings](/cloud/share-with-your-team/per-member-llm-
    Use the name actually declared in your provider, not necessarily this example.
    Coordinate any rename with existing users before changing it.
 4. Save and check **Provider configuration** on the detail page as an authorized editor.
-   Confirm **Credential missing**. A blank edit field doesn't clear an existing credential.
-   If it says **Credential saved**, [remove the saved organization key](/cloud/share-with-your-team/remove-legacy-provider-key) before continuing.
+   Confirm **Credential missing**. A blank edit field doesn't clear a saved key. If it says **Credential saved**:
+   1. Open **Advanced: edit as JSON**, copy the definition, and note **Who can use it**.
+   2. **Delete** the provider **before** creating its replacement: while both use the same `env` name, the old one keeps delivering its key and overwrites users' local values.
+   3. Create a new custom provider from the copied JSON with the same `env` name and **API key / credential** left blank. Re-add the access grants and confirm **Credential missing**.
+   4. Tell existing users to run **Sync now** and pick the model again. Old model selections pointed at the deleted provider.
+   5. If the old key was real, revoke or rotate it upstream. Deleting doesn't revoke it, and offline or signed-out devices keep their copy until they sync.
 5. Under **Who can use it**, grant only the intended people or teams access and save.
 6. Send users the provider name, a model to select, and the exact variable name from `env`.
 
