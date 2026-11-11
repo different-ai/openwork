@@ -705,17 +705,6 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
-  workbotStepLimit: {
-    label: "Workbot: step limit",
-    description: "Admins choose in Manage › Workbot how many steps Workbot may take on one request before it stops and asks for a smaller piece: the deployment's default, a number, or no limit. Applies to each member's chats from their next message.",
-    category: "workbot",
-    added: "2026-11-09",
-    since: "2026-11",
-    author: "reachjalil",
-    docs: "docs/features/workbot-step-limit/README.md",
-    deployments: everywhere,
-    default: false,
-  },
   workbotTeamSettings: {
     label: "Workbot: settings per team",
     description: "Admins can give a team its own Workbot default model and its own Workbot name, and turn Workbot on or off for everyone or for a team; teams without their own use the organization's. A member on several teams whose settings differ gets the organization's.",

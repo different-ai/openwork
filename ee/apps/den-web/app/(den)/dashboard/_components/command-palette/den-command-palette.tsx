@@ -1,6 +1,7 @@
 "use client";
 
 import { desktopPolicyScreenRemoved } from "../../_lib/desktop-policy-screen-rollout";
+import { workbotSettingsInTeams } from "../../_lib/workbot-settings-rollout";
 
 import { Command } from "cmdk";
 import {
@@ -163,6 +164,7 @@ export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: D
       runtimeConfigLoaded,
 
       desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),
+      workbotSettingsInTeams: workbotSettingsInTeams(orgContext),
       canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
       myBot: myAgentAvailable(orgContext),
       authSecuritySettings: orgFeatureEnabled(orgContext, "authSecuritySettings"),

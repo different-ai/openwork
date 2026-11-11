@@ -22,7 +22,7 @@ export function workbotTeamSettingsQueryKey(orgId: string): string[] {
   return [...workbotSettingsQueryKey(orgId), "teams"];
 }
 
-/** Everyone's Workbot settings (on or off, model, name, the step limit while it is on, and whether members' agents are on while they are available) and what each team changed (the `workbotTeamSettings` feature). */
+/** Everyone's Workbot settings (on or off, model, name, and whether members' agents are on while they are available) and what each team changed (the `workbotTeamSettings` feature). */
 export function useWorkbotTeamSettings(orgId: string, enabled = true) {
   return useQuery({
     queryKey: workbotTeamSettingsQueryKey(orgId),
@@ -93,7 +93,7 @@ export function useSaveWorkbotTeamSettings(orgId: string) {
   });
 }
 
-/** Turns Workbot on or off for Everyone. Everyone's model and step limit are saved with Manage › Workbot's own hooks. */
+/** Turns Workbot on or off for Everyone. Everyone's model is saved with Manage › Workbot's own hook. */
 export function useSaveWorkbotEveryoneSettings(orgId: string) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();

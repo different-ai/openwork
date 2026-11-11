@@ -611,16 +611,6 @@
               ],
               "description": "Workbot: settings in tabs: Workbot's settings are split into three tabs, General, Agents and Data sources, instead of one long page: in Manage › Workbot and on the Workbot section of a team's page and Everyone's page. With Your agent's brief on, the Agents tab groups its rows (Messages, Schedule), uses switches for yes or no choices and explains each row in a tooltip. Turning it off restores the single page and its rows. Renders DEN_FEATURE_WORKBOT_SETTINGS_TABS."
             },
-            "workbotStepLimit": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Workbot: step limit: Admins choose in Manage › Workbot how many steps Workbot may take on one request before it stops and asks for a smaller piece: the deployment's default, a number, or no limit. Applies to each member's chats from their next message. Renders DEN_FEATURE_WORKBOT_STEP_LIMIT."
-            },
             "workbotTeamSettings": {
               "enum": [
                 "",

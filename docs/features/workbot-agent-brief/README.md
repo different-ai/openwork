@@ -50,7 +50,7 @@ The same recorded day through today's prompts and the brief's pipeline (replay e
 | Messages per person per day | 4 (1–10) | Admin; a member may lower it |
 | Extra checks the agent may ask for | 3 a day (0–6) | Admin |
 | Send to | A DM from Workbot | Admin (unchanged) |
-| What agents read | Calendar, email and team chat on; other connections members choose | Admin and members (unchanged) |
+| What agents read | The calendar on; connectors members choose | Admin and members (unchanged) |
 
 ## The default brief
 
@@ -175,21 +175,22 @@ research it now does (sent mail, threads, the calendar) and the notes it keeps; 
 
 ## Any connected connector as a source
 
-Same flag. Before, Manage › Workbot › What agents read and My bot offered only Den's own providers for the core
-sources they serve and MCP connections whose service had a hand-reviewed list of read tools (Slack, Linear, Notion,
-GitHub, Granola; #6630). Every other connector the organization or member had connected was invisible. With the brief
-on, **every connection is offered**: each MCP connection (custom ones included) and Den's own providers for what isn't
-calendar, email or chat (Drive, Docs, OneDrive…), with no hand-picked list or count cap.
+Same flag. Before, Manage › Workbot › Connectors (then "What agents read") and My bot offered only Den's own
+providers for the calendar and MCP connections whose service had a hand-reviewed list of read tools (Slack, Linear,
+Notion, GitHub, Granola; #6630). Every other connector the organization or member had connected was invisible. With
+the brief on, **every connection is offered**: each MCP connection (custom ones included) and Den's own providers for
+what isn't the calendar (mail, Teams chats, Drive, Docs, OneDrive…), with no hand-picked list or count cap. Mail and
+chat have no setting of their own: they are read through the Google Workspace, Microsoft 365 or Slack connector.
 
 | | Before (flag off) | With the brief |
 | --- | --- | --- |
-| What can be a source | Den's own providers for calendar, email, chat; MCPs on the reviewed list | Every connection the organization has (admin) or the member can use (My bot), MCP and Den's own |
-| Admin policy | Per connection in Other context; Add/Remove picks what is there | Per connection, every one listed: on for everyone, members choose (default), not allowed. A reviewed connection an admin had removed from Other context stays not allowed |
+| What can be a source | Den's own providers for the calendar; MCPs on the reviewed list | Every connection the organization has (admin) or the member can use (My bot), MCP and Den's own |
+| Admin policy | Per connection under Connectors; Add/Remove picks what is there | Per connection, every one listed: on for everyone, members choose (default), not allowed. A reviewed connection an admin had removed stays not allowed |
 | What the check may call | A reviewed service's reviewed read tools | A per-tool decision, made when the check starts and carried in its token (below) |
 | Admin review | None | "Tools agents may use: N read tools" per connection, one row per tool with why, a switch, and a lock where no one can allow it |
 | Member | Only reviewed services listed | Any allowed connector, from the page or chat ("also use Linear", "use my Granola for meeting context"); "Connect <name>" when their account isn't ready, a lock with the reason when the admin doesn't allow it, and "No read-only tools found. An admin can review its tools." when it has none |
 
-What agents read with ten custom connectors (`evals/proofs/workbot-agent-any-connector.proof.test.ts`, fictional
+Connectors with ten custom connectors (`evals/proofs/workbot-agent-any-connector.proof.test.ts`, fictional
 names), then one connector's tools after the admin allowed `ticket_report`, then My bot after "also use Lumen Support
 Desk for refund tickets" in chat:
 
@@ -217,8 +218,8 @@ Desk for refund tickets" in chat:
    denies too. Unsure is no. So `get_or_create_customer`, `search_and_replace`, `mark_read`, `send_digest` and
    `run_query` are all denied, while `get_email`, `list_runs` and `get_commit` are reads.
 
-Den's own providers have operations instead of tools: a GET outside calendar, mail and chat reads (an admin may turn
-one off); anything else never does (locked).
+Den's own providers have operations instead of tools: a GET outside the calendar reads, mail and chats included (an
+admin may turn one off); anything else never does (locked). The calendar is read under its own setting.
 
 ### How the check gets only those tools
 
@@ -303,8 +304,8 @@ Once the brief is on everywhere:
   `sourceSlotsOf`, `allowedConnections`, `checkSourcesChange`, `resolveMemberSources`, `groupSourceConnections`),
   `agentReadableConnection` and `agentReadTool` and the `!allowlist.tools` branch of `agentMayUseExternalTool` in
   `mcp/agent-read-sources.ts` (tokens without `openwork:agent-tools`), `sources.otherConnections` (kept only so a removed
-  reviewed connection stays not allowed; `otherSourcePolicy` then reads `connections` alone), the Add source / Remove
-  rows of Other context in `workbot-proactive-sources.tsx`, and the reviewed-only paragraphs of the routes' descriptions.
+  reviewed connection stays not allowed; `otherSourcePolicy` then reads `connections` alone), the Add connector / Remove
+  rows before the brief (`listedRows`) in `workbot-proactive-sources.tsx`, and the reviewed-only paragraphs of the routes' descriptions.
   The reviewed lists stay, as overrides inside `decideAgentReadTool`.
 
 ## Try it

@@ -46,7 +46,7 @@ import {
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
 import { canOpenAdminRoute } from "./admin-route-access";
-import { myBotNavMarker, type WorkbotEntry, workbotEntryHref, workbotNavMarker } from "./workbot-entry";
+import { type WorkbotEntry, workbotEntryHref, workbotNavMarker } from "./workbot-entry";
 
 export type DashboardNavChild = {
   href: string;
@@ -95,9 +95,11 @@ export type BuildDashboardNavSectionsInput = {
   /** The managedDeployments feature is on for this organization. */
   managedDeployments?: boolean;
   desktopPolicyScreenRemoved?: boolean;
+  /** Workbot's settings are on Members › Teams › Everyone for this viewer, so Manage has no Workbot entry. */
+  workbotSettingsInTeams?: boolean;
   /** Explicit server capability, independent of organization role permissions. */
   canManageDeploymentServices?: boolean;
-  /** What clicking Workbot does; a blocked entry stays visible with a marker. */
+  /** What clicking Workbot does; an entry without a provider stays visible with a marker, one turned off is hidden. */
   workbotEntry?: WorkbotEntry;
   /** The workspace on screen, so the Workbot entry opens Workbot for it. */
   organizationId?: string | null;
@@ -117,6 +119,7 @@ export function buildDashboardNavSections({
   libraryNeedsSignIn = 0,
   managedDeployments = false,
   desktopPolicyScreenRemoved = false,
+  workbotSettingsInTeams = false,
   canManageDeploymentServices = false,
   workbotEntry = { kind: "open" },
   organizationId = null,
@@ -126,12 +129,14 @@ export function buildDashboardNavSections({
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
+  // Workbot turned off for the viewer: no Workbot and no My bot in the menu.
+  const workbotOff = workbotEntry.kind === "off";
   const workItems: DashboardNavItem[] = [
-    ...(capabilities.workbot
+    ...(capabilities.workbot && !workbotOff
       ? [{ href: workbotEntryHref(organizationId), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot", ...workbotNavMarker(workbotEntry) }]
       : []),
-    ...(myBot && orgSlug
-      ? [{ href: getLibraryMyAgentRoute(orgSlug), label: "My bot", icon: Radar, testId: "dashboard-nav-my-bot", ...myBotNavMarker(workbotEntry) }]
+    ...(myBot && orgSlug && !workbotOff
+      ? [{ href: getLibraryMyAgentRoute(orgSlug), label: "My bot", icon: Radar, testId: "dashboard-nav-my-bot" }]
       : []),
     {
       href: orgSlug ? getLibraryRoute(orgSlug) : "#",
@@ -157,7 +162,7 @@ export function buildDashboardNavSections({
         { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug, badge: "MCPs" },
         { href: getAiGatewayRoute(orgSlug), label: "AI Gateway", icon: Sparkles },
         ...(!desktopPolicyScreenRemoved ? [{ href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop }] : []),
-        { href: getWorkbotSettingsRoute(orgSlug), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot-settings" },
+        ...(!workbotSettingsInTeams ? [{ href: getWorkbotSettingsRoute(orgSlug), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot-settings" }] : []),
         ...(managedDeployments ? [{ href: getDeploymentsRoute(orgSlug), label: "Deployments", icon: Server }] : []),
       ].filter((item) => canOpen(item.href))
     : [];

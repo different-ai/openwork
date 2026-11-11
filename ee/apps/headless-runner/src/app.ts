@@ -26,8 +26,6 @@ const createSessionBody = z
     title: z.string().max(200).optional(),
     instructions: z.string().max(20_000).optional(),
     repeats: repeatLimitsSchema.optional(),
-    /** Model calls per turn for this conversation, instead of HEADLESS_MAX_STEPS: 0 for no limit, null to go back to the runner's. */
-    maxSteps: z.number().int().min(0).max(100_000).nullable().optional(),
     /** Keep files in this conversation (needs HEADLESS_FILES). Off unless asked for. */
     files: z.boolean().optional(),
     /** Give this conversation a Linux computer (needs HEADLESS_COMPUTER). Off unless asked for. */

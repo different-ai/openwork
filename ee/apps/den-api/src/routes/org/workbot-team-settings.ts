@@ -50,13 +50,12 @@ const teamConnectionParamsSchema = teamParamsSchema.extend(connectionToolsParams
 const AGENTS_OFF_MESSAGE = "Members' agents aren't on for this organization."
 
 /**
- * The groups that exist only with a second feature: a team's step limit with the organization's step limit
- * (`workbotStepLimit`), and its members'-agents policy with members' agents (`workbotProactive`, on a deployment
- * with Workbot). One cached feature read.
+ * The group that exists only with a second feature: a team's members'-agents policy with members' agents
+ * (`workbotProactive`, on a deployment with Workbot). One cached feature read.
  */
-async function shownGroups(organizationId: string, userId: string): Promise<{ stepLimit: boolean; agents: boolean }> {
+async function shownGroups(organizationId: string, userId: string): Promise<{ agents: boolean }> {
   const features = await getOrganizationFeatures(organizationId, { userId })
-  return { stepLimit: features.workbotStepLimit, agents: features.workbotProactive && workbotOrigin() !== null }
+  return { agents: features.workbotProactive && workbotOrigin() !== null }
 }
 
 /**
@@ -85,13 +84,13 @@ export async function saveWorkbotEnabledForEveryone(organizationId: DenTypeId<"o
   await updateOrganizationMetadata(organizationId, (current) => withWorkbotEnabled(current, enabled))
 }
 
-async function settingsView(c: PermissionRouteContext, organizationId: DenTypeId<"organization">, groups: { stepLimit: boolean; agents: boolean }) {
+async function settingsView(c: PermissionRouteContext, organizationId: DenTypeId<"organization">, groups: { agents: boolean }) {
   return { ...await listWorkbotTeamSettings(organizationId, groups), canEdit: await hasPermission(c, "inference.manage") }
 }
 
 /**
  * Members › Teams › a team › Workbot (the `workbotTeamSettings` feature): a team's own default model, Workbot
- * name, on/off switch, (with `workbotStepLimit`) step limit and (with `workbotProactive`) policy for its members'
+ * name, on/off switch and (with `workbotProactive`) policy for its members'
  * agents on top of the organization's, and the organization's switch for everyone. Members never
  * read these routes; Den resolves each member's values for them. No route here depends on the caller's own
  * switch, so an admin whose Workbot is off can still turn it back on.
@@ -103,7 +102,7 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       tags: ["Organizations"],
       summary: "Get Workbot settings per team",
       description:
-        "Returns the organization's Workbot default model (null is the deployment's default model), Workbot name (null when the organization set none) and whether Workbot is on for everyone, and for each team, by name, whether it uses the organization's value or its own for each of the three. With Workbot's step limit on (workbotStepLimit), the organization and each team also carry `maxSteps`, how many model calls Workbot may make on one request (null is the deployment's default, 0 is no limit). With members' agents on (workbotProactive), `organization.agentEnabled` says whether they are on for everyone and each team carries `agent`: `inherit` (the team follows the organization's policy for members' agents) and `enabled` (agents are on under the policy the team has now); the team's own policy is read and saved at `/v1/org/workbot-settings/teams/{teamId}/agent`. A member on several teams whose own values for a setting differ gets the organization's value for it; conflictingMemberCount counts them per team. Requires View OpenWork Models settings or Manage OpenWork Models, and the Workbot settings per team feature.",
+        "Returns the organization's Workbot default model (null is the deployment's default model), Workbot name (null when the organization set none) and whether Workbot is on for everyone, and for each team, by name, whether it uses the organization's value or its own for each of the three. With members' agents on (workbotProactive), `organization.agentEnabled` says whether they are on for everyone and each team carries `agent`: `inherit` (the team follows the organization's policy for members' agents) and `enabled` (agents are on under the policy the team has now); the team's own policy is read and saved at `/v1/org/workbot-settings/teams/{teamId}/agent`. A member on several teams whose own values for a setting differ gets the organization's value for it; conflictingMemberCount counts them per team. Requires View OpenWork Models settings or Manage OpenWork Models, and the Workbot settings per team feature.",
       responses: {
         200: jsonResponse("Workbot settings per team returned.", workbotTeamSettingsViewSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -127,10 +126,10 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       tags: ["Organizations"],
       summary: "Set a team's Workbot settings",
       description:
-        "Changes one team's Workbot default model, Workbot name, whether Workbot is on for the team (`enabled`), or several; a setting left out is kept. For each, `{ inherit: true }` makes the team use the organization's value again and `{ inherit: false, value }` sets the team's own: a model from the caller's supported, credential-ready AI Gateway models (null is the deployment's default model), a name of 1 to 40 characters, or true or false for `enabled`. With Workbot's step limit on (workbotStepLimit), `maxSteps` sets how many model calls Workbot may make on one request for the team's members (1–100,000; null is the deployment's default, 0 is no limit), from each chat's next message; without it `maxSteps` answers 400. With members' agents on (workbotProactive), `agent: { inherit: true }` removes the team's own policy for its members' agents so they follow the organization's again from their next check (the team's own policy is saved with `PUT /v1/org/workbot-settings/teams/{teamId}/agent`); without it `agent` answers 400. The team's members get it from their next message or run, in Workbot, the Slack assistant and cloud Automations set to the cloud default; a member on several teams whose own values differ gets the organization's. `enabled` covers the Workbot app and Your agent only, never the Slack assistant, Automations or the desktop app. A team's model selects a model and never grants access to it. Requires the Manage OpenWork Models permission, which also governs the team's Workbot name and switch, a recent sign-in and the Workbot settings per team feature.",
+        "Changes one team's Workbot default model, Workbot name, whether Workbot is on for the team (`enabled`), or several; a setting left out is kept. For each, `{ inherit: true }` makes the team use the organization's value again and `{ inherit: false, value }` sets the team's own: a model from the caller's supported, credential-ready AI Gateway models (null is the deployment's default model), a name of 1 to 40 characters, or true or false for `enabled`. With members' agents on (workbotProactive), `agent: { inherit: true }` removes the team's own policy for its members' agents so they follow the organization's again from their next check (the team's own policy is saved with `PUT /v1/org/workbot-settings/teams/{teamId}/agent`); without it `agent` answers 400. The team's members get it from their next message or run, in Workbot, the Slack assistant and cloud Automations set to the cloud default; a member on several teams whose own values differ gets the organization's. `enabled` covers the Workbot app and Your agent only, never the Slack assistant, Automations or the desktop app. A team's model selects a model and never grants access to it. Requires the Manage OpenWork Models permission, which also governs the team's Workbot name and switch, a recent sign-in and the Workbot settings per team feature.",
       responses: {
         200: jsonResponse("Workbot settings per team saved.", workbotTeamSettingsViewSchema),
-        400: jsonResponse("The model is not one the runner serves, the step limit or members' agents aren't on for this organization, or the request was invalid.", z.union([unknownModelSchema, invalidRequestSchema])),
+        400: jsonResponse("The model is not one the runner serves, members' agents aren't on for this organization, or the request was invalid.", z.union([unknownModelSchema, invalidRequestSchema])),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
         403: jsonResponse("The caller lacks the Manage OpenWork Models permission or needs to sign in again.", forbiddenSchema),
         404: notFound,
@@ -150,7 +149,6 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       if (!await findOrganizationTeamForDefaultModel(organizationId, teamId)) return c.json({ error: "team_not_found" }, 404)
       let change: WorkbotTeamSettingsWrite = c.req.valid("json")
       const groups = await shownGroups(organizationId, context.currentMember.userId)
-      if (change.maxSteps && !groups.stepLimit) return c.json({ error: "invalid_request" as const, message: "Workbot's step limit isn't on for this organization.", details: [] }, 400)
       if (change.agent && !groups.agents) return c.json({ error: "invalid_request" as const, message: AGENTS_OFF_MESSAGE, details: [] }, 400)
       if (change.model && !change.model.inherit && change.model.value !== null) {
         // The same check as the organization's default model, against the caller's own models.
@@ -277,7 +275,6 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
         briefOn,
         checkGateOn,
         sendCheckOn,
-        currentSources: async () => ((await readTeamAgentPolicy(organization.id, teamId)) ?? everyone).settings.sources,
       })
       if (refused) return c.json(refused, 400)
       const write = () => saveTeamAgentPolicy({ organizationId: organization.id, teamId, change: requested, everyone, updatedByOrgMemberId: currentMember.id })

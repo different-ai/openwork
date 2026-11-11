@@ -38,9 +38,11 @@ export type AgentCheckGate = {
 
 /**
  * Den's own look, with no agent turn: new mail and changed meetings, each since that source was last read. Den can
- * look at Gmail and Google Calendar through the member's Google Workspace connection. Any other readable source (team
- * chat, another connection, another mail or calendar provider), a source never read yet, or a read that fails means
- * Den can't tell, and the check runs.
+ * look at Google Calendar through the calendar source, and at Gmail through the member's Google Workspace connection
+ * when it is one of the check's sources (what else that connection reads, such as files, isn't looked at). Any other
+ * readable source (Slack, another connection, another mail or calendar provider), a Google Workspace connection an
+ * admin turned some reads off for (`restricted`), a source never read yet, or a read that fails means Den can't tell,
+ * and the check runs.
  */
 export async function peekArrivals(input: {
   /** The sources this check would read. */
@@ -48,6 +50,8 @@ export async function peekArrivals(input: {
   lastLook: Readonly<Record<string, number>>
   now: number
   timeZone: string
+  /** Connections with reads an admin turned off for agents: Den doesn't look at their mail either. */
+  restricted?: ReadonlySet<string>
   mail: AgentCheckGate["mail"]
   calendar: (input: { connectionId: string; timeMin: number; timeMax: number }) => Promise<MemberCalendarRead>
 }): Promise<AgentPeek> {
@@ -56,10 +60,10 @@ export async function peekArrivals(input: {
   for (const source of input.sources) {
     const connections = readableConnections(source)
     const google = connections.length === 1 && connections[0]?.native === "google-workspace" ? connections[0] : null
-    if (!google || (source.id !== "email" && source.id !== "calendar")) return { kind: "unknown", why: source.kind }
+    if (!google || (source.kind === "other" && input.restricted?.has(google.id))) return { kind: "unknown", why: source.kind }
     const since = input.lastLook[source.id]
     if (since === undefined) return { kind: "unknown", why: "never_read" }
-    looks.push({ source: source.id, connectionId: google.id, since })
+    looks.push({ source: source.kind === "other" ? "email" : "calendar", connectionId: google.id, since })
   }
   const items: AgentArrival[] = []
   let more = false

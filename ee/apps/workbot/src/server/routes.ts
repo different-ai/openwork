@@ -192,7 +192,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       connectors: () => connectors(`${member.den.organization.id}:${member.den.memberId}`, member.accessToken),
       sandboxGateway: member.den.sandboxGateway,
       browserRecovery: member.den.browserRecovery,
-      maxSteps: member.den.maxSteps,
       // Saved steps are GA; older Dens may omit stepTurns, so preserve their continuous-turn protocol.
       stepTurns: member.den.stepTurns,
       // Per-chat cells are GA; older Dens may omit sessionCells, so preserve their legacy placement.

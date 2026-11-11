@@ -114,7 +114,7 @@ export function ConnectionToolsDisclosure({ view, failed, name, connectionId, co
         ) : null}
         {view?.status === "ready" && view.tools.length === 0 ? <p className="py-2 pl-20 pr-6 text-[12px] text-gray-500">It lists no tools.</p> : null}
         {view?.status === "ready" ? view.tools.map((tool) => <ToolRow key={tool.name} tool={tool} connectionId={connectionId} disabled={disabled} onChange={onChange} />) : null}
-        {view?.coreSourcesElsewhere ? <p className="py-2 pl-20 pr-6 text-[12px] text-gray-500">Calendar, mail and chat are read under their own sources.</p> : null}
+        {view?.coreSourcesElsewhere ? <p className="py-2 pl-20 pr-6 text-[12px] text-gray-500">The calendar is read under its own setting.</p> : null}
         {chosen ? (
           <div className="flex justify-end py-1.5 pr-6">
             <DenButton variant="ghost" size="xs" disabled={disabled} onClick={() => onChange(automaticToolsChange(connectionId))}>Use automatic choices</DenButton>
@@ -222,7 +222,7 @@ export function ConnectionToolsButton({ view, failed, name, connectionId, connec
               {!view && !failed ? <p className="py-3 text-[13px] text-gray-500">Loading tools</p> : null}
               {view?.status === "ready" && view.tools.length === 0 ? <p className="py-3 text-[13px] text-gray-500">It lists no tools.</p> : null}
               {view?.status === "ready" ? view.tools.map((tool) => <DialogToolRow key={tool.name} tool={tool} connectionId={connectionId} disabled={disabled} onChange={onChange} />) : null}
-              {view?.coreSourcesElsewhere ? <p className="py-3 text-[12px] text-gray-500">Calendar, mail and chat are read under their own sources.</p> : null}
+              {view?.coreSourcesElsewhere ? <p className="py-3 text-[12px] text-gray-500">The calendar is read under its own setting.</p> : null}
             </div>
             <div className="flex items-center justify-between gap-3 border-t border-gray-100 px-6 py-4">
               {chosen ? (

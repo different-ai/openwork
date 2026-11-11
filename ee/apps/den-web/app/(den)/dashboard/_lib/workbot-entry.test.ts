@@ -89,16 +89,25 @@ test("a blocked Workbot entry stays in the navigation with a quiet marker (P4)",
   assert.equal(others?.attention, undefined);
 });
 
-test("Workbot turned off keeps Workbot and My bot in the navigation, locked, with who can turn it on (P4)", () => {
+test("Workbot turned off takes Workbot and My bot out of the navigation: no lock", () => {
   const myBot = (entry?: WorkbotEntry) => navItems(entry).find((item) => item.testId === "dashboard-nav-my-bot");
-  assert.equal(myBot({ kind: "open" })?.locked, undefined);
+  assert.ok(myBot({ kind: "open" }));
   assert.equal(myBot({ kind: "ask-admin" })?.locked, undefined);
 
-  const off: WorkbotEntry = { kind: "off", teamsHref: null };
-  assert.equal(workbotItem(off)?.href, WORKBOT_ENTRY_HREF);
-  assert.equal(workbotItem(off)?.locked, "Workbot is off for your team. An admin can turn it on in Members › Teams.");
-  assert.equal(workbotItem(off)?.attention, undefined);
-  assert.equal(myBot(off)?.locked, "My bot is off for your team. An admin can turn it on in Members › Teams.");
+  for (const off of [{ kind: "off", teamsHref: null }, { kind: "off", teamsHref: getMembersTeamsRoute("workspace") }] satisfies WorkbotEntry[]) {
+    assert.equal(workbotItem(off), undefined);
+    assert.equal(myBot(off), undefined);
+    assert.equal(navItems(off).some((item) => item.locked), false);
+  }
+});
+
+test("Manage has no Workbot entry once its settings are on Members › Teams › Everyone", () => {
+  const manage = (workbotSettingsInTeams?: boolean) => buildDashboardNavSections({
+    orgSlug: "workspace", access: owner, capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, workbotSettingsInTeams,
+  }).flatMap((section) => section.items).find((item) => item.testId === "dashboard-nav-workbot-settings");
+  assert.ok(manage());
+  assert.ok(manage(false));
+  assert.equal(manage(true), undefined);
 });
 
 test("the Workbot entry names the workspace on screen, and Den passes only a well-formed id on to Workbot", () => {

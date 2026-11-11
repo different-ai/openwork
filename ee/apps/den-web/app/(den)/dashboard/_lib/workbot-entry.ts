@@ -42,7 +42,6 @@ export const WORKBOT_ENTRY_COPY = {
   askAdminTitle: "Workbot needs an organization admin to add an AI provider",
   offTitle: "Workbot is off for your team. An admin can turn it on in Members › Teams.",
   offAction: "Open Teams",
-  myBotOffTitle: "My bot is off for your team. An admin can turn it on in Members › Teams.",
 } as const;
 
 /**
@@ -70,15 +69,12 @@ export function decideWorkbotEntry({
   return { kind: "ask-admin" };
 }
 
-/** The member's own agent runs on Workbot: off for them when Workbot is, and its entry stays with a lock (P4). */
-export function myBotNavMarker(entry: WorkbotEntry): { locked?: string } {
-  return entry.kind === "off" ? { locked: WORKBOT_ENTRY_COPY.myBotOffTitle } : {};
-}
-
-/** The quiet marker on the Workbot nav entry while it is blocked (DESIGN.md P4): never hidden. */
+/**
+ * The quiet marker on the Workbot nav entry while it has no AI provider (DESIGN.md P4). Workbot turned off for the
+ * viewer has no entry at all (buildDashboardNavSections), and neither has My bot, which runs on it.
+ */
 export function workbotNavMarker(entry: WorkbotEntry): { attention?: string; locked?: string } {
   if (entry.kind === "add-provider") return { attention: WORKBOT_ENTRY_COPY.addProviderTitle };
   if (entry.kind === "ask-admin") return { locked: WORKBOT_ENTRY_COPY.askAdminTitle };
-  if (entry.kind === "off") return { locked: WORKBOT_ENTRY_COPY.offTitle };
   return {};
 }

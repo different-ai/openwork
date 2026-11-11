@@ -22,23 +22,17 @@ import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { HelpTip } from "./help-tip";
 import { BriefPreview, CHECK_GATE_ROW, everyLabel, hourLabel, SEND_CHECK_ROW, ThresholdSelect } from "./workbot-agent-brief-panel";
-import { agentsSwitchLabel, type AgentPolicyScope } from "./workbot-agent-scope";
+import { AGENTS_SWITCH_LABEL, type AgentPolicyScope } from "./workbot-agent-scope";
 
 /**
  * Members' agents with `workbotSettingsTabs` on: the same settings and saves as `WorkbotAgentBriefPanel`, in three
  * groups (who gets an agent, messages, schedule) and then what to tell people. A choice between yes and no is a
- * switch, a choice among several is a select, and every row says what it does in a tooltip beside its label.
+ * switch and a choice among several is a select. Only a row whose label can't say what it does has a tooltip.
  */
 
-/** What each row does, shown from the "i" beside its label. */
+/** What a row does, shown from the "i" beside its label: only the rows that need explaining. */
 export const AGENT_SETTING_HELP = {
   membersStart: "On: members get messages and can turn their agent off. Off: each member turns their agent on.",
-  slack: "Each member gets a direct message in Slack from Workbot. Agents can't be turned on without it.",
-  dailyCap: "The most messages an agent sends one member in a day. A member can only lower it.",
-  checkEvery: "How often each member's agent reads their calendar, email, team chat and other context for things to tell them. A member can only check less often.",
-  hours: "Agents check and send messages only between these hours, in each member's calendar time zone.",
-  days: "The days agents check and send messages.",
-  instructions: "What every member's agent looks for and tells them about, in plain words. Agents read this on each check.",
   example: "A sample of the direct message a member gets in Slack from their agent. The names are made up, and it does not change with your instructions.",
   extraChecks: "Besides the schedule, an agent may ask for this many more checks a day, for example at 1:45 before a 2 PM meeting.",
 } as const;
@@ -80,7 +74,6 @@ function InstructionsRow({ brief, locked, onSave }: { brief: AgentBriefView; loc
       <div className="flex min-h-[28px] items-center justify-between gap-3">
         <span className="flex min-w-0 items-center gap-1.5">
           <label htmlFor={editing ? id : undefined} className="text-[13px] font-medium text-gray-900">Agent instructions</label>
-          <HelpTip label="Agent instructions">{AGENT_SETTING_HELP.instructions}</HelpTip>
           {isDefault ? <span className="text-[12px] text-gray-500">Default</span> : null}
         </span>
         {editing ? null : (
@@ -127,7 +120,7 @@ export function WorkbotAgentSettingsGroups({ view, brief, canManage, saving, onC
   scope?: AgentPolicyScope;
 }) {
   const ids = { every: useId(), hours: useId(), days: useId(), cap: useId(), extra: useId(), holdAt: useId(), skipAt: useId() };
-  const switchLabel = agentsSwitchLabel(scope);
+  const switchLabel = AGENTS_SWITCH_LABEL;
   const { settings, slackReady, runnerReady } = view;
   const locked = !canManage || saving;
   const switchNote = !runnerReady
@@ -153,7 +146,6 @@ export function WorkbotAgentSettingsGroups({ view, brief, canManage, saving, onC
       <Group title="Messages">
         <Row
           label="Send messages in Slack"
-          help={AGENT_SETTING_HELP.slack}
           testId="workbot-proactive-destination"
           note={slackReady ? null : (
             <>
@@ -168,7 +160,7 @@ export function WorkbotAgentSettingsGroups({ view, brief, canManage, saving, onC
           <DenSwitch aria-label="Send messages in Slack" checked={settings.destination === "workbot_dm"} disabled={locked}
             onChange={(on) => onChange({ destination: on ? "workbot_dm" : null })} />
         </Row>
-        <Row label="Daily message limit" labelId={ids.cap} help={AGENT_SETTING_HELP.dailyCap} testId="workbot-agent-brief-cap">
+        <Row label="Daily message limit" labelId={ids.cap} testId="workbot-agent-brief-cap">
           <div className="w-36">
             <DenSelect aria-labelledby={ids.cap} menuWidth="trigger" value={String(brief.dailyCap)} disabled={locked}
               onChange={(event) => onChange({ brief: { dailyCap: Number(event.target.value) } })}>
@@ -191,7 +183,7 @@ export function WorkbotAgentSettingsGroups({ view, brief, canManage, saving, onC
       </Group>
 
       <Group title="Schedule">
-        <Row label="Check for updates" labelId={ids.every} help={AGENT_SETTING_HELP.checkEvery} testId="workbot-agent-brief-rhythm">
+        <Row label="Check for updates" labelId={ids.every} testId="workbot-agent-brief-rhythm">
           <div className="w-40">
             <DenSelect aria-labelledby={ids.every} menuWidth="trigger" value={String(brief.checkEveryHours)} disabled={locked}
               onChange={(event) => {
@@ -202,7 +194,7 @@ export function WorkbotAgentSettingsGroups({ view, brief, canManage, saving, onC
             </DenSelect>
           </div>
         </Row>
-        <Row label="Working hours" labelId={ids.hours} help={AGENT_SETTING_HELP.hours} testId="workbot-agent-brief-hours">
+        <Row label="Working hours" labelId={ids.hours} testId="workbot-agent-brief-hours">
           <div className="w-28">
             <DenSelect aria-label="Start of the workday" menuWidth="trigger" value={String(settings.startHour)} disabled={locked}
               onChange={(event) => onChange({ startHour: Number(event.target.value) })}>
@@ -217,7 +209,7 @@ export function WorkbotAgentSettingsGroups({ view, brief, canManage, saving, onC
             </DenSelect>
           </div>
         </Row>
-        <Row label="Working days" labelId={ids.days} help={AGENT_SETTING_HELP.days} testId="workbot-agent-brief-days">
+        <Row label="Working days" labelId={ids.days} testId="workbot-agent-brief-days">
           <div className="w-36">
             <DenSelect aria-labelledby={ids.days} menuWidth="trigger" value={settings.workingDays} disabled={locked}
               onChange={(event) => onChange({ workingDays: event.target.value === "everyday" ? "everyday" : "weekdays" })}>

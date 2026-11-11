@@ -55,8 +55,8 @@ const MORNING_8 = at("2026-10-20T08:00:00")
 const localHours = (slots: number[], timeZone = TZ) => slots.map((slot) => { const c = zonedClock(slot, timeZone); return `${c.hour}:${String(c.minute).padStart(2, "0")}` })
 const SOURCES: AgentPromptSource[] = [
   { id: "calendar", name: "Calendar", via: ["Google Calendar"], instruction: "", lastReadAt: at("2026-10-20T08:00:00") },
-  { id: "email", name: "Email", via: ["Gmail"], instruction: "", lastReadAt: at("2026-10-20T08:00:00") },
-  { id: "chat", name: "Team chat", via: ["Slack"], instruction: "Ignore #random.", lastReadAt: null },
+  { id: "emc_google", name: "Google Workspace", via: [], service: "google-workspace", instruction: "", lastReadAt: at("2026-10-20T08:00:00") },
+  { id: "emc_slack", name: "Slack", via: [], service: "slack", instruction: "Ignore #random.", lastReadAt: null },
 ]
 
 describe("the prompts, ported from the spec", () => {
@@ -94,8 +94,8 @@ describe("the prompts, ported from the spec", () => {
     assert.ok(first.startsWith(`${AGENT_CHECK_MARKER} Scheduled check, the first of the day. It is Tue, Oct 20, 8:00 AM (America/New_York).`))
     assert.match(first, /Your next scheduled check: today at 10:00 AM\. Extra checks you can still ask for today: 3\./)
     assert.match(first, /checkpoint to memory\/checks\/2026-10-20\/08-00\.md, and delete checkpoints in memory\/checks\/ from before 2026-10-06\./)
-    assert.match(first, /- email: Email through Gmail: their inbox\. last read today at 8:00 AM \(Gmail search after:\d+\)\./)
-    assert.match(first, /- chat: Team chat through Slack: .*never read yet\..*"""Ignore #random\."""/)
+    assert.match(first, /- emc_google: Google Workspace: their inbox first, then anything else there the brief asks for\. last read today at 8:00 AM \(.*Gmail search after:\d+\)\./)
+    assert.match(first, /- emc_slack: Slack: DMs to them, mentions of them and threads they're in\. never read yet\..*"""Ignore #random\."""/)
     assert.match(first, /End with your report for the messenger, or exactly NO_FINDINGS\.$/)
     const requested = agentCheckPrompt({ occasion: { kind: "requested", at: at("2026-10-20T13:45:00"), why: "before your 2 PM with Northwind" }, now: at("2026-10-20T13:45:00"), timeZone: TZ, nextCheckAt: at("2026-10-20T14:00:00"), extraChecksLeft: 2, sources: SOURCES, unavailable: [{ name: "Granola", why: "not connected" }] })
     assert.match(requested, /^\[check\] The extra check you asked for at 1:45 PM: before your 2 PM with Northwind\./)

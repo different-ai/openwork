@@ -6,7 +6,7 @@ import { appLogger } from "../observability/logger.js"
 import type { MemberCalendarRead } from "../routes/org/google-workspace.js"
 import type { DeliveryResult } from "./deliver.js"
 import type { AgentInstanceRow } from "./repository.js"
-import { readableConnections, withConnectionState, type MemberConnection, type ResolvedSource } from "./sources.js"
+import { connectionService, readableConnections, withConnectionState, type MemberConnection, type ResolvedSource } from "./sources.js"
 
 /**
  * What both ways of waking a member's agent share (today's, wake.ts, and the brief's, wake-brief.ts): the one calendar
@@ -99,7 +99,14 @@ export async function noticeUnreadableSources(input: {
   return notices
 }
 
-/** The sources a message's items came from, named as the member knows them ("Slack", "Gmail"). */
+/** For the check's prompt: the service behind a connection source, so the agent knows what to read there (its mail, its chats). */
+export function sourcePromptService(source: ResolvedSource): { service?: "google-workspace" | "microsoft-365" | "slack" } {
+  const connection = source.kind === "other" ? readableConnections(source)[0] : undefined
+  const service = connection ? connectionService(connection) : null
+  return service ? { service } : {}
+}
+
+/** The sources a message's items came from, named as the member knows them ("Slack", "Google Calendar"). */
 export function checkSources(items: readonly AgentItem[], sources: readonly ResolvedSource[]): AgentMemberCheckSource[] {
   return items.flatMap((item) => {
     const source = sources.find((entry) => entry.id === item.source)

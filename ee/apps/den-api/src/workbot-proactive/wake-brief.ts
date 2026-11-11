@@ -60,7 +60,7 @@ import type { AgentSendCheck } from "./send-check.js"
 import type { MemberConnection } from "./sources.js"
 import type { AgentRawTurnResult } from "./turn.js"
 import type { AgentWakeDeps, AgentWakeOutcome } from "./wake.js"
-import { checkSources, noticeUnreadableSources, readMemberCalendar, type CheckRecordInput } from "./wake-shared.js"
+import { checkSources, noticeUnreadableSources, readMemberCalendar, sourcePromptService, type CheckRecordInput } from "./wake-shared.js"
 
 /**
  * One check of a member's agent under `workbotAgentBrief`: one rhythm, the brief, and two steps.
@@ -280,6 +280,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
       lastLook: state.lastLook,
       now,
       timeZone,
+      restricted: new Set(toolPlan.nativeReads.filter((entry) => entry.denied.length > 0).map((entry) => entry.connectionId)),
       mail: gate.mail,
       calendar: (read) => deps.calendar({ organizationId, orgMembershipId: memberId, connectionId: read.connectionId, timeMin: iso(read.timeMin), timeMax: iso(read.timeMax) }),
     })
@@ -333,6 +334,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
         id: source.id,
         name: source.name,
         via: source.kind === "other" ? [] : readableConnections(source).map((connection) => connection.name),
+        ...sourcePromptService(source),
         instruction: source.instruction,
         lastReadAt: source.lastReadAt,
       })),

@@ -15,20 +15,21 @@ test("every connector is listed with its read tools; an admin reviews one; a mem
   const tools = async (connectionId: string) => agentConnectionToolsViewSchema.parse((await ownerProbe.api(world.den.admin, `/v1/org/workbot-settings/proactive/sources/${connectionId}/tools`)).body);
   const agent = async () => memberAgentViewSchema.parse((await probe.api(world.den.members.member, "/v1/me/agent")).body);
 
-  await step("What agents read lists every connection, custom ones too, each with its policy and how many read tools agents may use", async () => {
-    await owner.see({ text: "What agents read" }, { timeoutMs: 90_000 });
-    await owner.see({ text: "11 connections" });
+  await step("Connectors lists every connection, custom ones, Google Workspace and Slack too, each with its policy and how many read tools agents may use", async () => {
+    await owner.see({ testId: "workbot-proactive-sources" }, { timeoutMs: 90_000 });
+    await owner.see({ text: /12 connections\. Read only\./ });
     for (const fixture of ANY_CONNECTOR_FIXTURES) await owner.see({ text: fixture.name });
     await owner.see({ text: "Tools agents may use: No read tools" }, { timeoutMs: 60_000 });
     await owner.see({ text: "Tools agents may use: 1 read tool" }, { timeoutMs: 60_000 });
     const view = await settings();
     const other = view.sourceConnections?.other ?? [];
     evidence.recordAssertionEvidence(
-      "Every connection is offered in Other context with its policy (members choose by default), no hand-picked list",
+      "Every connection is offered under Connectors with its policy (members choose by default), no hand-picked list; mail and chat are read through Google Workspace and Slack",
       `${other.length} connections: ${other.map((entry) => `${entry.name} (${entry.policy})`).join(", ")}`,
-      other.length === 11 && other.every((entry) => entry.policy === "members"),
+      other.length === 12 && other.every((entry) => entry.policy === "members"),
     );
-    expect(other.length).toBe(11);
+    expect(other.length).toBe(12);
+    expect(other.map((entry) => entry.name)).toEqual(expect.arrayContaining(["Google Workspace", "Slack"]));
     await owner.screenshot();
   });
 
