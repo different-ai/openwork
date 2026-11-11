@@ -150,6 +150,15 @@ export function responsesToChat(body: JsonObject): JsonObject {
   const choice = body.tool_choice
   if (typeof choice === "string") chat.tool_choice = choice
   else if (isJsonObject(choice) && (choice.type === "function" || choice.type === "custom") && typeof choice.name === "string") chat.tool_choice = { type: "function", function: { name: choice.name } }
+  else if (isJsonObject(choice) && choice.type === "allowed_tools" && Array.isArray(choice.tools)) {
+    const allowed = new Set(choice.tools.flatMap((tool): string[] => {
+      if (!isJsonObject(tool) || typeof tool.name !== "string") return []
+      return [typeof tool.namespace === "string" && tool.namespace ? `${tool.namespace}${NAMESPACE_SEPARATOR}${tool.name}` : tool.name]
+    }))
+    chat.tools = (Array.isArray(chat.tools) ? chat.tools : []).filter((tool) =>
+      isJsonObject(tool) && isJsonObject(tool.function) && typeof tool.function.name === "string" && allowed.has(tool.function.name))
+    chat.tool_choice = choice.mode === "required" ? "required" : "auto"
+  }
   // OpenAI-compatible providers refuse fewer than 16 output tokens.
   if (typeof body.max_output_tokens === "number") chat.max_tokens = Math.max(MIN_OUTPUT_TOKENS, body.max_output_tokens)
   for (const field of ["temperature", "top_p", "parallel_tool_calls", "user"]) if (body[field] !== undefined) chat[field] = body[field]
