@@ -56,7 +56,8 @@ remote session lifecycle.
    the registered-target surface.
 3. `remote-session:read` with `commandId`: inspect durable delivery and progress.
    Delivery is not task completion. `session.status` distinguishes running,
-   waiting, idle and error. Approval remains in the native client.
+   waiting, idle and error. What it waits on is answered with `answer`
+   (see "Pending requests and answers").
 4. `remote-session:read/send/stop` with the native `sessionId` and workspace:
    route control requests back to the owning runner. A pending request returns
    `requestId`; reading that ID collects its eventual receipt.
@@ -186,6 +187,34 @@ permission replies, v2 form replies by field key and option value, v2 permission
 replies. The OpenCode plugin host has no question reply in 2.0.26, so
 `opencode-openwork` answers permissions only. An answer request that expires
 after its reply was dispatched settles as `ambiguous_answer`.
+
+A runner that also registers `remote_session_access_v1` lists every open item
+of a session in a transcript read as `pendingItems` (up to five, `pending`
+first; it also holds a question a finished turn left open). An answer may name
+any of them by its `requestId`, and `{ kind: "dismiss", requestId }` closes a
+question without answering it. A remote answer still never approves "always".
+
+### Session access and attach
+
+Feature `remoteSessionAccess` ([docs](features/remote-session-access/README.md)).
+Which sessions a caller can reach is a policy with two parts: the
+organization's ceiling in Den and the owner's choice on each computer, both
+`created` (only sessions started remotely, the default) or `all`. The narrower
+applies and the computer enforces it.
+
+The native session ID is still not a routing key. A session that was started
+on the computer is reached only after `remote-session:attach` (or
+`POST /v1/remote-sessions/attach`) queues a command of kind
+`remote_session_attach` for that computer. The runner checks its policy,
+verifies the session is in the named workspace, and journals a receipt without
+touching the session; from then on read, send, stop, answer and progress work
+as for a created session. The policy is read again on every request and
+progress report of an attached session. A newer attach to the same session
+replaces an older one. Den lets go of an attached session ("detach") when the
+computer reports `created`, the ceiling is lowered, or the computer no longer
+knows the receipt; the caller attaches again. While its access is `all` the
+computer reports its sessions (`PUT /v1/session-runners/sessions`) so the owner
+can find them in Den; nobody else can list them.
 
 ## Recovery and honest guarantees
 
