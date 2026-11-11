@@ -40,9 +40,19 @@ async function eventually(predicate, message = "condition was not reached") {
   assert.fail(message)
 }
 
+/** Runners started by the test in progress; tests in this file run one at a time. */
+const startedRunners = []
+const started = (runner) => { startedRunners.push(runner); return runner }
+
 async function privateDirectory(t) {
   const root = await mkdtemp(join(tmpdir(), "openwork-session-runner-"))
-  t.after(() => rm(root, { recursive: true, force: true }))
+  // Hooks run in the order they were added, and one that throws skips the rest: a runner still
+  // writing its journal made this removal fail, and was then never stopped. Stop them first; the
+  // retries cover a write that was already on its way.
+  t.after(async () => {
+    for (const runner of startedRunners.splice(0)) runner.stop()
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 })
+  })
   return root
 }
 
@@ -165,13 +175,13 @@ function runnerFixture(native, assignment = command()) {
 }
 
 function desktopRunner(native, den, root) {
-  return createDesktopAutomationRunner({
+  return started(createDesktopAutomationRunner({
     fetchImpl: den.fetchImpl, getLocalRuntime: native.getLocalRuntime, getJournalRoot: () => root,
     remoteSessionFirstTurnWindowMs: 0,
     remoteSessionWatch: { fastPollMs: 10, slowPollMs: 10 },
     remoteSessionRequestPoll: { pollMs: 10 },
     waitBeforeReconnect: (_ms, signal) => new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true })),
-  })
+  }))
 }
 
 function configure(runner, capabilities, nonce = "first", selectedAccount = account) {
@@ -784,14 +794,14 @@ test("an engine policy the local server cannot take yet never stops the runner f
     return new Response(JSON.stringify({ ...(await response.json()), enginePolicy: { upgrade: true } }), { status: response.status })
   }
   const policies = []
-  const runner = createDesktopAutomationRunner({
+  const runner = started(createDesktopAutomationRunner({
     fetchImpl, getLocalRuntime: native.getLocalRuntime, getJournalRoot: () => root,
     remoteSessionFirstTurnWindowMs: 0,
     remoteSessionWatch: { fastPollMs: 10, slowPollMs: 10 },
     remoteSessionRequestPoll: { pollMs: 10 },
     waitBeforeReconnect: (_ms, signal) => new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true })),
     onEnginePolicy: async (policy) => { policies.push(policy); throw new Error("OpenWork engine policy service unavailable") },
-  })
+  }))
   t.after(() => runner.stop())
   configure(runner, legacyCapabilities)
   await eventually(() => den.calls.some((call) => call.path.endsWith("/complete")))

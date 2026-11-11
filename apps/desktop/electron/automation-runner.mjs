@@ -14,6 +14,15 @@ import {
 } from "./session-access.mjs"
 
 const EMPTY_USAGE = { inputTokens: null, outputTokens: null, costMicros: null }
+/**
+ * Den's 403 error for a desktop that was disconnected from its organization:
+ * the credential is refused until someone signs in on this computer again.
+ */
+export const COMPUTER_DISCONNECTED_ERROR = "computer_disconnected"
+/** Why Den refused the runner credential: the computer was disconnected, or any other 401/403. */
+const credentialRejectionReason = (status, responseError) => status === 403 && responseError === COMPUTER_DISCONNECTED_ERROR
+  ? COMPUTER_DISCONNECTED_ERROR
+  : "credential_rejected"
 const RUNNER_WORK_POLL_MS = 60_000
 /** Inventory is gathered at most this often; it is sent only when it changed. */
 const INVENTORY_MIN_INTERVAL_MS = 2 * 60_000
@@ -719,6 +728,8 @@ export async function requestJson(fetchImpl, baseUrl, token, requestPath, option
   if (!response.ok) {
     const error = new Error(String(payload?.message ?? payload?.error ?? `Request returned ${response.status}`))
     Object.defineProperty(error, "status", { value: response.status })
+    // The `error` name the server answered with. Not `code`: failures are classified by that elsewhere.
+    if (typeof payload?.error === "string") Object.defineProperty(error, "responseError", { value: payload.error })
     throw error
   }
   return payload
@@ -1513,9 +1524,10 @@ export function createDesktopAutomationRunner(options) {
     if (current === state) current = null
   }
 
-  const rejectCredential = (state, status) => {
+  const rejectCredential = (state, status, responseError) => {
     if (state.credentialRejected) return
     state.credentialRejected = true
+    const reason = credentialRejectionReason(status, responseError)
     const key = credentialKey(state.configuration)
     rejectedCredentials.add(key)
     const affectedCurrent = current === state || (current && credentialKey(current.configuration) === key)
@@ -1527,8 +1539,10 @@ export function createDesktopAutomationRunner(options) {
       retire(affectedCurrent, new Error(`Automation runner credential rejected with HTTP ${status}`))
     }
     if (pendingConfiguration && credentialKey(pendingConfiguration) === key) pendingConfiguration = null
-    options.log?.(`runner credential rejected with HTTP ${status}`)
-    if (affectedCurrent) options.onCredentialRejected?.()
+    options.log?.(reason === COMPUTER_DISCONNECTED_ERROR
+      ? "this computer was disconnected from its organization; it takes no work until someone signs in again"
+      : `runner credential rejected with HTTP ${status}`)
+    if (affectedCurrent) options.onCredentialRejected?.({ reason })
     if (affectedCurrent && pendingConfiguration) {
       const next = pendingConfiguration
       pendingConfiguration = null
@@ -1562,7 +1576,7 @@ export function createDesktopAutomationRunner(options) {
       }
       return payload
     } catch (error) {
-      if ([401, 403].includes(error?.status)) rejectCredential(state, error.status)
+      if ([401, 403].includes(error?.status)) rejectCredential(state, error.status, error.responseError)
       throw error
     }
   }
@@ -2217,7 +2231,8 @@ export function createDesktopAutomationRunner(options) {
           signal: state.controller.signal,
         })
         if ([401, 403].includes(response.status)) {
-          rejectCredential(state, response.status)
+          const refusal = await response.json().catch(() => null)
+          rejectCredential(state, response.status, refusal?.error)
           return
         }
         if (response.status === 404) {

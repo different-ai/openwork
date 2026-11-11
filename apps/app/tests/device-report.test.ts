@@ -1,10 +1,12 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
 import type { ComputerDevicesSnapshot, DesktopDeviceIdentity } from "@openwork/types/desktop-ipc"
+import { DenApiError, createDenClient } from "../src/app/lib/den"
 import {
   DEVICE_REPORT_BACKOFF_MS,
   buildDeviceReport,
   createDeviceReporter,
   deviceReportBackoffMs,
+  deviceReportFailure,
   deviceReportKey,
   reportedComputerUse,
   type DeviceReportOutcome,
@@ -105,6 +107,7 @@ function harness(outcomes: DeviceReportOutcome[] = []) {
   let pending: { run: () => void; at: number } | null = null
   const sent: Array<{ at: number; key: string }> = []
   const reported: string[] = []
+  const signals: string[] = []
   let snapshots = 0
   const start = time
   const reporter = createDeviceReporter({
@@ -115,6 +118,8 @@ function harness(outcomes: DeviceReportOutcome[] = []) {
       return outcomes.shift() ?? { kind: "sent", deviceId: "device-1", reportAfterSeconds: 300 }
     },
     onReported: (id) => { reported.push(id) },
+    onDisconnected: () => { signals.push("disconnected") },
+    onSignInRefused: () => { signals.push("sign_in_refused") },
     now: () => time,
     timers: {
       set: (run, ms) => { pending = { run, at: time + ms }; return pending },
@@ -136,7 +141,7 @@ function harness(outcomes: DeviceReportOutcome[] = []) {
     time = end
   }
   return {
-    reporter, sent, reported, advance, settle,
+    reporter, sent, reported, signals, advance, settle,
     change: (next: Partial<ComputerDevicesSnapshot>) => { current = snapshot(next) },
     waiting: () => pending !== null,
     snapshots: () => snapshots,
@@ -218,6 +223,50 @@ test("the feature turned off in the organization stops reporting for good", asyn
   expect(h.reported).toEqual([])
 })
 
+test("a computer disconnected from its organization stops reporting for good and says so once", async () => {
+  const h = harness([{ kind: "disconnected" }])
+  h.reporter.start()
+  await h.advance(0)
+  expect(h.signals).toEqual(["disconnected"])
+  expect(h.waiting()).toBe(false)
+  h.change({ selectedId: "freestyle-vm" })
+  await h.reporter.check()
+  await h.advance(3_600_000)
+  expect(h.sent).toHaveLength(1)
+  expect(h.reported).toEqual([])
+  expect(h.signals).toEqual(["disconnected"])
+})
+
+test("a refused sign-in asks for the sign-in to be checked and waits like any failure", async () => {
+  const h = harness([{ kind: "sign_in_refused" }, { kind: "sign_in_refused" }])
+  h.reporter.start()
+  await h.advance(59_999)
+  expect(h.sent.map((entry) => entry.at)).toEqual([0])
+  expect(h.signals).toEqual(["sign_in_refused"])
+  await h.advance(1)
+  expect(h.sent.map((entry) => entry.at)).toEqual([0, 60_000])
+  expect(h.signals).toEqual(["sign_in_refused", "sign_in_refused"])
+  await h.advance(120_000)
+  expect(h.sent.map((entry) => entry.at)).toEqual([0, 60_000, 180_000])
+  expect(h.reported).toEqual(["device-1"])
+  expect(h.signals).toHaveLength(2)
+})
+
+test("Den's refusals are told apart: disconnected, sign-in refused, rate limited, feature off, anything else", () => {
+  const limited = new DenApiError(429, "rate_limited", "Slow down")
+  limited.retryAfterSeconds = 90
+  expect(deviceReportFailure(new DenApiError(403, "computer_disconnected", "This computer was disconnected."))).toEqual({ kind: "disconnected" })
+  expect(deviceReportFailure(new DenApiError(401, "unauthorized", "Sign in again."))).toEqual({ kind: "sign_in_refused" })
+  expect(deviceReportFailure(limited)).toEqual({ kind: "rate_limited", retryAfterSeconds: 90 })
+  expect(deviceReportFailure(new DenApiError(429, "rate_limited", "Slow down"))).toEqual({ kind: "rate_limited", retryAfterSeconds: null })
+  expect(deviceReportFailure(new DenApiError(404, "feature_disabled", "Off"))).toEqual({ kind: "feature_off" })
+  // A 403 for another reason, a 401 a proxy made up and a network error are not verdicts on this computer.
+  expect(deviceReportFailure(new DenApiError(403, "forbidden", "No"))).toEqual({ kind: "failed" })
+  expect(deviceReportFailure(new DenApiError(401, "request_failed", "Proxy"))).toEqual({ kind: "failed" })
+  expect(deviceReportFailure(new DenApiError(401, "computer_disconnected", "Odd"))).toEqual({ kind: "failed" })
+  expect(deviceReportFailure(new TypeError("fetch failed"))).toEqual({ kind: "failed" })
+})
+
 test("stopping while identity is being read prevents sending the old sign-in's report", async () => {
   let resolveIdentity!: (value: DesktopDeviceIdentity) => void
   const reading = new Promise<DesktopDeviceIdentity>(resolve => { resolveIdentity = resolve })
@@ -250,4 +299,31 @@ test("stopping cancels the next report and ignores one already on its way", asyn
   await late.reporter.check()
   await late.advance(600_000)
   expect(late.sent).toHaveLength(1)
+})
+
+test("an older Den, which knows nothing of disconnecting, still lists devices and takes this desktop's report", async () => {
+  // What a Den from before disconnecting sends: no `disconnectedAt`, no `canDisconnect`.
+  const device = {
+    id: "device-1", kind: "desktop", provider: "openwork_desktop", source: "desktop_app", platform: "darwin",
+    label: "Ada's MacBook Pro", access: "mine", availability: "online", state: "ready", statusDetail: null,
+    lastSeenAt: "2026-11-10T10:00:00Z", createdAt: "2026-11-10T09:00:00Z", appVersion: "0.14.2",
+    computerId: "3d0a0b6e-install", workbotChat: null, canRename: true, canRemove: true,
+  }
+  const requests: string[] = []
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = new URL(String(input)).pathname
+    requests.push(`${init?.method ?? "GET"} ${path.slice(path.indexOf("/v1/"))}`)
+    return path.endsWith("/v1/remote-devices/this-computer")
+      ? Response.json({ device, reportAfterSeconds: 300 })
+      : Response.json({ devices: [device] })
+  })
+  try {
+    const client = createDenClient({ baseUrl: "https://den.example.test", token: "fixture-token" })
+    expect(await client.listRemoteDevices("org_fixture")).toEqual([{ ...device, disconnectedAt: null, canDisconnect: false }])
+    const report = buildDeviceReport(identity, snapshot())
+    const answer = await client.reportThisComputer("org_fixture", report!)
+    expect(answer.reportAfterSeconds).toBe(300)
+    expect(answer.device).toEqual({ ...device, disconnectedAt: null, canDisconnect: false })
+    expect(requests).toEqual(["GET /v1/remote-devices", "PUT /v1/remote-devices/this-computer"])
+  } finally { fetch.mockRestore() }
 })

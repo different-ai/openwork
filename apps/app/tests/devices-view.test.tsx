@@ -4,13 +4,15 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { RemoteDevice } from "@openwork/types/den/remote-devices";
+import { remoteDeviceSchema, type RemoteDevice } from "@openwork/types/den/remote-devices";
 import type { RemoteSessionAccessMode } from "@openwork/types/automations";
 import type { RemoteSessionAccessState } from "../src/app/lib/desktop";
 import type { AutomationsDenContext } from "../src/react-app/domains/automations/use-automations";
 
 let createRoot: typeof import("react-dom/client")["createRoot"];
 let DevicesContent: typeof import("../src/react-app/domains/settings/pages/devices-view")["DevicesContent"];
+let connection: typeof import("../src/react-app/domains/devices/computer-connection-store");
+let thisDevice: typeof import("../src/react-app/domains/devices/this-device-store")["useThisDeviceStore"];
 let root: Root | null = null;
 let queryClient: QueryClient;
 const ownedDom = !GlobalRegistrator.isRegistered && typeof document === "undefined";
@@ -19,23 +21,26 @@ beforeAll(async () => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
   createRoot = (await import("react-dom/client")).createRoot;
   DevicesContent = (await import("../src/react-app/domains/settings/pages/devices-view")).DevicesContent;
+  connection = await import("../src/react-app/domains/devices/computer-connection-store");
+  thisDevice = (await import("../src/react-app/domains/devices/this-device-store")).useThisDeviceStore;
 });
 const previousBridge = typeof window === "undefined" ? undefined : window.__OPENWORK_ELECTRON__;
 afterEach(async () => {
   await act(async () => root?.unmount()); root = null;
   queryClient?.clear(); document.body.innerHTML = "";
   Reflect.set(window, "__OPENWORK_ELECTRON__", previousBridge);
+  connection.markThisComputerConnected(); thisDevice.setState({ deviceIds: {} });
 });
 afterAll(async () => { if (ownedDom) await GlobalRegistrator.unregister(); });
 const device = (change: Partial<RemoteDevice> = {}): RemoteDevice => ({
   id: "desktop-1", kind: "desktop", provider: "openwork_desktop", source: "desktop_app", platform: "darwin",
   label: "Ada's Mac", access: "mine", availability: "online", state: "ready", statusDetail: null,
   lastSeenAt: "2026-11-10T10:00:00Z", createdAt: "2026-11-10T09:00:00Z", appVersion: "0.14.2",
-  computerId: "runner-1", workbotChat: null, canRename: true, canRemove: true, ...change,
+  computerId: "runner-1", workbotChat: null, canRename: true, canRemove: true, disconnectedAt: null, canDisconnect: false, ...change,
 });
 const pause = () => new Promise(resolve => setTimeout(resolve, 20));
 const calls: Array<{ kind: string; input?: unknown }> = [];
-async function render(options: { devices?: RemoteDevice[]; enabled?: boolean; ready?: boolean; failure?: boolean; sessionAccess?: boolean } = {}) {
+async function render(options: { devices?: RemoteDevice[]; enabled?: boolean; ready?: boolean; failure?: boolean; sessionAccess?: boolean; organizationName?: string; onSignOut?: () => void; signedOut?: boolean; disconnectFailure?: boolean } = {}) {
   calls.length = 0;
   const devices = options.devices ?? [device(), device({ id: "vm-1", label: "Build VM", kind: "vm", provider: "daytona", availability: "paused", state: "paused", access: "shared" })];
   const client = {
@@ -43,12 +48,13 @@ async function render(options: { devices?: RemoteDevice[]; enabled?: boolean; re
     getRemoteDevice: async () => { calls.push({ kind: "detail" }); return { device: devices[0], events: [{ id: "event-1", type: "registered", actor: "device", level: "info", message: "Computer registered", createdAt: "2026-11-10T10:00:00Z" }] }; },
     registerRemoteDevice: async (_org: string, input: unknown) => { calls.push({ kind: "register", input }); return devices[0]; },
     renameRemoteDevice: async (_org: string, id: string, label: string) => { calls.push({ kind: "rename", input: { id, label } }); return devices[0]; },
+    disconnectRemoteDevice: async (_org: string, id: string) => { calls.push({ kind: "disconnect", input: id }); if (options.disconnectFailure) throw new Error("Network unavailable"); return { device: devices[0], signedOut: options.signedOut ?? true }; },
     removeRemoteDevice: async (_org: string, id: string) => { calls.push({ kind: "remove", input: id }); },
   } as unknown as NonNullable<AutomationsDenContext["client"]>;
   const context: AutomationsDenContext = { client, ready: options.ready ?? true, organizationId: "org-1", queryRoot: ["den", "automations", "org-1"] };
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  await act(async () => { root!.render(<QueryClientProvider client={queryClient}><DevicesContent context={context} enabled={options.enabled ?? true} sessionAccess={options.sessionAccess} /></QueryClientProvider>); await pause(); });
+  await act(async () => { root!.render(<QueryClientProvider client={queryClient}><DevicesContent context={context} enabled={options.enabled ?? true} sessionAccess={options.sessionAccess} organizationName={options.organizationName} onSignOut={options.onSignOut} /></QueryClientProvider>); await pause(); });
   await act(pause);
   return container;
 }
@@ -65,9 +71,21 @@ async function fill(id: string, value: string) {
     input.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
-async function manage() {
-  await act(async () => { (document.querySelector('[aria-label="Manage Ada\'s Mac"]') as HTMLButtonElement).click(); await pause(); });
+async function manage(label = "Ada's Mac") {
+  const trigger = [...document.querySelectorAll<HTMLButtonElement>("button[aria-label]")].find(button => button.getAttribute("aria-label") === `Manage ${label}`);
+  expect(trigger).toBeDefined();
+  await act(async () => { trigger!.click(); await pause(); });
 }
+/** The entries of the open row menu, closed again afterwards. */
+async function menuOf(label: string) {
+  await manage(label);
+  const items = [...document.querySelectorAll('[role="menuitem"]')].map(item => item.textContent?.trim());
+  await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await pause(); });
+  return items;
+}
+const row = (label: string) => [...document.querySelectorAll<HTMLElement>('[data-testid="device-row"]')].find(item => item.textContent?.includes(label))!;
+const notice = () => document.querySelector<HTMLElement>('[data-testid="computer-disconnected"]');
+const outcome = () => document.querySelector('[data-testid="device-outcome"]')?.textContent ?? null;
 
 test("web Devices groups desktops and VMs with reported state and lazy recent events", async () => {
   const container = await render();
@@ -133,6 +151,136 @@ test("rename saves the new name and remove waits for confirmation", async () => 
   expect(calls.some(call => call.kind === "remove")).toBe(false);
   expect(document.body.textContent).toContain("won't stop or delete"); await click("Remove device");
   expect(calls.find(call => call.kind === "remove")?.input).toBe("desktop-1");
+});
+
+test("a disconnected computer says so at the top, calmly, with a way to sign out", async () => {
+  await render();
+  expect(notice()).toBeNull();
+  await act(async () => root?.unmount()); root = null; document.body.innerHTML = "";
+  connection.markThisComputerDisconnected("this sign-in");
+  let signOuts = 0;
+  await render({ organizationName: "Acme", onSignOut: () => { signOuts += 1; } });
+  expect(notice()?.getAttribute("role")).toBe("status");
+  expect(notice()?.textContent).toContain("This computer was disconnected from Acme.");
+  expect(notice()?.textContent).toContain("Sign out and sign in again to reconnect it.");
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+  expect(document.querySelectorAll('[data-testid="device-row"]').length).toBe(2);
+  await click("Sign out");
+  expect(signOuts).toBe(1);
+  await act(async () => { connection.markThisComputerConnected(); await pause(); });
+  expect(notice()).toBeNull();
+});
+test("the disconnected notice names no organization it does not know, and is not shown signed out", async () => {
+  connection.markThisComputerDisconnected("this sign-in");
+  await render();
+  expect(notice()?.textContent).toContain("This computer was disconnected from your organization.");
+  await act(async () => root?.unmount()); root = null; document.body.innerHTML = "";
+  await render({ ready: false });
+  expect(notice()).toBeNull();
+});
+test("this computer's session choice stays readable while it is disconnected", async () => {
+  desktopSessionAccess(accessState({ mode: "all", ceiling: null, supported: false }));
+  connection.markThisComputerDisconnected("this sign-in");
+  const container = await render({ sessionAccess: true });
+  expect(notice()).not.toBeNull();
+  expect(container.textContent).toContain(accessHeading);
+  expect(reason()).toBe("Not in effect. Sign in again or update OpenWork to use this.");
+});
+test("a disconnected desktop's row says so, what to do, and its short version", async () => {
+  await render({ devices: [
+    device({ disconnectedAt: "2026-11-10T11:00:00Z", availability: "offline", statusDetail: "Screen Recording is off", appVersion: "0.18.66-alpha.4137+053df1c" }),
+    device({ id: "desktop-2", label: "Office PC", platform: "win32", appVersion: "0.18.66-alpha.4137+053df1c" }),
+  ] });
+  const status = row("Ada's Mac").querySelector('[role="status"]')!;
+  expect(status.textContent).toBe("Disconnected");
+  expect(status.className).toContain("text-muted-foreground");
+  expect(row("Ada's Mac").textContent).toContain("Sign in on it again to reconnect.");
+  expect(row("Ada's Mac").textContent).not.toContain("Offline");
+  expect(row("Ada's Mac").textContent).not.toContain("Screen Recording is off");
+  expect(row("Ada's Mac").textContent).toContain("OpenWork 0.18.66 alpha");
+  expect(row("Ada's Mac").textContent).not.toContain("4137");
+  expect(row("Office PC").querySelector('[role="status"]')!.textContent).toBe("Online");
+  expect(row("Office PC").textContent).not.toContain("Sign in on it again");
+});
+test("Disconnect is offered for the member's other signed-in desktops, never for this computer", async () => {
+  const devices = [
+    device({ canDisconnect: true, canRemove: false }),
+    device({ id: "desktop-2", label: "Office PC", computerId: "runner-2", canDisconnect: true, canRename: false, canRemove: false }),
+    device({ id: "desktop-3", label: "Old laptop", computerId: null, disconnectedAt: "2026-11-10T11:00:00Z" }),
+  ];
+  thisDevice.setState({ deviceIds: { "org-1": "desktop-1" } });
+  await render({ devices });
+  expect(row("Ada's Mac").textContent).toContain("This computer");
+  expect(await menuOf("Ada's Mac")).toEqual(["Rename"]);
+  expect(await menuOf("Office PC")).toEqual(["Disconnect"]);
+  expect(await menuOf("Old laptop")).toEqual(["Rename", "Remove"]);
+});
+test("before its first report, this computer is known by the id its runner registers with", async () => {
+  const previous = localStorage.getItem("openwork.automations.desktop-runner-id");
+  localStorage.setItem("openwork.automations.desktop-runner-id", "runner-1");
+  Reflect.set(window, "__OPENWORK_ELECTRON__", {});
+  try {
+    await render({ devices: [
+      device({ canDisconnect: true, canRemove: false }),
+      device({ id: "desktop-2", label: "Office PC", computerId: "runner-2", canDisconnect: true, canRemove: false }),
+    ] });
+    expect(row("Ada's Mac").textContent).toContain("This computer");
+    expect(await menuOf("Ada's Mac")).toEqual(["Rename"]);
+    expect(row("Office PC").textContent).not.toContain("This computer");
+    expect(await menuOf("Office PC")).toEqual(["Rename", "Disconnect"]);
+  } finally {
+    if (previous === null) localStorage.removeItem("openwork.automations.desktop-runner-id");
+    else localStorage.setItem("openwork.automations.desktop-runner-id", previous);
+  }
+});
+test("disconnecting waits for confirmation, then says whether OpenWork was signed out there", async () => {
+  for (const [signedOut, message] of [
+    [true, "Disconnected. OpenWork was signed out on that computer."],
+    [false, "Disconnected. It can't act as a computer until someone signs in on it again."],
+  ] as const) {
+    await render({ signedOut, devices: [device(), device({ id: "desktop-2", label: "Office PC", canDisconnect: true, canRemove: false })] });
+    await manage("Office PC"); await click("Disconnect");
+    expect(calls.some(call => call.kind === "disconnect")).toBe(false);
+    expect(document.body.textContent).toContain("Disconnect Office PC?");
+    expect(document.body.textContent).toContain("OpenWork on that computer is signed out and it stops taking tasks and sharing sessions. Sign in on it again to reconnect it.");
+    expect(outcome()).toBeNull();
+    await click("Disconnect");
+    expect(calls.filter(call => call.kind === "disconnect").map(call => call.input)).toEqual(["desktop-2"]);
+    expect(document.body.textContent).not.toContain("Disconnect Office PC?");
+    expect(outcome()).toBe(message);
+    expect(calls.filter(call => call.kind === "list").length).toBe(2);
+    await manage(); await click("Rename");
+    expect(outcome()).toBeNull();
+    await act(async () => root?.unmount()); root = null; document.body.innerHTML = "";
+  }
+});
+test("a cancelled disconnect sends nothing, and a failed one stays in the dialog and says so", async () => {
+  await render({ disconnectFailure: true, devices: [device({ id: "desktop-2", label: "Office PC", canDisconnect: true })] });
+  await manage("Office PC"); await click("Disconnect"); await click("Cancel");
+  expect(calls.some(call => call.kind === "disconnect")).toBe(false);
+  expect(outcome()).toBeNull();
+  await manage("Office PC"); await click("Disconnect"); await click("Disconnect");
+  expect(calls.filter(call => call.kind === "disconnect").length).toBe(1);
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe("Network unavailable");
+  expect(document.body.textContent).toContain("Disconnect Office PC?");
+  expect(outcome()).toBeNull();
+});
+test("a desktop listed by an older Den, which sends no disconnect fields, shows as connected with no Disconnect", async () => {
+  const { disconnectedAt: _disconnectedAt, canDisconnect: _canDisconnect, ...fromOlderDen } = device({ id: "desktop-2", label: "Office PC" });
+  await render({ devices: [remoteDeviceSchema.parse(fromOlderDen)] });
+  expect(row("Office PC").querySelector('[role="status"]')!.textContent).toBe("Online");
+  expect(row("Office PC").textContent).not.toContain("Disconnected");
+  expect(row("Office PC").textContent).not.toContain("Sign in on it again");
+  expect(await menuOf("Office PC")).toEqual(["Rename", "Remove"]);
+});
+test("removing a disconnected desktop no longer says it comes back when it reports", async () => {
+  await render({ devices: [device({ disconnectedAt: "2026-11-10T11:00:00Z" }), device({ id: "desktop-2", label: "Office PC" })] });
+  await manage(); await click("Remove");
+  expect(document.body.textContent).toContain("This won't stop or delete the computer. It appears again if someone signs in on it.");
+  expect(document.body.textContent).not.toContain("when it next reports");
+  await click("Cancel");
+  await manage("Office PC"); await click("Remove");
+  expect(document.body.textContent).toContain("A desktop can appear again when it next reports.");
 });
 
 const accessHeading = "Sessions other devices can reach";

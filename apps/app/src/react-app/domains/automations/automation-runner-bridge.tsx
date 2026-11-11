@@ -13,17 +13,26 @@ import type {
   AutomationDesktopRunnerCapability,
   AutomationDesktopRunnerRegistration,
 } from "@openwork/types/automations"
+import { COMPUTER_DISCONNECTED_ERROR } from "@openwork/types/den/remote-devices"
 
-import { createDenClient, DenApiError, readDenSettings } from "@/app/lib/den"
+import { createDenClient, DenApiError, isDenSessionRevokedError, readDenSettings } from "@/app/lib/den"
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events"
 import { isDesktopRuntime } from "@/app/utils"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { useEnterpriseActivationRequired } from "@/react-app/domains/cloud/enterprise-activation-gate"
+import {
+  denSignInKey,
+  markThisComputerConnected,
+  markThisComputerDisconnected,
+  thisComputerStillDisconnected,
+} from "@/react-app/domains/devices/computer-connection-store"
 import { useDesktopAutomationsEnabled } from "./automation-availability"
 import { createAutomationRunnerConnectCoordinator } from "./automation-runner-connect-coordinator"
 import { desktopRunnerId, organizationRunnerId } from "./automation-runner-identity"
 
 const RUNNER_TOKEN_REFRESH_MS = 30 * 60_000
+/** A disconnected computer asks Den again this often. A new sign-in asks at once. */
+const RUNNER_DISCONNECTED_RETRY_MS = 5 * 60_000
 
 /** Keeps this signed-in desktop registered as the owner's Automation runner when Den allows it. */
 export function AutomationRunnerBridge() {
@@ -32,7 +41,7 @@ export function AutomationRunnerBridge() {
 }
 
 function ActivatedAutomationRunnerBridge() {
-  const { status } = useDenAuth()
+  const { status, refresh } = useDenAuth()
   const deploymentEnabled = useDesktopAutomationsEnabled()
 
   useEffect(() => {
@@ -42,6 +51,7 @@ function ActivatedAutomationRunnerBridge() {
       .catch(() => undefined)
     const coordinator = createAutomationRunnerConnectCoordinator({
       refreshMs: RUNNER_TOKEN_REFRESH_MS,
+      disconnectedRetryMs: RUNNER_DISCONNECTED_RETRY_MS,
       connect: async (isCurrent) => {
         if (status !== "signed_in") {
           await disconnect()
@@ -54,6 +64,7 @@ function ActivatedAutomationRunnerBridge() {
           await disconnect()
           return
         }
+        const signIn = denSignInKey(settings)
         try {
           const client = createDenClient({ baseUrl: settings.baseUrl, token: authToken })
           let runnerId = desktopRunnerId()
@@ -148,28 +159,54 @@ function ActivatedAutomationRunnerBridge() {
             runner = await mintRunner(runnerId)
           }
           if (!isCurrent()) return
+          markThisComputerConnected()
           await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("automationRunnerConfigure", {
             baseUrl: client.baseUrls.apiBaseUrl,
             token: runner.token,
             runnerId,
           })
         } catch (error) {
-          if (isCurrent()) console.warn("[automation-runner] registration failed", error)
+          if (!isCurrent()) throw error
+          // This computer was disconnected from the organization. Only a new
+          // sign-in reconnects it, so asking again right away cannot help.
+          if (error instanceof DenApiError && error.status === 403 && error.code === COMPUTER_DISCONNECTED_ERROR) {
+            markThisComputerDisconnected(signIn)
+            await disconnect()
+            return "disconnected"
+          }
+          // The sign-in itself was refused: check it, which signs out when it
+          // is gone, instead of minting against it again.
+          if (isDenSessionRevokedError(error)) {
+            void refresh()
+            return
+          }
+          console.warn("[automation-runner] registration failed", error)
           throw error
         }
       },
     })
 
     const requestConnect = () => void coordinator.request().catch(() => undefined)
-    const handleSettingsChanged = () => requestConnect()
+    // While Den refuses this computer, only a different sign-in is worth an attempt before the long interval.
+    const handleSettingsChanged = () => { if (!thisComputerStillDisconnected()) requestConnect() }
     window.addEventListener(denSettingsChangedEvent, handleSettingsChanged)
     // Rejoining a network mints a fresh credential immediately instead of
     // leaving this desktop unreachable until the next refresh, which is long
     // enough for a scheduled occurrence to come due and be missed.
     window.addEventListener("online", handleSettingsChanged)
     const unsubscribeCredentialRejected = window.__OPENWORK_ELECTRON__.automationRunner
-      ?.onCredentialRejected?.(() => coordinator.credentialRejected())
-    requestConnect()
+      ?.onCredentialRejected?.((rejection) => {
+        if (rejection?.reason !== COMPUTER_DISCONNECTED_ERROR) {
+          coordinator.credentialRejected()
+          return
+        }
+        markThisComputerDisconnected(denSignInKey(readDenSettings()))
+        coordinator.computerDisconnected()
+        // A disconnect usually ends this sign-in too: find out now, not at the next request.
+        void refresh()
+      })
+    if (thisComputerStillDisconnected()) coordinator.computerDisconnected()
+    else requestConnect()
     return () => {
       coordinator.dispose()
       unsubscribeCredentialRejected?.()
@@ -177,7 +214,7 @@ function ActivatedAutomationRunnerBridge() {
       window.removeEventListener("online", handleSettingsChanged)
       void disconnect()
     }
-  }, [deploymentEnabled, status])
+  }, [deploymentEnabled, refresh, status])
 
   return null
 }
