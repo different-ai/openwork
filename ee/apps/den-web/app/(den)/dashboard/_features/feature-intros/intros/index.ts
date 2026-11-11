@@ -15,6 +15,7 @@ import { apiKeysIntros } from "./api-keys";
 import { collectionsIntros } from "./collections";
 import { deploymentsIntros } from "./deployments";
 import { computersIntros } from "./computers";
+import { sessionsIntros } from "./sessions";
 import { settingsIntros } from "./settings";
 import { toolTesterIntros } from "./tool-tester";
 
@@ -39,6 +40,7 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
   ...collectionsIntros,
   ...deploymentsIntros,
   ...computersIntros,
+  ...sessionsIntros,
   ...settingsIntros,
   ...toolTesterIntros,
 ];

@@ -11,11 +11,12 @@ import { DenSelect } from "../../../_components/ui/select";
 import { DenSegmented } from "../../../_components/ui/segmented";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { DenTable, type DenTableColumn } from "../../../_components/ui/table";
-import { getOrgAccessFlags, orgFeatureEnabled, permissionLockReason } from "../../../_lib/den-org";
+import { getOrgAccessFlags, orgFeatureEnabled, permissionLockReason, type DenOrgContext } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { FeatureIntroGate } from "../feature-intros/feature-intro-gate";
 import { ComputerDetail } from "./computer-detail";
 import { RegisteredInstances } from "./registered-instances";
+import { OrgSessionAccessSetting } from "../sessions/session-access-setting";
 import { StatusDot, TimeAgo, focusRing, hairline, secondaryText } from "./computer-parts";
 import { useComputers } from "./computers-data";
 import { AVAILABILITY_TONE, KIND_LABELS, PROVIDER_LABELS, clearComputerFilters, countLabel, devicePageCount, hasComputerFilters, ownerLabel, parseDeviceAvailability, parseDeviceProvider, readComputerFilters, writeComputerFilters, type ComputerFilters, type OrganizationComputer } from "./computers-format";
@@ -37,14 +38,14 @@ export function ComputersScreen() {
       {!access.canViewComputers ? permissionLockReason("computers.view") : "Computers is not enabled for this organization. Ask an organization owner or admin about availability."}
     </p>
   </section>;
-  return <ComputersList key={orgId} orgId={orgId} />;
+  return <ComputersList key={orgId} orgId={orgId} orgContext={orgContext} />;
 }
 
 function ComputersSkeleton() {
   return <div aria-busy="true" aria-label="Computers"><DenSkeleton className="mb-6 h-5 w-28" />{SKELETON_ROWS.map(({ id }) => <DenSkeleton key={id} className="mb-3 h-10 w-full" />)}</div>;
 }
 
-function ComputersList({ orgId }: { orgId: string }) {
+function ComputersList({ orgId, orgContext }: { orgId: string; orgContext: Pick<DenOrgContext, "features"> }) {
   const queryClient = useQueryClient();
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["organization-computers", orgId] });
   const router = useRouter();
@@ -129,5 +130,7 @@ function ComputersList({ orgId }: { orgId: string }) {
       </nav> : null}
       {data ? <RegisteredInstances instances={data.instances} total={data.instancesTotal} page={data.instancePage} pageSize={data.instancePageSize} busy={query.isFetching} onPage={(instancePage) => apply({ instancePage })} now={now} /> : null}
     </FeatureIntroGate>
+    {/* The organization's ceiling for what members may let their other devices reach; renders only with remoteSessionAccess on. */}
+    <OrgSessionAccessSetting orgId={orgId} orgContext={orgContext} />
   </section>;
 }

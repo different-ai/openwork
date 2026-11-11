@@ -905,6 +905,11 @@ export function getMyComputersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/my-computers`;
 }
 
+/** A member's own sessions across their computers (feature `remoteSessionAccess`). */
+export function getMySessionsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/my-sessions`;
+}
+
 export function getDesktopPoliciesRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/desktop-policies`;
 }

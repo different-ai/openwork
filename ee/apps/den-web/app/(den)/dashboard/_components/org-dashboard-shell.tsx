@@ -30,6 +30,7 @@ import {
   getConfigRoute,
   getComputersRoute,
   getMyComputersRoute,
+  getMySessionsRoute,
   getCustomLlmProvidersRoute,
   getDiagnosticsRoute,
   getDeploymentsRoute,
@@ -286,6 +287,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getMyComputersRoute(orgSlug))) {
     return "My Computers";
   }
+  if (pathname.startsWith(getMySessionsRoute(orgSlug))) {
+    return "My Sessions";
+  }
   if (pathname.startsWith(getComputersRoute(orgSlug))) {
     return "Computers";
   }
@@ -490,6 +494,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     runtimeConfigLoaded,
 
     remoteDevices: orgFeatureEnabled(orgContext, "remoteDevices"),
+    remoteSessionAccess: orgFeatureEnabled(orgContext, "remoteSessionAccess"),
     managedDeployments: orgFeatureEnabled(orgContext, "managedDeployments"),
     authSecuritySettings: orgFeatureEnabled(orgContext, "authSecuritySettings"),
     configBlobs: orgFeatureEnabled(orgContext, "configBlobs"),
