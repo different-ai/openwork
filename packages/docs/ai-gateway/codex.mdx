@@ -45,8 +45,19 @@ using this key**. Already have a key? Open its menu and select **Set up**.
    args = ["-c", "echo $OPENWORK_API_KEY"]
    ```
 
-3. **Start Codex** in your project with `codex`.
-4. **Check it.** Run `/status`: it should show the `openwork` provider. `/model`
+3. **Restart Codex's background server.** In a new terminal (one that has the
+   key), run:
+
+   ```bash
+   codex app-server daemon restart
+   ```
+
+   Codex runs a background server that keeps going after you quit Codex or close
+   the terminal. It reads the key and `config.toml` when it starts, so without
+   this step it keeps using what it had before, even in a new terminal. Run it
+   again whenever you change the key or `config.toml`.
+4. **Start Codex** in your project with `codex`.
+5. **Check it.** Run `/status`: it should show the `openwork` provider. `/model`
    lists your models and their thinking levels.
 
 The key is read through a command (the `auth` block) rather than `env_key`:
@@ -56,7 +67,8 @@ windows and thinking levels, for `/model`.
 ### On Windows
 
 Set the key with `setx OPENWORK_API_KEY "<your API key>"`, open a new
-terminal, and use this `auth` block instead:
+terminal, run `codex app-server daemon restart`, and use this `auth` block
+instead:
 
 ```toml
 [model_providers.openwork.auth]
@@ -91,9 +103,9 @@ page rather than typing them, or pick one with `/model`.
 
 | Codex shows | What to do |
 | --- | --- |
-| `401 Unauthorized` / `invalid_api_key` | `OPENWORK_API_KEY` isn't set in this terminal (open a new one after editing your profile), or the key was revoked, has expired, or 3rd party tools are off for your organization. Check it in **My Library › Models**. |
+| `401 Unauthorized` / `invalid_api_key` | Codex's background server started before the key was set. In a new terminal, run `codex app-server daemon restart`, then `codex`. Still failing? Check that `echo $OPENWORK_API_KEY` prints the key there, and that the key isn't revoked or expired and 3rd party tools are on for your organization (**My Library › Models**). |
 | `model_not_found: … is not one of your OpenWork models` | The model name isn't one of yours anymore. Copy the configuration again from the page, or pick a model with `/model`. |
 | `Model metadata for … not found` | Codex didn't load your models: check that the provider uses the `auth` block above, not `env_key`. |
 | `unsupported_thinking_level` | The model doesn't have that thinking level. Pick one in `/model`, or remove `model_reasoning_effort`. |
 | `404 … not available for this organization` | 3rd party tools are turned off for your organization. Ask an admin. |
-| A new model, or a new key, isn't picked up | Codex keeps them in a background server. Run `codex app-server daemon restart`, then start `codex` again. |
+| A new model, a new key or a `config.toml` change isn't picked up | Run `codex app-server daemon restart` in a terminal that has the key, then start `codex` again. |

@@ -74,6 +74,9 @@ test("a member creates a key, picks Codex, and Codex's requests with that config
       config.base_url === `${world.gatewayUrl}/api/v1/codex` && config.model_provider === "openwork" && config.model_reasoning_effort === "high" && text.includes("echo $OPENWORK_API_KEY"),
     );
     expect(envLine).toMatch(/^export OPENWORK_API_KEY="ow_gw_[^"]+"$/);
+    // Codex's background server keeps the key and config it started with, so the steps restart it.
+    const restart = (await probe.dom('[data-testid="gateway-tool-codex-restart"]')).elements[0]?.text ?? "";
+    expect(restart).toBe("codex app-server daemon restart");
     expect(config.model_provider).toBe("openwork");
     expect(config.base_url).toBe(`${world.gatewayUrl}/api/v1/codex`);
     expect(config.wire_api).toBe("responses");
