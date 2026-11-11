@@ -48,6 +48,7 @@ test("a member follows and answers sessions on their own computer from Den, only
     await owner.see({ testId: "session-access-setting" });
     await owner.see({ text: "Sessions other devices can reach" });
     await owner.screenshot();
+    await owner.click({ testId: "session-access-select" });
     await owner.click({ testId: "session-access-all" });
     await probe.eventually(async () => (await world.settings("owner")).settings.access, { within: 30_000, until: (access) => access === "all", label: "the organization allows all sessions" });
     await owner.see({ text: "Saved" }, { timeoutMs: 30_000 });
@@ -135,6 +136,7 @@ test("a member follows and answers sessions on their own computer from Den, only
   });
 
   await step("lowering the organization's ceiling closes the attached session at once; the remotely started task stays", async () => {
+    await owner.click({ testId: "session-access-select" });
     await owner.click({ testId: "session-access-created" });
     await probe.eventually(async () => (await world.settings("owner")).settings.access, { within: 30_000, until: (access) => access === "created", label: "the organization is back to remotely started sessions" });
     const send = await world.memberRequest("/v1/remote-sessions/send", { sessionId: world.local.sessionId, workspaceId: world.workspaceId, prompt: "One more thing" });

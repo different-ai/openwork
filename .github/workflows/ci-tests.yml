@@ -148,7 +148,7 @@ jobs:
       - name: Test that a streaming reply keeps its place in the chat
         run: pnpm --filter @openwork/app exec bun --conditions=development test --isolate ./tests/reply-keeps-its-place.test.ts
       - name: Test Devices settings and desktop reporting
-        run: pnpm --filter @openwork/app exec bun test --isolate ./tests/devices-view.test.tsx ./tests/device-report.test.ts
+        run: pnpm --filter @openwork/app exec bun test --isolate ./tests/devices-view.test.tsx ./tests/device-report.test.ts ./tests/automation-runner-bridge.test.tsx ./tests/automation-runner-connect-coordinator.test.ts ./tests/disconnected-sign-out.test.tsx
       - name: Test desktop and cloud computer access and interruption
         run: |
           # Electron's permission checks import the production JavaScript export.
@@ -177,7 +177,7 @@ jobs:
         run: |
           pnpm --filter @openwork/remote-sessions build
           pnpm --filter @openwork/headless-threads build
-          node --test apps/desktop/test/remote-session-push.test.mjs apps/desktop/test/session-runner.test.mjs apps/desktop/test/session-access.test.mjs apps/desktop/test/session-attach.test.mjs
+          node --test apps/desktop/test/remote-session-push.test.mjs apps/desktop/test/session-runner.test.mjs apps/desktop/test/session-access.test.mjs apps/desktop/test/session-attach.test.mjs apps/desktop/test/computer-disconnected.test.mjs
           pnpm --filter @openwork/headless-threads test
       - name: Test the OpenCode engine new installs start on
         run: |

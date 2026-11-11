@@ -142,10 +142,11 @@ export async function denMySessionsWorld(seed: Seed) {
     const followUps: string[] = [];
     const refusedAttaches: string[] = [];
     const effective = (): Access => choice === "all" && ceiling === "all" ? "all" : "created";
+    const started = Date.now() - 3 * 60_000;
     const messages = () => [
-      { id: "msg_ask", role: "user", createdAt: 1, text: "Review the Q4 budget and flag anything over plan.", truncated: false, toolCalls: [], error: null },
-      { id: "msg_work", role: "assistant", createdAt: 2, text: "Travel is 18% over plan. See https://example.com/budget for the table. I need a few answers before I export it.", truncated: false, toolCalls: [], error: null },
-      ...followUps.map((text, index) => ({ id: `msg_follow${index}`, role: "user", createdAt: 3 + index, text, truncated: false, toolCalls: [], error: null })),
+      { id: "msg_ask", role: "user", createdAt: started, text: "Review the Q4 budget and flag anything over plan.", truncated: false, toolCalls: [], error: null },
+      { id: "msg_work", role: "assistant", createdAt: started + 60_000, text: "Travel is 18% over plan. See https://example.com/budget for the table. I need a few answers before I export it.", truncated: false, toolCalls: [], error: null },
+      ...followUps.map((text, index) => ({ id: `msg_follow${index}`, role: "user", createdAt: started + 120_000 + index, text, truncated: false, toolCalls: [], error: null })),
     ];
     const transcript = () => ({
       title: LOCAL_TITLE, status: open.length ? "waiting" : "idle", waitingFor: open[0]?.kind ?? null, lastError: null, historyScope: "full",
