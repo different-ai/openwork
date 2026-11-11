@@ -548,13 +548,15 @@ export const desktopRunnerInventoryResponseSchema = z.object({
  * keeps only the latest report per runner and shows it to the owner alone.
  */
 export const RUNNER_SESSION_REPORT_LIMIT = 100
+/** Largest epoch millisecond timestamp expressible with an RFC 3339 four-digit year. */
+export const RUNNER_SESSION_TIMESTAMP_MAX = 253_402_300_799_999
 export const runnerReportedSessionSchema = z.object({
   workspaceId: desktopInventoryIdSchema,
   sessionId: desktopInventoryIdSchema,
   title: z.string().max(240),
   engine: z.enum(["v1", "v2"]),
-  /** When the session last changed on the computer. */
-  updatedAt: timestampSchema,
+  /** When the session last changed on the computer; must fit a four-digit RFC 3339 year. */
+  updatedAt: timestampSchema.max(RUNNER_SESSION_TIMESTAMP_MAX),
   /** Whether a turn was running at report time; absent when the computer could not tell. */
   working: z.boolean().optional(),
 })

@@ -29,6 +29,7 @@ import {
   type RemoteSessionAttachRequest,
 } from "@openwork/types/den/remote-sessions"
 import { COMPUTER_DISCONNECTED_ERROR } from "@openwork/types/den/remote-devices"
+import { sessionTimestampIso } from "../remote-sessions/timestamps.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
@@ -731,7 +732,9 @@ async function activeMemberId(scope: {
 /** Desktops listed by remote-session:targets; a member rarely has more than a few. */
 const DESKTOP_TARGET_LIMIT = 50
 
-const reportedSessionsSchema = z.array(runnerReportedSessionSchema)
+// Keep older numeric reports readable even when their time is outside today's
+// ingestion bounds. Public session responses render those stored times as null.
+const reportedSessionsSchema = z.array(runnerReportedSessionSchema.extend({ updatedAt: z.number() }))
 
 async function defaultDesktopTargets(scope: {
   organizationId: DenTypeId<"organization">
@@ -1389,7 +1392,7 @@ async function attachDesktopSession(
     targetWorkspaceId: body.workspaceId,
     targetSessionId: body.sessionId,
   })
-  return jsonResult({ target: "desktop", state: "queued", commandId: command.id, ...identity, expiresAt: command.expiresAt === null ? null : new Date(command.expiresAt).toISOString() })
+  return jsonResult({ target: "desktop", state: "queued", commandId: command.id, ...identity, expiresAt: sessionTimestampIso(command.expiresAt) })
 }
 
 /** `GET /v1/sessions`: the caller's own sessions across their computers. */

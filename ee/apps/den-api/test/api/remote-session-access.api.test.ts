@@ -254,6 +254,34 @@ test("a computer must understand session access, and its owner must allow every 
   assert.equal((await db.select().from(RemoteSessionCommandTable)).length, 0, "no refusal queued anything")
 })
 
+test("session reports enforce RFC 3339 bounds while older out-of-range stored times remain listable as null", async () => {
+  const maximum = Date.parse("9999-12-31T23:59:59.999Z")
+  try {
+    for (const updatedAt of [0, maximum - 1, maximum]) {
+      const report = await laptop.call("PUT", "/v1/session-runners/sessions", { access: "all", sessions: [{ ...localSession, updatedAt }] })
+      assert.equal(report.status, 200, summary(report))
+      assert.equal(sessionsOf(await asMilo("GET", "/v1/sessions")).sessions[0]?.updatedAt, new Date(updatedAt).toISOString())
+    }
+    for (const updatedAt of [-1, 0.5, maximum + 1, Number.MAX_SAFE_INTEGER]) {
+      const report = await laptop.call("PUT", "/v1/session-runners/sessions", { access: "all", sessions: [{ ...localSession, updatedAt }] })
+      assert.equal(report.status, 400, summary(report))
+      assert.deepEqual((await runnerRow(laptop.computerId)).sessions, [{ ...localSession, updatedAt: maximum }], "invalid reports do not replace the last valid report")
+    }
+
+    const storedTimes = [Number.MAX_SAFE_INTEGER, maximum + 1, -1, 0.5, maximum, 0]
+    await db.update(AutomationRunnerTable).set({ sessions: storedTimes.map((updatedAt, index) => ({ ...localSession, sessionId: `ses_stored_${index}`, updatedAt })) }).where(eq(AutomationRunnerTable.id, laptop.computerId))
+    const listed = await asMilo("GET", "/v1/sessions")
+    assert.equal(listed.status, 200, summary(listed))
+    const sessions = sessionsOf(listed).sessions
+    assert.equal(sessions.length, storedTimes.length, "one old invalid timestamp must not hide the report's sessions")
+    for (const [index, updatedAt] of storedTimes.entries()) {
+      assert.equal(sessions.find((session) => session.sessionId === `ses_stored_${index}`)?.updatedAt, updatedAt >= 0 && updatedAt <= maximum && Number.isInteger(updatedAt) ? new Date(updatedAt).toISOString() : null)
+    }
+  } finally {
+    await db.update(AutomationRunnerTable).set({ sessions: [localSession] }).where(eq(AutomationRunnerTable.id, laptop.computerId))
+  }
+})
+
 test("the session a computer reports is attachable for its owner and invisible to everyone else", async () => {
   const listed = sessionsOf(await asMilo("GET", "/v1/sessions"))
   assert.equal(listed.ceiling, "all")

@@ -16,6 +16,7 @@ import type { RemoteSessionDesktopRecord } from "../mcp/remote-session-capabilit
 import { commandProjection } from "../mcp/remote-session-status.js"
 import { computerSessionAccess, type ComputerSessionAccess, type RemoteSessionAccessPolicy } from "./access.js"
 import type { RemoteSessionCommand } from "./commands.js"
+import { sessionTimestampIso } from "./timestamps.js"
 
 /**
  * A member's own sessions across their computers: the ones they reach through
@@ -116,7 +117,7 @@ function commandSession(
     computerLabel: computer ? computerLabel(computer) : null,
     origin: command.kind === "attach" ? "local" as const : "remote" as const,
     commandId: command.id,
-    updatedAt: new Date(command.updatedAt).toISOString(),
+    updatedAt: sessionTimestampIso(command.updatedAt),
   }
   if (command.status !== "delivered") {
     const workspaceId = command.targetWorkspaceId
@@ -169,9 +170,9 @@ export function memberSessionComputers(
     label: computerLabel(computer),
     platform: computer.platform,
     online: computerOnline(computer, now),
-    lastSeenAt: computer.lastSeenAt === null ? null : new Date(computer.lastSeenAt).toISOString(),
+    lastSeenAt: sessionTimestampIso(computer.lastSeenAt),
     ...sessionAccessOf(computer, policy),
-    sessionsUpdatedAt: computer.sessionsUpdatedAt == null ? null : new Date(computer.sessionsUpdatedAt).toISOString(),
+    sessionsUpdatedAt: sessionTimestampIso(computer.sessionsUpdatedAt),
   }))
 }
 
@@ -207,7 +208,7 @@ export function memberSessionList(input: {
       waitingFor: null,
       pending: null,
       latestStep: null,
-      updatedAt: new Date(session.updatedAt).toISOString(),
+      updatedAt: sessionTimestampIso(session.updatedAt),
     })
   }
   return {
