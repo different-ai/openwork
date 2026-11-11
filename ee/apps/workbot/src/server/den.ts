@@ -29,6 +29,18 @@ export class DenRemoteSessionError extends Error {
   }
 }
 
+/** An App could not be opened or used: `signed_out` needs the person to sign in again; anything else reads as unavailable. */
+export class DenAppError extends Error {
+  constructor(readonly reason: "signed_out" | "unavailable", readonly code: string) {
+    super(`app_${reason}:${code}`)
+    this.name = "DenAppError"
+  }
+}
+
+/** The most of an App's page Workbot passes on (Den's own limit for a built page is below it). */
+const MAX_APP_HTML_CHARS = 2_000_000
+const appLaunchToolSchema = z.object({ _meta: z.object({ ui: z.object({ resourceUri: z.string().min(1) }) }) })
+
 const protectedResourceSchema = z.object({ resource: z.string(), authorization_servers: z.array(z.string()).min(1) })
 const metadataSchema = z.object({
   issuer: z.string(),
@@ -82,6 +94,8 @@ export const denSessionSchema = z.object({
   remoteTasks: z.boolean().default(false),
   /** Pages-only navigation with Files and Apps in the profile (`workbotProfileNav`); absent means off. */
   profileNav: z.boolean().default(false),
+  /** Apps built in OpenWork show as cards and open beside the chat (`workbotApps`); absent means off. */
+  openworkApps: z.boolean().default(false),
   /** Quiet calendar (`workbotQuietCalendar`); absent means off. */
   quietCalendar: z.boolean().default(false),
   /** The organization's default model for Workbot's turns. Null, or a Den from before it, means the runner's default. */
@@ -269,8 +283,42 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     } finally { await client.close().catch(() => undefined) }
   }
 
+  /**
+   * One exchange with an App's own MCP server (`/mcp/agent/connections/<App id>`), as the member: Den decides there
+   * whether they may use the App, and runs its tools as them. The same sign-in Workbot's other member calls use.
+   */
+  const withApp = async <T>(accessToken: string, appId: string, run: (client: Client) => Promise<T>): Promise<T> => {
+    const client = new Client({ name: "openwork-workbot", version: "1" })
+    const transport = new StreamableHTTPClientTransport(new URL(`${options.apiUrl}/mcp/agent/connections/${encodeURIComponent(appId)}`), {
+      requestInit: { headers: { authorization: `Bearer ${accessToken}` } },
+    })
+    try {
+      await client.connect(transport, { timeout: TIMEOUT_MS })
+      return await run(client)
+    } catch (error) {
+      if (error instanceof DenAppError) throw error
+      const status = typeof error === "object" && error !== null && "code" in error ? error.code : null
+      throw new DenAppError(status === 401 ? "signed_out" : "unavailable", typeof status === "number" ? `code_${status}` : error instanceof Error ? error.name : "transport")
+    } finally { await client.close().catch(() => undefined) }
+  }
+
   return {
     discover,
+    /** An App built in OpenWork, opened as the member: its page, and what its `open_app` answered (the App reads it). */
+    openApp: (accessToken: string, appId: string) =>
+      withApp(accessToken, appId, async (client) => {
+        const listed = await client.listTools(undefined, { timeout: TIMEOUT_MS })
+        const launch = appLaunchToolSchema.safeParse(listed.tools.find((tool) => tool.name === "open_app"))
+        if (!launch.success) throw new DenAppError("unavailable", "no_launch")
+        const result = await client.callTool({ name: "open_app", arguments: { input: {} } }, undefined, { timeout: TIMEOUT_MS })
+        const resource = await client.readResource({ uri: launch.data._meta.ui.resourceUri }, { timeout: TIMEOUT_MS })
+        const page = resource.contents.flatMap((entry) => ("text" in entry && typeof entry.text === "string" ? [entry.text] : []))[0]
+        if (page === undefined || page.length > MAX_APP_HTML_CHARS) throw new DenAppError("unavailable", "no_page")
+        return { html: page, result }
+      }),
+    /** One of the App's own tools, called for its page as the member. Den checks the tool and what it reaches. */
+    callApp: (accessToken: string, appId: string, name: string, args: Record<string, unknown>) =>
+      withApp(accessToken, appId, (client) => client.callTool({ name, arguments: args }, undefined, { timeout: TIMEOUT_MS })),
     modelRecovery: (accessToken: string) => authorized("GET", "/v1/workbot/model-recovery", accessToken),
     /** The member's Get set up checklist; Den computes every step and enforces the feature. */
     activation: (accessToken: string) => authorized("GET", "/v1/workbot/activation", accessToken),

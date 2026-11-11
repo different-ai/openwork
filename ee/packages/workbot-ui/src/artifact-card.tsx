@@ -1,6 +1,6 @@
 "use client";
 
-import { AppWindow, File, FileSpreadsheet, FileText, Film, Image as ImageIcon, Music, Presentation, type LucideIcon } from "lucide-react";
+import { AppWindow, File, FileSpreadsheet, FileText, Film, Globe, Image as ImageIcon, Music, Presentation, type LucideIcon } from "lucide-react";
 import { useContext, useMemo } from "react";
 import { artifactColor, artifactKind, artifactLabel, artifactTitle, staticAppHtml, type ArtifactKind } from "./artifact";
 import { useWorkbotFileBytes, useWorkbotImageUrl, useWorkbotPreview, useWorkbotPreviewPage, type WorkbotAttachment } from "./data";
@@ -9,10 +9,11 @@ import { OpenFileContext, OpenFileIdContext } from "./open-file";
 /**
  * A file Workbot made, as a card in the conversation: a large preview of the file itself, then a small
  * icon, its title and its type. Tapping it opens the file beside the chat (a full-screen sheet on a phone).
+ * An App built in OpenWork is a card too: it has no bytes to preview, so it shows its type until it is opened.
  */
 
 const ICONS: Record<ArtifactKind, LucideIcon> = {
-  html: AppWindow, image: ImageIcon, pdf: FileText, video: Film, audio: Music, markdown: FileText, text: FileText,
+  html: Globe, app: AppWindow, image: ImageIcon, pdf: FileText, video: Film, audio: Music, markdown: FileText, text: FileText,
   csv: FileSpreadsheet, sheet: FileSpreadsheet, slides: Presentation, document: FileText, other: File,
 };
 

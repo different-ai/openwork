@@ -15,6 +15,17 @@ export const toolCallSchema = z.object({
 })
 export type ToolCall = z.infer<typeof toolCallSchema>
 
+/**
+ * The App a tool result opened: an App built in OpenWork (Connect's `openwork/mcpApp` launch of the App's own
+ * `open_app`), by its id and name. Kept on the tool message for the caller that shows the App; the model reads only
+ * the result's text.
+ */
+export const toolAppSchema = z.object({
+  id: z.string().min(1).max(200),
+  title: z.string().max(200),
+})
+export type ToolApp = z.infer<typeof toolAppSchema>
+
 /** Engine-neutral transcript entry. Stored as JSON, one row per entry. */
 export const messageSchema = z.discriminatedUnion("role", [
   z.object({
@@ -37,6 +48,8 @@ export const messageSchema = z.discriminatedUnion("role", [
     images: z.array(z.object({ mediaType: z.string(), data: z.string() })).optional(),
     /** PDFs a tool returned, passed to the model as document input (text and page images). */
     documents: z.array(z.object({ mediaType: z.literal("application/pdf"), data: z.string(), name: z.string() })).optional(),
+    /** The App this result opened, for the caller to show. */
+    app: toolAppSchema.optional(),
   }),
 ])
 export type Message = z.infer<typeof messageSchema>
@@ -52,7 +65,7 @@ export type ToolSpec = {
 
 export type ToolImage = { mediaType: string; data: string }
 export type ToolDocument = { mediaType: "application/pdf"; data: string; name: string }
-export type ToolResult = { output: string; isError: boolean; images?: ToolImage[]; documents?: ToolDocument[] }
+export type ToolResult = { output: string; isError: boolean; images?: ToolImage[]; documents?: ToolDocument[]; app?: ToolApp }
 
 /**
  * How long a session's turns may keep repeating a step (same calls, same results) before the model is asked to stop

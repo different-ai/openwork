@@ -1,7 +1,7 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client"
 import { z } from "zod"
 import { fileName, readToolFile } from "./tool-files.js"
-import type { ToolDocument, ToolImage, ToolResult, ToolSpec } from "./types.js"
+import type { ToolApp, ToolDocument, ToolImage, ToolResult, ToolSpec } from "./types.js"
 
 /** Tools from one remote MCP server, connected for the duration of one turn. */
 export type ToolSession = {
@@ -55,8 +55,29 @@ const callResult = z
     content: z.array(contentBlock).optional(),
     structuredContent: z.unknown().optional(),
     isError: z.boolean().optional(),
+    _meta: z.unknown().optional(),
   })
   .loose()
+
+const appLaunch = z.object({
+  "openwork/mcpApp": z.object({
+    connectionId: z.string().min(1).max(200),
+    toolName: z.literal("open_app"),
+  }),
+})
+const appSummary = z.object({ app: z.object({ title: z.string() }) })
+
+/**
+ * The App a result opened, when OpenWork Connect says so (`_meta["openwork/mcpApp"]`): an App built in OpenWork, which
+ * its own server opens with `open_app`. An App a connected service brings has another launch tool and is left out.
+ */
+export function appOf(result: { structuredContent?: unknown; isError?: boolean; _meta?: unknown }): ToolApp | undefined {
+  if (result.isError === true) return undefined
+  const launch = appLaunch.safeParse(result._meta)
+  if (!launch.success) return undefined
+  const summary = appSummary.safeParse(result.structuredContent)
+  return { id: launch.data["openwork/mcpApp"].connectionId, title: (summary.success ? summary.data.app.title : "").slice(0, 200) }
+}
 
 export async function formatToolResult(value: unknown): Promise<ToolResult> {
   const parsed = callResult.safeParse(value)
@@ -100,11 +121,13 @@ export async function formatToolResult(value: unknown): Promise<ToolResult> {
   if (parts.length === 0 && parsed.data.structuredContent !== undefined) {
     parts.push(JSON.stringify(parsed.data.structuredContent))
   }
+  const app = appOf(parsed.data)
   return {
     output: truncate(parts.join("\n") || "(no output)"),
     isError: parsed.data.isError === true,
     ...(images.length ? { images } : {}),
     ...(documents.length ? { documents } : {}),
+    ...(app ? { app } : {}),
   }
 }
 

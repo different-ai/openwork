@@ -20,9 +20,10 @@ import { z } from "zod"
 import { browserTeachingPrompt, compileBrowserDemonstration, demonstrationCommandSchema } from "@openwork/types/browser-demonstration"
 import { workbotContextPrompt, workbotViewContextSchema, WORKBOT_MAX_MESSAGE_CHARS, type WorkbotViewContext } from "@openwork/types/workbot-context"
 import { activationEventRequestSchema } from "@openwork/types/den/activation"
+import { mcpAppIdSchema } from "@openwork/types/mcp-app"
 import type { AppEnv, Member } from "./auth.js"
 import type { Config } from "./config.js"
-import type { Den } from "./den.js"
+import { DenAppError, type Den } from "./den.js"
 import { observedRunnerFetch, reportError } from "./error-reporting.js"
 
 /**
@@ -173,6 +174,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     createWorkbot({
       client: runnerClientFor(member),
       remoteTasks: member.den.remoteTasks,
+      apps: member.den.openworkApps,
       remoteStatus: input => den.remoteStatus(member.accessToken, input),
       remoteRead: input => den.remoteRead(member.accessToken, input),
       remoteStop: input => den.remoteStop(member.accessToken, input),
@@ -624,6 +626,42 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       if (error instanceof WorkbotRemoteJobError) return c.json({ error: error.code }, error.status)
       // A dropped stop response is uncertain, never a successful stop or an invitation to replay it automatically.
       return c.json({ error: "remote_stop_unconfirmed" }, 503)
+    }
+  })
+
+  /**
+   * An App built in OpenWork, for the panel beside the chat (`workbotApps`): its page and what opening it answered.
+   * Workbot asks the App's own server as the member, so Den decides whether they may use it.
+   */
+  app.post("/v1/workbot/apps/:appId/open", bodyLimit({ maxSize: 1024 }), async (c) => {
+    c.header("Cache-Control", "no-store")
+    const member = c.get("member")
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    if (!member.den.openworkApps) return c.json({ error: "feature_disabled" }, 404)
+    const appId = mcpAppIdSchema.safeParse(c.req.param("appId"))
+    if (!appId.success) return c.json({ error: "invalid_request" }, 400)
+    try {
+      return c.json(await den.openApp(member.accessToken, appId.data))
+    } catch (error) {
+      if (error instanceof DenAppError) return c.json({ error: error.reason === "signed_out" ? "app_signed_out" : "app_unavailable" }, 502)
+      throw error
+    }
+  })
+
+  /** A call the App's page makes to one of the App's own tools, run by Den as the member. */
+  app.post("/v1/workbot/apps/:appId/call", bodyLimit({ maxSize: 256 * 1024 }), async (c) => {
+    c.header("Cache-Control", "no-store")
+    const member = c.get("member")
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    if (!member.den.openworkApps) return c.json({ error: "feature_disabled" }, 404)
+    const appId = mcpAppIdSchema.safeParse(c.req.param("appId"))
+    const body = z.object({ name: z.string().min(1).max(200), arguments: z.record(z.string(), z.unknown()).default({}) }).strict().safeParse(await c.req.json().catch(() => null))
+    if (!appId.success || !body.success) return c.json({ error: "invalid_request" }, 400)
+    try {
+      return c.json({ result: await den.callApp(member.accessToken, appId.data, body.data.name, body.data.arguments) })
+    } catch (error) {
+      if (error instanceof DenAppError) return c.json({ error: error.reason === "signed_out" ? "app_signed_out" : "app_unavailable" }, 502)
+      throw error
     }
   })
 

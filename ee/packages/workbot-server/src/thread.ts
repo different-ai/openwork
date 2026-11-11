@@ -46,6 +46,12 @@ export type WorkbotTurnStatus = "queued" | "working" | "done" | "failed" | "stop
 /** A file in the conversation; `updatedAt` changes when Workbot revises it in place. */
 export type WorkbotAttachment = { id: string; name: string; mediaType: string; size: number; updatedAt?: number }
 /**
+ * An App built in OpenWork, among a turn's outputs: not a file with bytes, but the App itself, which the page opens
+ * from its own server. Its id is `app:<App id>` and its name is the App's title.
+ */
+export const WORKBOT_APP_MEDIA_TYPE = "application/vnd.openwork.app"
+export const WORKBOT_APP_ID_PREFIX = "app:"
+/**
  * Something Workbot did that a colleague would mention while doing it: work in one of the person's apps, or on its
  * own computer. The page shows only the one in progress; finished work speaks through the answer.
  */
@@ -665,7 +671,19 @@ function outputsOf(files: FileNames, startedAt: number | null, finishedAt: numbe
   return [...latest.values()]
 }
 
-export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = new Map(), connectors: WorkbotConnectors = new Map()): WorkbotTurn[] {
+/** Apps built in OpenWork that a turn made, changed or opened: each once, as it last appeared, after the turn's files. */
+function appsOf(messages: RunnerMessage[]): WorkbotAttachment[] {
+  const apps = new Map<string, WorkbotAttachment>()
+  for (const message of messages) {
+    if (message.role !== "tool" || message.isError || !message.app) continue
+    const id = `${WORKBOT_APP_ID_PREFIX}${message.app.id}`
+    apps.delete(id)
+    apps.set(id, { id, name: message.app.title || "App", mediaType: WORKBOT_APP_MEDIA_TYPE, size: 0, ...(message.createdAt === undefined ? {} : { updatedAt: message.createdAt }) })
+  }
+  return [...apps.values()]
+}
+
+export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = new Map(), connectors: WorkbotConnectors = new Map(), options: { apps?: boolean } = {}): WorkbotTurn[] {
   const byTurn = new Map<string, RunnerMessage[]>()
   for (const message of snapshot.messages) {
     if (!message.messageId) continue
@@ -766,7 +784,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
         suggestions = split.suggestions
       }
     }
-    const outputs = outputsOf(files, turn.createdAt ?? null, working ? null : (turn.updatedAt ?? null))
+    const outputs = [...outputsOf(files, turn.createdAt ?? null, working ? null : (turn.updatedAt ?? null)), ...(options.apps ? appsOf(messages) : [])]
     // A report is Workbot speaking first: the task's notes to it stay hidden, and it brings back what the task made.
     const task = turn.kind === "report" ? snapshot.turns.find((entry) => entry.messageId === turn.parent) : undefined
     const visible = readWorkbotContextPrompt(readBrowserSkillRunPrompt(readBrowserTeachingPrompt(user.text)))
@@ -779,7 +797,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
       status,
       attachments: turn.kind === "report" ? [] : (user.attachments ?? []),
       outputs: task
-        ? [...new Map([...outputsOf(files, task.createdAt ?? null, task.updatedAt ?? null), ...outputs].map((file) => [file.id, file])).values()]
+        ? [...new Map([...outputsOf(files, task.createdAt ?? null, task.updatedAt ?? null), ...(options.apps ? appsOf(byTurn.get(task.messageId) ?? []) : []), ...outputs].map((file) => [file.id, file])).values()]
         : outputs,
       reaction,
       ...(navigation.length ? { navigation } : {}),

@@ -531,6 +531,16 @@
               ],
               "description": "Workbot: pages on the left, the rest in its profile: The left navigation lists only full pages (Chats, Documents, Calendar). Files and Apps, which open beside the chat rather than as pages, move into Workbot's profile as tabs; the logo at the top of the navigation opens that profile. Requires the profile sheet. Renders DEN_FEATURE_WORKBOT_PROFILE_NAV."
             },
+            "workbotApps": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: Apps built in OpenWork open in the chat: An App that Workbot builds, changes or opens with OpenWork's App tools shows as a card under its reply, like a file it made, and opens beside the chat as the App itself. Off: the App is made but nothing shows in the chat. Renders DEN_FEATURE_WORKBOT_APPS."
+            },
             "workbotQuietCalendar": {
               "enum": [
                 "",
