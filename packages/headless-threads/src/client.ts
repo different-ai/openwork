@@ -32,7 +32,7 @@ import type {
   HeadlessThreadPending,
   HeadlessTurnAcceptance,
 } from "./types.js";
-import { answerRefusal, permissionPending, v1QuestionPending, v2FormAnswer, v2FormPending, type PendingFormField } from "./pending.js";
+import { answerRefusal, permissionPending, PLAIN_FORM, v1QuestionPending, v2FormAnswer, v2FormPending, type PendingForm } from "./pending.js";
 import {
   abortResultSchema,
   isRunning,
@@ -373,9 +373,9 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
      * it started, the thread's own first, as two lists of raw rows.
      */
     requests(threadId: string, signal?: AbortSignal): Promise<{ permissions: PendingRequestRow[]; questions: PendingRequestRow[] }>;
-    /** The first pending question, mapped, with v2 form fields for its reply. */
-    question(rows: unknown[]): { pending: HeadlessThreadPending; fields: PendingFormField[] } | null;
-    replyQuestion(threadId: string, requestId: string, answer: Extract<HeadlessThreadAnswer, { kind: "question" }>, fields: PendingFormField[], signal?: AbortSignal): Promise<void>;
+    /** The first pending question, mapped, with what a v2 form needs for its reply. */
+    question(rows: unknown[]): PendingForm & { pending: HeadlessThreadPending } | null;
+    replyQuestion(threadId: string, requestId: string, answer: Extract<HeadlessThreadAnswer, { kind: "question" }>, form: PendingForm, signal?: AbortSignal): Promise<void>;
     replyPermission(threadId: string, requestId: string, decision: "once" | "reject", signal?: AbortSignal): Promise<void>;
   }
 
@@ -490,11 +490,11 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     question(rows) {
       for (const row of rows) {
         const pending = v1QuestionPending(row);
-        if (pending) return { pending, fields: [] };
+        if (pending) return { ...PLAIN_FORM, pending };
       }
       return null;
     },
-    async replyQuestion(_threadId, requestId, answer, _fields, signal) {
+    async replyQuestion(_threadId, requestId, answer, _form, signal) {
       const path = `${opencodePath}/question/${encodeURIComponent(requestId)}/reply`;
       const result = await send("POST", path, { body: { answers: answer.answers }, signal });
       if (!result.response.ok) throw failure("POST", path, result);
@@ -661,13 +661,15 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     question(rows) {
       for (const row of rows) {
         const read = v2FormPending(row);
-        if (read?.pending) return { pending: read.pending, fields: read.fields };
+        if (read?.pending) return { ...read, pending: read.pending };
       }
       return null;
     },
-    async replyQuestion(threadId, requestId, answer, fields, signal) {
+    async replyQuestion(threadId, requestId, answer, form, signal) {
       const path = `${v2SessionPath(threadId)}/form/${encodeURIComponent(requestId)}/reply`;
-      const result = await send("POST", path, { body: { answer: v2FormAnswer(fields, answer) }, signal });
+      const values = v2FormAnswer(form, answer);
+      if (typeof values === "string") refused("invalid_answer", values);
+      const result = await send("POST", path, { body: { answer: values }, signal });
       if (!result.response.ok) throw failure("POST", path, result);
     },
     async replyPermission(threadId, requestId, decision, signal) {
@@ -867,13 +869,13 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     // The session that asked, the thread or one of its helpers, takes the reply.
     for (const row of rows.permissions) {
       const pending = permissionPending(row);
-      if (pending) return { engine, pending, fields: [], sessionId: row.sessionID ?? threadId };
+      if (pending) return { engine, pending, form: PLAIN_FORM, sessionId: row.sessionID ?? threadId };
     }
     for (const row of rows.questions) {
       const question = engine.question([row]);
-      if (question) return { engine, ...question, sessionId: row.sessionID ?? threadId };
+      if (question) return { engine, pending: question.pending, form: question, sessionId: row.sessionID ?? threadId };
     }
-    return { engine, pending: null, fields: [], sessionId: threadId };
+    return { engine, pending: null, form: PLAIN_FORM, sessionId: threadId };
   }
 
   async function getThreadPending(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadPending | null> {
@@ -895,9 +897,10 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       return;
     }
     if (read.pending.kind !== "question") return refused("stale_request", "That question is no longer pending.");
+    if (!read.form.answerable) refused("invalid_answer", "This step can't be answered from here.");
     const refusal = answerRefusal(read.pending, answer.answers);
     if (refusal) refused("invalid_answer", refusal);
-    await read.engine.replyQuestion(read.sessionId, answer.requestId, answer, read.fields, input?.signal);
+    await read.engine.replyQuestion(read.sessionId, answer.requestId, answer, read.form, input?.signal);
   }
 
   async function abortThread(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessAbortResult> {
