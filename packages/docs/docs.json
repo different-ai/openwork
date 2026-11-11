@@ -307,6 +307,7 @@
             "group": "SSO and SCIM",
             "pages": [
               "cloud/auth-and-security",
+              "cloud/sso-oidc",
               "cloud/sso-google-workspace",
               "cloud/scim-google-workspace",
               "cloud/sso-okta",
