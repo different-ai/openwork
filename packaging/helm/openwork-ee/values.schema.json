@@ -61,6 +61,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "legacyProviderCredentialRemoval": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Remove saved legacy provider keys: Provider managers remove a saved organization credential without replacing the provider, models or access grants. Renders DEN_FEATURE_LEGACY_PROVIDER_CREDENTIAL_REMOVAL."
+            },
             "claudeAgentProvider": {
               "enum": [
                 "",

@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRightLeft, ExternalLink, KeyRound, Trash2, Users } from "lucide-react";
+import { ArrowLeft, ArrowRightLeft, ExternalLink, KeyRound, LockKeyhole, Trash2, Users } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
@@ -13,6 +13,8 @@ import {
     getLlmProvidersRoute,
     getLibraryRoute,
     getLibraryLlmProviderRoute,
+    orgFeatureEnabled,
+    permissionLockReason,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { migrateLlmProviderToGateway } from "./inference-provider-data";
@@ -28,6 +30,7 @@ import {
     useOrgLlmProviders,
 } from "./llm-provider-data";
 import { RuntimeEnvKeyChip, resolveRuntimeEnvKeys } from "./runtime-env-key";
+import { ConfirmDialog } from "./item-list";
 
 function formatCountLabel(count: number, singular: string, plural: string) {
     return `${count} ${count === 1 ? singular : plural}`;
@@ -51,7 +54,19 @@ export function LlmProviderDetailScreen({
 }) {
     const router = useRouter();
     const gatewayEnabled = useGatewayDashboardAccess("manage-providers") === "enabled";
-    const { orgId, orgSlug, runReauthableAction } = useOrgDashboard();
+    const { orgId, orgSlug, orgContext, runReauthableAction } = useOrgDashboard();
+    const credentialRemovalEnabled = orgFeatureEnabled(orgContext, "legacyProviderCredentialRemoval");
+    const [confirmingCredentialRemoval, setConfirmingCredentialRemoval] = useState(false);
+    const [credentialRemoved, setCredentialRemoved] = useState(false);
+    const [credentialRemovalBusy, setCredentialRemovalBusy] = useState(false);
+    const credentialRemovalInFlight = useRef(false);
+    const credentialRemovalScope = useRef("");
+    credentialRemovalScope.current = `${orgId}:${llmProviderId}`;
+
+    useEffect(() => {
+        setConfirmingCredentialRemoval(false);
+        setCredentialRemoved(false);
+    }, [orgId, llmProviderId, credentialRemovalEnabled]);
     const listRoute = library ? `${getLibraryRoute(orgSlug)}?show=models` : getLlmProvidersRoute(orgSlug);
     const { llmProviders, busy, error, reloadProviders } =
         useOrgLlmProviders(orgId);
@@ -70,6 +85,38 @@ export function LlmProviderDetailScreen({
         () => llmProviders.find((entry) => entry.id === llmProviderId) ?? null,
         [llmProviderId, llmProviders],
     );
+
+    async function removeCredential() {
+        if (!credentialRemovalEnabled || !orgId || !provider?.canManage || provider.source === "openwork" || provider.credentialMode === "per_member" || credentialRemovalInFlight.current) {
+            return;
+        }
+        const scope = credentialRemovalScope.current;
+        credentialRemovalInFlight.current = true;
+        setCredentialRemovalBusy(true);
+        try {
+            await runReauthableAction("remove-llm-provider-credential", async () => {
+                if (credentialRemovalScope.current !== scope) throw new Error("Workspace changed. Open the provider again to remove its saved key.");
+                const { response, payload } = await requestJson(
+                    `/v1/llm-providers/${encodeURIComponent(provider.id)}/credential`,
+                    { method: "DELETE" },
+                    12000,
+                );
+                if (response.status !== 204) {
+                    throw getRequestError(payload, response, "Could not remove the saved key. Try again.");
+                }
+                // Do not optimistically mark the credential missing or navigate
+                // away: the existing list/detail metadata is refreshed after commit.
+                if (credentialRemovalScope.current !== scope) return;
+                await reloadProviders();
+                if (credentialRemovalScope.current !== scope) return;
+                setCredentialRemoved(true);
+                router.refresh();
+            });
+        } finally {
+            credentialRemovalInFlight.current = false;
+            setCredentialRemovalBusy(false);
+        }
+    }
 
     async function deleteProvider() {
         if (!orgId || !provider) {
@@ -165,6 +212,12 @@ export function LlmProviderDetailScreen({
     const npmPackage = getProviderNpmPackage(provider.providerConfig);
     const apiBase = getProviderApiBase(provider.providerConfig);
     const docUrl = getProviderDocUrl(provider.providerConfig);
+    const removableCredential = provider.source !== "openwork" && provider.credentialMode !== "per_member";
+    const credentialRemovalLock = !provider.canManage
+        ? permissionLockReason("llm_providers.update")
+        : !credentialRemovalEnabled
+            ? "Saved key removal is not enabled. Contact your OpenWork administrator."
+            : null;
 
     return (
         <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
@@ -279,6 +332,28 @@ export function LlmProviderDetailScreen({
                 </div>
             ) : null}
 
+            <ConfirmDialog
+                destructive
+                confirm={confirmingCredentialRemoval && credentialRemovalEnabled ? {
+                    title: `Remove saved key from ${provider.name}?`,
+                    description: "Keeps this provider, its models and access. Devices drop the shared key on their next sync; offline or signed-out copies remain until then. This does not revoke the key upstream. People need their own local key to keep using these models.",
+                    action: "Remove saved key",
+                } : null}
+                onConfirm={removeCredential}
+                onClose={() => setConfirmingCredentialRemoval(false)}
+            />
+            {credentialRemoved ? (
+                <DenNotice className="mb-6" tone="success" message="Saved key removed. Provider, models and access kept." />
+            ) : null}
+            {error ? (
+                <DenNotice
+                    className="mb-6"
+                    tone="error"
+                    message={credentialRemoved ? "Saved key removed, but provider details could not refresh. Refresh to verify the credential status." : error}
+                    action={<DenButton variant="secondary" size="sm" onClick={() => void reloadProviders()}>Refresh</DenButton>}
+                />
+            ) : null}
+
             <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div>
@@ -288,13 +363,32 @@ export function LlmProviderDetailScreen({
                     </div>
 
                     {provider.configRedacted ? null : (
-                        <div
-                            className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-medium ${provider.hasApiKey ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}
-                        >
-                            <KeyRound className="h-4 w-4" />
-                            {provider.hasApiKey
-                                ? "Credential saved"
-                                : "Credential missing"}
+                        <div className="flex flex-col items-start gap-2 lg:items-end">
+                            <div className="flex flex-wrap items-center gap-3">
+                                <div
+                                    className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-medium ${provider.hasApiKey ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}
+                                >
+                                    <KeyRound className="h-4 w-4" />
+                                    {provider.hasApiKey ? "Credential saved" : "Credential missing"}
+                                </div>
+                                {removableCredential && provider.hasApiKey ? (
+                                    <DenButton
+                                        variant="secondary"
+                                        size="sm"
+                                        data-testid="llm-provider-remove-credential"
+                                        disabled={Boolean(credentialRemovalLock) || deleteBusy || migrateBusy}
+                                        loading={credentialRemovalBusy}
+                                        aria-describedby={credentialRemovalLock ? "credential-removal-locked" : undefined}
+                                        onClick={() => setConfirmingCredentialRemoval(true)}
+                                    >
+                                        {credentialRemovalLock ? <LockKeyhole aria-hidden className="size-4" /> : null}
+                                        Remove saved key
+                                    </DenButton>
+                                ) : null}
+                            </div>
+                            {removableCredential && provider.hasApiKey && credentialRemovalLock ? (
+                                <p id="credential-removal-locked" className="text-sm text-muted-foreground">{credentialRemovalLock}</p>
+                            ) : null}
                         </div>
                     )}
                 </div>

@@ -104,6 +104,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  legacyProviderCredentialRemoval: {
+    label: "Remove saved legacy provider keys",
+    description: "Provider managers remove a saved organization credential without replacing the provider, models or access grants.",
+    category: "models",
+    added: "2026-11-11",
+    since: "2026-11",
+    author: "yomgui",
+    docs: "docs/features/legacy-provider-credential-removal/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   claudeAgentProvider: {
     label: "Claude Code sign-in",
     description: "Connect Claude through the Claude Code login on this computer, without an Anthropic API key.",

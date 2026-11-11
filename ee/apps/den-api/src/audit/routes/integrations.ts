@@ -295,6 +295,7 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   read("/v1/llm-providers/:llmProviderId/member-credentials", "llm_provider.member_credential.list", LLMC, res("llm_provider", "llmProviderId")),
   change("POST", "/v1/llm-providers", "llm_provider.create", LLM, res("llm_provider")),
   change("PATCH", "/v1/llm-providers/:llmProviderId", "llm_provider.update", LLM, res("llm_provider", "llmProviderId")),
+  change("DELETE", "/v1/llm-providers/:llmProviderId/credential", "llm_provider.credential.remove", LLM, res("llm_provider", "llmProviderId"), "Removes only the shared legacy organization credential; no secret request or response payload, no upstream revocation."),
   change("DELETE", "/v1/llm-providers/:llmProviderId", "llm_provider.delete", LLM, res("llm_provider", "llmProviderId")),
   change("PUT", "/v1/llm-providers/by-key/:externalKey", "llm_provider.by_key.upsert", LLM, res("llm_provider", "externalKey")),
   change("DELETE", "/v1/llm-providers/by-key/:externalKey", "llm_provider.by_key.delete", LLM, res("llm_provider", "externalKey")),

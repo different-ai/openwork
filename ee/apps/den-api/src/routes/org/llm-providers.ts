@@ -49,6 +49,7 @@ import { listAccessibleLlmProviderAccess, listGrantedLlmProviderMemberIds } from
 import type { OrgRouteVariables } from "./shared.js"
 import { hasPermission, idParamSchema, memberPermissionsForRequest, orgAccessFailureStatus, permissionFailureHeaders, requirePermission } from "./shared.js"
 import { ensureFreshPrivilegedSession } from "../../privileged-session.js"
+import { requireFeature } from "../../features.js"
 
 type LlmProviderId = typeof LlmProviderTable.$inferSelect.id
 type LlmProviderAccessId = typeof LlmProviderAccessTable.$inferSelect.id
@@ -1886,6 +1887,51 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     paramValidator(orgLlmProviderParamsSchema),
     jsonValidator(llmProviderWriteSchema),
     async (c) => updateLlmProvider(c, c.get("organizationContext"), c.req.valid("param").llmProviderId, c.req.valid("json")),
+  )
+
+  app.delete(
+    "/v1/llm-providers/:llmProviderId/credential",
+    describeRoute({
+      tags: ["LLM Providers"],
+      summary: "Remove saved organization LLM provider credential",
+      description: "Removes only the saved organization credential of a shared legacy custom or catalog provider. Keeps its identity, definition, credential mode, models and access grants. Requires legacyProviderCredentialRemoval and the same authorization and recent sign-in as editing this provider. Already missing credentials succeed without changing the provider. Does not revoke the upstream credential or clear offline copies; devices remove a matching synced copy on their next sync. Concurrent removals serialize on the provider row. Other provider edits retain their existing last-write-wins behavior and may save a credential again; serialize configuration writers.",
+      responses: {
+        204: emptyResponse("Organization credential removed or already missing."),
+        400: jsonResponse("The provider path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller cannot edit this provider or needs a recent sign-in.", forbiddenSchema),
+        404: jsonResponse("The provider was not found or the feature is disabled.", notFoundSchema),
+        409: jsonResponse("Only shared legacy provider credentials can be removed here.", conflictSchema),
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("legacyProviderCredentialRemoval"),
+    paramValidator(orgLlmProviderParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const id = parseLlmProviderId(c.req.valid("param").llmProviderId)
+      return db.transaction(async (tx) => {
+        // Read the actual row under the write lock: never authorize or choose a
+        // credential mode from caller-supplied/stale configuration.
+        const [provider] = await tx.select().from(LlmProviderTable).where(and(
+          eq(LlmProviderTable.id, id),
+          eq(LlmProviderTable.organizationId, payload.organization.id),
+        )).limit(1).for("update")
+        if (!provider) return c.json({ error: "llm_provider_not_found" }, 404)
+        const denied = await authorizeLlmProviderChange(c, payload, provider, "llm_providers.update", "Only the provider creator or someone with permission to edit this provider can remove its saved credential.")
+        if (denied) return denied
+        if (provider.credentialMode !== "shared" || (provider.source !== "custom" && provider.source !== "models_dev")) {
+          return c.json({ error: "unsupported_credential_mode", message: "Only shared legacy provider credentials can be removed here. Member bindings and gateway credentials are unchanged." }, 409)
+        }
+        if (provider.apiKey !== null) {
+          await tx.update(LlmProviderTable).set({ apiKey: null, updatedAt: new Date() }).where(and(
+            eq(LlmProviderTable.id, provider.id),
+            eq(LlmProviderTable.organizationId, payload.organization.id),
+          ))
+        }
+        return c.body(null, 204)
+      })
+    },
   )
 
   app.delete(
