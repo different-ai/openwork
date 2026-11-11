@@ -468,6 +468,11 @@ const workbotProactiveFieldsSchema = z.object({
    * looked and skips the check when nothing that could matter arrived. Absent means off.
    */
   checkGate: z.boolean().optional(),
+  /**
+   * `workbotAgentSendCheck`: before a message is sent, a fast second model reads it against the brief and what the
+   * member was already told today, and Den holds one it is confident should not go. Absent means off.
+   */
+  sendCheck: z.boolean().optional(),
 })
 
 const hoursInOrder = (value: { startHour: number; endHour: number }) => value.endHour > value.startHour
@@ -568,6 +573,11 @@ export const workbotProactiveViewSchema = z.object({
    * is off, and from servers before it; `settings.checkGate` is the switch.
    */
   checkGate: z.object({ model: z.boolean() }).optional(),
+  /**
+   * `workbotAgentSendCheck` only: `ready` is whether this deployment can run the check (it has the key for the
+   * evaluation model). Absent while the feature is off, and from servers before it; `settings.sendCheck` is the switch.
+   */
+  sendCheck: z.object({ ready: z.boolean() }).optional(),
 })
 export type WorkbotProactiveView = z.infer<typeof workbotProactiveViewSchema>
 

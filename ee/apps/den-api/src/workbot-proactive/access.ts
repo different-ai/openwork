@@ -46,9 +46,20 @@ export async function agentCheckGateAllowed(organizationId: string, userId?: str
   return organizationFeatureEnabled(organizationId, "workbotAgentCheckGate", userId ? { userId } : {})
 }
 
-/** Whether this deployment has the key for the gate's evaluation model; without it only "nothing arrived" skips a check. */
-export function agentCheckGateModelReady() {
-  return Boolean(env.agentCheckGateApiKey)
+/**
+ * Your agent's send check (`workbotAgentSendCheck`) for this member: on top of the brief, never instead. The policy's
+ * own switch (`settings.sendCheck`) and the deployment's key are checked where it runs.
+ */
+export async function agentSendCheckAllowed(organizationId: string, userId?: string) {
+  return organizationFeatureEnabled(organizationId, "workbotAgentSendCheck", userId ? { userId } : {})
+}
+
+/**
+ * Whether this deployment has the key for the evaluation model. Without it the check gate skips a check only when
+ * nothing arrived, and the send check can't run.
+ */
+export function agentEvaluationModelReady() {
+  return Boolean(env.agentEvaluationApiKey)
 }
 
 export async function readProactiveSettings(organizationId: DenTypeId<"organization">): Promise<WorkbotProactiveSettings> {

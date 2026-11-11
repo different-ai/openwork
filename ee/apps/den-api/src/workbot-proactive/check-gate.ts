@@ -10,13 +10,15 @@ import {
   type AgentPeek,
 } from "@openwork/automations/proactive-brief"
 import type { MemberCalendarRead, MemberMailArrivals } from "../routes/org/google-workspace.js"
+import type { EvaluationModel } from "./evaluation-model.js"
 import { readableConnections, type ResolvedSource } from "./sources.js"
 
 /**
  * The check gate (`workbotAgentCheckGate`): before a scheduled check, Den looks itself at what reached the member
  * since their agent last looked, and skips the check when nothing that could matter arrived. The rules are plain code
  * (`planCheckGate`, `decideCheckGate` in @openwork/automations/proactive-brief); this file is the two things they need
- * from outside: the look (`peekArrivals`) and, where the deployment has its key, the evaluation model.
+ * from outside: the look (`peekArrivals`) and, where the deployment has its key, the evaluation model
+ * (evaluation-model.ts).
  */
 
 const HOUR_MS = 3_600_000
@@ -75,85 +77,10 @@ export async function peekArrivals(input: {
   return { kind: "arrivals", items, more }
 }
 
-// ---- The evaluation model ---------------------------------------------------------------------------------------------
-
-/**
- * One request to a fast evaluation model (typesafe-ai/jev through Vercel AI Gateway), which answers one yes-or-no
- * question with a probability and writes nothing. Every failure (no answer in time, a refused request, an unreadable
- * body) runs the check, exactly as without the gate. One attempt, no retries, no redirects, and the request asks the
- * provider to keep nothing.
- *
- * Wire contract: POST {state, questions, providerOptions} with the evaluation headers below, as @ai-sdk/gateway 4.0.87
- * sends it (GatewayEvaluationModel.doEvaluate); answers are {type: "boolean", probability}.
- */
-const ENDPOINT = "https://ai-gateway.vercel.sh/v4/ai/evaluation-model"
-const MODEL = "typesafe-ai/jev"
-const RESPONSE_BYTE_LIMIT = 64 * 1024
-const DEFAULT_TIMEOUT_MS = 4_000
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-async function boundedJson(response: Response): Promise<unknown> {
-  if (!response.body || Number(response.headers.get("content-length")) > RESPONSE_BYTE_LIMIT) throw new Error("unreadable body")
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    for (;;) {
-      const chunk = await reader.read()
-      if (chunk.done) break
-      size += chunk.value.byteLength
-      if (size > RESPONSE_BYTE_LIMIT) throw new Error("oversized body")
-      chunks.push(chunk.value)
-    }
-  } finally {
-    void reader.cancel().catch(() => {})
-  }
-  const bytes = new Uint8Array(size)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
-}
-
-export function createCheckGateModel(options: { apiKey: string; fetch?: typeof globalThis.fetch; timeoutMs?: number }): AgentCheckGateModel {
-  const send = options.fetch ?? globalThis.fetch
+/** The gate's question to the evaluation model; no usable answer runs the check, exactly as without the gate. */
+export function createCheckGateModel(model: EvaluationModel): AgentCheckGateModel {
   return async (request) => {
-    const started = performance.now()
-    try {
-      const response = await send(ENDPOINT, {
-        method: "POST",
-        redirect: "error",
-        signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${options.apiKey}`,
-          "ai-gateway-protocol-version": "0.0.1",
-          "ai-gateway-auth-method": "api-key",
-          "ai-evaluation-model-specification-version": "4",
-          "ai-model-id": MODEL,
-        },
-        body: JSON.stringify({ ...request, providerOptions: { gateway: { zeroDataRetention: true } } }),
-      })
-      if (!response.ok) {
-        void response.body?.cancel().catch(() => {})
-        throw new Error("evaluation model unavailable")
-      }
-      const body = await boundedJson(response)
-      if (!isRecord(body)) throw new Error("unreadable answer")
-      const usage = isRecord(body.usage) ? body.usage.inputTokens : null
-      return {
-        verdict: decideCheckGate(body.answers),
-        durationMs: Math.round(performance.now() - started),
-        inputTokens: typeof usage === "number" && Number.isSafeInteger(usage) && usage >= 0 ? usage : null,
-      }
-    } catch {
-      // Never the provider's error text: it can quote the request.
-      return { verdict: { kind: "run", why: "no_answer" }, durationMs: Math.round(performance.now() - started), inputTokens: null }
-    }
+    const answer = await model(request)
+    return { verdict: decideCheckGate(answer.answers), durationMs: answer.durationMs, inputTokens: answer.inputTokens }
   }
 }

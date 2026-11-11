@@ -5,7 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { AGENT_INSTRUCTIONS, agentLedgerKey, agentWakePrompt, parseAgentReply, parseAgentState, type AgentState } from "@openwork/automations/proactive"
-import type { AgentCheckGateRequest, AgentCheckGateVerdict, AgentCheckRequest, AgentConversationTurn } from "@openwork/automations/proactive-brief"
+import { agentSendCheckRequest, type AgentCheckGateRequest, type AgentCheckGateVerdict, type AgentCheckRequest, type AgentConversationTurn, type AgentSendCheckVerdict } from "@openwork/automations/proactive-brief"
 import type { AgentReadToolInput } from "@openwork/automations/agent-read-tools"
 import {
   AGENT_BRIEF_OFF_LINES,
@@ -27,6 +27,7 @@ import type { AgentCheckRecord } from "../src/workbot-proactive/checks.js"
 import type { AgentInstanceRow, AgentSettle } from "../src/workbot-proactive/repository.js"
 import type { MemberConnection } from "../src/workbot-proactive/sources.js"
 import type { MemberMailArrivals } from "../src/routes/org/google-workspace.js"
+import type { AgentSendCheckInput } from "../src/workbot-proactive/send-check.js"
 import type { AgentRawTurnResult } from "../src/workbot-proactive/turn.js"
 import type { AgentBriefWakeDeps } from "../src/workbot-proactive/wake-brief.js"
 
@@ -46,6 +47,8 @@ bootstrapSelect.mock.restore()
 const { wakeAgentBrief, AGENT_MESSAGE_SCOPES } = await import("../src/workbot-proactive/wake-brief.js")
 const { wakeMemberAgent } = await import("../src/workbot-proactive/worker.js")
 const { createCheckGateModel } = await import("../src/workbot-proactive/check-gate.js")
+const { createEvaluationModel } = await import("../src/workbot-proactive/evaluation-model.js")
+const { createAgentSendCheck } = await import("../src/workbot-proactive/send-check.js")
 const { agentSessionId, agentMessageSessionId } = await import("../src/workbot-proactive/turn.js")
 const preferences = await import("../src/workbot-proactive/preferences.js")
 const { memberNextChecks, memberRhythm, memberBriefLines } = await import("../src/workbot-proactive/brief.js")
@@ -101,6 +104,8 @@ type Harness = {
   listed: string[]
   /** The check gate: each look at the member's mail, and each question put to the evaluation model. */
   gate: { looks: { connectionId: string; since: number }[]; asked: AgentCheckGateRequest[] }
+  /** What the send check was asked, one entry per message. */
+  sendChecks: AgentSendCheckInput[]
 }
 
 function harness(input: {
@@ -124,8 +129,10 @@ function harness(input: {
   checkGate?: { mail?: MemberMailArrivals | (() => MemberMailArrivals); model?: (request: AgentCheckGateRequest) => AgentCheckGateVerdict } | null
   /** What Google Calendar returns for the check's own read and the gate's look. */
   calendarItems?: unknown[]
+  /** The send check's verdict per message; null: the feature is off for the member or the deployment has no key. */
+  sendCheck?: ((call: AgentSendCheckInput) => AgentSendCheckVerdict) | null
 }) {
-  const h: Harness = { clock: MORNING, row: agentRow(input.row), checks: [], messageTurns: [], ended: [], delivered: [], ledger: new Map(), records: [], counters: [], settles: [], requests: [], briefOn: input.briefOn ?? [], gate: { looks: [], asked: [] }, listed: [] }
+  const h: Harness = { clock: MORNING, row: agentRow(input.row), checks: [], messageTurns: [], ended: [], delivered: [], ledger: new Map(), records: [], counters: [], settles: [], requests: [], briefOn: input.briefOn ?? [], gate: { looks: [], asked: [] }, sendChecks: [], listed: [] }
   const checks = [...(input.checks ?? ["NO_FINDINGS"])]
   const replies = [...(input.replies ?? ["NO_REPLY"])]
   let briefCalls = 0
@@ -195,6 +202,14 @@ function harness(input: {
       h.listed.push(connection.id)
       const tools = { [SLACK.id]: SLACK_TOOLS, ...input.tools }
       return connection.id in tools ? tools[connection.id] ?? null : null
+    },
+    sendCheck: async () => {
+      const verdict = input.sendCheck
+      if (!verdict) return null
+      return async (call) => {
+        h.sendChecks.push(call)
+        return { verdict: verdict(call), status: "answered", durationMs: 40, inputTokens: 300 }
+      }
     },
     ...(input.checkGate === undefined ? {} : {
       checkGate: async () => {
@@ -431,6 +446,85 @@ describe("Your agent's brief: a check, then maybe a message (workbotAgentBrief)"
   })
 })
 
+describe("the send check: each message is read once more before it is sent (workbotAgentSendCheck)", () => {
+  const NEWSLETTER = { text: "The Fabrikam newsletter has a pricing webinar on Thursday.", about: ["email:news"] }
+  const SOW = { text: "The SOW is due by noon and Dana is waiting on it.", about: ["email:thr_sow"] }
+  const twoFindings = ["P1 — a newsletter. ids: email:news\n\nP0 — SOW due at noon. ids: email:thr_sow"]
+  const holdNewsletter = (call: AgentSendCheckInput): AgentSendCheckVerdict => (call.message.includes("newsletter") ? { kind: "hold", reason: "brief" } : { kind: "send" })
+
+  test("off until the policy turns it on: the check model is never asked and every message is sent", async () => {
+    const { h, run } = harness({ checks: twoFindings, replies: [messages(NEWSLETTER, SOW)], sendCheck: holdNewsletter })
+    await run()
+    assert.equal(h.sendChecks.length, 0)
+    assert.equal(h.delivered.length, 2)
+  })
+
+  test("on: a message the brief says to leave out is held, the other is sent, and the model sees the brief and what was told today", async () => {
+    const conversation: AgentConversationTurn[] = [
+      { at: at("2026-10-19T16:00:00"), from: "agent", text: "Yesterday: the invoice from Fabrikam is due Friday." },
+      { at: at("2026-10-20T07:30:00"), from: "agent", text: "Before 9 AM: Lee needs the launch date." },
+      { at: at("2026-10-20T07:40:00"), from: "member", text: "On it." },
+    ]
+    const { h, run } = harness({ settings: { sendCheck: true }, checks: twoFindings, replies: [messages(NEWSLETTER, SOW)], conversation, sendCheck: holdNewsletter })
+    assert.deepEqual(await run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "sent" })
+    assert.deepEqual(h.delivered, [SOW.text])
+    assert.equal(h.ledger.has("email:news"), false, "a held message is not recorded as told")
+    assert.deepEqual(h.sendChecks.map((call) => [call.message, call.update]), [[NEWSLETTER.text, false], [SOW.text, false]])
+    assert.match(h.sendChecks[0]?.brief ?? "", /^Tell me about things that need me soon:/)
+    assert.deepEqual(h.sendChecks[0]?.toldToday, ["Before 9 AM: Lee needs the launch date."], "only the agent's own messages since the start of the member's day")
+    assert.deepEqual(h.records.map((record) => record.reason), ["sent"])
+  })
+
+  test("everything held because the brief says so is a quiet check; everything held as a repeat is already told", async () => {
+    const brief = harness({ settings: { sendCheck: true }, checks: twoFindings, replies: [messages(NEWSLETTER)], sendCheck: () => ({ kind: "hold", reason: "brief" }) })
+    assert.deepEqual(await brief.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "nothing_new" })
+    assert.equal(brief.h.delivered.length, 0)
+    assert.deepEqual(brief.h.records.map((record) => [record.reason, record.outcome]), [["findings_held", "quiet"]])
+    const repeat = harness({ settings: { sendCheck: true }, checks: twoFindings, replies: [messages(SOW)], sendCheck: () => ({ kind: "hold", reason: "repeat" }) })
+    await repeat.run()
+    assert.deepEqual(repeat.h.records.map((record) => record.reason), ["already_told"])
+  })
+
+  test("with the feature off for the member, or no key on the deployment, messages are sent as before", async () => {
+    const { h, run } = harness({ settings: { sendCheck: true }, checks: twoFindings, replies: [messages(NEWSLETTER, SOW)], sendCheck: null })
+    await run()
+    assert.equal(h.delivered.length, 2)
+  })
+
+  test("the request: one POST to the evaluation model with the two questions, no retention, and no redirects", async () => {
+    const calls: { url: string; init: RequestInit | undefined }[] = []
+    const check = createAgentSendCheck(createEvaluationModel({
+      apiKey: "synthetic-gateway-key",
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init })
+        return Response.json({ answers: { skip: { type: "boolean", probability: 0.93 }, repeat: { type: "boolean", probability: 0.1 } }, usage: { inputTokens: 412 } })
+      },
+    }))
+    const result = await check({ brief: "Never tell me about newsletters.", message: NEWSLETTER.text, update: false, toldToday: [] })
+    assert.deepEqual([result.verdict, result.status, result.inputTokens], [{ kind: "hold", reason: "brief" }, "answered", 412])
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0]?.url, "https://ai-gateway.vercel.sh/v4/ai/evaluation-model")
+    assert.equal(calls[0]?.init?.redirect, "error")
+    const headers = new Headers(calls[0]?.init?.headers)
+    assert.deepEqual([headers.get("authorization"), headers.get("ai-model-id")], ["Bearer synthetic-gateway-key", "typesafe-ai/jev"])
+    assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+      ...agentSendCheckRequest({ brief: "Never tell me about newsletters.", message: NEWSLETTER.text, toldToday: [] }),
+      providerOptions: { gateway: { zeroDataRetention: true } },
+    })
+  })
+
+  test("no usable answer sends the message: a refused request, an unreadable body, a failed connection", async () => {
+    const input = { brief: "Never tell me about newsletters.", message: NEWSLETTER.text, update: false, toldToday: [] }
+    const refused = createAgentSendCheck(createEvaluationModel({ apiKey: "synthetic-gateway-key", fetch: async () => new Response("quota exceeded for key synthetic-gateway-key", { status: 402 }) }))
+    const unreadable = createAgentSendCheck(createEvaluationModel({ apiKey: "synthetic-gateway-key", fetch: async () => new Response("<html>", { status: 200 }) }))
+    const down = createAgentSendCheck(createEvaluationModel({ apiKey: "synthetic-gateway-key", fetch: async () => { throw new Error("connect ECONNREFUSED") } }))
+    for (const check of [refused, unreadable, down]) {
+      const result = await check(input)
+      assert.deepEqual([result.verdict, result.status, result.inputTokens], [{ kind: "send" }, "unavailable", null])
+    }
+  })
+})
+
 describe("the check gate: a scheduled check runs only when something that could matter arrived (workbotAgentCheckGate)", () => {
   const TEN = at("2026-10-20T10:00:00")
   const NOON = at("2026-10-20T12:00:00")
@@ -552,13 +646,13 @@ describe("the check gate: a scheduled check runs only when something that could 
       questions: { needed: { type: "boolean", instructions: "Could any arrival matter?" } },
     }
     const calls: { url: string; init: RequestInit | undefined }[] = []
-    const model = createCheckGateModel({
+    const model = createCheckGateModel(createEvaluationModel({
       apiKey: "synthetic-gateway-key",
       fetch: async (url, init) => {
         calls.push({ url: String(url), init })
         return Response.json({ answers: { needed: { type: "boolean", probability: 0.04 } }, usage: { inputTokens: 212 } })
       },
-    })
+    }))
     const answer = await model(request)
     assert.deepEqual([answer.verdict, answer.inputTokens], [{ kind: "skip", why: "routine" }, 212])
     assert.equal(calls.length, 1)
@@ -568,9 +662,9 @@ describe("the check gate: a scheduled check runs only when something that could 
     assert.deepEqual([headers.get("authorization"), headers.get("ai-model-id")], ["Bearer synthetic-gateway-key", "typesafe-ai/jev"])
     assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), { ...request, providerOptions: { gateway: { zeroDataRetention: true } } })
 
-    const refused = createCheckGateModel({ apiKey: "synthetic-gateway-key", fetch: async () => new Response("quota exceeded for key synthetic-gateway-key", { status: 402 }) })
-    const unreadable = createCheckGateModel({ apiKey: "synthetic-gateway-key", fetch: async () => new Response("<html>", { status: 200 }) })
-    const down = createCheckGateModel({ apiKey: "synthetic-gateway-key", fetch: async () => { throw new Error("connect ECONNREFUSED") } })
+    const refused = createCheckGateModel(createEvaluationModel({ apiKey: "synthetic-gateway-key", fetch: async () => new Response("quota exceeded for key synthetic-gateway-key", { status: 402 }) }))
+    const unreadable = createCheckGateModel(createEvaluationModel({ apiKey: "synthetic-gateway-key", fetch: async () => new Response("<html>", { status: 200 }) }))
+    const down = createCheckGateModel(createEvaluationModel({ apiKey: "synthetic-gateway-key", fetch: async () => { throw new Error("connect ECONNREFUSED") } }))
     for (const failing of [refused, unreadable, down]) {
       const failed = await failing(request)
       assert.deepEqual([failed.verdict, failed.inputTokens], [{ kind: "run", why: "no_answer" }, null])

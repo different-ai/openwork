@@ -9,6 +9,7 @@ import {
   parseAgentReply,
   projectGoogleCalendarEvents,
   zonedClock,
+  zonedDayStart,
   zonedInstant,
   type AgentPromptSource,
   type AgentWakeReason,
@@ -22,6 +23,7 @@ import {
   agentMessageInstructions,
   agentMessagePrompt,
   agentMessageRetryPrompt,
+  agentToldToday,
   checkSlotsOn,
   decideBriefDelivery,
   extraChecksLeft,
@@ -38,6 +40,7 @@ import {
   type AgentCheckRequest,
   type AgentConversationTurn,
   type AgentRhythm,
+  type AgentSendCheckVerdict,
   type AgentSentRecord,
 } from "../../../packages/automations/src/proactive-brief.ts";
 import { DEFAULT_AGENT_BRIEF, EMPTY_AGENT_PREFERENCES } from "../../../packages/types/src/den/workbot-proactive.ts";
@@ -62,12 +65,16 @@ import type { ReplayMessage, ReplayModel, ReplayToolCall, ReplayToolSpec, Replay
 export type Pipeline = "old" | "new";
 export type StepUsage = { calls: number } & ReplayUsage;
 export type DeliveredMessage = { at: number; text: string };
+/** The send check (workbotAgentSendCheck), as Den asks it for one message step 2 wrote. */
+export type ReplaySendCheck = (input: { brief: string; message: string; update: boolean; toldToday: readonly string[] }) => Promise<AgentSendCheckVerdict>;
 export type CheckLog = {
   at: number;
   occasion: string;
   answer: string;
   outcome: string;
   delivered: string[];
+  /** Messages the send check held, and why. */
+  held?: { text: string; reason: "brief" | "repeat" }[];
   tools: string[];
   usage: { check: StepUsage; message: StepUsage };
 };
@@ -166,8 +173,9 @@ function previousEvening(scenario: DayScenario): number {
   return zonedInstant(scenario.timeZone, year ?? 0, month ?? 0, (day ?? 0) - 1, 18);
 }
 
-/** The brief's pipeline over a scenario. */
-export async function runNewPipeline(scenario: DayScenario, model: ReplayModel): Promise<DayRun> {
+/** The brief's pipeline over a scenario; with `sendCheck`, each message step 2 wrote is checked before Den's limits. */
+export async function runNewPipeline(scenario: DayScenario, model: ReplayModel, options: { sendCheck?: ReplaySendCheck } = {}): Promise<DayRun> {
+  const { sendCheck } = options;
   const run: DayRun = { scenario: scenario.id, pipeline: "new", messages: [], checks: [], error: null };
   const tz = scenario.timeZone;
   const rhythm: AgentRhythm = { policy: { workingDays: "weekdays", startHour: 8, endHour: 19 }, everyHours: 2, quietWindow: null };
@@ -179,7 +187,8 @@ export async function runNewPipeline(scenario: DayScenario, model: ReplayModel):
   let lastReport: { at: number; text: string } | null = null;
   let lastCheckAt: number | null = null;
   const name = scenario.person.first;
-  const instructions = agentCheckInstructions({ name, brief: agentBriefForCheck({ name, organization: DEFAULT_AGENT_BRIEF, member: scenario.memberLines ?? "" }) });
+  const brief = agentBriefForCheck({ name, organization: DEFAULT_AGENT_BRIEF, member: scenario.memberLines ?? "" });
+  const instructions = agentCheckInstructions({ name, brief });
   // Any connected connector: its read tools only, decided per tool as Den does when the check starts.
   const connectorTools = connectorReadTools(scenario);
   run.connectorTools = connectorTools.map((tool) => tool.name);
@@ -253,7 +262,17 @@ export async function runNewPipeline(scenario: DayScenario, model: ReplayModel):
             log.answer += `\n\n--- step 2 ---\n${reply.content ?? ""}`;
             if (parsed.kind !== "messages") log.outcome = parsed.kind === "quiet" ? "findings_held" : "unreadable_reply";
             else {
-              const decision = decideBriefDelivery({ messages: parsed.messages, sources: new Set(sourcesFor(scenario, null, true).map((source) => source.id)), resolveSource: (source) => resolveSource(source, scenario), told, sentToday, dailyCap: cap, rhythm, snoozedUntil: null, at: now, timeZone: tz });
+              let written = parsed.messages;
+              if (sendCheck) {
+                const toldToday = agentToldToday({ conversation: conversationAt(scenario, run.messages, now), sent, since: zonedDayStart(now, tz) });
+                const verdicts = await Promise.all(written.map((message) => sendCheck({ brief, message: message.text, update: message.update, toldToday })));
+                log.held = written.flatMap((message, index) => {
+                  const verdict = verdicts[index];
+                  return verdict?.kind === "hold" ? [{ text: message.text, reason: verdict.reason }] : [];
+                });
+                written = written.filter((_, index) => verdicts[index]?.kind !== "hold");
+              }
+              const decision = decideBriefDelivery({ messages: written, sources: new Set(sourcesFor(scenario, null, true).map((source) => source.id)), resolveSource: (source) => resolveSource(source, scenario), told, sentToday, dailyCap: cap, rhythm, snoozedUntil: null, at: now, timeZone: tz });
               if (decision.kind === "held") log.outcome = decision.reason;
               else {
                 for (const message of decision.deliver) {

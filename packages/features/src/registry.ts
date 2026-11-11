@@ -661,6 +661,17 @@ export const FEATURES = defineFeatures({
     deployments: ["cloud"],
     default: false,
   },
+  workbotAgentSendCheck: {
+    label: "Workbot: Your agent checks each message before sending",
+    description: "With Your agent's brief on, admins can turn on Check each message before sending in Manage › Workbot. A fast second model then reads each message Your agent wrote against the brief and what the member was already told today, and holds a message the brief says to skip or that repeats one from today. It never writes, changes or adds a message, and when it can't answer the message is sent as before.",
+    category: "workbot",
+    added: "2026-11-10",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/workbot-agent-send-check/README.md",
+    deployments: ["cloud"],
+    default: false,
+  },
   workbotSlackAnswerReply: {
     label: "Workbot: Slack answers as their own reply",
     description: "In Slack, Workbot's notes while it works (\"Let me check your calendar.\") stay in one message that updates in place, and its final answer is posted as a new reply that notifies the person, written in its own words. Replaces the fixed \"Done:\" ping that quoted the first line of the reply.",

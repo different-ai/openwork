@@ -6,7 +6,7 @@ import { readMemberGmailArrivals, readMemberGoogleCalendar } from "../routes/org
 import { organizationCloudModel } from "../workbot/model.js"
 import { resolveMemberTeamAgent, teamAgentPolicy } from "../workbot/team-settings.js"
 import { readWorkbotDirectMessages } from "../slack-assistant/direct-message.js"
-import { activeMemberUser, agentBriefAllowed, agentCheckGateAllowed, listAgentCandidates, memberFirstName, proactiveAllowed, readProactiveSettings } from "./access.js"
+import { activeMemberUser, agentBriefAllowed, agentCheckGateAllowed, agentSendCheckAllowed, listAgentCandidates, memberFirstName, proactiveAllowed, readProactiveSettings } from "./access.js"
 import { deliverAgentMessage, destinationBlock } from "./deliver.js"
 import {
   agentSentSince,
@@ -27,6 +27,8 @@ import {
 } from "./repository.js"
 import { countConnectedMembers, listConnectionToolsForMember, listMemberConnections } from "./sources-repository.js"
 import { createCheckGateModel } from "./check-gate.js"
+import { createEvaluationModel } from "./evaluation-model.js"
+import { createAgentSendCheck } from "./send-check.js"
 import { readAgentTemplate } from "./template.js"
 import { agentMessageId, agentMessageSessionId, agentSessionId, defaultAgentTurnDeps, endAgentMessageSession, runAgentSessionTurn, runAgentTurn } from "./turn.js"
 import { wakeAgent, type AgentWakeOutcome } from "./wake.js"
@@ -45,7 +47,10 @@ const LEDGER_RETENTION_MS = 30 * 24 * 3_600_000
 
 export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
   const turnDeps = defaultAgentTurnDeps()
-  const checkGateModel = env.agentCheckGateApiKey ? createCheckGateModel({ apiKey: env.agentCheckGateApiKey }) : null
+  // One evaluation model for the check gate and the send check, where the deployment has its key.
+  const evaluationModel = env.agentEvaluationApiKey ? createEvaluationModel({ apiKey: env.agentEvaluationApiKey }) : null
+  const checkGateModel = evaluationModel ? createCheckGateModel(evaluationModel) : null
+  const sendCheck = evaluationModel ? createAgentSendCheck(evaluationModel) : null
   return {
     now: Date.now,
     allowed: (organizationId, userId) => proactiveAllowed(organizationId, userId),
@@ -89,6 +94,12 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
         mail: (input) => readMemberGmailArrivals({ organizationId, orgMembershipId: memberId, ...input }),
         model: checkGateModel,
       }
+    },
+    // A check that is about to read a member's messages is that member using the feature, too.
+    sendCheck: async ({ organizationId, memberId, userId }) => {
+      if (!sendCheck || !(await agentSendCheckAllowed(organizationId, userId))) return null
+      markFeaturesUsed({ organizationId, memberId, keys: ["workbotAgentSendCheck"] })
+      return sendCheck
     },
     readTools: (input) => listConnectionToolsForMember({ organizationId: input.organizationId, memberId: input.memberId, connectionId: input.connection.id }),
   }

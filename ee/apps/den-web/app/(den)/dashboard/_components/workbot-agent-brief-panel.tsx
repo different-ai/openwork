@@ -35,6 +35,13 @@ export function everyLabel(hours: number) {
   return hours === 1 ? "Every hour" : `Every ${hours} hours`;
 }
 
+/** The send check's row (`workbotAgentSendCheck`), worded the same in both layouts. */
+export const SEND_CHECK_ROW = {
+  label: "Check each message before sending",
+  help: "A second, fast model reads each message before it is sent and holds one your instructions say to leave out, or that repeats what the agent already said today. It never writes or changes a message, and it keeps nothing it reads.",
+  notReady: "Not set up on this deployment. Ask your deployment administrator.",
+} as const;
+
 /** The check gate's row (`workbotAgentCheckGate`), worded the same in both layouts. */
 export const CHECK_GATE_ROW = {
   label: "Skip checks when nothing new arrived",
@@ -207,6 +214,13 @@ export function WorkbotAgentBriefPanel({
           </DenSelect>
         </div>
       </Row>
+
+      {view.sendCheck ? (
+        <Row label={SEND_CHECK_ROW.label} testId="workbot-agent-send-check" note={view.sendCheck.ready ? null : SEND_CHECK_ROW.notReady}>
+          <DenSwitch aria-label={SEND_CHECK_ROW.label} checked={settings.sendCheck === true} disabled={locked || (!view.sendCheck.ready && settings.sendCheck !== true)}
+            onChange={(sendCheck) => onChange({ sendCheck })} />
+        </Row>
+      ) : null}
 
       <Row label="Extra checks agents may ask for" labelId={ids.extra} testId="workbot-agent-brief-extra">
         <div className="w-36">

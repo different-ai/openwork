@@ -30,7 +30,7 @@ a scheduled check is due
        since each was last read by the agent
   a failed look, or more than 15 arrivals                              ─▶ run
   nothing arrived                                                      ─▶ skip
-  otherwise, with DEN_AGENT_CHECK_GATE_API_KEY: one question to the evaluation model
+  otherwise, with DEN_AGENT_EVALUATION_API_KEY: one question to the evaluation model
        "could any arrival be something the brief asks about, or need the person soon?"
        probability ≤ 0.2 ─▶ skip        anything else, or no answer ─▶ run
   without the key                                                      ─▶ run
@@ -63,7 +63,7 @@ gate never skips for that member. `workbot_agent_check_gate` logs say how often 
 2. The switch **Skip checks when nothing new arrived** in Manage › Workbot (Schedule group; also on a team's own
    policy). Off by default. `PUT /v1/org/workbot-settings/proactive` takes `checkGate: boolean`; the view has
    `settings.checkGate` and `checkGate: { model }` while the feature is on.
-3. Optional: `DEN_AGENT_CHECK_GATE_API_KEY` on den-api, a Vercel AI Gateway key that can call `typesafe-ai/jev`.
+3. Optional: `DEN_AGENT_EVALUATION_API_KEY` on den-api, a Vercel AI Gateway key that can call `typesafe-ai/jev`.
    Without it only "nothing arrived" skips a check.
 
 ## Data
