@@ -26,6 +26,8 @@ export type AutomationRunOutcomeActor =
   | Readonly<{ kind: "executor" }>
   | Readonly<{ kind: "runner"; runnerId: string; ownerMemberId: string }>
   | Readonly<{ kind: "owner" }>
+  /** A teammate acting on an Automation shared with their team. */
+  | Readonly<{ kind: "member"; memberId: string; userId: string }>
 
 async function loadRun(runId: string) {
   const [row] = await db.select({
@@ -87,6 +89,7 @@ export async function recordAutomationRunCompleted(input: { runId: string; termi
     const reporter = input.actor ?? { kind: "executor" }
     const actor = reporter.kind === "runner"
       ? auditServiceAttribution("automation-runner", reporter.runnerId, { memberId: reporter.ownerMemberId }).actor
+      : reporter.kind === "member" ? { type: "user" as const, id: reporter.userId, memberId: reporter.memberId }
       : reporter.kind === "owner" ? ownerActor(run) ?? EXECUTOR_ACTOR : EXECUTOR_ACTOR
     await recordAuditJobOutcome({
       ...jobContext(run), action: "automation_run.completed", actor,

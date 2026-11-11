@@ -791,6 +791,16 @@
               ],
               "description": "Outlook attachments: Agents read the files attached to Outlook messages and create Outlook drafts and replies with workspace files attached, after the member approves each draft. Drafts are never sent. Renders DEN_FEATURE_OUTLOOK_ATTACHMENTS."
             },
+            "automationTeamSharing": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Share Automations with teams: An Automation's owner shares it with a team they are on. Teammates see it under Shared with my teams with its instructions, runs and results; teams given manage access can also pause, resume and run it, cancel a run, and take it over. It keeps running with its owner's accounts and models, and only the owner edits it. Turning this off hides shared Automations from teammates again; nothing is deleted and owners are unaffected. Renders DEN_FEATURE_AUTOMATION_TEAM_SHARING."
+            },
             "gatewayDashboard": {
               "enum": [
                 "",

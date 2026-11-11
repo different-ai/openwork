@@ -261,6 +261,58 @@ export const automationSchema = z.object({
 export type Automation = z.infer<typeof automationSchema>
 
 /**
+ * What a team an Automation is shared with may do. `view`: read its
+ * instructions, schedule, runs and results. `manage`: also pause, resume and
+ * run it, cancel a run, and take it over. Editing, archiving and sharing stay
+ * with the owner, because the Automation runs with the owner's accounts.
+ */
+export const automationShareAccessSchema = z.enum(["view", "manage"]).meta({ ref: "AutomationShareAccess" })
+export type AutomationShareAccess = z.infer<typeof automationShareAccessSchema>
+
+export const automationTeamShareSchema = z.object({
+  teamId: idSchema,
+  teamName: z.string().trim().min(1).max(255),
+  access: automationShareAccessSchema,
+  sharedAt: timestampSchema,
+}).meta({ ref: "AutomationTeamShare" })
+export type AutomationTeamShare = z.infer<typeof automationTeamShareSchema>
+
+export const automationAccessRoleSchema = z.enum(["owner", "manage", "view"]).meta({ ref: "AutomationAccessRole" })
+export type AutomationAccessRole = z.infer<typeof automationAccessRoleSchema>
+
+/**
+ * The caller's relation to an Automation. `teams` lists every team it is
+ * shared with for its owner, and for a teammate the teams that give them
+ * access. Absent from a Den that does not share Automations: everything such a
+ * Den returns is the caller's own.
+ */
+export const automationAccessSchema = z.object({
+  role: automationAccessRoleSchema,
+  owner: z.object({ memberId: idSchema, name: z.string().nullable() }),
+  teams: z.array(automationTeamShareSchema),
+}).meta({ ref: "AutomationAccess" })
+export type AutomationAccess = z.infer<typeof automationAccessSchema>
+
+const AUTOMATION_ROLE_RANK: Record<AutomationAccessRole, number> = { view: 1, manage: 2, owner: 3 }
+
+/** Whether `role` may do what needs `need`. No role means an Automation the caller owns. */
+export function automationRoleAllows(role: AutomationAccessRole | undefined, need: AutomationAccessRole): boolean {
+  return AUTOMATION_ROLE_RANK[role ?? "owner"] >= AUTOMATION_ROLE_RANK[need]
+}
+
+export const shareAutomationWithTeamSchema = z.object({
+  access: automationShareAccessSchema,
+}).strict().meta({ ref: "ShareAutomationWithTeam" })
+export type ShareAutomationWithTeam = z.infer<typeof shareAutomationWithTeamSchema>
+
+/** An owner's view of who an Automation is shared with, and the teams they can share it with. */
+export const automationSharingSchema = z.object({
+  teams: z.array(automationTeamShareSchema),
+  shareableTeams: z.array(z.object({ teamId: idSchema, teamName: z.string().trim().min(1).max(255) })),
+}).meta({ ref: "AutomationSharing" })
+export type AutomationSharing = z.infer<typeof automationSharingSchema>
+
+/**
  * The workspace an Automation is pinned to at creation/update time.
  *
  * Before this field existed, both executors resolved the runner's *currently
@@ -1095,6 +1147,7 @@ export const automationListSchema = z.object({
     automation: automationSchema,
     revision: automationRevisionSchema,
     latestRun: automationRunSchema.nullable(),
+    access: automationAccessSchema.optional(),
   })),
   nextCursor: z.string().nullable(),
 }).meta({ ref: "AutomationList" })
@@ -1128,6 +1181,7 @@ export const automationDetailSchema = z.object({
   automation: automationSchema,
   revision: automationRevisionSchema,
   latestRun: automationRunSchema.nullable(),
+  access: automationAccessSchema.optional(),
 }).meta({ ref: "AutomationDetail" })
 export type AutomationDetail = z.infer<typeof automationDetailSchema>
 

@@ -11,6 +11,7 @@ import {
   Clock3,
   Cloud,
   History,
+  Lock,
   Monitor,
   Pencil,
   Play,
@@ -18,17 +19,19 @@ import {
   RefreshCw,
   Search,
   Square,
+  Users,
 } from "lucide-react"
 import { useNavigate, useSearchParams } from "react-router"
 import { globalSettingsRoute, workspaceSettingsRoute } from "@/react-app/shell/workspace-routes"
 import type {
   AutomationDetail,
+  AutomationList,
   AutomationRun,
   AutomationRunEvent,
   AutomationState,
   CreateAutomation,
 } from "@openwork/types/automations"
-import { AUTOMATION_FREE_MODEL, automationScheduleSchema } from "@openwork/types/automations"
+import { AUTOMATION_FREE_MODEL, automationRoleAllows, automationScheduleSchema } from "@openwork/types/automations"
 
 import { readDenSettings } from "@/app/lib/den"
 import { isDesktopRuntime } from "@/app/lib/runtime-env"
@@ -49,12 +52,14 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/sonner"
 import { CloudSignInBanner, CloudSignInBannerIcon } from "@/react-app/domains/cloud/cloud-sign-in-banner"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature"
 import { usePlatform } from "@/react-app/kernel/platform"
 import { t } from "../../../i18n"
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal"
 import { automationCreationPlacement } from "./automation-availability"
 import { resolveAutomationPlacement } from "./automation-placement"
 import { AutomationEditor } from "./automation-editor"
+import { AutomationShareButton, SharedAccessNotice, SharedByLine, ownerName, sharedWithLabel } from "./automation-sharing"
 import { automationEditChoices, useAutomationEditorSetup } from "./use-automation-editor-setup"
 import {
   ACTIVE_RUN_STATUSES,
@@ -65,6 +70,7 @@ import {
   useAutomationListQuery,
   useAutomationRunsQuery,
   useAutomationsDenContext,
+  useSharedAutomationListQuery,
 } from "./use-automations"
 import { automationExecutionThreadRoute, automationExecutionIdentity, automationLocalSessionRoute } from "./automation-cloud-thread"
 import { automationRunConnectionFix, automationRunNotice, formatAutomationSchedule, formatAutomationTime, runStatusLabel } from "./automation-format"
@@ -168,6 +174,60 @@ function LoadingState() {
   )
 }
 
+type AutomationListEntry = AutomationList["items"][number]
+
+function matchesQuery(item: AutomationListEntry, normalized: string) {
+  return !normalized
+    || item.automation.name.toLowerCase().includes(normalized)
+    || item.revision.instructions.toLowerCase().includes(normalized)
+}
+
+/** One Automation in the list. A shared one says whose it is; the caller's own says who it is shared with. */
+function AutomationCard(props: { item: AutomationListEntry; shared?: boolean; onOpen: () => void }) {
+  const { item } = props
+  const sharedWith = props.shared ? null : sharedWithLabel(item.access)
+  return (
+    <button
+      type="button"
+      data-automation-id={item.automation.id}
+      {...(props.shared ? { "data-automation-shared": item.access?.role ?? true } : {})}
+      {...(item.automation.state === "needs_attention" ? { "data-automation-needs-attention": true } : {})}
+      className="rounded-2xl border border-border bg-card p-4 text-left transition-colors hover:bg-muted/40"
+      onClick={props.onOpen}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="flex items-center gap-2 truncate font-medium">
+            {item.automation.state === "needs_attention" ? (
+              <AlertTriangle className="size-4 shrink-0 text-warning" aria-label="Automation needs attention" />
+            ) : null}
+            <span className="truncate">{item.automation.name}</span>
+          </h3>
+          <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{item.revision.instructions}</p>
+        </div>
+        <Badge variant={stateVariant(item.automation.state)}>{stateLabel(item.automation.state)}</Badge>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5" data-automation-computer={item.revision.executionTarget ?? "desktop"}>
+          {item.revision.executionTarget === "cloud" ? <Cloud className="size-3.5" aria-hidden="true" /> : <Monitor className="size-3.5" aria-hidden="true" />}
+          <span>{item.revision.executionTarget === "cloud" ? "Cloud computer" : "Desktop computer"}</span>
+        </span>
+        {props.shared && item.access ? <SharedByLine access={item.access} /> : null}
+        {sharedWith ? (
+          <span className="flex min-w-0 items-center gap-1.5" data-automation-shared-with>
+            <Users className="size-3.5 shrink-0" aria-hidden="true" />
+            <span className="truncate">Shared with {sharedWith}</span>
+          </span>
+        ) : null}
+      </div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>{formatAutomationSchedule(item.revision.schedule)}</span>
+        <span>{item.latestRun ? `Last run: ${runStatusLabel(item.latestRun)}` : `Next: ${formatAutomationTime(item.automation.nextDueAt)}`}</span>
+      </div>
+    </button>
+  )
+}
+
 export function AutomationsPage(props: {
   providerCatalog?: AutomationProviderCatalog
   workspaceId?: string | null
@@ -185,6 +245,7 @@ export function AutomationsPage(props: {
   const [editing, setEditing] = useState(false)
   const [repairingModel, setRepairingModel] = useState(false)
   const [archiveOpen, setArchiveOpen] = useState(false)
+  const [takeOverOpen, setTakeOverOpen] = useState(false)
 
   const denContext = useAutomationsDenContext()
   const { client, organizationId, ready, queryRoot } = denContext
@@ -201,6 +262,9 @@ export function AutomationsPage(props: {
   const placement = automationCreationPlacement()
 
   const listQuery = useAutomationListQuery(denContext)
+  // Off (or an older Den): everything listed is the caller's own, as before.
+  const sharingEnabled = useOrgFeature("automationTeamSharing")
+  const sharedQuery = useSharedAutomationListQuery(denContext, sharingEnabled)
   const { placementChoices, cloudRunAvailable, cloudOptions, connectedAccounts, modelsByPlacement, modelsByPlacementFor, modelsFor } = useAutomationEditorSetup(denContext, props.providerCatalog, props.workspaceId)
   const runnerPresenceQuery = useQuery({
     queryKey: [...queryRoot, "runner-presence"],
@@ -235,12 +299,12 @@ export function AutomationsPage(props: {
   const filteredItems = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     const items = listQuery.data?.items.filter((item) => item.automation.state !== "archived") ?? []
-    if (!normalized) return items
-    return items.filter((item) => (
-      item.automation.name.toLowerCase().includes(normalized)
-      || item.revision.instructions.toLowerCase().includes(normalized)
-    ))
+    return items.filter((item) => matchesQuery(item, normalized))
   }, [listQuery.data, query])
+  const sharedItems = useMemo(() => {
+    const normalized = query.trim().toLowerCase()
+    return sharingEnabled ? (sharedQuery.data?.items ?? []).filter((item) => matchesQuery(item, normalized)) : []
+  }, [sharedQuery.data, sharingEnabled, query])
 
   const openAutomation = (automationId: string | null) => {
     const next = new URLSearchParams()
@@ -408,7 +472,16 @@ export function AutomationsPage(props: {
       ? automationLocalSessionRoute(selectedReceipt.run.executionThread)
       : null
 
-    const editable = detail.revision.action?.kind !== "saved_script"
+    // A shared Automation runs with its owner's accounts: a teammate reads it, and with manage access
+    // pauses, resumes and runs it. Editing, archiving and sharing stay with the owner.
+    const access = sharingEnabled ? detail.access : undefined
+    const role = access?.role ?? "owner"
+    const isOwner = role === "owner"
+    const canManage = automationRoleAllows(role, "manage")
+    const ownerOnlyReason = `Only ${ownerName(access)} can do this`
+    const manageReason = isOwner || canManage ? undefined : `${ownerName(access)} can give your team manage access`
+    const whose = isOwner ? "your" : `${ownerName(access)}'s`
+    const editable = isOwner && detail.revision.action?.kind !== "saved_script"
     const detailPlacement = detail.revision.executionTarget ?? "desktop"
 
     if (editing && editable) {
@@ -481,14 +554,20 @@ export function AutomationsPage(props: {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            {isOwner && sharingEnabled && task.state !== "archived" ? (
+              <AutomationShareButton context={denContext} automationId={task.id} access={access} />
+            ) : null}
             {editable ? <Button variant="outline" onClick={() => {
               setRepairingModel(false)
               setEditing(true)
-            }}><Pencil />Edit</Button> : null}
+            }}><Pencil />Edit</Button> : !isOwner ? (
+              <Button variant="outline" disabled title={ownerOnlyReason} data-automation-locked="edit"><Lock />Edit</Button>
+            ) : null}
             {task.state === "active" ? (
               <Button
                 variant="outline"
-                disabled={busyAction !== null}
+                disabled={busyAction !== null || !canManage}
+                title={manageReason}
                 onClick={() => void act("deactivate", async () => {
                   await client.deactivateAutomation(organizationId, task.id)
                 }, "Automation deactivated. A run already in progress will continue.")}
@@ -498,7 +577,8 @@ export function AutomationsPage(props: {
             ) : task.state === "inactive" ? (
               <Button
                 variant="outline"
-                disabled={busyAction !== null}
+                disabled={busyAction !== null || !canManage}
+                title={manageReason}
                 onClick={() => void act("activate", async () => {
                   await client.activateAutomation(organizationId, task.id)
                 }, "Automation activated")}
@@ -506,7 +586,7 @@ export function AutomationsPage(props: {
                 <Play />Activate
               </Button>
             ) : null}
-            {detailPlacement === "desktop" && cloudRunAvailable ? (
+            {isOwner && detailPlacement === "desktop" && cloudRunAvailable ? (
               <Button
                 variant="outline"
                 data-automation-run-in-cloud
@@ -520,7 +600,8 @@ export function AutomationsPage(props: {
               </Button>
             ) : null}
             <Button
-              disabled={busyAction !== null || task.state === "archived" || task.state === "needs_attention"}
+              disabled={busyAction !== null || !canManage || task.state === "archived" || task.state === "needs_attention"}
+              title={manageReason}
               onClick={() => void act("run", async () => {
                 const run = await client.runAutomationNow(organizationId, task.id)
                 const next = new URLSearchParams({ automation: task.id, run: run.id })
@@ -529,13 +610,25 @@ export function AutomationsPage(props: {
             >
               <Play />Run now
             </Button>
-            <Button variant="ghost" size="icon" aria-label="Archive Automation" onClick={() => setArchiveOpen(true)}>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Archive Automation"
+              disabled={!isOwner}
+              title={isOwner ? undefined : ownerOnlyReason}
+              onClick={() => setArchiveOpen(true)}
+            >
               <Archive />
             </Button>
           </div>
         </div>
 
-        {(detail.revision.executionTarget ?? "desktop") === "desktop"
+        {access && !isOwner ? (
+          <SharedAccessNotice access={access} busy={busyAction !== null} onTakeOver={() => setTakeOverOpen(true)} />
+        ) : null}
+
+        {isOwner
+          && (detail.revision.executionTarget ?? "desktop") === "desktop"
           && task.state === "active"
           && noDesktopConnected ? (
           <Alert variant="warning" data-automation-runner-offline>
@@ -591,13 +684,17 @@ export function AutomationsPage(props: {
             <Card variant="outline">
               <CardHeader>
                 <CardTitle>{detail.revision.executionTarget === "cloud" ? "Cloud computer" : "Desktop computer"}</CardTitle>
-                <CardDescription>{detail.revision.executionTarget === "cloud" ? "Runs on your cloud computer, even when your desktop is offline." : "Runs on your desktop computer. Keep OpenWork open and connected at the scheduled time."}</CardDescription>
+                <CardDescription>{detail.revision.executionTarget === "cloud"
+                  ? `Runs on ${whose} cloud computer, even when ${whose} desktop is offline.`
+                  : isOwner
+                    ? "Runs on your desktop computer. Keep OpenWork open and connected at the scheduled time."
+                    : `Runs on ${whose} desktop computer, when it is open and connected.`}</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-3 text-sm sm:grid-cols-2">
                 <div className="min-w-0"><span className="text-muted-foreground">Model</span><p className="break-words">{describeAutomationModel(detail.revision.model, modelsFor(detailPlacement, detail.revision.workspaceId))}</p></div>
                 <div className="min-w-0"><span className="text-muted-foreground">Next run</span><p className="break-words">{task.state === "needs_attention" ? "No future run scheduled" : formatAutomationTime(task.nextDueAt)}</p></div>
                 <div className="min-w-0"><span className="text-muted-foreground">Runtime limit</span><p className="break-words">{Math.round(detail.revision.maximumRuntimeMs / 60_000)} minutes</p></div>
-                <div className="min-w-0"><span className="text-muted-foreground">Integrations</span><p className="break-words">Your available OpenWork Connect tools</p></div>
+                <div className="min-w-0"><span className="text-muted-foreground">Integrations</span><p className="break-words">{isOwner ? "Your" : `${ownerName(access)}'s`} available OpenWork Connect tools</p></div>
               </CardContent>
             </Card>
 
@@ -633,7 +730,8 @@ export function AutomationsPage(props: {
                           type="button"
                           size="sm"
                           variant="outline"
-                          disabled={busyAction !== null}
+                          disabled={busyAction !== null || !canManage}
+                          title={manageReason}
                           onClick={() => void act(`cancel:${run.id}`, async () => {
                             await client.cancelAutomationRun(organizationId, run.id)
                           }, "Run cancellation requested")}
@@ -680,7 +778,7 @@ export function AutomationsPage(props: {
                     ) : (
                       <Badge variant="outline">{selectedReceipt.run.executionTarget === "cloud" ? <Cloud className="mr-1 h-3 w-3" /> : <Monitor className="mr-1 h-3 w-3" />}{selectedReceipt.run.executionTarget === "cloud" ? "Cloud computer" : "Desktop computer"}</Badge>
                     )}
-                    {localSessionRoute ? (
+                    {localSessionRoute && isOwner ? (
                       <Button
                         type="button"
                         size="sm"
@@ -749,6 +847,20 @@ export function AutomationsPage(props: {
             }, "Automation archived")
           }}
         />
+        <ConfirmModal
+          open={takeOverOpen}
+          title="Take over this Automation?"
+          message={`It will run with your accounts, models and computers instead of ${ownerName(access)}'s, and stays paused until you resume it. Your team still sees it.`}
+          confirmLabel="Take over"
+          cancelLabel="Cancel"
+          onCancel={() => setTakeOverOpen(false)}
+          onConfirm={() => {
+            setTakeOverOpen(false)
+            void act("take-over", async () => {
+              await client.takeOverAutomation(organizationId, task.id)
+            }, "Taken over. Resume it when you are ready.")
+          }}
+        />
       </div>
     )
   }
@@ -765,7 +877,7 @@ export function AutomationsPage(props: {
         <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
         <Input className="pl-9" value={query} placeholder="Search Automations" onChange={(event) => setQuery(event.currentTarget.value)} />
       </div>
-      {filteredItems.length === 0 ? (
+      {filteredItems.length === 0 && sharedItems.length === 0 ? (
         <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon"><CalendarClock /></EmptyMedia>
@@ -783,39 +895,28 @@ export function AutomationsPage(props: {
           {!query ? <EmptyContent><Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button></EmptyContent> : null}
         </Empty>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2">
-          {filteredItems.map((item) => (
-            <button
-              key={item.automation.id}
-              type="button"
-              data-automation-id={item.automation.id}
-              {...(item.automation.state === "needs_attention" ? { "data-automation-needs-attention": true } : {})}
-              className="rounded-2xl border border-border bg-card p-4 text-left transition-colors hover:bg-muted/40"
-              onClick={() => openAutomation(item.automation.id)}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h3 className="flex items-center gap-2 truncate font-medium">
-                    {item.automation.state === "needs_attention" ? (
-                      <AlertTriangle className="size-4 shrink-0 text-warning" aria-label="Automation needs attention" />
-                    ) : null}
-                    <span className="truncate">{item.automation.name}</span>
-                  </h3>
-                  <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{item.revision.instructions}</p>
-                </div>
-                <Badge variant={stateVariant(item.automation.state)}>{stateLabel(item.automation.state)}</Badge>
+        <>
+          {filteredItems.length > 0 ? (
+            <section className="space-y-3" data-automations-mine>
+              {sharedItems.length > 0 ? <h2 className="text-sm font-medium text-muted-foreground">Mine</h2> : null}
+              <div className="grid gap-3 md:grid-cols-2">
+                {filteredItems.map((item) => (
+                  <AutomationCard key={item.automation.id} item={sharingEnabled ? item : { ...item, access: undefined }} onOpen={() => openAutomation(item.automation.id)} />
+                ))}
               </div>
-              <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground" data-automation-computer={item.revision.executionTarget ?? "desktop"}>
-                {item.revision.executionTarget === "cloud" ? <Cloud className="size-3.5" aria-hidden="true" /> : <Monitor className="size-3.5" aria-hidden="true" />}
-                <span>{item.revision.executionTarget === "cloud" ? "Cloud computer" : "Desktop computer"}</span>
+            </section>
+          ) : null}
+          {sharedItems.length > 0 ? (
+            <section className="space-y-3" data-automations-shared>
+              <h2 className="text-sm font-medium text-muted-foreground">Shared with my teams</h2>
+              <div className="grid gap-3 md:grid-cols-2">
+                {sharedItems.map((item) => (
+                  <AutomationCard key={item.automation.id} item={item} shared onOpen={() => openAutomation(item.automation.id)} />
+                ))}
               </div>
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span>{formatAutomationSchedule(item.revision.schedule)}</span>
-                <span>{item.latestRun ? `Last run: ${runStatusLabel(item.latestRun)}` : `Next: ${formatAutomationTime(item.automation.nextDueAt)}`}</span>
-              </div>
-            </button>
-          ))}
-        </div>
+            </section>
+          ) : null}
+        </>
       )}
     </div>
   )
