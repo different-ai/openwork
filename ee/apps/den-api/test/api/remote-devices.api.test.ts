@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { AutomationRunnerTable, RemoteDeviceEventTable, RemoteDeviceTable } from "@openwork-ee/den-db/schema"
+import { desc, eq } from "@openwork-ee/den-db/drizzle"
+import { AutomationRunnerTable, HeadlessSessionIndexTable, RemoteDeviceEventTable, RemoteDeviceTable } from "@openwork-ee/den-db/schema"
+import { workbotSessionId, workbotSideChatSessionId } from "@openwork-ee/headless-protocol/workbot-routing"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   REMOTE_DEVICE_AVAILABILITIES,
@@ -207,6 +208,55 @@ test("virtual computers are registered by hand: for me, or by an admin for every
   assert.equal(deviceId(back), id)
 })
 
+test("removed devices cannot be claimed by another owner or downgraded from shared", async () => {
+  const body = { label: "Private restore", provider: "freestyle", platform: "linux", externalId: "restore-private" }
+  const created = await asMember("POST", "/v1/remote-devices", body)
+  const id = deviceId(created)
+  assert.equal((await asMember("DELETE", `/v1/remote-devices/${id}`)).status, 204)
+  for (const as of [asOther, asOwner]) assert.equal((await as("POST", "/v1/remote-devices", body)).status, 403)
+  assert.equal((await asOwner("POST", "/v1/remote-devices", { ...body, shared: true })).status, 403)
+  assert.equal((await asMember("POST", "/v1/remote-devices", body)).status, 201)
+
+  const sharedBody = { ...body, externalId: "restore-shared", label: "Shared restore", shared: true }
+  const sharedId = deviceId(await asOwner("POST", "/v1/remote-devices", sharedBody))
+  const report = desktopReport({ computerUse: { enabled: true, remoteEnabled: true, selectedId: "shared", permissions: null,
+    computers: [{ id: "shared", label: "Shared", placement: "remote", provider: "freestyle", externalId: "restore-shared", readiness: "unavailable", detail: "Forged failure" }],
+  } })
+  const read = async () => (await db.select().from(RemoteDeviceTable).where(eq(RemoteDeviceTable.id, normalizeDenTypeId("remoteDevice", sharedId))))[0]!
+  const before = await read()
+  assert.equal((await asMember("PUT", "/v1/remote-devices/this-computer", report)).status, 200)
+  assert.deepEqual(await read(), before, "a member cannot change a live shared VM through a desktop report")
+  assert.equal((await asOwner("DELETE", `/v1/remote-devices/${sharedId}`)).status, 204)
+  const removed = await read()
+  assert.equal((await asMember("PUT", "/v1/remote-devices/this-computer", report)).status, 200)
+  assert.deepEqual(await read(), removed, "a member cannot restore a removed shared VM")
+  assert.equal((await asMember("POST", "/v1/remote-devices", { ...sharedBody, shared: false })).status, 403)
+  assert.equal((await asOwner("POST", "/v1/remote-devices", { ...sharedBody, shared: false })).status, 403)
+  assert.equal((await asOwner("POST", "/v1/remote-devices", sharedBody)).status, 201)
+  // Keep existing downstream inventory assertions isolated from these security fixtures.
+  assert.equal((await asOwner("DELETE", `/v1/remote-devices/${sharedId}`)).status, 204)
+  assert.equal((await asMember("DELETE", `/v1/remote-devices/${id}`)).status, 204)
+})
+
+test("concurrent first registrations resolve to one row, not raw database errors", async () => {
+  const body = { label: "Race", provider: "freestyle", platform: "linux", externalId: "register-race" }
+  const calls = await Promise.all([asMember("POST", "/v1/remote-devices", body), asOther("POST", "/v1/remote-devices", body)])
+  assert.deepEqual(calls.map((call) => call.status).sort(), [201, 409], calls.map(summary).join("\n"))
+  const winner = calls[0]!.status === 201 ? asMember : asOther
+  await winner("DELETE", `/v1/remote-devices/${deviceId(calls.find((call) => call.status === 201)!)}`)
+  const raceReport = desktopReport({ installId: "install-race", label: "Race desktop", computerUse: {
+    enabled: true, remoteEnabled: true, selectedId: "race-vm", permissions: null,
+    computers: [{ id: "race-vm", label: "Race VM", placement: "remote", readiness: "ready", detail: null, provider: "daytona", externalId: "race-vm" }],
+  } })
+  const desktops = await Promise.all(Array.from({ length: 3 }, () => asMember("PUT", "/v1/remote-devices/this-computer", raceReport)))
+  assert.ok(desktops.every((call) => call.status === 200), desktops.map(summary).join("\n"))
+  assert.equal(new Set(desktops.map(deviceId)).size, 1)
+  const vms = await db.select().from(RemoteDeviceTable).where(eq(RemoteDeviceTable.externalId, "race-vm"))
+  assert.equal(vms.length, 1)
+  await asMember("DELETE", `/v1/remote-devices/${vms[0]!.id}`)
+  await asMember("DELETE", `/v1/remote-devices/${deviceId(desktops[0]!)}`)
+})
+
 test("a desktop's report covers the VMs it is configured to reach, never someone else's", async () => {
   const vm = (readiness: string | null, detail: string | null = null) => desktopReport({
     appVersion: "1.5.0",
@@ -239,7 +289,7 @@ test("a desktop's report covers the VMs it is configured to reach, never someone
 })
 
 test("Workbot lists the same computers and reports what happens to its own", async () => {
-  const sessionId = "hs_wb_0123456789abcdef0123456789abcdef01234567"
+  const sessionId = workbotSessionId(orgId, member.memberId)
   const token = await den.mintMcpToken(member, orgId)
   const report = (body: Record<string, unknown>, bearer = token) => den.request(bearer, "POST", "/v1/workbot/devices/computer", { body: { sessionId, chat: "main", ...body } })
 
@@ -275,15 +325,15 @@ test("Workbot lists the same computers and reports what happens to its own", asy
     ],
   )
 
-  // Idle for longer than the runner's pause: shown paused without anyone having said so.
+  // A stale report cannot prove that the computer paused.
   await db.update(RemoteDeviceTable).set({ lastSeenAt: new Date(Date.now() - REMOTE_DEVICE_ONLINE_WINDOW_MS - 60_000) }).where(eq(RemoteDeviceTable.id, normalizeDenTypeId("remoteDevice", computer.id)))
-  assert.equal(devicesOf(await asMember("GET", "/v1/remote-devices")).find((device) => device.id === computer.id)?.availability, "paused")
+  assert.equal(devicesOf(await asMember("GET", "/v1/remote-devices")).find((device) => device.id === computer.id)?.availability, "unknown")
 
   // Fixed codes only, and only for the member's own conversations.
   assert.equal((await report({ event: "failed", code: "Error: connect ECONNREFUSED 10.0.0.4" })).status, 400)
   assert.equal((await report({ event: "exploded" })).status, 400)
   const otherToken = await den.mintMcpToken(other, orgId)
-  assert.equal((await report({ event: "paused" }, otherToken)).status, 204)
+  assert.equal((await report({ event: "paused" }, otherToken)).status, 403)
   assert.equal(devicesOf(await asOther("GET", "/v1/remote-devices")).some((device) => device.provider === "workbot"), false)
   const readOnly = text(field((await den.request(member.token, "POST", "/v1/mcp/token", { orgId, body: { scopes: ["mcp:read"] } })).body, "token"), "read token")
   assert.equal((await report({ event: "paused" }, readOnly)).status, 403)
@@ -292,6 +342,40 @@ test("Workbot lists the same computers and reports what happens to its own", asy
   // Deleting the chat takes its computer off the list.
   assert.equal((await report({ event: "removed" })).status, 204)
   assert.equal(devicesOf(await asMember("GET", "/v1/remote-devices")).some((device) => device.id === computer.id), false)
+})
+
+test("Workbot cannot preclaim sessions or disclose another owner or tenant's title", async () => {
+  const token = await den.mintMcpToken(member, orgId)
+  const otherToken = await den.mintMcpToken(other, orgId)
+  const report = (sessionId: string, chat: string, bearer = token) => den.request(bearer, "POST", "/v1/workbot/devices/computer", { body: { sessionId, chat, event: "resumed" } })
+  const cell = "hs_c_0123456789abcdef0123456789abcdef01234567"
+  const now = new Date()
+  assert.equal((await report(cell, "main")).status, 403, "an arbitrary unindexed cell cannot be preclaimed")
+  assert.equal((await report(workbotSessionId(orgId, other.memberId), "main")).status, 403)
+  const chat = "0123456789abcdef"
+  assert.equal((await report(workbotSideChatSessionId(orgId, other.memberId, chat), chat)).status, 403)
+  const side = workbotSideChatSessionId(orgId, member.memberId, chat)
+  assert.equal((await report(side, chat)).status, 204, "derived legacy side chats work without an index")
+  const sideRow = (await db.select().from(RemoteDeviceTable).where(eq(RemoteDeviceTable.externalId, side)))[0]!
+  await asMember("DELETE", `/v1/remote-devices/${sideRow.id}`)
+
+  await db.insert(HeadlessSessionIndexTable).values({ sessionId: cell, organizationId: normalizeDenTypeId("organization", orgId), memberId: normalizeDenTypeId("member", member.memberId),
+    kind: "workbot", title: "Private cell title", version: 1, createdAt: now, updatedAt: now, lastReportedAt: now })
+  assert.equal((await report(cell, chat, otherToken)).status, 403, "indexed cells require matching membership")
+  assert.equal((await report(cell, chat)).status, 204, "real indexed Workbot cells are accepted")
+  const cellRow = (await db.select().from(RemoteDeviceTable).where(eq(RemoteDeviceTable.externalId, cell)))[0]!
+  assert.match(devicesOf(await asMember("GET", "/v1/remote-devices")).find((device) => device.id === cellRow.id)!.label, /Private cell title/)
+
+  // Simulate a historical poisoned registry row. Reads must independently fence title enrichment.
+  await db.update(HeadlessSessionIndexTable).set({ memberId: normalizeDenTypeId("member", other.memberId) }).where(eq(HeadlessSessionIndexTable.sessionId, cell))
+  assert.equal((await report(cell, chat)).status, 403)
+  const detail = await asMember("GET", `/v1/remote-devices/${cellRow.id}`)
+  assert.equal(field(detail.body, "device", "label"), "Workbot's computer")
+  assert.equal(JSON.stringify((await asMember("GET", "/v1/remote-devices")).body).includes("Private cell title"), false)
+  await db.update(HeadlessSessionIndexTable).set({ organizationId: normalizeDenTypeId("organization", elsewhere.orgId), memberId: normalizeDenTypeId("member", member.memberId) }).where(eq(HeadlessSessionIndexTable.sessionId, cell))
+  assert.equal((await report(cell, chat)).status, 403)
+  assert.equal(JSON.stringify((await asMember("GET", "/v1/remote-devices")).body).includes("Private cell title"), false)
+  await asMember("DELETE", `/v1/remote-devices/${cellRow.id}`)
 })
 
 test("a platform admin sees every device with what explains its state, and nobody else does", async () => {
@@ -342,7 +426,7 @@ test("a platform admin sees every device with what explains its state, and nobod
   assert.equal(detail.session, null)
 
   // A removed device is still readable by id, with its removal and its conversation's index row.
-  const removed = (await db.select({ id: RemoteDeviceTable.id }).from(RemoteDeviceTable).where(eq(RemoteDeviceTable.provider, "workbot")))[0]
+  const removed = (await db.select({ id: RemoteDeviceTable.id }).from(RemoteDeviceTable).where(eq(RemoteDeviceTable.externalId, workbotSessionId(orgId, member.memberId))))[0]
   assert.ok(removed)
   const removedDetail = adminRemoteDeviceDetailResponseSchema.parse((await den.asPlatformAdmin("GET", `/v1/admin/remote-devices/${removed.id}`)).body)
   assert.equal(typeof removedDetail.device.removedAt, "string")
@@ -356,6 +440,15 @@ test("a platform admin sees every device with what explains its state, and nobod
   for (const device of page.devices) {
     assert.equal(device.availability, remoteDeviceAvailability({ kind: device.kind, provider: device.provider, state: device.state, lastSeenAt: device.lastSeenAt ? Date.parse(device.lastSeenAt) : null, now }), device.label)
   }
+})
+
+test("member agents discover read-only Devices capabilities", async () => {
+  const token = await den.mintMcpToken(member, orgId)
+  const found = await den.callMcpTool(token, "search_capabilities", { query: "remote devices computers", limit: 20 })
+  const matches = list(field(found.body, "matches"))
+  assert.ok(matches.some((entry) => entry.path === "/v1/remote-devices" && entry.method === "GET"), found.raw)
+  assert.ok(matches.some((entry) => entry.path === "/v1/remote-devices/{deviceId}" && entry.method === "GET"), found.raw)
+  assert.ok(matches.filter((entry) => String(entry.path).startsWith("/v1/remote-devices")).every((entry) => entry.method === "GET"), found.raw)
 })
 
 test("the admin MCP tools answer the same questions for an agent, for platform admins only", async () => {
@@ -405,10 +498,24 @@ test("events are bounded per device, and turning the feature off hides everythin
     id: createDenTypeId("remoteDeviceEvent"), organizationId: device.organizationId, deviceId: device.id,
     type: "state_changed", level: "info", message: "Long ago", actor: "device", createdAt: new Date(Date.now() - 45 * 24 * 60 * 60_000),
   })
-  await pruneRemoteDeviceEvents(device.id)
+  // A normal event write deterministically prunes; no random branch or explicit cleanup needed.
+  assert.equal((await asMember("PUT", "/v1/remote-devices/this-computer", desktopReport({ appVersion: "1.6.0" }))).status, 200)
   const kept = await db.select({ message: RemoteDeviceEventTable.message }).from(RemoteDeviceEventTable).where(eq(RemoteDeviceEventTable.deviceId, device.id))
   assert.equal(kept.length, REMOTE_DEVICE_EVENT_LIMIT)
   assert.equal(kept.some((event) => event.message === "Long ago"), false)
+
+  const tiedAt = new Date()
+  await db.update(RemoteDeviceEventTable).set({ createdAt: tiedAt }).where(eq(RemoteDeviceEventTable.deviceId, device.id))
+  await db.insert(RemoteDeviceEventTable).values(Array.from({ length: 20 }, () => ({
+    id: createDenTypeId("remoteDeviceEvent"), organizationId: device.organizationId, deviceId: device.id,
+    type: "state_changed" as const, level: "info" as const, message: "Tied", actor: "device" as const, createdAt: tiedAt,
+  })))
+  const ordered = () => db.select({ id: RemoteDeviceEventTable.id }).from(RemoteDeviceEventTable).where(eq(RemoteDeviceEventTable.deviceId, device.id))
+    .orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id))
+  const expected = (await ordered()).slice(0, REMOTE_DEVICE_EVENT_LIMIT)
+  await pruneRemoteDeviceEvents(device.id)
+  assert.deepEqual(await ordered(), expected, "ties retain exactly the newest ids, in stable order")
+  assert.deepEqual((await eventsOf(asMember, device.id)).map((event) => event.id), expected.slice(0, 20).map((event) => event.id))
 
   const stored = (await db.select().from(RemoteDeviceTable)).length
   assert.equal((await den.setFeature(orgId, "remoteDevices", false)).status, 200)

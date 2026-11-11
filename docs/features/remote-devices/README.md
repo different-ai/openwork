@@ -43,9 +43,8 @@ One row per organization, provider and the provider's own id
 `availability` is worked out when the list is read
 (`remoteDeviceAvailability`): a desktop is online for ten minutes after it was
 last heard from (its report or its runner's presence, whichever is newer);
-Workbot's computer shows paused once it has been idle that long, because the
-runner pauses it without telling Den; a hand-registered VM nobody has probed
-is "Not checked yet". Desktops unheard from for 30 days leave the list, as
+a stale Workbot report shows "Not checked yet", never an assumed pause that
+Den did not observe; a hand-registered VM nobody has probed is also "Not checked yet". Desktops unheard from for 30 days leave the list, as
 their runner rows do.
 
 Each device keeps its last 200 events for 30 days (`remote_device_event`):

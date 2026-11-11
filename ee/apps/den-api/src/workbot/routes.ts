@@ -623,7 +623,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
     async (c) => {
       const actor = await devicesFor(c, true)
       if (actor instanceof Response) return actor
-      await reportWorkbotComputer(actor, c.req.valid("json"))
+      if (!await reportWorkbotComputer(actor, c.req.valid("json"))) return c.json({ error: "remote_device_forbidden" }, 403)
       return c.body(null, 204)
     },
   )

@@ -37,7 +37,7 @@ export type RemoteDevicePlatform = (typeof REMOTE_DEVICE_PLATFORMS)[number]
 export const REMOTE_DEVICE_STATES = ["ready", "paused", "setup_required", "unavailable", "unknown"] as const
 export type RemoteDeviceState = (typeof REMOTE_DEVICE_STATES)[number]
 
-/** What a person is told, worked out from the state and when the computer was last heard from. */
+/** Last reported availability: stale virtual-computer reports are unknown, not assumed pauses. */
 export const REMOTE_DEVICE_AVAILABILITIES = ["online", "paused", "needs_setup", "offline", "unknown"] as const
 export type RemoteDeviceAvailability = (typeof REMOTE_DEVICE_AVAILABILITIES)[number]
 
@@ -67,8 +67,8 @@ export const remoteDeviceAvailability = (input: {
   if (input.state === "setup_required") return "needs_setup"
   if (input.state === "unavailable") return "offline"
   if (input.state === "unknown") return "unknown"
-  // Workbot's runner pauses a computer after a few idle minutes without telling Den.
-  if (input.provider === "workbot") return recent ? "online" : "paused"
+  // Stale reports are not proof that the runner successfully paused the computer.
+  if (input.provider === "workbot") return recent ? "online" : "unknown"
   return recent ? "online" : "unknown"
 }
 

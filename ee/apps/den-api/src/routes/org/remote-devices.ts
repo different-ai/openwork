@@ -55,6 +55,7 @@ function failureOf(error: unknown) {
 }
 
 const describeReportRoute = (options: DescribeRouteOptions & { "x-mcp": false }) => describeRoute(options)
+const describeDeviceReadRoute = (options: DescribeRouteOptions & { "x-mcp": true }) => describeRoute(options)
 
 /**
  * Devices (feature `remoteDevices`): the computers the calling member can reach through OpenWork. Desktop's
@@ -63,10 +64,11 @@ const describeReportRoute = (options: DescribeRouteOptions & { "x-mcp": false })
 export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/remote-devices",
-    describeRoute({
+    describeDeviceReadRoute({
       tags: ["Devices"],
       summary: "List the computers I can reach",
-      description: "The caller's own computers (Macs and PCs running OpenWork Desktop, Workbot's cloud computers, virtual computers they registered) and the ones registered for the whole organization, online first. `availability` is worked out from the last report: a desktop is online for ten minutes after it was last heard from; Workbot's computer pauses when idle. Desktops not heard from for 30 days are left out. Names, versions and state only: never credentials or anything from the computer's screen. Needs the Devices feature.",
+      "x-mcp": true,
+      description: "The caller's own computers (Macs and PCs running OpenWork Desktop, Workbot's cloud computers, virtual computers they registered) and the ones registered for the whole organization, online first. `availability` is worked out from the last report: a desktop is online for ten minutes after it was last heard from; Workbot's computer is paused only after an observed pause; a stale ready report is unknown. Desktops not heard from for 30 days are left out. Names, versions and state only: never credentials or anything from the computer's screen. Needs the Devices feature.",
       responses: { 200: jsonResponse("The computers.", remoteDeviceListResponseSchema), 401: unauthorized, 404: featureOff },
     }),
     orgMemberRoute(),
@@ -143,9 +145,10 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
 
   app.get(
     "/v1/remote-devices/:deviceId",
-    describeRoute({
+    describeDeviceReadRoute({
       tags: ["Devices"],
       summary: "Get one of my computers and its recent activity",
+      "x-mcp": true,
       description: "One computer from the caller's list with its 20 most recent events, newest first: when it registered, state changes, app updates, and for Workbot's computer when a view was opened, paused, resumed or rebuilt. Needs the Devices feature.",
       responses: { 200: jsonResponse("The computer and its recent activity.", remoteDeviceDetailResponseSchema), 400: jsonResponse("Invalid computer id.", invalidRequestSchema), 401: unauthorized, 404: deviceNotFound },
     }),

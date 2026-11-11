@@ -37,7 +37,9 @@ import {
   type RemoteDeviceState,
   type RemoteDeviceWorkbotReport,
 } from "@openwork/types/den/remote-devices"
+import { workbotSessionId, workbotSideChatSessionId } from "@openwork-ee/headless-protocol/workbot-routing"
 import { automationRunnerRowId } from "./automations/repository.js"
+import { withDeadlockRetry } from "./utils/deadlock-retry.js"
 import { db } from "./db.js"
 import { getOrganizationFeatures } from "./features.js"
 
@@ -76,6 +78,25 @@ export class RemoteDeviceError extends Error {
 }
 
 const iso = (value: Date | null) => value?.toISOString() ?? null
+
+/** A losing first-registration transaction must re-read the winner before applying ownership checks. */
+async function registrationTransaction<T>(work: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => Promise<T>): Promise<T> {
+  return withDeadlockRetry(async () => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await db.transaction(work)
+      } catch (error) {
+        let current: unknown = error
+        let duplicate = false
+        for (let depth = 0; depth < 8 && current && typeof current === "object"; depth++) {
+          if (("code" in current && current.code === "ER_DUP_ENTRY") || ("errno" in current && current.errno === 1062)) duplicate = true
+          current = "cause" in current ? current.cause : undefined
+        }
+        if (!duplicate || attempt >= 2) throw error
+      }
+    }
+  })
+}
 
 function platformLabel(platform: RemoteDevicePlatform | null) {
   if (platform === "darwin") return "Mac"
@@ -135,7 +156,7 @@ function adminEventView(row: typeof RemoteDeviceEventTable.$inferSelect): AdminR
   return { ...eventView(row), data: row.data ?? null, actorId: row.actorId }
 }
 
-/** Appends one event. Pruning is occasional: the table is small per device and reads are bounded. */
+/** Appends one event and bounds storage in the same transaction as its writer. */
 async function recordEvent(database: Database, input: {
   organizationId: OrganizationId
   deviceId: DeviceId
@@ -159,7 +180,7 @@ async function recordEvent(database: Database, input: {
     data: input.data ?? null,
     createdAt: input.now,
   })
-  if (Math.random() < 0.05) await pruneRemoteDeviceEvents(input.deviceId, input.now, database)
+  await pruneRemoteDeviceEvents(input.deviceId, input.now, database)
 }
 
 /** Keeps a device's newest REMOTE_DEVICE_EVENT_LIMIT events from the last REMOTE_DEVICE_EVENT_RETENTION_MS. */
@@ -168,13 +189,15 @@ export async function pruneRemoteDeviceEvents(deviceId: DeviceId, now = new Date
     eq(RemoteDeviceEventTable.deviceId, deviceId),
     lt(RemoteDeviceEventTable.createdAt, new Date(now.getTime() - REMOTE_DEVICE_EVENT_RETENTION_MS)),
   ))
-  const [oldestKept] = await database.select({ createdAt: RemoteDeviceEventTable.createdAt }).from(RemoteDeviceEventTable)
+  const [oldestKept] = await database.select({ id: RemoteDeviceEventTable.id, createdAt: RemoteDeviceEventTable.createdAt }).from(RemoteDeviceEventTable)
     .where(eq(RemoteDeviceEventTable.deviceId, deviceId))
-    .orderBy(desc(RemoteDeviceEventTable.createdAt)).limit(1).offset(REMOTE_DEVICE_EVENT_LIMIT - 1)
+    .orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(1).offset(REMOTE_DEVICE_EVENT_LIMIT - 1)
   if (!oldestKept) return
   await database.delete(RemoteDeviceEventTable).where(and(
     eq(RemoteDeviceEventTable.deviceId, deviceId),
-    lt(RemoteDeviceEventTable.createdAt, oldestKept.createdAt),
+    or(lt(RemoteDeviceEventTable.createdAt, oldestKept.createdAt), and(
+      eq(RemoteDeviceEventTable.createdAt, oldestKept.createdAt), lt(RemoteDeviceEventTable.id, oldestKept.id),
+    )),
   ))
 }
 
@@ -239,17 +262,24 @@ async function runnerFacts(ids: readonly string[]): Promise<Map<string, RunnerFa
   return new Map(rows.map((row) => [row.id, { lastSeenAt: row.lastSeenAt, capabilities: row.capabilities ?? [], appVersion: row.appVersion }]))
 }
 
-async function sessionTitles(sessionIds: readonly string[]): Promise<Map<string, string>> {
-  if (sessionIds.length === 0) return new Map()
-  const rows = await db.select({ sessionId: HeadlessSessionIndexTable.sessionId, title: HeadlessSessionIndexTable.title })
-    .from(HeadlessSessionIndexTable).where(inArray(HeadlessSessionIndexTable.sessionId, [...sessionIds]))
-  return new Map(rows.filter((row) => row.title).map((row) => [row.sessionId, row.title]))
+async function sessionTitles(devices: readonly DeviceRow[]): Promise<Map<string, string>> {
+  const workbot = devices.filter((row) => row.provider === "workbot" && row.workbotChat !== "main" && row.ownerMemberId !== null)
+  if (workbot.length === 0) return new Map()
+  // Never enrich a forged or historical device row from another tenant/member's session.
+  const rows = await db.select({ deviceId: RemoteDeviceTable.id, title: HeadlessSessionIndexTable.title })
+    .from(RemoteDeviceTable).innerJoin(HeadlessSessionIndexTable, and(
+      eq(HeadlessSessionIndexTable.sessionId, RemoteDeviceTable.externalId),
+      eq(HeadlessSessionIndexTable.organizationId, RemoteDeviceTable.organizationId),
+      eq(HeadlessSessionIndexTable.memberId, RemoteDeviceTable.ownerMemberId),
+      eq(HeadlessSessionIndexTable.kind, "workbot"),
+    )).where(inArray(RemoteDeviceTable.id, workbot.map((row) => row.id)))
+  return new Map(rows.filter((row) => row.title).map((row) => [row.deviceId, row.title]))
 }
 
 async function related(rows: readonly DeviceRow[]) {
   const [runners, titles] = await Promise.all([
     runnerFacts(rows.filter((row) => row.kind === "desktop").map((row) => row.externalId)),
-    sessionTitles(rows.filter((row) => row.provider === "workbot" && row.workbotChat !== "main").map((row) => row.externalId)),
+    sessionTitles(rows),
   ])
   return { runners, titles }
 }
@@ -272,7 +302,7 @@ export async function listMemberRemoteDevices(actor: RemoteDeviceActor, options:
   const { runners, titles } = await related(rows)
   const stale = now.getTime() - REMOTE_DEVICE_DESKTOP_RETENTION_MS
   return rows
-    .map((row) => deviceView(row, { viewer: actor, canManageShared: options.canManageShared, runner: runners.get(row.externalId) ?? null, title: titles.get(row.externalId) ?? null, now: now.getTime() }))
+    .map((row) => deviceView(row, { viewer: actor, canManageShared: options.canManageShared, runner: runners.get(row.externalId) ?? null, title: titles.get(row.id) ?? null, now: now.getTime() }))
     // A desktop nobody has heard from in a month is gone, as its runner registration is.
     .filter((device) => device.kind !== "desktop" || (device.lastSeenAt !== null && Date.parse(device.lastSeenAt) >= stale))
     .sort((a, b) => AVAILABILITY_ORDER[a.availability] - AVAILABILITY_ORDER[b.availability]
@@ -287,14 +317,14 @@ async function visibleRow(actor: RemoteDeviceActor, deviceId: DeviceId, database
 
 async function viewOne(row: DeviceRow, actor: RemoteDeviceActor, canManageShared: boolean, now: Date) {
   const { runners, titles } = await related([row])
-  return deviceView(row, { viewer: actor, canManageShared, runner: runners.get(row.externalId) ?? null, title: titles.get(row.externalId) ?? null, now: now.getTime() })
+  return deviceView(row, { viewer: actor, canManageShared, runner: runners.get(row.externalId) ?? null, title: titles.get(row.id) ?? null, now: now.getTime() })
 }
 
 export async function readMemberRemoteDevice(actor: RemoteDeviceActor, deviceId: DeviceId, options: { canManageShared: boolean; now?: Date }) {
   const row = await visibleRow(actor, deviceId)
   if (!row) return null
   const events = await db.$primary.select().from(RemoteDeviceEventTable)
-    .where(eq(RemoteDeviceEventTable.deviceId, row.id)).orderBy(desc(RemoteDeviceEventTable.createdAt)).limit(20)
+    .where(eq(RemoteDeviceEventTable.deviceId, row.id)).orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(20)
   return { device: await viewOne(row, actor, options.canManageShared, options.now ?? new Date()), events: events.map(eventView) }
 }
 
@@ -307,9 +337,16 @@ export async function registerRemoteDevice(actor: RemoteDeviceActor, input: Remo
     eq(RemoteDeviceTable.provider, input.provider),
     eq(RemoteDeviceTable.externalId, input.externalId),
   )
-  const row = await db.transaction(async (tx) => {
+  const row = await registrationTransaction(async (tx) => {
     const [existing] = await tx.select().from(RemoteDeviceTable).where(identity).limit(1).for("update")
     if (existing && !existing.removedAt) throw new RemoteDeviceError("remote_device_exists", "This computer is already registered in your organization.")
+    if (existing && (existing.ownerMemberId !== actor.memberId && (existing.ownerMemberId !== null || !options.canManageShared))) {
+      throw new RemoteDeviceError("remote_device_forbidden", "You cannot restore a computer owned by someone else or shared without manage permission.")
+    }
+    // Restoring an entry must not silently transfer its owner or change its sharing.
+    if (existing && (existing.ownerMemberId === null) !== input.shared) {
+      throw new RemoteDeviceError("remote_device_forbidden", "Restoring a computer cannot change who owns it.")
+    }
     const values = {
       ownerMemberId: input.shared ? null : actor.memberId,
       createdByMemberId: actor.memberId,
@@ -418,7 +455,7 @@ export async function reportDesktopDevice(actor: RemoteDeviceActor, report: Remo
   const now = options.now ?? new Date()
   const externalId = automationRunnerRowId({ organizationId: actor.organizationId, ownerMemberId: actor.memberId, runnerId: report.installId })
   const { state, detail } = desktopState(report)
-  const row = await db.transaction(async (tx) => {
+  const row = await registrationTransaction(async (tx) => {
     const identity = and(
       eq(RemoteDeviceTable.organizationId, actor.organizationId),
       eq(RemoteDeviceTable.provider, DESKTOP_PROVIDER),
@@ -463,7 +500,7 @@ export async function reportDesktopDevice(actor: RemoteDeviceActor, report: Remo
         await event("computer_changed", `Agents now use ${chosen?.label ?? "another computer"}`, "info", { selectedId: after })
       }
     }
-    for (const computer of report.computerUse?.computers ?? []) await reportReachableVm(tx, actor, computer, now)
+    for (const computer of report.computerUse?.computers ?? []) await reportReachableVm(tx, actor, computer, now, options.canManageShared)
     const [stored] = await tx.select().from(RemoteDeviceTable).where(eq(RemoteDeviceTable.id, id)).limit(1)
     if (!stored) throw new Error("remote_device_missing")
     return stored
@@ -474,7 +511,7 @@ export async function reportDesktopDevice(actor: RemoteDeviceActor, report: Remo
 const READINESS_STATE = { ready: "ready", "setup-required": "setup_required", unsupported: "unavailable", unavailable: "unavailable" } as const
 
 /** A VM the desktop is configured to reach: registered for its member on first sight, refreshed after that. */
-async function reportReachableVm(tx: Database, actor: RemoteDeviceActor, computer: RemoteDeviceReportedComputer, now: Date) {
+async function reportReachableVm(tx: Database, actor: RemoteDeviceActor, computer: RemoteDeviceReportedComputer, now: Date, canManageShared: boolean) {
   if (computer.placement !== "remote" || !computer.provider || !computer.externalId) return
   const [existing] = await tx.select().from(RemoteDeviceTable).where(and(
     eq(RemoteDeviceTable.organizationId, actor.organizationId),
@@ -482,7 +519,7 @@ async function reportReachableVm(tx: Database, actor: RemoteDeviceActor, compute
     eq(RemoteDeviceTable.externalId, computer.externalId),
   )).limit(1).for("update")
   // Someone else's VM: this desktop having its id does not make it this member's.
-  if (existing && existing.ownerMemberId !== null && existing.ownerMemberId !== actor.memberId) return
+  if (existing && existing.ownerMemberId !== actor.memberId && (existing.ownerMemberId !== null || !canManageShared)) return
   const state: RemoteDeviceState | null = computer.readiness ? READINESS_STATE[computer.readiness] : null
   const detail = state && state !== "ready" ? computer.detail || null : null
   if (!existing) {
@@ -525,7 +562,17 @@ function workbotFailure(code: string | null): { state: RemoteDeviceState; detail
  * belongs to another member (never expected: session ids are derived per member).
  */
 export async function reportWorkbotComputer(actor: RemoteDeviceActor, report: RemoteDeviceWorkbotReport, now = new Date()): Promise<boolean> {
-  return db.transaction(async (tx) => {
+  return registrationTransaction(async (tx) => {
+    const [session] = await tx.select().from(HeadlessSessionIndexTable)
+      .where(eq(HeadlessSessionIndexTable.sessionId, report.sessionId)).limit(1)
+    if (session) {
+      if (session.organizationId !== actor.organizationId || session.memberId !== actor.memberId || session.kind !== "workbot") return false
+    } else {
+      const expected = report.chat === "main"
+        ? workbotSessionId(actor.organizationId, actor.memberId)
+        : workbotSideChatSessionId(actor.organizationId, actor.memberId, report.chat)
+      if (report.sessionId !== expected) return false
+    }
     const [existing] = await tx.select().from(RemoteDeviceTable).where(and(
       eq(RemoteDeviceTable.organizationId, actor.organizationId),
       eq(RemoteDeviceTable.provider, "workbot"),
@@ -559,7 +606,7 @@ export async function reportWorkbotComputer(actor: RemoteDeviceActor, report: Re
     const message = workbotEventMessage(report, failure?.detail ?? null)
     if (report.event === "viewer_opened" && existing) {
       const [last] = await tx.select({ type: RemoteDeviceEventTable.type, data: RemoteDeviceEventTable.data, createdAt: RemoteDeviceEventTable.createdAt })
-        .from(RemoteDeviceEventTable).where(eq(RemoteDeviceEventTable.deviceId, id)).orderBy(desc(RemoteDeviceEventTable.createdAt)).limit(1)
+        .from(RemoteDeviceEventTable).where(eq(RemoteDeviceEventTable.deviceId, id)).orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(1)
       const same = last?.type === "viewer_opened" && last.data?.view === report.view && last.data?.control === report.control
       if (same && now.getTime() - last.createdAt.getTime() < VIEWER_EVENT_QUIET_MS) return true
     }
@@ -611,14 +658,13 @@ const seenSql = sql<Date | null>`greatest(coalesce(${RemoteDeviceTable.lastSeenA
 /** `remoteDeviceAvailability` in SQL, for filtering and counting; test/api/remote-devices.api.test.ts holds the two together. */
 function availabilitySql(now: Date) {
   const cutoff = new Date(now.getTime() - REMOTE_DEVICE_ONLINE_WINDOW_MS)
-  const recent = sql`${seenSql} >= ${cutoff}`
+  const recent = sql`${seenSql} >= ${sql.param(cutoff, RemoteDeviceTable.lastSeenAt)}`
   return sql<RemoteDeviceAvailability>`case
     when ${RemoteDeviceTable.kind} = 'desktop' then (case when ${recent} then (case when ${RemoteDeviceTable.state} = 'setup_required' then 'needs_setup' else 'online' end) else 'offline' end)
     when ${RemoteDeviceTable.state} = 'paused' then 'paused'
     when ${RemoteDeviceTable.state} = 'setup_required' then 'needs_setup'
     when ${RemoteDeviceTable.state} = 'unavailable' then 'offline'
     when ${RemoteDeviceTable.state} = 'unknown' then 'unknown'
-    when ${RemoteDeviceTable.provider} = 'workbot' then (case when ${recent} then 'online' else 'paused' end)
     else (case when ${recent} then 'online' else 'unknown' end)
   end`
 }
@@ -638,7 +684,7 @@ function problemsSince(now: Date) {
 
 function hasProblemsSql(now: Date) {
   return sql`exists (select 1 from ${RemoteDeviceEventTable} where ${RemoteDeviceEventTable.deviceId} = ${RemoteDeviceTable.id}
-    and ${RemoteDeviceEventTable.level} in ('warning', 'error') and ${RemoteDeviceEventTable.createdAt} >= ${problemsSince(now)})`
+    and ${RemoteDeviceEventTable.level} in ('warning', 'error') and ${RemoteDeviceEventTable.createdAt} >= ${sql.param(problemsSince(now), RemoteDeviceEventTable.createdAt)})`
 }
 
 type AdminRow = {
@@ -674,13 +720,13 @@ async function adminViews(rows: readonly AdminRow[], now: Date): Promise<AdminRe
   const ids = rows.map((row) => row.device.id)
   const since = problemsSince(now)
   const [titles, problems, lastEvents] = await Promise.all([
-    sessionTitles(rows.filter((row) => row.device.provider === "workbot" && row.device.workbotChat !== "main").map((row) => row.device.externalId)),
+    sessionTitles(rows.map((row) => row.device)),
     ids.length === 0 ? [] : db.select({ deviceId: RemoteDeviceEventTable.deviceId, total: sql<number>`count(*)` }).from(RemoteDeviceEventTable)
       .where(and(inArray(RemoteDeviceEventTable.deviceId, ids), inArray(RemoteDeviceEventTable.level, ["warning", "error"]), gte(RemoteDeviceEventTable.createdAt, since)))
       .groupBy(RemoteDeviceEventTable.deviceId),
     // One short indexed read per device on the page; a page is at most ADMIN_REMOTE_DEVICE_PAGE_SIZE.
     Promise.all(ids.map(async (id) => (await db.select().from(RemoteDeviceEventTable).where(eq(RemoteDeviceEventTable.deviceId, id))
-      .orderBy(desc(RemoteDeviceEventTable.createdAt)).limit(1))[0] ?? null)),
+      .orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(1))[0] ?? null)),
   ])
   const problemCount = new Map(problems.map((row) => [row.deviceId, Number(row.total)]))
   return rows.map((row, index) => {
@@ -693,7 +739,7 @@ async function adminViews(rows: readonly AdminRow[], now: Date): Promise<AdminRe
       provider: device.provider,
       source: device.source,
       platform: device.platform,
-      label: labelOf(device, titles.get(device.externalId) ?? null),
+      label: labelOf(device, titles.get(device.id) ?? null),
       availability: availabilityOf(device, lastSeenAt, now.getTime()),
       state: device.state,
       statusDetail: device.statusDetail,
@@ -722,7 +768,7 @@ export async function listAdminRemoteDevices(filters: AdminRemoteDeviceFilters, 
   const live = and(
     isNull(RemoteDeviceTable.removedAt),
     // Desktops unheard from for a month have left the member's list too.
-    sql`(${RemoteDeviceTable.kind} <> 'desktop' or ${seenSql} >= ${new Date(now.getTime() - REMOTE_DEVICE_DESKTOP_RETENTION_MS)})`,
+    sql`(${RemoteDeviceTable.kind} <> 'desktop' or ${seenSql} >= ${sql.param(new Date(now.getTime() - REMOTE_DEVICE_DESKTOP_RETENTION_MS), RemoteDeviceTable.lastSeenAt)})`,
   )
   const where = and(
     live,
@@ -764,7 +810,7 @@ export async function readAdminRemoteDevice(deviceId: DeviceId, now = new Date()
   const device = row.device
   const [[view], events, runnerRows, sessionRows, ownerRows] = await Promise.all([
     adminViews([row], now),
-    db.select().from(RemoteDeviceEventTable).where(eq(RemoteDeviceEventTable.deviceId, device.id)).orderBy(desc(RemoteDeviceEventTable.createdAt)).limit(100),
+    db.select().from(RemoteDeviceEventTable).where(eq(RemoteDeviceEventTable.deviceId, device.id)).orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(100),
     device.kind === "desktop"
       ? db.select({
           id: AutomationRunnerTable.id, capabilities: AutomationRunnerTable.capabilities, appVersion: AutomationRunnerTable.app_version,
@@ -775,7 +821,11 @@ export async function readAdminRemoteDevice(deviceId: DeviceId, now = new Date()
       ? db.select({
           sessionId: HeadlessSessionIndexTable.sessionId, kind: HeadlessSessionIndexTable.kind, title: HeadlessSessionIndexTable.title,
           updatedAt: HeadlessSessionIndexTable.updatedAt, activeTurnSince: HeadlessSessionIndexTable.activeTurnSince, deletedAt: HeadlessSessionIndexTable.deletedAt,
-        }).from(HeadlessSessionIndexTable).where(and(eq(HeadlessSessionIndexTable.sessionId, device.externalId), eq(HeadlessSessionIndexTable.organizationId, device.organizationId))).limit(1)
+        }).from(HeadlessSessionIndexTable).where(and(
+          eq(HeadlessSessionIndexTable.sessionId, device.externalId), eq(HeadlessSessionIndexTable.organizationId, device.organizationId),
+          device.ownerMemberId ? eq(HeadlessSessionIndexTable.memberId, device.ownerMemberId) : isNull(HeadlessSessionIndexTable.memberId),
+          eq(HeadlessSessionIndexTable.kind, "workbot"),
+        )).limit(1)
       : [],
     device.ownerMemberId
       ? db.select({ userId: MemberTable.userId }).from(MemberTable).where(eq(MemberTable.id, device.ownerMemberId)).limit(1)
