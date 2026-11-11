@@ -62,9 +62,11 @@ jobs:
           while [ "$SECONDS" -lt "$deadline" ]; do
             attempt=$((attempt + 1))
             # The deployment query keeps these out of the edge cache, so they
-            # read what the Pages origin serves right now.
-            actual="$(curl -fsS --compressed --max-time 60 "$CATALOG_ORIGIN/api.json?deployment=$GITHUB_SHA-$attempt" | sha256sum | cut -d' ' -f1)"
-            actual_v2="$(curl -fsS --compressed --max-time 60 "$CATALOG_ORIGIN/experimental/v2.0/api.json?deployment=$GITHUB_SHA-$attempt" | sha256sum | cut -d' ' -f1)"
+            # read what the Pages origin serves right now. A file the current
+            # deployment does not have yet answers 404: keep waiting (the step
+            # shell runs with -e, so a failed curl must not end it).
+            actual="$(curl -fsS --compressed --max-time 60 "$CATALOG_ORIGIN/api.json?deployment=$GITHUB_SHA-$attempt" | sha256sum | cut -d' ' -f1)" || true
+            actual_v2="$(curl -fsS --compressed --max-time 60 "$CATALOG_ORIGIN/experimental/v2.0/api.json?deployment=$GITHUB_SHA-$attempt" | sha256sum | cut -d' ' -f1)" || true
             if [ "$actual" = "$expected" ] && [ "$actual_v2" = "$expected_v2" ]; then
               echo "Pages serves the catalog built from $GITHUB_SHA (check $attempt)."
               echo "live=true" >> "$GITHUB_OUTPUT"
