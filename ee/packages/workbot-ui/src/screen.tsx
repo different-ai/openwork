@@ -1199,7 +1199,7 @@ function ScrollToBottom({ visible, onClick }: { visible: boolean; onClick(): voi
   return <button type="button" aria-label="Scroll to latest message" title="Scroll to latest message"
     aria-hidden={!visible} tabIndex={visible ? 0 : -1} disabled={!visible} onClick={onClick}
     className={`workbot-scroll-latest absolute left-1/2 z-30 grid size-11 -translate-x-1/2 place-items-center rounded-full focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${visible ? "is-visible" : ""}`}>
-    <span className="grid size-[34px] place-items-center rounded-full border border-[var(--wb-ring)] bg-[var(--wb-surface)] text-[var(--wb-text)] shadow-[0_4px_12px_-4px_#01162733,0_1px_2px_#0116270f]"><ChevronDown size={18} strokeWidth={1.5} aria-hidden /></span>
+    <span className="grid size-[34px] place-items-center rounded-full border border-[var(--wb-ring)] bg-[var(--wb-surface)] text-[var(--wb-text)]"><ChevronDown size={18} strokeWidth={1.5} aria-hidden /></span>
   </button>;
 }
 
@@ -1396,8 +1396,8 @@ function CopyAnswer({ text }: { text: string }) {
 }
 
 /**
- * Workbot's words in a chat bubble on the left, like a person texting back: white on the page with a soft shadow
- * (no outline), so its answers and the person's grey bubbles on the right read as two sides of one conversation. It
+ * Workbot's words in a chat bubble on the left, like a person texting back: white on the page with a hairline edge
+ * (no drop shadow), so its answers and the person's grey bubbles on the right read as two sides of one conversation. It
  * hugs short replies (Copy sits right after it) and stops at a readable width; wide tables and code scroll inside it.
  */
 function AssistantBubble({ children, trailing = null }: { children: ReactNode; trailing?: ReactNode }) {

@@ -102,7 +102,7 @@ const STATUS_LABEL: Record<AutomationCalendarItem["status"], string> = {
 /* ── Blocks ─────────────────────────────────────────────────────────────────────────────────────────────── */
 
 function blockTone(item: AutomationCalendarItem, selected: boolean) {
-  if (selected) return "bg-[#011627] text-[#E6EDF3] shadow-[0_4px_12px_-4px_#01162759]";
+  if (selected) return "bg-[#011627] text-[#E6EDF3]";
   if (item.status === "blocked") return "bg-[#F1F3F5] text-[#687076] shadow-[inset_0_0_0_1px_#01162714]";
   if (item.status === "skipped" || item.status === "cancelled") return "bg-[#F1F3F5] text-[#687076]";
   if (item.status === "upcoming" || item.status === "running") return "bg-[#DCE6EF] text-[#011627]";
@@ -403,7 +403,7 @@ function ScheduleFields({ draft, setDraft }: { draft: AutomationSchedule; setDra
       ) : null}
       <div className="flex rounded-lg bg-[#F1F3F5] p-0.5" role="radiogroup" aria-label="Repeats">
         {(["daily", "weekly"] as const).map((kind) => (
-          <button key={kind} type="button" role="radio" aria-checked={draft.kind === kind} onClick={() => setKind(kind)} className={`h-6.5 flex-1 rounded-md text-[12px] leading-4 ${draft.kind === kind ? "bg-white font-semibold text-black shadow-[0_1px_2px_#0116271A]" : "font-medium text-[#687076]"}`}>
+          <button key={kind} type="button" role="radio" aria-checked={draft.kind === kind} onClick={() => setKind(kind)} className={`h-6.5 flex-1 rounded-md text-[12px] leading-4 ${draft.kind === kind ? "bg-white font-semibold text-black shadow-[0_0_0_1px_var(--wb-ring)]" : "font-medium text-[#687076]"}`}>
             {kind === "daily" ? "Every day" : "Some days"}
           </button>
         ))}
@@ -795,7 +795,7 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
               {(quiet ? (["agenda", "week", "month"] as const) : (["day", "week", "month"] as const)).map((option) => {
                 const checked = quiet ? (option === "agenda" ? agenda || narrow : !agenda && !narrow && view === option) : view === option;
                 return (
-                  <button key={option} type="button" role="radio" aria-checked={checked} onClick={() => { if (option === "agenda") { setAgenda(true); setView("week"); } else { setAgenda(false); setView(option); } }} className={`flex h-6.5 items-center px-2.5 text-[12px] leading-4 ${checked ? "rounded-md bg-white font-semibold text-black shadow-[0_1px_2px_#0116271A]" : "font-medium text-[#687076]"}`}>
+                  <button key={option} type="button" role="radio" aria-checked={checked} onClick={() => { if (option === "agenda") { setAgenda(true); setView("week"); } else { setAgenda(false); setView(option); } }} className={`flex h-6.5 items-center px-2.5 text-[12px] leading-4 ${checked ? "rounded-md bg-white font-semibold text-black shadow-[0_0_0_1px_var(--wb-ring)]" : "font-medium text-[#687076]"}`}>
                     {option === "agenda" ? "Agenda" : option === "day" ? "Day" : option === "week" ? "Week" : "Month"}
                   </button>
                 );
