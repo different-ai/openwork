@@ -8,6 +8,7 @@ import { changedFiles, isBuildAffected } from "./build-inputs.mjs";
 import { QUICK_CHECKS, REQUIRED_JOBS, assertQuickChecks, assertSelectedChecks, classifyCiChanges, classifyQuickChanges, pullRequestChanges, pushChanges } from "./classify-ci-changes.mjs";
 
 const snapshot = "ee/apps/gateway/src/models/base.json";
+const snapshotV2 = "ee/apps/gateway/src/models/base-v2.json";
 const electron = "apps/desktop/electron/main.ts";
 const landing = "ee/apps/landing/app/page.tsx";
 const backend = "ee/apps/den-api/src/routes/example.ts";
@@ -49,6 +50,14 @@ test("the generated snapshot fast lane survives on push, not mixed changes", () 
   assert.equal(push([snapshot, landing]).lane, "affected");
   // A deleted snapshot must not claim a modified snapshot.
   expectFlags(push([{ filename: snapshot, status: "removed" }]), { core: true, den_api: true, snapshot: true });
+});
+
+test("the v1 and v2 model snapshots refreshed together stay in the snapshot fast lane", () => {
+  assert.equal(push([snapshot, snapshotV2]).lane, "snapshot");
+  assert.equal(push([snapshotV2]).lane, "snapshot");
+  expectFlags(push([snapshot, snapshotV2]), { snapshot: true });
+  assert.equal(push([snapshot, snapshotV2, landing]).lane, "affected");
+  expectFlags(push([snapshot, { filename: snapshotV2, status: "removed" }]), { core: true, den_api: true, snapshot: true });
 });
 
 for (const eventName of ["schedule", "workflow_dispatch", "pull_request", "unknown-event"]) {

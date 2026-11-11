@@ -1,7 +1,8 @@
 # Cloudflare Pages builds the model catalog from dev through its Git
 # integration, and Cloudflare's edge keeps a copy for up to 5 minutes. When the
-# catalog sources change, this rebuilds the same file, waits until Pages serves
-# exactly those bytes, then purges the edge copy so users get it within seconds.
+# catalog sources change, this rebuilds the same files (the v1 /api.json and the
+# v2 /experimental/v2.0/api.json), waits until Pages serves exactly those bytes,
+# then purges the edge copies so users get it within seconds.
 # A skipped or failed purge only warns: the 5-minute edge TTL still bounds
 # staleness.
 name: Purge Model Catalog
@@ -23,7 +24,9 @@ concurrency:
 
 env:
   CATALOG_ORIGIN: https://models.openworklabs.com
-  CATALOG_FILE: ee/apps/gateway/models-site/models/api.json
+  CATALOG_DIR: ee/apps/gateway/models-site/models
+  # OpenCode v2 engines always ask for these types; the static file ignores them.
+  V2_QUERY: type=chat,decision,image
 
 jobs:
   purge:
@@ -52,15 +55,17 @@ jobs:
         run: |
           set -uo pipefail
 
-          expected="$(sha256sum "$CATALOG_FILE" | cut -d' ' -f1)"
+          expected="$(sha256sum "$CATALOG_DIR/api.json" | cut -d' ' -f1)"
+          expected_v2="$(sha256sum "$CATALOG_DIR/experimental/v2.0/api.json" | cut -d' ' -f1)"
           deadline=$((SECONDS + 30 * 60))
           attempt=0
           while [ "$SECONDS" -lt "$deadline" ]; do
             attempt=$((attempt + 1))
-            # The Cache Rule only matches requests without a query string, so
-            # this reads what the Pages origin serves right now.
+            # The deployment query keeps these out of the edge cache, so they
+            # read what the Pages origin serves right now.
             actual="$(curl -fsS --compressed --max-time 60 "$CATALOG_ORIGIN/api.json?deployment=$GITHUB_SHA-$attempt" | sha256sum | cut -d' ' -f1)"
-            if [ "$actual" = "$expected" ]; then
+            actual_v2="$(curl -fsS --compressed --max-time 60 "$CATALOG_ORIGIN/experimental/v2.0/api.json?deployment=$GITHUB_SHA-$attempt" | sha256sum | cut -d' ' -f1)"
+            if [ "$actual" = "$expected" ] && [ "$actual_v2" = "$expected_v2" ]; then
               echo "Pages serves the catalog built from $GITHUB_SHA (check $attempt)."
               echo "live=true" >> "$GITHUB_OUTPUT"
               exit 0
@@ -84,7 +89,12 @@ jobs:
             exit 0
           fi
 
-          body="$(jq -nc --arg origin "$CATALOG_ORIGIN" '{files: [$origin + "/api.json", $origin + "/models/api.json"]}')"
+          body="$(jq -nc --arg origin "$CATALOG_ORIGIN" --arg query "$V2_QUERY" '{files: [
+            $origin + "/api.json",
+            $origin + "/models/api.json",
+            $origin + "/experimental/v2.0/api.json",
+            $origin + "/experimental/v2.0/api.json?" + $query
+          ]}')"
           response="$(curl -sS --max-time 30 --retry 3 \
             -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/purge_cache" \
             -H "Authorization: Bearer $PURGE_TOKEN" \
@@ -92,7 +102,7 @@ jobs:
             --data "$body")"
 
           if [ "$(jq -r '.success // false' <<< "$response" 2> /dev/null)" = "true" ]; then
-            echo "Purged $CATALOG_ORIGIN/api.json and $CATALOG_ORIGIN/models/api.json."
+            echo "Purged the v1 and v2 catalogs on $CATALOG_ORIGIN."
           else
             errors="$(jq -c '.errors // empty' <<< "$response" 2> /dev/null)"
             echo "::warning title=Model catalog purge failed::Cloudflare did not confirm the purge: ${errors:-no response}. The edge copy still expires within 5 minutes."
