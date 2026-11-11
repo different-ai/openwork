@@ -1,8 +1,10 @@
 import {
+  COMPUTER_DISCONNECTED_ERROR,
   REMOTE_DEVICE_REPORT_INTERVAL_SECONDS,
   remoteDeviceDesktopReportResponseSchema,
   remoteDeviceDesktopReportSchema,
   remoteDeviceDetailResponseSchema,
+  remoteDeviceDisconnectResponseSchema,
   remoteDeviceListResponseSchema,
   remoteDeviceRegisterRequestSchema,
   remoteDeviceResponseSchema,
@@ -11,10 +13,12 @@ import {
 import type { Hono } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
+import { ComputerDisconnectedError, computerDisconnectedBody, signInSessionOf } from "../../computer-disconnect.js"
 import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, paramValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import {
+  disconnectMemberRemoteDevice,
   listMemberRemoteDevices,
   readMemberRemoteDevice,
   registerRemoteDevice,
@@ -30,6 +34,7 @@ import { hasPermission, type OrgRouteVariables, type PermissionRouteContext } fr
 const deviceParamsSchema = z.object({ deviceId: denTypeIdSchema("remoteDevice") })
 const errorSchema = z.object({ error: z.string(), message: z.string() })
 const rateLimitedSchema = z.object({ error: z.literal("rate_limited") })
+const computerDisconnectedSchema = z.object({ error: z.literal(COMPUTER_DISCONNECTED_ERROR), message: z.string() })
 
 const unauthorized = jsonResponse("Authentication required.", unauthorizedSchema)
 const featureOff = jsonResponse("The organization was not found, or Devices is off for it.", notFoundSchema)
@@ -48,9 +53,10 @@ function actorOf(c: PermissionRouteContext): RemoteDeviceActor | null {
 /** Computers shared with the whole organization are an admin's to register, rename and remove. */
 const canManageShared = (c: PermissionRouteContext) => hasPermission(c, "desktop_policies.manage")
 
-function failureOf(error: unknown) {
+/** The response for a refusal from remote-devices.ts; anything else is rethrown. */
+export function remoteDeviceFailure(error: unknown) {
   if (!(error instanceof RemoteDeviceError)) throw error
-  const status = error.code === "remote_device_not_found" ? 404 as const : error.code === "remote_device_exists" ? 409 as const : 403 as const
+  const status = error.code === "remote_device_not_found" ? 404 as const : error.code === "remote_device_forbidden" ? 403 as const : 409 as const
   return { body: { error: error.code, message: error.message }, status }
 }
 
@@ -105,7 +111,7 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
       try {
         return c.json({ device: await registerRemoteDevice(actor, c.req.valid("json"), { canManageShared: await canManageShared(c) }) }, 201)
       } catch (error) {
-        const failed = failureOf(error)
+        const failed = remoteDeviceFailure(error)
         return c.json(failed.body, failed.status)
       }
     },
@@ -117,11 +123,12 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
       tags: ["Devices"],
       "x-mcp": false,
       summary: "Report this desktop and how its computer use is doing",
-      description: "Sent by the signed-in desktop app on launch, when something changes and every few minutes. Creates or refreshes this desktop in the caller's list, records what changed (app update, computer use needing setup, the computer agents use) and does the same for VMs the desktop is configured to reach. Names, versions and readiness only: no file paths, window titles or screen content. `installId` is the id the desktop registers its runner with, so the same computer is one entry. Needs the Devices feature.",
+      description: "Sent by the signed-in desktop app on launch, when something changes and every few minutes. Creates or refreshes this desktop in the caller's list, records what changed (app update, computer use needing setup, the computer agents use) and does the same for VMs the desktop is configured to reach. Names, versions and readiness only: no file paths, window titles or screen content. `installId` is the id the desktop registers its runner with, so the same computer is one entry. A desktop that was disconnected from the organization is answered 403 computer_disconnected and its entry is left as it was, unless the report comes with a sign-in made after the disconnect, which connects it again. Needs the Devices feature.",
       responses: {
         200: jsonResponse("This desktop as listed, and when to report again.", remoteDeviceDesktopReportResponseSchema),
         400: jsonResponse("The report was invalid.", invalidRequestSchema),
         401: unauthorized,
+        403: jsonResponse("This computer was disconnected from the organization. Signing in on it again connects it.", computerDisconnectedSchema),
         404: featureOff,
         429: jsonResponse("Too many reports from this member; Retry-After says when to send again.", rateLimitedSchema),
       },
@@ -138,8 +145,13 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
         c.header("Retry-After", String(retryAfter))
         return c.json({ error: "rate_limited" as const }, 429)
       }
-      const device = await reportDesktopDevice(actor, c.req.valid("json"), { canManageShared: await canManageShared(c) })
-      return c.json({ device, reportAfterSeconds: REMOTE_DEVICE_REPORT_INTERVAL_SECONDS })
+      try {
+        const device = await reportDesktopDevice(actor, c.req.valid("json"), { canManageShared: await canManageShared(c), session: signInSessionOf(c) })
+        return c.json({ device, reportAfterSeconds: REMOTE_DEVICE_REPORT_INTERVAL_SECONDS })
+      } catch (error) {
+        if (error instanceof ComputerDisconnectedError) return c.json(computerDisconnectedBody, 403)
+        throw error
+      }
     },
   )
 
@@ -189,7 +201,7 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
       try {
         return c.json({ device: await renameRemoteDevice(actor, c.req.valid("param").deviceId, c.req.valid("json").label, { canManageShared: await canManageShared(c) }) })
       } catch (error) {
-        const failed = failureOf(error)
+        const failed = remoteDeviceFailure(error)
         return c.json(failed.body, failed.status)
       }
     },
@@ -200,7 +212,7 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Devices"],
       summary: "Remove a computer from my list",
-      description: "Takes the computer off the list. Nothing is stopped or deleted at its provider, and a desktop or Workbot computer that reports again comes back. Needs the Devices feature.",
+      description: "Takes the computer off the list. Nothing is stopped or deleted at its provider, and a desktop or Workbot computer that reports again comes back: `canRemove` is false for a signed-in desktop until it is disconnected or has been quiet for 30 days. Needs the Devices feature.",
       responses: { 204: { description: "Removed." }, 400: jsonResponse("Invalid computer id.", invalidRequestSchema), 401: unauthorized, 403: sharedForbidden, 404: deviceNotFound },
     }),
     orgMemberRoute(),
@@ -213,7 +225,40 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
         await removeRemoteDevice(actor, c.req.valid("param").deviceId, { canManageShared: await canManageShared(c) })
         return c.body(null, 204)
       } catch (error) {
-        const failed = failureOf(error)
+        const failed = remoteDeviceFailure(error)
+        return c.json(failed.body, failed.status)
+      }
+    },
+  )
+
+  app.post(
+    "/v1/remote-devices/:deviceId/disconnect",
+    describeRoute({
+      tags: ["Devices"],
+      summary: "Disconnect one of my computers",
+      description: "Disconnects the caller's own signed-in desktop from the organization. Den stops accepting that install as their computer at once: it gets no runner credential, takes no remote tasks, shares no sessions and its reports are refused with 403 computer_disconnected; work that was going through it is failed. Where Den knows the sign-in the desktop uses and it is not the one making this request, that sign-in is ended too (`signedOut`), so OpenWork there is signed out. The computer stays in the list as disconnected; signing in on it again connects it again. Repeating the call changes nothing. Someone else's computer answers 404; a computer that never signs in (a virtual computer, Workbot's) answers 409 not_disconnectable. Needs a signed-in session and the Devices feature.",
+      responses: {
+        200: jsonResponse("The computer, now disconnected, and whether its sign-in was ended.", remoteDeviceDisconnectResponseSchema),
+        400: jsonResponse("Invalid computer id.", invalidRequestSchema),
+        401: unauthorized,
+        403: jsonResponse("API keys and agents cannot disconnect a computer.", forbiddenSchema),
+        404: deviceNotFound,
+        409: jsonResponse("This computer never signs in, so there is nothing to disconnect.", errorSchema),
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("remoteDevices"),
+    paramValidator(deviceParamsSchema),
+    async (c) => {
+      c.header("Cache-Control", "no-store")
+      const actor = actorOf(c)
+      if (!actor) return c.json({ error: "organization_not_found" }, 404)
+      const session = signInSessionOf(c)
+      if (!session) return c.json({ error: "forbidden", message: "Sign in to disconnect a computer." }, 403)
+      try {
+        return c.json(await disconnectMemberRemoteDevice(actor, c.req.valid("param").deviceId, { sessionId: session.id, canManageShared: await canManageShared(c) }))
+      } catch (error) {
+        const failed = remoteDeviceFailure(error)
         return c.json(failed.body, failed.status)
       }
     },

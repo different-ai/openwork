@@ -1352,6 +1352,13 @@
       "when": 1794376055148,
       "tag": "0193_remote_session_access",
       "breakpoints": true
+    },
+    {
+      "idx": 194,
+      "version": "5",
+      "when": 1794417781063,
+      "tag": "0194_computer_disconnect",
+      "breakpoints": true
     }
   ]
 }

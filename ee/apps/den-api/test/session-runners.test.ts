@@ -42,6 +42,7 @@ const { registerAutomationRoutes } = await import("../src/routes/automations/ind
 const { automationRunnerAuth, AutomationRunnerAuth, automationRunnerAudienceFromRequestUrl } = await import("../src/automations/runner-auth.js")
 const { AutomationService } = await import("../src/automations/service.js")
 const { automationRepository, automationRunnerComputerIds } = await import("../src/automations/repository.js")
+const { signInSessionOf, signedInAfterDisconnect } = await import("../src/computer-disconnect.js")
 const { databaseRemoteSessionCommandStore, RemoteSessionAttachClaimRefusedError, RemoteSessionIdempotencyConflictError, remoteSessionCommandDetached, remoteSessionCommandRecoverable, remoteSessionCommandCompletionMatches } = await import("../src/remote-sessions/commands.js")
 const { databaseRemoteSessionRequestStore, remoteSessionRequestRecoverable, remoteSessionRequestCompletionMatches } = await import("../src/remote-sessions/requests.js")
 
@@ -76,6 +77,8 @@ const accessCapabilities: AutomationDesktopRunnerCapability[] = [...modernCapabi
 
 function fixtures(options: {
   active?: boolean
+  /** What the service says of the runner's credential; a function is asked on every check. */
+  standing?: () => "active" | "inactive" | "disconnected"
   capabilities?: AutomationDesktopRunnerCapability[]
   push?: boolean
   pending?: () => RemoteSessionCommand[]
@@ -90,7 +93,7 @@ function fixtures(options: {
   const detached: unknown[] = []
   const service = {
     async registerDesktopRunner() {},
-    async isActiveRunnerOwner() { return options.active ?? true },
+    async runnerStanding() { return options.standing?.() ?? (options.active === false ? "inactive" as const : "active" as const) },
     async touchDesktopRunner() { calls.push("touch") },
     async saveDesktopRunnerInventory() { return true },
     async saveDesktopRunnerSessions(_scope: unknown, report: unknown) { reports.push(report); return options.registered ?? true },
@@ -360,6 +363,85 @@ test("every runner request rechecks active owner authority", async () => {
     assert.equal((await app.request(path, { method: "POST", headers })).status, 401)
   }
   assert.deepEqual(calls, [])
+})
+
+const COMPUTER_DISCONNECTED = { error: "computer_disconnected", message: "This computer was disconnected from your organization. Sign in again to reconnect it." }
+
+test("a disconnected computer's credential is refused on every runner route with 403 computer_disconnected, not the 401 that makes it mint another", async () => {
+  const { app, headers, calls, reports, detached } = fixtures({ standing: () => "disconnected" })
+  const inventory = { computer: { label: "Unit computer", platform: "darwin", appVersion: "unit" }, workspaces: [] }
+  for (const [method, path, body] of [
+    ["GET", "/v1/session-runners/work", undefined],
+    ["GET", "/v1/automation-runner/work", undefined],
+    ["PUT", "/v1/session-runners/inventory", inventory],
+    ["PUT", "/v1/automation-runner/inventory", inventory],
+    ["PUT", "/v1/session-runners/sessions", { access: "created", sessions: [] }],
+    ["POST", `/v1/remote-session-commands/${command.id}/claim`, undefined],
+    ["POST", `/v1/remote-session-commands/${command.id}/complete`, { status: "delivered", sessionId: "ses_unit", workspaceId: "workspace_unit" }],
+    ["POST", `/v1/remote-session-commands/${command.id}/session`, { status: "idle", finalText: "Unit result", observedAt: now }],
+    ["GET", "/v1/remote-session-requests/pending", undefined],
+    ["POST", `/v1/remote-session-requests/${request.id}/claim`, undefined],
+    ["POST", `/v1/remote-session-requests/${request.id}/complete`, { status: "done", outcome: { action: "send", result: { messageId: "msg_unit", alreadyPresent: false } } }],
+    ["GET", "/v1/automation-runners/events", undefined],
+  ] as const) {
+    const response = await app.request(path, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+    assert.equal(response.status, 403, `${method} ${path}`)
+    assert.deepEqual(await response.json(), COMPUTER_DISCONNECTED, `${method} ${path}`)
+  }
+  assert.deepEqual([calls, reports, detached], [[], [], []], "nothing was read, stored or detached for it")
+
+  // The Automation run routes authenticate through the same protocol.
+  const runs = new Hono()
+  registerAutomationRoutes(runs, {
+    service: Object.assign(Object.create(AutomationService.prototype), { runnerStanding: async () => "disconnected" }),
+    sessionRunners: false,
+  })
+  for (const [path, body] of [["/v1/automation-runs/run_unit/claim", undefined], ["/v1/automation-runs/run_unit/heartbeat", { attempt: 1 }]] as const) {
+    const response = await runs.request(path, { method: "POST", headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+    assert.equal(response.status, 403, path)
+    assert.deepEqual(await response.json(), COMPUTER_DISCONNECTED, path)
+  }
+})
+
+test("a held-open stream ends at its next owner check once the computer is disconnected, and reconnecting is told why", async (t) => {
+  let standing: "active" | "disconnected" = "active"
+  const { app, headers } = fixtures({ standing: () => standing })
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() })
+  const response = await app.request("/v1/automation-runners/events", { headers })
+  assert.equal(response.status, 200)
+  assert.ok(response.body)
+  const reader = response.body.getReader()
+  assert.equal((await reader.read()).done, false, "the stream is open and has sent its first keepalive")
+  standing = "disconnected"
+  t.mock.timers.tick(15_000)
+  const closed = async () => {
+    while (!(await reader.read()).done) continue
+    return true
+  }
+  assert.equal(await Promise.race([closed(), new Promise<false>((resolve) => setTimeout(() => resolve(false), 8_000))]), true, "the stream was closed")
+  const again = await app.request("/v1/automation-runners/events", { headers })
+  assert.equal(again.status, 403)
+  assert.deepEqual(await again.json(), COMPUTER_DISCONNECTED)
+})
+
+test("only a sign-in made after the disconnect connects a computer again", () => {
+  const disconnectedAt = new Date("2026-11-11T10:00:00.000Z")
+  const session = (createdAt: string) => ({ id: createDenTypeId("session"), createdAt: new Date(createdAt) })
+  assert.equal(signedInAfterDisconnect({ disconnectedAt }, session("2026-11-11T10:00:00.001Z")), true)
+  assert.equal(signedInAfterDisconnect({ disconnectedAt }, session("2026-11-11T10:00:00.000Z")), false, "the sign-in that disconnected it does not")
+  assert.equal(signedInAfterDisconnect({ disconnectedAt }, session("2026-11-10T09:00:00.000Z")), false, "nor does one the desktop already had")
+  assert.equal(signedInAfterDisconnect({ disconnectedAt }, null), false, "nor an API key or an agent")
+
+  // What the mint and the report read from a request: a real sign-in only.
+  const createdAt = new Date("2026-11-11T11:00:00.000Z")
+  const request = (session: { id: string; createdAt: Date } | null, apiKey: unknown = null) => ({
+    get: (key: "session" | "apiKey") => key === "session" ? session : apiKey,
+  }) as Parameters<typeof signInSessionOf>[0]
+  const id = createDenTypeId("session")
+  assert.deepEqual(signInSessionOf(request({ id, createdAt })), { id, createdAt })
+  assert.equal(signInSessionOf(request({ id: "mcp_internal", createdAt })), null)
+  assert.equal(signInSessionOf(request({ id, createdAt }, { id: "key_unit" })), null)
+  assert.equal(signInSessionOf(request(null)), null)
 })
 
 test("scoped runner ids differ across tenants and retain the raw install alias", () => {

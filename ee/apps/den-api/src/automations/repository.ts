@@ -91,6 +91,11 @@ export function automationRunnerComputerIds(input: { organizationId: string; own
   return [automationRunnerRowId(input), input.runnerId]
 }
 
+/** Who holds the lease of a run a desktop claimed: its owner and the install's own id. */
+export function automationDesktopLeaseOwner(input: { ownerMemberId: string; runnerId: string }) {
+  return `desktop:${input.ownerMemberId}:${input.runnerId}`
+}
+
 /**
  * A pinned workspace names a folder on the kind of computer its revision
  * targets. A run moved once to the other target ignores the pin: a desktop
@@ -1045,12 +1050,15 @@ export class DenAutomationRepository implements AutomationRepository {
     appVersion: string
     platform: "darwin" | "win32" | "linux"
     concurrency: number
+    /** The sign-in session the registration came with; null for an API key or Den's own MCP principal. */
+    authSessionId?: string | null
     now: number
   }) {
     const now = new Date(input.now)
     const organizationId = normalizeOrganizationId(input.organizationId)
     const ownerMemberId = normalizeMemberId(input.ownerMemberId)
     const id = automationRunnerRowId(input)
+    const signIn = { install_id: input.runnerId, auth_session_id: input.authSessionId ? normalizeDenTypeId("session", input.authSessionId) : null }
     // An app that does not understand session access only ever allows sessions
     // started remotely: whatever a newer app reported from this install is dropped.
     const sessionReport = input.capabilities.includes(REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY)
@@ -1076,6 +1084,7 @@ export class DenAutomationRepository implements AutomationRepository {
         platform: input.platform,
         concurrency: input.concurrency,
         last_seen_at: now,
+        ...signIn,
         created_at: now,
         updated_at: now,
       }).onDuplicateKeyUpdate({ set: {
@@ -1087,6 +1096,7 @@ export class DenAutomationRepository implements AutomationRepository {
         concurrency: input.concurrency,
         last_seen_at: now,
         updated_at: now,
+        ...signIn,
         ...sessionReport,
       } })
     } catch (error) {
@@ -1114,6 +1124,22 @@ export class DenAutomationRepository implements AutomationRepository {
       eq(AutomationRunnerTable.id, input.runnerId),
       eq(AutomationRunnerTable.organization_id, organizationId),
       eq(AutomationRunnerTable.owner_member_id, ownerMemberId),
+    ))
+  }
+
+  /**
+   * The sign-in session a desktop reported itself with, kept on its runner
+   * registration when it has one, so a desktop that has not asked for a new
+   * runner credential lately is still signed out when it is disconnected.
+   */
+  async noteDesktopRunnerSignIn(input: { organizationId: string; ownerMemberId: string; runnerId: string; authSessionId: string }) {
+    await db.update(AutomationRunnerTable).set({
+      install_id: input.runnerId,
+      auth_session_id: normalizeDenTypeId("session", input.authSessionId),
+    }).where(and(
+      eq(AutomationRunnerTable.id, automationRunnerRowId(input)),
+      eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
+      eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
     ))
   }
 

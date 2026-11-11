@@ -1,7 +1,8 @@
-import { and, desc, eq, gte, inArray, isNull, lt, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, gte, inArray, isNull, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
   AutomationRunnerTable,
+  ComputerDisconnectionTable,
   HeadlessSessionIndexTable,
   MemberTable,
   OrganizationTable,
@@ -12,9 +13,8 @@ import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY } from "@openwork/types/automations"
 import {
   ORGANIZATION_COMPUTER_PAGE_SIZE,
+  ORGANIZATION_COMPUTER_STALE_MS,
   REMOTE_DEVICE_DESKTOP_RETENTION_MS,
-  REMOTE_DEVICE_EVENT_LIMIT,
-  REMOTE_DEVICE_EVENT_RETENTION_MS,
   REMOTE_DEVICE_ONLINE_WINDOW_MS,
   remoteDeviceAvailability,
   type OrganizationComputerRecord,
@@ -26,7 +26,6 @@ import {
   type RemoteDeviceDesktopReport,
   type RemoteDeviceDiagnostics,
   type RemoteDeviceEvent,
-  type RemoteDeviceEventActor,
   type RemoteDeviceEventLevel,
   type RemoteDeviceEventType,
   type RemoteDeviceKind,
@@ -38,11 +37,24 @@ import {
   type RemoteDeviceWorkbotReport,
 } from "@openwork/types/den/remote-devices"
 import { workbotSessionId, workbotSideChatSessionId } from "@openwork-ee/headless-protocol/workbot-routing"
-import { automationRunnerRowId } from "./automations/repository.js"
+import { automationRepository, automationRunnerRowId } from "./automations/repository.js"
+import {
+  ComputerDisconnectedError,
+  deleteOrganizationComputerDisconnections,
+  deviceDisconnectionJoin,
+  deviceDisconnections,
+  disconnectDesktop,
+  findDisconnection,
+  reconnectIfSignedInAgain,
+  type SignInSession,
+} from "./computer-disconnect.js"
 import { withDeadlockRetry } from "./utils/deadlock-retry.js"
 import { db } from "./db.js"
 import { getOrganizationFeatures } from "./features.js"
 import { listOrganizationComputerInstances, type OrganizationInstanceFilters } from "./organization-computer-instances.js"
+import { pruneRemoteDeviceEvents, recordRemoteDeviceEvent as recordEvent, type RemoteDeviceDatabase, type RemoteDeviceEventData } from "./remote-device-events.js"
+
+export { pruneRemoteDeviceEvents }
 
 /**
  * Remote devices (feature `remoteDevices`): Den's registry of the computers a
@@ -58,12 +70,12 @@ import { listOrganizationComputerInstances, type OrganizationInstanceFilters } f
 type OrganizationId = DenTypeId<"organization">
 type MemberId = DenTypeId<"member">
 type DeviceId = DenTypeId<"remoteDevice">
-type Database = typeof db | typeof db.$primary | Parameters<Parameters<typeof db["transaction"]>[0]>[0]
+type Database = RemoteDeviceDatabase
 
 export type RemoteDeviceActor = { organizationId: OrganizationId; memberId: MemberId }
 
 type DeviceRow = typeof RemoteDeviceTable.$inferSelect
-type EventData = Record<string, string | number | boolean | null>
+type EventData = RemoteDeviceEventData
 
 const DESKTOP_PROVIDER: RemoteDeviceProvider = "openwork_desktop"
 const WORKBOT_COMPUTER_LABEL = "Workbot's computer"
@@ -73,10 +85,15 @@ const VIEWER_EVENT_QUIET_MS = 10 * 60_000
 const TOUCH_QUIET_MS = 60_000
 
 export class RemoteDeviceError extends Error {
-  constructor(readonly code: "remote_device_exists" | "remote_device_not_found" | "remote_device_forbidden", message: string) {
+  constructor(
+    readonly code: "remote_device_exists" | "remote_device_not_found" | "remote_device_forbidden" | "not_disconnectable" | "disconnect_first",
+    message: string,
+  ) {
     super(message)
   }
 }
+
+const NOT_DISCONNECTABLE_MESSAGE = "Only a computer signed in to OpenWork Desktop can be disconnected."
 
 const iso = (value: Date | null) => value?.toISOString() ?? null
 
@@ -118,10 +135,24 @@ function availabilityOf(row: Pick<DeviceRow, "kind" | "provider" | "state">, las
   return remoteDeviceAvailability({ kind: row.kind, provider: row.provider, state: row.state, lastSeenAt: lastSeenAt?.getTime() ?? null, now })
 }
 
-function deviceView(row: DeviceRow, input: { viewer: RemoteDeviceActor; canManageShared: boolean; runner: RunnerFacts | null; title: string | null; now: number }): RemoteDevice {
+/** Never heard from, or not for `ms`. A signed-in desktop that still reports would come back after being removed. */
+function quietSince(lastSeenAt: Date | null, now: number, ms: number) {
+  return lastSeenAt === null || now - lastSeenAt.getTime() > ms
+}
+
+function deviceView(row: DeviceRow, input: {
+  viewer: RemoteDeviceActor
+  canManageShared: boolean
+  runner: RunnerFacts | null
+  title: string | null
+  disconnectedAt: Date | null
+  now: number
+}): RemoteDevice {
   const lastSeenAt = latest(row.lastSeenAt, input.runner?.lastSeenAt)
   const mine = row.ownerMemberId === input.viewer.memberId
   const manages = mine || (row.ownerMemberId === null && input.canManageShared)
+  const signedIn = row.provider === DESKTOP_PROVIDER
+  const disconnected = input.disconnectedAt !== null
   return {
     id: row.id,
     kind: row.kind,
@@ -130,7 +161,7 @@ function deviceView(row: DeviceRow, input: { viewer: RemoteDeviceActor; canManag
     platform: row.platform,
     label: labelOf(row, input.title),
     access: mine ? "mine" : "shared",
-    availability: availabilityOf(row, lastSeenAt, input.now),
+    availability: disconnected ? "offline" : availabilityOf(row, lastSeenAt, input.now),
     state: row.state,
     statusDetail: row.statusDetail,
     lastSeenAt: iso(lastSeenAt),
@@ -140,7 +171,9 @@ function deviceView(row: DeviceRow, input: { viewer: RemoteDeviceActor; canManag
     workbotChat: row.workbotChat,
     // Desktops name themselves and Workbot's computers are named after their chat.
     canRename: manages && row.source === "manual",
-    canRemove: manages,
+    canRemove: manages && (!signedIn || disconnected || quietSince(lastSeenAt, input.now, REMOTE_DEVICE_DESKTOP_RETENTION_MS)),
+    disconnectedAt: iso(input.disconnectedAt),
+    canDisconnect: mine && signedIn && !disconnected,
   }
 }
 
@@ -155,51 +188,6 @@ function eventView(row: typeof RemoteDeviceEventTable.$inferSelect): RemoteDevic
 
 function organizationComputerEventView(row: typeof RemoteDeviceEventTable.$inferSelect): OrganizationComputerEvent {
   return { ...eventView(row), data: row.data ?? null, actorId: row.actorId }
-}
-
-/** Appends one event and bounds storage in the same transaction as its writer. */
-async function recordEvent(database: Database, input: {
-  organizationId: OrganizationId
-  deviceId: DeviceId
-  type: RemoteDeviceEventType
-  level?: RemoteDeviceEventLevel
-  message: string
-  actor: RemoteDeviceEventActor
-  actorId?: string | null
-  data?: EventData | null
-  now: Date
-}) {
-  await database.insert(RemoteDeviceEventTable).values({
-    id: createDenTypeId("remoteDeviceEvent"),
-    organizationId: input.organizationId,
-    deviceId: input.deviceId,
-    type: input.type,
-    level: input.level ?? "info",
-    message: input.message.slice(0, 300),
-    actor: input.actor,
-    actorId: input.actorId ?? null,
-    data: input.data ?? null,
-    createdAt: input.now,
-  })
-  await pruneRemoteDeviceEvents(input.deviceId, input.now, database)
-}
-
-/** Keeps a device's newest REMOTE_DEVICE_EVENT_LIMIT events from the last REMOTE_DEVICE_EVENT_RETENTION_MS. */
-export async function pruneRemoteDeviceEvents(deviceId: DeviceId, now = new Date(), database: Database = db) {
-  await database.delete(RemoteDeviceEventTable).where(and(
-    eq(RemoteDeviceEventTable.deviceId, deviceId),
-    lt(RemoteDeviceEventTable.createdAt, new Date(now.getTime() - REMOTE_DEVICE_EVENT_RETENTION_MS)),
-  ))
-  const [oldestKept] = await database.select({ id: RemoteDeviceEventTable.id, createdAt: RemoteDeviceEventTable.createdAt }).from(RemoteDeviceEventTable)
-    .where(eq(RemoteDeviceEventTable.deviceId, deviceId))
-    .orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(1).offset(REMOTE_DEVICE_EVENT_LIMIT - 1)
-  if (!oldestKept) return
-  await database.delete(RemoteDeviceEventTable).where(and(
-    eq(RemoteDeviceEventTable.deviceId, deviceId),
-    or(lt(RemoteDeviceEventTable.createdAt, oldestKept.createdAt), and(
-      eq(RemoteDeviceEventTable.createdAt, oldestKept.createdAt), lt(RemoteDeviceEventTable.id, oldestKept.id),
-    )),
-  ))
 }
 
 /**
@@ -279,11 +267,12 @@ async function sessionTitles(devices: readonly DeviceRow[]): Promise<Map<string,
 }
 
 async function related(rows: readonly DeviceRow[]) {
-  const [runners, titles] = await Promise.all([
+  const [runners, titles, disconnections] = await Promise.all([
     runnerFacts(rows.filter((row) => row.kind === "desktop").map((row) => row.externalId)),
     sessionTitles(rows),
+    deviceDisconnections(rows.filter((row) => row.provider === DESKTOP_PROVIDER).map((row) => row.id)),
   ])
-  return { runners, titles }
+  return { runners, titles, disconnections }
 }
 
 function visibleTo(actor: RemoteDeviceActor) {
@@ -301,12 +290,16 @@ export async function listMemberRemoteDevices(actor: RemoteDeviceActor, options:
   const now = options.now ?? new Date()
   await syncDesktopsFromRunners({ organizationId: actor.organizationId, memberId: actor.memberId }, now)
   const rows = await db.$primary.select().from(RemoteDeviceTable).where(visibleTo(actor)).limit(500)
-  const { runners, titles } = await related(rows)
+  const { runners, titles, disconnections } = await related(rows)
   const stale = now.getTime() - REMOTE_DEVICE_DESKTOP_RETENTION_MS
+  const recent = (at: string | null) => at !== null && Date.parse(at) >= stale
   return rows
-    .map((row) => deviceView(row, { viewer: actor, canManageShared: options.canManageShared, runner: runners.get(row.externalId) ?? null, title: titles.get(row.id) ?? null, now: now.getTime() }))
-    // A desktop nobody has heard from in a month is gone, as its runner registration is.
-    .filter((device) => device.kind !== "desktop" || (device.lastSeenAt !== null && Date.parse(device.lastSeenAt) >= stale))
+    .map((row) => deviceView(row, {
+      viewer: actor, canManageShared: options.canManageShared, runner: runners.get(row.externalId) ?? null, title: titles.get(row.id) ?? null,
+      disconnectedAt: disconnections.get(row.id) ?? null, now: now.getTime(),
+    }))
+    // A desktop nobody has heard from in a month is gone, as its runner registration is; a disconnected one a month after that.
+    .filter((device) => device.kind !== "desktop" || recent(device.lastSeenAt) || recent(device.disconnectedAt))
     .sort((a, b) => AVAILABILITY_ORDER[a.availability] - AVAILABILITY_ORDER[b.availability]
       || (b.lastSeenAt ?? "").localeCompare(a.lastSeenAt ?? "")
       || a.label.localeCompare(b.label))
@@ -318,8 +311,11 @@ async function visibleRow(actor: RemoteDeviceActor, deviceId: DeviceId, database
 }
 
 async function viewOne(row: DeviceRow, actor: RemoteDeviceActor, canManageShared: boolean, now: Date) {
-  const { runners, titles } = await related([row])
-  return deviceView(row, { viewer: actor, canManageShared, runner: runners.get(row.externalId) ?? null, title: titles.get(row.id) ?? null, now: now.getTime() })
+  const { runners, titles, disconnections } = await related([row])
+  return deviceView(row, {
+    viewer: actor, canManageShared, runner: runners.get(row.externalId) ?? null, title: titles.get(row.id) ?? null,
+    disconnectedAt: disconnections.get(row.id) ?? null, now: now.getTime(),
+  })
 }
 
 export async function readMemberRemoteDevice(actor: RemoteDeviceActor, deviceId: DeviceId, options: { canManageShared: boolean; now?: Date }) {
@@ -407,6 +403,23 @@ export async function removeRemoteDevice(actor: RemoteDeviceActor, deviceId: Dev
   })
 }
 
+/**
+ * The caller disconnects their own signed-in desktop. Someone else's computer
+ * is as unknown as one that does not exist; a computer that never signs in
+ * cannot be disconnected.
+ */
+export async function disconnectMemberRemoteDevice(actor: RemoteDeviceActor, deviceId: DeviceId, options: { sessionId: string; canManageShared: boolean; now?: Date }) {
+  const now = options.now ?? new Date()
+  const row = await visibleRow(actor, deviceId)
+  if (!row || row.ownerMemberId !== actor.memberId) throw new RemoteDeviceError("remote_device_not_found", "No such computer.")
+  if (row.provider !== DESKTOP_PROVIDER) throw new RemoteDeviceError("not_disconnectable", NOT_DISCONNECTABLE_MESSAGE)
+  const { signedOut } = await disconnectDesktop({
+    organizationId: actor.organizationId, ownerMemberId: actor.memberId, runnerRowId: row.externalId,
+    actor: { memberId: actor.memberId, sessionId: options.sessionId }, byAdmin: false, now,
+  })
+  return { device: await viewOne(row, actor, options.canManageShared, now), signedOut }
+}
+
 function desktopState(report: RemoteDeviceDesktopReport): { state: RemoteDeviceState; detail: string | null } {
   const computerUse = report.computerUse
   if (!computerUse?.enabled) return { state: "ready", detail: null }
@@ -453,7 +466,11 @@ function stateEvent(state: RemoteDeviceState, detail: string | null): { level: R
  * records what changed, and does the same for the VMs it is configured to
  * reach (never one that belongs to another member).
  */
-export async function reportDesktopDevice(actor: RemoteDeviceActor, report: RemoteDeviceDesktopReport, options: { canManageShared: boolean; now?: Date }): Promise<RemoteDevice> {
+export async function reportDesktopDevice(
+  actor: RemoteDeviceActor,
+  report: RemoteDeviceDesktopReport,
+  options: { canManageShared: boolean; session: SignInSession | null; now?: Date },
+): Promise<RemoteDevice> {
   const now = options.now ?? new Date()
   const externalId = automationRunnerRowId({ organizationId: actor.organizationId, ownerMemberId: actor.memberId, runnerId: report.installId })
   const { state, detail } = desktopState(report)
@@ -464,6 +481,10 @@ export async function reportDesktopDevice(actor: RemoteDeviceActor, report: Remo
       eq(RemoteDeviceTable.externalId, externalId),
     )
     const [existing] = await tx.select().from(RemoteDeviceTable).where(identity).limit(1).for("update")
+    // Read under the row lock a disconnect takes: a disconnected desktop's report touches nothing,
+    // and only a sign-in made after the disconnect connects it again.
+    const disconnection = await findDisconnection(actor.organizationId, actor.memberId, report.installId, tx)
+    if (disconnection && await reconnectIfSignedInAgain(disconnection, options.session, { database: tx, now }) === "refused") throw new ComputerDisconnectedError()
     const values = {
       platform: report.platform,
       label: report.label,
@@ -507,6 +528,10 @@ export async function reportDesktopDevice(actor: RemoteDeviceActor, report: Remo
     if (!stored) throw new Error("remote_device_missing")
     return stored
   })
+  // A desktop that has not asked for a runner credential lately is still signed out when it is disconnected.
+  if (options.session) {
+    await automationRepository.noteDesktopRunnerSignIn({ organizationId: actor.organizationId, ownerMemberId: actor.memberId, runnerId: report.installId, authSessionId: options.session.id })
+  }
   return viewOne(row, actor, options.canManageShared, now)
 }
 
@@ -635,8 +660,9 @@ function workbotEventMessage(report: RemoteDeviceWorkbotReport, failure: string 
   }
 }
 
-/** Every device row and event of an organization, when the organization is deleted. */
+/** Every device row, event and disconnection of an organization, when the organization is deleted. */
 export async function deleteOrganizationRemoteDevices(database: Database, organizationId: OrganizationId) {
+  await deleteOrganizationComputerDisconnections(database, organizationId)
   await database.delete(RemoteDeviceEventTable).where(eq(RemoteDeviceEventTable.organizationId, organizationId))
   await database.delete(RemoteDeviceTable).where(eq(RemoteDeviceTable.organizationId, organizationId))
 }
@@ -650,9 +676,14 @@ export type OrganizationComputerFilters = OrganizationInstanceFilters & {
   provider?: RemoteDeviceProvider
   availability?: RemoteDeviceAvailability
   problems?: boolean
+  /** Also list desktops nobody has heard from for ORGANIZATION_COMPUTER_STALE_MS. */
+  includeStale?: boolean
   page?: number
   pageSize?: number
 }
+
+/** What the reader may do to the computers they see: `computers.disconnect`, without the recent sign-in the action itself needs. */
+export type OrganizationComputerViewer = { canDisconnect: boolean }
 
 /** Last contact as readers see it: the device's own report or its runner's presence, whichever is newer. */
 const seenSql = sql<Date | null>`greatest(coalesce(${RemoteDeviceTable.lastSeenAt}, '1970-01-01'), coalesce(${AutomationRunnerTable.last_seen_at}, '1970-01-01'))`
@@ -662,6 +693,7 @@ function availabilitySql(now: Date) {
   const cutoff = new Date(now.getTime() - REMOTE_DEVICE_ONLINE_WINDOW_MS)
   const recent = sql`${seenSql} >= ${sql.param(cutoff, RemoteDeviceTable.lastSeenAt)}`
   return sql<RemoteDeviceAvailability>`case
+    when ${ComputerDisconnectionTable.id} is not null then 'offline'
     when ${RemoteDeviceTable.kind} = 'desktop' then (case when ${recent} then (case when ${RemoteDeviceTable.state} = 'setup_required' then 'needs_setup' else 'online' end) else 'offline' end)
     when ${RemoteDeviceTable.state} = 'paused' then 'paused'
     when ${RemoteDeviceTable.state} = 'setup_required' then 'needs_setup'
@@ -682,6 +714,19 @@ const runnerJoin = and(
   eq(AutomationRunnerTable.owner_member_id, RemoteDeviceTable.ownerMemberId),
 )
 
+/**
+ * Desktops a team list leaves out unless asked: not heard from for
+ * ORGANIZATION_COMPUTER_STALE_MS, or disconnected that long ago. A disconnected
+ * desktop stays listed until then however long it had been quiet before.
+ */
+function staleSql(now: Date) {
+  const cutoff = new Date(now.getTime() - ORGANIZATION_COMPUTER_STALE_MS)
+  return sql`(${RemoteDeviceTable.provider} = ${DESKTOP_PROVIDER} and (case
+    when ${ComputerDisconnectionTable.id} is not null then ${ComputerDisconnectionTable.disconnectedAt} < ${sql.param(cutoff, ComputerDisconnectionTable.disconnectedAt)}
+    else ${seenSql} < ${sql.param(cutoff, RemoteDeviceTable.lastSeenAt)}
+  end))`
+}
+
 function problemsSince(now: Date) {
   return new Date(now.getTime() - 24 * 60 * 60_000)
 }
@@ -700,6 +745,11 @@ type OrganizationComputerRow = {
   organizationName: string | null
   ownerName: string | null
   ownerEmail: string | null
+  /** Null when the owner's member row is gone. */
+  ownerMemberRowId: MemberId | null
+  ownerRemovedAt: Date | null
+  ownerUserId: string | null
+  disconnectedAt: Date | null
 }
 
 const organizationComputerColumns = {
@@ -710,18 +760,28 @@ const organizationComputerColumns = {
   organizationName: OrganizationTable.name,
   ownerName: AuthUserTable.name,
   ownerEmail: AuthUserTable.email,
+  ownerMemberRowId: MemberTable.id,
+  ownerRemovedAt: MemberTable.removedAt,
+  ownerUserId: AuthUserTable.id,
+  disconnectedAt: ComputerDisconnectionTable.disconnectedAt,
 }
 
 function organizationComputerQuery(where: SQL | undefined) {
   return db.select(organizationComputerColumns).from(RemoteDeviceTable)
     .leftJoin(AutomationRunnerTable, runnerJoin)
+    .leftJoin(ComputerDisconnectionTable, deviceDisconnectionJoin)
     .leftJoin(OrganizationTable, eq(OrganizationTable.id, RemoteDeviceTable.organizationId))
     .leftJoin(MemberTable, and(eq(MemberTable.id, RemoteDeviceTable.ownerMemberId), eq(MemberTable.organizationId, RemoteDeviceTable.organizationId)))
     .leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
     .where(where)
 }
 
-async function organizationComputerViews(rows: readonly OrganizationComputerRow[], now: Date, organizationId: OrganizationId): Promise<OrganizationComputerRecord[]> {
+async function organizationComputerViews(
+  rows: readonly OrganizationComputerRow[],
+  now: Date,
+  organizationId: OrganizationId,
+  viewer: OrganizationComputerViewer,
+): Promise<OrganizationComputerRecord[]> {
   const ids = rows.map((row) => row.device.id)
   const since = problemsSince(now)
   const [problems, lastEvents] = await Promise.all([
@@ -737,6 +797,10 @@ async function organizationComputerViews(rows: readonly OrganizationComputerRow[
     const device = row.device
     const lastSeenAt = latest(device.lastSeenAt, row.runnerSeenAt)
     const lastEvent = lastEvents[index]
+    const signedIn = device.provider === DESKTOP_PROVIDER
+    const disconnected = row.disconnectedAt !== null
+    // Their computer can no longer act for them: the membership check refuses its runner credential.
+    const former = device.ownerMemberId !== null && (row.ownerMemberRowId === null || row.ownerRemovedAt !== null || row.ownerUserId === null)
     return {
       id: device.id,
       kind: device.kind,
@@ -744,7 +808,7 @@ async function organizationComputerViews(rows: readonly OrganizationComputerRow[
       source: device.source,
       platform: device.platform,
       label: labelOf(device, null),
-      availability: availabilityOf(device, lastSeenAt, now.getTime()),
+      availability: disconnected ? "offline" : availabilityOf(device, lastSeenAt, now.getTime()),
       state: device.state,
       statusDetail: device.statusDetail,
       lastSeenAt: iso(lastSeenAt),
@@ -753,24 +817,28 @@ async function organizationComputerViews(rows: readonly OrganizationComputerRow[
       computerId: device.kind === "desktop" && row.runnerCapabilities?.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY) ? device.externalId : null,
       workbotChat: device.workbotChat,
       organization: { id: device.organizationId, name: row.organizationName ?? "Deleted organization" },
-      owner: device.ownerMemberId ? { memberId: device.ownerMemberId, name: row.ownerName, email: row.ownerEmail } : null,
+      owner: device.ownerMemberId ? { memberId: device.ownerMemberId, name: row.ownerName, email: row.ownerEmail, former } : null,
       shared: device.ownerMemberId === null,
       externalId: device.externalId,
       removedAt: iso(device.removedAt),
       recentProblems: problemCount.get(device.id) ?? 0,
       lastEvent: lastEvent ? organizationComputerEventView(lastEvent) : null,
+      canRemove: viewer.canDisconnect && device.provider !== "workbot"
+        && (former || disconnected || device.source === "manual" || (signedIn && quietSince(lastSeenAt, now.getTime(), ORGANIZATION_COMPUTER_STALE_MS))),
+      disconnectedAt: iso(row.disconnectedAt),
+      canDisconnect: viewer.canDisconnect && signedIn && device.ownerMemberId !== null && !former && !disconnected,
     }
   })
 }
 
 /** All members and shared computers in this organization, filtered and paged on the server. */
-export async function listOrganizationComputerRecords(filters: OrganizationComputerFilters, now = new Date()): Promise<OrganizationComputerListResponse> {
+export async function listOrganizationComputerRecords(filters: OrganizationComputerFilters, viewer: OrganizationComputerViewer, now = new Date()): Promise<OrganizationComputerListResponse> {
   await syncDesktopsFromRunners({ organizationId: filters.organizationId, includeStale: true }, now)
   const pageSize = Math.max(1, Math.min(ORGANIZATION_COMPUTER_PAGE_SIZE, filters.pageSize ?? ORGANIZATION_COMPUTER_PAGE_SIZE))
   const page = Math.max(1, filters.page ?? 1)
   const pattern = filters.search?.trim() ? likePattern(filters.search.trim()) : null
   const live = isNull(RemoteDeviceTable.removedAt)
-  const where = and(
+  const matching = and(
     live,
     eq(RemoteDeviceTable.organizationId, filters.organizationId),
     filters.kind ? eq(RemoteDeviceTable.kind, filters.kind) : undefined,
@@ -781,32 +849,42 @@ export async function listOrganizationComputerRecords(filters: OrganizationCompu
       or lower(${RemoteDeviceTable.id}) like ${pattern} escape '|' or lower(${OrganizationTable.name}) like ${pattern} escape '|'
       or lower(${AuthUserTable.email}) like ${pattern} escape '|' or lower(${AuthUserTable.name}) like ${pattern} escape '|')` : undefined,
   )
-  const counted = (condition: SQL | undefined) => db.select({ total: sql<number>`count(*)` }).from(RemoteDeviceTable)
-    .leftJoin(AutomationRunnerTable, runnerJoin)
-    .leftJoin(OrganizationTable, eq(OrganizationTable.id, RemoteDeviceTable.organizationId))
-    .leftJoin(MemberTable, and(eq(MemberTable.id, RemoteDeviceTable.ownerMemberId), eq(MemberTable.organizationId, RemoteDeviceTable.organizationId)))
-    .leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
-    .where(condition)
-  const [rows, matching] = await Promise.all([
+  const stale = staleSql(now)
+  const where = filters.includeStale ? matching : and(matching, sql`not ${stale}`)
+  const counted = async (condition: SQL | undefined) => {
+    const [row] = await db.select({ total: sql<number>`count(*)` }).from(RemoteDeviceTable)
+      .leftJoin(AutomationRunnerTable, runnerJoin)
+      .leftJoin(ComputerDisconnectionTable, deviceDisconnectionJoin)
+      .leftJoin(OrganizationTable, eq(OrganizationTable.id, RemoteDeviceTable.organizationId))
+      .leftJoin(MemberTable, and(eq(MemberTable.id, RemoteDeviceTable.ownerMemberId), eq(MemberTable.organizationId, RemoteDeviceTable.organizationId)))
+      .leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
+      .where(condition)
+    return Number(row?.total ?? 0)
+  }
+  const [rows, total, online, staleHidden] = await Promise.all([
     organizationComputerQuery(where).orderBy(desc(seenSql), desc(RemoteDeviceTable.createdAt), desc(RemoteDeviceTable.id)).limit(pageSize).offset((page - 1) * pageSize),
     counted(where),
+    counted(and(where, sql`${availabilitySql(now)} in ('online', 'needs_setup')`)),
+    filters.includeStale ? 0 : counted(and(matching, stale)),
   ])
   return {
-    devices: await organizationComputerViews(rows, now, filters.organizationId),
+    devices: await organizationComputerViews(rows, now, filters.organizationId, viewer),
     ...await listOrganizationComputerInstances(filters.organizationId, filters),
-    total: Number(matching[0]?.total ?? 0),
+    total,
+    online,
+    staleHidden,
     page,
     pageSize,
   }
 }
 
 /** One device with everything Den knows that explains its state: the last report, its events, runner and session rows, and the owner's features. */
-export async function readOrganizationComputerRecord(organizationId: OrganizationId, deviceId: DeviceId, now = new Date()): Promise<OrganizationComputerDetailResponse | null> {
+export async function readOrganizationComputerRecord(organizationId: OrganizationId, deviceId: DeviceId, viewer: OrganizationComputerViewer, now = new Date()): Promise<OrganizationComputerDetailResponse | null> {
   const [row] = await organizationComputerQuery(and(eq(RemoteDeviceTable.organizationId, organizationId), eq(RemoteDeviceTable.id, deviceId))).limit(1)
   if (!row) return null
   const device = row.device
   const [[view], events, runnerRows, sessionRows, ownerRows] = await Promise.all([
-    organizationComputerViews([row], now, organizationId),
+    organizationComputerViews([row], now, organizationId, viewer),
     db.select().from(RemoteDeviceEventTable).where(and(eq(RemoteDeviceEventTable.organizationId, organizationId), eq(RemoteDeviceEventTable.deviceId, device.id))).orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(100),
     device.kind === "desktop"
       ? db.select({
@@ -859,4 +937,45 @@ export async function readOrganizationComputerRecord(organizationId: Organizatio
       sandboxGateway: features.sandboxGateway,
     },
   }
+}
+
+/** One computer of the organization as its team list shows it, to someone who holds `computers.disconnect`. */
+async function manageableOrganizationComputer(organizationId: OrganizationId, deviceId: DeviceId, now: Date, live: boolean) {
+  const [row] = await organizationComputerQuery(and(
+    eq(RemoteDeviceTable.organizationId, organizationId), eq(RemoteDeviceTable.id, deviceId), live ? isNull(RemoteDeviceTable.removedAt) : undefined,
+  )).limit(1)
+  const [view] = row ? await organizationComputerViews([row], now, organizationId, { canDisconnect: true }) : []
+  if (!row || !view) throw new RemoteDeviceError("remote_device_not_found", "No such computer.")
+  return { row, view }
+}
+
+/**
+ * Someone with `computers.disconnect` disconnects a current member's signed-in
+ * desktop. A former member's desktop is already refused by the membership
+ * check, so there is nothing to disconnect: it can be removed instead.
+ */
+export async function disconnectOrganizationComputer(actor: RemoteDeviceActor, deviceId: DeviceId, options: { sessionId: string | null; now?: Date }) {
+  const now = options.now ?? new Date()
+  const { row, view } = await manageableOrganizationComputer(actor.organizationId, deviceId, now, false)
+  const ownerMemberId = row.device.ownerMemberId
+  if (row.device.provider !== DESKTOP_PROVIDER || ownerMemberId === null || view.owner?.former) throw new RemoteDeviceError("not_disconnectable", NOT_DISCONNECTABLE_MESSAGE)
+  const { signedOut } = await disconnectDesktop({
+    organizationId: actor.organizationId, ownerMemberId, runnerRowId: row.device.externalId,
+    actor: { memberId: actor.memberId, sessionId: options.sessionId }, byAdmin: true, now,
+  })
+  const disconnected = await manageableOrganizationComputer(actor.organizationId, deviceId, now, false)
+  return { device: disconnected.view, signedOut, ownerMemberId }
+}
+
+/** Someone with `computers.disconnect` takes a computer off the team list. A connected desktop would only report itself back. */
+export async function removeOrganizationComputer(actor: RemoteDeviceActor, deviceId: DeviceId, now = new Date()) {
+  const { row, view } = await manageableOrganizationComputer(actor.organizationId, deviceId, now, true)
+  if (!view.canRemove) {
+    if (view.canDisconnect) throw new RemoteDeviceError("disconnect_first", "Disconnect this computer before removing it, or it comes back the next time it reports.")
+    throw new RemoteDeviceError("remote_device_forbidden", "This computer cannot be removed from the team list.")
+  }
+  await db.transaction(async (tx) => {
+    await tx.update(RemoteDeviceTable).set({ removedAt: now, updatedAt: now }).where(eq(RemoteDeviceTable.id, row.device.id))
+    await recordEvent(tx, { organizationId: actor.organizationId, deviceId: row.device.id, type: "removed", actor: "member", actorId: actor.memberId, message: "Removed from the team list", now })
+  })
 }

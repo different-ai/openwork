@@ -58,3 +58,35 @@ The rules, all read through `src/remote-sessions/access.ts`:
   again where its computer still reports it and both still allow it; and the
   next attach is a new command. A command that started a session remotely is
   never detached.
+
+## Disconnected computers
+
+A signed-in desktop can be disconnected from its organization
+(`src/computer-disconnect.ts`): by its owner with
+`POST /v1/remote-devices/:deviceId/disconnect`, or by someone who holds
+Disconnect team computers (`computers.disconnect`, recent sign-in) with
+`POST /v1/org/computers/:deviceId/disconnect` (`src/routes/org`). From then on:
+
+- Den refuses that install. `POST /v1/session-runners/token` and
+  `/v1/automation-runners/token`, every runner route and
+  `PUT /v1/remote-devices/this-computer` answer `403 computer_disconnected`.
+  A runner route never answers it with the `401` that makes a desktop mint
+  another credential. An open notification stream ends at its next check.
+- Its runner registration is deleted, so `remote-session:targets`,
+  `GET /v1/sessions` and the Automation targets no longer list it.
+- The attaches it delivered are detached. Commands it had claimed or that were
+  addressed to it, and the requests waiting for it, are settled as `failed`
+  with error code `computer_disconnected`. An Automation run it holds has its
+  lease ended, so the scheduler retries or fails it like any lost lease.
+  Sessions that were started remotely on it keep their delivered command.
+- `read`, `send`, `stop` and `answer` for a session on it, `attach`, and
+  `create` naming it as `computerId`, answer a non-retryable
+  `409 computer_disconnected` ("That computer was disconnected from your
+  organization. Sign in on it again to reach it.").
+- Where Den knows the sign-in session the desktop used, and it is not the one
+  making the request, that session is ended (`session.revoked`, reason
+  `computer_disconnected`), so OpenWork there is signed out.
+
+Signing in on the computer again connects it again: the first credential
+request or report that comes with a session created after the disconnect
+deletes the disconnection. Nothing else does.
