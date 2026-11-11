@@ -45,8 +45,8 @@ Den web calls the organization's values **Everyone**'s. Both pages show the same
   many of the team's members are also on a team with a different Workbot setting, so they get Everyone's.
 - **Members › Teams › Everyone › Workbot**: Everyone's values. The switch and the default model are changed
   here (the model is the same one as on Manage › Workbot, saved the same way); the name is the organization's
-  brand name, with a link to Brand appearance. A row whose value teams changed shows "Changed for {team}" or
-  "Changed for N teams".
+  brand name, with a link to Brand appearance. Everyone's values are the default, so no row here says which
+  teams changed it: a team's own page marks what it changed.
 - **Manage › Workbot**: one line under the default model, "N teams have their own Workbot settings", linking to
   Members › Teams. With the feature on, Manage › Workbot is no longer in the side menu or the command palette
   for people who can open Members › Teams, since Everyone's page holds the same settings; the page still opens
@@ -255,7 +255,7 @@ sit under Everyone's, so a change to Everyone's policy refreshes the teams that 
   to Everyone's current policy (`agentPolicyRestoreChange`), so every choice returns; only the template's version
   count starts again. The switch reads "Proactive Mode", as it does for Everyone.
 - **Everyone's page**: the same section for Everyone's policy, the same value and save as Manage › Workbot, with
-  "Changed for {team}" or "Changed for N teams" when teams have their own, and the "Last 7 days" table under it.
+  the "Last 7 days" table under it.
   That table counts every member whatever their team, so it is on Everyone's page and not on a team's.
 - **Calendar** is a row with the Workbot rows (General), on Everyone's page and on a team's: On for everyone,
   Members choose or Not allowed, with the calendar apps in use named under it. It is the `sources.calendar`

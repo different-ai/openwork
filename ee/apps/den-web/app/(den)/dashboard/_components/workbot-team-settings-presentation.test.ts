@@ -22,8 +22,6 @@ import {
   workbotTeamRow,
   workbotTeamSavedMessage,
   workbotTeamCalendarChanged,
-  workbotTeamsCalendarChanged,
-  workbotTeamsChanged,
   workbotTeamsOnCount,
   workbotTeamsOverridingCount,
   workbotTeamsOverridingLabel,
@@ -87,15 +85,9 @@ test("a team's chip says From Everyone until the team has its own value", () => 
   assert.deepEqual(scopeChipState(support, { changed: true }), { label: "Changed for Support", tone: "info" });
 });
 
-test("Everyone's chip names the teams that changed a value, and is absent when none did", () => {
-  assert.equal(scopeChipState(EVERYONE_SCOPE, { changed: false, changedTeams: [] }), null);
+test("Everyone's page has no chip, whatever its teams changed: Everyone's values are the default", () => {
   assert.equal(scopeChipState(EVERYONE_SCOPE, { changed: false }), null);
-  assert.deepEqual(scopeChipState(EVERYONE_SCOPE, { changed: false, changedTeams: ["Sales"] }), { label: "Changed for Sales", tone: "info" });
-  assert.deepEqual(scopeChipState(EVERYONE_SCOPE, { changed: false, changedTeams: ["Sales", "Support", "Legal"] }), { label: "Changed for 3 teams", tone: "info" });
-
-  assert.deepEqual(workbotTeamsChanged(view, "enabled"), ["Support", "Legal"]);
-  assert.deepEqual(workbotTeamsChanged(view, "model"), ["Support"]);
-  assert.deepEqual(workbotTeamsChanged(view, "name"), ["Sales"]);
+  assert.equal(scopeChipState(EVERYONE_SCOPE, { changed: true }), null);
 });
 
 test("the conflict line counts members, one or many, and says they get Everyone's, whichever Workbot setting differs", () => {
@@ -188,7 +180,7 @@ const withAgents: WorkbotTeamSettingsView = {
   teams: view.teams.map((team) => ({ ...team, agent: team.teamName === "Design" ? { inherit: false, enabled: true } : { inherit: true, enabled: false } })),
 };
 
-test("the Calendar chip names only teams whose Calendar choice differs from Everyone's, not every team with its own agent settings", () => {
+test("a team's Calendar row is marked changed only when its Calendar choice differs from Everyone's, not whenever it has its own agent settings", () => {
   const calendars: WorkbotTeamSettingsView = {
     ...view,
     organization: { ...view.organization, agentEnabled: true, agentCalendar: "everyone" },
@@ -200,14 +192,12 @@ test("the Calendar chip names only teams whose Calendar choice differs from Ever
           : { inherit: true, enabled: true, calendar: "everyone" as const },
     })),
   };
-  assert.deepEqual(workbotTeamsChanged(calendars, "agent"), ["Sales", "Design"]);
-  assert.deepEqual(workbotTeamsCalendarChanged(calendars), ["Design"]);
   const row = (teamName: string) => calendars.teams.find((team) => team.teamName === teamName) ?? { agent: undefined };
   assert.equal(workbotTeamCalendarChanged(calendars, row("Sales")), false);
   assert.equal(workbotTeamCalendarChanged(calendars, row("Design")), true);
   assert.equal(workbotTeamCalendarChanged(calendars, row("Support")), false);
-  // A server from before the field says nothing about the calendar: no chip.
-  assert.deepEqual(workbotTeamsCalendarChanged(withAgents), []);
+  // A server from before the field says nothing about the calendar: not marked.
+  assert.equal(workbotTeamCalendarChanged(withAgents, withAgents.teams.find((team) => team.teamName === "Design") ?? { agent: undefined }), false);
   assert.equal(workbotTeamCalendarChanged(view, { agent: undefined }), false);
 });
 
@@ -228,10 +218,7 @@ test("a team's chip for members' agents follows its loaded settings, and the lis
   assert.equal(workbotTeamAgentsChanged(workbotTeamRow(withAgents, { teamId: "team_new", teamName: "New" }), undefined), false);
 });
 
-test("Everyone's chip and the count of teams with their own settings include members' agents", () => {
-  assert.deepEqual(workbotTeamsChanged(view, "agent"), []);
-  assert.deepEqual(workbotTeamsChanged(withAgents, "agent"), ["Design"]);
-  assert.deepEqual(scopeChipState(EVERYONE_SCOPE, { changed: false, changedTeams: workbotTeamsChanged(withAgents, "agent") }), { label: "Changed for Design", tone: "info" });
+test("the count of teams with their own settings includes members' agents", () => {
   // Design has only its members' agents of its own.
   assert.equal(workbotTeamsOverridingCount(withAgents), 4);
 });

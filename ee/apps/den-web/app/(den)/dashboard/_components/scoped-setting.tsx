@@ -41,15 +41,13 @@ export function SettingRow({ label, labelId, aside, stateLine, children, flush =
   );
 }
 
-/** Where a row's value comes from. Renders nothing on Everyone's page while no team changed the value. */
-export function ScopeChip({ scope, changed, changedTeams }: {
+/** Where a team's value comes from. Renders nothing on Everyone's page: Everyone's values are the default. */
+export function ScopeChip({ scope, changed }: {
   scope: TeamScope;
   /** On a team's page: the team has its own value. */
   changed: boolean;
-  /** On Everyone's page: the names of the teams with their own value. */
-  changedTeams?: readonly string[];
 }) {
-  const state = scopeChipState(scope, { changed, changedTeams });
+  const state = scopeChipState(scope, { changed });
   if (!state) return null;
   return (
     <DenChip tone={state.tone} className="min-w-0 max-w-56" title={state.label} data-scope-chip={state.tone === "info" ? "changed" : "everyone"}>
