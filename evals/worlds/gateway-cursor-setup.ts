@@ -116,6 +116,8 @@ async function dropCachedSessions(redisUrl: string): Promise<void> {
     throw new Error(`Redis did not answer ${args[0]}.`);
   };
   try {
+    const database = url.pathname.slice(1);
+    if (database && await command(["SELECT", database]) !== "OK") throw new Error(`Could not select Redis database ${database}.`);
     let cursor = "0";
     do {
       const reply = await command(["SCAN", cursor, "MATCH", "cache:auth:session:*", "COUNT", "1000"]);
