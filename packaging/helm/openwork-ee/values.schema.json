@@ -811,6 +811,16 @@
               ],
               "description": "Sandboxes: sample Microsoft 365 for Workbot: New sandbox organizations get one Microsoft 365 connector for the sample Outlook, Calendar and Drive instead of three separate ones, so Workbot chat, Calendar, Documents and the first hello read each person's own sample mail, calendar and files. Each person approves once in their own browser. Only sandbox organizations are affected; every other organization keeps Microsoft's real sign-in. Turning it off stops the sample connector without sending anything to Microsoft. Renders DEN_FEATURE_SANDBOX_MICROSOFT365."
             },
+            "sandboxSlack": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Sandboxes: sample Slack for Workbot: New sandbox organizations get a sample Slack: a Slack connector at the sandbox's sample work apps with the Workbot Slack app already installed, so Proactive Mode can be turned on and each person's agent messages arrive on their own sample Slack page. Each person connects Slack once in their own browser. Only sandbox organizations are affected; every other organization keeps real Slack. Turning it off stops the sample Slack without sending anything to Slack. Renders DEN_FEATURE_SANDBOX_SLACK."
+            },
             "connectStandardTools": {
               "enum": [
                 "",

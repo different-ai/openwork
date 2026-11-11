@@ -199,9 +199,22 @@ export class SlackApiError extends Error {
 }
 const responseSchema = z.object({ ok: z.boolean(), error: z.string().optional() }).passthrough()
 export type SlackCall = (method: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>
-export function slackClient(token: string, request: typeof fetch = fetch): SlackCall {
+export const SLACK_API_BASE_URL = "https://slack.com/api"
+/**
+ * Bot tokens a sandbox's sample work apps issue start with this; Slack never issues one. It is how Den tells a
+ * sandbox's sample Slack app from a real one (sandbox-api.ts): an installation's bot token is only ever written
+ * from Slack's own install answer or by sandbox setup.
+ */
+export const SANDBOX_SLACK_TOKEN_PREFIX = "xoxb-open-workplace-"
+export function isSandboxSlackToken(token: string | null | undefined): token is string {
+  return typeof token === "string" && token.startsWith(SANDBOX_SLACK_TOKEN_PREFIX)
+}
+/** `baseUrl` is only ever a sandbox's sample Slack (sandboxSlackApiBase); everything else calls Slack. */
+export function slackClient(token: string, request: typeof fetch = fetch, baseUrl: string = SLACK_API_BASE_URL): SlackCall {
   return async (method, body) => {
-    const response = await request(`https://slack.com/api/${method}`, {
+    // A sample token is for a sandbox's sample Slack only: never send it to Slack.
+    if (baseUrl === SLACK_API_BASE_URL && isSandboxSlackToken(token)) throw new SlackApiError("sandbox_slack_unavailable")
+    const response = await request(`${baseUrl}/${method}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
