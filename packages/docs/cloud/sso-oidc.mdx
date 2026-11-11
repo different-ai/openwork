@@ -23,20 +23,22 @@ If your identity provider requires the final callback before creating an applica
 
    | Field | Value |
    | --- | --- |
-   | **Issuer URL** | OIDC issuer URL |
+   | **Issuer URL** | The issuer, for example `https://idp.example.com`. Don't include `/.well-known/openid-configuration`. |
    | **Domain** | Members' email domain, without `@` |
    | **Client ID** | Application client ID |
    | **Client Secret** | Application secret, entered directly |
    | **Scopes** | `openid email profile` |
-   | **Token endpoint auth method** | **Use provider default**, unless your provider specifies a method |
+   | **Token endpoint auth method** | **Use provider default**, or a required method listed in the discovery document's `token_endpoint_auth_methods_supported` |
 
-3. Leave **Use manual OIDC endpoints instead of discovery** unchecked. If discovery isn't available,
-   check it and enter the provider's **Authorization endpoint**, **Token endpoint** and **JWKS endpoint**.
-   Add **UserInfo endpoint** if your provider requires it.
+3. Leave **Use manual OIDC endpoints instead of discovery** unchecked. Don't use it to bypass a discovery error.
+   Use it only if your provider publishes no discovery document or OpenWork's server can't reach that document.
+   Keep **Issuer URL** set to the base issuer. Copy `authorization_endpoint`, `token_endpoint` and `jwks_uri`
+   from the provider's discovery document into **Authorization endpoint**, **Token endpoint** and **JWKS endpoint**.
+   Copy `userinfo_endpoint` into **UserInfo endpoint** if needed. If no document exists, get these values from the provider.
 4. Select **Save SSO connection**, then copy the generated **Redirect URL**.
 
 <Note>
-With multiple connections, start with **Add SSO connection**, set **Name on the sign-in button**
+If your organization uses multiple SSO connections, start with **Add SSO connection**, set **Name on the sign-in button**
 and **Email domains**, and save with **Add SSO connection**. Verify every listed domain.
 To disable one of these connections, use **Disable connection**.
 </Note>
@@ -67,7 +69,7 @@ Don't delete a connection as rollback. Use **Disable SSO** while you have manage
 | Problem | Next action |
 | --- | --- |
 | Page is read-only | Ask the owner to check your permission and plan. |
-| Discovery fails | Check the issuer and discovery metadata, or obtain manual endpoints from your provider. |
+| Discovery fails | Remove `/.well-known/openid-configuration` from **Issuer URL**. Confirm the document is publicly reachable from OpenWork and its `issuer` matches exactly (apart from a trailing slash). Only then consider manual endpoints. |
 | Callback is rejected | Compare the allowed callback with OpenWork's **Redirect URL** exactly. |
 | DNS verification fails | Check the displayed record name, zone suffix and propagation. |
 | Test fails or expires | Allow popups, check account assignment and email, then start a fresh test within five minutes. |
