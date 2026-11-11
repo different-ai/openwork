@@ -325,7 +325,7 @@ test("cheap source guards need no install, build or classification", () => {
   assert.doesNotMatch(staticJob, /\bneeds:|setup-tests|\bbuild:|continue-on-error: false/);
   assert.doesNotMatch(staticJob, /^    if:/m);
   for (const file of [
-    ".github/scripts/contributor-pr.test.mjs", ".github/scripts/warden-check.test.mjs", ".github/scripts/pr-proof-selection.test.mjs",
+    ".github/scripts/contributor-pr.test.mjs", ".github/scripts/pr-proof-selection.test.mjs",
     ".github/scripts/build-inputs.test.mjs", ".github/scripts/classify-ci-changes.test.mjs", ".github/scripts/typecheck-shipped.test.mjs",
     ".github/scripts/build-boundaries-codeql.test.mjs", ".github/scripts/managed-stable-release.test.mjs",
     "scripts/ci/codeql-config.test.mjs", "scripts/ci/check-codeql-results.test.mjs",

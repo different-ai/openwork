@@ -62,7 +62,7 @@ a Drizzle migration snapshot to resolve an API conflict.
 
 Optional: `pnpm hooks:install` enables source validation before commits. It
 refuses unstaged/untracked contract inputs and never stages generated outputs.
-Hooks never commit, push, or change CI/Warden policy; CI remains authoritative.
+Hooks never commit, push, or change CI policy; CI remains authoritative.
 
 ## Coding
 
@@ -78,8 +78,7 @@ Hooks never commit, push, or change CI/Warden policy; CI remains authoritative.
   `.opencode/skills/add-a-feature`.
 * Any user-facing UI (desktop app, Den web, MCP Apps, artifact views) follows
   `DESIGN.md`: read it before designing, cite its rule ids in PRs, and attach
-  screenshots of new UI. The optional
-  `.warden/skills/design-spec-review` skill can review these rules locally.
+  screenshots of new UI.
 
 ## Verify changes headless
 

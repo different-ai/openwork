@@ -16,7 +16,6 @@ import { fileURLToPath } from "node:url";
 const INTERNAL_PATH_PATTERNS = [
   /^\.github\//,
   /^\.opencode\//,
-  /^\.warden\//,
   /^\.agents\//,
   /^evals\//,
   /(^|\/)scripts\//,
@@ -24,7 +23,6 @@ const INTERNAL_PATH_PATTERNS = [
   /^docs\//,
   /^worlds\//,
   /^packages\/world\//,
-  /^warden\.toml$/,
   /^apps\/review\//,
   /^packages\/review\//,
   /^packages\/freestyle\//,
