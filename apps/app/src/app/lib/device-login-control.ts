@@ -10,20 +10,25 @@ export function readDeviceLoginRequestId(args: unknown): { ok: true; requestId?:
   return { ok: true, requestId };
 }
 
-/** Local action gate; only an explicitly different destination may discover its own deployment switch. */
+/** Cached deployment observations can kill work, but admission always uses live discovery. */
 export function createDeviceLoginControl(input: {
   flow: ReturnType<typeof createDesktopDeviceLogin>;
-  deploymentEnabled(): boolean;
+  deploymentFeature(): { enabled: boolean | undefined; updatedAt: number };
   isConfiguredDestination(options: DeviceLoginStartOptions): boolean;
 }) {
   let alternateDestination = false;
+  let startingObservation = 0;
   const unsupported = () => ({ state: "unsupported", message: DEVICE_LOGIN_UNSUPPORTED } satisfies ReturnType<typeof input.flow.status>);
   function status(requestId?: string) {
     const current = input.flow.status(requestId);
     // A scoped failure includes ownership mismatch. Do not turn it into an
     // unscoped read/cancel of whichever newer flow happens to be running.
     if (requestId !== undefined && current.state === "failed") return current;
-    if (!alternateDestination && !input.deploymentEnabled() && current.state !== "signed_in") {
+    const feature = input.deploymentFeature();
+    // An OFF cached before this start/live admission cannot overrule its newer
+    // anonymous ON response. Unknown (including errors with stale data) cannot kill.
+    const observationFloor = Math.max(startingObservation, input.flow.admittedAt() ?? 0);
+    if (!alternateDestination && feature.enabled === false && feature.updatedAt > observationFloor && current.state !== "signed_in") {
       if (current.state === "pending" || current.state === "approved") input.flow.cancel(requestId);
       return unsupported();
     }
@@ -31,15 +36,9 @@ export function createDeviceLoginControl(input: {
   }
   return {
     start(options: DeviceLoginStartOptions = {}) {
-      const configured = input.isConfiguredDestination(options);
-      if (configured && !input.deploymentEnabled()) {
-        status();
-        return Promise.resolve(unsupported());
-      }
-      // A cached flag for one server cannot admit or reject another server.
-      // The flow performs anonymous discovery for an explicit alternate target;
-      // no code/token request is made unless that target's deployment opts in.
-      alternateDestination = !configured;
+      alternateDestination = !input.isConfiguredDestination(options);
+      startingObservation = input.deploymentFeature().updatedAt;
+      // All destinations await the same anonymous discovery inside the flow.
       return input.flow.start(options);
     },
     status,

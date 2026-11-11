@@ -263,12 +263,12 @@ function DenAuthControlActions() {
   deviceLoginEnabledRef.current = deviceLoginEnabled;
   const deviceLoginControl = useMemo(() => createDeviceLoginControl({
     flow: denDeviceLogin,
-    deploymentEnabled: () => deviceLoginEnabledRef.current,
+    deploymentFeature: () => deviceLoginEnabledRef.current,
     isConfiguredDestination: isConfiguredDenDeviceDestination,
   }), []);
   useEffect(() => {
     // Stop a pending configured-server flow when its deployment switch goes off.
-    if (!deviceLoginEnabled) deviceLoginControl.status();
+    if (deviceLoginEnabled.enabled === false) deviceLoginControl.status();
   }, [deviceLoginControl, deviceLoginEnabled]);
 
   const exchangeGrantAction = useMemo<OpenworkControlAction>(() => ({

@@ -23,8 +23,54 @@ const statusSchema = z.object({
   email: z.string().optional(), org: z.object({ id: z.string(), name: z.string() }).optional(),
 });
 
+const actionsSchema = z.object({ ok: z.literal(true), actions: z.array(z.object({ id: z.string() })) });
+const networkFailureSchema = z.object({ state: z.literal("failed"), reason: z.literal("den_unreachable"), host: z.string() });
+
+function networkFailureMessage(value: unknown): string | undefined {
+  const failure = networkFailureSchema.safeParse(value);
+  if (!failure.success) return undefined;
+  const host = failure.data.host;
+  // Only a host (optionally with a port), never a URL, userinfo or terminal text.
+  if (host.length > 300 || !/^(?:[a-z0-9.-]+|\[[a-f0-9:.]+\])(?::[0-9]{1,5})?$/i.test(host)
+    || !URL.canParse(`http://${host}`)) return undefined;
+  const url = new URL(`http://${host}`);
+  if (!url.hostname || url.username || url.password || url.pathname !== "/" || url.search || url.hash) return undefined;
+  return `Couldn't reach ${host}. Check the network and try again.`;
+}
+
 class DesktopSetupError extends Error {
-  constructor(readonly reason: "unavailable" | "unsafe") { super(reason); }
+  constructor(readonly reason: "unavailable" | "unsafe" | "not_ready" | "permission") { super(reason); }
+}
+
+/** Read metadata only before dispatch. Never retry a potentially executed start. */
+async function readyDesktopBridge(signal: AbortSignal) {
+  const deadline = Date.now() + 20_000;
+  let available = false;
+  while (Date.now() < deadline) {
+    signal.throwIfAborted();
+    try {
+      const bridge = await desktopBridge();
+      const response = await fetch(new URL("/actions", bridge.baseUrl), {
+        redirect: "error",
+        signal: AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, Math.min(1_000, deadline - Date.now())))]),
+        headers: { authorization: `Bearer ${bridge.token}` },
+      });
+      available = true;
+      if (response.status === 401 || response.status === 403) throw new DesktopSetupError("permission");
+      if (response.ok) {
+        const actions = actionsSchema.safeParse(await response.json());
+        if (actions.success && ["auth.device-login.start", "auth.device-login.status"].every((id) => actions.data.actions.some((action) => action.id === id))) {
+          signal.throwIfAborted();
+          return bridge;
+        }
+      }
+    } catch (error) {
+      signal.throwIfAborted();
+      if (error instanceof DesktopSetupError && error.reason !== "unavailable") throw error;
+    }
+    await delay(Math.min(250, Math.max(1, deadline - Date.now())), undefined, { signal });
+  }
+  throw new DesktopSetupError(available ? "not_ready" : "unavailable");
 }
 
 function startDesktopMessage(): string {
@@ -74,7 +120,7 @@ async function desktopBridge() {
       } finally { await handle.close(); }
     } catch (error) {
       // Never fall through from an explicit profile to another desktop.
-      const missing = error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+      const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
       throw new DesktopSetupError(missing ? "unavailable" : "unsafe");
     }
   }
@@ -117,7 +163,7 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", interrupt);
   try {
-    const bridge = await desktopBridge();
+    const bridge = await readyDesktopBridge(stop.signal);
     async function request(kind: "query" | "command", id: string, input: unknown = {}, cleanup = false) {
       if (!cleanup) stop.signal.throwIfAborted();
       const timeout = AbortSignal.timeout(15_000);
@@ -130,13 +176,6 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
       const receipt = receiptSchema.parse(await response.json());
       if (!cleanup) stop.signal.throwIfAborted();
       return receipt;
-    }
-    // Missing actions mean an older app. A historical unsupported result must
-    // not prevent retrying after rollout or against an explicit new destination.
-    const before = await request("query", "auth.device-login.status");
-    if (!before.ok) {
-      console.error("Device sign-in is not available on this server. Use the sign-in link instead.");
-      return 4;
     }
     stop.signal.throwIfAborted();
     // Arm cleanup before dispatch: losing the receipt must not leave a live
@@ -152,16 +191,20 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
     const start = await request("command", "auth.device-login.start", args);
     if (!start.ok) {
       cancel = undefined; // An explicit refusal did not start a new flow.
-      if (start.code === "unsupported") {
-        console.error("Device sign-in is not available on this server. Use the sign-in link instead.");
-        return 4;
-      }
-      console.error("Device sign-in could not start. If already signed in, use --force to replace that sign-in.");
+      // A local missing/unsupported action is not an explicit Den OFF result.
+      console.error(start.code === "unsupported" || start.code === "not_found"
+        ? "OpenWork is not ready for device sign-in. Start or update OpenWork, then run this command again."
+        : "Device sign-in could not start. If already signed in, use --force to replace that sign-in.");
       return 1;
     }
     if (statusSchema.safeParse(start.result).data?.state === "unsupported") {
       console.error("Device sign-in is not available on this server. Use the sign-in link instead.");
       return 4;
+    }
+    const startNetworkFailure = networkFailureMessage(start.result);
+    if (startNetworkFailure) {
+      console.error(startNetworkFailure);
+      return 1;
     }
     const started = startedSchema.parse(start.result);
     const code = printable(started.userCode).replace(/[\s-]/g, "").toUpperCase();
@@ -182,9 +225,9 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
         console.log(`Signed in as ${printable(status.email)} in ${printable(status.org.name)}.`);
         return 0;
       }
-      console.error(status.state === "unsupported"
+      console.error(networkFailureMessage(receipt.result) ?? (status.state === "unsupported"
         ? "Device sign-in is not available on this server. Use the sign-in link instead."
-        : `Device sign-in ${status.state}.`);
+        : `Device sign-in ${status.state}.`));
       return status.state === "denied" ? 2 : status.state === "expired" ? 3 : status.state === "unsupported" ? 4 : 1;
     }
     console.error(stop.signal.aborted ? "Device sign-in cancelled." : "Device sign-in expired.");
@@ -193,6 +236,8 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
     // Never print raw control receipts, HTTP bodies, paths or errors containing credentials.
     console.error(stop.signal.aborted ? "Device sign-in cancelled."
       : error instanceof DesktopSetupError ? error.reason === "unavailable" ? startDesktopMessage()
+        : error.reason === "not_ready" ? "OpenWork is not ready for device sign-in. Start or update OpenWork, then run this command again."
+        : error.reason === "permission" ? "OpenWork refused local bridge authorization. Restart OpenWork with your owner-only profile, then run this command again."
         : "Device sign-in cannot safely use this desktop profile. Use an owner-only OpenWork profile and run this command again."
         : "Device sign-in failed. Try again or use the sign-in link instead.");
     return stop.signal.aborted ? 130 : 1;

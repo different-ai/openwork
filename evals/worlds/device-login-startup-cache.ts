@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { denFetch } from "@openwork/behaviors";
 import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import type { Seed } from "@openwork/env";
 import { record } from "./org-invite.ts";
@@ -49,7 +50,7 @@ async function controlRegistered(state) {
   return new Promise(resolve => {
     const ws = new WebSocket(target.webSocketDebuggerUrl);
     const timer = setTimeout(() => { ws.close(); resolve(false); }, 700);
-    ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "({ registered: ['auth.device-login.status', 'auth.device-login.start'].every(id => window.__openworkControl?.listActions?.().some(action => action.id === id)), bootstrapWebUrl: window.__OPENWORK_ELECTRON__?.desktopBootstrap?.baseUrl ?? null, bootstrapApiUrl: window.__OPENWORK_ELECTRON__?.desktopBootstrap?.apiBaseUrl ?? null, storedWebUrl: localStorage.getItem('openwork.den.baseUrl') })", returnByValue: true } }));
+    ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "({ registered: ['auth.device-login.status', 'auth.device-login.start'].every(id => window.__openworkControl?.listActions?.().some(action => action.id === id)), bootstrapWebUrl: window.__OPENWORK_ELECTRON__?.meta?.desktopBootstrap?.baseUrl ?? null, bootstrapApiUrl: window.__OPENWORK_ELECTRON__?.meta?.desktopBootstrap?.apiBaseUrl ?? null, storedWebUrl: localStorage.getItem('openwork.den.baseUrl') })", returnByValue: true } }));
     ws.onmessage = event => { const value = JSON.parse(String(event.data)); if (value.id !== 1) return; clearTimeout(timer); ws.close(); const snapshot = value.result?.result?.value; resolve(snapshot?.registered ? snapshot : false); };
     ws.onerror = () => { clearTimeout(timer); ws.close(); resolve(false); };
   });
@@ -57,7 +58,7 @@ async function controlRegistered(state) {
 async function command(input, state) {
   let controlReadyAt = null, publicConfigurationObserved = null;
   if (input.waitForControl) {
-    const deadline = Date.now() + 15000;
+    const deadline = Date.now() + 20000;
     while (Date.now() < deadline) {
       const snapshot = await controlRegistered(state).catch(() => false);
       if (snapshot) { controlReadyAt = Date.now(); publicConfigurationObserved = snapshot; break; }
@@ -82,7 +83,9 @@ async function command(input, state) {
   cli.once("error", error => { launchError = error.code ?? "spawn failed"; exitAt = Date.now(); });
   cli.once("exit", (code, signal) => { cliExitCode = code; cliSignal = signal; exitAt = Date.now(); });
   cli.once("close", () => { closedAt = Date.now(); });
-  const deadline = Date.now() + 15000;
+  // The real CLI owns a 20s readiness budget plus its live deployment request.
+  // This test observes that behavior; it does not wait before natural spawns.
+  const deadline = Date.now() + 35000;
   while (!closedAt && Date.now() < deadline) {
     if (firstInstructionsAt && !cancelledAt && Date.now() - firstInstructionsAt >= 500) { cancelledAt = Date.now(); cli.kill("SIGINT"); }
     await sleep(25);
@@ -111,15 +114,28 @@ export async function deviceLoginStartupCache(seed: Seed) {
   if (!binary?.startsWith("/") || !binary.endsWith("/openwork") || !sandbox) throw new Error("Startup reproduction needs an owned prepared Daytona VM and a packaged Linux openwork executable.");
   const desktopSandbox = sandbox;
   const den = await seed.den({ org: { name: "Startup cache diagnostic", admin: { name: "Startup Approver" }, members: {} } });
-  const enabled = await seed.api(den.admin, "/v1/admin/features/remoteDesktopDeviceLogin", { method: "PUT", body: JSON.stringify({ enabled: true, killed: false }) });
-  if (!enabled.response.ok) throw new Error(`Enable isolated deployment: HTTP ${enabled.response.status}`);
-  async function featuresOn() {
+  async function setEnabled(enabled: boolean) {
+    const result = await denFetch(den.admin, "/v1/admin/features/remoteDesktopDeviceLogin", { method: "PUT", body: JSON.stringify({ enabled, killed: false }), signal: AbortSignal.timeout(10_000) });
+    if (!result.response.ok) throw new Error(`Set isolated deployment flag: HTTP ${result.response.status}`);
+  }
+  async function confirmFeatures(expectedEnabled: boolean) {
     const response = await fetch(`${den.ref.apiUrl}/v1/features`, { signal: AbortSignal.timeout(10_000) });
     const body = record(await response.json());
-    if (!response.ok || record(body.features).remoteDesktopDeviceLogin !== true) throw new Error("The real isolated Den must report device sign-in enabled before every GUI launch.");
-    return { status: response.status, enabled: true };
+    if (!response.ok || record(body.features).remoteDesktopDeviceLogin !== expectedEnabled) throw new Error(`The real isolated Den must report device sign-in enabled=${expectedEnabled} before GUI launch.`);
+    return { status: response.status, enabled: expectedEnabled };
   }
-  await featuresOn();
+  await setEnabled(true);
+  await confirmFeatures(true);
+  async function requestMetadata() {
+    return (await den.apiLog()).split("\n").flatMap(line => {
+      try {
+        const value = record(JSON.parse(line));
+        const route = value.http_route;
+        if (route !== "/v1/features" && !(typeof route === "string" && route.startsWith("/api/auth/"))) return [];
+        return [{ at: value.time ?? value.timestamp ?? value.at ?? null, method: value.http_method, status: value.http_status_code, route, clock: "Den host (not compared against desktop-VM timestamps)" }];
+      } catch { return []; }
+    });
+  }
   // Natural trials retain the deployment's exact real web/API URLs. The
   // separate bridge-ready comparison does not wait for feature-cache readiness
   // or alter discovery responses, deployment URLs, or application state.
@@ -127,28 +143,38 @@ export async function deviceLoginStartupCache(seed: Seed) {
   async function remote(input: Record<string, unknown>) {
     const source = `${coordinator}\nrun(${JSON.stringify(input)}).then(value => process.stdout.write(JSON.stringify(value)), error => { console.error(error.message); process.exitCode = 1; });`;
     const encoded = Buffer.from(source).toString("base64");
-    const result = await execInSandbox(defaultDaytonaExec, desktopSandbox, `node -e "eval(Buffer.from(\\\"${encoded}\\\",\\\"base64\\\").toString())"`, { timeoutMs: 60_000, context: "isolated packaged startup observation" });
+    const result = await execInSandbox(defaultDaytonaExec, desktopSandbox, `node -e "eval(Buffer.from(\\\"${encoded}\\\",\\\"base64\\\").toString())"`, { timeoutMs: 75_000, context: "isolated packaged startup observation" });
     return record(JSON.parse(result.stdout));
   }
-  async function trial(mode: "default" | "same-url", bridgeReady = false) {
-    const featureConfirmation = await featuresOn();
+  async function trial(mode: "default" | "same-url", bridgeReady = false, expectedEnabled = true) {
+    const featureConfirmation = await confirmFeatures(expectedEnabled);
+    const beforeRequests = await requestMetadata();
     const profile = `/tmp/openwork-startup-cache-${randomUUID()}`; profiles.add(profile);
     const base = { binary, profile, mode, webUrl: den.ref.webUrl, apiUrl: den.ref.apiUrl };
     try {
-      if (!bridgeReady) return { mode, kind: "natural-immediate", featureConfirmation, result: await remote({ ...base, operation: "immediate" }) };
-      await remote({ ...base, operation: "launch" });
-      return { mode, kind: "bridge-registered-startup-comparison", featureConfirmation, result: await remote({ ...base, operation: "command", waitForControl: true }) };
+      let result: Record<string, unknown>;
+      if (!bridgeReady) result = await remote({ ...base, operation: "immediate" });
+      else {
+        await remote({ ...base, operation: "launch" });
+        result = await remote({ ...base, operation: "command", waitForControl: true });
+      }
+      const requests = (await requestMetadata()).slice(beforeRequests.length);
+      return {
+        mode, kind: !expectedEnabled ? "flag-off-action-registered" : bridgeReady ? "bridge-registered-startup-comparison" : "natural-immediate",
+        featureConfirmation, result, requests,
+        observedAuthPostCount: requests.filter(row => row.method === "POST" && row.route.startsWith("/api/auth/")).length,
+        authRouteObservation: "Normalized auth route metadata, not request bodies. Wildcard POSTs conservatively include any device-code POST.",
+      };
     } finally {
       await remote({ operation: "cleanup", profile }); profiles.delete(profile);
     }
   }
   return {
-    den, trial,
-    async featureRequestMetadata() {
-      return (await den.apiLog()).split("\n").flatMap(line => {
-        try { const value = record(JSON.parse(line)); return value.http_route === "/v1/features" ? [{ at: value.time ?? value.timestamp ?? value.at ?? null, status: value.http_status_code, route: value.http_route, clock: "Den host (not compared against desktop-VM timestamps)" }] : []; }
-        catch { return []; }
-      });
+    den, trial, featureRequestMetadata: requestMetadata,
+    async flagOffTrial() {
+      await setEnabled(false);
+      try { return await trial("default", true, false); }
+      finally { await setEnabled(true); }
     },
     async [Symbol.asyncDispose]() { for (const profile of profiles) await remote({ operation: "cleanup", profile }); },
   };

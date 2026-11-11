@@ -8,8 +8,10 @@ import { useAutomationsDenContext } from "@/react-app/domains/automations/use-au
 
 const FEATURE_STALE_MS = 30_000
 
-/** Deployment-only even when signed in: pre-login capabilities cannot use an org override. */
-export function useDeploymentFeature(key: "remoteDesktopDeviceLogin"): boolean {
+export type DeploymentFeatureSnapshot = { enabled: boolean | undefined; updatedAt: number }
+
+/** Deployment-only; unknown discovery is not evidence that the deployment is off. */
+export function useDeploymentFeature(key: "remoteDesktopDeviceLogin"): DeploymentFeatureSnapshot {
   const settings = readDenSettings()
   const { baseUrl, apiBaseUrl } = settings
   const client = useMemo(() => createDenClient({ baseUrl, apiBaseUrl }), [baseUrl, apiBaseUrl])
@@ -20,9 +22,9 @@ export function useDeploymentFeature(key: "remoteDesktopDeviceLogin"): boolean {
     refetchInterval: FEATURE_STALE_MS,
     refetchIntervalInBackground: true,
     retry: false,
-    select: (features) => features[key] === true,
+    select: (features) => typeof features[key] === "boolean" ? features[key] : undefined,
   })
-  return !deployment.isError && deployment.data === true
+  return { enabled: deployment.isError || deployment.isPending ? undefined : deployment.data, updatedAt: deployment.dataUpdatedAt }
 }
 
 type DesktopFeatureKey = "claudeAgentProvider" | "computerUse" | "computerSessionHistory" | "remoteComputers" | "settledSessions" | "composerBackgroundTasks" | "agentQuestions" | "standardCodeMode" | "parallelComputerUse" | "steadyLiveTurn" | "plainFreeModel" | "remoteDevices" | "remoteSessionAccess"

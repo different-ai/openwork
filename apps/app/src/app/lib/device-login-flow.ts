@@ -5,11 +5,18 @@ const FAILED = "Device sign-in failed. Try again or use the sign-in link.";
 const MAX_LIFETIME_MS = 15 * 60_000;
 const SERVER_DEVICE_UNAVAILABLE = "Device sign-in is not available on this server. Use the sign-in link instead.";
 
+/** Only anonymous discovery exhaustion may cross the public boundary with this reason. */
+export class DeviceLoginDiscoveryUnavailable extends Error {
+  constructor(readonly host: string) { super("Device sign-in discovery is unavailable."); }
+}
+
 type Destination = { baseUrl: string; apiBaseUrl: string };
 type Attempt = { activate(): boolean; isCurrent(): boolean; cancel(): void };
 export type DeviceLoginStatus = {
   state: "pending" | "approved" | "denied" | "expired" | "unsupported" | "failed" | "signed_in";
   message?: string;
+  reason?: "den_unreachable";
+  host?: string;
   email?: string;
   org?: { id: string; name: string };
 };
@@ -64,6 +71,7 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
   // Public caller correlation only, never sent to Den or used as auth authority.
   // Retain terminal ownership so an older command cannot inspect a later result.
   let ownerRequestId: string | undefined;
+  let admittedAt: number | null = null;
   const superseded = (): DeviceLoginStatus => ({ state: "failed", message: "Device sign-in was superseded by a newer sign-in." });
   const isOwner = (requestId?: string) => requestId === undefined || requestId === ownerRequestId;
 
@@ -86,6 +94,7 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
     const flow = { attempt: deps.beginEnrollment(), controller: new AbortController() };
     current = flow;
     ownerRequestId = options.requestId;
+    admittedAt = null;
     status = { state: "pending" };
     const live = () => current === flow && flow.attempt.isCurrent() && !flow.controller.signal.aborted;
     const finish = (state: DeviceLoginStatus["state"], message?: string) => {
@@ -112,6 +121,7 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
         finish("unsupported", DEVICE_LOGIN_UNSUPPORTED);
         return { state: "unsupported", message: DEVICE_LOGIN_UNSUPPORTED };
       }
+      admittedAt = now();
       if (!flow.attempt.activate()) throw new Error("superseded");
       const destination = prepared;
       const started = await request(destination, "/api/auth/device/code", { client_id: DESKTOP_DEVICE_CLIENT_ID }, startDeadline);
@@ -188,7 +198,13 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
       }
       void poll();
       return publicAuthorization;
-    } catch {
+    } catch (error) {
+      if (live() && error instanceof DeviceLoginDiscoveryUnavailable) {
+        const failure = { state: "failed", reason: "den_unreachable", host: error.host } satisfies DeviceLoginStatus;
+        finish("failed");
+        status = failure;
+        return failure;
+      }
       if (current === flow) finish("failed", FAILED);
       return { ok: false, error: FAILED };
     }
@@ -196,6 +212,8 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
 
   return {
     start,
+    // Local observation freshness only, not part of the public control projection.
+    admittedAt: () => admittedAt,
     status: (requestId?: string): DeviceLoginStatus => {
       if (!isOwner(requestId)) return superseded();
       if (current && !current.attempt.isCurrent()) cancel(requestId);
