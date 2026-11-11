@@ -344,7 +344,8 @@ test("a member can still use the existing sign-in handoff when device sign-in is
     await appUser.screenshot();
   });
   await step("after: a disabled device start cannot replace the working handoff enrollment", async () => {
-    const disabled = record(await desktop.run("auth.device-login.start", world.args));
+    // Exercise live OFF admission, not the earlier already-signed-in conflict.
+    const disabled = record(await desktop.run("auth.device-login.start", { ...world.args, force: true }));
     expect(disabled.state).toBe("unsupported");
     const auth = record(await desktop.run("auth.status"));
     expect(auth.status).toBe("signed_in");
