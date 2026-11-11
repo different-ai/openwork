@@ -418,6 +418,57 @@ test("a v1 helper's question is the task's, another session's is not", async () 
   assert.equal(calls.at(-1).path, "/workspace/workspace_fixture/opencode/question/que_helper/reply")
 })
 
+test("a form's yes/no, number, hidden and conditional fields are answered in their own types", async () => {
+  const replies = []
+  let form = {
+    id: "frm_deploy", sessionID: "ses_task", title: "Deploy", fields: [
+      { key: "token", type: "string", hidden: true, default: "preset-token" },
+      { key: "confirm", type: "boolean", title: "Deploy now?" },
+      { key: "replicas", type: "integer", title: "Replicas", description: "How many replicas?", minimum: 1, maximum: 5 },
+      { key: "region", type: "string", title: "Region", options: [{ label: "Europe", value: "eu" }, { label: "Asia", value: "ap" }], custom: false,
+        when: [{ key: "confirm", op: "eq", value: true }] },
+      { key: "reason", type: "string", title: "Why not?", when: [{ key: "confirm", op: "neq", value: true }] },
+    ],
+  }
+  const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
+  const client = createHeadlessThreadClient({
+    baseUrl: "http://localhost:8787", token: "fixture-token", workspaceId: "workspace_fixture", engine: "v2",
+    fetch: async (input, init = {}) => {
+      const path = new URL(String(input)).pathname.replace("/workspace/workspace_fixture/opencode2/api", "")
+      if (path === "/session/ses_task/form") return response({ data: [form] })
+      if (path === "/session/ses_task/permission") return response({ data: [] })
+      if (path.endsWith("/reply")) { replies.push([path, JSON.parse(init.body)]); return response({}) }
+      return response({ message: "unexpected" }, 404)
+    },
+  })
+  const pending = await client.getThreadPending("ses_task")
+  assert.deepEqual(pending.questions.map((question) => [question.header, question.options.map((option) => option.label), question.custom]), [
+    ["Deploy now?", ["Yes", "No"], false],
+    ["Replicas", [], true],
+    ["Region", ["Europe", "Asia"], false],
+    ["Why not?", [], true],
+  ], "a hidden field is not asked")
+  const answer = (answers) => client.answerThread("ses_task", { kind: "question", requestId: "frm_deploy", answers })
+  await assert.rejects(answer([["Maybe"], ["3"], ["Europe"], ["n/a"]]), { code: "invalid_answer" })
+  await assert.rejects(answer([["Yes"], ["three"], ["Europe"], ["n/a"]]), { code: "invalid_answer", message: "Question 2 takes a number." })
+  await assert.rejects(answer([["Yes"], ["2.5"], ["Europe"], ["n/a"]]), { code: "invalid_answer", message: "Question 2 takes a whole number." })
+  await assert.rejects(answer([["Yes"], ["9"], ["Europe"], ["n/a"]]), { code: "invalid_answer", message: "Question 2 must be at most 5." })
+  assert.deepEqual(replies, [], "an answer that does not fit sends nothing")
+  await answer([["Yes"], ["3"], ["Europe"], ["n/a"]])
+  await answer([["No"], ["1"], ["Asia"], ["Too early"]])
+  assert.deepEqual(replies, [
+    ["/session/ses_task/form/frm_deploy/reply", { answer: { token: "preset-token", confirm: true, replicas: 3, region: "eu" } }],
+    ["/session/ses_task/form/frm_deploy/reply", { answer: { token: "preset-token", confirm: false, replicas: 1, reason: "Too early" } }],
+  ], "a field that does not apply is left out")
+
+  form = { id: "frm_sign_in", sessionID: "ses_task", title: "Sign in", fields: [{ key: "open", type: "external", url: "https://example.com/authorize", title: "Sign in to Example" }] }
+  assert.deepEqual(await client.getThreadPending("ses_task"), { kind: "question", requestId: "frm_sign_in", questions: [{
+    header: "Sign in to Example", question: "This step opens a link, so it can't be answered from here.", options: [], multiple: false, custom: false,
+  }] })
+  await assert.rejects(client.answerThread("ses_task", { kind: "question", requestId: "frm_sign_in", answers: [["done"]] }), { code: "invalid_answer" })
+  assert.equal(replies.length, 2)
+})
+
 test("a computer-use approval on this computer is reported and answered once from the other one", async () => {
   const native = nativeFixture()
   const answers = []
