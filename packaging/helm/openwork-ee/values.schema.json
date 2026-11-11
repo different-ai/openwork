@@ -141,6 +141,26 @@
               ],
               "description": "AI Gateway: API keys for 3rd party tools: Admins allow members, in AI Gateway › API Keys, to create their own AI Gateway API keys and use the Gateway's models from 3rd party tools and harnesses. After creating a key (or from a key's Set up), members pick a tool (Cursor, OpenAI Codex, Claude Code, another tool) and get its steps with their key and models filled in; Cursor reaches every model through /api/v1/cursor. Members manage their keys in Library › Models; admins see and revoke every key on the same tab. Renders DEN_FEATURE_GATEWAY_MEMBER_API_KEYS."
             },
+            "localModelsPolicy": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "AI Gateway: limit local models (Ollama, LM Studio): Admins turn local models on or off in AI Gateway › Who can use models, separately from members adding their own provider keys. Off: local models follow the provider setting (\"Only models you provide\" blocks them). Renders DEN_FEATURE_LOCAL_MODELS_POLICY."
+            },
+            "shareDeviceProvider": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: share a provider key with your organization: In Settings › AI Providers, a person who manages AI Gateway shares an API key already saved on their device with everyone in the organization, after confirming who can use it and who pays. People they invite get those models without anyone pasting the key again. Off: sharing means adding the provider again in AI Gateway. Renders DEN_FEATURE_SHARE_DEVICE_PROVIDER."
+            },
             "plainFreeModel": {
               "enum": [
                 "",

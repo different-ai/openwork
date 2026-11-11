@@ -37,7 +37,8 @@ import {
 } from "../settings-list";
 import { t } from "@/i18n";
 import { useCloudSession } from "./cloud-session-provider";
-import { ArrowUpRight, RefreshCcw, Users } from "lucide-react";
+import { ArrowUpRight, Lock, RefreshCcw, Users } from "lucide-react";
+import { shareLockedLine, type OrganizationShareEmptyState } from "../provider-share/device-provider-share";
 import { OrganizationMark, ProviderList, ProviderMeta, ProviderRow, ProviderStatus, ProviderTile } from "../pages/provider-rows";
 
 export type CloudProviderRowStatus =
@@ -245,6 +246,8 @@ function CloudProviderListItem({ actionId, row, onRetry }: CloudProviderListItem
 }
 
 export interface CloudProvidersSectionProps {
+  /** Den feature shareDeviceProvider: what to offer while nothing is shared with the organization. */
+  shareEmptyState?: OrganizationShareEmptyState;
   actionError: string | null;
   actionId: string | null;
   busy: boolean;
@@ -258,7 +261,34 @@ export interface CloudProvidersSectionProps {
   additionalCount?: number;
 }
 
-export function CloudProvidersSection({ actionError, actionId, busy, rows, onRefresh, onRetry, onOpenDen, onOpenModelConnections, lastVerifiedAt, additionalRows, additionalCount = 0 }: CloudProvidersSectionProps) {
+/**
+ * Nothing is shared with the organization yet: say so and offer the next step
+ * (DESIGN C6), or who manages it for someone who cannot (P4, C5).
+ */
+export function OrganizationShareEmpty({ state, organizationName, onOpenDen }: {
+  state: NonNullable<OrganizationShareEmptyState>;
+  organizationName: string;
+  onOpenDen?: () => void;
+}) {
+  if (state.kind === "locked") {
+    return <p data-testid="organization-share-empty" data-state="locked" className="flex items-center gap-2 rounded-2xl border border-dashed border-dls-border px-5 py-4 text-sm text-muted-foreground">
+      <Lock className="size-4 shrink-0" strokeWidth={1.5} aria-hidden />
+      <span>{shareLockedLine(state.managerName, organizationName)}</span>
+    </p>;
+  }
+  // A shareable key already has its Share action on its own row; repeating it
+  // here would put two identical actions on one screen (DESIGN P7, S6).
+  return <div data-testid="organization-share-empty" data-state={state.kind} className="flex flex-col gap-3 rounded-2xl border border-dashed border-dls-border px-5 py-4 sm:flex-row sm:items-center">
+    <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+      {state.kind === "share"
+        ? `Nothing shared with ${organizationName} yet. Teammates can't use the keys on this device.`
+        : `Nothing shared with ${organizationName} yet.`}
+    </p>
+    {state.kind === "add" && onOpenDen ? <Button variant="outline" className="shrink-0 self-start sm:self-center" onClick={onOpenDen}>Add a provider<ArrowUpRight className="size-3.5" aria-hidden /></Button> : null}
+  </div>;
+}
+
+export function CloudProvidersSection({ actionError, actionId, busy, rows, onRefresh, onRetry, onOpenDen, onOpenModelConnections, lastVerifiedAt, additionalRows, additionalCount = 0, shareEmptyState }: CloudProvidersSectionProps) {
   const { hasActiveOrg, activeOrgName } = useCloudSession();
   const organizationName = activeOrgName || "your organization";
   const verified = lastVerifiedAt ? new Date(lastVerifiedAt) : null;
@@ -282,7 +312,9 @@ export function CloudProvidersSection({ actionError, actionId, busy, rows, onRef
     </div>
     {actionError ? <SettingsNotice tone="error">{actionError}</SettingsNotice> : null}
     {busy && !providerCount ? <div role="status" aria-label="Loading organization providers" className="grid gap-2">{[0, 1].map((key) => <div key={key} className="h-16 animate-pulse rounded-2xl bg-muted" />)}</div> : null}
-    {!busy && !providerCount ? <SettingsListEmptyState>{hasActiveOrg ? t("den.no_cloud_providers") : t("den.choose_org_for_providers")}</SettingsListEmptyState> : null}
+    {!busy && !providerCount ? hasActiveOrg && shareEmptyState
+      ? <OrganizationShareEmpty state={shareEmptyState} organizationName={organizationName} onOpenDen={onOpenDen} />
+      : <SettingsListEmptyState>{hasActiveOrg ? t("den.no_cloud_providers") : t("den.choose_org_for_providers")}</SettingsListEmptyState> : null}
     {providerCount ? <ProviderList>
       {rows.map((row) => <CloudProviderListItem key={row.key} actionId={actionId} row={row} onRetry={onRetry} />)}
       {additionalRows}

@@ -46,11 +46,12 @@ import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgGatewayUsageRoutes } from "./gateway-usage.js"
 import { registerOrgGatewayUsageLimitRoutes } from "./gateway-usage-limits.js"
 import { registerOrgProviderInventoryRoutes } from "./provider-inventory.js"
+import { registerOrgDeviceProviderShareRoutes } from "./device-provider-share.js"
 import { credentialPromptSchema } from "@openwork/types/den/credential-prompt"
 import { GatewayProviderUsageLimitsError, GatewayUsageError, lockUsageOrganization } from "@openwork-ee/den-db/gateway-usage-limits"
 import { GATEWAY_PROVIDER_HAS_USAGE_LIMITS, GATEWAY_PROVIDER_REMOVAL_LIMIT_ACTIONS, gatewayProviderHasUsageLimitsSchema, type GatewayProviderRemovalLimitChoice } from "@openwork/types/den/gateway-usage-limits"
 import { credentialPromptResponseFields, gatewayCredentialShape, gatewayProviderCredentialPrompt, gatewayUpstreamDestination } from "../../credential-prompt.js"
-import { requireFeature } from "../../features.js"
+import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { GATEWAY_CUSTOM_PROVIDER_ID, gatewayCustomCreateRequestSchema, gatewayCustomDiscoverRequestSchema, gatewayCustomDiscoverResponseSchema, gatewayCustomProviderStatusSchema, gatewayCustomTestRequestSchema, gatewayCustomTestResponseSchema, gatewayCustomTestStep, gatewayCustomUpdateRequestSchema, isGatewayCustomProviderId, type GatewayCustomModel, type GatewayCustomProviderSettings, type GatewayCustomTestResponse } from "@openwork/types/den/gateway-custom-providers"
 import { discoverCustomProviderModels } from "../../llm/custom-provider-discovery.js"
 import { checkCustomBaseUrl, customCatalogProvider, customProviderConfig, readCustomProviderSettings, sameCustomOrigin } from "../../llm/gateway-custom-provider.js"
@@ -85,7 +86,11 @@ const settingsSchema = gatewayProviderSettingsSchema
 const legacyFields = { credentialMode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES).optional(), credential: credentialSchema.optional(), apiKeys: apiKeysSchema.optional(), ...oauthFields, allMembers: z.boolean().optional(), memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() }
 const universeSchema = modelIdsSchema.describe("Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.")
 const reuseCredentialFromSchema = denTypeIdSchema("inferenceProvider").describe("Amazon Bedrock only: copy the organization AWS keys of another Amazon Bedrock provider in this organization, server-side. Mutually exclusive with credential and apiKeys.")
-const createSchema = z.object({ name: nameSchema, providerId: nameSchema, modelIds: universeSchema.default([]), settings: settingsSchema.optional(), status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(), ...legacyFields, reuseCredentialFrom: reuseCredentialFromSchema.optional() }).strict().superRefine(singleCredential)
+const createSchema = z.object({ name: nameSchema, providerId: nameSchema, modelIds: universeSchema.default([]), settings: settingsSchema.optional(), status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(), ...legacyFields, reuseCredentialFrom: reuseCredentialFromSchema.optional(), shareFromDevice: z.literal(true).optional().describe("shareDeviceProvider feature only: atomically refuse if this organization already has an active provider for the catalog id. Requires an explicit shared API key and Everyone grant; no credential or audience mutation of existing providers.") }).strict().superRefine(singleCredential).superRefine((input, ctx) => {
+  if (input.shareFromDevice && (input.credential?.kind !== "api_key" || input.allMembers !== true || input.credentialMode === "member" || input.status === "disabled")) {
+    ctx.addIssue({ code: "custom", message: "Sharing a device provider needs a shared API key, active status and explicit Everyone access." })
+  }
+})
 const patchSchema = z.object({ name: nameSchema.optional(), providerId: nameSchema.optional(), modelIds: universeSchema.optional(), pinnedModelIds: pinnedModelIdsSchema.optional(), settings: settingsSchema.optional(), status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(), ...legacyFields }).strict().superRefine((input, ctx) => {
   singleCredential(input, ctx)
   if (input.pinnedModelIds !== undefined && Object.keys(input).length !== 1) {
@@ -446,6 +451,7 @@ function awsSsoWriteError(error: unknown): unknown {
 
 export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   registerOrgProviderInventoryRoutes(app)
+  registerOrgDeviceProviderShareRoutes(app)
   registerCustomProviderRoutes(app)
   registerOrgGatewayUsageRoutes(app)
   registerOrgGatewayUsageLimitRoutes(app)
@@ -596,6 +602,18 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const now = new Date()
       const provider: GatewayProvider = { id: normalizeDenTypeId("inferenceProvider", providerAuditRequests.get(c.req.raw)?.providerId ?? createDenTypeId("inferenceProvider")), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: catalog.catalog.id, name: input.name, model_ids: [...new Set(input.modelIds)], pinned_model_ids: [], provider_config: catalog.config, settings: input.settings ?? {}, credential_mode: input.credentialMode ?? "org", oauth_client_id: null, oauth_client_secret: null, status: input.status ?? "active", created_at: now, updated_at: now }
       await db.transaction(async (tx) => {
+        if (input.shareFromDevice) {
+          // Serialize device shares (including retries after a lost response).
+          // Ordinary Gateway creation still permits intentionally separate configurations.
+          await lockUsageOrganization(tx, actor.organization.id)
+          if (!await organizationFeatureEnabled(actor.organization.id, "shareDeviceProvider", { database: tx, lock: "share", userId: actor.currentMember.userId })) {
+            throw new GatewayWriteError(404, "feature_disabled", "Sharing from this device is not available for your organization.")
+          }
+          const [existing] = await tx.select({ id: GatewayProviderTable.id }).from(GatewayProviderTable)
+            .where(and(eq(GatewayProviderTable.organization_id, actor.organization.id), eq(GatewayProviderTable.provider_id, input.providerId), eq(GatewayProviderTable.status, "active")))
+            .limit(1).for("update")
+          if (existing) throw new GatewayWriteError(409, "already_shared", "Your organization already has this provider.")
+        }
         const capture = providerAuditRequests.get(c.req.raw)?.capture ?? null
         if (capture) await recheckAuditEntitlement(tx, actor.organization.id)
         const member = await liveMember(tx, actor, true)

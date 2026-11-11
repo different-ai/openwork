@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, CheckCircle2, Download, Loader2, RefreshCw, XCircle } from "lucide-react";
+import { Bot, CheckCircle2, Download, Loader2, Lock, RefreshCw, XCircle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -213,6 +213,32 @@ function usePullOllamaModel(options: { onSuccess?: (model: string) => void } = {
   });
 
   return { pullModel, isPulling, progress };
+}
+
+/**
+ * Local models turned off by the organization: the page stays, with a lock and
+ * who changes it, and talks to nothing (DESIGN P4, C5). Ollama is not even
+ * probed on this computer.
+ */
+export function LocalModelsBlocked({ organizationName }: { organizationName?: string }) {
+  return (
+    <Card variant="outline" size="sm" data-testid="local-models-blocked">
+      <CardHeader>
+        <CardTitle>Configuration</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Empty className="flex-none p-6" variant="ghost">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><Lock /></EmptyMedia>
+            <EmptyTitle>Local models are off</EmptyTitle>
+            <EmptyDescription>
+              {organizationName ? `${organizationName} turned off Ollama and LM Studio.` : "Your organization turned off Ollama and LM Studio."} An admin can turn them on in AI Gateway.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </CardContent>
+    </Card>
+  );
 }
 
 export type OllamaConfigProps = {

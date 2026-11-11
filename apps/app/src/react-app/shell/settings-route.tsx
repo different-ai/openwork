@@ -90,7 +90,7 @@ import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
 import { deviceProviders, useLocalProviderEngineStates } from "@/react-app/domains/connections/provider-auth/local-provider-engine-state";
 // Side-effect imports: register extension config components into the registry.
-import { OllamaConfig } from "@/react-app/domains/settings/ollama-config";
+import { LocalModelsBlocked, OllamaConfig } from "@/react-app/domains/settings/ollama-config";
 import "@/react-app/domains/settings/browser-extension-config";
 import { useSettingsExtensionController } from "@/react-app/domains/settings/settings-extension-controller";
 import { buildExtensionItems } from "@/react-app/domains/settings/extension-items";
@@ -130,6 +130,7 @@ import { useDebugViewModel } from "@/react-app/domains/settings/state/debug-view
 import { useDesktopUpdater } from "@/react-app/domains/settings/state/desktop-updater-provider";
 import { CloudSessionProvider, useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import { useDenSession } from "@/react-app/domains/settings/cloud/use-den-session";
+import { useDeviceProviderShareFlow } from "@/react-app/domains/settings/provider-share/use-device-provider-share-flow";
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { useBootState } from "./boot-state";
 import { SettingsShell } from "@/react-app/domains/settings/shell/settings-shell";
@@ -1866,6 +1867,25 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       ? []
       : [{ id, name: providers.find((provider) => provider.id === id)?.name ?? PROVIDER_LABELS[id.toLowerCase()] ?? id }],
   );
+  // Den feature shareDeviceProvider: a key saved here can go to the organization in one confirmation.
+  const deviceShare = useDeviceProviderShareFlow({
+    providers: selectedWorkspace && selectedWorkspace.workspaceType !== "local" ? [] : connectedProviders,
+    runtimeWorkspaceId,
+    organizationName: cloudSession.activeOrgName,
+    share: providerAuthStore.shareDeviceProvider,
+  });
+  // Someone who cannot manage AI Gateway already has "My model connections";
+  // a second link to an admin-only page would only bounce them (DESIGN P4).
+  const openProviderCloudPage = deviceShare.resolved && !deviceShare.canShare ? undefined : openProvidersInDen;
+  // "Share" in Get set up lands here with ?share=1: open the confirmation for a
+  // key on this device, or AI Gateway's own form when nothing here is one key.
+  const shareRequested = route.tab === "ai" && new URLSearchParams(location.search).get("share") === "1";
+  useEffect(() => {
+    if (!shareRequested || loading || !activeClient || providerAuthSnapshot.providerLoadState.status !== "ready" || !deviceShare.resolved) return;
+    navigate({ pathname: location.pathname }, { replace: true, state: location.state });
+    if (deviceShare.firstShareable) deviceShare.open(deviceShare.firstShareable);
+    else if (deviceShare.canShare) openProvidersInDen();
+  }, [shareRequested, loading, activeClient, providerAuthSnapshot.providerLoadState.status, deviceShare.resolved, deviceShare.firstShareable, deviceShare.canShare, deviceShare.open, location.pathname, location.state, navigate, openProvidersInDen]);
   const openworkCloudMcpUrl = connectionsSnapshot.mcpServers.find(
     (server) => server.name === "openwork-cloud",
   )?.config.url ?? null;
@@ -2226,7 +2246,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         );
       case "ai":
         return (
+          <>
+          {deviceShare.dialog}
           <AiSettingsView
+            shareRows={deviceShare.rows}
+            onShareProvider={deviceShare.open}
             claudeAgent={providerAuthSnapshot.claudeAgent}
             onOpenClaudeAgent={() => handleOpenProviderAuth("claude-agent")}
             runtimeWorkspaceId={runtimeWorkspaceId}
@@ -2290,13 +2314,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             autoError={autoError}
             onSetAutoEnabled={autoClient ? setAutoEnabled : undefined}
             organizationProviderIds={organizationProviderIds}
-            onOpenDen={openProvidersInDen}
+            onOpenDen={openProviderCloudPage}
             cloudProvidersView={
               <CloudProvidersView
                 runtimeWorkspaceId={runtimeWorkspaceId}
                 key={`${cloudSession.baseUrl}:${cloudSession.activeOrganization?.id ?? "signed-out"}`}
                 embedded
-                onOpenDen={openProvidersInDen}
+                onOpenDen={openProviderCloudPage}
                 onOpenModelConnections={() => { void platform.openLink(denDashboardUrl(readDenSettings().baseUrl, "modelConnections")); }}
                 gatewayConnectProviders={gatewayConnectProviders}
                 connectingGatewayProviderId={connectingGatewayProviderId}
@@ -2315,11 +2339,16 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 refreshCloudOrgProviders={providerAuthStore.refreshCloudOrgProviders}
                 runCloudProviderSync={providerAuthStore.runCloudProviderSync}
                 serverSync={providerAuthSnapshot.cloudProviderServerSync}
+                shareEmptyState={deviceShare.emptyState}
               />
             }
           />
+          </>
         );
       case "ollama":
+        if (checkDesktopRestriction({ restriction: "allowLocalModels" })) {
+          return <LocalModelsBlocked organizationName={cloudSession.activeOrgName} />;
+        }
         return (
           <OllamaConfig
             busy={localProviderBusy}

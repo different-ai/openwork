@@ -1700,6 +1700,20 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       requestJson<GatewayDesktopOauthStartResponse>(baseUrl, `/cloud-provider-sync/providers/${encodeURIComponent(providerId)}/oauth/start`, {
         hostToken, signal, method: "POST", body: { orgId, ...(credentialSetId !== undefined ? { credentialSetId } : {}) } satisfies GatewayDesktopOauthStartRequest, timeoutMs: timeouts.config,
       }),
+    /**
+     * Den feature shareDeviceProvider: after the person confirms, this server sends
+     * the key it holds for `providerId` to their organization. The key is never
+     * read by or returned to the app. `token` is a freshly verified sign-in, when
+     * Den asked for one.
+     */
+    shareDeviceProvider: async (providerId: string, orgId: string, token?: string): Promise<{ inferenceProviderId: string; name: string }> => {
+      const payload = await requestJson<unknown>(baseUrl, `/cloud-provider-sync/device-providers/${encodeURIComponent(providerId)}/share`, {
+        hostToken, method: "POST", body: { orgId, ...(token ? { token } : {}) }, timeoutMs: timeouts.cloudMcpReconcile,
+      });
+      const shared = z.object({ inferenceProviderId: z.string().min(1), name: z.string() }).safeParse(payload);
+      if (!shared.success) throw new OpenworkServerError(502, "share_unconfirmed", "OpenWork did not confirm the share. Check AI Providers before trying again.");
+      return shared.data;
+    },
     runCloudProviderSyncNow: async (reason?: string, signal?: AbortSignal) =>
       parseCloudProviderSyncRun(await requestJson<unknown>(baseUrl, "/cloud-provider-sync/run", {
         hostToken,

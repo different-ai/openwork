@@ -24,7 +24,28 @@ export const DESKTOP_POLICY_ENFORCEMENT_ENABLED: boolean = false;
  * Enforcement never blocks startup, sign-in or chat: callers apply the last
  * known setting and allow when none is known (see #5131).
  */
-export const MODEL_ACCESS_POLICY_KEYS = ["allowCustomProviders"] as const;
+export const MODEL_ACCESS_POLICY_KEYS = ["allowCustomProviders", "allowLocalModels"] as const;
+
+/**
+ * Models that run on the member's own computer (Ollama, LM Studio), by the
+ * provider ids OpenWork's own setup writes. Governed by `allowLocalModels`
+ * (feature `localModelsPolicy`), not by `allowCustomProviders`. A local server
+ * someone adds under another id through Connect a provider is a custom
+ * provider and follows "Only models you provide".
+ */
+export const LOCAL_MODEL_PROVIDER_IDS = ["ollama", "lmstudio"] as const;
+
+export function isLocalModelProviderId(providerId: string): boolean {
+  return (LOCAL_MODEL_PROVIDER_IDS as readonly string[]).includes(providerId.trim().toLowerCase());
+}
+
+/**
+ * Whether local models may run. A config without the key (an older Den, or
+ * the feature off) keeps what `allowCustomProviders` always meant for them.
+ */
+export function localModelsAllowed(config: { allowLocalModels?: boolean; allowCustomProviders?: boolean } | null | undefined): boolean {
+  return (config?.allowLocalModels ?? config?.allowCustomProviders) !== false;
+}
 
 export function isModelAccessPolicyKey(key: string): boolean {
   return (MODEL_ACCESS_POLICY_KEYS as readonly string[]).includes(key);
@@ -85,6 +106,19 @@ export const desktopPolicyDefinitions = [
       "Allow users to add and use models that are not deployed through OpenWork Cloud.",
     userNotice:
       "Your organization administrator has disabled adding custom providers.",
+    defaultValue: true,
+    restrictedValue: false,
+  },
+  {
+    id: "allowLocalModels",
+    // A policy stored before this key existed inherits `allowCustomProviders`
+    // (see normalizeDesktopPolicyValue): "Only models you provide" already
+    // blocked local models, and an admin exception already allowed them.
+    teamLabel: "Use local models",
+    group: "ai",
+    name: "Local models (Ollama, LM Studio)",
+    description: "Allow users to run models on their own computer with Ollama or LM Studio.",
+    userNotice: "Your organization administrator has turned off local models.",
     defaultValue: true,
     restrictedValue: false,
   },
@@ -540,13 +574,19 @@ export function normalizeDesktopPolicyValue(
 ): DesktopPolicyValue {
   const parsed = desktopPolicyValueSchema.safeParse(coerceJsonRecord(value));
   if (parsed.success) {
-    return Object.fromEntries(
+    const result = Object.fromEntries(
       desktopPolicyKeys.flatMap((key) =>
         typeof parsed.data[key] === "boolean"
           ? [[key, parsed.data[key]] as const]
           : [],
       ),
     ) as DesktopPolicyValue;
+    // Written before local models had their own switch: keep what the
+    // provider setting already meant for them.
+    if (result.allowLocalModels === undefined && typeof result.allowCustomProviders === "boolean") {
+      result.allowLocalModels = result.allowCustomProviders;
+    }
+    return result;
   }
 
   return {};
