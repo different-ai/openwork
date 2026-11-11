@@ -333,6 +333,10 @@ test("cheap source guards need no install, build or classification", () => {
   for (const command of ["node scripts/check-outbound-access.mjs", "pnpm --filter @openwork/features test", "pnpm features:check"]) {
     assert.ok(staticJob.includes(`run: ${command}`), command);
   }
+  // Every PR checks what production Node loads from TypeScript source, after the install that provides its parser.
+  const importCheck = staticJob.indexOf("\n          node scripts/check-node-source-imports.mjs\n");
+  assert.ok(importCheck > staticJob.indexOf('--filter "@different-ai/openwork-workspace"'), "check Node's source imports after installing the root's dependencies");
+  assert.ok(staticJob.indexOf('--filter "@different-ai/openwork-workspace"') !== -1);
   // Every .github/scripts test runs in the quick check.
   const tests = readdirSync(new URL(".", import.meta.url)).filter((name) => name.endsWith(".test.mjs"));
   for (const name of tests) assert.ok(staticJob.includes(`.github/scripts/${name}`), name);

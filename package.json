@@ -60,6 +60,8 @@
     "check:outbound-access": "node scripts/check-outbound-access.mjs",
     "check:ui-guardrails": "node scripts/check-ui-guardrails.mjs",
     "test:ui-guardrails": "node --test scripts/check-ui-guardrails.test.mjs",
+    "check:node-source-imports": "node scripts/check-node-source-imports.mjs",
+    "test:node-source-imports": "node --test scripts/check-node-source-imports.test.mjs",
     "features:sync": "node scripts/features-sync.mjs",
     "features:check": "node scripts/features-sync.mjs --check",
     "test:e2e": "pnpm --filter @openwork/app test:e2e",

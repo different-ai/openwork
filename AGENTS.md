@@ -80,6 +80,24 @@ Hooks never commit, push, or change CI policy; CI remains authoritative.
   `DESIGN.md`: read it before designing, cite its rule ids in PRs, and attach
   screenshots of new UI.
 
+## Modules Node loads from source
+
+Den API and the Gateway run in plain Node and load many workspace exports
+straight from TypeScript source (`"default": "./src/x.ts"`, most of
+`@openwork/types/den/*`). Node only removes the types. Development, tests and
+typecheck are more forgiving, so these pass there and fail the deploy:
+
+* A relative import without the real file name (`"./sibling"`,
+  `"./sibling.js"`). Import the sibling by package name:
+  `"@openwork/types/den/sibling"`.
+* A type imported or re-exported without `type`.
+* `enum`, a namespace with values, constructor parameter properties, `.tsx`.
+
+After changing a package these services import, or what they import, run
+`pnpm check:node-source-imports` (two seconds, no build). It runs on every PR.
+A new service that runs unbundled in Node goes in `SERVICES` in
+`scripts/check-node-source-imports.mjs`.
+
 ## Verify changes headless
 
 Launching the desktop app on a developer's computer opens a window that takes
