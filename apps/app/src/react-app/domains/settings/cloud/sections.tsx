@@ -196,10 +196,20 @@ function MarketplacePluginListItem({
   );
 }
 
+/**
+ * The organization's OpenWork Models on this device: Turn off / Turn on when
+ * the person decides, or "Managed by {organization}" when only admins do.
+ */
+export type OpenWorkModelsToggle =
+  | { managed?: false; turnedOff: boolean; busy: boolean; onToggle: (enabled: boolean) => void | Promise<void> }
+  | { managed: true };
+
 interface CloudProviderListItemProps {
   actionId: string | null;
   row: CloudProviderRow;
   onRetry: (cloudProviderId: string) => void | Promise<void>;
+  openWorkModelsToggle?: OpenWorkModelsToggle;
+  organizationName?: string;
 }
 
 function cloudProviderRowStatus(status: CloudProviderRowStatus) {
@@ -218,10 +228,40 @@ function cloudProviderRowStatus(status: CloudProviderRowStatus) {
   }
 }
 
-function CloudProviderListItem({ actionId, row, onRetry }: CloudProviderListItemProps) {
+function CloudProviderListItem({ actionId, row, onRetry, openWorkModelsToggle, organizationName }: CloudProviderListItemProps) {
   const actionBusy = actionId === row.cloudProviderId;
   const status = actionBusy ? "syncing" : row.status;
   const providerId = row.imported?.sourceProviderId ?? row.provider?.providerId ?? "";
+  const toggle = row.provider?.source === "openwork" ? openWorkModelsToggle : undefined;
+
+  if (toggle?.managed) {
+    return (
+      <ProviderRow
+        testId="org-openwork-models-provider"
+        scope="organization"
+        tile={<ProviderTile providerId={providerId} name={row.name} />}
+        name={row.name}
+        status={cloudProviderRowStatus(status)}
+        meta={<ProviderMeta id={row.metaId} parts={[row.detail, organizationName ? `Managed by ${organizationName}` : "Managed by your organization"]} />}
+        aside={row.access ? <><Users className="size-3.5" aria-hidden />{row.access}</> : null}
+      />
+    );
+  }
+
+  if (toggle) {
+    return (
+      <ProviderRow
+        testId="org-openwork-models-provider"
+        scope="organization"
+        tile={<ProviderTile providerId={providerId} name={row.name} />}
+        name={row.name}
+        status={toggle.turnedOff ? <ProviderStatus tone="neutral">Turned off</ProviderStatus> : cloudProviderRowStatus(status)}
+        meta={<ProviderMeta id={row.metaId} parts={[toggle.turnedOff ? "Turned off on this device" : row.detail]} />}
+        aside={row.access ? <><Users className="size-3.5" aria-hidden />{row.access}</> : null}
+        actions={<Button variant="ghost" disabled={toggle.busy} onClick={() => void toggle.onToggle(toggle.turnedOff)}>{toggle.turnedOff ? "Turn on" : "Turn off"}</Button>}
+      />
+    );
+  }
 
   return (
     <ProviderRow
@@ -259,6 +299,7 @@ export interface CloudProvidersSectionProps {
   lastVerifiedAt?: string | number | null;
   additionalRows?: React.ReactNode;
   additionalCount?: number;
+  openWorkModelsToggle?: OpenWorkModelsToggle;
 }
 
 /**
@@ -288,7 +329,7 @@ export function OrganizationShareEmpty({ state, organizationName, onOpenDen }: {
   </div>;
 }
 
-export function CloudProvidersSection({ actionError, actionId, busy, rows, onRefresh, onRetry, onOpenDen, onOpenModelConnections, lastVerifiedAt, additionalRows, additionalCount = 0, shareEmptyState }: CloudProvidersSectionProps) {
+export function CloudProvidersSection({ actionError, actionId, busy, rows, onRefresh, onRetry, onOpenDen, onOpenModelConnections, lastVerifiedAt, additionalRows, additionalCount = 0, shareEmptyState, openWorkModelsToggle }: CloudProvidersSectionProps) {
   const { hasActiveOrg, activeOrgName } = useCloudSession();
   const organizationName = activeOrgName || "your organization";
   const verified = lastVerifiedAt ? new Date(lastVerifiedAt) : null;
@@ -316,7 +357,7 @@ export function CloudProvidersSection({ actionError, actionId, busy, rows, onRef
       ? <OrganizationShareEmpty state={shareEmptyState} organizationName={organizationName} onOpenDen={onOpenDen} />
       : <SettingsListEmptyState>{hasActiveOrg ? t("den.no_cloud_providers") : t("den.choose_org_for_providers")}</SettingsListEmptyState> : null}
     {providerCount ? <ProviderList>
-      {rows.map((row) => <CloudProviderListItem key={row.key} actionId={actionId} row={row} onRetry={onRetry} />)}
+      {rows.map((row) => <CloudProviderListItem key={row.key} actionId={actionId} row={row} onRetry={onRetry} openWorkModelsToggle={openWorkModelsToggle} organizationName={activeOrgName} />)}
       {additionalRows}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-dls-surface-muted px-4 py-2.5 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-2"><RefreshCcw className="size-3.5" aria-hidden />{timestamp ? `Synced with Den ${timestamp}` : "Not synced with Den yet"} · {providerCount === 1 ? "1 provider" : `${providerCount} providers`}, {credentialCount === 1 ? "1 credential" : `${credentialCount} credentials`}</span>
