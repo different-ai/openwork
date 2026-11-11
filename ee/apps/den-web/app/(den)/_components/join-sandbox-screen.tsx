@@ -103,7 +103,7 @@ export function JoinSandboxScreen({ token }: { token: string }) {
             <>
               <Heading
                 title={`Try OpenWork in ${preview.organizationName}.`}
-                copy={`A private sandbox with included AI models${preview.connectors.length ? " and sample work apps" : ""}. You'll join as ${preview.joinRole === "admin" ? "an admin" : "a member"}. Open until ${dateLabel(preview.expiresAt)}.`}
+                copy={`A private sandbox with included AI models${preview.connectors.length ? " and sample work apps" : ""}. You'll join as ${preview.joinRole === "super-admin" ? "a super admin" : preview.joinRole === "admin" ? "an admin" : "a member"}. Open until ${dateLabel(preview.expiresAt)}.`}
               />
               {preview.connectors.length ? (
                 <div className="grid gap-2" data-testid="join-sandbox-connectors">

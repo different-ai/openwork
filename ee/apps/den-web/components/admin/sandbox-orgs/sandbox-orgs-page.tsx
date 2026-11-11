@@ -27,10 +27,16 @@ const date = (value: string) => new Date(value).toLocaleDateString(undefined, { 
 const stateLabel = { open: "Open", expired: "Ended", closed: "Closed" } as const;
 
 type Draft = { name: string; connectorBaseUrl: string; days: string; memberLimit: string; domains: string; joinRole: SandboxJoinRole; creditUsd: string };
-const freshDraft = (defaults: SandboxList["defaults"]): Draft => ({ name: "", connectorBaseUrl: defaults?.workplaceUrl ?? "", days: "14", memberLimit: "50", domains: "", joinRole: "admin", creditUsd: defaults?.creditUsd ? String(defaults.creditUsd) : "" });
+const freshDraft = (defaults: SandboxList["defaults"]): Draft => ({ name: "", connectorBaseUrl: defaults?.workplaceUrl ?? "", days: "14", memberLimit: "50", domains: "", joinRole: "super-admin", creditUsd: defaults?.creditUsd ? String(defaults.creditUsd) : "" });
 const dollars = (value: number) => `$${value.toFixed(value % 1 === 0 ? 0 : 2)}`;
 const CREDIT_STEP_USD = 25;
-const roleLabel: Record<SandboxJoinRole, string> = { member: "Members", admin: "Admins" };
+const roleLabel: Record<SandboxJoinRole, string> = { member: "Members", admin: "Admins", "super-admin": "Super admins" };
+const joinRoleChangedMessage = (name: string, joinRole: SandboxJoinRole) => {
+  const role = roleLabel[joinRole].toLowerCase();
+  return joinRole === "member"
+    ? `People who join ${name} now become ${role}. People who already joined keep their role.`
+    : `People who join ${name} now become ${role}. People who already joined with a lower role become ${role} too.`;
+};
 
 export function SandboxOrgsPage() {
   const [data, setData] = useState<SandboxList | null>(null);
@@ -120,7 +126,7 @@ export function SandboxOrgsPage() {
         {data.sandboxes.length === 0 ? <p className="border-t border-[var(--dls-border)] py-6 text-sm text-[color:var(--dls-text-secondary)]">No sandboxes yet. Create one to get a join link.</p>
           : data.sandboxes.map(sandbox => <SandboxRow key={sandbox.id} sandbox={sandbox} busy={busy}
             onRotate={() => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/rotate-link`, undefined, "New link ready. The old link no longer works.")}
-            onJoinRole={(joinRole) => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/join-role`, { joinRole }, `People who join ${sandbox.name} now become ${joinRole === "admin" ? "admins" : "members"}. People who already joined keep their role.`)}
+            onJoinRole={(joinRole) => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/join-role`, { joinRole }, joinRoleChangedMessage(sandbox.name, joinRole))}
             onAddCredit={(limitUsd) => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/credit`, { creditUsd: limitUsd + CREDIT_STEP_USD }, `${sandbox.name} can now spend up to ${dollars(limitUsd + CREDIT_STEP_USD)} on models.`)}
             onAddMicrosoft={() => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/microsoft-365`, undefined, `${sandbox.name} now has sample Microsoft 365 for Workbot. Members approve it once from Workbot or their connections.`)}
             onExtend={() => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/extend`, { days: 7 }, `${sandbox.name} is open for 7 more days.`)}
@@ -145,11 +151,11 @@ export function SandboxOrgsPage() {
             <label className="grid gap-2 text-xs">Open for (days)<DenInput aria-label="Days open" type="number" required min={1} max={SANDBOX_MAX_DAYS} step={1} value={draft.days} disabled={saving} onChange={event => setDraft({ ...draft, days: event.target.value })} /></label>
             <label className="grid gap-2 text-xs">Seats<DenInput aria-label="Seats" type="number" required min={1} max={SANDBOX_MAX_MEMBERS} step={1} value={draft.memberLimit} disabled={saving} onChange={event => setDraft({ ...draft, memberLimit: event.target.value })} /></label>
           </div>
-          <label className="grid gap-2 text-xs">People who join become<DenSelect aria-label="People who join become" value={draft.joinRole} disabled={saving} onChange={event => { const parsed = sandboxJoinRoleSchema.safeParse(event.target.value); if (parsed.success) setDraft({ ...draft, joinRole: parsed.data }); }}><option value="admin">Admins</option><option value="member">Members</option></DenSelect>
-            <span className="text-[color:var(--dls-text-secondary)]">Admins can try everything: connectors, members and settings.</span></label>
+          <label className="grid gap-2 text-xs">People who join become<DenSelect aria-label="People who join become" value={draft.joinRole} disabled={saving} onChange={event => { const parsed = sandboxJoinRoleSchema.safeParse(event.target.value); if (parsed.success) setDraft({ ...draft, joinRole: parsed.data }); }}><option value="super-admin">Super admins</option><option value="admin">Admins</option><option value="member">Members</option></DenSelect>
+            <span className="text-[color:var(--dls-text-secondary)]">Super admins can try everything the owner can, except deleting the organization or transferring ownership. Admins can try connectors, members and most settings.</span></label>
           <label className="grid gap-2 text-xs">Who can join<DenInput aria-label="Allowed email domains" placeholder="Anyone with the link" value={draft.domains} disabled={saving} onChange={event => setDraft({ ...draft, domains: event.target.value })} />
             <span className="text-[color:var(--dls-text-secondary)]">Optional. Email domains separated by commas, such as example.com.</span></label>
-          <div className="grid gap-1 rounded-md bg-[var(--dls-hover)] p-3 text-xs"><span className="font-medium">You become the owner of an Enterprise organization.</span><span className="text-[color:var(--dls-text-secondary)]">People who join become {draft.joinRole === "admin" ? "admins" : "members"}, never owners. When the sandbox ends, the link, Free Auto and its models stop; members and data stay.</span></div>
+          <div className="grid gap-1 rounded-md bg-[var(--dls-hover)] p-3 text-xs"><span className="font-medium">You become the owner of an Enterprise organization.</span><span className="text-[color:var(--dls-text-secondary)]">People who join become {roleLabel[draft.joinRole].toLowerCase()}, never owners. When the sandbox ends, the link, Free Auto and its models stop; members and data stay.</span></div>
           <div className="flex flex-wrap justify-end gap-2"><DenButton type="button" variant="secondary" size="sm" disabled={saving} onClick={() => setDraft(null)}>Cancel</DenButton><DenButton type="submit" size="sm" disabled={busy} loading={saving} data-testid="admin-sandbox-create-submit">Create sandbox</DenButton></div>
         </form>
       </section> : null}
@@ -183,7 +189,7 @@ function SandboxRow({ sandbox, busy, onRotate, onExtend, onClose, onJoinRole, on
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <DenSelect aria-label={`${sandbox.name}: people who join become`} value={sandbox.joinRole} disabled={busy} onChange={event => { const parsed = sandboxJoinRoleSchema.safeParse(event.target.value); if (parsed.success && parsed.data !== sandbox.joinRole) onJoinRole(parsed.data); }}><option value="member">Join as members</option><option value="admin">Join as admins</option></DenSelect>
+        <DenSelect aria-label={`${sandbox.name}: people who join become`} value={sandbox.joinRole} disabled={busy} onChange={event => { const parsed = sandboxJoinRoleSchema.safeParse(event.target.value); if (parsed.success && parsed.data !== sandbox.joinRole) onJoinRole(parsed.data); }}><option value="member">Join as members</option><option value="admin">Join as admins</option><option value="super-admin">Join as super admins</option></DenSelect>
         {credit ? <DenButton variant="secondary" size="sm" disabled={busy || credit.limitUsd + CREDIT_STEP_USD > SANDBOX_MAX_CREDIT_USD} onClick={() => onAddCredit(credit.limitUsd)}>Add {dollars(CREDIT_STEP_USD)}</DenButton> : null}
         {sandbox.state === "open" && sandbox.connectorBaseUrl && sandbox.sampleMicrosoft365 === false
           ? <DenButton variant="secondary" size="sm" disabled={busy} onClick={onAddMicrosoft} data-testid="admin-sandbox-add-microsoft">Add Microsoft 365</DenButton> : null}

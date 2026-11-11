@@ -852,7 +852,7 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
         memberLimit: z.number().int().min(1).max(SANDBOX_MAX_MEMBERS).describe("Seats"),
         creditUsd: z.number().int().min(1).max(SANDBOX_MAX_CREDIT_USD).optional().describe("Model spending cap in US dollars; omitted uses the deployment default"),
         allowedEmailDomains: z.array(z.string()).max(20).optional().describe("Only people with these email domains can join; omitted means anyone with the link"),
-        joinRole: z.enum(["member", "admin"]).optional().describe("What people who join become; default admin"),
+        joinRole: z.enum(["member", "admin", "super-admin"]).optional().describe("What people who join become; default super-admin"),
         withConnectors: z.boolean().optional().describe("Add the fictional workplace connectors (default true)"),
       }),
     },
