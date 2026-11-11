@@ -346,6 +346,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  denGreySidebar: {
+    label: "Den: grey sidebar, white pages",
+    description: "The Den dashboard shows its sidebar on a light grey band and every page on white, like the admin dashboard pictured on the website, instead of a white sidebar beside lightly tinted pages. Only colours change: navigation, page layouts and every control stay where they are. Turning it off restores the earlier colours at once.",
+    category: "experience",
+    added: "2026-11-11",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/den-grey-sidebar/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   teamSettingsSidebar: {
     label: "Den: team sections in a sidebar",
     description: "On Members › Teams, a team's page and Everyone's page list their sections (Role, Members, Access, Agents, Browser, Models, Workbot, Prompts, Desktop) in a grouped sidebar on the left instead of a row of tabs across the top. The Role, Agents and Browser sections get a heading with a tooltip that explains them, and a role that adds nothing says so. Turning it off restores the tabs and the earlier sections.",

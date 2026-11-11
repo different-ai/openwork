@@ -107,6 +107,13 @@ export const PERMISSIONS = {
     description: "View the team's computer inventory, owners, versions, availability and reported readiness. Does not grant control or access to files or screen content.",
     defaultOn: ADMIN,
   },
+  "computers.disconnect": {
+    area: "desktop",
+    label: "Disconnect team computers",
+    description: "Disconnect a member's signed-in computer from the organization, which signs OpenWork out there, and remove computers from the team list. Does not grant control or access to files, sessions or screen content.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
 
   // Organization
   "organization.update": {
