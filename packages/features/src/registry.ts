@@ -324,6 +324,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  ssoOidcSetupCheck: {
+    label: "SSO: check the OIDC issuer during setup",
+    description: "The OIDC setup form accepts the provider's issuer or its discovery URL, checks it while the administrator types and on save, shows the issuer and endpoints it found, and reports a wrong address on the field with the exact URL that was tried. Manual endpoints move behind a disclosure and reject a discovery URL as the issuer. Off: the form saves what was typed and reports discovery failures in the page banner.",
+    category: "administration",
+    added: "2026-11-11",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/sso-oidc-setup-check/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   featureIntros: {
     label: "Den: feature intros",
     description: "Den pages, sub-pages and tabs explain themselves while nothing is set up: a full-screen intro, info box or banner with one action that leads straight to setup, a quiet dot on tabs not viewed yet, and a ? button to reopen the intro. Turning it off restores the previous empty states.",

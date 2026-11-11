@@ -6,7 +6,8 @@ import { DenButton } from "../../_components/ui/button";
 import { DenSecretInput } from "../../_components/ui/secret-input";
 import { DenNotice } from "../../_components/ui/notice";
 import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
-import { getOrgAccessFlags, parseOrgSsoPayload, type DenOrgSsoConnection } from "../../_lib/den-org";
+import { getOrgAccessFlags, orgFeatureEnabled, parseOrgSsoPayload, type DenOrgSsoConnection } from "../../_lib/den-org";
+import { issuerProblemFromSave, manualIssuerProblem, OidcIssuerField, parseOidcIssuerCheck, type OidcIssuerCheck } from "./sso-oidc-issuer-field";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 function formatDateTime(value: string | null) {
@@ -107,6 +108,48 @@ export function SsoConnectionPanel({
   const [userInfoEndpoint, setUserInfoEndpoint] = useState("");
   const [tokenEndpointAuthentication, setTokenEndpointAuthentication] = useState<"" | "client_secret_basic" | "client_secret_post">("");
 
+  // ssoOidcSetupCheck: the issuer field checks the provider and reports on itself.
+  const setupCheck = orgFeatureEnabled(orgContext, "ssoOidcSetupCheck");
+  const [issuerCheck, setIssuerCheck] = useState<OidcIssuerCheck>({ state: "idle" });
+  const issuerCheckRun = useRef(0);
+
+  function changeOidcIssuer(value: string) {
+    issuerCheckRun.current += 1;
+    setIssuer(value);
+    setIssuerCheck({ state: "idle" });
+  }
+
+  /** Reports on the issuer under its field; the save runs the same check on the server. */
+  async function checkOidcIssuer(value: string, manual: boolean) {
+    const run = ++issuerCheckRun.current;
+    const typed = value.trim();
+    if (!typed || !orgId) {
+      setIssuerCheck({ state: "idle" });
+      return;
+    }
+    if (manual) {
+      const problem = manualIssuerProblem(typed);
+      setIssuerCheck(problem ? { state: "failed", message: problem } : { state: "idle" });
+      return;
+    }
+    let host = typed;
+    try {
+      host = new URL(typed).host;
+    } catch {
+      setIssuerCheck({ state: "failed", message: "Enter the full address, starting with https://." });
+      return;
+    }
+    setIssuerCheck({ state: "checking", host });
+    try {
+      const { response, payload } = await requestJson("/v1/sso/oidc/check", { method: "POST", headers: getOrgScopedHeaders(), body: JSON.stringify({ issuer: typed }) }, 15000);
+      if (run !== issuerCheckRun.current) return;
+      // A check that could not run says nothing: the save still checks.
+      setIssuerCheck(response.ok ? parseOidcIssuerCheck(payload) : { state: "idle" });
+    } catch {
+      if (run === issuerCheckRun.current) setIssuerCheck({ state: "idle" });
+    }
+  }
+
   function setConnection(next: DenOrgSsoConnection | null) {
     setConnectionState(next);
     onConnectionChange?.(next);
@@ -177,6 +220,8 @@ export function SsoConnectionPanel({
     setFormMode(nextConnection.kind);
     setName(nextConnection.name ?? "");
     setIssuer(nextConnection.issuer);
+    issuerCheckRun.current += 1;
+    setIssuerCheck({ state: "idle" });
     setDomain(nextConnection.domains.join(", ") || nextConnection.domain);
     if (nextConnection.saml) {
       setEntryPoint(nextConnection.saml.entryPoint ?? "");
@@ -185,7 +230,8 @@ export function SsoConnectionPanel({
     if (nextConnection.oidc) {
       setClientId(nextConnection.oidc.clientId ?? "");
       setScopes(nextConnection.oidc.scopes.length > 0 ? nextConnection.oidc.scopes.join(" ") : "openid email profile");
-      setSkipDiscovery(nextConnection.oidc.skipDiscovery);
+      // Saved connections always store their endpoints; with the setup check the form starts from discovery again.
+      setSkipDiscovery(setupCheck ? false : nextConnection.oidc.skipDiscovery);
       setAuthorizationEndpoint(nextConnection.oidc.authorizationEndpoint ?? "");
       setTokenEndpoint(nextConnection.oidc.tokenEndpoint ?? "");
       setJwksEndpoint(nextConnection.oidc.jwksEndpoint ?? "");
@@ -312,6 +358,13 @@ export function SsoConnectionPanel({
 
           const { response, payload } = await requestJson(path, { method: "POST", headers: getOrgScopedHeaders(), body: JSON.stringify(body) }, 20000);
           if (!response.ok) {
+            const issuerProblem = setupCheck && formMode === "oidc" && response.status === 400 ? issuerProblemFromSave(payload) : null;
+            if (issuerProblem) {
+              // The issuer was refused: say so on its field, not in the page banner.
+              issuerCheckRun.current += 1;
+              setIssuerCheck({ state: "failed", message: issuerProblem });
+              return;
+            }
             throw getRequestError(payload, response, `Failed to save SSO settings (${response.status}).`);
           }
 
@@ -542,6 +595,27 @@ export function SsoConnectionPanel({
   }
 
   const ssoFormDisabled = formReadOnly || saving || !orgContext.entitlements.sso;
+  const oidcSetupCheck = setupCheck && formMode === "oidc";
+  const manualEndpointFields = (
+    <>
+      <label className="block text-[14px] text-gray-700 md:col-span-2">
+        <span className="mb-2 block font-medium">Authorization endpoint</span>
+        <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={authorizationEndpoint} onChange={(event) => setAuthorizationEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/authorize" disabled={ssoFormDisabled} />
+      </label>
+      <label className="block text-[14px] text-gray-700 md:col-span-2">
+        <span className="mb-2 block font-medium">Token endpoint</span>
+        <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={tokenEndpoint} onChange={(event) => setTokenEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/token" disabled={ssoFormDisabled} />
+      </label>
+      <label className="block text-[14px] text-gray-700 md:col-span-2">
+        <span className="mb-2 block font-medium">JWKS endpoint</span>
+        <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={jwksEndpoint} onChange={(event) => setJwksEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/keys" disabled={ssoFormDisabled} />
+      </label>
+      <label className="block text-[14px] text-gray-700 md:col-span-2">
+        <span className="mb-2 block font-medium">UserInfo endpoint</span>
+        <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={userInfoEndpoint} onChange={(event) => setUserInfoEndpoint(event.target.value)} placeholder="Optional" disabled={ssoFormDisabled} />
+      </label>
+    </>
+  );
 
   return (
     <>
@@ -564,11 +638,31 @@ export function SsoConnectionPanel({
                     <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={name} onChange={(event) => setName(event.target.value)} maxLength={120} placeholder={connection?.displayName ?? "Okta"} disabled={ssoFormDisabled} data-testid="sso-connection-name" />
                   </label>
                 ) : null}
-                <label className="block text-[14px] text-gray-700">
-                  <span className="mb-2 block font-medium">{formMode === "saml" ? "IdP Issuer URL" : "Issuer URL"}</span>
-                  <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={issuer} onChange={(event) => setIssuer(event.target.value)} placeholder="https://idp.example.com" disabled={ssoFormDisabled} />
-                </label>
-                <label className="block text-[14px] text-gray-700">
+                {oidcSetupCheck ? (
+                  <OidcIssuerField
+                    value={issuer}
+                    onChange={changeOidcIssuer}
+                    onCheck={(value) => void checkOidcIssuer(value, skipDiscovery)}
+                    check={issuerCheck}
+                    onUseIssuer={(next) => {
+                      changeOidcIssuer(next);
+                      void checkOidcIssuer(next, skipDiscovery);
+                    }}
+                    manual={skipDiscovery}
+                    onManualChange={(next) => {
+                      setSkipDiscovery(next);
+                      void checkOidcIssuer(issuer, next);
+                    }}
+                    manualFields={manualEndpointFields}
+                    disabled={ssoFormDisabled}
+                  />
+                ) : (
+                  <label className="block text-[14px] text-gray-700">
+                    <span className="mb-2 block font-medium">{formMode === "saml" ? "IdP Issuer URL" : "Issuer URL"}</span>
+                    <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={issuer} onChange={(event) => setIssuer(event.target.value)} placeholder="https://idp.example.com" disabled={ssoFormDisabled} />
+                  </label>
+                )}
+                <label className={`block text-[14px] text-gray-700 ${oidcSetupCheck ? "md:col-span-2" : ""}`}>
                   <span className="mb-2 block font-medium">{multiple ? "Email domains" : "Domain"}</span>
                   <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder={multiple ? "example.com, example.org" : "example.com"} disabled={ssoFormDisabled} data-testid="sso-connection-domains" />
                 </label>
@@ -614,30 +708,15 @@ export function SsoConnectionPanel({
                         <option value="client_secret_post">client_secret_post</option>
                       </select>
                     </label>
-                    <label className="flex items-center gap-3 rounded-[18px] border border-gray-200 px-4 py-3 text-[14px] text-gray-700 md:col-span-2">
-                      <input type="checkbox" checked={skipDiscovery} onChange={(event) => setSkipDiscovery(event.target.checked)} disabled={ssoFormDisabled} />
-                      Use manual OIDC endpoints instead of discovery
-                    </label>
-                    {skipDiscovery ? (
+                    {oidcSetupCheck ? null : (
                       <>
-                        <label className="block text-[14px] text-gray-700 md:col-span-2">
-                          <span className="mb-2 block font-medium">Authorization endpoint</span>
-                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={authorizationEndpoint} onChange={(event) => setAuthorizationEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/authorize" disabled={ssoFormDisabled} />
+                        <label className="flex items-center gap-3 rounded-[18px] border border-gray-200 px-4 py-3 text-[14px] text-gray-700 md:col-span-2">
+                          <input type="checkbox" checked={skipDiscovery} onChange={(event) => setSkipDiscovery(event.target.checked)} disabled={ssoFormDisabled} />
+                          Use manual OIDC endpoints instead of discovery
                         </label>
-                        <label className="block text-[14px] text-gray-700 md:col-span-2">
-                          <span className="mb-2 block font-medium">Token endpoint</span>
-                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={tokenEndpoint} onChange={(event) => setTokenEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/token" disabled={ssoFormDisabled} />
-                        </label>
-                        <label className="block text-[14px] text-gray-700 md:col-span-2">
-                          <span className="mb-2 block font-medium">JWKS endpoint</span>
-                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={jwksEndpoint} onChange={(event) => setJwksEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/keys" disabled={ssoFormDisabled} />
-                        </label>
-                        <label className="block text-[14px] text-gray-700 md:col-span-2">
-                          <span className="mb-2 block font-medium">UserInfo endpoint</span>
-                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={userInfoEndpoint} onChange={(event) => setUserInfoEndpoint(event.target.value)} placeholder="Optional" disabled={ssoFormDisabled} />
-                        </label>
+                        {skipDiscovery ? manualEndpointFields : null}
                       </>
-                    ) : null}
+                    )}
                   </>
                 )}
               </div>
