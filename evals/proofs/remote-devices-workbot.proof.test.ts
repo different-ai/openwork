@@ -7,11 +7,9 @@ const test = spec.world(remoteDevicesWorkbotWorld, { timeout: 600_000, resources
 
 const listSchema = z.object({ devices: z.array(z.object({ label: z.string(), provider: z.string(), availability: z.string(), statusDetail: z.string().nullable() })) });
 
-test("a person sees their computers in Workbot, and a platform admin sees why one of them is not responding", async ({ world, user, probe, step, evidence }) => {
+test("a person sees only their Workbot computers, including an honest unavailable state, while Devices is enabled", async ({ world, user, probe, step, evidence }) => {
   const person = user.on(world.web);
   const personProbe = probe.on(world.web);
-  const admin = user.on(world.admin);
-  const adminProbe = probe.on(world.admin);
 
   // Workbot checks sign-in on load rather than polling: a changed rollout shows on the next load once its server reports it.
   const reloadWhenDevices = async (enabled: boolean) => {
@@ -68,47 +66,15 @@ test("a person sees their computers in Workbot, and a platform admin sees why on
     await person.screenshot();
   });
 
-  await step("a platform admin finds the same computers in /admin, with the one that has problems marked", async () => {
-    await admin.navigate(world.adminUrl(`/admin/devices?organizationId=${world.organizationId}`));
-    await admin.see({ role: "heading", label: "Devices" }, { timeoutMs: 60_000 });
-    await admin.see({ text: "Alex's MacBook Pro" }, { timeoutMs: 30_000 });
-    await admin.see({ text: "Design review Mac" });
-    await admin.see({ text: "Shared with the organization" });
-    await admin.see({ testId: "admin-devices-problems" });
-    const rows = await adminProbe.dom('[data-testid^="admin-device-row-"]');
-    const devices = await world.adminDevices();
-    const troubled = devices.filter(device => device.recentProblems > 0).map(device => device.label);
-    const ok = rows.elements.length === 3 && troubled.length === 1 && troubled[0] === "Workbot's computer";
-    evidence.recordAssertionEvidence("Every computer of the organization, one with problems", `rows=${rows.elements.length}; with problems in the last 24 hours: ${troubled.join(", ")}`, ok);
-    expect(ok).toBe(true);
-    await admin.screenshot();
-  });
-
-  await step("opening that computer shows what happened, the fixed code, and which features its owner has", async () => {
-    const computer = (await world.adminDevices()).find(device => device.provider === "workbot");
-    if (!computer) throw new Error("Workbot's computer is missing from /admin.");
-    await admin.click({ testId: `admin-device-row-${computer.id}` });
-    await admin.see({ testId: `admin-device-detail-${computer.id}` }, { timeoutMs: 30_000 });
-    await admin.see({ text: "Workbot started using this computer" }, { timeoutMs: 30_000 });
-    await admin.see({ text: "code=desktop_unavailable" });
-    const failures = await adminProbe.dom('[data-testid^="admin-device-event-"][data-level="error"]');
-    const devicesOn = await adminProbe.dom('[data-testid="admin-device-feature-remoteDevices"]');
-    const ok = failures.elements.length >= 1 && devicesOn.elements.length === 1 && devicesOn.elements[0]?.text.includes("On") === true;
-    evidence.recordAssertionEvidence("The device's own record explains its state", `error events=${failures.elements.length}, each "Did not respond" with code desktop_unavailable; Devices for the owner: ${devicesOn.elements[0]?.text ?? "missing"}`, ok);
-    expect(ok).toBe(true);
-    await admin.screenshot();
-  });
-
-  await step("turning Devices off removes the page from Workbot, while /admin keeps the record", async () => {
+  await step("turning Devices off removes the page and refuses the personal Workbot list", async () => {
     await world.setEnabled(false);
     await person.navigate(new URL("/", await personProbe.url()).toString());
     await reloadWhenDevices(false);
     await person.see({ text: "Acme AI Gateway is working." });
     await person.notSee({ role: "button", label: "Devices" });
     const refused = await world.call("/v1/workbot/devices");
-    const kept = await world.adminDevices();
-    const ok = refused.status === 403 && kept.length === 3;
-    evidence.recordAssertionEvidence("Off for people, still readable for platform admins", `GET /v1/workbot/devices → ${refused.status}; /admin still lists ${kept.length} computers`, ok);
+    const ok = refused.status === 403;
+    evidence.recordAssertionEvidence("Devices is off for the signed-in person", `GET /v1/workbot/devices → ${refused.status}; no Devices navigation`, ok);
     expect(ok).toBe(true);
     await person.screenshot();
   });

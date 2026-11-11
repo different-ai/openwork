@@ -729,7 +729,7 @@
                 true,
                 false
               ],
-              "description": "Devices: One list of the computers a person can reach through OpenWork: their own Macs and PCs running OpenWork Desktop, Workbot's cloud computers, and virtual computers registered for them or for the whole organization (Freestyle or Daytona VMs, Mac sandboxes). Shown in Settings > Devices on Desktop and on Workbot's Devices page, with whether each is online and what it needs. Off, both lists are hidden and desktops stop reporting; computer use, remote tasks and Workbot's computer work as before. Renders DEN_FEATURE_REMOTE_DEVICES."
+              "description": "Computers: Computers in Den lets organization owners and admins view their team's reported desktops, cloud computers, registered virtual computers and OpenWork instances, with owners, status, last contact, versions and supported inventory. Desktop Settings > Devices and Workbot's Devices page show each member their own and shared computers. Registration does not provision a computer or grant provider access. Off, these views are hidden and desktop reports stop; existing computer use and remote tasks are unchanged. Renders DEN_FEATURE_REMOTE_DEVICES."
             },
             "remoteSessionPush": {
               "enum": [

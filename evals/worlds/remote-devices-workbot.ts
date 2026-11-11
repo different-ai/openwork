@@ -4,13 +4,12 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { bootWorkbot, enableWorkbot, signInWorkbot } from "../../worlds/lib/workbot.ts";
 import { ACME_MODEL, gatewayEnvironment, seedAcmeGateway, startAcmeGateway, startAcmeUpstream } from "../../worlds/lib/acme-gateway.ts";
-import { adminRemoteDeviceListResponseSchema } from "@openwork/types/den/remote-devices";
 import { denFetch } from "../packages/behaviors/src/den.ts";
 
 /**
- * The real signed-in Workbot and Den, with a second browser on Den's /admin for
- * the same person (the seeded owner is the platform admin). No cloud computer
- * is created: this fixture has no desktop provider, so opening the Computer
+ * The real signed-in Workbot and Den. Organization management is proved
+ * separately in den-computers, with a non-platform organization admin.
+ * No cloud computer is created: this fixture has no desktop provider, so opening the Computer
  * view fails honestly, which is exactly what the devices registry should show.
  */
 export async function remoteDevicesWorkbotWorld(seed: Seed) {
@@ -69,17 +68,13 @@ export async function remoteDevicesWorkbotWorld(seed: Seed) {
       await web.client.send("Network.setCookie", { name: pair.slice(0, equal), value: pair.slice(equal + 1), url: workbot.workbotUrl, httpOnly: true, sameSite: "Lax" });
     }
     await web.client.send("Page.navigate", { url: `${workbot.workbotUrl}/` });
-    const admin = await seed.web({ den: workbot.den, signedInAs: workbot.den.admin, startPath: "/admin", headless: true, viewport });
     const send = async (method: "PUT" | "POST", path: string, body: unknown) => {
       const result = await denFetch(workbot.den.admin, path, { method, headers: owner, body: JSON.stringify(body) });
       if (!result.response.ok) throw new Error(`${method} ${path} failed: HTTP ${result.response.status} ${result.text.slice(0, 200)}`);
     };
     return {
       web,
-      admin,
       call: signed.call,
-      organizationId: workbot.orgId,
-      adminUrl: (path: string) => new URL(path, workbot.den.ref.webUrl).toString(),
       /** Workbot's computer and Devices, on or off together for the seeded organization. */
       setEnabled: (value: boolean) => enableWorkbot(workbot.den, { computerUse: value, browserUse: value, remoteComputers: value, remoteDevices: value }),
       /** What the person's signed-in OpenWork Desktop sends on launch, through the route it uses. */
@@ -93,12 +88,6 @@ export async function remoteDevicesWorkbotWorld(seed: Seed) {
       }),
       /** An admin registers a Mac sandbox for everyone, as Settings › Devices does. */
       shareMacSandbox: () => send("POST", "/v1/remote-devices", { label: "Design review Mac", provider: "mac_host", platform: "darwin", externalId: "local:design-review", shared: true }),
-      /** What /admin › Devices reads for this organization. */
-      async adminDevices() {
-        const result = await denFetch(workbot.den.admin, `/v1/admin/remote-devices?organizationId=${workbot.orgId}`, { headers: owner });
-        if (!result.response.ok) throw new Error(`Admin devices failed: HTTP ${result.response.status}`);
-        return adminRemoteDeviceListResponseSchema.parse(result.body).devices;
-      },
       async [Symbol.asyncDispose]() { await stack.disposeAsync(); },
     };
   } catch (error) { await stack.disposeAsync(); throw error; }

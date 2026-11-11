@@ -1,4 +1,3 @@
-import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   REMOTE_DEVICE_AVAILABILITIES,
   REMOTE_DEVICE_KINDS,
@@ -11,8 +10,8 @@ import type { Hono } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { requireFeature } from "../../features.js"
-import { orgMemberRoute, queryValidator, requireOrgPermission } from "../../middleware/index.js"
-import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { orgMemberRoute, paramValidator, queryValidator, requireOrgPermission } from "../../middleware/index.js"
+import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { listOrganizationComputerRecords, readOrganizationComputerRecord } from "../../remote-devices.js"
 import { readOrganizationComputerInstance } from "../../organization-computer-instances.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -35,6 +34,8 @@ const listQuerySchema = z.object({
   instanceStatus: z.enum(["provisioning", "healthy", "failed", "stopped"]).optional(),
   instanceProvider: z.string().max(64).optional(),
 })
+const deviceParamsSchema = z.object({ deviceId: denTypeIdSchema("remoteDevice") })
+const instanceParamsSchema = z.object({ instanceId: denTypeIdSchema("worker") })
 const describeComputerRead = (options: DescribeRouteOptions & { "x-mcp": true }) => describeRoute(options)
 
 /** Organization inventory is separate from the member's own/shared, usable computers. */
@@ -62,13 +63,11 @@ export function registerOrgComputerRoutes<T extends { Variables: OrgRouteVariabl
     summary: "Get registered OpenWork instance inventory",
     description: "A registered local or cloud worker host in the current organization. Reported status and heartbeat only, never inferred OS or online state. No endpoints, tokens, provider reference blobs or workspace paths. Requires Devices and computers.view.",
     responses: { 200: jsonResponse("Registered instance returned.", organizationComputerInstanceDetailResponseSchema), ...errors },
-  }), orgMemberRoute(), requireFeature("remoteDevices"), requireOrgPermission("computers.view"), async (c) => {
+  }), orgMemberRoute(), requireFeature("remoteDevices"), requireOrgPermission("computers.view"), paramValidator(instanceParamsSchema), async (c) => {
     c.header("Cache-Control", "no-store")
     const context = c.get("organizationContext")
     if (!context) return c.json({ error: "organization_not_found" }, 404)
-    const id = c.req.param("instanceId")
-    if (!isDenTypeId("worker", id)) return c.json({ error: "invalid_request", message: "Invalid instance id." }, 400)
-    const detail = await readOrganizationComputerInstance(context.organization.id, normalizeDenTypeId("worker", id))
+    const detail = await readOrganizationComputerInstance(context.organization.id, c.req.valid("param").instanceId)
     return detail ? c.json(detail) : c.json({ error: "not_found", message: "Instance not found." }, 404)
   })
   app.get(`${base}/:deviceId`, describeComputerRead({
@@ -76,13 +75,11 @@ export function registerOrgComputerRoutes<T extends { Variables: OrgRouteVariabl
     summary: "Get team computer inventory details",
     description: "One computer in the current organization, its reported OS, architecture, adapters, readiness, versions, fixed events, runner capabilities and workspace count. Owner feature state is resolved only within this organization. No credentials, workspace paths, screen content or conversation titles. Requires Devices and computers.view.",
     responses: { 200: jsonResponse("Team computer returned.", organizationComputerDetailResponseSchema), ...errors },
-  }), orgMemberRoute(), requireFeature("remoteDevices"), requireOrgPermission("computers.view"), async (c) => {
+  }), orgMemberRoute(), requireFeature("remoteDevices"), requireOrgPermission("computers.view"), paramValidator(deviceParamsSchema), async (c) => {
     c.header("Cache-Control", "no-store")
     const context = c.get("organizationContext")
     if (!context) return c.json({ error: "organization_not_found" }, 404)
-    const id = c.req.param("deviceId")
-    if (!isDenTypeId("remoteDevice", id)) return c.json({ error: "invalid_request", message: "Invalid device id." }, 400)
-    const detail = await readOrganizationComputerRecord(context.organization.id, normalizeDenTypeId("remoteDevice", id))
+    const detail = await readOrganizationComputerRecord(context.organization.id, c.req.valid("param").deviceId)
     return detail ? c.json(detail) : c.json({ error: "not_found", message: "Computer not found." }, 404)
   })
 }
