@@ -97,7 +97,7 @@ describe("device control deployment UX gate", () => {
 
   test("turning off cannot undo a completed enrollment", () => {
     const h = harness();
-    h.state({ state: "signed_in", email: "member@example.test", org: { id: "org-b", name: "Second workspace" }, runner: "unknown" });
+    h.state({ state: "signed_in", email: "member@example.test", org: { id: "org-b", name: "Second workspace" } });
     expect(h.control.status().state).toBe("signed_in");
     expect(h.cancel).not.toHaveBeenCalled();
   });

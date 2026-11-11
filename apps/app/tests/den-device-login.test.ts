@@ -87,7 +87,7 @@ describe("device enrollment uses the handoff transaction", () => {
       const started = await denDeviceLogin.start(options);
       expect(started).toHaveProperty("expiresAt");
       const status = await terminal();
-      expect(status).toEqual({ state: "signed_in", email: user.email, org: { id: orgB.id, name: orgB.name }, runner: "unknown" });
+      expect(status).toEqual({ state: "signed_in", email: user.email, org: { id: orgB.id, name: orgB.name } });
       expect(readDenSettings().authToken).toBe("new-device-session");
       expect(readDenSettings().activeOrgId).toBe(orgB.id);
       expect(readOrgSelectionPending().pending).toBe(false);

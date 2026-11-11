@@ -12,7 +12,7 @@ import { isDesktopRuntime } from "./runtime-env";
 
 /** Finite app-owned transport, also for packaged file:// renderers and alternate loopback ports. */
 export function fetchDenDeviceLogin(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  return isDesktopRuntime() ? desktopFetchViaMain(input, init, 10_000) : fetch(input, init);
+  return isDesktopRuntime() ? desktopFetchViaMain(input, { ...init, cancellable: true }, 10_000) : fetch(input, init);
 }
 
 export function isConfiguredDenDeviceDestination(options: DeviceLoginStartOptions): boolean {

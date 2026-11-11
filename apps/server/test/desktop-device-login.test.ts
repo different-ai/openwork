@@ -13,6 +13,8 @@ const bridgeToken = "synthetic-local-bridge-token-must-not-print";
 
 async function fixture(options: {
   terminal?: string; unavailable?: boolean; unsafe?: boolean; nonlocal?: boolean;
+  missingDiscovery?: boolean; unreachable?: boolean; nodeAdapter?: boolean; userCode?: string; verificationUri?: string;
+  verificationUriComplete?: string; email?: string; orgName?: string;
   dropStart?: boolean; interruptAt?: "preflight" | "status"; historicalUnsupported?: boolean;
 } = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "desktop-device-login-")));
@@ -33,9 +35,9 @@ async function fixture(options: {
     if (input.id === "auth.device-login.start") {
       started = true;
       if (options.dropStart) { response.destroy(); return; }
-      result = { userCode: "TEST-CODE", verificationUri: "https://den.example.test/device", expiresAt: Date.now() + 60_000, token: secret, deviceCode };
+      result = { userCode: options.userCode ?? "ABCDEFGH", verificationUri: options.verificationUri ?? "https://den.example.test/device", verificationUriComplete: options.verificationUriComplete, expiresAt: Date.now() + 60_000, token: secret, deviceCode };
     } else if (input.id === "auth.device-login.cancel") result = {};
-    else result = { state: started ? options.terminal ?? "signed_in" : options.historicalUnsupported ? "unsupported" : "pending", email: "person@example.test", org: { id: "org-b", name: "Organization B" }, runner: "unknown", token: secret, deviceCode };
+    else result = { state: started ? options.terminal ?? "signed_in" : options.historicalUnsupported ? "unsupported" : "pending", email: options.email ?? "person@example.test", org: { id: "org-b", name: options.orgName ?? "Organization B" }, token: secret, deviceCode };
     if (input.id === "auth.device-login.status" && options.interruptAt === (started ? "status" : "preflight")) {
       interruptChild?.();
       await delay(50);
@@ -47,11 +49,16 @@ async function fixture(options: {
   const address = server.address();
   assert.ok(address && typeof address === "object");
   const discovery = join(directory, "openwork-ui-control.json");
-  await writeFile(discovery, JSON.stringify({ baseUrl: options.nonlocal ? "https://example.test" : `http://127.0.0.1:${address.port}`, token: bridgeToken }), { mode: 0o600 });
+  if (!options.missingDiscovery) await writeFile(discovery, JSON.stringify({ baseUrl: options.nonlocal ? "https://example.test" : `http://127.0.0.1:${address.port}`, token: bridgeToken }), { mode: 0o600 });
+  if (options.unreachable) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   return {
     calls, inputs,
     async run(argv: string[] = []) {
-      const child = spawn(process.execPath, [join(import.meta.dirname, "../bin/openwork-server.mjs"), "login", ...argv], {
+      const moduleUrl = new URL("../src/desktop-device-login.ts", import.meta.url).href;
+      const childArgs = options.nodeAdapter
+        ? ["--import", "tsx", "--input-type=module", "-e", `import { runDesktopDeviceLogin } from ${JSON.stringify(moduleUrl)}; process.exitCode = await runDesktopDeviceLogin(${JSON.stringify(argv)});`]
+        : [join(import.meta.dirname, "../bin/openwork-server.mjs"), "login", ...argv];
+      const child = spawn(process.execPath, childArgs, {
         env: { ...process.env, NODE_OPTIONS: "--conditions=development", OPENWORK_UI_CONTROL_DISCOVERY: discovery }, stdio: ["ignore", "pipe", "pipe"], detached: true,
       });
       // A terminal sends Ctrl-C to the foreground process group, including the
@@ -65,25 +72,90 @@ async function fixture(options: {
         child.on("error", reject);
         child.on("close", (status, signal) => resolve(status ?? (signal === "SIGINT" ? 130 : null)));
       });
-      for (const credential of [secret, deviceCode, bridgeToken]) assert.ok(!`${stdout}${stderr}`.includes(credential), "no private credential in captured command output");
+      for (const credential of [secret, deviceCode, bridgeToken, directory]) assert.ok(!`${stdout}${stderr}`.includes(credential), "no private credential or profile path in captured command output");
+      assert.ok(!`${stdout}${stderr}`.includes("Runner:"), "no unobserved runner claim in command output");
       return { code, stdout, stderr };
     },
     async [Symbol.asyncDispose]() {
       server.closeAllConnections();
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      if (server.listening) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
       await rm(directory, { recursive: true, force: true });
     },
   };
 }
 
-test("shell prints only public code, final identity and existing runner state", async () => {
+test("shell prints browser instructions, formatted public code and only final identity", async () => {
   await using world = await fixture();
   const result = await world.run();
   assert.equal(result.code, 0);
-  assert.match(result.stdout, /Code: TEST-CODE/);
-  assert.match(result.stdout, /Signed in as person@example.test in Organization B\. Runner: unknown/);
+  assert.equal(result.stderr, "");
+  assert.equal(result.stdout, [
+    "To sign in, open this link in a browser on any device:",
+    "https://den.example.test/device",
+    "Then check the code ABCD-EFGH and choose the organization.",
+    "Waiting for approval…",
+    "Signed in as person@example.test in Organization B.",
+    "",
+  ].join("\n"));
   assert.deepEqual(world.calls, ["auth.device-login.status", "auth.device-login.start", "auth.device-login.status"]);
 });
+
+test("Node adapter uses the same authenticated bridge, instructions and final identity", async () => {
+  await using world = await fixture({ nodeAdapter: true });
+  const result = await world.run();
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, /\nhttps:\/\/den\.example\.test\/device\n/);
+  assert.match(result.stdout, /Then check the code ABCD-EFGH and choose the organization\./);
+  assert.match(result.stdout, /Signed in as person@example.test in Organization B\.\n$/);
+  assert.deepEqual(world.calls, ["auth.device-login.status", "auth.device-login.start", "auth.device-login.status"]);
+});
+
+test("shell formats the code like approval UI and strips terminal control characters from identity", async () => {
+  await using world = await fixture({
+    userCode: "ab\tcd-ef\rgh", email: "person\r\n@example.test", orgName: "Organization\u0000 B\u009b",
+    verificationUriComplete: "https://den.example.test/device?user_code=ABCDEFGH",
+  });
+  const result = await world.run();
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /\nhttps:\/\/den\.example\.test\/device\?user_code=ABCDEFGH\n/);
+  assert.match(result.stdout, /Then check the code ABCD-EFGH and choose the organization\./);
+  assert.match(result.stdout, /Signed in as person@example.test in Organization B\.\n$/);
+  assert.doesNotMatch(result.stdout, /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+});
+
+for (const verificationUri of ["file:///device", "javascript:alert(1)", "https://person:secret@example.test/device", "https://den.example.test/\ndevice"]) {
+  test(`shell refuses an unsafe approval URL without printing it: ${new URL(verificationUri).protocol}`, async () => {
+    await using world = await fixture({ verificationUri });
+    const result = await world.run();
+    assert.equal(result.code, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /^Device sign-in failed\./);
+    assert.equal(world.calls.at(-1), "auth.device-login.cancel");
+  });
+}
+
+test("shell refuses a malformed public code before showing browser instructions", async () => {
+  await using world = await fixture({ userCode: "not-a-device-code" });
+  const result = await world.run();
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(world.calls.at(-1), "auth.device-login.cancel");
+});
+
+for (const options of [{ missingDiscovery: true }, { unreachable: true }]) {
+  test(`shell gives actionable startup advice for ${options.missingDiscovery ? "missing discovery" : "an unreachable app"}`, async () => {
+    await using world = await fixture(options);
+    const result = await world.run();
+    assert.equal(result.code, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Cannot reach the local OpenWork app\. Start OpenWork/);
+    if (process.platform === "darwin") assert.match(result.stderr, /open -a OpenWork/);
+    assert.match(result.stderr, /run this command again/);
+    assert.doesNotMatch(result.stderr, /unsafe|owner-only/);
+    assert.deepEqual(world.calls, []);
+  });
+}
 
 test("shell forwards an explicit replacement and destination without reading Den credentials", async () => {
   await using world = await fixture();
@@ -187,7 +259,11 @@ test("Windows fails closed with the sign-in link, before discovery or network ac
 for (const options of [{ unsafe: true }, { nonlocal: true }]) {
   test(`shell refuses ${options.unsafe ? "unsafe profile custody" : "a non-loopback destination"} before dispatch`, async () => {
     await using world = await fixture(options);
-    assert.equal((await world.run()).code, 1);
+    const result = await world.run();
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /cannot safely use this desktop profile/);
+    assert.match(result.stderr, /owner-only/);
+    assert.doesNotMatch(result.stderr, /Cannot reach|Start OpenWork|open -a/);
     assert.deepEqual(world.calls, []);
   });
 }
