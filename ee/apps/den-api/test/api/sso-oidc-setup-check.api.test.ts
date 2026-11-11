@@ -98,3 +98,32 @@ test("flag on: a discovery URL saves the connection under the provider's issuer 
   assert.equal(field(saved.body, "connection", "oidc", "jwksEndpoint"), `${idp.issuer}/jwks`)
   text(field(saved.body, "connection", "id"), "connection id")
 })
+
+test("domain check: saving again keeps the same TXT value, and with the flag on a failed check says which record failed", async () => {
+  // A public issuer, so dev mode does not mark the domain verified on save.
+  const { kind: _kind, ...manual } = idp.registration({ skipDiscovery: true })
+  const publicIssuer = { ...manual, issuer: `https://idp.${domain}` }
+
+  assert.equal((await den.setFeature(orgId, "ssoOidcSetupCheck", false)).status < 300, true)
+  const first = await asOwner("POST", "/v1/sso/oidc", publicIssuer)
+  assert.equal(first.status, 201, summary(first))
+  assert.equal(field(first.body, "connection", "domainVerified"), false)
+  const value = text(field(first.body, "domainVerificationToken"), "TXT value")
+
+  const again = await asOwner("POST", "/v1/sso/oidc", publicIssuer)
+  assert.equal(again.status, 201, summary(again))
+  assert.equal(field(again.body, "domainVerificationToken"), value, "a save must not replace a value an administrator may already have published")
+
+  const off = await asOwner("POST", "/v1/sso/verify-domain", {})
+  assert.equal(off.status, 400, summary(off))
+  assert.equal(field(off.body, "domainVerification"), undefined)
+
+  assert.equal((await den.setFeature(orgId, "ssoOidcSetupCheck", true)).status < 300, true)
+  const on = await asOwner("POST", "/v1/sso/verify-domain", {})
+  assert.equal(on.status, 400, summary(on))
+  const dnsName = text(field(again.body, "connection", "domainVerificationDnsName"), "record name")
+  assert.equal(field(on.body, "domainVerification", "dnsName"), dnsName)
+  assert.equal(field(on.body, "domainVerification", "domain"), domain)
+  // No resolver has a record under the reserved .example name; offline runs cannot reach one at all.
+  assert.ok(["record_missing", "lookup_failed"].includes(String(field(on.body, "domainVerification", "reason"))), summary(on))
+})

@@ -326,7 +326,7 @@ export const FEATURES = defineFeatures({
   },
   ssoOidcSetupCheck: {
     label: "SSO: check the OIDC issuer during setup",
-    description: "The OIDC setup form accepts the provider's issuer or its discovery URL, checks it while the administrator types and on save, shows the issuer and endpoints it found, and reports a wrong address on the field with the exact URL that was tried. Manual endpoints move behind a disclosure and reject a discovery URL as the issuer. Off: the form saves what was typed and reports discovery failures in the page banner.",
+    description: "The OIDC setup form accepts the provider's issuer or its discovery URL, checks it while the administrator types and on save, shows the issuer and endpoints it found, and reports a wrong address on the field with the exact URL that was tried. Manual endpoints move behind a disclosure and reject a discovery URL as the issuer. The domain verification panel leads with the next step after a save and, when a check fails, says whether the TXT record is missing, has another value, could not be looked up, or the value expired. Off: the form saves what was typed and reports discovery and domain check failures in the page banner.",
     category: "administration",
     added: "2026-11-11",
     since: "2026-11",

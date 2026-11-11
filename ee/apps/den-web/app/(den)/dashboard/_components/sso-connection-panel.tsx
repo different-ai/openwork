@@ -9,6 +9,7 @@ import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/
 import { getOrgAccessFlags, orgFeatureEnabled, parseOrgSsoPayload, type DenOrgSsoConnection } from "../../_lib/den-org";
 import { issuerProblemFromSave, manualIssuerProblem, OidcIssuerField, parseOidcIssuerCheck, type OidcIssuerCheck } from "./sso-oidc-issuer-field";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { parseDomainVerificationProblem, SsoDomainVerificationSteps, type DomainVerificationProblem } from "./sso-domain-verification-steps";
 
 function formatDateTime(value: string | null) {
   if (!value) return "Not configured";
@@ -111,6 +112,9 @@ export function SsoConnectionPanel({
   // ssoOidcSetupCheck: the issuer field checks the provider and reports on itself.
   const setupCheck = orgFeatureEnabled(orgContext, "ssoOidcSetupCheck");
   const [issuerCheck, setIssuerCheck] = useState<OidcIssuerCheck>({ state: "idle" });
+  // ssoOidcSetupCheck: the domain panel leads with the next step after a save, and explains a failed check.
+  const [justSaved, setJustSaved] = useState(false);
+  const [domainProblem, setDomainProblem] = useState<DomainVerificationProblem | null>(null);
   const issuerCheckRun = useRef(0);
 
   function changeOidcIssuer(value: string) {
@@ -376,6 +380,8 @@ export function SsoConnectionPanel({
           setConnection(parsed.connection);
           syncFormFromConnection(parsed.connection);
           setDomainVerificationToken(parsed.domainVerificationToken);
+          setJustSaved(setupCheck);
+          setDomainProblem(null);
           setEditing(false);
         } finally {
           setSaving(false);
@@ -445,6 +451,7 @@ export function SsoConnectionPanel({
             throw new Error("SSO domain verification token was missing from the response.");
           }
           setDomainVerificationToken(token);
+          setDomainProblem(null);
         } finally {
           setRequestingDomainToken(false);
         }
@@ -465,8 +472,16 @@ export function SsoConnectionPanel({
       await runReauthableAction("verify-sso-domain", async () => {
         setVerifyingDomain(true);
         try {
+          setJustSaved(false);
+          setDomainProblem(null);
           const { response, payload } = await requestJson(`${endpoints.base}/verify-domain`, { method: "POST", headers: getOrgScopedHeaders(), body: JSON.stringify({}) }, 12000);
           if (response.status !== 204 && !response.ok) {
+            const problem = setupCheck && response.status === 400 ? parseDomainVerificationProblem(payload) : null;
+            if (problem) {
+              // Said inside the domain panel, next to the record it is about.
+              setDomainProblem(problem);
+              return;
+            }
             throw getRequestError(payload, response, `Failed to verify domain (${response.status}).`);
           }
           setDomainVerificationToken(null);
@@ -762,7 +777,22 @@ export function SsoConnectionPanel({
 
             {connection ? (
               <div className="mt-5 space-y-4">
-                {!connection.domainVerified ? (
+                {!connection.domainVerified && setupCheck ? (
+                  <SsoDomainVerificationSteps
+                    connection={connection}
+                    multiple={multiple}
+                    token={domainVerificationToken}
+                    justSaved={justSaved}
+                    problem={domainProblem}
+                    verifying={verifyingDomain}
+                    requesting={requestingDomainToken}
+                    canManage={access.canManageSso}
+                    copiedValue={copiedValue}
+                    onVerify={() => void handleVerifyDomain()}
+                    onRequestValue={() => void handleRequestDomainToken()}
+                    onCopy={(value, key) => void copyValue(value, key)}
+                  />
+                ) : !connection.domainVerified ? (
                   <section id="sso-domain-verification" data-testid="sso-domain-verification" className="scroll-mt-6 overflow-hidden rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-surface)] text-[14px] text-[var(--dls-text-primary)]">
                     <div className="flex flex-col gap-4 border-b border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
                       <div className="flex items-start gap-3">

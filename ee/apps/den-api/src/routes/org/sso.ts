@@ -35,6 +35,7 @@ import {
 } from "../../sso-domain-verification.js"
 import { createGuardedFetch, createRealmSafeFetch } from "../../capability-sources/url-guard.js"
 import { checkOidcDiscovery } from "../../sso-oidc-discovery.js"
+import { explainDomainVerificationFailure, NO_PENDING_VERIFICATION } from "../../sso-domain-verification-problem.js"
 import { defaultSsoConnectionName, normalizeSsoDomains, parseSsoDomains, serializeSsoDomains } from "../../sso-domains.js"
 import {
   beginOrganizationSsoTestIntent,
@@ -224,6 +225,17 @@ const ssoConnectionListResponseSchema = z.object({
 const metadataQuerySchema = z.object({
   format: z.enum(["xml", "json"]).default("xml"),
 })
+
+const domainVerificationFailureSchema = invalidRequestSchema.extend({
+  domainVerification: z.object({
+    reason: z.enum(["record_missing", "value_mismatch", "lookup_failed", "expired"]),
+    domain: z.string().nullable(),
+    dnsName: z.string().nullable(),
+    found: z.string().nullable(),
+    checkedAt: z.string(),
+    message: z.string(),
+  }).nullable().optional(),
+}).meta({ ref: "OrganizationSsoDomainVerificationFailure" })
 
 const domainVerificationResponseSchema = z.object({
   domainVerificationToken: z.string().min(1),
@@ -577,7 +589,7 @@ async function domainVerificationTokenFor(connection: SsoConnection, headers: He
     : { ok: false, message: "Could not request a domain verification token." }
 }
 
-async function verifyConnectionDomain(connection: SsoConnection, headers: Headers): Promise<{ ok: true } | { ok: false; message: string }> {
+async function verifyConnectionDomain(connection: SsoConnection, headers: Headers): Promise<{ ok: true } | { ok: false; message: string; code: string | null }> {
   try {
     await auth.api.verifyDomain({
       body: { providerId: connection.providerId },
@@ -585,8 +597,27 @@ async function verifyConnectionDomain(connection: SsoConnection, headers: Header
     })
     return { ok: true }
   } catch (error) {
-    return { ok: false, message: error instanceof Error ? error.message : "Could not verify the SSO domain." }
+    const body = isRecord(error) && isRecord(error.body) ? error.body : null
+    const code = body ? maybeString(body.code) : null
+    if (code === NO_PENDING_VERIFICATION && connection.domainVerificationToken) {
+      // The value expired: forget the copy so the next request issues a new one.
+      await db.update(SsoConnectionTable).set({ domainVerificationToken: null }).where(eq(SsoConnectionTable.id, connection.id))
+    }
+    return { ok: false, message: error instanceof Error ? error.message : "Could not verify the SSO domain.", code }
   }
+}
+
+/** ssoOidcSetupCheck: says which record failed and how, instead of Better Auth's "try again later". */
+async function domainVerificationProblem(connection: SsoConnection, failureCode: string | null, headers: Headers) {
+  const expected = failureCode === NO_PENDING_VERIFICATION
+    ? null
+    : connection.domainVerificationToken ?? await domainVerificationTokenFor(connection, headers).then((token) => token.ok ? token.domainVerificationToken : null)
+  return explainDomainVerificationFailure({
+    failureCode,
+    records: parseSsoDomains(connection.domain).map((domain) => ({ domain, dnsName: getSsoDomainVerificationDnsName(connection.providerId, domain) })),
+    expected,
+    identifier: getSsoDomainVerificationHost(connection.providerId),
+  }).catch(() => null)
 }
 
 const sharedErrorResponses = {
@@ -1024,6 +1055,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         responses: {
           204: { description: "Organization SSO domain verified" },
           ...sharedErrorResponses,
+          400: { description: "The domain could not be verified. With ssoOidcSetupCheck, domainVerification says which record failed and how.", content: { "application/json": { schema: resolver(domainVerificationFailureSchema) } } },
           402: planRequired,
           403: manageForbidden,
           404: notFound,
@@ -1045,7 +1077,13 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         }
 
         const verified = await verifyConnectionDomain(connection, c.req.raw.headers)
-        if (!verified.ok) return c.json(invalidRequest(verified.message), 400)
+        if (!verified.ok) {
+          if (!await organizationFeatureEnabled(payload.organization.id, OIDC_SETUP_CHECK, { userId: payload.currentMember.userId })) {
+            return c.json(invalidRequest(verified.message), 400)
+          }
+          const problem = await domainVerificationProblem(connection, verified.code, c.req.raw.headers)
+          return c.json({ ...invalidRequest(problem?.message ?? verified.message), domainVerification: problem }, 400)
+        }
         return c.body(null, 204)
       },
     )
