@@ -11,7 +11,7 @@ import { isRecord } from "./library.ts";
  * an unreachable TypeSafe URL: routing counts as configured, every Jev call
  * fails at once, and Smart takes its fallback model without leaving the machine.
  */
-function jevEnvironment(typesafe: string | undefined): Record<string, string> {
+export function jevEnvironment(typesafe: string | undefined): Record<string, string> {
   return typesafe ? { TYPESAFE_API_KEY: typesafe } : { TYPESAFE_API_KEY: "auto-router-proof-placeholder", TYPESAFE_BASE_URL: "http://127.0.0.1:9" };
 }
 

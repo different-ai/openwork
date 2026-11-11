@@ -16,6 +16,7 @@ import { HEADLESS_SESSION_HEADER, parseHeadlessSessionHeader } from "@openwork/t
 import type { Context, Hono } from "hono"
 import { sanitizeIncomingHeaders } from "./inference-reporting.js"
 import type { InferenceReporter } from "./inference-reporting.js"
+import type { GatewayContext } from "./middleware/gateway-auth.js"
 import type { InferenceAuthVariables } from "./middleware/inference-auth.js"
 import type { OrganizationVariables } from "./middleware/org-context.js"
 import { bedrockMantleService, bedrockService, signAwsRequest } from "./credentials/aws-sigv4.js"
@@ -68,8 +69,9 @@ import { createOpenAiResponsesSseUsageParser, parseOpenAiResponsesJsonUsage } fr
 import { createJsonBodyUsageParser, emptyUsage } from "./usage/shared.js"
 import type { ParsedUsage, UsageParser } from "./usage/shared.js"
 import { autoRouterIdFromModel } from "@openwork/types/den/auto-router"
-import { loadAutoRouterConfigFromDb, type LoadAutoRouterConfig } from "./auto-router/config.js"
-import { handleAutoRequest } from "./auto-router/handler.js"
+import { loadAutoRouterConfigFromDb, loadMemberAutoRoutersFromDb, type LoadAutoRouterConfig, type LoadMemberAutoRouters } from "./auto-router/config.js"
+import { handleAutoRequest, type AutoRouterDependencies } from "./auto-router/handler.js"
+import { smartToolRouters, type SmartToolDependencies } from "./smart-tools.js"
 import { createJevClient, type AskJev } from "./auto-router/jev.js"
 import { createDbReasoningStore, type ReasoningStore } from "./auto-router/reasoning-store.js"
 import { cursorApiPaths, cursorModels, cursorModelsPath, cursorPathPrefix, handleCursorChat, listCursorModels, type CursorApi } from "./cursor.js"
@@ -104,6 +106,8 @@ export type GatewayDependencies = {
   now: () => Date
   /** Smart Model Router (feature `autoRouter`): a member's router, and Jev. */
   loadAutoRouterConfig: LoadAutoRouterConfig
+  /** The Smart Routers that apply to a member, for the 3rd party tool endpoints' model lists. */
+  loadMemberAutoRouters: LoadMemberAutoRouters
   askJev: AskJev
   autoRouterReasoning: ReasoningStore
   /** Whether a TypeSafe key is configured; without one Smart is off. */
@@ -815,6 +819,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     catalog: input.catalog ?? loadProviderCatalogFromFile(),
     now: input.now ?? (() => new Date()),
     loadAutoRouterConfig: input.loadAutoRouterConfig ?? loadAutoRouterConfigFromDb,
+    loadMemberAutoRouters: input.loadMemberAutoRouters ?? loadMemberAutoRoutersFromDb,
     askJev: input.askJev ?? createJevClient({
       apiKey: env.autoRouter.typesafeApiKey ?? null,
       baseUrl: env.autoRouter.typesafeBaseUrl,
@@ -1253,12 +1258,43 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     })
   }
 
+  /** What the Smart Model Router needs for one request. */
+  function autoDependencies(c: Context<GatewayEnv>, identity: GatewayContext): AutoRouterDependencies {
+    return {
+      loadConfig: dependencies.loadAutoRouterConfig,
+      loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
+      catalog: dependencies.catalog,
+      askJev: dependencies.askJev,
+      reasoningStore: dependencies.autoRouterReasoning,
+      routingConfigured: dependencies.autoRouterRoutingConfigured,
+      forward: (target) => handleGatewayRequest(c, target),
+      onJevError: (error) => console.warn("[gateway] Smart Model Router could not ask Jev; using the fallback model", {
+        openworkRequestId: c.get("openworkRequestId"),
+        organizationId: identity.organizationId,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    }
+  }
+
+  /** Smart Routers on the 3rd party tool endpoints: listed, and run through the Smart Model Router. */
+  function smartTools(c: Context<GatewayEnv>, identity: GatewayContext): SmartToolDependencies {
+    return {
+      routingConfigured: dependencies.autoRouterRoutingConfigured,
+      loadMemberAutoRouters: dependencies.loadMemberAutoRouters,
+      route: ({ request, body, routerId }) => handleAutoRequest({ request, body, routerId, identity, dependencies: autoDependencies(c, identity) }),
+    }
+  }
+
   // Models keys fall through to the OpenWork Models handler registered after this one.
   api.get(gatewayModelsPath, async (c, next) => {
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return next()
     c.header("cache-control", "no-store")
-    return c.json(listGatewayModels(await dependencies.loadMemberGatewayAccess(identity)))
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
+    // Smart Routers are listed for the API keys members paste into tools; the desktop and other
+    // OpenWork clients learn them from Den. Either key can call them on POST /api/v1/chat/completions.
+    const routers = identity.keySource === "api_key" ? await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity)) : []
+    return c.json(listGatewayModels(rows, routers))
   })
   // Cursor (feature `gatewayMemberApiKeys`): every model as Chat Completions under names a person can type.
   const cursorOff = () => gatewayError(404, "not_found", "The Cursor endpoint is not available for this organization.")
@@ -1267,7 +1303,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
     if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return cursorOff()
     c.header("cache-control", "no-store")
-    return c.json(listCursorModels(cursorModels(await dependencies.loadMemberGatewayAccess(identity), dependencies.catalog)))
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
+    return c.json(listCursorModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
   })
   const cursorChat = async (c: Context<GatewayEnv>, api: CursorApi) => {
     const identity = c.get("inference")
@@ -1293,6 +1330,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         catalog: dependencies.catalog,
         reasoningStore: dependencies.autoRouterReasoning,
         forward: (target) => handleGatewayRequest(c, target),
+        smart: smartTools(c, identity),
       },
     }))
   }
@@ -1305,7 +1343,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
     if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return claudeCodeOff()
     c.header("cache-control", "no-store")
-    return c.json(listClaudeCodeModels(cursorModels(await dependencies.loadMemberGatewayAccess(identity), dependencies.catalog)))
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
+    return c.json(listClaudeCodeModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
   })
   const claudeCodeBody = async (c: Context<GatewayEnv>): Promise<JsonObject | Response> => {
     try {
@@ -1340,6 +1379,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         catalog: dependencies.catalog,
         reasoningStore: dependencies.autoRouterReasoning,
         forward: (target) => handleGatewayRequest(c, target),
+        smart: smartTools(c, identity),
       },
     }))
   })
@@ -1351,7 +1391,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
     if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return codexOff()
     c.header("cache-control", "no-store")
-    return c.json(listCodexModels(cursorModels(await dependencies.loadMemberGatewayAccess(identity), dependencies.catalog)))
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
+    return c.json(listCodexModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
   })
   api.post(codexResponsesPath, async (c) => {
     const identity = c.get("inference")
@@ -1376,6 +1417,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         catalog: dependencies.catalog,
         reasoningStore: dependencies.autoRouterReasoning,
         forward: (target) => handleGatewayRequest(c, target),
+        smart: smartTools(c, identity),
       },
     }))
   })
@@ -1397,20 +1439,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
             body: auto.body,
             routerId: auto.routerId,
             identity,
-            dependencies: {
-              loadConfig: dependencies.loadAutoRouterConfig,
-              loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
-              catalog: dependencies.catalog,
-              askJev: dependencies.askJev,
-              reasoningStore: dependencies.autoRouterReasoning,
-              routingConfigured: dependencies.autoRouterRoutingConfigured,
-              forward: (target) => handleGatewayRequest(c, target),
-              onJevError: (error) => console.warn("[gateway] Smart Model Router could not ask Jev; using the fallback model", {
-                openworkRequestId: c.get("openworkRequestId"),
-                organizationId: identity.organizationId,
-                error: error instanceof Error ? error.message : String(error),
-              }),
-            },
+            dependencies: autoDependencies(c, identity),
           })
           response.headers.set("x-openwork-request-id", c.get("openworkRequestId"))
           return response

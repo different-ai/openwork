@@ -338,6 +338,15 @@ export const autoRouterConnectSchema = z
   .meta({ ref: "AutoRouterConnect" })
 export type AutoRouterConnect = z.infer<typeof autoRouterConnectSchema>
 
+/**
+ * The Smart Routers the caller can use: those that apply to them and have at least one model they
+ * can use, while the AI Gateway can route. For setup screens that offer them in 3rd party tools.
+ */
+export const autoRouterMemberListSchema = z
+  .object({ routers: z.array(z.object({ id: z.string(), name: z.string() })) })
+  .meta({ ref: "AutoRouterMemberList" })
+export type AutoRouterMemberList = z.infer<typeof autoRouterMemberListSchema>
+
 /** Whether an assignment reaches a member, given the member's teams. */
 export function autoRouterAssignmentIncludes(assignment: AutoRouterAssignment, memberId: string, teamIds: readonly string[]) {
   return assignment.everyone || assignment.memberIds.includes(memberId) || assignment.teamIds.some((id) => teamIds.includes(id))
