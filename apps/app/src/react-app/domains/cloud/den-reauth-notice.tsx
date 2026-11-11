@@ -29,8 +29,11 @@ export function DenReauthNotice({ onVerified, onCancel, title = "Confirm your id
   const url = new URL("/reauth/desktop", settings.baseUrl);
   url.searchParams.set("nonce", nonce);
   // Keep the opaque account reference out of requests; the browser gets the
-  // email from its own matching session or asks the user to enter it.
-  url.hash = new URLSearchParams({ userId: user?.id ?? "" }).toString();
+  // email from its own matching session or asks the user to enter it. The
+  // active organization only picks which organization's SSO the page offers.
+  const identity = new URLSearchParams({ userId: user?.id ?? "" });
+  if (settings.activeOrgId) identity.set("orgId", settings.activeOrgId);
+  url.hash = identity.toString();
 
   useEffect(() => {
     active.current = true;
