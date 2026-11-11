@@ -90,13 +90,6 @@ export function useGatewayToolModels(enabled: boolean) {
   });
 }
 
-/** Providers whose models answer the Gateway's provider-less Responses endpoint, which Codex calls. */
-const RESPONSES_PROVIDERS = new Set(["openai", "azure"]);
-
-export function codexModels(models: readonly GatewayToolModel[]) {
-  return models.filter((model) => RESPONSES_PROVIDERS.has(model.providerKey));
-}
-
 /** A Claude model Claude Code knows by this id, so it can treat the OpenWork name as that model. */
 export function claudeModelId(model: GatewayToolModel): string | null {
   return /^claude-[a-z0-9-]+$/.test(model.upstreamModelId) ? model.upstreamModelId : null;

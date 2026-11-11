@@ -29,24 +29,95 @@ function chatParts(content: unknown): unknown {
   return parts.every((part) => part.type === "text") ? parts.map((part) => String(part.text)).join("") : parts
 }
 
-/** A Responses tool (`{type: "function", name, parameters}`) as a Chat Completions tool. Others are dropped. */
-function chatTool(tool: unknown): JsonObject[] {
-  if (!isJsonObject(tool) || tool.type !== "function") return []
-  if (isJsonObject(tool.function)) return [tool]
-  if (typeof tool.name !== "string") return []
-  return [{ type: "function", function: {
-    name: tool.name,
+/**
+ * How the tools a Responses request names reach a chat model and come back: custom (freeform) tools
+ * become functions taking one `input` string, and the functions of a `namespace` tool become
+ * functions named `<namespace>__<name>`.
+ */
+export type ResponsesToolNames = {
+  custom: ReadonlySet<string>
+  namespaced: ReadonlyMap<string, { namespace: string; name: string }>
+}
+
+const NAMESPACE_SEPARATOR = "__"
+
+function functionTool(tool: JsonObject, name: string): JsonObject {
+  return { type: "function", function: {
+    name,
     ...(tool.description === undefined ? {} : { description: tool.description }),
     ...(tool.parameters === undefined ? {} : { parameters: tool.parameters }),
     ...(tool.strict === undefined ? {} : { strict: tool.strict }),
-  } }]
+  } }
+}
+
+/** A custom tool takes free text; a chat model gets it as one string argument, with its grammar. */
+function customTool(tool: JsonObject, name: string): JsonObject {
+  const format = isJsonObject(tool.format) ? tool.format : null
+  const grammar = format && typeof format.definition === "string" ? format.definition : null
+  // The tool's own description may say not to send JSON: here its text goes in one JSON string.
+  const description = [
+    typeof tool.description === "string" ? tool.description : "",
+    "Send the tool's text as the `input` argument, exactly as written: every line as it should be, with its exact indentation and no added spaces.",
+    grammar ? `The text follows this ${typeof format?.syntax === "string" ? format.syntax : ""} grammar:\n${grammar}` : "",
+  ].filter(Boolean).join("\n\n")
+  return { type: "function", function: {
+    name,
+    description,
+    parameters: { type: "object", properties: { input: { type: "string", description: "The tool's whole text input, exactly as written." } }, required: ["input"], additionalProperties: false },
+  } }
 }
 
 /**
+ * A Responses tool as Chat Completions tools: functions as they are, custom tools and namespaces as
+ * above. Hosted tools (web search, file search, local shell and the like) are dropped: only the
+ * provider that runs them could.
+ */
+function chatTools(tool: unknown): JsonObject[] {
+  if (!isJsonObject(tool)) return []
+  if (tool.type === "function") {
+    if (isJsonObject(tool.function)) return [tool]
+    return typeof tool.name === "string" ? [functionTool(tool, tool.name)] : []
+  }
+  if (tool.type === "custom" && typeof tool.name === "string") return [customTool(tool, tool.name)]
+  if (tool.type === "namespace" && typeof tool.name === "string" && Array.isArray(tool.tools)) {
+    const namespace = tool.name
+    return tool.tools.flatMap((inner): JsonObject[] => {
+      if (!isJsonObject(inner) || typeof inner.name !== "string") return []
+      const name = `${namespace}${NAMESPACE_SEPARATOR}${inner.name}`
+      if (inner.type === "function") return [functionTool(inner, name)]
+      if (inner.type === "custom") return [customTool(inner, name)]
+      return []
+    })
+  }
+  return []
+}
+
+/** The custom and namespaced tools of a Responses request, to name their calls in the answer. */
+export function responsesToolNames(body: JsonObject): ResponsesToolNames {
+  const custom = new Set<string>()
+  const namespaced = new Map<string, { namespace: string; name: string }>()
+  for (const tool of Array.isArray(body.tools) ? body.tools : []) {
+    if (!isJsonObject(tool) || typeof tool.name !== "string") continue
+    if (tool.type === "custom") custom.add(tool.name)
+    if (tool.type !== "namespace" || !Array.isArray(tool.tools)) continue
+    for (const inner of tool.tools) {
+      if (!isJsonObject(inner) || typeof inner.name !== "string") continue
+      const joined = `${tool.name}${NAMESPACE_SEPARATOR}${inner.name}`
+      namespaced.set(joined, { namespace: tool.name, name: inner.name })
+      if (inner.type === "custom") custom.add(joined)
+    }
+  }
+  return { custom, namespaced }
+}
+
+/** The fewest output tokens every translated provider accepts. */
+const MIN_OUTPUT_TOKENS = 16
+
+/**
  * A Responses request as a Chat Completions request. `instructions` becomes the system message;
- * messages, function calls and their outputs become chat messages in order (consecutive function
- * calls join one assistant message). Reasoning items are dropped: the Gateway keeps reasoning state
- * itself, by tool call id.
+ * messages, function and custom tool calls and their outputs become chat messages in order
+ * (consecutive calls join one assistant message). Reasoning items are dropped: the Gateway keeps
+ * reasoning state itself, by tool call id. Hosted tool calls (web search and the like) are dropped.
  */
 export function responsesToChat(body: JsonObject): JsonObject {
   const messages: JsonObject[] = []
@@ -58,24 +129,29 @@ export function responsesToChat(body: JsonObject): JsonObject {
     if (type === "message" && typeof item.role === "string") {
       const role = item.role === "developer" ? "system" : item.role
       messages.push({ role, content: role === "assistant" || role === "system" ? partsText(item.content) : chatParts(item.content) })
-    } else if (type === "function_call" && typeof item.name === "string") {
-      const call = { id: typeof item.call_id === "string" ? item.call_id : typeof item.id === "string" ? item.id : `call_${randomUUID()}`, type: "function", function: { name: item.name, arguments: typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments ?? {}) } }
+    } else if ((type === "function_call" || type === "custom_tool_call") && typeof item.name === "string") {
+      const name = typeof item.namespace === "string" && item.namespace ? `${item.namespace}${NAMESPACE_SEPARATOR}${item.name}` : item.name
+      const args = type === "custom_tool_call"
+        ? JSON.stringify({ input: typeof item.input === "string" ? item.input : "" })
+        : typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments ?? {})
+      const call = { id: typeof item.call_id === "string" ? item.call_id : typeof item.id === "string" ? item.id : `call_${randomUUID()}`, type: "function", function: { name, arguments: args } }
       const last = messages[messages.length - 1]
       if (last?.role === "assistant" && Array.isArray(last.tool_calls)) last.tool_calls.push(call)
       else messages.push({ role: "assistant", content: null, tool_calls: [call] })
-    } else if (type === "function_call_output" && typeof item.call_id === "string") {
+    } else if ((type === "function_call_output" || type === "custom_tool_call_output") && typeof item.call_id === "string") {
       messages.push({ role: "tool", tool_call_id: item.call_id, content: typeof item.output === "string" ? item.output : partsText(item.output) || JSON.stringify(item.output ?? "") })
     }
   }
   const chat: JsonObject = { model: body.model, messages, stream: body.stream === true }
   if (Array.isArray(body.tools)) {
-    const tools = body.tools.flatMap(chatTool)
+    const tools = body.tools.flatMap(chatTools)
     if (tools.length) chat.tools = tools
   }
   const choice = body.tool_choice
   if (typeof choice === "string") chat.tool_choice = choice
-  else if (isJsonObject(choice) && choice.type === "function" && typeof choice.name === "string") chat.tool_choice = { type: "function", function: { name: choice.name } }
-  if (typeof body.max_output_tokens === "number") chat.max_tokens = body.max_output_tokens
+  else if (isJsonObject(choice) && (choice.type === "function" || choice.type === "custom") && typeof choice.name === "string") chat.tool_choice = { type: "function", function: { name: choice.name } }
+  // OpenAI-compatible providers refuse fewer than 16 output tokens.
+  if (typeof body.max_output_tokens === "number") chat.max_tokens = Math.max(MIN_OUTPUT_TOKENS, body.max_output_tokens)
   for (const field of ["temperature", "top_p", "parallel_tool_calls", "user"]) if (body[field] !== undefined) chat[field] = body[field]
   return chat
 }
@@ -101,7 +177,7 @@ function responsesUsage(usage: unknown): ResponsesUsage | null {
   }
 }
 
-type OutputItem = JsonObject & { type: "message" | "function_call" | "reasoning"; id: string }
+type OutputItem = JsonObject & { type: "message" | "function_call" | "custom_tool_call" | "reasoning"; id: string }
 
 function responseObject(input: { id: string; created: number; model: string; status: "in_progress" | "completed" | "incomplete" | "failed"; output: OutputItem[]; usage: ResponsesUsage | null; error?: JsonObject | null; incomplete?: string | null }): JsonObject {
   return {
@@ -128,12 +204,30 @@ function reasoningItem(id: string, text: string): OutputItem {
   return { type: "reasoning", id, summary: text ? [{ type: "summary_text", text }] : [] }
 }
 
+/** A chat tool call as the Responses item the request's tools call for. */
+function toolCallItem(input: { id: string; callId: string; name: string; arguments: string; status: string }, tools?: ResponsesToolNames): OutputItem {
+  const namespaced = tools?.namespaced.get(input.name)
+  if (tools?.custom.has(input.name)) {
+    return { type: "custom_tool_call", id: input.id, call_id: input.callId, ...(namespaced ? { namespace: namespaced.namespace, name: namespaced.name } : { name: input.name }), input: customInput(input.arguments), status: input.status }
+  }
+  return { type: "function_call", id: input.id, call_id: input.callId, ...(namespaced ? { namespace: namespaced.namespace, name: namespaced.name } : { name: input.name }), arguments: input.arguments, status: input.status }
+}
+
+/** A custom tool's free text from the `{input}` arguments a chat model sends; other text as it is. */
+function customInput(args: string): string {
+  try {
+    const parsed: unknown = JSON.parse(args)
+    if (isJsonObject(parsed) && typeof parsed.input === "string") return parsed.input
+  } catch { /* Not JSON: the model sent the text itself. */ }
+  return args
+}
+
 function itemId(prefix: string) {
   return `${prefix}_${randomUUID().replace(/-/g, "")}`
 }
 
 /** A `chat.completion` object as a Responses `response` object. */
-export function chatToResponses(chat: unknown, model: string): JsonObject {
+export function chatToResponses(chat: unknown, model: string, tools?: ResponsesToolNames): JsonObject {
   const choice = isJsonObject(chat) && Array.isArray(chat.choices) ? chat.choices.find(isJsonObject) : undefined
   const message = choice && isJsonObject(choice.message) ? choice.message : {}
   const output: OutputItem[] = []
@@ -144,7 +238,7 @@ export function chatToResponses(chat: unknown, model: string): JsonObject {
   if (Array.isArray(message.tool_calls)) {
     for (const call of message.tool_calls) {
       if (!isJsonObject(call) || !isJsonObject(call.function)) continue
-      output.push({ type: "function_call", id: itemId("fc"), call_id: typeof call.id === "string" ? call.id : itemId("call"), name: String(call.function.name ?? ""), arguments: typeof call.function.arguments === "string" ? call.function.arguments : "{}", status: "completed" })
+      output.push(toolCallItem({ id: itemId("fc"), callId: typeof call.id === "string" ? call.id : itemId("call"), name: String(call.function.name ?? ""), arguments: typeof call.function.arguments === "string" ? call.function.arguments : "{}", status: "completed" }, tools))
     }
   }
   const incomplete = choice?.finish_reason === "length" ? "max_output_tokens" : choice?.finish_reason === "content_filter" ? "content_filter" : null
@@ -164,7 +258,7 @@ export function chatToResponses(chat: unknown, model: string): JsonObject {
  * event stream: response.created, the output items with their deltas, then response.completed
  * (or response.incomplete / response.failed).
  */
-export function chatStreamToResponses(body: ReadableStream<Uint8Array>, model: string): ReadableStream<Uint8Array> {
+export function chatStreamToResponses(body: ReadableStream<Uint8Array>, model: string, tools?: ResponsesToolNames): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder()
   const decoder = new TextDecoder()
   const id = itemId("resp")
@@ -210,9 +304,10 @@ export function chatStreamToResponses(body: ReadableStream<Uint8Array>, model: s
   }
   const closeCalls = (controller: TransformStreamDefaultController<Uint8Array>) => {
     for (const call of calls.values()) {
-      const item: OutputItem = { type: "function_call", id: call.id, call_id: call.callId, name: call.name, arguments: call.arguments, status: "completed" }
+      const item = toolCallItem({ id: call.id, callId: call.callId, name: call.name, arguments: call.arguments, status: "completed" }, tools)
       output[call.index] = item
-      event(controller, "response.function_call_arguments.done", { item_id: call.id, output_index: call.index, arguments: call.arguments })
+      if (item.type === "custom_tool_call") event(controller, "response.custom_tool_call_input.done", { item_id: call.id, output_index: call.index, input: item.input })
+      else event(controller, "response.function_call_arguments.done", { item_id: call.id, output_index: call.index, arguments: call.arguments })
       event(controller, "response.output_item.done", { output_index: call.index, item })
     }
     calls.clear()
@@ -267,13 +362,14 @@ export function chatStreamToResponses(body: ReadableStream<Uint8Array>, model: s
         if (!call) {
           call = { index: output.length, id: itemId("fc"), callId: typeof part.id === "string" ? part.id : itemId("call"), name: typeof fn.name === "string" ? fn.name : "", arguments: "" }
           calls.set(key, call)
-          const item: OutputItem = { type: "function_call", id: call.id, call_id: call.callId, name: call.name, arguments: "", status: "in_progress" }
+          const item = toolCallItem({ id: call.id, callId: call.callId, name: call.name, arguments: "", status: "in_progress" }, tools)
           output.push(item)
           event(controller, "response.output_item.added", { output_index: call.index, item })
         }
         if (typeof fn.arguments === "string" && fn.arguments) {
           call.arguments += fn.arguments
-          event(controller, "response.function_call_arguments.delta", { item_id: call.id, output_index: call.index, delta: fn.arguments })
+          // A custom tool's text is only known once its JSON arguments are whole.
+          if (!tools?.custom.has(call.name)) event(controller, "response.function_call_arguments.delta", { item_id: call.id, output_index: call.index, delta: fn.arguments })
         }
       }
     }

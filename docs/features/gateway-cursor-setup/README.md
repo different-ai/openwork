@@ -57,9 +57,10 @@ copy button; **Choose another tool** goes back.
 - **Cursor:** the key, the base URL, then a model (and thinking level, for
   models that have levels) to choose from a dropdown, with its Cursor name to
   copy. The last step says to run the agent in Local mode (This Mac), not Cloud.
-- **OpenAI Codex:** the key line for the shell, and a `~/.codex/config.toml`
-  provider (`wire_api = "responses"`) for the model chosen. Only OpenAI and
-  Azure models are offered: Codex calls the provider-less Responses endpoint.
+- **OpenAI Codex:** the key line for the shell profile, and a
+  `~/.codex/config.toml` provider on the Gateway's Codex endpoint (below) for a
+  model (and thinking level, as `model_reasoning_effort`) chosen from dropdowns.
+  Every model is offered.
 - **Claude Code:** a project settings file (`.claude/settings.local.json`) for
   a main and a fast model chosen from dropdowns, pointing at the Gateway's
   Claude Code endpoint (below). Every model is offered.
@@ -68,10 +69,11 @@ copy button; **Choose another tool** goes back.
 
 ![Cursor's steps](./cursor-steps.png)
 
-The Codex steps use today's provider-less Responses endpoint; Cursor and Claude
-Code have their own endpoints.
+Cursor, Claude Code and Codex each have their own endpoint.
 
 ![Claude Code's steps](./claude-code-steps.png)
+
+![Codex's steps](./codex-steps.png)
 
 In **My Library › Models**, each key's menu has **Set up**: the same choice of
 tools for a key that already exists. The key isn't shown again, so the steps
@@ -148,10 +150,71 @@ file only after its first-run sign-in screen; a key in the shell or in
 login next to the settings file (the steps follow OpenRouter: `/status`, then
 `/logout` if needed).
 
+## Codex endpoint
+
+A Codex provider's `base_url` = `<gateway>/api/v1/codex`. The setup follows
+OpenRouter's Codex guide: `model_provider = "openwork"`, `wire_api =
+"responses"`, and an `auth` block that runs `sh -c 'echo $OPENWORK_API_KEY'`.
+Codex fetches a provider's model catalog only with command auth (`env_key`
+works but gives "Model metadata … not found"). Code:
+`ee/apps/gateway/src/codex.ts` (the translation is shared with Cursor in
+`cursor-responses.ts`). Public docs: `packages/docs/ai-gateway/codex.mdx`.
+
+What Codex 0.167 sends (codex-rs source at `rust-v0.167.1`, and captured):
+
+- `GET {base_url}/models?client_version=0.167.1`, bearer key. It expects
+  Codex's own catalog, `{models: [ModelInfo]}` (`codex-protocol`
+  `openai_models.rs`), not the OpenAI list; an entry without
+  `base_instructions` (or `model_messages.instructions_template`) fails the
+  whole catalog. Each entry carries Codex's own base prompt
+  (`codex-instructions.ts`, copied from `models-manager/prompt.md`,
+  Apache-2.0), the model's context window, reasoning levels, and
+  `apply_patch_tool_type: "freeform"` only for OpenAI GPT-5 and later (OpenAI
+  refuses custom tools before; translated models edit through the shell tool).
+  Codex merges the catalog with its bundled OpenAI models, so `/model` lists
+  those too; ours get a negative priority to come first.
+- `POST {base_url}/responses`, `stream: true`, `store: false`, `include:
+  ["reasoning.encrypted_content"]`, `reasoning: {effort, summary}`,
+  `prompt_cache_key`, `client_metadata` (session ids, local paths), the base
+  prompt as a developer message (no `instructions`), item ids on every input
+  item, and tools: functions, a `namespace` (`multi_agent_v1`), `web_search`,
+  and the custom `apply_patch` when the catalog asks for it. Remote compaction
+  is off for a provider not named OpenAI, so `/compact` is a normal request.
+- OpenAI and Azure models: the request passes through under the member's alias
+  within the Gateway's resource policy: `client_metadata` and input item ids
+  (except on reasoning items with encrypted content) are dropped, hosted tools
+  (`web_search`) and hosted call items are dropped, and the policy now accepts a
+  `namespace` of client tools. A model without reasoning loses `reasoning` and
+  the encrypted-content include.
+- Other models: Responses → Chat Completions → the model's protocol, and back
+  as a Responses event stream. Namespaced functions become `<ns>__<name>`,
+  custom tools a function taking `{input}`, and both come back as Codex's
+  items. `previous_response_id` is refused (Codex never sends it with
+  `store: false`); at least 16 output tokens.
+- Names are the Cursor names; a level suffix wins over `reasoning.effort`; a
+  raw catalog id resolves when the member has that model. Errors are OpenAI
+  error bodies.
+
+Checked on 2026-11-10 with Codex 0.167.1 on a local Den and Gateway with real
+OpenAI and Anthropic keys, the config exactly as the page writes it:
+`codex exec` and a tmux session on GPT-5 mini (passed through, encrypted
+reasoning across turns, native `apply_patch`), GPT-4.1 mini (passed through, no
+reasoning) and Claude Haiku 4.5 (translated: shell commands, file edits,
+`/compact`), `/status`, `/model` with reasoning levels, and switching
+GPT → Claude → GPT mid-conversation. Found and fixed there: the Gateway's
+resource policy refused Codex's requests (item ids, `client_metadata`'s
+`session_id`, `namespace` and `web_search` tools); GPT-4.1 refuses custom
+tools; Claude Haiku wrote `apply_patch` text with lost indentation when given
+it as a function, so translated models don't get it; Codex's picker listed its
+own OpenAI models first. Codex 0.167 keeps the catalog in a background
+app-server daemon: a model added later shows after `codex app-server daemon
+restart`. Not checked: Azure OpenAI, Windows, images, and Codex's own OpenAI
+models chosen in `/model` when the member has the same model.
+
 ## Turning it off
 
 Turning off `gatewayMemberApiKeys` (or the organization setting) stops member
-keys at the Gateway, and `/api/v1/cursor/*` and `/api/v1/claude-code/*` answer
+keys at the Gateway, and `/api/v1/cursor/*`, `/api/v1/claude-code/*` and `/api/v1/codex/*` answer
 `404` within 15 seconds. The setup screens go with the API keys section. Nothing else is stored
 for Cursor, so the model names people added to Cursor work again when it is
 turned back on.
@@ -181,4 +244,7 @@ back, refusals, keys, and the feature being off.
 `evals/proofs/gateway-cursor-setup.proof.test.ts` drives the page and both APIs
 on a real Den and AI Gateway. `ee/apps/gateway/test/claude-code.test.ts` and
 `evals/proofs/gateway-claude-code.proof.test.ts` do the same for Claude Code
-(a Claude model passed through, a DeepSeek model translated).
+(a Claude model passed through, a DeepSeek model translated), and
+`ee/apps/gateway/test/codex.test.ts` and `evals/proofs/gateway-codex.proof.test.ts`
+for Codex (an OpenAI model passed through, a Claude model translated, with the
+config read from the page).

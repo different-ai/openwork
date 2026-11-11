@@ -23,7 +23,7 @@ import { classifyProtocolFamily, type ProtocolFamily } from "./protocols.js"
 import type { GatewayMemberAccessRow } from "./provider-access.js"
 import type { ProviderCatalog } from "./provider-catalog.js"
 import { isEventStreamContentType, isJsonContentType } from "./relay.js"
-import { chatStreamToResponses, chatToResponses, responsesReasoningEffort, responsesToChat } from "./cursor-responses.js"
+import { chatStreamToResponses, chatToResponses, responsesReasoningEffort, responsesToChat, type ResponsesToolNames } from "./cursor-responses.js"
 
 export const cursorPathPrefix = "/api/v1/cursor"
 export const cursorModelsPath = `${cursorPathPrefix}/models`
@@ -104,7 +104,7 @@ export function listCursorModels(models: CursorModel[]) {
   }
 }
 
-function cursorError(status: number, code: string, message: string) {
+export function cursorError(status: number, code: string, message: string) {
   return Response.json({ error: { message, type: status >= 500 ? "api_error" : "invalid_request_error", code } }, { status })
 }
 
@@ -134,27 +134,75 @@ export function normalizeCursorChatBody(body: JsonObject): JsonObject {
 }
 
 /** The level a Responses request's `reasoning.effort` names, when the model has it. */
-function requestedEffort(body: JsonObject, levels: readonly AutoRouterThinkingLevel[]): AutoRouterThinkingLevel | null {
+export function requestedEffort(body: JsonObject, levels: readonly AutoRouterThinkingLevel[]): AutoRouterThinkingLevel | null {
   const effort = responsesReasoningEffort(body)
   return AUTO_ROUTER_THINKING_LEVELS.find((level) => level === effort && levels.includes(level)) ?? null
 }
 
 /** A Chat Completions answer as the Responses API's. Errors already share the `{error}` shape. */
-async function asResponses(response: Response, model: string): Promise<Response> {
+export async function asResponses(response: Response, model: string, tools?: ResponsesToolNames): Promise<Response> {
   if (!response.ok) return response
   const headers = new Headers(response.headers)
   headers.delete("content-length")
   const contentType = response.headers.get("content-type")
   if (response.body && isEventStreamContentType(contentType)) {
     headers.set("content-type", "text/event-stream; charset=utf-8")
-    return new Response(chatStreamToResponses(response.body, model), { status: response.status, headers })
+    return new Response(chatStreamToResponses(response.body, model, tools), { status: response.status, headers })
   }
   if (isJsonContentType(contentType)) {
     const body: unknown = await response.json().catch(() => null)
     headers.set("content-type", "application/json")
-    return new Response(JSON.stringify(chatToResponses(body, model)), { status: response.status, headers })
+    return new Response(JSON.stringify(chatToResponses(body, model, tools)), { status: response.status, headers })
   }
   return response
+}
+
+/**
+ * Sends a Chat Completions request to a model through its provider's own protocol under the
+ * member's Gateway alias, and answers as Chat Completions. Shared by every tool endpoint that
+ * translates.
+ */
+export async function sendTranslatedChat(input: {
+  request: Request
+  body: JsonObject
+  model: CursorModel
+  thinking: AutoRouterThinkingLevel
+  identity: GatewayContext
+  dependencies: CursorDependencies
+  reason: string
+}): Promise<Response> {
+  const { request, body, model, thinking, identity, dependencies } = input
+  const row = model.row
+  const providerModel = row.model
+  if (!providerModel) return cursorError(404, "model_not_found", `${model.name} is not one of your OpenWork models.`)
+  const alias = createGatewayModelAlias({ modelGroupId: row.group.id, credentialSetId: row.credentialSet.id, gatewayProviderModelId: providerModel.id })
+  const translated = model.translator.toUpstream({
+    body,
+    model: alias,
+    upstreamModel: providerModel.model_id,
+    thinkingLevel: thinking,
+    thinkingLevels: model.thinkingLevels,
+    maxOutputTokens: maxOutputTokens(row),
+    reasoning: await dependencies.reasoningStore.recall(identity.organizationId, chatToolCallIds(body)),
+  })
+  const response = await dependencies.forward({
+    inferenceProviderId: row.provider.id,
+    request: new Request(request.url, {
+      method: "POST",
+      headers: forwardedHeaders(request, translated.headers),
+      body: JSON.stringify(translated.body),
+      signal: request.signal,
+    }),
+    model: alias,
+    rest: translated.rest,
+    search: translated.search,
+    protocol: translated.protocol,
+  })
+  return translateResponse(response, model.translator, {
+    route: { provider: row.provider.provider_id, model: providerModel.model_id, thinking, reason: input.reason, name: model.name },
+    stream: body.stream === true,
+    remember: (toolCallIds, payload) => { void dependencies.reasoningStore.remember(identity.organizationId, toolCallIds, payload) },
+  }, { smart: false })
 }
 
 export async function handleCursorChat(input: {
@@ -180,8 +228,6 @@ export async function handleCursorChat(input: {
     return cursorError(404, "model_not_found", `${String(requested)} is not one of your OpenWork models. Copy the name from Set up Cursor in your OpenWork Library.`)
   }
   const { model } = match
-  const row = model.row
-  const providerModel = match.model.row.model
   // A level in the name wins; otherwise a Responses request may carry one.
   const thinking = parsed.thinking === "default" && api === "responses" ? requestedEffort(input.body, model.thinkingLevels) ?? "default" : parsed.thinking
   if (!model.thinkingLevels.includes(thinking)) {
@@ -192,33 +238,6 @@ export async function handleCursorChat(input: {
   }
 
   const body = normalizeCursorChatBody(api === "responses" ? responsesToChat(input.body) : input.body)
-  const alias = createGatewayModelAlias({ modelGroupId: row.group.id, credentialSetId: row.credentialSet.id, gatewayProviderModelId: providerModel.id })
-  const translated = model.translator.toUpstream({
-    body,
-    model: alias,
-    upstreamModel: providerModel.model_id,
-    thinkingLevel: thinking,
-    thinkingLevels: model.thinkingLevels,
-    maxOutputTokens: maxOutputTokens(row),
-    reasoning: await dependencies.reasoningStore.recall(identity.organizationId, chatToolCallIds(body)),
-  })
-  const response = await dependencies.forward({
-    inferenceProviderId: row.provider.id,
-    request: new Request(request.url, {
-      method: "POST",
-      headers: forwardedHeaders(request, translated.headers),
-      body: JSON.stringify(translated.body),
-      signal: request.signal,
-    }),
-    model: alias,
-    rest: translated.rest,
-    search: translated.search,
-    protocol: translated.protocol,
-  })
-  const chat = await translateResponse(response, model.translator, {
-    route: { provider: row.provider.provider_id, model: providerModel.model_id, thinking, reason: "cursor", name: model.name },
-    stream: body.stream === true,
-    remember: (toolCallIds, payload) => { void dependencies.reasoningStore.remember(identity.organizationId, toolCallIds, payload) },
-  }, { smart: false })
+  const chat = await sendTranslatedChat({ request, body, model, thinking, identity, dependencies, reason: "cursor" })
   return api === "responses" ? asResponses(chat, typeof requested === "string" ? requested : model.name) : chat
 }

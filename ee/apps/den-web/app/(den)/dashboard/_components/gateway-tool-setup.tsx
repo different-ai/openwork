@@ -1,13 +1,13 @@
 "use client";
 
 import { AUTO_ROUTER_THINKING_LABELS, autoRouterThinkingLevelSchema, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router";
-import { CLAUDE_CODE_LONG_CONTEXT, claudeCodeBaseUrl, claudeCodeModelName, cursorBaseUrl, cursorModelName } from "@openwork/types/den/gateway-cursor";
+import { CLAUDE_CODE_LONG_CONTEXT, claudeCodeBaseUrl, claudeCodeModelName, codexBaseUrl, cursorBaseUrl, cursorModelName } from "@openwork/types/den/gateway-cursor";
 import { Check, ChevronLeft, ChevronRight, Copy } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenSelect } from "../../_components/ui/select";
 import { markFeatureUsed } from "../../_lib/feature-usage";
-import { claudeModelId, codexModels, useGatewayToolModels, type GatewayToolModel } from "./cursor-setup-data";
+import { claudeModelId, useGatewayToolModels, type GatewayToolModel } from "./cursor-setup-data";
 import { GATEWAY_API_KEYS_DOCS_URL } from "./gateway-api-keys-data";
 
 /**
@@ -22,13 +22,14 @@ type GatewayTool = { id: GatewayToolId; name: string; slug?: string; serviceUrl?
 
 export const GATEWAY_TOOLS: readonly GatewayTool[] = [
   { id: "cursor", name: "Cursor", slug: "cursor", serviceUrl: "https://cursor.com", line: "Every model, in Cursor's chat and agent" },
-  { id: "codex", name: "OpenAI Codex", slug: "openai", serviceUrl: "https://openai.com", line: "OpenAI models, in the Codex CLI" },
+  { id: "codex", name: "OpenAI Codex", slug: "openai", serviceUrl: "https://openai.com", line: "Every model, in the Codex CLI" },
   { id: "claude-code", name: "Claude Code", slug: "claude", serviceUrl: "https://claude.com", line: "Every model, in Claude Code" },
   { id: "other", name: "Another tool", line: "Any OpenAI or Anthropic compatible tool" },
 ];
 
 export const CURSOR_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/cursor";
 export const CLAUDE_CODE_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/claude-code";
+export const CODEX_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/codex";
 
 /** The large choice of tools under "Start using this key". */
 export function GatewayToolPicker({ onPick }: { onPick: (tool: GatewayToolId) => void }) {
@@ -232,45 +233,85 @@ function ModelSnippet({ models, loading, error, empty, children }: {
   );
 }
 
-/** OpenAI Codex CLI: a provider in ~/.codex/config.toml that calls the Gateway's Responses API. */
+/**
+ * `~/.codex/config.toml` for the Codex CLI: an `openwork` provider on the Gateway's Codex endpoint
+ * that reads the key from OPENWORK_API_KEY through a command (so Codex also loads the model catalog
+ * for /model), the chosen model, and its reasoning effort when one is chosen.
+ */
+export function codexConfig(input: { baseUrl: string; model: GatewayToolModel; thinking: AutoRouterThinkingLevel }) {
+  return [
+    `model_provider = "openwork"`,
+    `model = "${cursorModelName({ name: input.model.name, modelId: input.model.modelId })}"`,
+    ...(input.thinking === "default" ? [] : [`model_reasoning_effort = "${input.thinking}"`]),
+    ``,
+    `[model_providers.openwork]`,
+    `name = "OpenWork"`,
+    `base_url = "${codexBaseUrl(input.baseUrl)}"`,
+    `wire_api = "responses"`,
+    ``,
+    `[model_providers.openwork.auth]`,
+    `command = "sh"`,
+    `args = ["-c", "echo $OPENWORK_API_KEY"]`,
+  ].join("\n");
+}
+
+/** OpenAI Codex CLI: the key in the shell profile, and a provider in ~/.codex/config.toml. */
 export function CodexSteps({ apiKey, baseUrl }: { apiKey: string | null; baseUrl: string }) {
   const models = useGatewayToolModels(true);
-  const usable = codexModels(models.data ?? []);
+  const list = models.data ?? [];
+  const [selected, setSelected] = useState<string | null>(null);
+  const [thinking, setThinking] = useState<AutoRouterThinkingLevel>("default");
+  const model = list.find((entry) => entry.modelId === selected) ?? list[0] ?? null;
+  const level = model?.thinkingLevels.includes(thinking) ? thinking : "default";
   return (
     <div className="flex flex-col gap-4" data-testid="gateway-tool-codex">
       <ol className="flex flex-col gap-4">
         <SetupStep number={1} field={<CopyField value={`export OPENWORK_API_KEY="${apiKey ?? "<your API key>"}"`} label="Copy the key line" testId="gateway-tool-codex-env" />}>
-          Put the key in your shell profile (for example <Strong>~/.zshrc</Strong>), then open a new terminal:
+          Add this line to your shell profile (for example <Strong>~/.zshrc</Strong>), then open a new terminal:
         </SetupStep>
         <SetupStep
           number={2}
           field={(
-            <ModelSnippet models={usable} loading={models.isLoading} error={models.error} empty="None of your models can be used in Codex yet: it needs OpenAI models.">
-              {(model) => model ? (
-                <CopyField
-                  multiline
-                  label="Copy the Codex configuration"
-                  testId="gateway-tool-codex-config"
-                  value={[
-                    `model = "${model.alias}"`,
-                    `model_provider = "openwork"`,
-                    ``,
-                    `[model_providers.openwork]`,
-                    `name = "OpenWork AI Gateway"`,
-                    `base_url = "${baseUrl}"`,
-                    `env_key = "OPENWORK_API_KEY"`,
-                    `wire_api = "responses"`,
-                  ].join("\n")}
-                />
+            <div className="flex flex-col gap-2">
+              <ModelsState loading={models.isLoading} error={models.error} empty={models.data && list.length === 0 ? "Your organization hasn't given you any models yet." : null} />
+              {model ? (
+                <>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <span className="min-w-0 flex-1">
+                      <DenSelect value={model.modelId} aria-label="Model" onChange={(event) => setSelected(event.target.value)}>
+                        {list.map((entry) => <option key={entry.modelId} value={entry.modelId}>{`${entry.name} · ${entry.providerName}`}</option>)}
+                      </DenSelect>
+                    </span>
+                    {model.thinkingLevels.length > 1 ? (
+                      <span className="sm:w-44">
+                        <DenSelect
+                          value={level}
+                          aria-label="Thinking level"
+                          onChange={(event) => {
+                            const next = autoRouterThinkingLevelSchema.safeParse(event.target.value);
+                            if (next.success) setThinking(next.data);
+                          }}
+                        >
+                          {model.thinkingLevels.map((entry) => (
+                            <option key={entry} value={entry}>{entry === "default" ? "Default thinking" : `${AUTO_ROUTER_THINKING_LABELS[entry]} thinking`}</option>
+                          ))}
+                        </DenSelect>
+                      </span>
+                    ) : null}
+                  </div>
+                  <CopyField multiline label="Copy the Codex configuration" testId="gateway-tool-codex-config" value={codexConfig({ baseUrl, model, thinking: level })} />
+                </>
               ) : null}
-            </ModelSnippet>
+            </div>
           )}
         >
-          Add this to <Strong>~/.codex/config.toml</Strong>:
+          Choose a model, then put this at the top of <Strong>~/.codex/config.toml</Strong>, replacing any <Strong>model</Strong> or <Strong>model_provider</Strong> lines already there:
         </SetupStep>
-        <SetupStep number={3}>Run <Strong>codex</Strong>. To switch model, change <Strong>model</Strong> to another id from the list above.</SetupStep>
+        <SetupStep number={3} field={<CopyField value="codex" label="Copy the command" />}>
+          Start Codex in your project. Run <Strong>/status</Strong> to check it uses OpenWork; <Strong>/model</Strong> switches between your models.
+        </SetupStep>
       </ol>
-      <DocsLink href={GATEWAY_API_KEYS_DOCS_URL} />
+      <DocsLink href={CODEX_DOCS_URL} />
     </div>
   );
 }

@@ -142,6 +142,12 @@ before running the new runtime. Do not deploy it against the old table names.
   only `ow_gw_` keys and answer in Anthropic's shapes. Same names as Cursor, with
   `[1m]` on 1M models; Messages providers get the request as it is, others are
   translated through Chat Completions and back.
+- Codex CLI (same feature): `GET /api/v1/codex/models` (Codex's own catalog
+  shape, `{models: [ModelInfo]}`) and `POST /api/v1/codex/responses` accept only
+  `ow_gw_` keys. Same names as Cursor; OpenAI and Azure models get the Responses
+  request as it is (within the Gateway's resource policy), others are
+  translated through Chat Completions and back, custom and namespaced tools
+  included.
   See `docs/features/gateway-cursor-setup/README.md`.
 - Requests resolve configured provider model rows and active group/set grants.
   Explicit aliases constrain candidates before member > team > organization
