@@ -1219,10 +1219,12 @@ const LoadingMessage = React.memo(({ elapsedSeconds, starting, backgroundShells 
           >
             <span aria-hidden="true"> · </span>
             <span className="sr-only">{t("session.reply_model_live_prefix")}</span>
-            <span className="inline-flex items-center gap-1 align-[-2px]">
-              {model.providerId ? <span aria-hidden="true" className="flex size-3 shrink-0 items-center justify-center"><ProviderIcon providerId={model.providerId} size={12} /></span> : null}
-              <span>{model.label}</span>
-            </span>
+            {/* The name is plain text on the line's own baseline, level with
+                "Working"; only the logo is nudged, to sit centered on the
+                capitals. Boxing the pair took its baseline from the logo: the
+                name dropped a pixel and the line grew once the model was known. */}
+            {model.providerId ? <span aria-hidden="true" data-working-model-logo="" className="mr-1 inline-flex size-3 items-center justify-center align-[-0.125em]"><ProviderIcon providerId={model.providerId} size={12} /></span> : null}
+            {model.label}
           </span>
         ) : null}
       </div>
