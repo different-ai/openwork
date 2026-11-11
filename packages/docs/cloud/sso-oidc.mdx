@@ -1,137 +1,74 @@
 ---
 title: "Set up OIDC single sign-on"
-description: "Let members sign in with your organization's OIDC identity provider, verify the domain, and test the connection before enabling it."
+description: "Connect your identity provider, verify your email domain, and test sign-in before enabling SSO."
 keywords: ["OIDC", "single sign-on", "SSO", "identity provider", "domain verification"]
 ---
 
-Use this guide to connect your organization's OIDC identity provider to OpenWork
-Cloud or a self-hosted OpenWork deployment.
+Connect an OIDC identity provider so members can sign in with their company accounts.
 
 ## Before you start
 
-You need:
+- Use the organization owner or an account with **Manage single sign-on**, on a plan with SSO.
+- Obtain a confidential web application's issuer URL, client ID and client secret from your identity-provider administrator.
+- Have DNS access and a test identity whose email matches the OpenWork administrator doing the setup.
+- Agree on administrator recovery before enabling SSO. Don't assume password access bypasses enforcement.
 
-- A plan that includes SSO, and the organization owner or an account granted
-  **Manage single sign-on**.
-- An identity-provider administrator who can create a confidential web application,
-  configure its callback URL and assign a test account.
-- Control of DNS for every email domain you want to use.
-- An identity-provider account whose email matches the OpenWork administrator
-  performing the setup. Use that account for the setup test.
+If your identity provider requires the final callback before creating an application, check the
+[OIDC callback URL reference](/cloud/auth-and-security#oidc-callback-urls) first.
 
-Agree on an administrator recovery procedure before enabling SSO. Don't assume
-an existing password session will bypass SSO enforcement. Avoid changing your
-only working connection without planning for a sign-in interruption.
+## 1. Save the connection in OpenWork
 
-## 1. Prepare the identity-provider application
+1. Select the organization and open **Settings → Auth & Security → Single sign-on (SSO)**.
+2. Select **OIDC** and enter:
 
-In your identity provider:
-
-1. Create or select an **OIDC confidential web application** for OpenWork.
-2. Obtain its **Issuer URL**, **Client ID** and **Client Secret**. Keep the
-   secret in your approved credential store, not in chat or email.
-3. Allow the scopes `openid email profile`. Configure a stable subject and an
-   email claim matching the administrator's OpenWork email.
-4. Assign only the administrator's test account initially.
-
-If the identity provider lets you save the application before entering its final
-callback URL, leave that step until OpenWork generates the URL below. If it
-requires a callback first, use a temporary HTTPS URL you control only when the
-provider supports replacing it. Don't start authentication until you have
-replaced it with OpenWork's exact generated URL. Don't use a wildcard callback.
-
-## 2. Save the connection in OpenWork
-
-1. Select the intended organization.
-2. Open **Settings → Auth & Security → Single sign-on (SSO)**. On older layouts,
-   open **Settings → SSO**.
-3. Select **Add SSO connection** if a connections list is shown, then select
-   **OIDC** in the connection form.
-4. Enter your identity-provider values:
-
-   | OpenWork field | What to enter |
+   | Field | Value |
    | --- | --- |
-   | **Name on the sign-in button**, if shown | A recognizable name for this sign-in option |
-   | **Issuer URL** | The OIDC issuer, not the authorization endpoint or discovery-document URL |
-   | **Domain** or **Email domains** | The email domains allowed to use this connection, without `@`. Explicitly list each intended domain. Where multiple domains are supported, separate them with commas or spaces. |
-   | **Client ID** | The application's client ID |
-   | **Client Secret** | The application's client secret |
-   | **Scopes** | `openid email profile`, unless your provider requires additional scopes |
-   | **Token endpoint auth method** | **Use provider default**, or the explicit method your provider requires |
+   | **Issuer URL** | OIDC issuer URL |
+   | **Domain** | Members' email domain, without `@` |
+   | **Client ID** | Application client ID |
+   | **Client Secret** | Application secret, entered directly |
+   | **Scopes** | `openid email profile` |
+   | **Token endpoint auth method** | **Use provider default**, unless your provider specifies a method |
 
-5. Leave **Use manual OIDC endpoints instead of discovery** unchecked if the
-   issuer publishes a working discovery document. If it doesn't, check it and
-   enter the provider's **Authorization endpoint**, **Token endpoint** and
-   **JWKS endpoint**. Enter **UserInfo endpoint** if required by your provider.
-6. Select **Add SSO connection** or **Save SSO connection**, depending on the
-   layout. The connection remains disabled.
-7. Copy the saved connection's **Redirect URL** into the identity provider's
-   allowed sign-in redirect/callback URLs. Save the identity-provider change.
-   Use the exact URL OpenWork displays, including its path. On a self-hosted
-   deployment, don't replace its host with a different web or API host.
+3. Leave **Use manual OIDC endpoints instead of discovery** unchecked. If discovery isn't available,
+   check it and enter the provider's **Authorization endpoint**, **Token endpoint** and **JWKS endpoint**.
+   Add **UserInfo endpoint** if your provider requires it.
+4. Select **Save SSO connection**, then copy the generated **Redirect URL**.
 
-If you need to edit and save the OIDC configuration again, have the client secret
-ready to re-enter. OpenWork doesn't return the saved secret. A replacement save
-disables the connection and requires testing the saved configuration again.
+<Note>
+With multiple connections, start with **Add SSO connection**, set **Name on the sign-in button**
+and **Email domains**, and save with **Add SSO connection**. Verify every listed domain.
+To disable one of these connections, use **Disable connection**.
+</Note>
 
-## 3. Verify the email domains
+## 2. Finish the identity-provider application
 
-On the saved OpenWork connection:
+1. Set its allowed sign-in callback to the exact **Redirect URL** you copied. Don't substitute a different web or API host.
+2. Allow `openid email profile` and an email claim matching the administrator's OpenWork email.
+3. Assign the administrator's matching test account, then save the application.
 
-1. Under **Domain verification**, use the displayed verification details or
-   select **Request token** if a token is needed.
-2. In your DNS provider, create the TXT record OpenWork displays for each domain:
+## 3. Verify the domain and enable SSO
 
-   | DNS field | Value |
-   | --- | --- |
-   | Type | `TXT` |
-   | Name | The displayed **Host / name** |
-   | Value | The displayed verification token |
+Return to the saved OpenWork connection:
 
-   If your DNS console appends the zone name automatically, enter only the host
-   portion rather than duplicating the full domain. For multiple domains, use
-   the displayed value at each required DNS name.
-3. Wait for public DNS propagation, then select **Verify domain**.
-4. Confirm **Domain verified** or **Domains verified** before continuing. If
-   verification reports an expired token and **Request token** returns the same
-   value, contact your OpenWork administrator or support for renewal. Don't keep
-   republishing an expired value.
+1. Under **Domain verification**, use the displayed token or select **Request token**.
+2. Create the displayed DNS **TXT** record using its **Host / name** and token value.
+   If your DNS console appends the zone automatically, enter only the host portion.
+3. Wait for DNS propagation, select **Verify domain**, and confirm verification succeeds.
+4. Select **Enable Config → SSO Login** and authenticate as the same administrator who started the test.
+5. Wait for **Authentication test successful**, then select **Enable SSO**.
+6. Complete a normal SSO sign-in and confirm the organization and email before assigning more users.
 
-## 4. Test and enable the connection
-
-1. Confirm the identity provider has the exact generated callback URL and that
-   the administrator's matching account is assigned to the application.
-2. In OpenWork, select **Enable Config** to open the test dialog, then select
-   **SSO Login**.
-3. Complete sign-in in the separate window with the **same administrator account**
-   that started the test. Allow popups and keep the window open until the flow
-   finishes. Test links expire after five minutes.
-4. Return to OpenWork and wait for **Authentication test successful**.
-5. Select **Enable SSO**. A successful test alone doesn't enable the connection.
-6. Perform a normal sign-in through SSO and confirm you reach the intended
-   organization with the expected email address. The setup test doesn't leave
-   you signed in through a normal SSO session.
-7. Once normal sign-in succeeds, assign the remaining intended users in your
-   identity provider.
-
-Before choosing **Require SSO** or **Restrict this domain to our SSO**, review
-[Auth & Security](/cloud/auth-and-security#single-sign-on) and confirm the scope
-with your administrator. Older deployments can require SSO as soon as it is
-enabled. Don't assume enabling it always leaves password access available.
+Review [sign-in enforcement](/cloud/auth-and-security#single-sign-on) before requiring SSO.
+Don't delete a connection as rollback. Use **Disable SSO** while you have management access.
 
 ## If setup stops
 
-| Where it stops | What to check next |
+| Problem | Next action |
 | --- | --- |
-| The page is read-only or the feature is unavailable | Ask the owner to check your **Manage single sign-on** permission and the organization's plan. |
-| Saving fails during discovery | Check the issuer URL, its reachable discovery document and matching issuer metadata. Use manual endpoints only with values from the identity-provider administrator. |
-| The identity provider rejects the callback | Compare its allowed callback URL with the saved **Redirect URL**, character for character. |
-| Domain verification fails | Check the displayed DNS name, avoid duplicating the zone suffix, and wait for propagation. |
-| The test fails, expires or reports a closed window | Allow popups, check the account assignment and matching administrator email, then start a fresh test. |
-| Enabling is blocked after an edit | Recheck domain verification and run a new test against the current saved configuration. |
-
-To stop using a connection while retaining its configuration, use **Disable SSO**
-or **Disable connection** while you still have authenticated management access.
-Don't delete a connection as a rollback step: deletion also removes linked
-provider-account data. If administrators are locked out, use the recovery
-procedure agreed before rollout.
+| Page is read-only | Ask the owner to check your permission and plan. |
+| Discovery fails | Check the issuer and discovery metadata, or obtain manual endpoints from your provider. |
+| Callback is rejected | Compare the allowed callback with OpenWork's **Redirect URL** exactly. |
+| DNS verification fails | Check the displayed record name, zone suffix and propagation. |
+| Test fails or expires | Allow popups, check account assignment and email, then start a fresh test within five minutes. |
+| Enablement is blocked after an edit | Recheck domain verification and test the saved configuration again. |
