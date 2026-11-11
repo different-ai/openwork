@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { once } from "node:events"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { request as httpRequest } from "node:http"
+import { networkInterfaces, tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 import { fileURLToPath } from "node:url"
@@ -17,7 +18,10 @@ const stubs: Record<string, string> = {
   "./browser-screencast.mjs": "export const streamBrowser = (ws) => { ws.send('frame'); return () => {}; };",
 }
 
-test("the desktop guest keeps serving after viewers open the page stream and VNC", async () => {
+const origin = "https://chat.example"
+
+/** The bundled guest running on this machine, with the secret its helper would hold. */
+async function startGuest() {
   const directory = await mkdtemp(join(tmpdir(), "desktop-guest-"))
   const outfile = join(directory, "guest.mjs")
   await build({
@@ -33,7 +37,6 @@ test("the desktop guest keeps serving after viewers open the page stream and VNC
   const guest = spawn(process.execPath, [outfile], { env: { ...process.env, WORKBOT_DESKTOP_STATE: directory }, stdio: ["ignore", "ignore", "pipe"] })
   let errors = ""
   guest.stderr.on("data", chunk => { errors += chunk })
-  const origin = "https://chat.example"
   const ticket = async () => {
     for (let attempt = 0; attempt < 100; attempt++) {
       const response = await fetch("http://127.0.0.1:6080/viewer", { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ view: "browser", origin }) }).catch(() => null)
@@ -42,11 +45,20 @@ test("the desktop guest keeps serving after viewers open the page stream and VNC
     }
     throw new Error(`The guest never served a viewer ticket. ${errors}`)
   }
+  const stop = async () => {
+    guest.kill()
+    await rm(directory, { recursive: true, force: true })
+  }
+  return { guest, secret, ticket, stop, errors: () => errors }
+}
+
+test("the desktop guest keeps serving after viewers open the page stream and VNC", async () => {
+  const { guest, ticket, stop, errors } = await startGuest()
   try {
     const stream = new WebSocket(`ws://127.0.0.1:6080/screencast/${await ticket()}`, { origin })
     const frame = await new Promise((resolve, reject) => {
       stream.once("message", resolve)
-      stream.once("close", () => reject(new Error(`The page stream closed before its first frame. ${errors}`)))
+      stream.once("close", () => reject(new Error(`The page stream closed before its first frame. ${errors()}`)))
     })
     assert.equal(String(frame), "frame")
     stream.close()
@@ -55,9 +67,32 @@ test("the desktop guest keeps serving after viewers open the page stream and VNC
     await once(vnc, "open")
     await once(vnc, "close")
     assert.ok(await ticket(), "the guest still issues viewer tickets")
-    assert.equal(guest.exitCode, null, errors)
+    assert.equal(guest.exitCode, null, errors())
   } finally {
-    guest.kill()
-    await rm(directory, { recursive: true, force: true })
+    await stop()
+  }
+})
+
+test("the desktop guest refuses its secret from outside the computer", async (t) => {
+  const { secret, ticket, stop } = await startGuest()
+  /** The status of a viewer request sent to `address` and naming `host`, with the right secret. */
+  const post = (address: string, host: string) => new Promise<number>((resolve, reject) => {
+    const request = httpRequest({ host: address, port: 6080, path: "/viewer", method: "POST", headers: { host, authorization: `Bearer ${secret}` } }, (response) => {
+      response.resume()
+      resolve(response.statusCode ?? 0)
+    })
+    request.on("error", reject)
+    request.end(JSON.stringify({ view: "browser", origin }))
+  })
+  try {
+    await ticket()
+    assert.equal(await post("127.0.0.1", "127.0.0.1:6080"), 200, "the helper on the computer is served")
+    // Through the computer's public address, as a proxy running on the computer would deliver it.
+    assert.equal(await post("127.0.0.1", "0123456789abcdef01234567-6080.example.dev"), 404)
+    const outside = Object.values(networkInterfaces()).flat().find(entry => entry?.family === "IPv4" && !entry.internal)?.address
+    if (outside) assert.equal(await post(outside, "127.0.0.1:6080"), 404)
+    else t.diagnostic("No outside address on this machine: only the public host name was checked.")
+  } finally {
+    await stop()
   }
 })
