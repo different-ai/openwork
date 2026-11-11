@@ -8,7 +8,10 @@ Drop one JSON file per provider in this folder, named after the provider id
 (`example.json`). `src/models/catalog.ts` validates every file and merges it
 after `base.json`:
 
-- `scripts/build-models.mjs` publishes it in the catalog Den reads.
+- `scripts/build-models.mjs` publishes it in the catalog Den reads, and
+  converts it for the v2 catalog OpenCode v2 engines read
+  (`src/models/catalog-v2.ts`). Its `npm` package picks the v2 API entry; write
+  the file in the v1 shape below only.
 - The gateway reads the same merged catalog for pricing and for the provider's
   SDK package and API URL.
 

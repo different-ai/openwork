@@ -21,7 +21,10 @@ Managed file:
 - `packages/types/src/den/inference.ts`
 
 `ee/apps/gateway/scripts/build-models.mjs` reads `openwork-models.json` and
-generates the OpenWork provider overlay in memory. It selects the API URL from
+generates the OpenWork provider overlay in memory, in both published catalogs:
+`/api.json` (models.dev v1 shape) and `/experimental/v2.0/api.json` (v2 shape,
+converted by `src/models/catalog-v2.ts`). Only edit `openwork-models.json` (v1
+shape); never edit the v2 output or `base-v2.json` by hand. It selects the API URL from
 `OPENWORK_DEV_MODE`: dev uses `http://127.0.0.1:8791/api/v1`, otherwise prod
 uses `https://inference.openworklabs.com/api/v1`.
 
@@ -65,7 +68,7 @@ node .opencode/skills/openwork-models/scripts/trigger-update-workflow.mjs --base
 ## Update Models Workflow
 
 When the user asks to update/refresh/sync the models from models.dev, do not edit
-`base.json` manually. Trigger `.github/workflows/update-models.yml` and wait for
+`base.json` or `base-v2.json` manually; the workflow refreshes both together. Trigger `.github/workflows/update-models.yml` and wait for
 the result:
 
 ```bash

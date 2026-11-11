@@ -583,6 +583,13 @@ jobs:
           }
           NODE
 
+      # Builds both published catalogs (v1 /api.json and v2
+      # /experimental/v2.0/api.json) from the snapshots with plain Node: it
+      # checks base-v2.json and that the custom and OpenWork providers convert
+      # to valid v2 entries.
+      - name: Build v1 and v2 catalogs
+        run: node ee/apps/gateway/scripts/build-models.mjs
+
   # Validate docs independently of the desktop smoke: images are site-only,
   # while MD/MDX and docs.json also feed the desktop's embedded agent docs.
   validate-docs:
