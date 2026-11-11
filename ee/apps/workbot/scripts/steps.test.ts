@@ -28,8 +28,11 @@ test("browser work is its own step that narrates what it does and links the page
   const steps = turn?.parts.flatMap((part) => (part.kind === "steps" ? part.steps : [])) ?? []
   assert.deepEqual(steps.map((step) => [step.label, step.surface ?? null, step.status]), [["Using the browser", "browser", "running"], ["Using my computer", null, "running"]])
   const [browser, computer] = steps
-  assert.equal(browser?.reason, "The browser action couldn't finish.", "a later merged call must not erase the earlier failure")
+  assert.equal(browser?.reason, "The browser action couldn't finish.", "a later call still running must not erase the earlier failure")
   assert.equal(computer?.reason, undefined)
+  // Once a later browser call works, Workbot got past the failed one: the step no longer reads as failed.
+  const [recovered] = buildWorkbotTurns({ ...snapshot, messages: [...snapshot.messages, { messageId: "wb_listings", role: "tool", callId: "c4", name: "desktop", isError: false, createdAt: 160 }] })
+  assert.equal(recovered?.parts.flatMap((part) => (part.kind === "steps" ? part.steps : [])).find((step) => step.surface === "browser")?.reason, undefined)
   // Plain words for each call, its own description first; never the typed value or a non-web address.
   assert.deepEqual(browser?.updates, ["Opening example-homes.test/search/2-bed", "Filling in the form", "Working in the browser", "Comparing prices on Example Homes"])
   assert.equal(JSON.stringify(turn).includes("private value"), false)

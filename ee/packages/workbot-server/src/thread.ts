@@ -582,8 +582,8 @@ function desktopUpdate(input: Record<string, unknown>): string | null {
 
 /**
  * Work on Workbot's computer reads as one step, however many commands it took: the person sees that it is using
- * its computer, never commands or raw failure details (DESIGN C3, T2). Failures retain a safe reason rather than
- * silently becoming successful when later calls are merged. Work in its browser is its own
+ * its computer, never commands or raw failure details (DESIGN C3, T2). A failure keeps a safe reason until a later
+ * call of the step works: Workbot got past it. One still running or cut short doesn't clear it. Work in its browser is its own
  * step ("Using the browser"), with the pages it opened, and so is work on its screen apart from commands run in the
  * background ("Working on my computer"), which has nothing to watch. What it is doing, in its own words, travels in `updates`; the
  * page shows the newest one under the step.
@@ -621,8 +621,10 @@ function addComputerStep(parts: WorkbotPart[], name: string, input: Record<strin
   const took = at !== null && ended !== null ? Math.max(0, ended - at) : 0
   const worked = before + (took <= LONGEST_COMMAND_MS ? took : 0)
   workedMs.set(step, worked)
-  const failed = result?.role === "tool" && result.isError
-  if (failed) step.reason = browser ? "The browser action couldn't finish." : "The computer action couldn't finish."
+  if (result?.role === "tool") {
+    if (result.isError) step.reason = browser ? "The browser action couldn't finish." : "The computer action couldn't finish."
+    else delete step.reason
+  }
   step.status = running ? "running" : "done"
   // Duration is shown as finishedAt − startedAt, and a running step counts up from startedAt.
   if (running) {
