@@ -2,7 +2,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { initializeDenBootstrapConfig, readDenBootstrapConfig, readDenSettings, setDenBootstrapConfig, writeDenSettings } from "../src/app/lib/den";
 import * as den from "../src/app/lib/den";
-import { denDeviceLogin, isConfiguredDenDeviceDestination } from "../src/app/lib/den-device-login";
+import { denDeviceLogin, isConfiguredDenDeviceDestination, readDeviceLoginDeployment } from "../src/app/lib/den-device-login";
 import { beginDenEnrollment, commitDenEnrollment, exchangeHandoffAndSignIn } from "../src/app/lib/den-handoff";
 import { denSettingsChangedEvent } from "../src/app/lib/den-session-events";
 import { readOrgSelectionPending } from "../src/app/lib/den-sign-in-intent";
@@ -59,6 +59,131 @@ async function terminal() {
   }
   throw new Error("Device test did not settle.");
 }
+
+describe("anonymous device deployment discovery", () => {
+  test.each(["network", "503"])("bounded %s exhaustion exposes only the safe destination host", async (failure) => {
+    const paths: string[] = [];
+    const fetch = spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      paths.push(new URL(String(url)).pathname);
+      expect(new Headers(init?.headers).has("authorization")).toBe(false);
+      if (failure === "network") throw new TypeError("https://secret.invalid/private?token=private-bearer");
+      return Response.json({ message: "https://secret.invalid/private?token=private-bearer" }, { status: 503 });
+    });
+    const began = performance.now();
+    try {
+      const started = await denDeviceLogin.start({ baseUrl, apiBaseUrl: "http://127.0.0.1:8788/api/den", force: true, requestId: "network-owner" });
+      expect(started).toEqual({ state: "failed", reason: "den_unreachable", host: "127.0.0.1:8788" });
+      expect(denDeviceLogin.status("network-owner")).toEqual(started);
+      expect(JSON.stringify([started, denDeviceLogin.status()])).not.toMatch(/https?:|private|bearer|secret/);
+      expect(paths).toEqual(Array(3).fill("/api/den/v1/features"));
+      expect(performance.now() - began).toBeLessThan(2500);
+      expect(readDenSettings().authToken).toBe("previous-session");
+    } finally { fetch.mockRestore(); }
+  });
+
+  test.each(["network", "503"])("one transient %s retries the anonymous read but not code writes", async (failure) => {
+    const s = server();
+    const normal = s.fetch.getMockImplementation();
+    let discoveryCalls = 0;
+    s.fetch.mockImplementation(async (url, init) => {
+      if (new URL(String(url)).pathname === "/v1/features" && ++discoveryCalls === 1) {
+        if (failure === "network") throw new TypeError("Synthetic network failure");
+        return Response.json({}, { status: 503 });
+      }
+      if (!normal) throw new Error("Missing test server implementation");
+      return normal(url, init);
+    });
+    try {
+      expect(await denDeviceLogin.start(options)).toHaveProperty("userCode");
+      expect(discoveryCalls).toBe(2);
+      expect(s.requests.filter((path) => path === "/api/auth/device/code")).toHaveLength(1);
+      denDeviceLogin.cancel();
+    } finally { s.fetch.mockRestore(); }
+  });
+
+  test("abort during retry sleep stops immediately without a second read or device code", async () => {
+    const fetch = spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({}, { status: 503 }));
+    try {
+      const started = denDeviceLogin.start(options);
+      while (fetch.mock.calls.length === 0) await Bun.sleep(1);
+      await Bun.sleep(20);
+      denDeviceLogin.cancel();
+      expect(await started).toHaveProperty("ok", false);
+      await Bun.sleep(180);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(denDeviceLogin.status()).not.toHaveProperty("reason");
+      expect(readDenSettings().authToken).toBe("previous-session");
+    } finally { fetch.mockRestore(); }
+  });
+
+  test("each stalled anonymous read has a finite deadline inside the prepare budget", async () => {
+    const fetch = spyOn(globalThis, "fetch").mockImplementation((_url, init) => new Promise((_resolve, reject) => {
+      const signal = init?.signal;
+      if (!signal) throw new Error("Discovery must carry an abort signal");
+      signal.addEventListener("abort", () => reject(new Error("private timeout details")), { once: true });
+    }));
+    const began = performance.now();
+    try {
+      expect(await denDeviceLogin.start(options)).toEqual({ state: "failed", reason: "den_unreachable", host: "den.example.test" });
+      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(performance.now() - began).toBeLessThan(6500);
+    } finally { fetch.mockRestore(); }
+  }, 8000);
+
+  test.each([{}, { features: {} }, { features: { remoteDesktopDeviceLogin: "false" } }])("missing or malformed flags fail closed, not unsupported or unreachable (%j)", async (payload) => {
+    const fetch = spyOn(globalThis, "fetch").mockImplementation(async () => Response.json(payload));
+    try {
+      expect(await denDeviceLogin.start(options)).toHaveProperty("ok", false);
+      expect(denDeviceLogin.status().state).toBe("failed");
+      expect(denDeviceLogin.status()).not.toHaveProperty("reason");
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally { fetch.mockRestore(); }
+  });
+
+  test("interrupted discovery bodies retry, but malformed JSON does not", async () => {
+    const fetch = spyOn(globalThis, "fetch").mockImplementationOnce(async () => new Response(new ReadableStream({
+      start(controller) { controller.error(new TypeError("private connection details")); },
+    }))).mockImplementation(async () => Response.json({ features: { remoteDesktopDeviceLogin: true } }));
+    try {
+      expect(await readDeviceLoginDeployment(baseUrl, new AbortController().signal)).toBe(true);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      fetch.mockClear();
+      fetch.mockImplementation(async () => new Response("malformed private response", { status: 200 }));
+      expect(await denDeviceLogin.start(options)).toHaveProperty("ok", false);
+      expect(denDeviceLogin.status()).not.toHaveProperty("reason");
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally { fetch.mockRestore(); }
+  });
+
+  test("a newer start aborts the previous retry pause and owns the terminal result", async () => {
+    let calls = 0;
+    const fetch = spyOn(globalThis, "fetch").mockImplementation(async () => {
+      calls++;
+      return calls === 1 ? Response.json({}, { status: 503 }) : Response.json({ features: { remoteDesktopDeviceLogin: false } });
+    });
+    try {
+      const old = denDeviceLogin.start({ ...options, requestId: "old" });
+      while (calls === 0) await Bun.sleep(1);
+      await Bun.sleep(20);
+      expect(await denDeviceLogin.start({ ...options, requestId: "new" })).toHaveProperty("state", "unsupported");
+      expect(await old).toHaveProperty("ok", false);
+      await Bun.sleep(180);
+      expect(calls).toBe(2);
+      expect(denDeviceLogin.status("new").state).toBe("unsupported");
+      expect(denDeviceLogin.status("old").state).toBe("failed");
+    } finally { fetch.mockRestore(); }
+  });
+
+  test("a pre-aborted read makes no request", async () => {
+    const fetch = spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({}));
+    const controller = new AbortController();
+    controller.abort();
+    try {
+      await expect(readDeviceLoginDeployment(baseUrl, controller.signal)).rejects.toBeDefined();
+      expect(fetch).not.toHaveBeenCalled();
+    } finally { fetch.mockRestore(); }
+  });
+});
 
 describe("device enrollment uses the handoff transaction", () => {
   test("the local deployment gate matches explicit same-server URLs but not an alternate API", () => {

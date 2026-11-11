@@ -6,7 +6,7 @@ import {
   resolveDenBaseUrlsForDestination,
 } from "./den";
 import { beginDenEnrollment, commitDenEnrollment } from "./den-handoff";
-import { createDesktopDeviceLogin, type DeviceLoginStartOptions } from "./device-login-flow";
+import { createDesktopDeviceLogin, DeviceLoginDiscoveryUnavailable, type DeviceLoginStartOptions } from "./device-login-flow";
 import { desktopFetchViaMain } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
 
@@ -46,6 +46,57 @@ async function getJson(apiBaseUrl: string, path: string, signal: AbortSignal, to
   return response.json();
 }
 
+function discoveryPause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    signal.throwIfAborted();
+    const cancel = () => { clearTimeout(timer); reject(new Error("Discovery cancelled.")); };
+    const timer = setTimeout(() => { signal.removeEventListener("abort", cancel); resolve(); }, ms);
+    signal.addEventListener("abort", cancel, { once: true });
+  });
+}
+
+/** Retry only this anonymous read: at most 4.95s, below prepare/control deadlines. */
+export async function readDeviceLoginDeployment(apiBaseUrl: string, signal: AbortSignal): Promise<boolean> {
+  assertDeviceLoginUrl(apiBaseUrl);
+  const host = new URL(apiBaseUrl).host;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    signal.throwIfAborted();
+    let response: Response | undefined;
+    try {
+      response = await fetchDenDeviceLogin(`${apiBaseUrl.replace(/\/+$/, "")}/v1/features`, {
+        credentials: "omit", redirect: "error", cache: "no-store",
+        signal: AbortSignal.any([signal, AbortSignal.timeout(1500)]),
+      });
+    } catch {
+      signal.throwIfAborted();
+      // Network errors and per-attempt timeouts are safe to retry for this GET.
+    }
+    signal.throwIfAborted();
+    if (response && response.status < 500) {
+      if (!response.ok) throw new Error("Device discovery failed.");
+      let payload: unknown;
+      let readFailed = false;
+      try { payload = await response.json(); }
+      catch (error) {
+        signal.throwIfAborted();
+        if (error instanceof SyntaxError) throw new Error("Invalid device discovery response.");
+        // The same per-attempt deadline covers a stalled or interrupted body.
+        readFailed = true;
+      }
+      signal.throwIfAborted();
+      if (!readFailed) {
+        if (!record(payload) || !record(payload.features) || typeof payload.features.remoteDesktopDeviceLogin !== "boolean") {
+          // Older/malformed Den fails closed, but is not an explicit deployment OFF.
+          throw new Error("Invalid device discovery response.");
+        }
+        return payload.features.remoteDesktopDeviceLogin;
+      }
+    }
+    if (attempt < 2) await discoveryPause(150 * (attempt + 1), signal);
+  }
+  throw new DeviceLoginDiscoveryUnavailable(host);
+}
+
 /** Renderer singleton: control actions receive only the public projection of this flow. */
 export const denDeviceLogin = createDesktopDeviceLogin({
   fetcher: fetchDenDeviceLogin,
@@ -63,12 +114,8 @@ export const denDeviceLogin = createDesktopDeviceLogin({
     });
     assertDeviceLoginUrl(destination.baseUrl);
     assertDeviceLoginUrl(destination.apiBaseUrl);
-    // Always deployment-scoped, even when --force replaces an authenticated session.
-    // A missing flag (older Den) or an unavailable discovery endpoint fails closed.
-    let payload: unknown;
-    try { payload = await getJson(destination.apiBaseUrl, "/v1/features", signal); }
-    catch { return null; }
-    if (!record(payload) || !record(payload.features) || payload.features.remoteDesktopDeviceLogin !== true) return null;
+    // Always live and anonymous, even for the configured server or --force.
+    if (!await readDeviceLoginDeployment(destination.apiBaseUrl, signal)) return null;
     return destination;
   },
   async enroll({ token, destination, attempt, signal }) {
