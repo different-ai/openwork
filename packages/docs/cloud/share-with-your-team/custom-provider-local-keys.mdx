@@ -1,149 +1,64 @@
 ---
-title: "Share a custom provider with Desktop-local keys"
-description: "Configure an endpoint and models once, then let each Desktop user supply their own upstream key on their computer."
-keywords: ["custom provider", "personal API keys", "Desktop", "environment variables", "legacy provider"]
+title: "Let each Desktop user bring their own key for a shared custom provider"
+description: "Share an endpoint and model list once, then have each Desktop user add their own gateway key."
+keywords: ["custom provider", "personal API keys", "Desktop", "environment variables"]
 ---
 
-Use this guide when your team needs one centrally maintained OpenAI-compatible
-endpoint and model list, but each person must use their own existing upstream
-key without supplying an upstream administration key.
-
-This setup is for **OpenWork Desktop**. If you need server-managed member
-bindings for OpenWork Web or Cloud Automations, use
-[Per-member LLM credentials](/cloud/share-with-your-team/per-member-llm-credentials)
-instead.
+Configure one endpoint and model list for the team without collecting users' keys or an upstream admin key.
+Use this flow for **OpenWork Desktop**. For server-managed keys in Web or Cloud Automations,
+use [per-member credential bindings](/cloud/share-with-your-team/per-member-llm-credentials).
 
 ## Before you start
 
-Have these ready:
+- Have permission to create or edit organization providers, plus the gateway's base URL and model IDs.
+- Give each user their own inference key and confirm your policy permits local credential storage.
+- Use a custom provider with one credential variable. Choose a name no other provider uses.
 
-- An OpenWork account allowed to create or edit the organization's legacy providers.
-- The gateway's OpenAI-compatible base URL and exact model IDs.
-- A separate inference key for each user, entered only on that user's computer.
-- Permission under your organization's policy to store credentials locally.
-
-Choose a dedicated environment-variable name, such as `TEAM_GATEWAY_API_KEY`,
-that no other provider uses. This guide covers a custom provider with **one**
-credential variable. For providers requiring several credentials or settings,
-use the provider-specific instructions instead.
-
-## 1. Prepare the provider without an organization key
+## 1. Prepare the provider without a shared key
 
 **Administrator, in OpenWork Cloud:**
 
-1. Select the organization, then open **AI Gateway → AI Providers**.
-2. Under **Legacy Providers**, open the existing custom provider. If it doesn't
-   exist, select **Add legacy provider → Custom provider**.
-3. For a new provider, leave **API key / credential** blank. Select
-   **Advanced: edit as JSON** and enter the definition below, replacing the
-   example endpoint, model ID and display names with your gateway's values:
+1. Select the organization, then open **AI Gateway → AI Providers → Legacy Providers**.
+2. Open the existing custom provider, or [create a custom provider](/cloud/share-with-your-team/custom-llm-provider#advanced-raw-json-config)
+   with its endpoint and models. Leave **API key / credential** blank for a new provider.
+3. Open **Advanced: edit as JSON** and find the top-level `env` list, for example:
 
    ```json
-   {
-     "id": "team-gateway",
-     "name": "Team gateway",
-     "npm": "@ai-sdk/openai-compatible",
-     "api": "https://gateway.example.com/v1",
-     "env": ["TEAM_GATEWAY_API_KEY"],
-     "models": [
-       {
-         "id": "your-model-id",
-         "name": "Team model"
-       }
-     ]
-   }
+   "env": ["TEAM_GATEWAY_API_KEY"]
    ```
 
-   For an existing provider, use its declared variable name unless you are
-   coordinating a rename with everyone already using it. Find the name in the
-   top-level `env` list under **Advanced: edit as JSON**. Don't copy the example
-   name if your provider declares a different one.
-4. Under **Who can use it**, select only the people or teams that need access.
-   Save the provider without entering an organization credential.
-5. Open its detail page. Under **Provider configuration**, confirm the badge says
-   **Credential missing**, not **Credential saved**. Check as the creator or
-   someone allowed to edit it. If the configuration is hidden, have an authorized
-   editor perform the check.
+   Use the name actually declared in your provider, not necessarily this example.
+   Coordinate any rename with existing users before changing it.
+4. Save and check **Provider configuration** on the detail page as an authorized editor.
+   Confirm **Credential missing**. A blank edit field doesn't clear an existing credential.
+   If it says **Credential saved**, [remove the saved organization key](/cloud/share-with-your-team/remove-legacy-provider-key) before continuing.
+5. Under **Who can use it**, grant only the intended people or teams access and save.
+6. Send users the provider name, a model to select, and the exact variable name from `env`.
 
-If the provider is already in `per_member` mode, don't change it to follow this
-guide. Use its [member-binding flow](/cloud/share-with-your-team/per-member-llm-credentials#member-flow).
-For this local-key setup, leave a new provider in the default `shared` mode,
-but store **no organization key**.
+Keep the default `shared` mode with no organization key. If an existing provider uses
+`per_member`, use its [member-binding flow](/cloud/share-with-your-team/per-member-llm-credentials#member-flow) instead.
 
 <Warning>
-Never add a key to the organization's credential field for this provider.
-Organization credential sync can distribute that key to members' computers and
-replace a local value using the same variable name.
+Never add an organization key to this provider: sync can distribute it and overwrite users' local values.
 </Warning>
 
-### If a credential is already saved
+## 2. Add your own key in Desktop
 
-Don't share the provider more widely yet. Leaving an existing provider's edit
-field blank preserves its saved credential.
+**Each user, on each computer:**
 
-Have an authorized operator use the
-[provider update API](/api-reference/llm-providers/update-organization-llm-provider)
-to explicitly clear it:
-
-1. Read the exact provider in the intended organization with
-   `GET /v1/llm-providers?scope=manageable`. Confirm `canManage: true`, the
-   configuration isn't redacted, and `credentialMode` is `shared`.
-2. Prepare the update with the existing name, custom definition including all
-   models, and complete member/team access grants preserved. Include
-   `credentialMode: "shared"` and **`apiKey: ""`** in the update body. Don't
-   omit the credential field or send only that field: the update also requires
-   provider configuration and can replace access grants.
-3. Send the reviewed update to `PATCH /v1/llm-providers/{llmProviderId}`.
-4. Read the metadata again and confirm `hasApiKey: false` with an unredacted
-   configuration. The detail page should now show **Credential missing**.
-
-Don't use the `/connect` route to check presence: that route can return the
-credential itself. If the key was previously distributed, review upstream
-revocation and affected device cleanup before continuing. Clearing the server's
-copy doesn't revoke the upstream key or prove old device copies are gone.
-
-## 2. Give each user the variable name and model to select
-
-Send users the provider's display name, one model to use, and the exact name from
-its `env` list, for example `TEAM_GATEWAY_API_KEY`. They don't need to recreate
-the endpoint or model definitions. Don't collect or send anyone's key for them.
-
-## 3. Add your own key on each computer
-
-**Each user, in OpenWork Desktop:**
-
-1. Sign in to the organization that shared the provider with you.
+1. Sign in to the organization that shared the provider.
 2. Open **Settings → Environment → Add variable**.
-3. For the name, enter the exact variable name your administrator supplied,
-   including capitalization. If it already exists for another purpose, ask your
-   administrator to resolve the conflict before replacing it.
-4. For the value, paste your own upstream inference key. Keep it hidden when
-   sharing your screen.
-5. Select **Save**. Finish any active work, then select **Apply** and confirm
-   the restart/apply prompt when offered. Wait for the change to finish.
-6. Open **Settings → AI Providers** and select **Sync now**. If a restart is
-   still needed, finish active work and restart Desktop safely.
-7. Return to a conversation and select the shared model in the model picker.
+3. Enter the exact variable name your administrator supplied, including capitalization.
+   If it already serves another provider, ask your administrator before replacing it.
+4. Paste your own inference key as the value. Keep it hidden and out of chat messages.
+5. Select **Save**, finish active work, then **Apply** and confirm the restart/apply prompt.
+6. Open **Settings → AI Providers → Sync now**.
+7. Select the shared model in a conversation and send a short, non-sensitive prompt.
 
-Repeat on each computer you use. Don't enter the key into the organization's
-shared credential field or into a chat message.
+## If the model is missing
 
-## 4. Check that requests use the intended key
+- Check the selected organization and ask your administrator to confirm your provider grant.
+- Match the variable name to `env`, complete Apply, then use **Sync now**.
+- Have your administrator check for an inherited variable overriding the saved value, without printing it.
 
-1. Confirm the shared model is available without entering the endpoint or models
-   locally, including after **Sync now** or a safe restart.
-2. With authorization for the upstream usage, send a short, non-sensitive prompt
-   to the agreed model. Have the gateway operator confirm attribution to your
-   key. Model selection alone doesn't establish a successful authenticated call.
-3. Before broad rollout, check a separate account/device that has the same
-   provider grant but no local or inherited credential. Its model should remain
-   unavailable. Don't delete a working user's key for this check.
-
-If the model is missing, check the organization, provider grant, variable name
-and completed Apply step. Environment variables set before Desktop starts take
-precedence over values saved in Settings. Ask your administrator to check for a
-conflict without printing values. Don't add an organization key to fix a
-**Needs organization credential** badge.
-
-For the other credential-sharing options, see
-[Provider support](/ai-gateway/provider-support).
+For other credential options, see [Provider support](/ai-gateway/provider-support).

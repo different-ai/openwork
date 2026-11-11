@@ -1,0 +1,40 @@
+---
+title: "Remove a saved organization key from a legacy provider"
+description: "Clear a legacy provider's saved credential without replacing its endpoint, models or access grants."
+keywords: ["legacy provider", "remove API key", "organization credential"]
+---
+
+Use this procedure to remove a saved organization credential before switching a
+legacy custom provider to users' own Desktop keys.
+
+## Before you start
+
+- Use an authorized provider editor in the intended organization, with an approved API client.
+- Schedule the change with affected users and retain the current nonsecret configuration and grants.
+- If the key was distributed, agree on upstream revocation and device cleanup separately.
+
+## 1. Check the exact provider
+
+1. Read `GET /v1/llm-providers?scope=manageable` in the intended organization.
+2. Select the provider by its `id`. Confirm `source: "custom"`, `credentialMode: "shared"`,
+   `canManage: true` and an unredacted configuration. Don't change a `per_member` provider with this procedure.
+3. Check `hasApiKey`. If it is `false`, no saved organization credential needs clearing.
+
+Don't use `/connect` for this check: it can return the key itself.
+
+## 2. Clear the credential and verify
+
+1. Prepare a [provider update](/api-reference/llm-providers/update-organization-llm-provider)
+   preserving the current `name`, `source`, complete custom definition including every model,
+   `memberIds`, `teamIds` and `allMembers` setting.
+2. Set `credentialMode` to `"shared"` and explicitly include `apiKey: ""` in that payload.
+   Don't send just this field or omit it: omitted credentials are preserved, and omitted grants can be removed.
+3. Review the full payload, then send it to `PATCH /v1/llm-providers/{llmProviderId}`.
+4. Read the provider metadata again. Confirm `hasApiKey: false` with an unredacted configuration,
+   and confirm the endpoint, models and access grants are unchanged.
+5. Reopen the detail page and confirm **Credential missing** under **Provider configuration**.
+
+Clearing this saved copy doesn't revoke the upstream key or remove previously synced copies.
+Complete the agreed revocation and device-cleanup plan before rollout.
+
+Continue with [users' own Desktop keys](/cloud/share-with-your-team/custom-provider-local-keys).
