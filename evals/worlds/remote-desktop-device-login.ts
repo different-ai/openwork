@@ -102,7 +102,7 @@ async function targetsReader(seed: Seed, den: Den, organizationId: string) {
 export async function remoteDesktopDeviceLogin(seed: Seed) {
   const binary = process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim();
   if (!binary?.startsWith("/") || !binary.endsWith("/openwork")) throw new Error("Native proof requires the prebuilt Linux unpacked openwork binary in OPENWORK_EVAL_ELECTRON_BINARY; source Electron is not evidence.");
-  const den = await seed.den({ org: { name: "Device workspace A", admin: { name: "Device Approver" }, members: {} }, env: { DEN_FEATURE_REMOTE_DESKTOP_DEVICE_LOGIN: undefined } });
+  const den = await seed.den({ org: { name: "Device organization A", admin: { name: "Device Approver" }, members: {} }, env: { DEN_FEATURE_REMOTE_DESKTOP_DEVICE_LOGIN: undefined } });
   // /v1 supports bearer sessions; Better Auth's session-list endpoint requires
   // its signed cookie. Arrange both from one real password sign-in, without
   // copying either credential into the desktop or exposing them to evidence.
@@ -130,14 +130,14 @@ export async function remoteDesktopDeviceLogin(seed: Seed) {
     return result.body.length;
   };
   const defaultEnabled = await publicFeatures();
-  const second = await seed.api(den.admin, "/v1/org", { method: "POST", body: JSON.stringify({ name: "Device workspace B" }) });
-  if (!second.response.ok) throw new Error(`Create second workspace: HTTP ${second.response.status}`);
+  const second = await seed.api(den.admin, "/v1/org", { method: "POST", body: JSON.stringify({ name: "Device organization B" }) });
+  if (!second.response.ok) throw new Error(`Create second organization: HTTP ${second.response.status}`);
   const orgB = record(record(second.body).organization);
   const organizations = rows(record((await seed.api(den.admin, "/v1/me/orgs")).body).orgs);
   const orgA = organizations.find(org => org.id !== orgB.id);
   if (!orgA || !organizations.some(org => org.id === orgB.id)) throw new Error("The approving user needs two organizations.");
   const active = await seed.api(den.admin, "/v1/me/active-organization", { method: "POST", body: JSON.stringify({ organizationId: text(orgA.id) }) });
-  if (!active.response.ok) throw new Error("Cannot arrange the browser's active workspace A.");
+  if (!active.response.ok) throw new Error("Cannot arrange the browser's active organization A.");
   const targetsA = await targetsReader(seed, den, text(orgA.id));
   const targetsB = await targetsReader(seed, den, text(orgB.id));
   const baselineA = await targetsA();

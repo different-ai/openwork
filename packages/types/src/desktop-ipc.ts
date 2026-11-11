@@ -304,6 +304,8 @@ export type NukeReceipt = {
 };
 
 export type DesktopFetchInit = {
+  /** Caller-owned opt-in for aborting a finite request beyond the default GET/PATCH methods. */
+  cancellable?: boolean;
   transferId?: string;
   redirect?: "error";
   method?: string;

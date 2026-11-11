@@ -1,6 +1,5 @@
 import type { DesktopAgentPermissionRule } from "@openwork/types/den/desktop-policies";
 import { nativeDeepLinkEvent } from "./deep-link-bridge";
-import { DESKTOP_DEVICE_CLIENT_ID } from "./device-login-flow";
 
 export type * from "./desktop-types";
 export type {
@@ -408,19 +407,6 @@ export function isPermissionReplyRequest(input: RequestInfo | URL, init?: Reques
   }
 }
 
-export function isDesktopDeviceLoginRequest(input: RequestInfo | URL, init?: RequestInit): boolean {
-  const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-  if (method.toUpperCase() !== "POST" || typeof init?.body !== "string") return false;
-  const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-  try {
-    if (!/\/api\/auth\/device\/(?:code|token)$/.test(new URL(raw).pathname)) return false;
-    const body: unknown = JSON.parse(init.body);
-    return typeof body === "object" && body !== null && "client_id" in body && body.client_id === DESKTOP_DEVICE_CLIENT_ID;
-  } catch {
-    return false;
-  }
-}
-
 function desktopTransferId(): string {
   return crypto.randomUUID();
 }
@@ -442,6 +428,10 @@ async function runCancellableDesktopTransfer<T>(
   }
 }
 
+export type DesktopFetchRequestInit = RequestInit & {
+  cancellable?: boolean;
+};
+
 type DesktopFetchMainOptions = {
   timeoutMs?: number;
   agentContextDiagnosticsDeadlineAtMs?: number;
@@ -449,7 +439,7 @@ type DesktopFetchMainOptions = {
 
 async function desktopFetchThroughMain(
   input: RequestInfo | URL,
-  init?: RequestInit,
+  init?: DesktopFetchRequestInit,
   options: DesktopFetchMainOptions = {},
 ): Promise<Response> {
   // Extract method/headers/body from either a Request object or the (input, init)
@@ -487,7 +477,7 @@ async function desktopFetchThroughMain(
   const cancellable = ["GET", "PATCH"].includes(requestMethod)
     || (requestMethod === "POST" && /\/session\/[^/]+\/abort$/.test(new URL(url).pathname))
     || isPermissionReplyRequest(url, { method: requestMethod })
-    || isDesktopDeviceLoginRequest(url, { method: requestMethod, body });
+    || init?.cancellable === true;
   const signal = cancellable && diagnosticsDeadlineAtMs === undefined
     ? init?.signal === undefined ? (input instanceof Request ? input.signal : undefined) : init.signal
     : undefined;
@@ -497,6 +487,7 @@ async function desktopFetchThroughMain(
     ...((init?.redirect ?? (input instanceof Request ? input.redirect : undefined)) === "error"
       ? { redirect: "error" satisfies RequestRedirect }
       : {}),
+    cancellable,
     transferId,
     method,
     headers,
@@ -537,7 +528,7 @@ export const desktopFetch: typeof globalThis.fetch = async (input, init) => {
   return desktopFetchThroughMain(input, init);
 };
 
-export async function desktopFetchViaMain(input: RequestInfo | URL, init?: RequestInit, timeoutMs?: number): Promise<Response> {
+export async function desktopFetchViaMain(input: RequestInfo | URL, init?: DesktopFetchRequestInit, timeoutMs?: number): Promise<Response> {
   return desktopFetchThroughMain(input, init, { timeoutMs });
 }
 

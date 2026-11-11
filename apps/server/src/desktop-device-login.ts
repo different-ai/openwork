@@ -8,20 +8,35 @@ import { z } from "zod";
 
 const discoverySchema = z.object({ baseUrl: z.string().url(), token: z.string().min(1) });
 const receiptSchema = z.object({ ok: z.boolean(), code: z.string().optional(), result: z.unknown().optional() });
+const verificationUrlSchema = z.string().refine((value) => {
+  // Validate the original text: URL parsers may silently remove line breaks.
+  if (!/^https?:\/\//i.test(value) || /[\u0000-\u0020\u007f-\u009f]/.test(value) || !URL.canParse(value)) return false;
+  const url = new URL(value);
+  return !url.username && !url.password;
+});
 const startedSchema = z.object({
-  userCode: z.string().min(1), verificationUri: z.string().url(),
-  verificationUriComplete: z.string().url().optional(), expiresAt: z.number().finite(),
+  userCode: z.string().min(1), verificationUri: verificationUrlSchema,
+  verificationUriComplete: verificationUrlSchema.optional(), expiresAt: z.number().finite(),
 });
 const statusSchema = z.object({
   state: z.enum(["pending", "approved", "denied", "expired", "unsupported", "failed", "signed_in"]),
   email: z.string().optional(), org: z.object({ id: z.string(), name: z.string() }).optional(),
-  runner: z.enum(["connected", "session_only", "not_connected", "unknown"]).optional(),
 });
+
+class DesktopSetupError extends Error {
+  constructor(readonly reason: "unavailable" | "unsafe") { super(reason); }
+}
+
+function startDesktopMessage(): string {
+  return process.platform === "darwin"
+    ? "Cannot reach the local OpenWork app. Start OpenWork (open -a OpenWork), then run this command again."
+    : "Cannot reach the local OpenWork app. Start OpenWork, then run this command again.";
+}
 
 /** Only the existing local bridge credential crosses this boundary, never a Den credential. */
 async function desktopBridge() {
   // POSIX custody can be verified without guessing inherited Windows ACLs.
-  if (!process.getuid) throw new Error("Device sign-in requires a local desktop profile with verifiable owner-only permissions.");
+  if (!process.getuid) throw new DesktopSetupError("unsafe");
   const uid = process.getuid();
   const appData = process.platform === "darwin"
     ? join(homedir(), "Library", "Application Support")
@@ -57,11 +72,13 @@ async function desktopBridge() {
         }
         return bridge;
       } finally { await handle.close(); }
-    } catch {
+    } catch (error) {
       // Never fall through from an explicit profile to another desktop.
+      const missing = error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+      throw new DesktopSetupError(missing ? "unavailable" : "unsafe");
     }
   }
-  throw new Error("OpenWork's local desktop bridge is unavailable or its profile permissions are unsafe. Open the app and use an owner-only profile.");
+  throw new DesktopSetupError("unavailable");
 }
 
 function printable(value: string): string {
@@ -108,7 +125,7 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
         method: "POST", redirect: "error", signal: cleanup ? timeout : AbortSignal.any([stop.signal, timeout]),
         headers: { authorization: `Bearer ${bridge.token}`, "content-type": "application/json" },
         body: JSON.stringify({ id, args: input }),
-      });
+      }).catch(() => { throw new DesktopSetupError("unavailable"); });
       if (!response.ok) throw new Error("Desktop control request failed");
       const receipt = receiptSchema.parse(await response.json());
       if (!cleanup) stop.signal.throwIfAborted();
@@ -147,8 +164,12 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
       return 4;
     }
     const started = startedSchema.parse(start.result);
-    console.log(`Open ${printable(started.verificationUriComplete ?? started.verificationUri)}`);
-    console.log(`Code: ${printable(started.userCode)}`);
+    const code = printable(started.userCode).replace(/[\s-]/g, "").toUpperCase();
+    if (!/^[A-Z0-9]{8}$/.test(code)) throw new Error("Invalid public user code");
+    console.log("To sign in, open this link in a browser on any device:");
+    console.log(started.verificationUriComplete ?? started.verificationUri);
+    console.log(`Then check the code ${code.slice(0, 4)}-${code.slice(4)} and choose the organization.`);
+    console.log("Waiting for approval…");
     const deadline = Math.min(started.expiresAt, Date.now() + 15 * 60_000);
     while (!stop.signal.aborted && Date.now() < deadline) {
       await delay(1_000, undefined, { signal: stop.signal });
@@ -158,7 +179,7 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
       if (status.state === "pending" || status.state === "approved") continue;
       if (status.state === "signed_in" && status.email && status.org) {
         cancel = undefined;
-        console.log(`Signed in as ${printable(status.email)} in ${printable(status.org.name)}. Runner: ${status.runner ?? "unknown"}`);
+        console.log(`Signed in as ${printable(status.email)} in ${printable(status.org.name)}.`);
         return 0;
       }
       console.error(status.state === "unsupported"
@@ -168,9 +189,12 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
     }
     console.error(stop.signal.aborted ? "Device sign-in cancelled." : "Device sign-in expired.");
     return stop.signal.aborted ? 130 : 3;
-  } catch {
-    // Never print raw control receipts, HTTP bodies or errors containing credentials.
-    console.error(stop.signal.aborted ? "Device sign-in cancelled." : "Device sign-in failed. Check that the local OpenWork app is running with an owner-only profile; use the sign-in link if this server is unsupported.");
+  } catch (error) {
+    // Never print raw control receipts, HTTP bodies, paths or errors containing credentials.
+    console.error(stop.signal.aborted ? "Device sign-in cancelled."
+      : error instanceof DesktopSetupError ? error.reason === "unavailable" ? startDesktopMessage()
+        : "Device sign-in cannot safely use this desktop profile. Use an owner-only OpenWork profile and run this command again."
+        : "Device sign-in failed. Try again or use the sign-in link instead.");
     return stop.signal.aborted ? 130 : 1;
   } finally {
     await cancel?.().catch(() => undefined);

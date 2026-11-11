@@ -73,7 +73,7 @@ describe("desktop-owned device sign-in", () => {
     expect(h.requests).toHaveLength(1);
     await h.tick();
     expect(h.enroll).toHaveBeenCalledTimes(1);
-    expect(h.flow.status()).toEqual({ state: "signed_in", ...identity, runner: "unknown" });
+    expect(h.flow.status()).toEqual({ state: "signed_in", ...identity });
     expect(JSON.stringify([started, h.flow.status(), h.flow.cancel()])).not.toMatch(/private-device-code|private-bearer/);
   });
 
@@ -167,12 +167,12 @@ describe("desktop-owned device sign-in", () => {
     const h = harness({ responses: [Response.json({ access_token: "private-a" }), Response.json({ access_token: "private-b" })] });
     await h.flow.start({ requestId: "request-a" });
     await h.tick();
-    expect(h.flow.status("request-a")).toEqual({ state: "signed_in", ...identity, runner: "unknown" });
+    expect(h.flow.status("request-a")).toEqual({ state: "signed_in", ...identity });
     await h.flow.start({ requestId: "request-b", force: true });
     expect(h.flow.cancel("request-a")).toEqual({ state: "failed", message: "Device sign-in was superseded by a newer sign-in." });
     expect(h.flow.status("request-b").state).toBe("pending");
     await h.tick();
-    expect(h.flow.status("request-b")).toEqual({ state: "signed_in", ...identity, runner: "unknown" });
+    expect(h.flow.status("request-b")).toEqual({ state: "signed_in", ...identity });
     expect(h.flow.status("request-a")).not.toHaveProperty("email");
     expect(h.flow.cancel("request-a")).not.toHaveProperty("org");
     expect(h.flow.status("request-b").state).toBe("signed_in");

@@ -12,7 +12,7 @@ const test = spec.world(remoteDesktopDeviceLogin, {
   timeout: 900_000,
 });
 
-test("a remote desktop signs in with its own session to the workspace chosen on another computer", async ({ world, user, agent, probe, step, evidence }) => {
+test("a remote desktop signs in with its own session to the organization chosen on another computer", async ({ world, user, agent, probe, step, evidence }) => {
   const desktop = agent.on(world.app);
   const appUser = user.on(world.app);
   const browser = user.on(world.web);
@@ -61,30 +61,32 @@ test("a remote desktop signs in with its own session to the workspace chosen on 
     evidence.recordAssertionEvidence("Cancellation leaves the remote desktop signed out", `device=${String(cancelled.state)}; account=none; start exposes no device code or bearer`, auth.user === null && cancelled.state !== "pending");
   });
 
-  await step("the approving member cannot approve without choosing a workspace and can deny the request", async () => {
+  await step("the approving member cannot approve without choosing an organization and can deny the request", async () => {
     const started = record(await desktop.run("auth.device-login.start", world.args));
     userCode = text(started.userCode);
     const missingOrganization = await world.approveWithoutOrganization(userCode);
     expect(missingOrganization).toBe(400);
     await browser.navigate(text(started.verificationUriComplete));
     await browser.see({ testId: "device-desktop-consent-line" }, { timeoutMs: 90_000 });
+    await browser.see({ text: "Choose an organization" });
+    expect((await probe.on(world.web).dom('[data-testid="device-approve"][disabled]')).elements).toHaveLength(1);
     await browser.click({ role: "button", label: "Deny" });
     const denied = await probe.eventually(async () => record(await desktop.run("auth.device-login.status")), {
       within: 45_000, label: "the remote desktop receives the denial", until: value => value.state === "denied",
     });
     const auth = record(await desktop.run("auth.status"));
     expect(auth.user).toBeNull();
-    evidence.recordAssertionEvidence("A denied computer receives no account", `approval without workspace=${missingOrganization}; desktop=${String(denied.state)}; account=none`, denied.state === "denied" && auth.user === null);
+    evidence.recordAssertionEvidence("A denied computer receives no account", `approval without organization=${missingOrganization}; desktop=${String(denied.state)}; account=none`, denied.state === "denied" && auth.user === null);
     await browser.screenshot();
   });
 
   await step("the remote user runs the real terminal command and compares the public code in a separate browser", async () => {
     await world.shell.start();
     const output = await probe.eventually(() => world.shell.output(), {
-      within: 60_000, label: "the terminal prints a public verification URL and user code", until: value => /^Code: /m.test(value),
+      within: 60_000, label: "the terminal prints a public verification URL and user code", until: value => /Then check the code [A-Z0-9]{4}-[A-Z0-9]{4} and choose the organization\./.test(value),
     });
-    const url = output.match(/^Open (https?:\/\/\S+)$/m)?.[1];
-    userCode = output.match(/^Code: (\S+)$/m)?.[1] ?? "";
+    const url = output.match(/^(https?:\/\/\S+)$/m)?.[1];
+    userCode = output.match(/Then check the code ([A-Z0-9]{4}-[A-Z0-9]{4}) and choose the organization\./)?.[1] ?? "";
     if (!url || !userCode) throw new Error("The device-login command did not print its public approval instructions.");
     expect(new URL(url).origin).toBe(new URL(world.den.ref.webUrl).origin);
     expect(new URL(url).searchParams.has("device_code")).toBe(false);
@@ -96,19 +98,22 @@ test("a remote desktop signs in with its own session to the workspace chosen on 
     await browser.screenshot();
   });
 
-  await step("the member explicitly chooses workspace B rather than the browser's active workspace A", async () => {
+  await step("the member explicitly chooses organization B rather than the browser's active organization A", async () => {
+    await browser.see({ text: "Choose an organization" });
+    expect((await probe.on(world.web).dom('[data-testid="device-approve"][disabled]')).elements).toHaveLength(1);
     // The shared organization selector is a button/listbox, not an HTML combobox.
     await browser.click({ role: "button", label: "Organization" });
     await browser.click({ role: "option", label: world.orgB.name });
     await browser.see({ testId: "device-desktop-consent-line" }, { text: new RegExp(world.orgB.name) });
+    expect((await probe.on(world.web).dom('[data-testid="device-approve"]:not([disabled])')).elements).toHaveLength(1);
     await browser.click({ role: "button", label: "Approve" });
     await browser.see({ text: "Return to the OpenWork app on that computer." }, { timeoutMs: 30_000 });
     const approvedPage = await probe.on(world.web).text();
-    evidence.recordAssertionEvidence("The approval names the chosen workspace", `browser started in ${world.orgA.name}; explicit approval=${world.orgB.name}`, approvedPage.includes(world.orgB.name));
+    evidence.recordAssertionEvidence("The approval names the chosen organization", `browser started in ${world.orgA.name}; explicit approval=${world.orgB.name}`, approvedPage.includes(world.orgB.name));
     await browser.screenshot();
   });
 
-  await step("after: the app adopts workspace B directly and attempts its existing runner registration", async () => {
+  await step("after: the app adopts organization B directly and attempts its existing runner registration", async () => {
     const signedIn = await probe.eventually(async () => record(await desktop.run("auth.device-login.status")), {
       within: 90_000, label: "the remote desktop finishes durable sign-in", until: value => value.state === "signed_in",
     });
@@ -128,7 +133,7 @@ test("a remote desktop signs in with its own session to the workspace chosen on 
     expect(runner.sameIdentityAbsentInA).toBe(true);
     expect(runner.sessionOnlyTokenMinted).toBe(true);
     expect(runner.inA).toEqual([]);
-    evidence.recordAssertionEvidence("The chosen workspace has this registered computer and the other workspace does not", `auth=${String(auth.status)}; B target=${runner.addedB[0]?.computerId}; registered=true; online=true; same identity in A=false`, runner.sameIdentityAbsentInA && runner.addedB.length === 1);
+    evidence.recordAssertionEvidence("The chosen organization has this registered computer and the other organization does not", `auth=${String(auth.status)}; B target=${runner.addedB[0]?.computerId}; registered=true; online=true; same identity in A=false`, runner.sameIdentityAbsentInA && runner.addedB.length === 1);
     await appUser.screenshot();
   });
 
@@ -138,11 +143,13 @@ test("a remote desktop signs in with its own session to the workspace chosen on 
     });
     expect(exitCode).toBe(0);
     const output = await world.shell.output();
-    expect(output).toContain(`Signed in as ${world.email} in ${world.orgB.name}. Runner:`);
+    expect(output).toContain(`Signed in as ${world.email} in ${world.orgB.name}.`);
+    expect(output).toContain("Waiting for approval…");
+    expect(output).not.toContain("Runner:");
     expect(output).not.toMatch(/device_code|access_token|authToken|Bearer /i);
     const custody = await world.custody(output);
     expect(custody).toEqual({ tokenPresent: true, distinctBrowserSession: true, outputContainsToken: false, outputContainsBrowserToken: false, activeOrgId: world.orgB.id, logContainsBrowserToken: false, logContainsToken: false });
-    evidence.recordAssertionEvidence("The desktop receives its own session, not a copy of the approving browser", `exit=${exitCode}; bearer present=true; distinct browser session=true; active workspace B=true; session in stdout/stderr=false`, exitCode === 0 && custody.distinctBrowserSession && !custody.outputContainsToken);
+    evidence.recordAssertionEvidence("The desktop receives its own session, not a copy of the approving browser", `exit=${exitCode}; bearer present=true; distinct browser session=true; active organization B=true; session in stdout/stderr=false`, exitCode === 0 && custody.distinctBrowserSession && !custody.outputContainsToken);
   });
 });
 
@@ -277,6 +284,8 @@ test("approval does not grant a remote computer access after the operator kills 
   await step("the member approves but the operator kills access before the delayed redemption can arrive", async () => {
     await browser.navigate(approvalUrl);
     await browser.see({ testId: "device-desktop-consent-line" }, { timeoutMs: 30_000 });
+    await browser.click({ role: "button", label: "Organization" });
+    await browser.click({ role: "option", label: world.orgB.name });
     await browser.click({ role: "button", label: "Approve" });
     await browser.see({ text: "Return to the OpenWork app on that computer." }, { timeoutMs: 15_000 });
     // A witness, not a hopeful race: fail if cold page hydration consumed the
@@ -337,7 +346,7 @@ test("a member can still use the existing sign-in handoff when device sign-in is
     expect(custody.tokenPresent).toBe(true);
     expect(custody.distinctBrowserSession).toBe(false);
     expect(custody.activeOrgId).toBe(world.orgA.id);
-    evidence.recordAssertionEvidence("The legacy handoff keeps its original session and workspace", `auth=${String(auth.status)}; chosen workspace=${world.orgA.name}; original browser session reused=true; no second chooser`, auth.status === "signed_in" && !custody.distinctBrowserSession && custody.activeOrgId === world.orgA.id);
+    evidence.recordAssertionEvidence("The legacy handoff keeps its original session and organization", `auth=${String(auth.status)}; chosen organization=${world.orgA.name}; original browser session reused=true; no second chooser`, auth.status === "signed_in" && !custody.distinctBrowserSession && custody.activeOrgId === world.orgA.id);
     await appUser.screenshot();
   });
   await step("after: a disabled device start cannot replace the working handoff enrollment", async () => {
@@ -352,7 +361,7 @@ test("a member can still use the existing sign-in handoff when device sign-in is
     expect(custody.logContainsToken).toBe(false);
     expect(custody.logContainsBrowserToken).toBe(false);
     await appUser.notSee({ text: "Choose your organization" });
-    evidence.recordAssertionEvidence("The new flag does not supersede or gate the existing handoff", `device=${String(disabled.state)}; auth=${String(auth.status)}; original session and workspace A unchanged=true; bearer in process log=false`, disabled.state === "unsupported" && auth.status === "signed_in" && !custody.distinctBrowserSession && custody.activeOrgId === world.orgA.id && !custody.logContainsToken);
+    evidence.recordAssertionEvidence("The new flag does not supersede or gate the existing handoff", `device=${String(disabled.state)}; auth=${String(auth.status)}; original session and organization A unchanged=true; bearer in process log=false`, disabled.state === "unsupported" && auth.status === "signed_in" && !custody.distinctBrowserSession && custody.activeOrgId === world.orgA.id && !custody.logContainsToken);
     await appUser.screenshot();
   });
 });

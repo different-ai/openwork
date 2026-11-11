@@ -4,6 +4,7 @@ import { Check, Terminal, X } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import { deviceReturnTarget, deviceReturnUrl } from "../_lib/device-return";
+import { initialDeviceOrganizationId } from "../_lib/device-organization";
 import { fetchDeploymentFeatureEnabled } from "../_lib/deployment-features";
 import { useDenFlow } from "../_providers/den-flow-provider";
 import { AuthPanel } from "./auth-panel";
@@ -111,7 +112,7 @@ export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initi
       if (cancelled) return;
       const list = directory.response.ok ? parseOrganizations(directory.payload) : [];
       setOrgs(list);
-      setOrganizationId(list.find((org) => org.isActive)?.id ?? list[0]?.id ?? "");
+      setOrganizationId(initialDeviceOrganizationId(readClientId(lookup.payload), list));
       if (!lookup.response.ok) {
         setCodeState({ kind: "invalid", message: "This code is not valid or has expired. Check it against your terminal, or run the command again." });
         return;
@@ -306,6 +307,7 @@ export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initi
             label: "Organization",
             value: orgs && orgs.length > 1 ? (
               <DenSelect aria-label="Organization" value={organizationId} onChange={(event) => setOrganizationId(event.target.value)} disabled={busy !== null}>
+                {isDesktopDevice ? <option value="" disabled>Choose an organization</option> : null}
                 {orgs.map((org) => (
                   <option key={org.id} value={org.id}>{org.name}</option>
                 ))}
@@ -319,6 +321,10 @@ export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initi
           <p className="m-0 text-sm font-medium leading-5 text-[var(--dls-text-primary)]" data-testid="device-desktop-consent-line">
             This computer will sign in as you and accept remote sessions and Automations for <strong>{selectedOrg.name}</strong>.
           </p>
+        ) : !checking && orgs && orgs.length > 1 ? (
+          <p className="m-0 text-sm font-medium leading-5 text-[var(--dls-text-primary)]" data-testid="device-desktop-consent-line">
+            Choose an organization to let this computer sign in as you and accept remote sessions and Automations.
+          </p>
         ) : !checking ? (
           <SetupLine testId="device-organization-required">Create or join an organization first. <a href="/organization" className="underline underline-offset-2">Create or join</a></SetupLine>
         ) : null
@@ -329,7 +335,7 @@ export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initi
       <div className="flex flex-col gap-3.5">
         {error ? <SetupErrorLine>{error}</SetupErrorLine> : null}
         <div className="flex gap-2.5">
-          <button type="button" className="den-button-primary grow" onClick={() => void decide("approve")} disabled={checking || busy !== null || (isDesktopDevice && !selectedOrg)}>
+          <button type="button" className="den-button-primary grow" data-testid="device-approve" onClick={() => void decide("approve")} disabled={checking || busy !== null || (isDesktopDevice && !selectedOrg)}>
             {busy === "approve" ? "Signing in…" : isDesktopDevice ? "Approve" : `Sign in ${clientName}`}
           </button>
           <button type="button" className="den-button-secondary w-30 shrink-0" onClick={() => void decide("deny")} disabled={checking || busy !== null}>
