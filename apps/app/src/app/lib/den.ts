@@ -41,6 +41,17 @@ import type {
 import { generatedArtifactViewSchema, savedAppDetailSchema, savedAppSummarySchema, type SaveApp, type WorkflowDetail } from "@openwork/types/workflows";
 import { canScheduleWorkflow, type WorkflowAccessRole } from "./workflow-run-access";
 import { gatewayUsageStatusSchema, gatewayUsageResetRequestSchema } from "@openwork/types/den/gateway-usage-limits";
+import {
+  remoteDeviceDesktopReportResponseSchema,
+  remoteDeviceDetailResponseSchema,
+  remoteDeviceListResponseSchema,
+  remoteDeviceResponseSchema,
+  type RemoteDevice,
+  type RemoteDeviceDesktopReport,
+  type RemoteDeviceDesktopReportResponse,
+  type RemoteDeviceDetailResponse,
+  type RemoteDeviceRegisterRequest,
+} from "@openwork/types/den/remote-devices";
 
 // Re-export the shared schema under the local alias so React consumers
 // (e.g. the cloud domain's desktop-config provider) can import it alongside
@@ -529,6 +540,8 @@ type RawJsonResponse<T> = {
   ok: boolean;
   status: number;
   json: T | null;
+  /** The response's `Retry-After`, when it names whole seconds. */
+  retryAfterSeconds?: number;
 };
 
 /** Den serves GET /v1/resolved-plugins for at most this many plugins per request. */
@@ -538,6 +551,8 @@ export class DenApiError extends Error {
   status: number;
   code: string;
   details?: unknown;
+  /** How long the server asked the caller to wait (`Retry-After`), on a 429. */
+  retryAfterSeconds?: number;
 
   constructor(status: number, code: string, message: string, details?: unknown) {
     super(message);
@@ -3025,7 +3040,8 @@ async function requestJsonRaw<T>(
     } catch {
       json = null;
     }
-    return { ok: response.ok, status: response.status, json };
+    const retryAfter = response.ok ? "" : response.headers?.get("Retry-After")?.trim() ?? "";
+    return { ok: response.ok, status: response.status, json, ...(/^\d{1,6}$/.test(retryAfter) ? { retryAfterSeconds: Number(retryAfter) } : {}) };
   };
   return options.unobserved ? send() : observeDenRequest(send);
 }
@@ -3040,7 +3056,9 @@ async function requestJson<T>(
     const payload = raw.json;
     const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
     const message = getErrorMessage(payload, `Request failed with ${raw.status}.`);
-    throw new DenApiError(raw.status, code, message, isRecord(payload) ? payload.details : undefined);
+    const error = new DenApiError(raw.status, code, message, isRecord(payload) ? payload.details : undefined);
+    if (raw.retryAfterSeconds !== undefined) error.retryAfterSeconds = raw.retryAfterSeconds;
+    throw error;
   }
   return raw.json as T;
 }
@@ -3268,6 +3286,50 @@ export function createDenClient(options: {
         if (error instanceof DenApiError && error.status === 404) return null;
         throw error;
       }
+    },
+
+    /** The computers the member can reach through OpenWork (feature `remoteDevices`). */
+    async listRemoteDevices(orgId: string): Promise<RemoteDevice[]> {
+      return remoteDeviceListResponseSchema.parse(await requestJson<unknown>(baseUrls, "/v1/remote-devices", {
+        method: "GET", token, organizationId: orgId,
+      })).devices;
+    },
+
+    /** One computer with its 20 most recent events, newest first. */
+    async getRemoteDevice(orgId: string, deviceId: string): Promise<RemoteDeviceDetailResponse> {
+      return remoteDeviceDetailResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}`, {
+        method: "GET", token, organizationId: orgId,
+      }));
+    },
+
+    /** Adds a virtual computer by hand. 409 `remote_device_exists`; 403 when `shared` needs a permission the member lacks. */
+    async registerRemoteDevice(orgId: string, input: RemoteDeviceRegisterRequest): Promise<RemoteDevice> {
+      return remoteDeviceResponseSchema.parse(await requestJson<unknown>(baseUrls, "/v1/remote-devices", {
+        method: "POST", token, organizationId: orgId, body: input,
+      })).device;
+    },
+
+    async renameRemoteDevice(orgId: string, deviceId: string, label: string): Promise<RemoteDevice> {
+      return remoteDeviceResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}`, {
+        method: "PATCH", token, organizationId: orgId, body: { label },
+      })).device;
+    },
+
+    /** Takes a computer off the list. The computer itself keeps running. */
+    async removeRemoteDevice(orgId: string, deviceId: string): Promise<void> {
+      await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}`, {
+        method: "DELETE", token, organizationId: orgId,
+      });
+    },
+
+    /**
+     * This desktop reports itself and how its computer use is doing. A background
+     * heartbeat: a 429 carries `retryAfterSeconds`, and no failure is a connection problem.
+     */
+    async reportThisComputer(orgId: string, report: RemoteDeviceDesktopReport): Promise<RemoteDeviceDesktopReportResponse> {
+      return remoteDeviceDesktopReportResponseSchema.parse(await requestJson<unknown>(baseUrls, "/v1/remote-devices/this-computer", {
+        method: "PUT", token, organizationId: orgId, body: report, unobserved: true,
+      }));
     },
 
     /** Reports registry features the member just used (POST /v1/org/feature-usage); Den keeps only keys that are on for them. */

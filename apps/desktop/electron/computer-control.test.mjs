@@ -62,7 +62,8 @@ function fixture(options = {}) {
     },
   };
   /** @type {import("@openwork/computer-use/computer-control").ComputerAdapter} */
-  const remote = { ...adapter, id: "vm", label: "VM", placement: "remote" };
+  const remote = { ...adapter, id: "vm", label: "VM", placement: "remote",
+    ...(options.remoteReadiness ? { readiness: options.remoteReadiness } : {}), ...(options.device !== undefined ? { device: options.device } : {}) };
   const control = createComputerControl({ adapters: options.remote ? [adapter, remote] : [adapter], readRemoteFeatureEnabled: options.authority, runProgram: options.runProgram, runScript: options.runScript, onTiming: options.onTiming, browserTask: options.browserTask, onRequest: (_sessionId, value) => { requests.push(value); }, movePolicy: options.movePolicy, idleMs: options.idleMs ?? 90_000, platform: options.platform, saveFolder: options.saveFolder });
   return { control, calls, requests, selected, emit: value => emit(value), disconnect: () => disconnect() };
 }
@@ -258,6 +259,67 @@ test("Settings reads this computer without a chat and picks the computer every c
   assert.equal((await f.control.snapshot({ sessionId: "new-chat" })).targetId, "vm");
   await f.control.setRemoteEnabled(false);
   assert.equal((await f.control.status()).targetId, "local");
+});
+
+test("the devices snapshot lists only this computer while remote computers are off", async (t) => {
+  const probes = [];
+  const f = fixture({
+    remote: true, authority: async () => true, device: { provider: "freestyle", externalId: "vm-1" },
+    readiness: async () => { probes.push("local"); return { readiness: "ready", detail: "Ready", permissions: { accessibility: true, screenRecording: true } }; },
+    remoteReadiness: async () => { probes.push("vm"); return { readiness: "ready", detail: "Ready" }; },
+  });
+  t.after(() => f.control.reset(true));
+  // Computer use off: listed, but no helper is started to probe it.
+  assert.deepEqual(await f.control.devices(), {
+    enabled: false, remoteEnabled: false, selectedId: "local", permissions: null,
+    computers: [{ id: "local", label: "This computer", placement: "local", readiness: null, detail: null, provider: null, externalId: null }],
+  });
+  assert.deepEqual(probes, []);
+  await f.control.setFeatureEnabled(true);
+  assert.deepEqual(await f.control.devices(), {
+    enabled: true, remoteEnabled: false, selectedId: "local", permissions: { accessibility: true, screenRecording: true },
+    computers: [{ id: "local", label: "This computer", placement: "local", readiness: "ready", detail: null, provider: null, externalId: null }],
+  });
+  assert.deepEqual(probes, ["local"]);
+  assert.deepEqual(f.calls, []);
+});
+
+test("the devices snapshot names a configured VM and probes only this computer and the one chats use", async (t) => {
+  const probes = [];
+  const f = fixture({
+    remote: true, authority: async () => true, device: { provider: "freestyle", externalId: " vm-1 " },
+    readiness: async () => { probes.push("local"); return { readiness: "setup-required", detail: `  Screen Recording is off. ${"x".repeat(400)}` }; },
+    remoteReadiness: async () => { probes.push("vm"); return { readiness: "unavailable", detail: "The VM is stopped. Start it and try again." }; },
+  });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.setRemoteEnabled(true);
+  const unselected = await f.control.devices();
+  assert.equal(unselected.remoteEnabled, true);
+  assert.equal(unselected.selectedId, "local");
+  assert.equal(unselected.permissions, null);
+  assert.deepEqual(unselected.computers.map((computer) => computer.id), ["local", "vm"]);
+  const [local, vm] = unselected.computers;
+  assert.equal(local.readiness, "setup-required");
+  assert.equal(local.detail.length, 300);
+  assert.ok(local.detail.startsWith("Screen Recording is off."));
+  // A probe runs a command on the VM: one no chat uses is listed, never probed.
+  assert.deepEqual(vm, { id: "vm", label: "VM", placement: "remote", readiness: null, detail: null, provider: "freestyle", externalId: "vm-1" });
+  assert.deepEqual(probes, ["local"]);
+
+  await f.control.chooseComputer({ targetId: "vm" });
+  const selected = await f.control.devices();
+  assert.equal(selected.selectedId, "vm");
+  assert.deepEqual(selected.computers[1], { id: "vm", label: "VM", placement: "remote", readiness: "unavailable", detail: "The VM is stopped. Start it and try again.", provider: "freestyle", externalId: "vm-1" });
+  // The answers Settings just read are reused, not asked for again.
+  assert.deepEqual(probes, ["local", "vm"]);
+  assert.deepEqual(f.calls, []);
+});
+
+test("an adapter's device needs both a provider and the provider's id", () => {
+  for (const device of [{ provider: "freestyle" }, { provider: "", externalId: "vm-1" }, { provider: "freestyle", externalId: 7 }, "vm-1", null]) {
+    assert.throws(() => fixture({ remote: true, device }), /device needs a provider/);
+  }
 });
 
 test("a revoked VM rollout blocks the next tool before connecting", async (t) => {

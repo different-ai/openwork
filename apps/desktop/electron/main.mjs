@@ -1577,6 +1577,20 @@ const legacyRunnerBaseUrls = [
     : null,
   `${DEFAULT_DEN_BASE_URL}/api/den`,
 ].map((value) => normalizeRunnerBaseUrl(value)).filter(Boolean);
+// One name for this computer: its runner inventory and its entry in the organization's devices list agree.
+const describeThisComputer = createComputerDescriber({
+  platform: process.platform,
+  appVersion: resolveAppVersion(app),
+  hostname: () => os.hostname(),
+  readComputerName: () => new Promise((resolve, reject) => {
+    execFile("/usr/sbin/scutil", ["--get", "ComputerName"], { timeout: 2_000 }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(String(stdout));
+    });
+  }),
+});
+/** The id the renderer last registered this install's runner with; Den names this desktop's device by it. */
+let registeredRunnerId = null;
 const automationRunnerDisabledBy = automationRunnerDisabledReason(process.env);
 if (automationRunnerDisabledBy) {
   console.info(`[automation-runner] disabled by ${automationRunnerDisabledBy}; renderer runner configuration will be ignored`);
@@ -1600,17 +1614,7 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
     getServerInfo: () => runtimeManager.openworkServerInfo(),
   }),
   // Remote-session callers choose a computer by this label, then a workspace and model.
-  describeComputer: createComputerDescriber({
-    platform: process.platform,
-    appVersion: resolveAppVersion(app),
-    hostname: () => os.hostname(),
-    readComputerName: () => new Promise((resolve, reject) => {
-      execFile("/usr/sbin/scutil", ["--get", "ComputerName"], { timeout: 2_000 }, (error, stdout) => {
-        if (error) reject(error);
-        else resolve(String(stdout));
-      });
-    }),
-  }),
+  describeComputer: describeThisComputer,
   log: (state) => console.info(`[automation-runner] ${state}`),
   onCredentialRejected: () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -2185,6 +2189,16 @@ const desktopCommandHandlers = {
       assertComputerSender(event);
       return computerControl.status();
   },
+  "computerDevices": async (event) => {
+      assertComputerSender(event);
+      return computerControl.devices();
+  },
+  "desktopDeviceIdentity": async (event) => {
+      assertComputerSender(event);
+      let osVersion = null;
+      try { osVersion = String(process.getSystemVersion?.() || os.release()).trim() || null; } catch { /* unnamed system */ }
+      return { installId: registeredRunnerId, ...await describeThisComputer(), osVersion, arch: process.arch };
+  },
   "computerPresentation": async (event, sessionId, visible) => {
       assertComputerSender(event);
       return computerControl.presentation({ sessionId: String(sessionId ?? ""), visible: visible === true });
@@ -2401,6 +2415,8 @@ const desktopCommandHandlers = {
       return runtimeManager.openworkServerInfo();
   },
   "automationRunnerConfigure": async (event, ...args) => {
+      const runnerId = typeof args[0]?.runnerId === "string" ? args[0].runnerId.trim() : "";
+      registeredRunnerId = runnerId || null;
       return desktopAutomationRunner.configure(args[0] ?? null);
   },
   "openworkServerRestart": async (event, ...args) => {

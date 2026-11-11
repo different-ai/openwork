@@ -17,6 +17,7 @@ import {
 import { evalRelaunchDesktopApp, readDesktopDistributionInfo } from "../../app/lib/desktop";
 import { outboundEgressAllowed } from "../../app/lib/enterprise-activation";
 import { isDesktopRuntime, isElectronRuntime } from "../../app/lib/runtime-env";
+import { DeviceReporter } from "../domains/devices/device-reporter";
 import { ComputerBridge } from "../domains/session/computer/computer-store";
 import { AgentQuestionsBridge } from "../domains/session/status/agent-questions-bridge";
 import { Button } from "../../components/ui/button";
@@ -471,6 +472,8 @@ export function AppRoot() {
                 <CloudWorkspaceStatusProvider>
                   {/* Settings unmounts the chat; computer use stays connected on every route. */}
                   {isElectronRuntime() ? <ComputerBridge /> : null}
+                  {/* This desktop keeps itself in its organization's devices list while that feature is on. */}
+                  {isElectronRuntime() ? <DeviceReporter /> : null}
                   {isElectronRuntime() ? <AgentQuestionsBridge /> : null}
                   <Routes>
               <Route
