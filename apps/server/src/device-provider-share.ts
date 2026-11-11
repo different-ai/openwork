@@ -82,6 +82,7 @@ async function denRequest(input: Input, path: string, init: { method: "GET" | "P
 function refused(status: number, body: unknown): ApiError {
   const code = denErrorCode(body);
   if (status === 401) return new ApiError(401, "no_session", "Sign in to OpenWork again, then share.");
+  if (status === 409 && code === "already_shared") return new ApiError(409, "already_shared", "Your organization already has this provider.");
   if (status === 403 && code === "reauth") return new ApiError(403, "verification_required", "Confirm it's you in your browser, then share.");
   if (status === 403 && code === "gateway_not_enabled") return new ApiError(409, "gateway_unavailable", "AI Gateway is not set up for this OpenWork yet.");
   if (status === 403) return new ApiError(403, "forbidden", "Only people who manage AI Gateway can share a provider.");
@@ -138,7 +139,7 @@ export async function shareDeviceProvider(input: Input): Promise<DeviceProviderS
   const name = deviceShareProviderName(provider.name, providerId);
   const created = await denRequest(input, "/v1/inference-providers", {
     method: "POST",
-    body: { name, providerId, credential: { kind: "api_key", secret: apiKey }, allMembers: true },
+    body: { name, providerId, credential: { kind: "api_key", secret: apiKey }, allMembers: true, shareFromDevice: true },
   });
   if (created.status >= 500) throw new ApiError(502, "share_unconfirmed", "OpenWork Cloud did not confirm the share. Check AI Providers before trying again.");
   if (created.status !== 201) throw refused(created.status, created.body);

@@ -10,6 +10,7 @@ import {
   organizationShareEmptyState,
   shareConsentFacts,
   shareFailureMessage,
+  shareNeedsReview,
   shareLockedLine,
   shareNeedsVerification,
   type ShareableDeviceProvider,
@@ -81,7 +82,10 @@ test("a refused share reads as what happened, and verification is not a failure"
   expect(shareNeedsVerification(new Error("verification_required"))).toBe(false);
   expect(shareFailureMessage({ code: "already_shared" })).toBe("Your organization already has this provider.");
   expect(shareFailureMessage({ code: "forbidden" })).toBe("Only people who manage AI Gateway can share a provider.");
-  expect(shareFailureMessage(new Error("socket hang up sk-secret"))).toBe("Could not share this provider. Nothing was shared.");
+  expect(shareFailureMessage(new Error("socket hang up sk-secret"))).toBe("Could not confirm this share. Check AI Providers before trying again.");
+  expect(shareNeedsReview(new Error("lost response"))).toBe(true);
+  expect(shareNeedsReview({ code: "share_unconfirmed" })).toBe(true);
+  expect(shareNeedsReview({ code: "forbidden" })).toBe(false);
 });
 
 const view: AiSettingsViewProps = {

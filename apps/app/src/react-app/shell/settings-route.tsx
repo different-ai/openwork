@@ -1880,11 +1880,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   // key on this device, or AI Gateway's own form when nothing here is one key.
   const shareRequested = route.tab === "ai" && new URLSearchParams(location.search).get("share") === "1";
   useEffect(() => {
-    if (!shareRequested || !deviceShare.resolved) return;
+    if (!shareRequested || loading || !activeClient || providerAuthSnapshot.providerLoadState.status !== "ready" || !deviceShare.resolved) return;
     navigate({ pathname: location.pathname }, { replace: true, state: location.state });
     if (deviceShare.firstShareable) deviceShare.open(deviceShare.firstShareable);
     else if (deviceShare.canShare) openProvidersInDen();
-  }, [shareRequested, deviceShare.resolved, deviceShare.firstShareable, deviceShare.canShare, deviceShare.open, location.pathname, location.state, navigate, openProvidersInDen]);
+  }, [shareRequested, loading, activeClient, providerAuthSnapshot.providerLoadState.status, deviceShare.resolved, deviceShare.firstShareable, deviceShare.canShare, deviceShare.open, location.pathname, location.state, navigate, openProvidersInDen]);
   const openworkCloudMcpUrl = connectionsSnapshot.mcpServers.find(
     (server) => server.name === "openwork-cloud",
   )?.config.url ?? null;

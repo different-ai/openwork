@@ -96,13 +96,26 @@ export function shareFailureMessage(error: unknown): string {
     case "gateway_unavailable": return "AI Gateway is not set up for this OpenWork yet.";
     case "feature_disabled": return "Sharing from this device is not available for your organization.";
     case "share_unconfirmed": return "OpenWork Cloud did not confirm the share. Check AI Providers before trying again.";
+    case "account_mismatch": return "Verify with the account already signed in on this device.";
     case "no_session":
     case "organization_mismatch": return "Your account or organization changed. Close this and try again.";
-    default: return "Could not share this provider. Nothing was shared.";
+    case "share_failed":
+    case "den_unreachable": return "Could not share this provider. Nothing was shared.";
+    default: return "Could not confirm this share. Check AI Providers before trying again.";
   }
 }
 
 /** Den asks for a recent sign-in before AI Gateway changes. */
 export function shareNeedsVerification(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "verification_required";
+}
+
+/** A missing response is not proof that a share failed: stop retries until the person checks. */
+export function shareNeedsReview(error: unknown): boolean {
+  const code = typeof error === "object" && error !== null && "code" in error ? error.code : null;
+  return typeof code !== "string" || ![
+    "already_shared", "not_shareable", "no_device_key", "forbidden", "gateway_unavailable",
+    "feature_disabled", "no_session", "organization_mismatch", "account_mismatch",
+    "share_failed", "den_unreachable", "verification_required", "invalid_provider",
+  ].includes(code);
 }

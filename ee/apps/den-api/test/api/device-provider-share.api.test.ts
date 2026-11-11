@@ -70,7 +70,7 @@ test("an owner learns which keys on their device one confirmation can share, and
 
   // What the desktop's own server sends after the person confirms: the provider, the key and everyone.
   const shared = await owner("POST", "/v1/inference-providers", {
-    name: "OpenAI", providerId: "openai", credential: { kind: "api_key", secret: DEVICE_KEY }, allMembers: true,
+    name: "OpenAI", providerId: "openai", credential: { kind: "api_key", secret: DEVICE_KEY }, allMembers: true, shareFromDevice: true,
   })
   assert.equal(shared.status, 201, summary(shared))
   assert.ok(!JSON.stringify(shared.body).includes(DEVICE_KEY), "the key never comes back")
@@ -121,4 +121,28 @@ test("sharing grants never cross organizations and a member cannot upload a devi
   const foreign = await den.request(member.token, "GET", `${OPTIONS}?providerIds=openai`, { orgId: other.orgId });
   assert.ok(foreign.status === 403 || foreign.status === 404, summary(foreign));
   assert.ok(!JSON.stringify(foreign.body).includes(DEVICE_KEY));
+});
+
+test("parallel device shares and retries never duplicate a provider; ordinary creation is unchanged", { timeout: 60_000 }, async () => {
+  const workspace = await den.createOrg(await den.signUp("Taylor Owner"), "Concurrent share workspace");
+  const call = den.as(workspace.owner, workspace.orgId);
+  const input = { name: "OpenAI", providerId: "openai", credential: { kind: "api_key", secret: DEVICE_KEY }, allMembers: true, shareFromDevice: true };
+  const off = await call("POST", "/v1/inference-providers", input);
+  assert.equal(off.status, 404, summary(off));
+  assert.equal(field(off.body, "error"), "feature_disabled");
+  assert.equal((await den.setFeature(workspace.orgId, "shareDeviceProvider", true)).status, 200);
+  const parallel = await Promise.all([call("POST", "/v1/inference-providers", input), call("POST", "/v1/inference-providers", input)]);
+  assert.deepEqual(parallel.map((result) => result.status).sort(), [201, 409], parallel.map(summary).join("\n"));
+  const retried = await call("POST", "/v1/inference-providers", input);
+  assert.equal(retried.status, 409, summary(retried));
+  assert.equal(field(retried.body, "error"), "already_shared");
+  const catalog = await call("GET", "/v1/inference-providers?scope=manageable");
+  assert.equal(list(field(catalog.body, "inferenceProviders")).length, 1);
+  const ordinary = await call("POST", "/v1/inference-providers", { name: "Separate configuration", providerId: "openai" });
+  assert.equal(ordinary.status, 201, summary(ordinary));
+  assert.equal((await den.setFeature(workspace.orgId, "shareDeviceProvider", false)).status, 200);
+  const killed = await call("POST", "/v1/inference-providers", { ...input, providerId: "anthropic" });
+  assert.equal(killed.status, 404, summary(killed));
+  const retained = await call("GET", "/v1/inference-providers?scope=manageable");
+  assert.equal(list(field(retained.body, "inferenceProviders")).length, 2, "turning sharing off retains deliberate existing grants");
 });

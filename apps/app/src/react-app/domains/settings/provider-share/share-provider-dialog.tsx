@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DenReauthNotice } from "../../cloud/den-reauth-notice";
 import { ProviderTile } from "../pages/provider-rows";
-import { shareConsentFacts, shareFailureMessage, shareNeedsVerification } from "./device-provider-share";
+import { shareConsentFacts, shareFailureMessage, shareNeedsReview, shareNeedsVerification } from "./device-provider-share";
 
 export type ShareProviderDialogProps = {
   /** The provider on this device being shared; null keeps the dialog closed. */
@@ -65,7 +65,7 @@ export function ShareProviderDialog(props: ShareProviderDialogProps) {
       else {
         setVerifying(false);
         setError(shareFailureMessage(cause));
-        if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "share_unconfirmed") setUnconfirmed(true);
+        if (shareNeedsReview(cause)) setUnconfirmed(true);
       }
     } finally {
       submitting.current = false;

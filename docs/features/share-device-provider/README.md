@@ -42,6 +42,10 @@ After confirmation, the host-token-only local server route
 active local OpenCode credential store. It never returns the key to the
 renderer. It sends it directly to the signed-in Den using the existing
 permission-checked provider creation route and an explicit Everyone grant.
+The `shareFromDevice` create marker is independently feature-checked inside the
+transaction. An organization lock plus an existing-provider recheck prevents
+concurrent device shares and lost-response retries from creating duplicates;
+ordinary Gateway administration still permits separate provider configurations.
 Redirects are refused. Errors are sanitized rather than forwarding provider text.
 The upstream key is encrypted in Den and stays server-side on Gateway calls.
 

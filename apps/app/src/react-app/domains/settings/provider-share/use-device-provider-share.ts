@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { DeviceShareOptions } from "@openwork/types/den/device-provider-share";
 import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations";
@@ -53,6 +53,11 @@ export function useDeviceProviderShare(input: {
     staleTime: 30_000,
     retry: false,
   });
+  // Verification replaces the token without changing account/org identity.
+  // Ask with the fresh client after that commit rather than retaining an old
+  // verificationRequired result in this identity-scoped cache.
+  const refetch = query.refetch;
+  useEffect(() => { if (enabled) void refetch(); }, [context.client, enabled, refetch]);
   // `enabled: false` stops fetching, not cache reads.
   const options = enabled && !query.isError ? query.data ?? null : null;
   return useMemo(() => ({

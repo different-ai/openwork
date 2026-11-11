@@ -51,7 +51,7 @@ test("a confirmed share asks Den first, then sends this computer's key for every
   ]);
   assert.ok(calls.every((call) => call.authorization === "Bearer den-session-token" && call.orgId === "org_test"));
   assert.equal(calls[0]?.body, null, "the question carries no key");
-  assert.deepEqual(calls[1]?.body, { name: "Anthropic", providerId: "anthropic", credential: { kind: "api_key", secret: DEVICE_KEY }, allMembers: true });
+  assert.deepEqual(calls[1]?.body, { name: "Anthropic", providerId: "anthropic", credential: { kind: "api_key", secret: DEVICE_KEY }, allMembers: true, shareFromDevice: true });
   assert.deepEqual(read, ["anthropic"]);
 });
 
