@@ -46,9 +46,7 @@ test("a remote desktop signs in with its own session to the organization chosen 
   await step("the operator enables device sign-in and the remote user can cancel a pending request", async () => {
     await world.rollout(true);
     expect(await world.features()).toBe(true);
-    await probe.eventually(async () => record(await desktop.run("auth.device-login.status")), {
-      within: 90_000, label: "the configured deployment enables device sign-in", until: value => value.state !== "unsupported",
-    });
+    // Live admission must work without waiting for a cached OFF/terminal status to clear.
     const started = record(await desktop.run("auth.device-login.start", world.args));
     expect(started.deviceCode).toBeUndefined();
     expect(started.token).toBeUndefined();
@@ -159,9 +157,8 @@ test("a remote desktop cannot finish a pending sign-in after the operator kills 
   await step("before: the operator enables device sign-in and a fresh computer waits for approval", async () => {
     await appUser.see({ text: "Sync with OpenWork Cloud" }, { timeoutMs: 180_000 });
     await world.rollout(true);
-    await probe.eventually(async () => record(await desktop.run("auth.device-login.status")), {
-      within: 90_000, label: "the configured deployment enables device sign-in", until: value => value.state !== "unsupported",
-    });
+    expect(await world.features()).toBe(true);
+
     const started = record(await desktop.run("auth.device-login.start", world.faultArgs));
     expect(started.userCode).toBeTypeOf("string");
     const pending = record(await desktop.run("auth.device-login.status"));
@@ -206,12 +203,10 @@ test("a remote desktop respects expiry and server backoff without replacing the 
   await step("before: the packaged computer is signed out and device sign-in is enabled", async () => {
     await appUser.see({ text: "Sync with OpenWork Cloud" }, { timeoutMs: 180_000 });
     await world.rollout(true);
-    const status = await probe.eventually(async () => record(await desktop.run("auth.device-login.status")), {
-      within: 90_000, label: "the configured deployment enables device sign-in", until: value => value.state !== "unsupported",
-    });
+    expect(await world.features()).toBe(true);
     const auth = record(await desktop.run("auth.status"));
     expect(auth.user).toBeNull();
-    evidence.recordAssertionEvidence("A fresh packaged desktop has no account", `account=none; device control=${String(status.state)}`, auth.user === null);
+    evidence.recordAssertionEvidence("A fresh packaged desktop has no account", "account=none; deployment explicitly enabled; start will perform live discovery", auth.user === null);
   });
   await step("an expired response ends the real desktop's pending sign-in without an account", async () => {
     await world.tokenFault("expired_token");
@@ -264,9 +259,8 @@ test("approval does not grant a remote computer access after the operator kills 
   await step("before: a fresh packaged computer waits for a browser decision with its next token request delayed", async () => {
     await appUser.see({ text: "Sync with OpenWork Cloud" }, { timeoutMs: 180_000 });
     await world.rollout(true);
-    await probe.eventually(async () => record(await desktop.run("auth.device-login.status")), {
-      within: 90_000, label: "the configured deployment enables device sign-in", until: value => value.state !== "unsupported",
-    });
+    expect(await world.features()).toBe(true);
+
     await world.holdNextToken();
     const started = record(await desktop.run("auth.device-login.start", world.faultArgs));
     approvalUrl = text(started.verificationUriComplete);

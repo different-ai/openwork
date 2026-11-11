@@ -125,12 +125,23 @@ Signed in as person@example.test in Example organization.
 
 This confirms desktop sign-in, not remote execution readiness.
 
+Every start awaits fresh anonymous deployment discovery, including the configured
+Den and explicitly supplied matching URLs. A pending or failed background feature
+query is unknown, not an OFF answer. Network/5xx discovery failures get at most
+three bounded reads with short pauses; device-code creation is not replayed.
+If Den remains unreachable, the command reports `Couldn't reach <Den host>. Check
+the network and try again.` and exits 1. An explicit deployment OFF response
+reports that device sign-in is unavailable and exits 4.
+
 The shell uses the desktop's existing authenticated `127.0.0.1` control bridge.
 The desktop must be running; a server-only process without a desktop renderer
-cannot enroll itself. If the app cannot be reached, start OpenWork and run the
-command again (on macOS: `open -a OpenWork`; use the installed flavor's app name
-when applicable). An unsafe profile is reported separately; starting the app does
-not bypass owner-only custody checks. `OPENWORK_UI_CONTROL_DISCOVERY` can select one explicit
+cannot enroll itself. During startup, the command waits up to 20 seconds for the
+bridge and both device sign-in actions to become ready. It does not open a second
+GUI or replay a potentially executed start request. If the app cannot be reached,
+start OpenWork and run the command again (on macOS: `open -a OpenWork`; use the
+installed flavor's app name when applicable). An unsafe profile is reported
+separately; waiting or starting the app does not bypass owner-only custody checks.
+`OPENWORK_UI_CONTROL_DISCOVERY` can select one explicit
 profile's discovery file; otherwise the production profile is used, never an
 implicit development-profile fallback. The command checks POSIX ownership and
 permissions, refuses symlinks/untrusted directories/non-loopback destinations,
@@ -165,9 +176,13 @@ Existing completed sessions are not revoked by a rollout change. Explicit sign-o
 
 Existing CLI/plugin device sign-in, desktop sign-in links and
 `auth.exchange-grant` are never gated by this flag and retain their behavior.
-Older Den reports unsupported: **use the sign-in link instead**.
+An older or malformed discovery endpoint fails closed: **use the sign-in link
+instead**. Missing discovery data or a transport error is not an explicit OFF
+answer. The cached background signal stops an admitted pending flow only for a
+newer explicit OFF observation; unknown state and an older cached OFF cannot
+override live ON admission. Den still enforces policy on every decision/redemption.
 
-Exit codes: success `0`, failure `1`, denied `2`, expired `3`, unavailable `4`,
+Exit codes: success `0`, failure (including startup/network errors) `1`, denied `2`, expired `3`, unsupported `4`,
 interrupted/cancelled `130`. Interrupting stops the local poll; it does not revoke
 an unredeemed server-side authorization, which expires normally. Shell status
 and cleanup are correlated with that command's public invocation ID, so an old
