@@ -109,8 +109,9 @@ computer's readiness as Settings › Computer use shows it. A VM adapter carries
 `device: { provider, externalId }` so the VM is one entry in the member's list
 whichever desktop reaches it. The broker's `devices()` probes this computer
 and the selected one only; it never runs a command on a VM nobody chose.
-Settings › Devices lists what Den knows, and `/admin` › Devices shows the last
-report. See [Devices](../features/remote-devices/README.md).
+Settings › Devices lists the member's own/shared computers. Organization
+admins inspect all team computers and their reports in regular Den's
+Manage › Computers (`/dashboard/computers`). See [Devices](../features/remote-devices/README.md).
 
 ## Not yet
 

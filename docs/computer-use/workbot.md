@@ -94,8 +94,9 @@ person's desktops, Workbot's own computers and registered virtual computers,
 read from Den. Workbot's server tells Den what happens to each chat's computer
 from the computer route: a view was opened, it was paused, resumed, rebuilt or
 handed back, or it could not connect (the fixed `desktop_…` code, never error
-text). Reports are best-effort and never delay or fail the route. Platform
-admins read them in `/admin` › Devices. See
+text). Reports are best-effort and never delay or fail the route. Customer
+organization admins read them in regular Den's Manage › Computers
+(`/dashboard/computers`). See
 [Devices](../features/remote-devices/README.md).
 
 ## Prepare the headless runner
