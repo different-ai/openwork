@@ -65,7 +65,7 @@
     "@openwork/types": "workspace:*",
     "@sveltejs/acorn-typescript": "1.0.13",
     "acorn": "8.16.0",
-    "better-sqlite3": "^13.0.2",
+    "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2",
     "htmlparser2": "8.0.2",
     "jsonc-parser": "^3.2.1",
