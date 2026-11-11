@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { PrivateUrlError } from "../src/capability-sources/url-guard.js"
-import { checkOidcDiscovery, isOidcDiscoveryUrl } from "../src/sso-oidc-discovery.js"
+import { checkOidcDiscovery, isOidcDiscoveryUrl, oidcIssuerFromInput } from "../src/sso-oidc-discovery.js"
 
 const ISSUER = "https://login.example.test"
 const DISCOVERY = `${ISSUER}/.well-known/openid-configuration`
@@ -81,4 +81,12 @@ test("unusable input, documents and unreachable or private providers each get th
   assert.equal(!blocked.ok && blocked.code, "blocked")
   const error = await checkOidcDiscovery(ISSUER, async () => new Response("", { status: 503 }))
   assert.equal(!error.ok && error.code, "http_error")
+})
+
+test("oidcIssuerFromInput strips a pasted discovery URL down to the issuer", () => {
+  assert.equal(oidcIssuerFromInput(DISCOVERY), ISSUER)
+  assert.equal(oidcIssuerFromInput(`${DISCOVERY}/`), ISSUER)
+  assert.equal(oidcIssuerFromInput(" https://idp.example.test/realms/acme/.well-known/openid-configuration "), "https://idp.example.test/realms/acme")
+  assert.equal(oidcIssuerFromInput(ISSUER), ISSUER)
+  assert.equal(oidcIssuerFromInput("https://idp.example.test/realms/acme/"), "https://idp.example.test/realms/acme/")
 })
