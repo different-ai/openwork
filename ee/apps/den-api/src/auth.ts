@@ -3,6 +3,7 @@ import { recordFreeAutoSignIn } from "@openwork-ee/den-db";
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy";
 import { invalidateTeamInferenceOAuth, revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js";
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js";
+import { removeMemberWorkbotComputersInBackground } from "./workbot/member-computers.js";
 import {
   finishScimProvisionedMember,
   organizationAllowsProvisioning,
@@ -1444,6 +1445,7 @@ export const auth = betterAuth({
             organizationId: member.organizationId,
             orgMembershipId: member.id,
           });
+          removeMemberWorkbotComputersInBackground({ organizationId: member.organizationId, memberId: member.id });
         }
         return;
       }
