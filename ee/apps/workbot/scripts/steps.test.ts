@@ -96,6 +96,13 @@ test("browser task acknowledgment and tap-only previews do not depend on present
   assert.equal(instructions.includes("It appears in their chat only when you pass show: true"), false)
 })
 
+test("an app Workbot builds is handed over as a card to open beside the chat, never as a download", () => {
+  const instructions = workbotInstructions({ name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false })
+  for (const rule of ["shows as a card under your reply", "as one .html file, hand it over in the same reply", "Never tell them to download it", "before a result says it was added to their Files"]) {
+    assert.ok(instructions.includes(rule), rule)
+  }
+})
+
 test("an App built in OpenWork shows among a reply's outputs, once, and only with workbotApps", () => {
   const app = { id: "cob_01kq8z0000000000000000000a", title: "Hello World Wave" }
   const call = (id: string, name: string) => ({ id, name, input: {} })
@@ -120,6 +127,10 @@ test("an App built in OpenWork shows among a reply's outputs, once, and only wit
   assert.equal(workbotInstructions(base).includes("OpenWork's App tools"), false)
   assert.equal(workbotInstructions({ ...base, apps: false }), workbotInstructions(base))
   const taught = workbotInstructions({ ...base, apps: true })
+  // With Apps on, a file is no longer the only way to make an app: the file rule stops saying to build one as a page.
+  assert.ok(workbotInstructions(base).includes("So build an app, a page or a game as one .html file"))
+  assert.equal(taught.includes("build an app, a page or a game"), false)
+  assert.ok(taught.includes("So make a web page as one .html file, hand it over in the same reply"))
   for (const rule of ["chosen by what they need", "something they keep and come back to", "a one-off such as a mock-up", "Call the first an App and the second a page", "never say it opened in a sidebar or a tab"]) assert.ok(taught.includes(rule), rule)
 })
 
