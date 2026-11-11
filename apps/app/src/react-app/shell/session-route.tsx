@@ -212,6 +212,7 @@ import {
   type CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
+import { cloudSurfaceAvailable } from "@/react-app/domains/cloud/cloud-surface-availability";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import {
   hasOpenWorkModelsAvailable,
@@ -428,11 +429,15 @@ export function SessionRoute() {
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
   const denAuth = useDenAuth();
   const artifactsLabel = "Artifacts";
-  // On desktop, Dashboard and Automations stay in the sidebar while signed
-  // out: each page explains that it needs OpenWork Cloud and calls nothing.
+  // Artifacts and Automations stay in the sidebar while signed out, on Desktop
+  // and Web alike: each page is an empty state that asks to sign in and calls
+  // nothing.
   const denAuthChecking = denAuth.status === "checking";
-  const signedOutDesktopSurfaces = isDesktopRuntime() && !denAuthChecking && !denAuth.isSignedIn;
-  const dashboardSurfaceAvailable = mcpAppsDashboardEnabled || signedOutDesktopSurfaces;
+  const dashboardSurfaceAvailable = cloudSurfaceAvailable({
+    deploymentEnabled: mcpAppsDashboardEnabled,
+    authChecking: denAuthChecking,
+    signedIn: denAuth.isSignedIn,
+  });
   const dashboardRouteActive = dashboardSurfaceAvailable && dashboardRouteRequested;
   const dashboardWorkspaceRoute = dashboardRouteRequested
     && (dashboardAvailabilityLoading || dashboardSurfaceAvailable);
@@ -443,7 +448,11 @@ export function SessionRoute() {
   // Desktop and Web share one Automations surface; the runtime only decides
   // the placement of what each creates. Den's deployment flag stays the gate.
   const automationsEnabled = automationDeploymentEnabled;
-  const automationsSurfaceAvailable = automationsEnabled || signedOutDesktopSurfaces;
+  const automationsSurfaceAvailable = cloudSurfaceAvailable({
+    deploymentEnabled: automationsEnabled,
+    authChecking: denAuthChecking,
+    signedIn: denAuth.isSignedIn,
+  });
   const automationsRouteActive = automationsSurfaceAvailable && automationsRouteRequested;
   const denSettings = readDenSettings();
   const retainedArtifactsScope = dashboardSurfaceAvailable && denAuth.isSignedIn && denAuth.verifiedIdentity

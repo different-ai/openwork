@@ -47,7 +47,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/sonner"
-import { CloudSignInBanner, CloudSignInBannerIcon } from "@/react-app/domains/cloud/cloud-sign-in-banner"
+import { CloudSignInEmptyState } from "@/react-app/domains/cloud/cloud-sign-in-banner"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { usePlatform } from "@/react-app/kernel/platform"
 import { t } from "../../../i18n"
@@ -253,21 +253,15 @@ export function AutomationsPage(props: {
   if (denAuth.status === "checking") return <LoadingState />
   if (!denAuth.isSignedIn) {
     // Automations live in OpenWork Cloud: signed out, nothing here calls Den,
-    // and the page leads with the same sign-in banner as Library.
+    // and the page is one empty state whose action is signing in.
     return (
-      <div className="mx-auto w-full max-w-5xl space-y-5 px-6 py-8 sm:px-8" data-automations-signed-out>
-        <CloudSignInBanner
-          testId="automations-sign-in-banner"
-          media={<CloudSignInBannerIcon><Clock3 /></CloudSignInBannerIcon>}
-          message={t("automations.sign_in_banner")}
+      <div className="h-full w-full" data-automations-signed-out>
+        <CloudSignInEmptyState
+          testId="automations-sign-in"
+          icon={<Clock3 />}
+          title={t("automations.signed_out_title")}
           onSignIn={props.onSignIn}
         />
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><CalendarClock /></EmptyMedia>
-            <EmptyTitle>No Automations yet</EmptyTitle>
-          </EmptyHeader>
-        </Empty>
       </div>
     )
   }
