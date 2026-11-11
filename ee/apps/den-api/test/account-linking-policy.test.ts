@@ -9,14 +9,28 @@ import { after, test } from "node:test"
 import { sso } from "@better-auth/sso"
 import { betterAuth } from "better-auth"
 import { memoryAdapter } from "better-auth/adapters/memory"
-import { DEN_ACCOUNT_CONFIG, DEN_USER_CONFIG } from "../src/account-linking-policy.js"
+import { DEN_ACCOUNT_CONFIG, denUserConfig } from "../src/account-linking-policy.js"
 
 const BASE_URL = "http://localhost:3000"
 const PASSWORD = "Correct-Horse-Battery-Staple-42!"
 const SSO_PROVIDER_ID = "acme"
 
+// Feature `signInEmailSync`, switched per test.
+let emailFollowsProvider = false
+
+/**
+ * An identity as the stand-in providers read it from a token: "email", or
+ * "id|email" for a person whose email changed while their provider id stayed,
+ * or "id|email|unverified".
+ */
+function identity(token: string, prefix: string) {
+  const parts = token.split("|")
+  const email = parts.length > 1 ? parts[1] ?? "" : token
+  return { id: parts.length > 1 ? parts[0] ?? "" : `${prefix}-${email}`, email, emailVerified: parts[2] !== "unverified" }
+}
+
 // The stand-in identity provider issues the authorization code as the access
-// token and answers userinfo for the email the code names.
+// token and answers userinfo for the identity the code names.
 const idp = createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://idp.local")
   if (request.method === "POST" && url.pathname === "/token") {
@@ -30,9 +44,9 @@ const idp = createServer((request, response) => {
     return
   }
   if (url.pathname === "/userinfo") {
-    const email = request.headers.authorization?.replace(/^Bearer /, "") ?? ""
+    const person = identity(request.headers.authorization?.replace(/^Bearer /, "") ?? "", "sso")
     response.writeHead(200, { "content-type": "application/json" })
-    response.end(JSON.stringify({ sub: `sso-${email}`, email, email_verified: true, name: "Synthetic Person" }))
+    response.end(JSON.stringify({ sub: person.id, email: person.email, email_verified: true, name: "Synthetic Person" }))
     return
   }
   response.writeHead(404).end()
@@ -54,15 +68,15 @@ const auth = betterAuth({
       clientId: "synthetic-google-client",
       clientSecret: "synthetic-google-secret",
       verifyIdToken: async () => true,
-      // The id token is the email Google vouches for.
+      // The id token is the identity Google vouches for.
       getUserInfo: async (token) => {
-        const email = token.idToken ?? ""
-        return { user: { id: `google-${email}`, email, emailVerified: true, name: "Synthetic Person" }, data: { sub: `google-${email}` } }
+        const person = identity(token.idToken ?? "", "google")
+        return { user: { ...person, name: "Synthetic Person" }, data: { sub: person.id } }
       },
     },
   },
   account: DEN_ACCOUNT_CONFIG,
-  user: DEN_USER_CONFIG,
+  user: denUserConfig({ emailFollowsProvider: () => emailFollowsProvider }),
   plugins: [sso({ domainVerification: { enabled: true } })],
 })
 const context = await auth.$context
@@ -124,6 +138,34 @@ async function signInWithGoogle(email: string) {
   const response = await post("/sign-in/social", { provider: "google", idToken: { token: email } })
   const body: unknown = await response.json()
   return { status: response.status, code: stringField(body, "code") }
+}
+
+/** Signs in with Google as `token` ("email" or "id|email") and returns the account it opened. */
+async function googleAccount(token: string) {
+  const response = await post("/sign-in/social", { provider: "google", idToken: { token } })
+  assert.equal(response.status, 200)
+  const userId = stringField(field(await response.json(), "user"), "id")
+  assert.ok(userId)
+  return userId
+}
+
+async function storedUser(userId: string) {
+  const user = await context.internalAdapter.findUserById(userId)
+  assert.ok(user)
+  return { email: user.email, emailVerified: user.emailVerified }
+}
+
+async function userIdForEmail(email: string) {
+  return (await context.internalAdapter.findUserByEmail(email))?.user.id ?? null
+}
+
+async function withEmailFollowingProvider<T>(run: () => Promise<T>) {
+  emailFollowsProvider = true
+  try {
+    return await run()
+  } finally {
+    emailFollowsProvider = false
+  }
 }
 
 /** Starts SSO sign-in, then completes the real OIDC callback; returns where it redirected. */
@@ -197,4 +239,73 @@ test("SSO never creates a user whose email is outside the provider's verified do
   assert.equal(landed.pathname, "/failed", landed.href)
   assert.equal(landed.searchParams.get("error"), "email_outside_sso_domain")
   assert.equal(await context.internalAdapter.findUserByEmail("outsider@other.test"), null)
+})
+
+// A person renamed in the company directory keeps their Google id, while SSO
+// whose subject is the email (the default SAML NameID) sees a new identity.
+
+test("off: an account keeps its old email when Google reports a new one, and SSO under the new email creates a second account", async () => {
+  const userId = await googleAccount("google-rename-off|old-off@acme.test")
+
+  assert.equal(await googleAccount("google-rename-off|new-off@acme.test"), userId)
+  assert.deepEqual(await storedUser(userId), { email: "old-off@acme.test", emailVerified: true })
+
+  assert.equal((await signInWithSso("new-off@acme.test")).pathname, "/signed-in")
+  const second = await userIdForEmail("new-off@acme.test")
+  assert.ok(second)
+  assert.notEqual(second, userId)
+})
+
+test("on: an account follows its Google email, so SSO under the new email opens the same account", async () => {
+  const userId = await googleAccount("google-rename|old@acme.test")
+
+  await withEmailFollowingProvider(async () => {
+    assert.equal(await googleAccount("google-rename|new@acme.test"), userId)
+    assert.deepEqual(await storedUser(userId), { email: "new@acme.test", emailVerified: true })
+    assert.equal(await userIdForEmail("old@acme.test"), null)
+
+    assert.equal((await signInWithSso("new@acme.test")).pathname, "/signed-in")
+  })
+  assert.equal(await userIdForEmail("new@acme.test"), userId)
+  assert.deepEqual(await providerIds(userId), [SSO_PROVIDER_ID, "google"].sort())
+})
+
+test("on: an email another account already has is never taken, and the sign-in still opens the original account", async () => {
+  const userId = await googleAccount("google-taken|first@acme.test")
+  const other = await googleAccount("second@acme.test")
+
+  await withEmailFollowingProvider(async () => {
+    assert.equal(await googleAccount("google-taken|second@acme.test"), userId)
+  })
+  assert.equal((await storedUser(userId)).email, "first@acme.test")
+  assert.equal(await userIdForEmail("second@acme.test"), other)
+})
+
+test("on: an email Google has not verified does not move the account", async () => {
+  const userId = await googleAccount("google-unverified|proven@example.test")
+
+  await withEmailFollowingProvider(async () => {
+    assert.equal(await googleAccount("google-unverified|claimed@example.test|unverified"), userId)
+  })
+  assert.deepEqual(await storedUser(userId), { email: "proven@example.test", emailVerified: true })
+})
+
+test("on: an account follows its SSO email on the provider's verified domain, and no further", async () => {
+  assert.equal((await signInWithSso("sso-rename|before@acme.test")).pathname, "/signed-in")
+  const userId = await userIdForEmail("before@acme.test")
+  assert.ok(userId)
+
+  await withEmailFollowingProvider(async () => {
+    assert.equal((await signInWithSso("sso-rename|after@acme.test")).pathname, "/signed-in")
+    assert.deepEqual(await storedUser(userId), { email: "after@acme.test", emailVerified: false }, "SSO does not verify an unverified account")
+
+    // An account that proved its email stays verified: the provider owns the new address's domain.
+    await context.internalAdapter.updateUser(userId, { emailVerified: true })
+    assert.equal((await signInWithSso("sso-rename|later@acme.test")).pathname, "/signed-in")
+    assert.deepEqual(await storedUser(userId), { email: "later@acme.test", emailVerified: true })
+
+    assert.equal((await signInWithSso("sso-rename|moved@other.test")).pathname, "/signed-in")
+    assert.equal((await storedUser(userId)).email, "later@acme.test")
+  })
+  assert.equal(await userIdForEmail("moved@other.test"), null)
 })
