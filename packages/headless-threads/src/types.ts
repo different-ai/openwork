@@ -254,7 +254,11 @@ export interface HeadlessThreadClient extends AgentSessionClient {
    * engine's own request lists. Two small reads; no transcript.
    */
   getThreadWaitingFor(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadWaitingFor>;
-  /** The request a thread waits on, a permission before a question, with what is needed to answer it. */
+  /**
+   * The request a thread waits on, a permission before a question, with what is
+   * needed to answer it. A request from a helper the thread started counts: it
+   * holds the thread just the same.
+   */
   getThreadPending(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadPending | null>;
   /**
    * Answers the thread's pending request through the engine's own reply path,

@@ -94,11 +94,24 @@ export function createDesktopSessionAdapter(options) {
       return await read(selected === "v2" ? "v1" : "v2")
     }
   }
+  // A computer-use approval (run a script, hand over files, type a password, set up)
+  // holds the session's tool call the way a native permission does, but only this
+  // app knows about it. An unreadable one is not reported.
+  const computerPending = (receipt) => {
+    try {
+      return options.computerRequests?.pending(receipt.sessionId) ?? null
+    } catch {
+      return null
+    }
+  }
   // The request a running session waits on, with what is needed to answer it.
   // An unreadable list is unknown (undefined), never "nothing pending".
   const pendingFor = async (native, receipt, signal) => {
     const running = native.snapshot?.status?.type === "busy" || native.snapshot?.status?.type === "retry"
     if (!running) return null
+    // Its card expires, so it is the one to surface first.
+    const computer = computerPending(receipt)
+    if (computer) return computer
     try {
       return await native.client.getThreadPending(receipt.sessionId, { signal })
     } catch (error) {
@@ -222,11 +235,16 @@ export function createDesktopSessionAdapter(options) {
     /**
      * The person's answer, through the same native reply paths a local chat uses:
      * v1 question/permission reply, v2 form reply by field key and option value,
-     * v2 permission reply. Never "always". A request no longer pending is refused.
+     * v2 permission reply, or the computer-use approval this app holds.
+     * Never "always". A request no longer pending is refused.
      */
     async answer(receipt, input, signal) {
       const operationSignal = bounded(signal)
       try {
+        if (input.kind === "permission" && computerPending(receipt)?.requestId === input.requestId) {
+          await options.computerRequests.answer(receipt.sessionId, input)
+          return
+        }
         const native = await snapshotFor(receipt, operationSignal, 1)
         await native.client.answerThread(receipt.sessionId, input, { signal: operationSignal })
       } catch (error) {
