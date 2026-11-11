@@ -90,8 +90,6 @@ type PickerProps = {
   /** The scope's saved model: Everyone's default, or the team's own. */
   saved: DefaultModelChoice | null;
   inherit: { label: string; description?: string; icon?: ReactNode };
-  /** On Everyone's page: the names of the teams with their own model. */
-  changedTeams?: readonly string[];
   /** On a team's page: its members who are also on a team with a different model. */
   conflictCount?: number;
   settingsError: unknown;
@@ -103,7 +101,7 @@ type PickerProps = {
  * live, saved as soon as it is picked, with Undo. Shared by Org settings and
  * each team's Access tab.
  */
-function DefaultModelPicker({ scope, label, canManage, settings, saved, inherit, changedTeams, conflictCount = 0, settingsError, onRetrySettings }: PickerProps) {
+function DefaultModelPicker({ scope, label, canManage, settings, saved, inherit, conflictCount = 0, settingsError, onRetrySettings }: PickerProps) {
   const { orgId: scopedOrgId, orgSlug } = useOrgDashboard();
   const orgId = scopedOrgId ?? "";
   const labelId = useId();
@@ -202,7 +200,7 @@ function DefaultModelPicker({ scope, label, canManage, settings, saved, inherit,
 
       <DenCard size="comfortable" className="divide-y divide-gray-100 overflow-hidden !p-0" data-section={scope.kind === "team" ? "team-default-model" : "org-default-model"}>
         <SettingRow label={label} labelId={labelId}>
-          {settings ? <ScopeChip scope={scope} changed={saved !== null} changedTeams={changedTeams} /> : null}
+          {settings ? <ScopeChip scope={scope} changed={saved !== null} /> : null}
           {control}
         </SettingRow>
         <ConflictLine count={conflictCount} setting="model" />
@@ -239,7 +237,6 @@ export function OrgDefaultModelSection({ canManage, embedded = false }: { canMan
         settings={settings.data}
         saved={settings.data?.everyone ?? null}
         inherit={{ label: "No default", description: "Desktops keep their own default" }}
-        changedTeams={settings.data?.teams.filter((team) => team.model !== null).map((team) => team.name)}
         settingsError={settings.error}
         onRetrySettings={() => void settings.refetch()}
       />

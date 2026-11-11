@@ -1,4 +1,5 @@
 import {
+  agentSourcePolicySchema,
   agentTemplateContentSchema,
   readStoredWorkbotProactiveSettings,
   workbotProactiveViewSchema,
@@ -207,10 +208,11 @@ export const workbotTeamSettingsTeamSchema = z
     enabled: workbotTeamEnabledSettingSchema,
     /**
      * Present only while `workbotProactive` is on: whether the team follows the
-     * organization's policy for members' agents, and whether agents are on
-     * under the policy the team has now (its own, or the organization's).
+     * organization's policy for members' agents, and, under the policy the
+     * team has now (its own, or the organization's), whether agents are on
+     * and whether they read the calendar.
      */
-    agent: z.object({ inherit: z.boolean(), enabled: z.boolean() }).optional(),
+    agent: z.object({ inherit: z.boolean(), enabled: z.boolean(), calendar: agentSourcePolicySchema.optional() }).optional(),
     /**
      * Members of this team who are also on another team that overrides a
      * setting differently; they get the organization's value for it.
@@ -225,13 +227,15 @@ export const workbotTeamSettingsViewSchema = z
     /**
      * The organization's values, which teams without their own use: null is the deployment's default model, or no
      * name set; `enabled` is whether Workbot is on for everyone; `agentEnabled` is whether members' agents are on
-     * for everyone, present only while `workbotProactive` is on.
+     * for everyone and `agentCalendar` whether they read the calendar, both present only while `workbotProactive`
+     * is on.
      */
     organization: z.object({
       model: z.string().nullable(),
       name: z.string().nullable(),
       enabled: z.boolean(),
       agentEnabled: z.boolean().optional(),
+      agentCalendar: agentSourcePolicySchema.optional(),
     }),
     teams: z.array(workbotTeamSettingsTeamSchema),
     /** Whether the caller can change them (inference.manage). */

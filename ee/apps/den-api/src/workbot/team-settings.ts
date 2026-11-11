@@ -107,9 +107,11 @@ export async function listWorkbotTeamSettings(organizationId: OrganizationId, op
   const teamSettings = teams.map((team) => ({ teamId: team.id, settings: byTeam.get(team.id) ?? {} }))
   const conflicts = countWorkbotTeamConflicts({ teams: teamSettings, memberships })
   const organization = organizationWorkbotSettings(organizations[0]?.metadata)
-  const agentEnabled = options.agents ? readWorkbotProactiveSettings(organizations[0]?.metadata).enabled : false
+  const everyones = readWorkbotProactiveSettings(organizations[0]?.metadata)
+  const agentEnabled = options.agents ? everyones.enabled : false
+  const agentCalendar = everyones.sources.calendar
   return {
-    organization: { ...organization, ...(options.agents ? { agentEnabled } : {}) },
+    organization: { ...organization, ...(options.agents ? { agentEnabled, agentCalendar } : {}) },
     teams: teams.map((team) => {
       const settings = byTeam.get(team.id) ?? {}
       return {
@@ -119,7 +121,11 @@ export async function listWorkbotTeamSettings(organizationId: OrganizationId, op
         model: settings.model !== undefined ? { inherit: false as const, value: settings.model } : { inherit: true as const },
         name: settings.name !== undefined ? { inherit: false as const, value: settings.name } : { inherit: true as const },
         enabled: settings.enabled !== undefined ? { inherit: false as const, value: settings.enabled } : { inherit: true as const },
-        ...(options.agents ? { agent: { inherit: !settings.agent, enabled: settings.agent ? settings.agent.settings.enabled : agentEnabled } } : {}),
+        ...(options.agents ? { agent: {
+          inherit: !settings.agent,
+          enabled: settings.agent ? settings.agent.settings.enabled : agentEnabled,
+          calendar: settings.agent ? settings.agent.settings.sources.calendar : agentCalendar,
+        } } : {}),
         conflictingMemberCount: conflicts.get(team.id) ?? 0,
       }
     }),

@@ -290,7 +290,6 @@ function ScopeAgents({ access, data, policy, team, area }: {
         team={team}
         settings={settings}
         everyone={data.everyone.settings}
-        teams={team ? [] : data.teams.filter(hasTeamRecord)}
         area={area}
         editable={editable}
         onChange={(next) => { setSaveError(null); setDraft(next); }}
@@ -397,14 +396,12 @@ const ROW_COPY: Record<string, string> = {
 
 const PATTERN_NOUN: Record<string, string> = { website: "site" };
 
-export function AgentPermissionsEditor({ scopeId, team, settings, everyone, teams, area = "all", editable, onChange }: {
+export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area = "all", editable, onChange }: {
   scopeId: AgentPermissionScopeId;
   /** The team's name, or null when editing Everyone's. */
   team: string | null;
   settings: AgentPermissionSettings;
   everyone: AgentPermissionSettings;
-  /** Teams with their own saved changes, for Everyone's status lane. */
-  teams: AgentPermissionPolicy[];
   area?: AgentPermissionsArea;
   editable: boolean;
   onChange: (settings: AgentPermissionSettings) => void;
@@ -424,7 +421,6 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, team
           <div key={group.label} className="pb-1">
             <h3 className="px-5 pb-1 pt-3 text-[12px] font-medium text-gray-500">{group.label}</h3>
             {group.definitions.map((definition) => {
-              const changedBy = teams.filter((policy) => normalizeAgentPermissionSettings(policy.settings)[definition.key] !== undefined);
               return (
                 <PermissionRow
                   key={`${scopeId}-${definition.key}`}
@@ -433,7 +429,6 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, team
                   scope={scope}
                   setting={settings[definition.key]}
                   everyoneSetting={team === null ? settings[definition.key] : everyone[definition.key]}
-                  changedTeams={changedBy.map((policy) => policy.name)}
                   editable={editable}
                   blockedBy={agentPermissionBlockedBy(definition.key, effectiveSettings, team === null ? null : effectiveEveryone)}
                   onChange={(setting) => onChange(withSetting(settings, definition.key, setting))}
@@ -448,15 +443,13 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, team
   );
 }
 
-export function PermissionRow({ definition, team, scope, setting, everyoneSetting, changedTeams, editable, blockedBy, onChange }: {
+export function PermissionRow({ definition, team, scope, setting, everyoneSetting, editable, blockedBy, onChange }: {
   definition: AgentPermissionDefinition;
   team: string | null;
   /** Everyone or the team, for the row's chip. */
   scope: TeamScope;
   setting: AgentPermissionSetting | undefined;
   everyoneSetting: AgentPermissionSetting | undefined;
-  /** On Everyone's tab: the names of the teams that changed this row. */
-  changedTeams: readonly string[];
   editable: boolean;
   blockedBy: { key: string; reason: string } | null;
   onChange: (setting: AgentPermissionSetting | null) => void;
@@ -484,7 +477,7 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
         </div>
         {/* The chip, with "Use Everyone's" under it when both don't fit the lane. */}
         <div className="flex w-[150px] shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5" data-testid={`agent-permission-${definition.key}-source`}>
-          <ScopeChip scope={scope} changed={changed} changedTeams={changedTeams} />
+          <ScopeChip scope={scope} changed={changed} />
           {changed && editable ? <UseEveryonesButton settingLabel={definition.label} onClick={() => onChange(null)} /> : null}
         </div>
         <div className={`flex shrink-0 justify-end ${definition.key === "browserUploads" ? "w-[190px]" : "w-[140px]"}`}>
