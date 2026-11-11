@@ -68,6 +68,21 @@ export function isOidcDiscoveryUrl(value: string) {
   }
 }
 
+/**
+ * The issuer an address names: a discovery URL loses its well-known suffix,
+ * anything else is returned trimmed. Administrators often paste the
+ * discovery URL where the issuer belongs; appending the suffix again 404s.
+ */
+export function oidcIssuerFromInput(value: string) {
+  const typed = value.trim()
+  if (!isOidcDiscoveryUrl(typed)) return typed
+  const url = new URL(typed)
+  url.hash = ""
+  url.search = ""
+  url.pathname = trimTrailingSlash(url.pathname).slice(0, -DISCOVERY_SUFFIX.length) || "/"
+  return trimTrailingSlash(url.toString())
+}
+
 function failure(code: OidcDiscoveryFailure["code"], message: string, extra: Partial<Pick<OidcDiscoveryFailure, "discoveryUrl" | "status" | "reportedIssuer">> = {}): OidcDiscoveryFailure {
   return { ok: false, code, message, discoveryUrl: extra.discoveryUrl ?? null, status: extra.status ?? null, reportedIssuer: extra.reportedIssuer ?? null }
 }
