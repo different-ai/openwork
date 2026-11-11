@@ -5,6 +5,8 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { RemoteDevice } from "@openwork/types/den/remote-devices";
+import type { RemoteSessionAccessMode } from "@openwork/types/automations";
+import type { RemoteSessionAccessState } from "../src/app/lib/desktop";
 import type { AutomationsDenContext } from "../src/react-app/domains/automations/use-automations";
 
 let createRoot: typeof import("react-dom/client")["createRoot"];
@@ -18,9 +20,11 @@ beforeAll(async () => {
   createRoot = (await import("react-dom/client")).createRoot;
   DevicesContent = (await import("../src/react-app/domains/settings/pages/devices-view")).DevicesContent;
 });
+const previousBridge = typeof window === "undefined" ? undefined : window.__OPENWORK_ELECTRON__;
 afterEach(async () => {
   await act(async () => root?.unmount()); root = null;
   queryClient?.clear(); document.body.innerHTML = "";
+  Reflect.set(window, "__OPENWORK_ELECTRON__", previousBridge);
 });
 afterAll(async () => { if (ownedDom) await GlobalRegistrator.unregister(); });
 const device = (change: Partial<RemoteDevice> = {}): RemoteDevice => ({
@@ -31,7 +35,7 @@ const device = (change: Partial<RemoteDevice> = {}): RemoteDevice => ({
 });
 const pause = () => new Promise(resolve => setTimeout(resolve, 20));
 const calls: Array<{ kind: string; input?: unknown }> = [];
-async function render(options: { devices?: RemoteDevice[]; enabled?: boolean; ready?: boolean; failure?: boolean } = {}) {
+async function render(options: { devices?: RemoteDevice[]; enabled?: boolean; ready?: boolean; failure?: boolean; sessionAccess?: boolean } = {}) {
   calls.length = 0;
   const devices = options.devices ?? [device(), device({ id: "vm-1", label: "Build VM", kind: "vm", provider: "daytona", availability: "paused", state: "paused", access: "shared" })];
   const client = {
@@ -44,7 +48,7 @@ async function render(options: { devices?: RemoteDevice[]; enabled?: boolean; re
   const context: AutomationsDenContext = { client, ready: options.ready ?? true, organizationId: "org-1", queryRoot: ["den", "automations", "org-1"] };
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  await act(async () => { root!.render(<QueryClientProvider client={queryClient}><DevicesContent context={context} enabled={options.enabled ?? true} /></QueryClientProvider>); await pause(); });
+  await act(async () => { root!.render(<QueryClientProvider client={queryClient}><DevicesContent context={context} enabled={options.enabled ?? true} sessionAccess={options.sessionAccess} /></QueryClientProvider>); await pause(); });
   await act(pause);
   return container;
 }
@@ -129,4 +133,115 @@ test("rename saves the new name and remove waits for confirmation", async () => 
   expect(calls.some(call => call.kind === "remove")).toBe(false);
   expect(document.body.textContent).toContain("won't stop or delete"); await click("Remove device");
   expect(calls.find(call => call.kind === "remove")?.input).toBe("desktop-1");
+});
+
+const accessHeading = "Sessions other devices can reach";
+const accessState = (change: Partial<RemoteSessionAccessState> = {}): RemoteSessionAccessState => ({ mode: "created", ceiling: "all", effective: "created", supported: true, ...change });
+/** This computer's main process: it keeps the choice and says what is in force. */
+function desktopSessionAccess(initial: RemoteSessionAccessState, options: { failWrites?: boolean } = {}) {
+  const desktop = { state: initial, reads: 0, writes: [] as RemoteSessionAccessMode[] };
+  Reflect.set(window, "__OPENWORK_ELECTRON__", { remoteSessionAccess: {
+    get: async () => { desktop.reads += 1; return desktop.state; },
+    set: async (mode: RemoteSessionAccessMode) => {
+      desktop.writes.push(mode);
+      if (options.failWrites) throw new Error("Error invoking remote method");
+      desktop.state = { ...desktop.state, mode, effective: mode === "all" && desktop.state.ceiling === "all" && desktop.state.supported ? "all" : "created" };
+      return desktop.state;
+    },
+  } });
+  return desktop;
+}
+const choice = (mode: RemoteSessionAccessMode) => document.getElementById(`session-access-${mode}`)!.closest("label")!.querySelector<HTMLElement>('[role="radio"]')!;
+const chosen = (mode: RemoteSessionAccessMode) => choice(mode).getAttribute("aria-checked") === "true";
+const unavailable = (mode: RemoteSessionAccessMode) => choice(mode).getAttribute("aria-disabled") === "true";
+const reason = () => document.querySelector('[data-testid="session-access-reason"]')?.textContent ?? null;
+async function choose(mode: RemoteSessionAccessMode) {
+  await act(async () => { choice(mode).click(); await pause(); });
+}
+
+test("this computer's session choice is hidden while the feature is off or outside the desktop app", async () => {
+  const desktop = desktopSessionAccess(accessState());
+  expect((await render({ sessionAccess: false })).textContent).not.toContain(accessHeading);
+  expect((await render()).textContent).not.toContain(accessHeading);
+  expect(desktop.reads).toBe(0);
+  Reflect.set(window, "__OPENWORK_ELECTRON__", undefined);
+  const container = await render({ sessionAccess: true });
+  expect(container.textContent).not.toContain(accessHeading);
+  expect(container.querySelectorAll('[data-testid="device-row"]').length).toBe(2);
+});
+test("this computer starts on sessions started remotely, with both choices explained", async () => {
+  desktopSessionAccess(accessState());
+  const container = await render({ sessionAccess: true });
+  expect(container.textContent).toContain(accessHeading);
+  expect(container.textContent).toContain("Only sessions started remotely");
+  expect(container.textContent).toContain("Your other devices can follow and answer tasks they started here.");
+  expect(container.textContent).toContain("All sessions on this computer");
+  expect(container.textContent).toContain("Your other devices, Workbot and agents working for you can also open sessions you started here, continue them, stop them and answer their questions and permission requests.");
+  expect(chosen("created")).toBe(true); expect(chosen("all")).toBe(false);
+  expect(unavailable("created")).toBe(false); expect(unavailable("all")).toBe(false);
+  expect(reason()).toBeNull();
+  expect(container.querySelectorAll('[data-testid="device-row"]').length).toBe(2);
+});
+test("all sessions cannot be chosen past the organization's limit, before it is known, or on an older sign-in", async () => {
+  for (const [state, text] of [
+    [accessState({ ceiling: "created" }), "Your organization only allows sessions started remotely."],
+    [accessState({ ceiling: null }), "Available once this computer is connected to your organization."],
+    [accessState({ ceiling: null, supported: false }), "Sign in again or update OpenWork to use this."],
+    [accessState({ supported: false }), "Sign in again or update OpenWork to use this."],
+  ] as const) {
+    const desktop = desktopSessionAccess(state);
+    await render({ sessionAccess: true });
+    expect(reason()).toBe(text);
+    expect(unavailable("all")).toBe(true); expect(unavailable("created")).toBe(false);
+    await choose("all");
+    expect(desktop.writes).toEqual([]);
+    expect(document.body.textContent).not.toContain("Allow all sessions");
+    await act(async () => root?.unmount()); root = null; document.body.innerHTML = "";
+  }
+});
+test("a stored choice of all sessions the organization no longer allows is shown as not in effect and can be narrowed", async () => {
+  const desktop = desktopSessionAccess(accessState({ mode: "all", ceiling: "created" }));
+  await render({ sessionAccess: true });
+  expect(chosen("all")).toBe(true);
+  expect(reason()).toBe("Not in effect. Your organization only allows sessions started remotely.");
+  await choose("created");
+  expect(desktop.writes).toEqual(["created"]);
+  expect(chosen("created")).toBe(true);
+  expect(reason()).toBe("Your organization only allows sessions started remotely.");
+});
+test("choosing all sessions waits for confirmation; narrowing applies at once", async () => {
+  const desktop = desktopSessionAccess(accessState());
+  await render({ sessionAccess: true });
+  await choose("all");
+  expect(desktop.writes).toEqual([]);
+  expect(document.body.textContent).toContain("will be able to open any session on this computer");
+  expect(document.body.textContent).toContain("You can turn this off here at any time.");
+  await click("Cancel");
+  expect(desktop.writes).toEqual([]); expect(chosen("created")).toBe(true);
+  await choose("all"); await click("Allow all sessions");
+  expect(desktop.writes).toEqual(["all"]);
+  const reads = desktop.reads;
+  expect(reads).toBeGreaterThan(1);
+  expect(chosen("all")).toBe(true); expect(reason()).toBeNull();
+  await choose("created");
+  expect(desktop.writes).toEqual(["all", "created"]);
+  expect(desktop.reads).toBeGreaterThan(reads);
+  expect(chosen("created")).toBe(true);
+  expect(document.body.textContent).not.toContain("Allow all sessions");
+});
+test("a choice that could not be saved says so and shows what this computer still has", async () => {
+  const desktop = desktopSessionAccess(accessState({ mode: "all", effective: "all" }), { failWrites: true });
+  await render({ sessionAccess: true });
+  await choose("created");
+  expect(desktop.writes).toEqual(["created"]);
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe("Couldn't change this. Try again.");
+  expect(chosen("all")).toBe(true);
+});
+test("signed out, this computer's choice can still be narrowed", async () => {
+  const desktop = desktopSessionAccess(accessState({ mode: "all", ceiling: null, supported: false }));
+  const container = await render({ sessionAccess: true, ready: false });
+  expect(container.textContent).toContain("Cloud account"); expect(calls).toHaveLength(0);
+  expect(reason()).toBe("Not in effect. Sign in again or update OpenWork to use this.");
+  await choose("created");
+  expect(desktop.writes).toEqual(["created"]);
 });

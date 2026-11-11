@@ -8,7 +8,7 @@ import { useAutomationsDenContext } from "@/react-app/domains/automations/use-au
 
 const FEATURE_STALE_MS = 30_000
 
-type DesktopFeatureKey = "claudeAgentProvider" | "computerUse" | "computerSessionHistory" | "remoteComputers" | "settledSessions" | "composerBackgroundTasks" | "agentQuestions" | "standardCodeMode" | "parallelComputerUse" | "steadyLiveTurn" | "plainFreeModel" | "remoteDevices"
+type DesktopFeatureKey = "claudeAgentProvider" | "computerUse" | "computerSessionHistory" | "remoteComputers" | "settledSessions" | "composerBackgroundTasks" | "agentQuestions" | "standardCodeMode" | "parallelComputerUse" | "steadyLiveTurn" | "plainFreeModel" | "remoteDevices" | "remoteSessionAccess"
 
 /**
  * Reads one desktop feature from the registry. Signed in, it follows the

@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ChevronRight, Cloud, Laptop, MoreHorizontal } from "lucide-react";
 import { useAutomationsDenContext, type AutomationsDenContext } from "../../automations/use-automations";
 import { useDesktopFeature } from "../../session/status/use-desktop-feature";
+import { SessionAccessSection } from "../../devices/session-access-section";
 import { useThisDeviceId } from "../../devices/this-device-store";
 import { remoteDevicesContextQueryKey, useRemoteDevicesQuery, useRemoteDeviceDetailQuery, useRemoteDeviceMutations } from "../../devices/use-remote-devices";
 import { LayoutStack, LayoutSection, LayoutSectionHeader, LayoutSectionTitle } from "../settings-layout";
@@ -34,16 +35,19 @@ type DeviceAction = { kind: "register" } | { kind: "rename" | "remove"; device: 
 export function DevicesView() {
   const context = useAutomationsDenContext();
   const enabled = useDesktopFeature("remoteDevices");
+  const sessionAccess = useDesktopFeature("remoteSessionAccess");
   // Key the contents to the sign-in, including dialogs and mutation state.
-  return <DevicesContent key={`${remoteDevicesContextQueryKey(context).join(":")}:${context.ready}`} context={context} enabled={enabled} />;
+  return <DevicesContent key={`${remoteDevicesContextQueryKey(context).join(":")}:${context.ready}`} context={context} enabled={enabled} sessionAccess={sessionAccess} />;
 }
 
-export function DevicesContent({ context, enabled }: { context: AutomationsDenContext; enabled: boolean }) {
+export function DevicesContent({ context, enabled, sessionAccess = false }: { context: AutomationsDenContext; enabled: boolean; sessionAccess?: boolean }) {
   const query = useRemoteDevicesQuery(context, enabled);
   const thisDeviceId = useThisDeviceId(context.organizationId);
   const [action, setAction] = useState<DeviceAction | null>(null);
   if (!enabled) return <p role="status" className="text-sm text-muted-foreground">Not turned on for this organization.</p>;
-  if (!context.ready) return <p role="status" className="text-sm text-muted-foreground">Sign in and select an organization in Cloud account to see your devices.</p>;
+  // This computer's own choice stays within reach while signed out, so it can always be narrowed.
+  const sessionAccessSection = sessionAccess ? <SessionAccessSection /> : null;
+  if (!context.ready) return <LayoutStack><p role="status" className="text-sm text-muted-foreground">Sign in and select an organization in Cloud account to see your devices.</p>{sessionAccessSection}</LayoutStack>;
   const devices = query.data ?? [];
   return <LayoutStack>
     <div className="flex justify-end"><Button size="sm" onClick={() => setAction({ kind: "register" })}>Add a computer</Button></div>
@@ -55,6 +59,7 @@ export function DevicesContent({ context, enabled }: { context: AutomationsDenCo
       {devices.filter(device => device.kind === kind).map(device => <DeviceRow key={device.id} device={device} context={context} thisDevice={device.id === thisDeviceId} onAction={setAction} />)}
       {!query.isPending && devices.length > 0 && !devices.some(device => device.kind === kind) ? <p className="text-sm text-muted-foreground">{kind === "desktop" ? "No desktops reported yet." : "No cloud VMs registered yet."}</p> : null}
     </LayoutSection>)}
+    {sessionAccessSection}
     {action ? <DeviceDialog key={action.kind === "register" ? "register" : `${action.kind}:${action.device.id}`} action={action} context={context} onClose={() => setAction(null)} /> : null}
   </LayoutStack>;
 }
