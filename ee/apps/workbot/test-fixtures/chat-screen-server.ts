@@ -156,6 +156,8 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
   if (request.method === "POST" && builtApp) {
     if (builtApp[1] !== OPENWORK_APP_ID) return json(response, 502, { error: "app_unavailable" })
     if (builtApp[2] === "open") return json(response, 200, OPENWORK_APP_OPENED)
+    // `wave` changes something, so it runs only on the person's click, as the real server requires.
+    if (!/"clicked"\s*:\s*true/.test((await body(request)).toString("utf8"))) return json(response, 409, { error: "app_needs_click" })
     appWaves += 1
     return json(response, 200, { result: { content: [{ type: "text", text: String(appWaves) }], structuredContent: { waves: appWaves } } })
   }

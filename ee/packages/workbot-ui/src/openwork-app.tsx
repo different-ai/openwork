@@ -7,8 +7,9 @@ import { workbotHost } from "./host";
 /**
  * An App built in OpenWork, running in the panel beside the chat (`workbotApps`). Workbot's server opens the App from
  * its own MCP server as the person and hands back its page; this component puts the page in an opaque-origin frame
- * and answers the frame's MCP Apps requests. The App's tools run through the server, as the person. The App never
- * gets this page's origin, sign-in or conversation.
+ * and answers the frame's MCP Apps requests. The App's tools run through the server, as the person: one that reads may
+ * run when the App opens, one that changes something only on the person's click inside the App. The App never gets
+ * this page's origin, sign-in or conversation.
  */
 
 const openedSchema = z.object({ html: z.string().min(1), result: z.unknown() });
@@ -33,10 +34,14 @@ async function openApp(appId: string): Promise<Opened> {
   return opened.data;
 }
 
-/** One of the App's own tools, for its page. */
-async function callAppTool(appId: string, name: string, args: Record<string, unknown>): Promise<unknown> {
-  const { response, payload } = await workbotHost().requestJson(`/v1/workbot/apps/${encodeURIComponent(appId)}/call`, { method: "POST", body: JSON.stringify({ name, arguments: args }) }, 45_000);
+/**
+ * One of the App's own tools, for its page. `clicked` is this page's own observation that the person just clicked in
+ * the App; the server runs a tool that changes something only with it.
+ */
+async function callAppTool(appId: string, name: string, args: Record<string, unknown>, clicked: boolean): Promise<unknown> {
+  const { response, payload } = await workbotHost().requestJson(`/v1/workbot/apps/${encodeURIComponent(appId)}/call`, { method: "POST", body: JSON.stringify({ name, arguments: args, clicked }) }, 45_000);
   const called = calledSchema.safeParse(payload);
+  if (response.status === 409) throw new Error("This needs your click in the App.");
   if (!response.ok || !called.success) throw new Error("That didn't work. Try again.");
   return called.data.result;
 }
@@ -113,11 +118,14 @@ export function OpenWorkApp({ appId, title }: { appId: string; title: string }) 
     const request = requestSchema.safeParse(event.data);
     if (!request.success) return;
     const post = (message: Record<string, unknown>) => target.postMessage({ jsonrpc: "2.0", ...message }, "*");
+    // Read now, while it is true: the browser grants this for a few seconds after a real click or key press, and only
+    // this page can read it. The App's frame must be where the person's focus is, so a click elsewhere doesn't count.
+    const clicked = navigator.userActivation?.isActive === true && document.activeElement === frame.current;
     void answerAppRequest(
       request.data,
       {
         opened: opened.result,
-        callTool: (name, args) => callAppTool(appId, name, args),
+        callTool: (name, args) => callAppTool(appId, name, args, clicked),
         openLink: (url) => { window.open(url, "_blank", "noopener,noreferrer"); },
       },
       {

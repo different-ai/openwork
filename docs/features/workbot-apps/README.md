@@ -56,12 +56,18 @@ Off: the App is still made, but nothing shows in the chat, as before.
   and forms, never `allow-same-origin`), so it cannot read Workbot's page, its
   sign-in or the conversation. Workbot answers the App's MCP Apps requests:
   the opening result, calls to the App's own tools, and web links (http and
-  https, in a new tab).
+  https, in a new tab). It tells the server whether the person just clicked
+  in the App (the browser's own record of a real click, with the App's frame
+  in focus); the App's frame cannot set that.
 
 ## Limits
 
-- The App's tools run as the person, with no extra prompt, as they do when the
-  App is opened as a site (`appSites`).
+- The App's tools run as the person. A tool its server labels read-only may
+  run when the App opens. A tool that can change something runs only on the
+  person's click inside the App: Workbot's server reads the tool's label from
+  the App's own server on every call and refuses without the click, the same
+  rule OpenWork's desktop App host enforces. There is no extra prompt after
+  the click.
 - An App cannot send Workbot a message or change what Workbot knows: those
   requests are refused.
 - Only Apps built in OpenWork. An App that a connected service brings is not

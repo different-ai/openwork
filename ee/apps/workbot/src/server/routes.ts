@@ -648,18 +648,23 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     }
   })
 
-  /** A call the App's page makes to one of the App's own tools, run by Den as the member. */
+  /**
+   * A call the App's page makes to one of the App's own tools, run by Den as the member. `clicked` is the page's own
+   * observation that the person just clicked inside the App; the App's frame cannot set it. Without it, only a tool
+   * that reads runs.
+   */
   app.post("/v1/workbot/apps/:appId/call", bodyLimit({ maxSize: 256 * 1024 }), async (c) => {
     c.header("Cache-Control", "no-store")
     const member = c.get("member")
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
     if (!member.den.openworkApps) return c.json({ error: "feature_disabled" }, 404)
     const appId = mcpAppIdSchema.safeParse(c.req.param("appId"))
-    const body = z.object({ name: z.string().min(1).max(200), arguments: z.record(z.string(), z.unknown()).default({}) }).strict().safeParse(await c.req.json().catch(() => null))
+    const body = z.object({ name: z.string().min(1).max(200), arguments: z.record(z.string(), z.unknown()).default({}), clicked: z.boolean().default(false) }).strict().safeParse(await c.req.json().catch(() => null))
     if (!appId.success || !body.success) return c.json({ error: "invalid_request" }, 400)
     try {
-      return c.json({ result: await den.callApp(member.accessToken, appId.data, body.data.name, body.data.arguments) })
+      return c.json({ result: await den.callApp(member.accessToken, appId.data, body.data.name, body.data.arguments, body.data.clicked) })
     } catch (error) {
+      if (error instanceof DenAppError && error.reason === "needs_click") return c.json({ error: "app_needs_click" }, 409)
       if (error instanceof DenAppError) return c.json({ error: error.reason === "signed_out" ? "app_signed_out" : "app_unavailable" }, 502)
       throw error
     }

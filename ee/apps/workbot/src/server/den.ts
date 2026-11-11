@@ -29,9 +29,12 @@ export class DenRemoteSessionError extends Error {
   }
 }
 
-/** An App could not be opened or used: `signed_out` needs the person to sign in again; anything else reads as unavailable. */
+/**
+ * An App could not be opened or used: `signed_out` needs the person to sign in again; `needs_click` is a tool that
+ * changes something, asked for without the person's click; anything else reads as unavailable.
+ */
 export class DenAppError extends Error {
-  constructor(readonly reason: "signed_out" | "unavailable", readonly code: string) {
+  constructor(readonly reason: "signed_out" | "needs_click" | "unavailable", readonly code: string) {
     super(`app_${reason}:${code}`)
     this.name = "DenAppError"
   }
@@ -40,6 +43,15 @@ export class DenAppError extends Error {
 /** The most of an App's page Workbot passes on (Den's own limit for a built page is below it). */
 const MAX_APP_HTML_CHARS = 2_000_000
 const appLaunchToolSchema = z.object({ _meta: z.object({ ui: z.object({ resourceUri: z.string().min(1) }) }) })
+
+/**
+ * Whether one of an App's tools runs only on the person's click. The same rule OpenWork's other App hosts enforce:
+ * only a tool its server labels read-only and not destructive may run by itself, such as when the App opens. An App's
+ * page, which its author controls, can therefore never change anything as the person just by being opened.
+ */
+export function appToolNeedsClick(tool: { annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }): boolean {
+  return tool.annotations?.readOnlyHint !== true || tool.annotations?.destructiveHint === true
+}
 
 const protectedResourceSchema = z.object({ resource: z.string(), authorization_servers: z.array(z.string()).min(1) })
 const metadataSchema = z.object({
@@ -316,9 +328,19 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
         if (page === undefined || page.length > MAX_APP_HTML_CHARS) throw new DenAppError("unavailable", "no_page")
         return { html: page, result }
       }),
-    /** One of the App's own tools, called for its page as the member. Den checks the tool and what it reaches. */
-    callApp: (accessToken: string, appId: string, name: string, args: Record<string, unknown>) =>
-      withApp(accessToken, appId, (client) => client.callTool({ name, arguments: args }, undefined, { timeout: TIMEOUT_MS })),
+    /**
+     * One of the App's own tools, called for its page as the member. Den checks the tool and what it reaches. A tool
+     * that is not listed is never called, and one that changes something (appToolNeedsClick, read from the App's own
+     * server on every call) runs only when `clicked`: the person's click in the App, as the page observed it.
+     */
+    callApp: (accessToken: string, appId: string, name: string, args: Record<string, unknown>, clicked: boolean) =>
+      withApp(accessToken, appId, async (client) => {
+        const listed = await client.listTools(undefined, { timeout: TIMEOUT_MS })
+        const tool = listed.tools.find((entry) => entry.name === name)
+        if (!tool) throw new DenAppError("unavailable", "no_tool")
+        if (appToolNeedsClick(tool) && !clicked) throw new DenAppError("needs_click", "needs_click")
+        return client.callTool({ name, arguments: args }, undefined, { timeout: TIMEOUT_MS })
+      }),
     modelRecovery: (accessToken: string) => authorized("GET", "/v1/workbot/model-recovery", accessToken),
     /** The member's Get set up checklist; Den computes every step and enforces the feature. */
     activation: (accessToken: string) => authorized("GET", "/v1/workbot/activation", accessToken),

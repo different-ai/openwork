@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { createServer, type Server } from "node:http"
 import { Hono } from "hono"
 import { createAuth, type AppEnv, type DenAuth } from "../src/server/auth.js"
-import { createDen, DenRateLimitedError, DenSignedOutError, DenUnavailableError, WorkbotTurnAccessError, tokenRetryAfterSeconds, type DenSession } from "../src/server/den.js"
+import { appToolNeedsClick, createDen, DenRateLimitedError, DenSignedOutError, DenUnavailableError, WorkbotTurnAccessError, tokenRetryAfterSeconds, type DenSession } from "../src/server/den.js"
 import type { Tokens } from "../src/server/sealed.js"
 import { loadConfig } from "../src/server/config.js"
 
@@ -700,4 +700,14 @@ test("a route's own Den call answers like sign-in does: signed out, Den unavaila
   assert.equal(d.reports.length, 3, "being signed out is not a fault")
   assert.equal((await me(d.app, session)).status, 200)
   assert.equal(d.asked(), asked + 1, "Den's earlier answer is not trusted after it refused the token")
+})
+
+test("an App's tool runs without the person's click only when its server labels it read-only and not destructive", () => {
+  assert.equal(appToolNeedsClick({ annotations: { readOnlyHint: true, destructiveHint: false } }), false)
+  assert.equal(appToolNeedsClick({ annotations: { readOnlyHint: true } }), false)
+  // Anything that may change data, and anything unlabeled, waits for a click: an App cannot act just by being opened.
+  assert.equal(appToolNeedsClick({ annotations: { readOnlyHint: false, destructiveHint: true } }), true)
+  assert.equal(appToolNeedsClick({ annotations: { readOnlyHint: true, destructiveHint: true } }), true)
+  assert.equal(appToolNeedsClick({ annotations: {} }), true)
+  assert.equal(appToolNeedsClick({}), true)
 })
