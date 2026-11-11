@@ -83,6 +83,8 @@ const modelConfigPassthroughKeys = [
   "headers",
   "provider",
   "variants",
+  // Engine request quirks per model, such as `cacheFormat: "anthropic"` for Claude behind an OpenAI-compatible endpoint.
+  "compatibility",
 ];
 
 function buildModelConfig(model: ManagedProviderModel, providerNpm: unknown): ManagedProviderModelConfig {

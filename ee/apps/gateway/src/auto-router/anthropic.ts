@@ -254,7 +254,7 @@ function chatUsage(usage: AnthropicUsage) {
     prompt_tokens: prompt,
     completion_tokens: usage.output,
     total_tokens: prompt + usage.output,
-    prompt_tokens_details: { cached_tokens: usage.cacheRead },
+    prompt_tokens_details: { cached_tokens: usage.cacheRead, cache_write_tokens: usage.cacheWrite },
   }
 }
 
