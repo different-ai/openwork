@@ -375,6 +375,20 @@ export const AGENT_MEMBER_BRIEF_MAX = 1_000
 export const AGENT_BRIEF_LINE_MAX = 300
 export const AGENT_BRIEF_DAILY_CAP_MAX = 10
 export const AGENT_EXTRA_CHECKS_MAX = 6
+/**
+ * `workbotAgentCheckGate`: a scheduled check is skipped only when the evaluation model puts the chance that something
+ * new could matter at or below this. The choices are what Manage › Workbot offers; the API takes any value in range.
+ */
+export const AGENT_CHECK_GATE_SKIP_AT_DEFAULT = 0.2
+export const AGENT_CHECK_GATE_SKIP_AT_CHOICES = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5] as const
+/**
+ * `workbotAgentSendCheck`: a message is held only when the evaluation model is at least this sure it should not be
+ * sent. The choices are what Manage › Workbot offers; the API takes any value in range.
+ */
+export const AGENT_SEND_CHECK_HOLD_AT_DEFAULT = 0.8
+export const AGENT_SEND_CHECK_HOLD_AT_CHOICES = [0.6, 0.7, 0.8, 0.9, 0.95] as const
+/** A threshold on the evaluation model's probability: never 0 or 1, which would turn a check into always or never. */
+export const agentEvaluationThresholdSchema = z.number().min(0.01).max(0.99)
 /** Why the agent asked for an extra check, as My bot shows it ("before your 2 PM with Northwind"). */
 export const AGENT_CHECK_REQUEST_WHY_MAX = 120
 
@@ -463,6 +477,20 @@ const workbotProactiveFieldsSchema = z.object({
    * field: a field not saved is carried over from the settings above and the template (`resolveAgentBrief`).
    */
   brief: storedAgentBriefSchema.optional(),
+  /**
+   * `workbotAgentCheckGate`: before a scheduled check, Den looks at what reached the member since their agent last
+   * looked and skips the check when nothing that could matter arrived. Absent means off.
+   */
+  checkGate: z.boolean().optional(),
+  /** `workbotAgentCheckGate`: the gate's threshold; absent means `AGENT_CHECK_GATE_SKIP_AT_DEFAULT`. */
+  checkGateThreshold: agentEvaluationThresholdSchema.optional(),
+  /**
+   * `workbotAgentSendCheck`: before a message is sent, a fast second model reads it against the brief and what the
+   * member was already told today, and Den holds one it is confident should not go. Absent means off.
+   */
+  sendCheck: z.boolean().optional(),
+  /** `workbotAgentSendCheck`: the check's threshold; absent means `AGENT_SEND_CHECK_HOLD_AT_DEFAULT`. */
+  sendCheckThreshold: agentEvaluationThresholdSchema.optional(),
 })
 
 const hoursInOrder = (value: { startHour: number; endHour: number }) => value.endHour > value.startHour
@@ -557,6 +585,17 @@ export const workbotProactiveViewSchema = z.object({
    * servers before it.
    */
   brief: agentBriefViewSchema.optional(),
+  /**
+   * `workbotAgentCheckGate` only: `model` is whether this deployment can also judge new mail as routine (it has the
+   * key for the evaluation model); without it a check is skipped only when nothing arrived. Absent while the feature
+   * is off, and from servers before it; `settings.checkGate` is the switch.
+   */
+  checkGate: z.object({ model: z.boolean() }).optional(),
+  /**
+   * `workbotAgentSendCheck` only: `ready` is whether this deployment can run the check (it has the key for the
+   * evaluation model). Absent while the feature is off, and from servers before it; `settings.sendCheck` is the switch.
+   */
+  sendCheck: z.object({ ready: z.boolean() }).optional(),
 })
 export type WorkbotProactiveView = z.infer<typeof workbotProactiveViewSchema>
 

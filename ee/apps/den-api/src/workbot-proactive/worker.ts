@@ -1,11 +1,12 @@
 import { libraryConnectorLink } from "../agent-links.js"
 import { markFeaturesUsed, type MarkFeaturesUsed } from "../feature-usage.js"
+import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
-import { readMemberGoogleCalendar } from "../routes/org/google-workspace.js"
+import { readMemberGmailArrivals, readMemberGoogleCalendar } from "../routes/org/google-workspace.js"
 import { organizationCloudModel } from "../workbot/model.js"
 import { resolveMemberTeamAgent, teamAgentPolicy } from "../workbot/team-settings.js"
 import { readWorkbotDirectMessages } from "../slack-assistant/direct-message.js"
-import { activeMemberUser, agentBriefAllowed, listAgentCandidates, memberFirstName, proactiveAllowed, readProactiveSettings } from "./access.js"
+import { activeMemberUser, agentBriefAllowed, agentCheckGateAllowed, agentSendCheckAllowed, listAgentCandidates, memberFirstName, proactiveAllowed, readProactiveSettings } from "./access.js"
 import { deliverAgentMessage, destinationBlock } from "./deliver.js"
 import {
   agentSentSince,
@@ -25,6 +26,9 @@ import {
   type AgentInstanceRow,
 } from "./repository.js"
 import { countConnectedMembers, listConnectionToolsForMember, listMemberConnections } from "./sources-repository.js"
+import { createCheckGateModel } from "./check-gate.js"
+import { createEvaluationModel } from "./evaluation-model.js"
+import { createAgentSendCheck } from "./send-check.js"
 import { readAgentTemplate } from "./template.js"
 import { agentMessageId, agentMessageSessionId, agentSessionId, defaultAgentTurnDeps, endAgentMessageSession, runAgentSessionTurn, runAgentTurn } from "./turn.js"
 import { wakeAgent, type AgentWakeOutcome } from "./wake.js"
@@ -43,6 +47,10 @@ const LEDGER_RETENTION_MS = 30 * 24 * 3_600_000
 
 export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
   const turnDeps = defaultAgentTurnDeps()
+  // One evaluation model for the check gate and the send check, where the deployment has its key.
+  const evaluationModel = env.agentEvaluationApiKey ? createEvaluationModel({ apiKey: env.agentEvaluationApiKey }) : null
+  const checkGateModel = evaluationModel ? createCheckGateModel(evaluationModel) : null
+  const sendCheck = evaluationModel ? createAgentSendCheck(evaluationModel) : null
   return {
     now: Date.now,
     allowed: (organizationId, userId) => proactiveAllowed(organizationId, userId),
@@ -78,6 +86,21 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
     endMessageSession: (sessionId) => endAgentMessageSession(sessionId, turnDeps),
     conversation: (input) => readWorkbotDirectMessages({ organizationId: input.organizationId, userId: input.userId, since: input.since }),
     requestedChecks: readAgentCheckRequests,
+    // A gate that is about to look for a member is that member using the feature, for /admin › Features.
+    checkGate: async ({ organizationId, memberId, userId }) => {
+      if (!(await agentCheckGateAllowed(organizationId, userId))) return null
+      markFeaturesUsed({ organizationId, memberId, keys: ["workbotAgentCheckGate"] })
+      return {
+        mail: (input) => readMemberGmailArrivals({ organizationId, orgMembershipId: memberId, ...input }),
+        model: checkGateModel,
+      }
+    },
+    // A check that is about to read a member's messages is that member using the feature, too.
+    sendCheck: async ({ organizationId, memberId, userId }) => {
+      if (!sendCheck || !(await agentSendCheckAllowed(organizationId, userId))) return null
+      markFeaturesUsed({ organizationId, memberId, keys: ["workbotAgentSendCheck"] })
+      return sendCheck
+    },
     readTools: (input) => listConnectionToolsForMember({ organizationId: input.organizationId, memberId: input.memberId, connectionId: input.connection.id }),
   }
 }

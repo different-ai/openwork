@@ -510,6 +510,45 @@ export async function readMemberGoogleCalendar(input: {
   return { kind: "ok", json: await readJson(response) }
 }
 
+export type MemberMailArrivals =
+  | { kind: "ok"; messages: { from: string; subject: string; snippet: string; labels: string[] }[]; more: boolean }
+  | { kind: "needs_connection" | "policy_blocked" | "missing_scope" | "google_api_error" }
+
+/**
+ * What reached a member's Gmail since `since`, for their agent's check gate (is this check worth running?), outside
+ * any request: one read-only list, then each message's headers, first words and labels. Never a body, and never the
+ * member's own sent mail, drafts, chats, spam or trash. Through exactly `connectionId`, as the calendar read above.
+ * `more` says there were more than `limit`.
+ */
+export async function readMemberGmailArrivals(input: {
+  organizationId: DenTypeId<"organization">
+  orgMembershipId: DenTypeId<"member">
+  connectionId: string
+  since: number
+  limit: number
+}): Promise<MemberMailArrivals> {
+  const token = await googleWorkspaceToken({ organizationId: input.organizationId, orgMembershipId: input.orgMembershipId, connectionId: input.connectionId })
+  if (token.kind !== "ok") return { kind: token.kind }
+  if (missingScope(token.account, [GMAIL_READ_SCOPE])) return { kind: "missing_scope" }
+  const listUrl = new URL(`${gmailApiBase()}/gmail/v1/users/me/messages`)
+  listUrl.searchParams.set("q", `after:${Math.floor(input.since / 1000)} -in:sent -in:drafts -in:chats -in:spam -in:trash`)
+  listUrl.searchParams.set("maxResults", String(input.limit + 1))
+  const listed = await googleWorkspaceApiFetch(listUrl, { headers: { authorization: `Bearer ${token.accessToken}` } })
+  if (!listed.ok) return { kind: "google_api_error" }
+  const ids = extractGmailMessageIds(await readJson(listed), input.limit + 1)
+  const metadata = await fetchGmailMetadata(ids.slice(0, input.limit), token.accessToken, AbortSignal.timeout(GOOGLE_WORKSPACE_API_TIMEOUT_MS))
+  if (!metadata.ok) return { kind: "google_api_error" }
+  return {
+    kind: "ok",
+    more: ids.length > input.limit,
+    messages: metadata.json.map((json) => {
+      const message = extractGmailMessage(json)
+      const labels: unknown = isRecordValue(json) ? json.labelIds : null
+      return { from: message.from, subject: message.subject, snippet: message.snippet, labels: Array.isArray(labels) ? labels.filter((label): label is string => typeof label === "string") : [] }
+    }),
+  }
+}
+
 async function googleApiError(operation: string, response: Response) {
   const text = await response.text()
   return { error: "google_api_error" as const, message: `${operation} failed: ${response.status} ${text.slice(0, 300)}` }

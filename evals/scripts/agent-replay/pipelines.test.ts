@@ -70,6 +70,25 @@ describe("brief replay harness", () => {
     expect(run.checks[0]?.usage.check).toEqual({ calls: 1, input: 100, cached: 50, output: 10 });
   });
 
+  test("new pipeline with the send check: a held message is not sent or recorded as told, and the log says why", async () => {
+    const ask = scenario("slack-ask-before-meeting");
+    const text = "Before your 11 AM with Fabrikam: Priya asked for pricing on 60 seats. <https://acme.slack.com/archives/C0FABRIKAM/p1792588920000100|Slack message>";
+    const message = JSON.stringify({ messages: [{ text, about: ["chat:https://acme.slack.com/archives/C0FABRIKAM/p1792588920000100"], update: false }] });
+    const { model } = scripted({ check: "P0 — Priya asked for pricing. ids: chat:https://acme.slack.com/archives/C0FABRIKAM/p1792588920000100", message });
+    const asked: { brief: string; toldToday: readonly string[] }[] = [];
+    const run = await runNewPipeline(ask, model, {
+      sendCheck: async (input) => {
+        asked.push({ brief: input.brief, toldToday: input.toldToday });
+        return { kind: "hold", reason: "brief" };
+      },
+    });
+    expect(run.messages).toHaveLength(0);
+    expect(run.checks[0]?.held).toEqual([{ text, reason: "brief" }]);
+    expect(run.checks.every((check) => check.outcome === "already_told")).toBe(true);
+    expect(asked[0]?.brief.startsWith("Tell me about things that need me soon:")).toBe(true);
+    expect(asked[0]?.toldToday).toEqual([]);
+  });
+
   test("old pipeline: a morning pass, about every three hours, and a meeting wake 15 minutes before a call with outsiders", async () => {
     const ask = scenario("slack-ask-before-meeting");
     const { model } = scripted({});

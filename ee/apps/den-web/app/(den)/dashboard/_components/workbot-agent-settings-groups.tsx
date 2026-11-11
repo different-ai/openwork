@@ -6,8 +6,12 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 import {
   AGENT_BRIEF_DAILY_CAP_MAX,
   AGENT_BRIEF_MAX,
+  AGENT_CHECK_GATE_SKIP_AT_CHOICES,
+  AGENT_CHECK_GATE_SKIP_AT_DEFAULT,
   AGENT_CHECK_EVERY_HOURS,
   AGENT_EXTRA_CHECKS_MAX,
+  AGENT_SEND_CHECK_HOLD_AT_CHOICES,
+  AGENT_SEND_CHECK_HOLD_AT_DEFAULT,
   type AgentBriefView,
   type WorkbotProactiveSettingsInput,
   type WorkbotProactiveView,
@@ -17,7 +21,7 @@ import { DenSelect } from "../../_components/ui/select";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { HelpTip } from "./help-tip";
-import { BriefPreview, everyLabel, hourLabel } from "./workbot-agent-brief-panel";
+import { BriefPreview, CHECK_GATE_ROW, everyLabel, hourLabel, SEND_CHECK_ROW, ThresholdSelect } from "./workbot-agent-brief-panel";
 import { agentsSwitchLabel, type AgentPolicyScope } from "./workbot-agent-scope";
 
 /**
@@ -122,7 +126,7 @@ export function WorkbotAgentSettingsGroups({ view, brief, canManage, saving, onC
   /** Whose policy the rows show: Everyone's, or one team's. */
   scope?: AgentPolicyScope;
 }) {
-  const ids = { every: useId(), hours: useId(), days: useId(), cap: useId(), extra: useId() };
+  const ids = { every: useId(), hours: useId(), days: useId(), cap: useId(), extra: useId(), holdAt: useId(), skipAt: useId() };
   const switchLabel = agentsSwitchLabel(scope);
   const { settings, slackReady, runnerReady } = view;
   const locked = !canManage || saving;
@@ -172,6 +176,18 @@ export function WorkbotAgentSettingsGroups({ view, brief, canManage, saving, onC
             </DenSelect>
           </div>
         </Row>
+        {view.sendCheck ? (
+          <Row label={SEND_CHECK_ROW.label} help={SEND_CHECK_ROW.help} testId="workbot-agent-send-check" note={view.sendCheck.ready ? null : SEND_CHECK_ROW.notReady}>
+            <DenSwitch aria-label={SEND_CHECK_ROW.label} checked={settings.sendCheck === true} disabled={locked || (!view.sendCheck.ready && settings.sendCheck !== true)}
+              onChange={(sendCheck) => onChange({ sendCheck })} />
+          </Row>
+        ) : null}
+        {view.sendCheck && settings.sendCheck ? (
+          <Row label={SEND_CHECK_ROW.thresholdLabel} labelId={ids.holdAt} help={SEND_CHECK_ROW.thresholdHelp} testId="workbot-agent-send-check-threshold">
+            <ThresholdSelect labelledBy={ids.holdAt} choices={AGENT_SEND_CHECK_HOLD_AT_CHOICES} value={settings.sendCheckThreshold} fallback={AGENT_SEND_CHECK_HOLD_AT_DEFAULT}
+              disabled={locked} onChange={(sendCheckThreshold) => onChange({ sendCheckThreshold })} />
+          </Row>
+        ) : null}
       </Group>
 
       <Group title="Schedule">
@@ -218,6 +234,17 @@ export function WorkbotAgentSettingsGroups({ view, brief, canManage, saving, onC
             </DenSelect>
           </div>
         </Row>
+        {view.checkGate ? (
+          <Row label={CHECK_GATE_ROW.label} help={CHECK_GATE_ROW.help} testId="workbot-agent-check-gate">
+            <DenSwitch aria-label={CHECK_GATE_ROW.label} checked={settings.checkGate === true} disabled={locked} onChange={(checkGate) => onChange({ checkGate })} />
+          </Row>
+        ) : null}
+        {view.checkGate && settings.checkGate ? (
+          <Row label={CHECK_GATE_ROW.thresholdLabel} labelId={ids.skipAt} help={CHECK_GATE_ROW.thresholdHelp} testId="workbot-agent-check-gate-threshold">
+            <ThresholdSelect labelledBy={ids.skipAt} choices={AGENT_CHECK_GATE_SKIP_AT_CHOICES} value={settings.checkGateThreshold} fallback={AGENT_CHECK_GATE_SKIP_AT_DEFAULT}
+              disabled={locked} onChange={(checkGateThreshold) => onChange({ checkGateThreshold })} />
+          </Row>
+        ) : null}
       </Group>
 
       <Group>

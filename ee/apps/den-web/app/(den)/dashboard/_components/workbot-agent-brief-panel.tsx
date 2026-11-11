@@ -6,8 +6,12 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 import {
   AGENT_BRIEF_DAILY_CAP_MAX,
   AGENT_BRIEF_MAX,
+  AGENT_CHECK_GATE_SKIP_AT_CHOICES,
+  AGENT_CHECK_GATE_SKIP_AT_DEFAULT,
   AGENT_CHECK_EVERY_HOURS,
   AGENT_EXTRA_CHECKS_MAX,
+  AGENT_SEND_CHECK_HOLD_AT_CHOICES,
+  AGENT_SEND_CHECK_HOLD_AT_DEFAULT,
   type AgentBriefView,
   type WorkbotProactiveSettingsInput,
   type WorkbotProactiveView,
@@ -34,6 +38,56 @@ export function hourLabel(hour: number) {
 export function everyLabel(hours: number) {
   return hours === 1 ? "Every hour" : `Every ${hours} hours`;
 }
+
+/** The send check's rows (`workbotAgentSendCheck`), worded the same in both layouts. */
+export const SEND_CHECK_ROW = {
+  label: "Check each message before sending",
+  help: "A second, fast model reads each message before it is sent and holds one your instructions say to leave out, or that repeats what the agent already said today. It never writes or changes a message, and it keeps nothing it reads.",
+  notReady: "Not set up on this deployment. Ask your deployment administrator.",
+  thresholdLabel: "Hold a message only when at least this sure",
+  thresholdHelp: "A message is held only when the check is at least this sure it should not be sent. Higher sends more messages; lower holds more.",
+} as const;
+
+/** A threshold as people read it: 0.2 is "20%". */
+export function percentLabel(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+/** The thresholds a select offers: the standard choices, plus the saved one when it was set through the API. */
+export function thresholdChoices(choices: readonly number[], saved: number): number[] {
+  return [...new Set([...choices, saved])].sort((left, right) => left - right);
+}
+
+/** One threshold select; the value shown is the saved one, else the default. */
+export function ThresholdSelect({ labelledBy, choices, value, fallback, disabled, onChange }: {
+  labelledBy: string;
+  choices: readonly number[];
+  value: number | undefined;
+  fallback: number;
+  disabled: boolean;
+  onChange: (value: number) => void;
+}) {
+  const shown = value ?? fallback;
+  return (
+    <div className="w-28">
+      <DenSelect aria-labelledby={labelledBy} menuWidth="trigger" value={String(shown)} disabled={disabled}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          if (Number.isFinite(next)) onChange(next);
+        }}>
+        {thresholdChoices(choices, shown).map((choice) => <option key={choice} value={String(choice)}>{percentLabel(choice)}</option>)}
+      </DenSelect>
+    </div>
+  );
+}
+
+/** The check gate's rows (`workbotAgentCheckGate`), worded the same in both layouts. */
+export const CHECK_GATE_ROW = {
+  label: "Skip checks when nothing new arrived",
+  help: "Before a scheduled check, Workbot looks at what reached the member's Gmail and Google Calendar since the last one. With nothing new, or only routine mail, the agent doesn't run. The first check of the day and checks the agent asked for always run, and so does a check after two skipped in a row.",
+  thresholdLabel: "Skip only when the chance new mail matters is at most",
+  thresholdHelp: "When mail arrived, the check is skipped only if the chance that any of it matters is at or below this. Lower runs the agent more often; higher skips more.",
+} as const;
 
 function Row({ label, labelId, note, children, testId }: { label: string; labelId?: string; note?: ReactNode; children: ReactNode; testId?: string }) {
   return (
@@ -120,7 +174,7 @@ export function WorkbotAgentBriefPanel({
   /** Whose policy the rows show: Everyone's, or one team's. */
   scope?: AgentPolicyScope;
 }) {
-  const ids = { destination: useId(), rhythm: useId(), cap: useId(), extra: useId(), members: useId() };
+  const ids = { destination: useId(), rhythm: useId(), cap: useId(), extra: useId(), members: useId(), holdAt: useId(), skipAt: useId() };
   const switchLabel = agentsSwitchLabel(scope);
   const { settings, slackReady, runnerReady } = view;
   const locked = !canManage || saving;
@@ -202,6 +256,19 @@ export function WorkbotAgentBriefPanel({
         </div>
       </Row>
 
+      {view.sendCheck ? (
+        <Row label={SEND_CHECK_ROW.label} testId="workbot-agent-send-check" note={view.sendCheck.ready ? null : SEND_CHECK_ROW.notReady}>
+          <DenSwitch aria-label={SEND_CHECK_ROW.label} checked={settings.sendCheck === true} disabled={locked || (!view.sendCheck.ready && settings.sendCheck !== true)}
+            onChange={(sendCheck) => onChange({ sendCheck })} />
+        </Row>
+      ) : null}
+      {view.sendCheck && settings.sendCheck ? (
+        <Row label={SEND_CHECK_ROW.thresholdLabel} labelId={ids.holdAt} testId="workbot-agent-send-check-threshold">
+          <ThresholdSelect labelledBy={ids.holdAt} choices={AGENT_SEND_CHECK_HOLD_AT_CHOICES} value={settings.sendCheckThreshold} fallback={AGENT_SEND_CHECK_HOLD_AT_DEFAULT}
+            disabled={locked} onChange={(sendCheckThreshold) => onChange({ sendCheckThreshold })} />
+        </Row>
+      ) : null}
+
       <Row label="Extra checks agents may ask for" labelId={ids.extra} testId="workbot-agent-brief-extra">
         <div className="w-36">
           <DenSelect aria-labelledby={ids.extra} menuWidth="trigger" value={String(brief.extraChecksPerDay)} disabled={locked}
@@ -210,6 +277,18 @@ export function WorkbotAgentBriefPanel({
           </DenSelect>
         </div>
       </Row>
+
+      {view.checkGate ? (
+        <Row label={CHECK_GATE_ROW.label} testId="workbot-agent-check-gate">
+          <DenSwitch aria-label={CHECK_GATE_ROW.label} checked={settings.checkGate === true} disabled={locked} onChange={(checkGate) => onChange({ checkGate })} />
+        </Row>
+      ) : null}
+      {view.checkGate && settings.checkGate ? (
+        <Row label={CHECK_GATE_ROW.thresholdLabel} labelId={ids.skipAt} testId="workbot-agent-check-gate-threshold">
+          <ThresholdSelect labelledBy={ids.skipAt} choices={AGENT_CHECK_GATE_SKIP_AT_CHOICES} value={settings.checkGateThreshold} fallback={AGENT_CHECK_GATE_SKIP_AT_DEFAULT}
+            disabled={locked} onChange={(checkGateThreshold) => onChange({ checkGateThreshold })} />
+        </Row>
+      ) : null}
 
       <Row label="Members start" labelId={ids.members} testId="workbot-proactive-members">
         <div className="w-36">

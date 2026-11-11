@@ -404,6 +404,66 @@ test("grouped: yes or no settings are switches, the schedule is one row per sett
   for (const about of ["On for members by default", "Send messages in Slack", "Daily message limit", "Check for updates", "Working hours", "Working days", "Extra checks"]) assert.ok(html.includes(`aria-label="About ${about}"`), about);
 });
 
+test("the send check is one switch, off until an admin turns it on, in both layouts, and absent while its feature is off", () => {
+  const label = "Check each message before sending";
+  for (const layout of [render, renderGrouped]) {
+    assert.ok(!text(layout(briefOn)).includes(label), "no row while the server doesn't offer it");
+    const offered = layout({ ...briefOn, sendCheck: { ready: true } });
+    assert.match(switchFor(offered, label) ?? "", /aria-checked="false"/);
+    assert.doesNotMatch(switchFor(offered, label) ?? "", /disabled=""/);
+    assert.match(switchFor(layout({ ...briefOn, settings: { ...briefOn.settings, sendCheck: true }, sendCheck: { ready: true } }), label) ?? "", /aria-checked="true"/);
+  }
+  assert.ok(renderGrouped({ ...briefOn, sendCheck: { ready: true } }).includes(`aria-label="About ${label}"`), "the grouped row explains itself");
+});
+
+test("where the deployment can't run the send check, its switch is locked with who can fix it, but can still be turned off", () => {
+  const label = "Check each message before sending";
+  for (const layout of [render, renderGrouped]) {
+    const locked = layout({ ...briefOn, sendCheck: { ready: false } });
+    assert.match(switchFor(locked, label) ?? "", /disabled=""/);
+    assert.ok(text(locked).includes("Not set up on this deployment. Ask your deployment administrator."));
+    const on = layout({ ...briefOn, settings: { ...briefOn.settings, sendCheck: true }, sendCheck: { ready: false } });
+    assert.doesNotMatch(switchFor(on, label) ?? "", /disabled=""/);
+  }
+});
+
+test("the check gate is one switch, off until an admin turns it on, in both layouts, and absent while its feature is off", () => {
+  const label = "Skip checks when nothing new arrived";
+  for (const layout of [render, renderGrouped]) {
+    assert.ok(!text(layout(briefOn)).includes(label), "no row while the server doesn't offer it");
+    const offered = layout({ ...briefOn, checkGate: { model: false } });
+    assert.match(switchFor(offered, label) ?? "", /aria-checked="false"/);
+    assert.doesNotMatch(switchFor(offered, label) ?? "", /disabled=""/);
+    assert.match(switchFor(layout({ ...briefOn, settings: { ...briefOn.settings, checkGate: true }, checkGate: { model: true } }), label) ?? "", /aria-checked="true"/);
+  }
+  assert.ok(renderGrouped({ ...briefOn, checkGate: { model: true } }).includes(`aria-label="About ${label}"`), "the grouped row explains itself");
+});
+
+test("each threshold is a select shown only while its switch is on: the default, the saved choice, or one set through the API", () => {
+  const gate = "Skip only when the chance new mail matters is at most";
+  const send = "Hold a message only when at least this sure";
+  /** The value a row's select shows: the closed field reads as its selected option. */
+  const selected = (html: string, testId: string) => new RegExp(`data-testid="${testId}"[\\s\\S]*?title="(\\d+%)"`).exec(html)?.[1] ?? null;
+  const offered = { ...briefOn, checkGate: { model: true }, sendCheck: { ready: true } };
+  for (const layout of [render, renderGrouped]) {
+    const off = text(layout(offered));
+    assert.ok(!off.includes(gate) && !off.includes(send), "no threshold rows while the switches are off");
+    const on = layout({ ...offered, settings: { ...offered.settings, checkGate: true, sendCheck: true } });
+    assert.ok(text(on).includes(gate) && text(on).includes(send));
+    assert.deepEqual([selected(on, "workbot-agent-check-gate-threshold"), selected(on, "workbot-agent-send-check-threshold")], ["20%", "80%"], "the defaults");
+    const tuned = layout({ ...offered, settings: { ...offered.settings, checkGate: true, checkGateThreshold: 0.4, sendCheck: true, sendCheckThreshold: 0.65 } });
+    assert.deepEqual([selected(tuned, "workbot-agent-check-gate-threshold"), selected(tuned, "workbot-agent-send-check-threshold")], ["40%", "65%"], "saved, including one off the list");
+  }
+});
+
+test("Undo for Use Everyone's carries the team's check gate choice only while the server offers it", () => {
+  const team = { ...briefOn, settings: { ...briefOn.settings, checkGate: true } };
+  assert.equal(agentPolicyRestoreChange({ ...team, checkGate: { model: true } }, briefOn).checkGate, true);
+  assert.equal("checkGate" in agentPolicyRestoreChange(team, briefOn), false);
+  const tuned = agentPolicyRestoreChange({ ...team, settings: { ...team.settings, checkGateThreshold: 0.3, sendCheck: true, sendCheckThreshold: 0.9 }, checkGate: { model: true }, sendCheck: { ready: true } }, briefOn);
+  assert.deepEqual([tuned.checkGateThreshold, tuned.sendCheck, tuned.sendCheckThreshold], [0.3, true, 0.9]);
+});
+
 test("grouped: with messages going nowhere and members opting in themselves, both switches are off", () => {
   const html = renderGrouped({ ...briefOn, settings: { ...briefOn.settings, enabled: false, destination: null, membersStart: "opted_out" } });
   assert.match(switchFor(html, "Send messages in Slack") ?? "", /aria-checked="false"/);
