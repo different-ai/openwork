@@ -114,6 +114,8 @@ export type ProviderAuthModalProps = {
   ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   onRefreshProviders?: () => Promise<unknown>;
   openWorkModelsState?: "included" | "off" | "unavailable";
+  /** True when the organization lists OpenWork Models, so it is not repeated under On this device. */
+  hideOpenWorkModelsDeviceRow?: boolean;
   organizationName?: string;
   organizationProviderIds?: ReadonlySet<string>;
   organizationProviderCount?: number;
@@ -804,7 +806,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const searchText = searchQuery.trim().toLowerCase();
-  const showIncludedAuto = Boolean(props.openWorkModelsState || props.connectedProviderIds.includes("openwork-free"))
+  const showIncludedAuto = !props.hideOpenWorkModelsDeviceRow && Boolean(props.openWorkModelsState || props.connectedProviderIds.includes("openwork-free"))
     && (!searchText || "openwork models auto free".includes(searchText));
   const showRetiredZen = showsRetiredOpencodeZen({ providerIds: entries.map((entry) => entry.id), query: searchText });
 
