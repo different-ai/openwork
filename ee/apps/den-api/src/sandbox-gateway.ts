@@ -61,6 +61,14 @@ export async function addSandboxGatewayProvider(input: {
   return provider.id
 }
 
+/** Every model a sandbox can be given: the sandbox provider's catalog models the AI Gateway supports. */
+export async function sandboxGatewayModelOptions() {
+  const config = env.sandbox.gateway
+  if (!config) return null
+  const catalog = await gatewayCatalog(config.providerId, [])
+  return { providerId: config.providerId, models: catalog.models.map(model => ({ id: model.id, name: model.name })) }
+}
+
 /**
  * Checks models chosen for one sandbox against the sandbox provider's catalog before anything is created, so a
  * mistyped id is refused instead of leaving a sandbox without its provider. Throws GatewayWriteError.

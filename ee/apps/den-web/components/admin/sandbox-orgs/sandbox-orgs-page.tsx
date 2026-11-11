@@ -11,12 +11,15 @@ import {
   sandboxCreatedSchema,
   sandboxJoinRoleSchema,
   sandboxListSchema,
+  sandboxModelOptionsSchema,
   type Sandbox,
   type SandboxJoinRole,
   type SandboxCreateInput,
   type SandboxList,
+  type SandboxModelOptions,
 } from "@openwork/types/den/sandbox-organizations";
 import { DenButton } from "../../../app/(den)/_components/ui/button";
+import { DenChipsCombobox } from "../../../app/(den)/_components/ui/chips-combobox";
 import { DenInput } from "../../../app/(den)/_components/ui/input";
 import { DenSelect } from "../../../app/(den)/_components/ui/select";
 import { AdminAccessScreen } from "../admin-access-screen";
@@ -24,13 +27,16 @@ import { requestAdmin, sendAdmin, type AdminAccess } from "../admin-request";
 
 const base = "/v1/admin/sandbox-orgs";
 const parseList = (value: unknown) => { const result = sandboxListSchema.safeParse(value); return result.success ? result.data : null; };
+const parseModelOptions = (value: unknown) => { const result = sandboxModelOptionsSchema.safeParse(value); return result.success ? result.data : null; };
 const date = (value: string) => new Date(value).toLocaleDateString(undefined, { dateStyle: "medium" });
 const stateLabel = { open: "Open", expired: "Ended", closed: "Closed" } as const;
 
-type Draft = { name: string; connectorBaseUrl: string; days: string; memberLimit: string; domains: string; joinRole: SandboxJoinRole; creditUsd: string; models: string };
-const freshDraft = (defaults: SandboxList["defaults"]): Draft => ({ name: "", connectorBaseUrl: defaults?.workplaceUrl ?? "", days: "14", memberLimit: "50", domains: "", joinRole: "super-admin", creditUsd: defaults?.creditUsd ? String(defaults.creditUsd) : "", models: defaults?.gatewayModels.join(", ") ?? "" });
-/** Model ids typed in the form, in order, without repeats. */
-const modelList = (value: string) => [...new Set(value.split(/[\s,]+/).map(entry => entry.trim()).filter(Boolean))];
+type Draft = { name: string; connectorBaseUrl: string; days: string; memberLimit: string; domains: string; joinRole: SandboxJoinRole; creditUsd: string; models: string[]; modelQuery: string };
+const freshDraft = (defaults: SandboxList["defaults"]): Draft => ({ name: "", connectorBaseUrl: defaults?.workplaceUrl ?? "", days: "14", memberLimit: "50", domains: "", joinRole: "super-admin", creditUsd: defaults?.creditUsd ? String(defaults.creditUsd) : "", models: [...(defaults?.gatewayModels ?? [])], modelQuery: "" });
+/** Model ids are case-sensitive catalog ids; only stray spaces are dropped. */
+const modelKey = (value: string) => value.trim();
+/** The chosen models plus an id still typed in the box, so text that was never entered is not lost. */
+const chosenModels = (draft: Draft) => [...new Set([...draft.models, modelKey(draft.modelQuery)].filter(Boolean))];
 const dollars = (value: number) => `$${value.toFixed(value % 1 === 0 ? 0 : 2)}`;
 const CREDIT_STEP_USD = 25;
 const roleLabel: Record<SandboxJoinRole, string> = { member: "Members", admin: "Admins", "super-admin": "Super admins" };
@@ -52,6 +58,21 @@ export function SandboxOrgsPage() {
   const [notice, setNotice] = useState("");
   // sandboxModelChoice: the admin picks this sandbox's AI Gateway models instead of the deployment's list.
   const canChooseModels = Boolean(data?.defaults?.modelChoice && data.defaults.gatewayModels.length);
+  // The models to pick from, loaded when the form first opens. null while loading; available false when it failed.
+  const [modelOptions, setModelOptions] = useState<SandboxModelOptions | null>(null);
+  const formOpen = draft !== null;
+  const providerId = data?.defaults?.gatewayProviderId ?? "";
+  useEffect(() => {
+    if (!formOpen || !canChooseModels || modelOptions) return;
+    const controller = new AbortController();
+    void requestAdmin(`${base}/models`, parseModelOptions, controller.signal)
+      .then(result => result.access === "ready" ? result.data : null)
+      .catch(() => null)
+      .then(options => {
+        if (!controller.signal.aborted) setModelOptions(options ?? { providerId, available: false, models: [] });
+      });
+    return () => controller.abort();
+  }, [formOpen, canChooseModels, modelOptions, providerId]);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -91,7 +112,10 @@ export function SandboxOrgsPage() {
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!draft) return;
-    const modelsChosen = canChooseModels && modelList(draft.models).join(",") !== (data?.defaults?.gatewayModels ?? []).join(",");
+    const models = chosenModels(draft);
+    if (canChooseModels && models.length === 0) { setError("Choose at least one model."); return; }
+    if (canChooseModels && models.length > SANDBOX_MAX_MODELS) { setError(`Choose up to ${SANDBOX_MAX_MODELS} models.`); return; }
+    const modelsChosen = canChooseModels && models.join(",") !== (data?.defaults?.gatewayModels ?? []).join(",");
     const body: SandboxCreateInput = {
       name: draft.name.trim(),
       connectorBaseUrl: draft.connectorBaseUrl.trim() || null,
@@ -101,7 +125,7 @@ export function SandboxOrgsPage() {
       joinRole: draft.joinRole,
       ...(draft.creditUsd ? { creditUsd: Number(draft.creditUsd) } : {}),
       // Sent only when the admin changed the list, so an unchanged form creates what it always did.
-      ...(modelsChosen ? { modelIds: modelList(draft.models) } : {}),
+      ...(modelsChosen ? { modelIds: models } : {}),
     };
     if (await mutate(base, body, `Created ${body.name}. Copy its join link below.`)) setDraft(null);
   }
@@ -147,8 +171,13 @@ export function SandboxOrgsPage() {
           <label className="grid gap-2 text-xs">Name<DenInput aria-label="Sandbox name" required minLength={2} maxLength={120} placeholder="OpenWork Sandbox" value={draft.name} disabled={saving} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
           <label className="grid gap-2 text-xs">Sample work apps address<DenInput aria-label="Sample work apps address" type="url" placeholder="https://workplace.example.com" value={draft.connectorBaseUrl} disabled={saving} onChange={event => setDraft({ ...draft, connectorBaseUrl: event.target.value })} />
             <span className="text-[color:var(--dls-text-secondary)]">Adds Outlook, Calendar, Drive, Jira and Confluence. Each person signs in to their own copy. Leave empty for no connectors.</span></label>
-          {canChooseModels ? <label className="grid gap-2 text-xs" data-testid="admin-sandbox-model-choice">Models<DenInput aria-label="Sandbox models" required placeholder={data.defaults?.gatewayModels.join(", ")} value={draft.models} disabled={saving} onChange={event => setDraft({ ...draft, models: event.target.value })} />
-            <span className="text-[color:var(--dls-text-secondary)]">{`Everyone gets these through AI Gateway (${data.defaults?.gatewayProviderId ?? "provider"})${data.defaults?.creditUsd ? ", on the sandbox's own key" : ""}, plus included models. Model ids separated by commas, up to ${SANDBOX_MAX_MODELS}.`}</span></label>
+          {canChooseModels ? <div className="grid gap-2 text-xs" data-testid="admin-sandbox-model-choice">
+            <span>Models</span>
+            <DenChipsCombobox ariaLabel="Sandbox models" value={draft.models} options={modelOptions?.models.map(model => model.id) ?? data.defaults?.gatewayModels ?? []} query={draft.modelQuery}
+              onQueryChange={modelQuery => setDraft({ ...draft, modelQuery })} onChange={models => setDraft({ ...draft, models, modelQuery: "" })}
+              toKey={modelKey} normalize={modelKey} maxItems={SANDBOX_MAX_MODELS} maxLength={200} disabled={saving}
+              placeholder="Search models" emptyLabel="Type a model id and press Enter to add it." limitLabel={`Up to ${SANDBOX_MAX_MODELS} models`} />
+            <span className="text-[color:var(--dls-text-secondary)]">{`Everyone gets these through AI Gateway (${data.defaults?.gatewayProviderId ?? "provider"})${data.defaults?.creditUsd ? ", on the sandbox's own key" : ""}, plus included models. ${modelOptions === null ? "Loading the model list…" : modelOptions.available ? `${modelOptions.models.length} models to choose from.` : "The model list could not be loaded. Type model ids instead; they are checked when you create the sandbox."}`}</span></div>
           : <div className="grid gap-1 text-xs" data-testid="admin-sandbox-models">
             <span>Models</span>
             <span className="text-[color:var(--dls-text-secondary)]">{data.defaults?.gatewayModels.length

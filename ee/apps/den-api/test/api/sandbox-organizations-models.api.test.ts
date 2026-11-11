@@ -186,6 +186,8 @@ test("with sandboxModelChoice on, a platform admin chooses a new sandbox's model
 
   assert.equal(field(await defaults(), "modelChoice"), false, "off until a platform admin turns it on")
   const before = await sandboxCount()
+  const options = () => den.request(admin.token, "GET", "/v1/admin/sandbox-orgs/models")
+  assert.equal((await options()).status, 404, "no list to choose from while it is off")
   const refusedOff = await create({ modelIds: ["openai/gpt-5.5"] })
   assert.equal(refusedOff.status, 400, summary(refusedOff))
   assert.equal(await sandboxCount(), before, "nothing is created when the choice is refused")
@@ -193,6 +195,12 @@ test("with sandboxModelChoice on, a platform admin chooses a new sandbox's model
   assert.equal((await setChoice(true)).status, 200)
   try {
     assert.equal(field(await defaults(), "modelChoice"), true)
+    const offered = await options()
+    assert.equal(offered.status, 200, summary(offered))
+    assert.deepEqual(offered.body, { providerId: "openrouter", available: true, models: [
+      { id: "anthropic/claude-sonnet-5.5", name: "Claude Sonnet 5.5" },
+      { id: "openai/gpt-5.5", name: "GPT-5.5" },
+    ] }, "the provider's catalog models are offered")
 
     const chosen = await create({ modelIds: ["openai/gpt-5.5"] })
     assert.equal(chosen.status, 200, summary(chosen))

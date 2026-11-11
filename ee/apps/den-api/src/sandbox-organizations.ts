@@ -14,6 +14,7 @@ import {
   type SandboxCreateInput,
   type SandboxJoinPreview,
   type SandboxJoinRole,
+  type SandboxModelOptions,
   type SandboxState,
 } from "@openwork/types/den/sandbox-organizations"
 import { customAlphabet } from "nanoid"
@@ -23,7 +24,7 @@ import { assertPublicUrl } from "./capability-sources/url-guard.js"
 import { db } from "./db.js"
 import { appLogger } from "./observability/logger.js"
 import { GatewayWriteError } from "./llm/gateway-matrix.js"
-import { addSandboxGatewayProvider, assertSandboxGatewayModels, sandboxGatewayConfigured } from "./sandbox-gateway.js"
+import { addSandboxGatewayProvider, assertSandboxGatewayModels, sandboxGatewayConfigured, sandboxGatewayModelOptions } from "./sandbox-gateway.js"
 import { createSandboxModelKey, deleteSandboxModelKey, readSandboxModelKey, sandboxMintsModelKeys, updateSandboxModelKey } from "./sandbox-model-keys.js"
 import { setOrganizationPlanByAdmin } from "./admin-organization-plan.js"
 import { utcDate } from "./organization-plan.js"
@@ -248,6 +249,23 @@ export async function sandboxDefaults(): Promise<SandboxDefaults> {
     creditUsd: sandboxMintsModelKeys() ? gateway?.creditUsd ?? null : null,
     modelChoice: await sandboxModelChoiceOn(),
   }
+}
+
+/**
+ * The models a platform admin can choose for a new sandbox, for the New sandbox form. Null when choosing is off.
+ * A catalog that cannot be read is not an error here: the form still takes typed ids, checked on create.
+ */
+export async function sandboxModelOptions(): Promise<SandboxModelOptions | null> {
+  if (!await sandboxModelChoiceOn()) return null
+  const providerId = env.sandbox.gateway?.providerId
+  if (!providerId) return null
+  try {
+    const options = await sandboxGatewayModelOptions()
+    if (options) return { ...options, available: true }
+  } catch (error) {
+    appLogger.warn("sandbox model catalog unavailable", { provider_id: providerId, error: error instanceof Error ? error.message : "unknown" })
+  }
+  return { providerId, available: false, models: [] }
 }
 
 export async function listSandboxes(): Promise<Sandbox[]> {

@@ -96,6 +96,14 @@ export const sandboxDefaultsSchema = z.object({
   modelChoice: z.boolean().optional(),
 });
 
+/** The models a new sandbox can be given: the sandbox provider's catalog models the AI Gateway supports. */
+export const sandboxModelOptionsSchema = z.object({
+  providerId: z.string(),
+  /** False when the provider's catalog could not be read; model ids can still be sent and are checked on create. */
+  available: z.boolean(),
+  models: z.array(z.object({ id: z.string(), name: z.string() })),
+});
+
 export const sandboxListSchema = z.object({
   enabled: z.boolean(),
   sandboxes: z.array(sandboxSchema),
@@ -122,4 +130,5 @@ export type Sandbox = z.infer<typeof sandboxSchema>;
 export type SandboxState = z.infer<typeof sandboxStateSchema>;
 export type SandboxList = z.infer<typeof sandboxListSchema>;
 export type SandboxDefaults = z.infer<typeof sandboxDefaultsSchema>;
+export type SandboxModelOptions = z.infer<typeof sandboxModelOptionsSchema>;
 export type SandboxJoinPreview = z.infer<typeof sandboxJoinPreviewSchema>;
