@@ -6,6 +6,7 @@ import { skillCreatedPayloadSchema } from "@openwork/types/skill-created-app"
 import { headlessModelAccessSchema } from "@openwork-ee/headless-protocol"
 import { remoteSessionStatusResultSchema, type RemoteSessionStatusRequest } from "@openwork/types/automations"
 import { workbotAccessFailureSchema, type WorkbotAccessReason } from "@openwork/types/den/workbot-settings"
+import type { RemoteDeviceWorkbotReport } from "@openwork/types/den/remote-devices"
 import type { Tokens } from "./sealed.js"
 
 /**
@@ -19,6 +20,8 @@ const SCOPES = "openid profile email offline_access mcp:read mcp:write"
 const TIMEOUT_MS = 20_000
 /** Each remote-session:status attempt; Workbot retries once. */
 const REMOTE_STATUS_TIMEOUT_MS = 8_000
+/** A report about a chat's computer is never worth holding a connection for: nothing waits on it. */
+const DEVICE_REPORT_TIMEOUT_MS = 5_000
 const remoteErrorCodeSchema = z.object({ error: z.string().max(120) })
 
 /** A remote-session call that failed: `signed_out` needs the person; anything else is passing. No token or body text. */
@@ -107,6 +110,8 @@ export const denSessionSchema = z.object({
   stepTurns: z.boolean().default(false),
   /** New chats get their own session cell on the runner (per-chat session cells). A Den from before it doesn't say: off. */
   sessionCells: z.boolean().default(false),
+  /** The Devices page and reports about each chat's computer (`remoteDevices`, while Workbot is on). A Den from before it doesn't say: off. */
+  devices: z.boolean().default(false),
 })
 
 const runTokenSchema = z.object({
@@ -236,12 +241,12 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     }
   }
 
-  const authorized = async (method: "GET" | "POST" | "PATCH", path: string, accessToken: string, body?: unknown) => {
+  const authorized = async (method: "GET" | "POST" | "PATCH", path: string, accessToken: string, body?: unknown, timeoutMs = TIMEOUT_MS) => {
     const response = await fetch(`${options.apiUrl}${path}`, {
       method,
       headers: { authorization: `Bearer ${accessToken}`, accept: "application/json", ...(body ? { "content-type": "application/json" } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     }).catch((error: unknown) => { throw unanswered(error) })
     if (response.status === 401) throw new DenSignedOutError()
     const payload: unknown = await response.json().catch(() => null)
@@ -318,6 +323,10 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     /** The member's Get set up checklist; Den computes every step and enforces the feature. */
     activation: (accessToken: string) => authorized("GET", "/v1/workbot/activation", accessToken),
     activationEvent: (accessToken: string, body: unknown) => authorized("POST", "/v1/workbot/activation/events", accessToken, body),
+    /** The computers the member can reach; Den builds the list and enforces the feature. */
+    devices: (accessToken: string) => authorized("GET", "/v1/workbot/devices", accessToken),
+    /** What happened to a chat's cloud computer, for Den's registry. Den answers 204, or 404 where Devices is off. */
+    reportComputer: (accessToken: string, report: RemoteDeviceWorkbotReport) => authorized("POST", "/v1/workbot/devices/computer", accessToken, report, DEVICE_REPORT_TIMEOUT_MS),
     /** Where to send the browser to sign in; Den returns it to /auth/callback with a code. */
     async authorizeUrl(input: { state: string; verifier: string; chooseWorkspace?: boolean }) {
       const { authorizationEndpoint, resource } = await discover()

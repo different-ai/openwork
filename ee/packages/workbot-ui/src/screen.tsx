@@ -49,6 +49,7 @@ import { ModelRecovery, AccessRecovery } from "./model-recovery";
 import { hasAnsweredTurn, WorkbotSetupChip } from "./activation";
 import { WorkbotCalendar } from "./lazy-surfaces";
 import { WorkbotDocuments } from "./documents";
+import { WorkbotDevices } from "./devices";
 import { LastGlimpse, LiveGlimpse, WorkbotComputer } from "./computer";
 import { readBrowserSkillRunPrompt, type BrowserTeachingContext } from "@openwork/types/browser-demonstration";
 import { readWorkbotCorrectionPrompt, workbotCorrectionPrompt, workbotContextLabel, workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
@@ -350,6 +351,19 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refetchChatList(); }, 30_000);
     return () => window.clearInterval(timer);
   }, [wideScreen, chatListEnabled, refetchChatList]);
+  // Devices: a row for one of Workbot's own computers opens that chat's Computer view. The chat on screen only
+  // changes pages; another chat is opened first (its page starts on the Computer view), and only a chat the person
+  // still has, never while document drafts hold them in this one.
+  const computerFor = (workbotChat: string) => {
+    if (computerViews(host).length === 0) return null;
+    const target = workbotChat === "main" ? null : workbotChat;
+    if (target === (navigation?.chat ?? null)) return () => setTab("computer");
+    if (!navigation || documentsDirty || (target !== null && !paletteChats.data?.side.some(entry => entry.id === target))) return null;
+    return () => {
+      navigation.openChat(target);
+      window.history.replaceState(null, "", `${pagePath("computer")}${window.location.search}`);
+    };
+  };
   const paletteTasks = useMemo(() => (data?.turns ?? []).flatMap((turn) => turn.tasks), [data?.turns]);
   const palette = (
     <WorkbotCommandPalette
@@ -492,7 +506,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       }}
       onSuggestion={text => submit(text)} onSwitch={text => submit(text, undefined, false, true)} starting={starting} intro={null}
     /> : null;
-    const pageTitle = tab === "documents" ? "Documents" : tab === "calendar" ? "Calendar" : tab === "computer" ? computerTabLabel(host) : undefined;
+    const pageTitle = tab === "documents" ? "Documents" : tab === "calendar" ? "Calendar" : tab === "devices" ? "Devices" : tab === "computer" ? computerTabLabel(host) : undefined;
     // An open document offers one small way to ask about it: switch to the chat with that document attached.
     const askable = tab === "documents" && documentContext?.kind === "document" && shares(documentContext) ? documentContext : null;
     const askAbout = askable ? () => {
@@ -535,6 +549,9 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           <div className="flex min-h-0 min-w-0 flex-1 border-t border-[var(--wb-hairline)]" style={{ display: tab === "calendar" ? undefined : "none" }} hidden={tab !== "calendar"}>
             {host.calendar && (calendarVisited || tab === "calendar") && <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={name} onContextChange={setCalendarContext} />}
           </div>
+          <div className="flex min-h-0 min-w-0 flex-1 border-t border-[var(--wb-hairline)]" style={{ display: tab === "devices" ? undefined : "none" }} hidden={tab !== "devices"}>
+            {host.devices === true && tab === "devices" && <WorkbotDevices computerFor={computerFor} />}
+          </div>
           <div className="flex min-h-0 min-w-0 flex-1" style={{ display: tab === "computer" ? undefined : "none" }} hidden={tab !== "computer"}>
             {computerVisited && tab === "computer" && !browserPreview?.visible && computerViews(host).length > 0 && <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} onViewChange={setComputerView} onContextChange={setBrowserContext} />}
             {docked && <DockedChat name={name} context={currentContext} includeContext={includeContext} onIncludeContext={setIncludeContext} composer={composer} conversation={conversation} unavailable={!data && !loading} />}
@@ -550,7 +567,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       </OpenDocumentContext.Provider>
     </>;
   }
-  if ((tab === "calendar" && host.calendar) || tab === "documents" || (tab === "computer" && computerViews(host).length > 0)) {
+  if ((tab === "calendar" && host.calendar) || tab === "documents" || (tab === "devices" && host.devices === true) || (tab === "computer" && computerViews(host).length > 0)) {
     return layout(
       <div className="flex min-h-0 flex-1 flex-col">
         <WorkbotHeader
@@ -559,13 +576,13 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           userName={user?.name ?? null}
           files={null}
           chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
-          page={tab === "documents" ? "Documents" : tab === "calendar" ? "Calendar" : computerTabLabel(host)}
+          page={tab === "documents" ? "Documents" : tab === "calendar" ? "Calendar" : tab === "devices" ? "Devices" : computerTabLabel(host)}
           answered={hasAnsweredTurn(data?.turns)}
           activity={activity}
         />
         {leavingDocuments && <div className="border-t border-[var(--wb-hairline)] px-4 py-2 text-[13px]" role="status">You have unsaved document edits. <button type="button" className="ml-3 underline" onClick={() => setLeavingDocuments(null)}>Keep editing</button><button type="button" className="ml-3 underline" onClick={() => { const next = leavingDocuments; setLeavingDocuments(null); setDocumentsDirty(false); setTab(next, true); }}>Discard edits and leave Documents</button></div>}
         <div className="flex min-h-0 flex-1 border-t border-[#01162712]">
-          {tab === "computer" ? <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} /> : tab === "documents" ? <WorkbotDocuments onDirtyChange={setDocumentsDirty} /> : <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={data?.name ?? "Workbot"} />}
+          {tab === "computer" ? <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} /> : tab === "documents" ? <WorkbotDocuments onDirtyChange={setDocumentsDirty} /> : tab === "devices" ? <WorkbotDevices computerFor={computerFor} /> : <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={data?.name ?? "Workbot"} />}
         </div>
       </div>
     );
@@ -796,7 +813,7 @@ type WorkbotTab = WorkbotPaletteTab;
 
 /** The pages this person has, in the header's order. */
 function paletteTabs(host: WorkbotHost): WorkbotTab[] {
-  return ["home", ...(host.calendar ? ["calendar" as const] : []), ...(host.documents ? ["documents" as const] : [])];
+  return ["home", ...(host.calendar ? ["calendar" as const] : []), ...(host.documents ? ["documents" as const] : []), ...(host.devices === true ? ["devices" as const] : [])];
 }
 
 /** Puts the caret in the message box on screen (the Home composer, or the workspace chat's). */
@@ -817,7 +834,12 @@ function showTask(taskId: string) {
 
 function tabFromLocation(): WorkbotTab {
   const path = typeof window !== "undefined" ? window.location.pathname.replace(/\/+$/, "") : "";
-  return path === "/computer" || path === "/browser" || path.startsWith("/browser/") ? "computer" : path === "/documents" ? "documents" : path === "/calendar" ? "calendar" : "home";
+  return path === "/computer" || path === "/browser" || path.startsWith("/browser/") ? "computer" : path === "/documents" ? "documents" : path === "/calendar" ? "calendar" : path === "/devices" ? "devices" : "home";
+}
+
+/** A page's address. The Computer tab opens on its first view (Browser, where the person has it), each with its own path (see WorkbotComputer). */
+function pagePath(page: WorkbotTab) {
+  return page === "home" ? "/" : page === "computer" ? `/${computerViews(workbotHost())[0] ?? "browser"}` : `/${page}`;
 }
 
 /** Home (the conversation) and Calendar, as paths so a reload or a shared link opens the same tab. */
@@ -826,9 +848,11 @@ function useWorkbotTab(beforeLeave?: (next: WorkbotTab) => boolean, preserveSear
   beforeLeaveRef.current = beforeLeave;
   const [tab, setTabState] = useState<WorkbotTab>(tabFromLocation);
   const computerEnabled = computerViews(workbotHost()).length > 0;
+  const devicesEnabled = workbotHost().devices === true;
   useEffect(() => {
-    if (!computerEnabled && tab === "computer") { window.history.replaceState(null, "", `/${preserveSearch ? window.location.search : ""}`); setTabState("home"); }
-  }, [computerEnabled, tab, preserveSearch]);
+    // A page this person doesn't have (from a link, or turned off since) opens Home instead.
+    if ((!computerEnabled && tab === "computer") || (!devicesEnabled && tab === "devices")) { window.history.replaceState(null, "", `/${preserveSearch ? window.location.search : ""}`); setTabState("home"); }
+  }, [computerEnabled, devicesEnabled, tab, preserveSearch]);
   useEffect(() => {
     const sync = () => {
       const next = tabFromLocation();
@@ -841,8 +865,7 @@ function useWorkbotTab(beforeLeave?: (next: WorkbotTab) => boolean, preserveSear
   const setTab = (next: WorkbotTab, discard = false) => {
     if (next === tab) return;
     if (!discard && beforeLeaveRef.current?.(next) === false) return;
-    // The Computer tab opens on its first view (Browser, where the person has it), each with its own path (see WorkbotComputer).
-    window.history.pushState(null, "", `${next === "home" ? "/" : next === "computer" ? `/${computerViews(workbotHost())[0] ?? "browser"}` : `/${next}`}${preserveSearch ? window.location.search : ""}`);
+    window.history.pushState(null, "", `${pagePath(next)}${preserveSearch ? window.location.search : ""}`);
     setTabState(next);
   };
   return [tab, setTab] as const;

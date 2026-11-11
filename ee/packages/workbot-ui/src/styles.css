@@ -26,6 +26,9 @@
   --wb-type-sheet: #1d7044;
   --wb-type-slides: #c55a11;
   --wb-danger: #c4302b;
+  /* A computer or app that can be reached, and one that needs the person to set something up. */
+  --wb-status-online: #30a46c;
+  --wb-status-attention: #ffba18;
   --wb-browser-success: #2b9a47;
   --wb-browser-success-bg: #e7f7e9;
   --wb-browser-working: #2589ed;

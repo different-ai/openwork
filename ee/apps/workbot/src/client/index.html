@@ -85,7 +85,7 @@
       // adds a line as it does in the app's box.
       (function () {
         var boot = document.getElementById("workbot-boot")
-        if (/^\/(computer|browser|documents|calendar)(\/|$)/.test(location.pathname)) { boot.remove(); return }
+        if (/^\/(computer|browser|documents|calendar|devices)(\/|$)/.test(location.pathname)) { boot.remove(); return }
         var touch = window.matchMedia("(hover: none) and (pointer: coarse)").matches
         boot.querySelector("textarea").addEventListener("keydown", function (event) { if (event.key === "Enter" && !event.shiftKey && !touch) event.preventDefault() })
       })()
