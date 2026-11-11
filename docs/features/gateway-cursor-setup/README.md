@@ -208,7 +208,14 @@ tools; Claude Haiku wrote `apply_patch` text with lost indentation when given
 it as a function, so translated models don't get it; Codex's picker listed its
 own OpenAI models first. Codex 0.167 keeps the catalog in a background
 app-server daemon: a model added later shows after `codex app-server daemon
-restart`. Not checked: Azure OpenAI, Windows, images, and Codex's own OpenAI
+restart`. The daemon also runs the `auth` command and keeps the environment and
+config it started with, and it outlives the terminal: someone who put
+`OPENWORK_API_KEY` in `~/.zshrc` after the daemon first started gets 401s in
+every new terminal until they restart it. Checked 2026-11-10: a daemon started
+without the variable kept sending an empty key from fresh shells that had it,
+and from a key file the auth command read; `codex app-server daemon restart`
+from a shell with the variable fixed it (`codex exec` is not affected: it reads
+the shell's environment). The steps now have a restart step. Not checked: Azure OpenAI, Windows, images, and Codex's own OpenAI
 models chosen in `/model` when the member has the same model.
 
 ## Turning it off

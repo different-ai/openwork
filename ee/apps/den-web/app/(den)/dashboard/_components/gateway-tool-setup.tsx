@@ -307,7 +307,10 @@ export function CodexSteps({ apiKey, baseUrl }: { apiKey: string | null; baseUrl
         >
           Choose a model, then put this at the top of <Strong>~/.codex/config.toml</Strong>, replacing any <Strong>model</Strong> or <Strong>model_provider</Strong> lines already there:
         </SetupStep>
-        <SetupStep number={3} field={<CopyField value="codex" label="Copy the command" />}>
+        <SetupStep number={3} field={<CopyField value="codex app-server daemon restart" label="Copy the restart command" testId="gateway-tool-codex-restart" />}>
+          In a new terminal, restart Codex&apos;s background server so it picks up the key and config. Do this again whenever you change either:
+        </SetupStep>
+        <SetupStep number={4} field={<CopyField value="codex" label="Copy the command" />}>
           Start Codex in your project. Run <Strong>/status</Strong> to check it uses OpenWork; <Strong>/model</Strong> switches between your models.
         </SetupStep>
       </ol>
