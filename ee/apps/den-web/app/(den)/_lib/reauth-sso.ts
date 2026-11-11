@@ -1,13 +1,11 @@
 /**
  * Where the re-authentication dialog sends someone to confirm through SSO.
  *
- * `/v1/orgs/sso/resolve` is the sign-in page's preflight: it only returns a
- * `signInUrl` when SSO is the sole way in for the email's domain (legacy SSO
- * or "Restrict this domain to our SSO"). With `ssoPerOrganization` on and the
- * domain not restricted it returns no link, even though the organization has
- * SSO set up. So the dialog reads the person's organization SSO from
- * `/v1/me/sso-sign-in`, falling back to the active organization's context
- * when that route is unavailable (an older Den API).
+ * Signed in: the person's organizations from `/v1/me/sso-sign-in`, falling
+ * back to the active organization's context on an older Den API. Not signed
+ * in (desktop page, email typed): `/v1/orgs/sso/resolve`, which returns the
+ * email domain's SSO as a sign-in option, or as the only one when SSO is
+ * forced for the domain. Older APIs return the link only when forced.
  */
 export type ReauthSsoTarget = {
   /** Path or URL of the organization's SSO sign-in page. */
@@ -37,9 +35,29 @@ export function parseMemberSsoSignIns(payload: unknown): MemberSsoSignIn[] | nul
   });
 }
 
+/** The SSO option `/v1/orgs/sso/resolve` returns for the email's domain. */
+export type ResolvedDomainSso = {
+  signInUrl: string;
+  /** `requireSso`: SSO is forced for the whole domain, so it is the only way to sign in. */
+  domainForced: boolean;
+  /** `ssoRequired`: the domain's organization only opens from an SSO session. */
+  organizationRequired: boolean;
+};
+
+/** Parses `/v1/orgs/sso/resolve`; null when it offers no SSO for the email. */
+export function parseResolvedDomainSso(payload: unknown): ResolvedDomainSso | null {
+  if (!isRecord(payload) || typeof payload.signInUrl !== "string" || !payload.signInUrl) return null;
+  return {
+    signInUrl: payload.signInUrl,
+    domainForced: payload.requireSso === true,
+    // Before ssoRequired existed, the route returned a link only when SSO was forced.
+    organizationRequired: payload.ssoRequired === true || (payload.ssoRequired === undefined && payload.requireSso === true),
+  };
+}
+
 export function resolveReauthSsoTarget(input: {
-  /** `signInUrl` from `/v1/orgs/sso/resolve`, set only when the domain must use SSO. */
-  resolvedSignInUrl: string | null;
+  /** The email domain's SSO from `/v1/orgs/sso/resolve`. */
+  resolvedDomainSso: ResolvedDomainSso | null;
   /** The organization the change is for, when known (dashboard context or the desktop's active organization). */
   organizationId: string | null;
   /** `/v1/me/sso-sign-in`, or null when it could not be read. */
@@ -53,8 +71,10 @@ export function resolveReauthSsoTarget(input: {
     restrictDomainToSso: boolean;
   } | null;
 }): ReauthSsoTarget | null {
-  if (input.resolvedSignInUrl) {
-    return { signInUrl: input.resolvedSignInUrl, ssoOnly: true };
+  const domainSso = input.resolvedDomainSso;
+  // SSO forced for the whole domain: no other sign-in works at all.
+  if (domainSso?.domainForced) {
+    return { signInUrl: domainSso.signInUrl, ssoOnly: true };
   }
 
   if (input.memberSsoSignIns) {
@@ -67,11 +87,18 @@ export function resolveReauthSsoTarget(input: {
   }
 
   const organization = input.organization;
-  if (!organization?.hasSso || !organization.slug) {
-    return null;
+  if (organization) {
+    if (!organization.hasSso || !organization.slug) {
+      return null;
+    }
+    return {
+      signInUrl: `/sso/${encodeURIComponent(organization.slug)}`,
+      ssoOnly: !organization.perOrganization || organization.requireSso || organization.restrictDomainToSso,
+    };
   }
-  return {
-    signInUrl: `/sso/${encodeURIComponent(organization.slug)}`,
-    ssoOnly: !organization.perOrganization || organization.requireSso || organization.restrictDomainToSso,
-  };
+
+  // No session and no organization context (the desktop page after typing an
+  // email): the email domain's SSO is one of the sign-in options, or the only
+  // one when that organization requires SSO.
+  return domainSso ? { signInUrl: domainSso.signInUrl, ssoOnly: domainSso.organizationRequired } : null;
 }

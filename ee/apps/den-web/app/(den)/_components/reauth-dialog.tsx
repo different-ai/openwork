@@ -8,7 +8,7 @@ import { DenInput } from "./ui/input";
 import { DenNotice } from "./ui/notice";
 import { type AuthUser, getErrorMessage, getUser, requestJson, type SocialAuthProvider, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../_lib/den-flow";
 import { type DenOrgContext, getRequireSsoFromMetadata, getRestrictDomainToSsoFromMetadata, orgFeatureEnabled } from "../_lib/den-org";
-import { type MemberSsoSignIn, parseMemberSsoSignIns, resolveReauthSsoTarget } from "../_lib/reauth-sso";
+import { type MemberSsoSignIn, type ResolvedDomainSso, parseMemberSsoSignIns, parseResolvedDomainSso, resolveReauthSsoTarget } from "../_lib/reauth-sso";
 
 function getSocialLabel(provider: SocialAuthProvider) {
   return provider === "google" ? "Google" : "GitHub";
@@ -80,7 +80,7 @@ export function ReauthDialog({
   const [loadingMethods, setLoadingMethods] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<string[]>([]);
-  const [resolvedSsoUrl, setResolvedSsoUrl] = useState<string | null>(null);
+  const [resolvedDomainSso, setResolvedDomainSso] = useState<ResolvedDomainSso | null>(null);
   const [memberSsoSignIns, setMemberSsoSignIns] = useState<MemberSsoSignIn[] | null>(null);
   const [nonce, setNonce] = useState("");
   const wasOpenRef = useRef(false);
@@ -96,7 +96,7 @@ export function ReauthDialog({
   );
   const organizationMetadata = orgContext?.organization.metadata ?? null;
   const ssoTarget = resolveReauthSsoTarget({
-    resolvedSignInUrl: resolvedSsoUrl,
+    resolvedDomainSso,
     organizationId: orgContext?.organization.id ?? organizationId ?? null,
     memberSsoSignIns,
     organization: orgContext
@@ -196,11 +196,7 @@ export function ReauthDialog({
         if (email) {
           const ssoResult = await requestJson(`/v1/orgs/sso/resolve?email=${encodeURIComponent(email)}`, { method: "GET" }, 12000);
           if (!cancelled && ssoResult.response.ok) {
-            const payload = ssoResult.payload;
-            const nextUrl = payload && typeof payload === "object" && "signInUrl" in payload && typeof payload.signInUrl === "string"
-              ? payload.signInUrl
-              : null;
-            setResolvedSsoUrl(nextUrl);
+            setResolvedDomainSso(parseResolvedDomainSso(ssoResult.payload));
           }
         }
       } catch (nextError) {

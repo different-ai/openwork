@@ -179,6 +179,9 @@ test("flag on, Require SSO: the person still signs in and uses other organizatio
   assert.equal(preflight.status, 200, summary(preflight))
   assert.equal(field(preflight.body, "requireSso"), false)
   assert.equal(field(preflight.body, "method"), "password")
+  // SSO is still one of the options, and the organization itself requires it.
+  assert.match(String(field(preflight.body, "signInUrl")), /\/sso\//)
+  assert.equal(field(preflight.body, "ssoRequired"), true)
 
   const signIn = await den.signIn(both.email)
   assert.equal(signIn.status, 200, summary(signIn))
@@ -245,6 +248,7 @@ test("restricting the domain needs the flag, and brings back sign-in-wide SSO fo
   assert.equal(preflight.status, 200, summary(preflight))
   assert.equal(field(preflight.body, "method"), "sso")
   assert.equal(field(preflight.body, "requireSso"), true)
+  assert.match(String(field(preflight.body, "signInUrl")), /\/sso\//)
 
   const signIn = await den.signIn(both.email)
   assert.equal(signIn.status, 403, summary(signIn))
@@ -275,12 +279,20 @@ test("re-authentication lists the person's SSO organizations, with SSO offered (
     assert.ok(Array.isArray(organizations), summary(response))
     return organizations
   }
-  // The email preflight gives no link while SSO is only offered; this route still does.
   await setFlag(ssoOrgId, true)
   await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: false })
   const bothSession = await passwordSession(both)
+
+  // Not signed in: the email preflight offers the domain's SSO as one option
+  // next to the usual method, so the sign-in page does not redirect.
   const preflight = await den.request(null, "GET", `/v1/orgs/sso/resolve?email=${encodeURIComponent(both.email)}`)
-  assert.equal(field(preflight.body, "signInUrl"), undefined)
+  assert.equal(preflight.status, 200, summary(preflight))
+  assert.equal(field(preflight.body, "requireSso"), false)
+  assert.equal(field(preflight.body, "method"), "password")
+  assert.equal(field(preflight.body, "ssoRequired"), false)
+  assert.match(String(field(preflight.body, "signInUrl")), /\/sso\//)
+
+  // Signed in: the person's own SSO organizations.
   const offered = await signIns(bothSession)
   assert.equal(offered.length, 1, "only the SSO organization, never the one without SSO")
   assert.equal(field(offered[0], "organizationId"), ssoOrgId)
