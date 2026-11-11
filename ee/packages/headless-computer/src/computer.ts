@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { posix } from "node:path"
-import { ensureRunning, isSandboxError, shellQuote, SCOPE_LABEL, withBlocks, type RunSpec, type SandboxHandle, type SandboxProvider, type SandboxSpec } from "@openwork/sandbox"
+import { ensureRunning, isSandboxError, shellQuote, SCOPE_LABEL, withBlocks, type RunSpec, type SandboxHandle, type SandboxProvider, type SandboxSpec, type SandboxState } from "@openwork/sandbox"
 import { z } from "zod"
 import type { ComputerFile, ComputerFiles, FileReader, ToolResult, ToolSpec } from "./types.js"
 import { demonstrationReplySchema, type DemonstrationCommand } from "@openwork/types/browser-demonstration"
@@ -38,6 +38,12 @@ const IDLE_REPLACEMENT_RETRY_MS = 24 * 60 * 60_000
 const NEEDED_REPLACEMENT_RETRY_MS = 10 * 60_000
 /** A computer replaced because its desktop wouldn't start isn't replaced again this soon: another fresh one won't do better. */
 const RECOVERY_RETRY_MS = 10 * 60_000
+/**
+ * How often a paused computer is looked at again. Pauses are scheduled only when this runner uses a computer, so one
+ * that anything else woke would run until its next use, and a provider's idle timeout doesn't see a desktop as idle
+ * while its browser keeps connections open.
+ */
+export const PAUSED_RECHECK_MS = 60 * 60_000
 /** How long a computer whose desktop won't start gets to hand its workspace and browser profile to its replacement. */
 const RECOVERY_CARRY_MS = 20_000
 
@@ -350,7 +356,8 @@ export class Computers {
 
   /**
    * Pauses the conversation's computer if it is running and idle, for a host acting on a stored pause time
-   * (`pauses`), including after a restart, when this process never used it. It never wakes a paused computer.
+   * (`pauses`), including after a restart, when this process never used it. It never wakes a paused computer, and
+   * keeps one due for another look (PAUSED_RECHECK_MS).
    */
   async pauseIdle(sessionId: string) {
     this.cancelPause(sessionId)
@@ -358,40 +365,69 @@ export class Computers {
     const box = await (known ? known.then(box => this.provider.inspect(box)) : this.provider.find({ idempotencyKey: this.slug(sessionId), labels: this.spec(sessionId).labels })).catch(() => undefined)
     // Unknown: look again after another idle period rather than at once.
     if (box === undefined) return this.options.pauses?.set(sessionId, Date.now() + this.options.idlePauseMs)
-    if (box?.state !== "running") return this.options.pauses?.clear(sessionId)
+    if (box?.state !== "running") return this.resting(sessionId, box?.state)
     if (!known) this.vms.set(sessionId, Promise.resolve(box))
-    await this.pauseIfIdle(sessionId)
+    await this.pauseIfIdle(sessionId, true)
   }
 
-  private pauseIfIdle(sessionId: string): Promise<void> {
+  /** What stays due for a computer that isn't running: another look while it is paused, nothing once it is gone. */
+  private resting(sessionId: string, state: SandboxState | undefined) {
+    if (state === undefined || state === "missing" || state === "archived") return this.options.pauses?.clear(sessionId)
+    // Coming up: someone is starting it, so it is due as any running computer is.
+    const soon = state === "creating" || state === "starting"
+    this.options.pauses?.set(sessionId, Date.now() + (soon ? this.options.idlePauseMs : PAUSED_RECHECK_MS))
+  }
+
+  /** `running`: the caller has just seen the computer running. */
+  private pauseIfIdle(sessionId: string, running = false): Promise<void> {
     const current = this.pausing.get(sessionId)
     if (current) return current
-    const pending = this.checkIdle(sessionId).finally(() => this.pausing.delete(sessionId))
+    const pending = this.checkIdle(sessionId, running).finally(() => this.pausing.delete(sessionId))
     this.pausing.set(sessionId, pending)
     return pending
   }
 
-  private async checkIdle(sessionId: string) {
+  private async checkIdle(sessionId: string, running: boolean) {
     this.pauseTimers.delete(sessionId)
     const pending = this.vms.get(sessionId)
     if (!pending) return this.options.pauses?.clear(sessionId)
+    const started = Date.now()
+    // One line per check: a computer that keeps running says here why. Two `paused` in a row with no use between them
+    // mean something other than this runner woke it.
+    const log = (outcome: string, error?: unknown) => console.log(`[headless-computer] idle pause ${JSON.stringify({ sessionId, outcome, ms: Date.now() - started, ...(error === undefined ? {} : { error: (error instanceof Error ? error.message : String(error)).slice(0, 300) }) })}`)
     try {
       let vm = await pending
+      if (!running) {
+        // The person or the provider may have paused it since: the checks below run commands, which would wake it.
+        const state = (await this.provider.inspect(vm)).state
+        if (state !== "running") {
+          log(state)
+          return this.resting(sessionId, state)
+        }
+      }
       // A command already running would carry on past the checkpoint, and its work would be lost.
-      if (this.working.has(sessionId) || await this.runningJobs(vm) > 0) return this.release(sessionId)
+      if (this.working.has(sessionId) || await this.runningJobs(vm) > 0) {
+        log("in_use")
+        return this.release(sessionId)
+      }
       // Nobody is using it: the moment to move a computer built from an older image onto the current one.
       if (!this.working.has(sessionId) && await this.staleImage(sessionId, vm)) vm = await this.replace(sessionId, vm, { required: false }) ?? vm
       // A provider that can neither pause nor stop keeps the computer running until its own expiry.
-      if (!this.provider.describe().stopResume) return this.options.pauses?.clear(sessionId)
+      if (!this.provider.describe().stopResume) {
+        log("cannot_pause")
+        return this.options.pauses?.clear(sessionId)
+      }
       const callsOff = this.provider.describe().callsOffPause === true
       if (callsOff) this.checkpointing.add(sessionId)
       await (this.provider.blocks?.pause ? this.provider.blocks.pause(vm, { timeoutMs: PAUSE_TIMEOUT_MS }) : this.provider.stop(vm, { timeoutMs: PAUSE_TIMEOUT_MS }))
       // Called off: the computer is in use again, and `vm()` set when it is next due.
-      if (callsOff && !this.checkpointing.delete(sessionId)) return
-      this.options.pauses?.clear(sessionId)
-    } catch {
+      if (callsOff && !this.checkpointing.delete(sessionId)) return log("called_off")
+      log("paused")
+      this.options.pauses?.set(sessionId, Date.now() + PAUSED_RECHECK_MS)
+    } catch (error) {
       this.checkpointing.delete(sessionId)
-      // Not fatal: tried again after another idle period, and Freestyle's own idle timeout pauses it later.
+      log("failed", error)
+      // Not fatal: tried again after another idle period.
       this.options.pauses?.set(sessionId, Date.now() + this.options.idlePauseMs)
     }
   }
