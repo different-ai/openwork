@@ -16,6 +16,11 @@ const UPLOADS = "/home/ubuntu"
 const REPLACED_NOTE = `${UPLOADS}/.openwork-replaced-on-older-image`
 /** The most either carried archive may be (desktop-bridge.py's MAX_CARRIED_BYTES). */
 const MAX_CARRIED_BYTES = 100 * 1024 * 1024
+/**
+ * How long a desktop gets to start, across every step. The steps' own limits add up to minutes, and a computer that
+ * needs them all isn't going to start: the sooner that is known, the sooner it can be replaced.
+ */
+const START_BUDGET_MS = 40_000
 const viewerSchema = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{43}$/), paused: z.boolean() })
 const healthSchema = z.object({ version: z.string(), protocol: z.number().optional() }).loose()
 const versionsSchema = z.object({ image: z.string().regex(/^[a-f0-9]{64}$/), guest: z.string().regex(/^[a-f0-9]{64}$/) })
@@ -63,14 +68,21 @@ export class Desktop {
     if (!run || this.provider.describe().platform?.os !== "linux") throw new Error("Desktop access needs a configured Linux computer.")
     const privateBrowsing = this.options.privateBrowsing === true
     const version = createHash("sha256").update(identity.image).update(identity.guest).update(privateBrowsing ? "private-browsing" : "").digest("hex")
+    const deadline = Date.now() + START_BUDGET_MS
+    /** What a step may take: its own limit, or what is left of the start's time. */
+    const within = (limit: number) => {
+      const left = deadline - Date.now()
+      if (left < 1_000) throw new DesktopError("desktop_unresponsive", "The computer's desktop didn't start. Try reconnecting.")
+      return Math.min(limit, left)
+    }
     const ready = await this.health(box)
     if (ready?.version === version) return "current"
     if (ready && this.compatible.get(key) === ready.version) return "stale"
-    let started = await this.launch(box, this.image, this.guest)
+    let started = await this.launch(box, this.image, this.guest, within(45_000))
     // Same image, older guest: install this runner's guest into the running computer instead of replacing it.
     if (!started.ok && /guest is out of date/i.test(started.detail)) {
-      await this.install(box)
-      started = await this.launch(box, this.image, this.guest)
+      await this.install(box, within(60_000))
+      started = await this.launch(box, this.image, this.guest, within(45_000))
     }
     if (!started.ok && started.timedOut) {
       // A timeout can leave startup running: only recheck health, never automatically replay start.
@@ -91,7 +103,7 @@ export class Desktop {
     let own = ready
     if (!own) {
       const versions = await this.versions(box)
-      if (versions && (await this.launch(box, versions.image, versions.guest)).ok) own = await this.healthy(box)
+      if (versions && (await this.launch(box, versions.image, versions.guest, within(45_000))).ok) own = await this.healthy(box)
     }
     if (own?.protocol === DESKTOP_PROTOCOL) {
       this.compatible.set(key, own.version)
@@ -114,9 +126,9 @@ export class Desktop {
     throw new DesktopError("desktop_unresponsive", "The desktop didn't respond. Try reconnecting.")
   }
 
-  private async launch(box: SandboxHandle, image: string, guest: string) {
+  private async launch(box: SandboxHandle, image: string, guest: string, timeoutMs: number) {
     try {
-      const result = await this.bridge(box, `start ${image} ${guest}`, 45_000)
+      const result = await this.bridge(box, `start ${image} ${guest}`, timeoutMs)
       const detail = result.stderr.trim()
       return {
         ok: result.exitCode === 0,
@@ -151,26 +163,26 @@ export class Desktop {
   }
 
   /** Hands the helper this runner's guest bundle; it checks the checksum and that the image is its own. */
-  private async install(box: SandboxHandle) {
+  private async install(box: SandboxHandle, timeoutMs: number) {
     const result = await this.upload(box, Buffer.from(guestBundle, "base64"), path =>
-      this.bridge(box, `install ${this.image} ${this.guest} ${identity.bundleSha256} < ${path}`, 60_000))
+      this.bridge(box, `install ${this.image} ${this.guest} ${identity.bundleSha256} < ${path}`, timeoutMs), timeoutMs)
     if (result.exitCode !== 0) throw new Error(`Couldn't update the computer's desktop. ${result.stderr.trim().slice(0, 300)}`)
   }
 
-  /** The browser profile or workspace as a gzipped tar, or null when this computer can't export it (or it's too big). */
-  async exportState(box: SandboxHandle, name: CarriedState): Promise<Uint8Array | null> {
+  /** The browser profile or workspace as a gzipped tar, or null when this computer can't export it in time (or it's too big). */
+  async exportState(box: SandboxHandle, name: CarriedState, timeoutMs = 240_000): Promise<Uint8Array | null> {
     const { files, run } = this.provider.blocks ?? {}
     if (!files || !run) return null
     const path = `${UPLOADS}/.openwork-carried-${randomUUID()}`
     try {
-      const result = await this.bridge(box, `export ${name} > ${path}`, 240_000)
-      if (result.exitCode === 0) return await files.read(box, path, { timeoutMs: 120_000 })
+      const result = await this.bridge(box, `export ${name} > ${path}`, timeoutMs)
+      if (result.exitCode === 0) return await files.read(box, path, { timeoutMs: Math.min(120_000, timeoutMs) })
       // A helper from before carrying existed: the provider account can still pack the shared workspace itself (the
       // browser's profile is private to the browser's account).
       if (name !== "workspace" || !/start VERSION/i.test(result.stderr)) return null
-      const packed = await run(box, { command: `tar -czf ${path} -C /workspace --exclude=./files --exclude='./.jobs/*.running' --ignore-failed-read . 2>/dev/null; [ $? -le 1 ]`, timeoutMs: 240_000 })
+      const packed = await run(box, { command: `tar -czf ${path} -C /workspace --exclude=./files --exclude='./.jobs/*.running' --ignore-failed-read . 2>/dev/null; [ $? -le 1 ]`, timeoutMs })
       const size = packed.exitCode === 0 ? (await files.stat(box, path, { timeoutMs: 10_000 }))?.size : undefined
-      return size !== undefined && size <= MAX_CARRIED_BYTES ? await files.read(box, path, { timeoutMs: 120_000 }) : null
+      return size !== undefined && size <= MAX_CARRIED_BYTES ? await files.read(box, path, { timeoutMs: Math.min(120_000, timeoutMs) }) : null
     } finally {
       await this.provider.blocks?.run?.(box, { command: `rm -f ${path}`, activity: "maintenance", timeoutMs: 10_000 }).catch(() => undefined)
     }
@@ -183,11 +195,11 @@ export class Desktop {
     this.compatible.delete(JSON.stringify(box.ref))
   }
 
-  private async upload<T>(box: SandboxHandle, bytes: Uint8Array, use: (path: string) => Promise<T>): Promise<T> {
+  private async upload<T>(box: SandboxHandle, bytes: Uint8Array, use: (path: string) => Promise<T>, timeoutMs = 120_000): Promise<T> {
     const files = this.provider.blocks?.files
     if (!files) throw new Error("This computer can't receive files.")
     const path = `${UPLOADS}/.openwork-upload-${randomUUID()}`
-    await files.write(box, path, bytes, { timeoutMs: 120_000 })
+    await files.write(box, path, bytes, { timeoutMs })
     try { return await use(path) }
     finally { await this.provider.blocks?.run?.(box, { command: `rm -f ${path}`, activity: "maintenance", timeoutMs: 10_000 }).catch(() => undefined) }
   }

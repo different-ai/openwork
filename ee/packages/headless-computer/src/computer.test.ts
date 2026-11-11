@@ -359,18 +359,22 @@ test("browser recovery comes only from the trusted caller policy, for tasks and 
  * Desktop computers whose helper behaves like desktop-bridge.py: the first one made was built from another image, and
  * so is every later one while `state.behind` is set, like a gateway whose template hasn't been rebuilt yet.
  */
-function upgradeFixture(old: { helper: "current" | "old"; protocol?: number }) {
+function upgradeFixture(old: { helper: "current" | "old"; protocol?: number; hung?: "desktop" | "machine" }) {
   const base = createFakeProvider({ capabilities: { platform: { os: "linux", isolation: "microvm" } } })
   const image = identity.image.trim(), guest = identity.guest.trim()
   const current = createHash("sha256").update(identity.image).update(identity.guest).digest("hex")
-  type Vm = { image: string; guest: string; helper: "current" | "old"; protocol?: number; running: boolean; files: Map<string, Uint8Array>; imported: string[]; tasks: number }
+  /** `hung`: on this runner's image, but its desktop won't start ("desktop"), or it runs no command at all ("machine"). */
+  type Vm = { image: string; guest: string; helper: "current" | "old"; protocol?: number; running: boolean; hung?: "desktop" | "machine"; files: Map<string, Uint8Array>; imported: string[]; tasks: number }
   const vms = new Map<string, Vm>()
   const state = { jobs: 0, gate: Promise.resolve(), behind: false }
+  const timedOut = () => new SandboxError({ providerId: "fake", code: "timeout", retryable: false, message: "Command deadline exceeded" })
   const vmOf = (box: SandboxHandle) => {
     const key = JSON.stringify(box.ref)
     let vm = vms.get(key)
     if (!vm) {
-      vm = vms.size === 0 || state.behind
+      vm = old.hung && (vms.size === 0 || state.behind)
+        ? { image, guest, helper: "current", protocol: DESKTOP_PROTOCOL, running: false, hung: old.hung, files: new Map(), imported: [], tasks: 0 }
+        : vms.size === 0 || state.behind
         ? { image: "e".repeat(64), guest: "f".repeat(64), helper: old.helper, protocol: old.protocol, running: true, files: new Map(), imported: [], tasks: 0 }
         : { image, guest, helper: "current", protocol: DESKTOP_PROTOCOL, running: true, files: new Map(), imported: [], tasks: 0 }
       vms.set(key, vm)
@@ -383,6 +387,7 @@ function upgradeFixture(old: { helper: "current" | "old"; protocol?: number }) {
     const vm = vmOf(box)
     const { command } = spec
     if (command.endsWith("openwork-desktop-bridge command")) { await state.gate; return ok("done") }
+    if (vm.hung === "machine") throw timedOut()
     if (command.startsWith("ls /workspace/.jobs/*.running")) return ok(String(state.jobs))
     if (command.startsWith("rm -f")) return ok()
     if (command.includes("call '/health'")) return vm.running ? ok(JSON.stringify({ version: vm.image === image && vm.guest === guest ? current : "other", ...(vm.protocol === undefined ? {} : { protocol: vm.protocol }) })) : fail("")
@@ -404,6 +409,7 @@ function upgradeFixture(old: { helper: "current" | "old"; protocol?: number }) {
     if (start) {
       if (start[1] !== vm.image) return fail("The desktop image is out of date. Rebuild its snapshot for this runner.")
       if (start[2] !== vm.guest) return fail("The desktop guest is out of date. Install this runner's guest.")
+      if (vm.hung) return fail("Cloud display did not start")
       vm.running = true
       return ok()
     }
@@ -462,6 +468,65 @@ test("an outdated computer with other work running says it is updating instead o
   f.state.jobs = 1
   await assert.rejects(f.computers.desktopRun("busy", browse), updating, "a background job counts as work")
   assert.equal(f.base.fake.count("destroy"), 0)
+})
+
+const unresponsive = (error: unknown) => error instanceof DesktopError && error.desktopCode === "desktop_unresponsive"
+
+test("a computer whose desktop won't start is replaced, carrying its workspace and browser profile", async t => {
+  const f = upgradeFixture({ helper: "current", hung: "desktop" })
+  t.after(() => f.computers.delete("hung"))
+  t.mock.method(console, "log", () => {})
+  assert.equal((await f.computers.desktopRun("hung", browse)).isError, false)
+  assert.equal(f.base.fake.count("destroy"), 1)
+  assert.deepEqual(f.vm(1)?.imported, ["workspace: workspace from the old computer", "profile: profile from the old computer"])
+  assert.deepEqual([f.vm(0)?.tasks, f.vm(1)?.tasks], [0, 1], "the step ran on the new computer")
+})
+
+test("a computer that runs no command at all is replaced without waiting for it to hand anything over", async t => {
+  const f = upgradeFixture({ helper: "current", hung: "machine" })
+  t.after(() => f.computers.delete("gone"))
+  t.mock.method(console, "log", () => {})
+  const view = await f.computers.desktopViewer("gone", { view: "computer", control: false, origin: "https://chat.example.test" })
+  assert.equal(view.state, "connected")
+  assert.deepEqual([f.base.fake.count("destroy"), f.vm(1)?.imported], [1, []])
+})
+
+test("steps and the view waiting on the same desktop that won't start share one replacement", async t => {
+  const f = upgradeFixture({ helper: "current", hung: "desktop" })
+  t.after(() => f.computers.delete("waiting"))
+  t.mock.method(console, "log", () => {})
+  const [first, second, view] = await Promise.all([
+    f.computers.desktopRun("waiting", browse),
+    f.computers.desktopRun("waiting", browse),
+    f.computers.desktopViewer("waiting", { view: "browser", control: false, origin: "https://chat.example.test" }),
+  ])
+  assert.deepEqual([first.isError, second.isError, view.state], [false, false, "connected"])
+  assert.deepEqual([f.base.fake.count("destroy"), f.base.fake.count("create")], [1, 2])
+})
+
+test("a computer whose desktop won't start is left alone while other work runs on it", async t => {
+  const f = upgradeFixture({ helper: "current", hung: "desktop" })
+  t.after(() => f.computers.delete("in-use"))
+  let release = () => {}
+  f.state.gate = new Promise<void>(resolve => { release = resolve })
+  const command = f.computers.run("in-use", "bash", { command: "sleep 1", timeout_seconds: 10 })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  await assert.rejects(f.computers.desktopRun("in-use", browse), unresponsive)
+  release()
+  await command
+  f.state.jobs = 1
+  await assert.rejects(f.computers.desktopRun("in-use", browse), unresponsive, "a background job counts as work")
+  assert.equal(f.base.fake.count("destroy"), 0)
+})
+
+test("a replacement whose desktop won't start either isn't replaced again", async t => {
+  const f = upgradeFixture({ helper: "current", hung: "desktop" })
+  t.after(() => f.computers.delete("again"))
+  t.mock.method(console, "log", () => {})
+  f.state.behind = true
+  await assert.rejects(f.computers.desktopRun("again", browse), unresponsive)
+  await assert.rejects(f.computers.desktopRun("again", browse), unresponsive)
+  assert.deepEqual([f.base.fake.count("destroy"), f.base.fake.count("create")], [1, 2])
 })
 
 test("a computer from an older image that still speaks the protocol is used, then replaced once idle", async t => {
