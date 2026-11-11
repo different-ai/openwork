@@ -443,6 +443,16 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return { ok: true, value: { deleted: true } }
     },
 
+    /**
+     * Deletes only a conversation's computer; its transcript, files and memory stay, and its next use makes a new one.
+     * Fails with `session_busy` (409) while it answers and `unknown_session` (404) when there is no such conversation.
+     */
+    async deleteComputer(id: string): Promise<RunnerResult<{ deleted: true }>> {
+      const { status, payload } = await request(deps, "DELETE", `${sessionPath(id)}/computer`, undefined, 60_000)
+      if (status !== 204) return { ok: false, status, error: errorCode(payload, `headless_computer_delete_${status}`) }
+      return { ok: true, value: { deleted: true } }
+    },
+
     /** The scratch files the agent wrote in the session (memory/ included, wherever it is kept): paths and sizes only. */
     async listScratchFiles(sessionId: string): Promise<RunnerResult<Array<{ path: string; size: number; updatedAt: number }>>> {
       const { status, payload } = await request(deps, "GET", `${sessionPath(sessionId)}/files`)

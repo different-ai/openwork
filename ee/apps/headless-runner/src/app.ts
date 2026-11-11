@@ -489,6 +489,16 @@ export function createApp(input: {
     return c.body(null, 204)
   })
 
+  // Only the computer goes (its owner left the organization): the conversation, its files and its memory stay, and
+  // its next use makes a new computer.
+  app.delete("/v1/sessions/:id/computer", async (c) => {
+    const id = c.req.param("id")
+    if (!store.getSession(id)) return c.json({ error: "unknown_session" }, 404)
+    if (store.activeTurn(id)) return c.json({ error: "session_busy" }, 409)
+    await input.computer?.delete(id)
+    return c.body(null, 204)
+  })
+
   // Saved files: uploads a person sends with messages, and files the agent hands back. Bytes live in the
   // configured blob store (disk, or any S3-compatible bucket), only for conversations created with
   // `files: true`, within a per-file and a per-conversation limit.
