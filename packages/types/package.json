@@ -212,6 +212,14 @@
       "development": "./src/den/remote-devices.ts",
       "default": "./src/den/remote-devices.ts"
     },
+    "./den/remote-sessions": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/remote-sessions.d.ts",
+        "default": "./src/den/remote-sessions.ts"
+      },
+      "development": "./src/den/remote-sessions.ts",
+      "default": "./src/den/remote-sessions.ts"
+    },
     "./den/connect-diagnostics": {
       "types": {
         "openwork-build": "./dist/types/src/den/connect-diagnostics.d.ts",

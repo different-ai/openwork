@@ -731,6 +731,16 @@
               ],
               "description": "Computers: Computers in Den lets organization owners and admins view their team's reported desktops, cloud computers, registered virtual computers and OpenWork instances, with owners, status, last contact, versions and supported inventory. My Computers in Den, Desktop Settings > Devices and Workbot's Devices page show each member their own and shared computers. Registration does not provision a computer or grant provider access. Off, these views are hidden and desktop reports stop; existing computer use and remote tasks are unchanged. Renders DEN_FEATURE_REMOTE_DEVICES."
             },
+            "remoteSessionAccess": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Sessions on my computers: My Sessions in Den lists a member's own sessions across their computers and lets them follow one, send a follow-up, stop it and answer or dismiss what it waits on. Organization owners and admins choose whether members may let other devices reach every session on their own computer or only sessions started remotely; each member then chooses per computer in Desktop Settings > Devices. Reaching a session that was started on the computer needs both choices and is enforced on that computer. Off, remote callers reach only sessions started remotely, as before, and computers report no sessions. Renders DEN_FEATURE_REMOTE_SESSION_ACCESS."
+            },
             "remoteSessionPush": {
               "enum": [
                 "",
