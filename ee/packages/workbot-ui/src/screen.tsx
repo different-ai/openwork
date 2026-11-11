@@ -38,7 +38,7 @@ import {
 import { AppMark, AttachButton, FilesButton, FilesPanel, SentAttachments, UploadTray, useFileDrop, type Upload } from "./files";
 import { createComposerState, type ComposerState, type Pending } from "./composer-state";
 import { browserTask, computerWork, finishedSummary, keepsCard, type ComputerSurface } from "./computer-work";
-import { BrowserExperience, useBrowserPreview } from "./browser-preview";
+import { BrowserExperience, useBrowserPreview, type BrowserPreviewTask } from "./browser-preview";
 import { AccountAvatar } from "./account-menu";
 import { documentLinks, WorkbotMarkdown } from "./markdown";
 import { OpenFileContext } from "./open-file";
@@ -1695,6 +1695,15 @@ function openSurface(surface: Exclude<ComputerSurface, "background">) {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
+/**
+ * The computer's screen from its card, where the browser's opens: beside the chat (a full-screen sheet on a phone), so
+ * the conversation stays in view. Without that panel (an older host), its own page.
+ */
+function openScreen(preview: ReturnType<typeof useBrowserPreview>, task: BrowserPreviewTask, surface: Exclude<ComputerSurface, "background">) {
+  if (preview) preview.open(task, surface);
+  else openSurface(surface);
+}
+
 /** The same browser task object from its first step through its stored, finished reply (P11). */
 function BrowserTaskCard({ turn, steps, working }: { turn: WorkbotTurn; steps: WorkbotStep[]; working: boolean }) {
   const preview = useBrowserPreview();
@@ -1727,12 +1736,15 @@ function BrowserTaskCard({ turn, steps, working }: { turn: WorkbotTurn; steps: W
  * view isn't already open beside the chat. Other work, on the screen or in the background, is its progress notes
  * alone. The browser card links the pages it opened. `starting` is what a step not yet stored says it is doing.
  */
-function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, starting: startingUpdate = null }: { surface: Exclude<ComputerSurface, "browser">; steps: WorkbotStep[]; live: boolean; showing: boolean; others: UsedApp[]; switchTo?: SwitchTo | null; starting?: string | null }) {
+function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, starting: startingUpdate = null, task }: { task: BrowserPreviewTask; surface: Exclude<ComputerSurface, "browser">; steps: WorkbotStep[]; live: boolean; showing: boolean; others: UsedApp[]; switchTo?: SwitchTo | null; starting?: string | null }) {
   // The switch just tapped, until Workbot takes it up and the card offers the other one.
   const [asked, setAsked] = useState<string | null>(null);
   const updates = steps.flatMap((step) => step.updates);
   const latest = (live ? startingUpdate : null) ?? updates.at(-1) ?? null;
   const onScreen = useContext(ComputerOnScreenContext) === surface;
+  const preview = useBrowserPreview();
+  const updatePreview = preview?.update;
+  useEffect(() => { if (surface !== "background") updatePreview?.(task); }, [updatePreview, surface, task.id, task.title, task.status, task.reason]);
   const update = useHeld(latest, latest ?? "", UPDATE_HOLD_MS);
   const views = computerViews(workbotHost());
   // Each view is its own rollout: a card shows a screen only for a view this person has. Work in the background has
@@ -1742,7 +1754,7 @@ function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, s
   const starting = surface === "background" ? "Running in the background" : "Starting up";
   // Finished work on a screen, with the inline preview or the working status: a compact record that stays in the
   // conversation, never a live view. One tap opens the full view.
-  if (!live && surface !== "background" && (workbotHost().browserPreview || workbotHost().workingStatus)) return <FinishedSurfaceCard surface={surface} steps={steps} watchable={watchable} />;
+  if (!live && surface !== "background" && (workbotHost().browserPreview || workbotHost().workingStatus)) return <FinishedSurfaceCard surface={surface} steps={steps} watchable={watchable} task={task} />;
   // A thumbnail is a glance, never a takeover: one button opens the full view only on the person's tap.
   if (workbotHost().browserPreview && live && watchable && surface !== "background") return <section className="workbot-row-enter w-full max-w-[480px] rounded-[20px] bg-[var(--wb-chip)] p-3" aria-label="Computer activity" data-workbot-computer-card>
     <div className="flex min-w-0 items-center gap-2.5 px-1 pb-1">
@@ -1753,7 +1765,7 @@ function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, s
       </div>
     </div>
     {!onScreen ? <LiveGlimpse view={surface} previewOnly /> : null}
-    <button type="button" onClick={() => openSurface(surface)} className="mt-3 flex h-10 w-full items-center justify-center rounded-full bg-[var(--wb-surface)] text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">Open computer</button>
+    <button type="button" onClick={() => openScreen(preview, task, surface)} className="mt-3 flex h-10 w-full items-center justify-center rounded-full bg-[var(--wb-surface)] text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">Open computer</button>
   </section>;
   return (
     <WorkCard
@@ -1792,7 +1804,8 @@ function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, s
  * card opens the full view on tap when the person has that view; otherwise it is a static record. It never opens
  * anything by itself.
  */
-function FinishedSurfaceCard({ surface, steps, watchable }: { surface: "computer"; steps: WorkbotStep[]; watchable: boolean }) {
+function FinishedSurfaceCard({ surface, steps, watchable, task }: { surface: "computer"; steps: WorkbotStep[]; watchable: boolean; task: BrowserPreviewTask }) {
+  const preview = useBrowserPreview();
   const name = "Computer";
   const summary = finishedSummary(surface, steps);
   const body = <>
@@ -1805,7 +1818,7 @@ function FinishedSurfaceCard({ surface, steps, watchable }: { surface: "computer
   </>;
   const className = "flex w-full max-w-[480px] min-w-0 items-center gap-2.5 rounded-[20px] bg-[var(--wb-chip)] p-3 text-left";
   return watchable
-    ? <button type="button" onClick={() => openSurface(surface)} aria-label={`${name}: ${summary}. Open the computer`} className={`${className} hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]`} data-workbot-computer-card="done">{body}</button>
+    ? <button type="button" onClick={() => openScreen(preview, task, surface)} aria-label={`${name}: ${summary}. Open the computer`} className={`${className} hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]`} data-workbot-computer-card="done">{body}</button>
     : <section aria-label={`${name}: ${summary}`} className={className} data-workbot-computer-card="done">{body}</section>;
 }
 
@@ -2011,7 +2024,7 @@ const TurnView = memo(function TurnView(props: {
             </AssistantBubble>
           ) : (
             <div key={item.key} className="py-1 pl-1">
-              {item.surface === "browser" ? <BrowserTaskCard turn={turn} steps={item.steps} working={working} /> : <SurfaceCard surface={item.surface} steps={item.steps} live={item.live} showing={item.showing} others={item.others} switchTo={item.switchTo} starting={item.update} />}
+              {item.surface === "browser" ? <BrowserTaskCard turn={turn} steps={item.steps} working={working} /> : <SurfaceCard surface={item.surface} steps={item.steps} live={item.live} showing={item.showing} others={item.others} switchTo={item.switchTo} starting={item.update} task={{ id: `computer:${turn.id}`, ...browserTask(item.steps, { working: working && item.live, title: turn.text.trim() || "Computer task", status: turn.status, what: "computer task" }) }} />}
             </div>
           ),
         )}

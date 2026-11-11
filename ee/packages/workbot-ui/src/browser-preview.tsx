@@ -1,40 +1,24 @@
 "use client";
 
 import { Dialog } from "@base-ui/react/dialog";
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { artifactTitle } from "./artifact";
 import { WorkbotComputer } from "./computer";
 import { useStopWorkbot, type WorkbotAttachment } from "./data";
-import { useRetainedSurface, workbotHost } from "./host";
+import { computerViews, useRetainedSurface, workbotHost } from "./host";
 import { OpenFileContext, OpenFileIdContext } from "./open-file";
 import { ArtifactView } from "./preview";
 import { useWideScreen } from "./workspace";
 import type { WorkbotViewContext } from "@openwork/types/workbot-context";
-import type { BrowserTask } from "./computer-work";
+import { BrowserPreviewContext, type BrowserPreviewTask, type ScreenView } from "./browser-preview-context";
+export { useBrowserPreview, type BrowserPreviewTask } from "./browser-preview-context";
 
-/** The transcript owns the task; opening its view never starts or resumes a task. */
-export type BrowserPreviewTask = BrowserTask & { id: string };
-type Opened = { kind: "browser"; task: BrowserPreviewTask } | { kind: "file"; file: WorkbotAttachment };
-const BrowserPreviewContext = createContext<{
-  open(task: BrowserPreviewTask): void;
-  update(task: BrowserPreviewTask): void;
-  /** The browser task's view is open (beside the chat or as the phone sheet). */
-  visible: boolean;
-  /** Anything is open beside the chat: the browser, or a file Workbot made. */
-  panelOpen: boolean;
-  /** The open file, so the screen can keep it at its newest version. */
-  file: WorkbotAttachment | null;
-  updateFile(file: WorkbotAttachment): void;
-  context: WorkbotViewContext | null;
-  includeContext: boolean;
-  setIncludeContext(include: boolean): void;
-} | null>(null);
-export const useBrowserPreview = () => useContext(BrowserPreviewContext);
+type Opened = { kind: "browser"; view: ScreenView; task: BrowserPreviewTask } | { kind: "file"; file: WorkbotAttachment };
 
 /**
  * One panel beside the chat on desktop, or a full-screen sheet on a phone, for whatever the person opened from the
- * conversation: a browser task's live view, or a file Workbot made (an app, a document, a spreadsheet). Opening one
- * replaces the other. Only a tap opens it (S5).
+ * conversation: a task's live view (Workbot's browser, or the rest of its computer), or a file Workbot made (an app, a
+ * document, a spreadsheet). Opening one replaces the other. Only a tap opens it (S5).
  */
 export function BrowserExperience({ children }: { children: ReactNode }) {
   const [opened, setOpened] = useState<Opened | null>(null);
@@ -46,13 +30,15 @@ export function BrowserExperience({ children }: { children: ReactNode }) {
   const wide = useWideScreen();
   const task = opened?.kind === "browser" ? opened.task : null;
   const file = opened?.kind === "file" ? opened.file : null;
-  const surface = useRetainedSurface(task !== null ? workbotHost().browser === true : file !== null);
+  const view = opened?.kind === "browser" ? opened.view : "browser";
+  // Each view is its own rollout: a screen opens only for a view this person has.
+  const surface = useRetainedSurface(task !== null ? computerViews(workbotHost()).includes(view) : file !== null);
   const stop = useStopWorkbot();
   // Focus goes back to what opened the panel (a card in the chat) when it closes.
   const opener = useRef<HTMLElement | null>(null);
   const remember = () => { if (document.activeElement instanceof HTMLElement && !opener.current) opener.current = document.activeElement; };
-  const open = useCallback((next: BrowserPreviewTask) => { remember(); setOpened({ kind: "browser", task: next }); setExpanded(false); setIncludeContext(true); }, []);
-  const update = useCallback((next: BrowserPreviewTask) => setOpened(current => current?.kind === "browser" && current.task.id === next.id && (current.task.status !== next.status || current.task.title !== next.title || current.task.reason !== next.reason) ? { kind: "browser", task: next } : current), []);
+  const open = useCallback((next: BrowserPreviewTask, nextView: ScreenView = "browser") => { remember(); setOpened({ kind: "browser", view: nextView, task: next }); setExpanded(false); setIncludeContext(true); }, []);
+  const update = useCallback((next: BrowserPreviewTask) => setOpened(current => current?.kind === "browser" && current.task.id === next.id && (current.task.status !== next.status || current.task.title !== next.title || current.task.reason !== next.reason) ? { ...current, task: next } : current), []);
   const openFile = useCallback((next: WorkbotAttachment) => {
     if (next.id.startsWith("local-")) return;
     remember();
@@ -78,12 +64,12 @@ export function BrowserExperience({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [wide, file, close]);
   const viewer = !surface.open ? null
-    : task ? <WorkbotComputer key={task.id} task={task} onContextChange={setContext} onClose={close} onStop={() => stop.mutateAsync().then(() => undefined)} {...(wide ? { expanded, onExpand: () => setExpanded(value => !value) } : {})} />
+    : task ? <WorkbotComputer key={`${view}:${task.id}`} task={task} surface={view} onContextChange={setContext} onClose={close} onStop={() => stop.mutateAsync().then(() => undefined)} {...(wide ? { expanded, onExpand: () => setExpanded(value => !value) } : {})} />
     : file ? <ArtifactView key={file.id} file={file} onClose={close} {...(wide ? { expanded, onExpand: () => setExpanded(value => !value) } : {})} />
     : null;
   const panelOpen = surface.open && opened !== null;
-  const label = task ? "Browser preview" : file ? artifactTitle(file) : "Preview";
-  return <BrowserPreviewContext.Provider value={{ open, update, visible: surface.open && task !== null, panelOpen, file, updateFile, context: surface.open && task ? context : null, includeContext, setIncludeContext }}>
+  const label = task ? (view === "computer" ? "Computer preview" : "Browser preview") : file ? artifactTitle(file) : "Preview";
+  return <BrowserPreviewContext.Provider value={{ open, update, visible: surface.open && task !== null, panelOpen, file, updateFile, context: surface.open && task && view === "browser" ? context : null, includeContext, setIncludeContext }}>
     <OpenFileContext.Provider value={openFile}>
     <OpenFileIdContext.Provider value={surface.open ? file?.id ?? null : null}>
     <div className="flex h-full min-h-0 min-w-0 flex-1" data-workbot-browser-layout>
@@ -92,7 +78,7 @@ export function BrowserExperience({ children }: { children: ReactNode }) {
       {wide && panelOpen ? <aside
         className={`workbot ${file ? "workbot-panel-enter" : ""} flex min-h-0 min-w-0 flex-1 flex-col border-l border-[var(--wb-hairline)] bg-[var(--wb-bg)]`}
         aria-label={label}
-        {...(task ? { "data-workbot-browser-panel": "" } : { "data-workbot-artifact-panel": "" })}
+        {...(task ? { "data-workbot-browser-panel": view } : { "data-workbot-artifact-panel": "" })}
       >{viewer}</aside> : null}
     </div>
     {!wide ? <Dialog.Root open={surface.open && opened !== null} onOpenChange={next => { if (!next) close(); }}>
@@ -100,7 +86,7 @@ export function BrowserExperience({ children }: { children: ReactNode }) {
         <Dialog.Backdrop className="fixed inset-0 z-40 bg-[var(--wb-ink)]/40" />
         <Dialog.Popup
           className={`workbot ${task ? "workbot-browser-sheet" : "workbot-panel-enter"} fixed inset-0 z-50 flex flex-col overflow-hidden bg-[var(--wb-bg)] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] outline-none`}
-          {...(task ? { "data-workbot-browser-sheet": "" } : { "data-workbot-artifact-sheet": "" })}
+          {...(task ? { "data-workbot-browser-sheet": view } : { "data-workbot-artifact-sheet": "" })}
         >
           <Dialog.Title className="sr-only">{task?.title ?? label}</Dialog.Title>
           {viewer}
