@@ -64,6 +64,18 @@ export function MicrosoftMark({ className }: MarkProps) {
   );
 }
 
+/** "aws" with the smile, set in the page face so it stays legible at 16-20px. */
+export function AwsMark({ className }: MarkProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
+      <text x="12" y="13" textAnchor="middle" fontSize="11.5" fontWeight="700" letterSpacing="-0.4" fill="#232F3E">
+        aws
+      </text>
+      <path d="M3.5 16.6c5 3 12 3 17 0" fill="none" stroke="#FF9900" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function VsCodeMark({ className }: MarkProps) {
   return (
     <svg viewBox="0 0 24 24" className={className} aria-hidden="true">

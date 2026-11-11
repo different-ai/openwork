@@ -8,37 +8,41 @@ export function SiteFooter() {
     <footer className="pt-10 text-sm text-gray-500">
       <div className="flex flex-col items-start gap-6 border-t border-[var(--lp-border)] pt-10">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3 md:gap-x-8">
-          <Link href="/docs" target="_blank" className="whitespace-nowrap transition-colors hover:text-gray-800">
-            Docs
-          </Link>
-          <Link href="/pricing" className="whitespace-nowrap transition-colors hover:text-gray-800">
-            Pricing
-          </Link>
-          <Link href="/roadmap" className="whitespace-nowrap transition-colors hover:text-gray-800">
-            Roadmap
-          </Link>
-          <Link href="/download" className="whitespace-nowrap transition-colors hover:text-gray-800">
+          <Link href="/desktop" className="whitespace-nowrap transition-colors hover:text-gray-800">
             Desktop
           </Link>
-          <Link href="/alternatives/claude-cowork" className="whitespace-nowrap transition-colors hover:text-gray-800">
-            Claude Cowork alternative
+          <Link href="/connect" className="whitespace-nowrap transition-colors hover:text-gray-800">
+            MCP Gateway
           </Link>
-          <Link href="/guides" className="whitespace-nowrap transition-colors hover:text-gray-800">
-            Guides
+          <Link href="/ai-gateway" className="whitespace-nowrap transition-colors hover:text-gray-800">
+            AI Gateway
           </Link>
-          <a
-            href="https://app.openworklabs.com"
-            target="_blank"
-            rel="noreferrer"
-            className="whitespace-nowrap transition-colors hover:text-gray-800"
-          >
+          <Link href="/cloud" className="whitespace-nowrap transition-colors hover:text-gray-800">
             Cloud
-          </a>
+          </Link>
           <Link href="/dashboard" className="whitespace-nowrap transition-colors hover:text-gray-800">
             Dashboard
           </Link>
           <Link href="/enterprise" className="whitespace-nowrap transition-colors hover:text-gray-800">
             Enterprise
+          </Link>
+          <Link href="/pricing" className="whitespace-nowrap transition-colors hover:text-gray-800">
+            Pricing
+          </Link>
+          <Link href="/download" className="whitespace-nowrap transition-colors hover:text-gray-800">
+            Download
+          </Link>
+          <Link href="/docs" target="_blank" className="whitespace-nowrap transition-colors hover:text-gray-800">
+            Docs
+          </Link>
+          <Link href="/roadmap" className="whitespace-nowrap transition-colors hover:text-gray-800">
+            Roadmap
+          </Link>
+          <Link href="/guides" className="whitespace-nowrap transition-colors hover:text-gray-800">
+            Guides
+          </Link>
+          <Link href="/alternatives/claude-cowork" className="whitespace-nowrap transition-colors hover:text-gray-800">
+            Claude Cowork alternative
           </Link>
           <Link href="/shadow-ai" className="whitespace-nowrap transition-colors hover:text-gray-800">
             Shadow AI governance

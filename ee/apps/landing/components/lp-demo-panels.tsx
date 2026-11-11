@@ -9,7 +9,7 @@ import { LpDemoDesktop } from "./lp-demo-desktop";
 import { LibraryView } from "./lp-demo-library";
 import { DemoMenu, focusRing } from "./lp-demo-ui";
 import { MCP_CLIENTS, MCP_SERVER_URL } from "./lp-mcp-clients";
-import { GoogleDriveMark, LinearMark, SkillMark, SlackMark } from "./lp-service-marks";
+import { AwsMark, GoogleDriveMark, LinearMark, SkillMark, SlackMark } from "./lp-service-marks";
 import { OpenWorkMark } from "./openwork-mark";
 
 const selectClass = `flex h-7 items-center rounded-lg px-2.5 text-xs text-[#111827] shadow-[0_0_0_1px_#E5E7EB] hover:bg-[#F7F8FA] ${focusRing}`;
@@ -118,7 +118,7 @@ type Provider = { id: string; mark: ReactNode; name: string; models: string; who
 const PROVIDERS: Provider[] = [
   { id: "anthropic", mark: <BrandLogo name="anthropic" className="h-[18px] w-[18px] text-[#191919]" />, name: "Anthropic", models: "Claude Opus, Sonnet, Haiku", who: "Everyone", ready: true },
   { id: "openai", mark: <BrandLogo name="openai" className="h-[18px] w-[18px] text-[#111]" />, name: "OpenAI", models: "GPT-5, GPT-5 mini", who: "Engineering", ready: true },
-  { id: "bedrock", mark: <BrandLogo name="aws" className="h-[18px] w-[18px] text-[#232F3E]" />, name: "Amazon Bedrock", models: "Claude, Llama", who: "Everyone", ready: true },
+  { id: "bedrock", mark: <AwsMark className="h-[18px] w-[18px]" />, name: "Amazon Bedrock", models: "Claude, Llama", who: "Everyone", ready: true },
   { id: "vertex", mark: <BrandLogo name="gemini" className="h-[18px] w-[18px] text-[#4285F4]" />, name: "Google Vertex AI", models: "Gemini 3 Pro", who: "Research", ready: true },
   { id: "openrouter", mark: <BrandLogo name="openrouter" className="h-[18px] w-[18px] text-[#6467F2]" />, name: "OpenRouter", models: "DeepSeek V4 Pro, Kimi K2", who: "Engineering", ready: true }
 ];
