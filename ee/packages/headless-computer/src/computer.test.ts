@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { createFakeProvider } from "@openwork/sandbox/testing"
 import { SandboxError } from "@openwork/sandbox"
-import { Computers } from "./computer.js"
+import { Computers, PAUSED_RECHECK_MS } from "./computer.js"
 import { DesktopError } from "./desktop.js"
 import { createHash } from "node:crypto"
 import type { RunSpec, SandboxHandle, SandboxProvider } from "@openwork/sandbox"
@@ -185,14 +185,65 @@ test("a computer pauses from its stored time after the process that used it is g
   const restarted = new Computers({ provider: f.provider, idlePauseMs: 60_000, keepDays: 1, pauses }, { readFile: async () => ({ text: "" }) })
   await restarted.pauseIdle("stored")
   assert.equal((await f.provider.inspect(box)).state, "stopped")
-  assert.equal(due.has("stored"), false)
+  // Paused, it stays due for another look, much later than an idle period.
+  assert.ok((due.get("stored") ?? 0) >= before + PAUSED_RECHECK_MS)
   // A paused computer is never woken to check it.
   const starts = f.provider.fake.count("start")
   pauses.set("stored", 0)
   await restarted.pauseIdle("stored")
   assert.equal(f.provider.fake.count("start"), starts)
-  assert.equal(due.has("stored"), false)
+  assert.ok((due.get("stored") ?? 0) >= before + PAUSED_RECHECK_MS)
   await used.delete("stored")
+  assert.equal(due.has("stored"), false)
+})
+
+test("a paused computer that something other than the runner woke is paused again at its next look", async () => {
+  const f = fixture()
+  const due = new Map<string, number>()
+  const pauses = { set: (sessionId: string, at: number) => { due.set(sessionId, at) }, clear: (sessionId: string) => { due.delete(sessionId) } }
+  const options = { provider: f.provider, idlePauseMs: 60_000, keepDays: 1, pauses }
+  const used = new Computers(options, { readFile: async () => ({ text: "" }) })
+  const box = await used.vm("woken")
+  await used.pauseIdle("woken")
+  assert.equal((await f.provider.inspect(box)).state, "stopped")
+  // Woken behind the runner's back: no command, view or turn of the runner's, so nothing reschedules its pause.
+  await f.provider.start(box, { timeoutMs: 1000 })
+  const before = Date.now()
+  // The look comes from a process that never used the computer, as after an idle chat is put away.
+  const later = new Computers(options, { readFile: async () => ({ text: "" }) })
+  await later.pauseIdle("woken")
+  assert.equal((await f.provider.inspect(box)).state, "stopped")
+  assert.ok((due.get("woken") ?? 0) >= before + PAUSED_RECHECK_MS)
+  // Gone: nothing is left to look at.
+  await f.provider.destroy(box, { timeoutMs: 1000 })
+  await later.pauseIdle("woken")
+  assert.equal(due.has("woken"), false)
+})
+
+test("an idle check runs no command on a computer that was paused in the meantime, and says what it found", async t => {
+  const commands: string[] = []
+  const provider = createFakeProvider({ onRun(spec) { commands.push(spec.command); return { exitCode: 0, stdout: "0", stderr: "" } } })
+  const due = new Map<string, number>()
+  const lines: string[] = []
+  t.mock.method(console, "log", (line: unknown) => { lines.push(String(line)) })
+  const computers = new Computers({ provider, idlePauseMs: 10, keepDays: 1, pauses: { set: (id, at) => { due.set(id, at) }, clear: id => { due.delete(id) } } }, { readFile: async () => ({ text: "" }) })
+  const box = await computers.vm("paused")
+  // The person pauses it; the idle timer set by their last use is still running.
+  await provider.stop(box, { timeoutMs: 1000 })
+  const before = Date.now()
+  computers.release("paused")
+  await until(() => lines.some(line => line.includes("idle pause")))
+  assert.deepEqual(commands, [], "a command would wake the paused computer")
+  assert.equal(provider.fake.count("start"), 0)
+  assert.ok((due.get("paused") ?? 0) >= before + PAUSED_RECHECK_MS)
+  assert.match(lines.find(line => line.includes("idle pause")) ?? "", /"sessionId":"paused","outcome":"stopped"/)
+  // Running and idle, the same check pauses it and says so.
+  await provider.start(box, { timeoutMs: 1000 })
+  lines.length = 0
+  await computers.pauseIdle("paused")
+  assert.equal((await provider.inspect(box)).state, "stopped")
+  assert.match(lines.find(line => line.includes("idle pause")) ?? "", /"outcome":"paused"/)
+  await computers.delete("paused")
 })
 
 test("a provider that can neither pause nor stop leaves an idle computer running, with nothing left due", async () => {
