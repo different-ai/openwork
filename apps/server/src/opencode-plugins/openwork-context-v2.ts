@@ -31,6 +31,13 @@ type Context = Omit<CloudSkillContext, "session"> & {
   };
 };
 
+/** Why the host refused a call, so the model can correct the call instead of guessing from a status code. */
+async function refusalReason(response: Response): Promise<string> {
+  const body: unknown = await response.json().catch(() => null);
+  const reason = body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error.trim() : "";
+  return reason ? `: ${reason.slice(0, 500)}` : "";
+}
+
 // Separate credentials authorize app reads, sidebar group changes, inert
 // automation proposals, Drive file transfers and Gmail or Outlook drafts the
 // person approves, and conversation-scoped browser and computer operations.
@@ -148,7 +155,7 @@ export default {
                 } : {}),
               }),
             });
-            if (!response.ok) throw new Error(`OpenWork ${name === "openwork_execute" ? "command" : "read"} failed (${response.status})`);
+            if (!response.ok) throw new Error(`OpenWork ${name === "openwork_execute" ? "command" : "read"} failed (${response.status})${await refusalReason(response)}`);
             return { content: [{ type: "text", text: await response.text() }] };
           },
         });
