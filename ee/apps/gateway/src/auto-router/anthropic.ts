@@ -12,6 +12,7 @@ import type { AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import { contentText, isJsonObject, type AutoRouteInfo, type JsonObject } from "./chat.js"
 import type { ReasoningPayload } from "./reasoning-store.js"
 import type { AutoTranslator } from "./protocol.js"
+import { objectToolSchema } from "./tool-schema.js"
 
 /** Receives reasoning state to keep for the tool calls it preceded. */
 export type RememberReasoning = (toolCallIds: string[], payload: ReasoningPayload) => void
@@ -155,7 +156,7 @@ export function toAnthropicBody(body: JsonObject, input: {
     const tools = body.tools.filter(isJsonObject).flatMap((tool) => {
       const fn = isJsonObject(tool.function) ? tool.function : null
       if (tool.type !== "function" || !fn || typeof fn.name !== "string") return []
-      return [{ name: fn.name, ...(typeof fn.description === "string" ? { description: fn.description } : {}), input_schema: isJsonObject(fn.parameters) ? fn.parameters : { type: "object", properties: {} } }]
+      return [{ name: fn.name, ...(typeof fn.description === "string" ? { description: fn.description } : {}), input_schema: objectToolSchema(fn.parameters) }]
     })
     if (tools.length) next.tools = tools
   }
