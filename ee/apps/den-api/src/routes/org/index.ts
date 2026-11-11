@@ -35,6 +35,7 @@ import { registerModelsAnalyticsRoutes } from "./models-analytics.js"
 import { registerLibraryUsageRoutes } from "./library-usage.js"
 import { registerOrgHeadlessSessionRoutes } from "./headless-sessions.js"
 import { registerOrgWorkbotUsageRoutes } from "./workbot-usage.js"
+import { registerOrgRemoteDeviceRoutes } from "./remote-devices.js"
 import { registerOrgLlmProviderRoutes } from "./llm-providers.js"
 import { registerOrgMemberRoutes } from "./members.js"
 import { registerOrgPermissionRoutes } from "./permissions.js"
@@ -104,6 +105,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerLibraryUsageRoutes(app)
   registerOrgHeadlessSessionRoutes(app)
   registerOrgWorkbotUsageRoutes(app)
+  registerOrgRemoteDeviceRoutes(app)
   registerOrgScimRoutes(app)
   registerOrgSsoRoutes(app)
   registerOrgInvitationRoutes(app)

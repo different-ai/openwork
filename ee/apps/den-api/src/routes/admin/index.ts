@@ -56,6 +56,7 @@ import { registerAdminOpportunitiesRoute } from "./opportunities.js"
 import { registerAdminServiceReadinessRoutes } from "./services.js"
 import { registerAdminOrganizationDetailRoutes } from "./organization-detail.js"
 import { registerAdminSandboxOrganizationRoutes } from "./sandbox-organizations.js"
+import { registerAdminRemoteDeviceRoutes } from "./remote-devices.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
 import {
@@ -1409,6 +1410,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
   registerAdminOpportunitiesRoute(app)
   registerAdminServiceReadinessRoutes(app)
   registerAdminSandboxOrganizationRoutes(app)
+  registerAdminRemoteDeviceRoutes(app)
   app.post(
     "/v1/admin/admins",
     describeRoute({

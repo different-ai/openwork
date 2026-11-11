@@ -831,6 +831,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  remoteDevices: {
+    label: "Devices",
+    description: "One list of the computers a person can reach through OpenWork: their own Macs and PCs running OpenWork Desktop, Workbot's cloud computers, and virtual computers registered for them or for the whole organization (Freestyle or Daytona VMs, Mac sandboxes). Shown in Settings > Devices on Desktop and on Workbot's Devices page, with whether each is online and what it needs. Off, both lists are hidden and desktops stop reporting; computer use, remote tasks and Workbot's computer work as before.",
+    category: "computerUse",
+    added: "2026-11-10",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/remote-devices/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   remoteSessionPush: {
     label: "Desktop: start tasks from other computers right away",
     description: "A task sent to this person's desktop from another computer, Workbot or an agent starts within a second or two instead of up to a minute later. Den tells the desktop the moment the task is queued over the runner's event stream; the desktop still checks every minute as a fallback.",

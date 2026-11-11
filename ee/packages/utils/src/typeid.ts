@@ -151,6 +151,8 @@ export const idTypesMapNameToPrefix = {
   denInstance: "dni",
   workbotTeamSetting: "wts",
   workbotUsageDay: "wud",
+  remoteDevice: "rdv",
+  remoteDeviceEvent: "rde",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

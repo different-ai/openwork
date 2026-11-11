@@ -721,6 +721,16 @@
               ],
               "description": "Desktop: computer use on remote computers: Use a Linux cloud computer with its browser and desktop in OpenWork Web, or connect a VM from Desktop. Configured and conversation-owned desktops open directly when enabled, including follow-ups and internal session renewal. Take over and Stop stay available. Renders DEN_FEATURE_REMOTE_COMPUTERS."
             },
+            "remoteDevices": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Devices: One list of the computers a person can reach through OpenWork: their own Macs and PCs running OpenWork Desktop, Workbot's cloud computers, and virtual computers registered for them or for the whole organization (Freestyle or Daytona VMs, Mac sandboxes). Shown in Settings > Devices on Desktop and on Workbot's Devices page, with whether each is online and what it needs. Off, both lists are hidden and desktops stop reporting; computer use, remote tasks and Workbot's computer work as before. Renders DEN_FEATURE_REMOTE_DEVICES."
+            },
             "remoteSessionPush": {
               "enum": [
                 "",

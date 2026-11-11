@@ -204,6 +204,14 @@
       "development": "./src/den/desktop-policies.ts",
       "default": "./src/den/desktop-policies.ts"
     },
+    "./den/remote-devices": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/remote-devices.d.ts",
+        "default": "./src/den/remote-devices.ts"
+      },
+      "development": "./src/den/remote-devices.ts",
+      "default": "./src/den/remote-devices.ts"
+    },
     "./den/connect-diagnostics": {
       "types": {
         "openwork-build": "./dist/types/src/den/connect-diagnostics.d.ts",
