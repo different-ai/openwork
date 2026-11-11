@@ -85,6 +85,10 @@ Then quit the app fully and open it again.
   OpenAI and other models. You can switch models in the same conversation.
 - The app's own tools (threads, automations, artifacts and the rest) are
   offered to every model.
+- **[Smart Routers](/ai-gateway/auto-model-routing)** you can use are listed
+  after your models as `openwork/smart-<router name>-<4 characters>`. Smart
+  picks the model and thinking level for each prompt, so
+  `model_reasoning_effort` doesn't apply to them.
 - **Web search** isn't available through AI Gateway: it runs on OpenAI's side.
 - The app names conversations with its own OpenAI model. That request isn't
   one of your models, so AI Gateway refuses it; conversations may keep a
