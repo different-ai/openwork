@@ -73,7 +73,7 @@ export function SharedAccessNotice(props: { access: AutomationAccess; onTakeOver
         </span>
       </span>
       {manage && props.onTakeOver ? (
-        <Button type="button" size="sm" variant="outline" disabled={props.busy} onClick={props.onTakeOver} data-automation-take-over>
+        <Button type="button" size="sm" variant="outline" aria-label="Take over this Automation" disabled={props.busy} onClick={props.onTakeOver} data-automation-take-over>
           Take over
         </Button>
       ) : null}

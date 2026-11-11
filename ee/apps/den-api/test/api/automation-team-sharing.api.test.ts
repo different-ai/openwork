@@ -234,6 +234,31 @@ test("a manager takes it over: it becomes theirs, paused, and the team still see
   assert.equal((await asOlive("PATCH", `/v1/automations/${pinned}`, { name: "Olive again" })).status, 403)
 })
 
+test("when the owner leaves the organization, a manager on the team takes the Automation over", async () => {
+  const liam = await den.newMember(admin, orgId, "Liam Leaver")
+  const asLiam = den.as(liam, orgId)
+  assert.equal((await asAdmin("PATCH", `/v1/teams/${salesTeam}`, { memberIds: [olive.memberId, tess.memberId, liam.memberId] })).status, 200)
+  const orphan = await createAutomation(asLiam, { name: "Liam's renewals report" })
+  assert.equal((await asLiam("PUT", sharePath(salesTeam, orphan), { access: "manage" })).status, 200)
+
+  const removed = await asAdmin("DELETE", `/v1/members/${liam.memberId}`)
+  assert.equal(removed.status < 300, true, summary(removed))
+
+  // The team still has it, and it cannot run for an owner who is gone.
+  const stranded = await asTess("GET", `/v1/automations/${orphan}`)
+  assert.equal(stranded.status, 200, summary(stranded))
+  assert.equal(field(stranded.body, "access", "role"), "manage")
+  assert.equal(field(stranded.body, "access", "owner", "name"), "Liam Leaver")
+
+  const taken = await asTess("POST", `/v1/automations/${orphan}/take-over`)
+  assert.equal(taken.status, 200, summary(taken))
+  assert.equal(field(taken.body, "automation", "ownerMemberId"), tess.memberId)
+  const resumed = await asTess("POST", `/v1/automations/${orphan}/activate`)
+  assert.equal(resumed.status, 200, summary(resumed))
+  assert.equal(field(resumed.body, "automation", "state"), "active")
+  assert.equal(field(resumed.body, "automation", "needsAttentionReason"), null)
+})
+
 test("an archived Automation is its owner's only, and deleting a team removes its shares", async () => {
   const doomed = await createAutomation(asOlive, { name: "Old report" })
   assert.equal((await asOlive("PUT", sharePath(salesTeam, doomed), { access: "manage" })).status, 200)
