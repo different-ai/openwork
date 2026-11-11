@@ -77,7 +77,7 @@ test("main permission replies preserve once/always/reject bodies and HTTP failur
       const body = JSON.stringify({ reply });
       const path = "/proxy/workspace/ws_fixture/opencode/permission/per_fixture/reply?directory=%2Ffixture%2Fa";
       const response = await handler(owner, `${server.url}${path}`, {
-        method: "POST", body, transferId: reply,
+        method: "POST", body, transferId: reply, cancellable: true,
         headers: { Authorization: "Bearer fixture-only", "x-opencode-directory": "/fixture/a", "Content-Type": "application/json" },
       });
       assert.equal(response.status, reply === "reject" ? 409 : 200);
@@ -94,7 +94,7 @@ test("main permission replies preserve once/always/reject bodies and HTTP failur
   } finally { await server.close(); }
 });
 
-test("main cancellation admission matches only permission reply POSTs and the existing read/archive/Stop allowlist", async () => {
+test("main cancellation admission uses explicit POST opt-in and preserves GET/PATCH with query strings", async () => {
   const signals = [];
   const registry = createDesktopTransferRegistry();
   const handler = await mainFetchHandler(registry, async (_url, init) => {
@@ -103,18 +103,27 @@ test("main cancellation admission matches only permission reply POSTs and the ex
   });
   const owner = { sender: Object.assign(new EventEmitter(), { id: 1 }) };
   for (const path of ["/permission/per_1/reply", "/workspace/ws_1/opencode/permission/per_1/reply", "/proxy/w/ws_1/opencode/permission/per_1/reply?directory=x", "/session/ses_1/abort"]) {
-    await handler(owner, `http://127.0.0.1${path}`, { method: "post", transferId: "fixture" });
+    await handler(owner, `http://127.0.0.1${path}`, { method: "post", transferId: "fixture", cancellable: true });
     assert.ok(signals.at(-1) instanceof AbortSignal);
   }
   for (const path of ["/permission", "/permissions/per_1/reply", "/notpermission/per_1/reply", "/permission//reply", "/permission/per%2F1/reply", "/permission/per_1/reply/", "/permission/per_1/reply/extra", "/permission/per_1/reply-other", "/permission/per_1/extra/reply", "/session/ses_1/prompt_async", "/session/ses_1/command", "/question/que_1/reply", "/output?next=/permission/per_1/reply"]) {
     await handler(owner, `http://127.0.0.1${path}`, { method: "POST", transferId: "fixture" });
     assert.equal(signals.at(-1), undefined, path);
   }
+  for (const path of ["/permission/per_1/reply", "/session/ses_1/abort"]) {
+    await handler(owner, `http://127.0.0.1${path}`, { method: "POST", transferId: "fixture" });
+    assert.equal(signals.at(-1), undefined, path);
+  }
   await handler(owner, "http://127.0.0.1/permission/per_1/reply", { method: "DELETE", transferId: "fixture" });
   assert.equal(signals.at(-1), undefined);
+  for (const method of ["GET", "PATCH"]) {
+    await handler(owner, "http://127.0.0.1/session/ses_1?directory=%2Ffixture", { method, transferId: "fixture", cancellable: false });
+    assert.ok(signals.at(-1) instanceof AbortSignal);
+  }
+  assert.equal(owner.sender.listenerCount("destroyed"), 0);
 });
 
-test("main admits cancellation only for the new desktop device client, and forwards redirect refusal", async () => {
+test("main honors explicit cancellation without inspecting URL paths or JSON client bodies, and forwards redirect refusal", async () => {
   const observed = [];
   const registry = createDesktopTransferRegistry();
   const handler = await mainFetchHandler(registry, async (_url, init) => {
@@ -122,17 +131,23 @@ test("main admits cancellation only for the new desktop device client, and forwa
     return Response.json(true);
   });
   const owner = { sender: Object.assign(new EventEmitter(), { id: 1 }) };
-  for (const endpoint of ["code", "token"]) {
-    await handler(owner, `https://den.example.test/api/auth/device/${endpoint}`, {
-      method: "POST", body: JSON.stringify({ client_id: "openwork-desktop-device" }), transferId: endpoint, redirect: "error",
+  for (const path of ["/api/auth/device/code", "/api/auth/device/token", "/ordinary?query=value"]) {
+    await handler(owner, `https://den.example.test${path}`, {
+      method: "POST", body: "not-json", transferId: "explicit", redirect: "error", cancellable: true,
     });
     assert.ok(observed.at(-1).signal instanceof AbortSignal);
     assert.equal(observed.at(-1).redirect, "error");
   }
-  for (const body of ['{"client_id":"openwork-cli"}', '{"client_id":"openwork-opencode-plugin"}', '{}', 'invalid']) {
+  for (const body of ['{"client_id":"openwork-desktop-device"}', '{"client_id":"openwork-cli"}', '{"client_id":"openwork-opencode-plugin"}', '{}', 'invalid']) {
     await handler(owner, "https://den.example.test/api/auth/device/token", { method: "POST", body, transferId: "legacy" });
     assert.equal(observed.at(-1).signal, undefined);
     assert.equal(observed.at(-1).redirect, undefined);
+  }
+  for (const cancellable of [false, "true", 1]) {
+    await handler(owner, "https://den.example.test/api/auth/device/token", {
+      method: "POST", body: '{"client_id":"openwork-desktop-device"}', transferId: "not-opted-in", cancellable,
+    });
+    assert.equal(observed.at(-1).signal, undefined);
   }
   await handler(owner, "https://den.example.test/api/auth/device/token/extra", {
     method: "POST", body: '{"client_id":"openwork-desktop-device"}', transferId: "other", redirect: "follow",
@@ -157,7 +172,7 @@ test("main cancellation closes a held device poll without replay or leaking its 
   const handler = await mainFetchHandler(registry);
   try {
     const pending = handler(owner, `${server.url}/api/auth/device/token`, {
-      method: "POST", body: '{"client_id":"openwork-desktop-device","device_code":"private-fixture-only"}', transferId: "device",
+      method: "POST", body: '{"client_id":"openwork-desktop-device","device_code":"private-fixture-only"}', transferId: "device", cancellable: true,
     });
     const rejected = assert.rejects(pending, { name: "AbortError" });
     await arrived.promise;
@@ -166,6 +181,7 @@ test("main cancellation closes a held device poll without replay or leaking its 
     await closed.promise;
     assert.equal(calls, 1);
     assert.equal(registry.cancel(owner, "device"), false);
+    assert.equal(owner.sender.listenerCount("destroyed"), 0);
   } finally { registry.cancel(owner, "device"); await server.close(); }
 });
 
@@ -197,7 +213,7 @@ for (const phase of ["headers", "body"]) {
     });
     try {
       const pending = handler(owner, `${server.url}/workspace/ws_1/opencode/permission/per_1/reply`, {
-        method: "POST", body: '{"reply":"once"}', transferId: "permission",
+        method: "POST", body: '{"reply":"once"}', transferId: "permission", cancellable: true,
       });
       const rejected = assert.rejects(pending, { name: "AbortError" });
       await arrival;

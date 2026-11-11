@@ -12,7 +12,6 @@ export type DeviceLoginStatus = {
   message?: string;
   email?: string;
   org?: { id: string; name: string };
-  runner?: "unknown";
 };
 export type DeviceLoginStartOptions = { baseUrl?: string; apiBaseUrl?: string; force?: boolean; requestId?: string };
 type Dependencies = {
@@ -165,7 +164,7 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
               const identity = await deps.enroll({ token: payload.access_token, destination, attempt: flow.attempt, signal: AbortSignal.any([flow.controller.signal, AbortSignal.timeout(Math.max(1, Math.ceil(deadline - now())))]) });
               if (!live()) break;
               // Enrollment already committed synchronously; do not undo it on a subsequent cancel.
-              status = { state: "signed_in", email: identity.email, org: identity.org, runner: "unknown" };
+              status = { state: "signed_in", email: identity.email, org: identity.org };
               current = null;
               flow.controller.abort();
               return;

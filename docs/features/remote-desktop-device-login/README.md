@@ -103,17 +103,34 @@ ELECTRON_RUN_AS_NODE=1 "$APP/openwork" \
 Substitute both bundle/executable names for other flavors; the relative CLI path
 stays the same. Do not set Node mode when starting the GUI.
 
-Open the printed verification URL on the other computer. Sign in, compare the
-code, select the organization and approve only if you started the request.
-An organization is required. The remote desktop adopts that explicit selection,
-without its usual in-app organization chooser, and the existing runner bridge
-handles machine registration. The final line reports the account and organization;
-`Runner: unknown` means runner state is not exposed to this control action, not
-that registration succeeded.
+The command prints a full browser link on its own line, for example:
+
+```text
+To sign in, open this link in a browser on any device:
+https://den.example.test/device?user_code=ABCDEFGH
+Then check the code ABCD-EFGH and choose the organization.
+Waiting for approval…
+```
+
+Open the printed link on any device. Sign in, compare the code and approve only
+if you started the request. With multiple organizations, nothing is preselected:
+choose an organization before Approve becomes available. With one organization,
+it is shown without a picker. The remote desktop adopts the approved organization,
+without its usual in-app organization chooser. Success reports only the account
+and organization:
+
+```text
+Signed in as person@example.test in Example organization.
+```
+
+This confirms desktop sign-in, not remote execution readiness.
 
 The shell uses the desktop's existing authenticated `127.0.0.1` control bridge.
 The desktop must be running; a server-only process without a desktop renderer
-cannot enroll itself. `OPENWORK_UI_CONTROL_DISCOVERY` can select one explicit
+cannot enroll itself. If the app cannot be reached, start OpenWork and run the
+command again (on macOS: `open -a OpenWork`; use the installed flavor's app name
+when applicable). An unsafe profile is reported separately; starting the app does
+not bypass owner-only custody checks. `OPENWORK_UI_CONTROL_DISCOVERY` can select one explicit
 profile's discovery file; otherwise the production profile is used, never an
 implicit development-profile fallback. The command checks POSIX ownership and
 permissions, refuses symlinks/untrusted directories/non-loopback destinations,
@@ -173,13 +190,13 @@ provider and original authentication time. It does not change SSO policy.
 
 ## Watch and limits
 
-Watch code-start/decision/redemption failures, desktop enrollment failures and
-existing runner registration health. Never log request bodies, device codes or
-bearers. An approved organization is the initial active org, **not an org-locked
+Watch code-start/decision/redemption failures and desktop enrollment failures.
+Never log request bodies, device codes or bearers. An approved organization is the initial active org, **not an org-locked
 credential**. This is a new general Den session, not OAuth access/refresh tokens,
 DPoP, VM attestation or an independently named/revocable device.
 
-Follow-ups remain separate: terminal `logout` and `status` commands, OAuth device
+Follow-ups remain separate: reporting remote execution readiness in the terminal,
+`logout` and `status` commands, OAuth device
 authorization, DPoP-bound audience/org claims, rotating refresh tokens with reuse
 detection, Devices/revoke UI, and the Better Auth security upgrade. No schema
 migration is part of this feature.
