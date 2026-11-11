@@ -15,6 +15,7 @@ import { LayoutStack } from "../settings-layout";
 import { SettingsPanel, SettingsPanelDescription, SettingsPanelHeading, SettingsPanelTitle } from "../shell/panel";
 import { getSettingsTabLabel } from "../shell/settings-page";
 import { CredentialHealthStatus, LocalProviderStatus, ProviderList, ProviderMeta, ProviderRow, ProviderStatus, ProviderTile } from "./provider-rows";
+import type { DeviceProviderShareRow } from "../provider-share/device-provider-share";
 
 export type ConnectedProvider = {
   id: string;
@@ -71,6 +72,9 @@ export type AiSettingsViewProps = {
   /** Providers on this device the engine chat runs on cannot use, from the server's skipped list. */
   localProviderStates?: ReadonlyMap<string, LocalProviderEngineState>;
   onOpenDen?: () => void;
+  /** Den feature shareDeviceProvider: which keys on this device can be shared with the organization, or already are. */
+  shareRows?: ReadonlyMap<string, DeviceProviderShareRow>;
+  onShareProvider?: (provider: { id: string; name: string }) => void;
 };
 
 function deviceSourceLabel(source: ConnectedProvider["source"]) {
@@ -100,8 +104,10 @@ export function GatewayConnectRow({ provider, busy, onConnect, onCancel }: {
   );
 }
 
-export function aiProvidersDescription(input: { signedIn: boolean; organizationName?: string }) {
-  const base = "Models your agents can use in this workspace. Keys you add here stay on this device.";
+export function aiProvidersDescription(input: { signedIn: boolean; organizationName?: string; canShare?: boolean }) {
+  const base = input.canShare
+    ? "Models your agents can use in this workspace. Your keys stay on this device unless you share them."
+    : "Models your agents can use in this workspace. Keys you add here stay on this device.";
   return input.signedIn
     ? `${base} Providers from ${input.organizationName || "your organization"} are included automatically and run through the OpenWork Gateway.`
     : `${base} Sign in to OpenWork to also get the providers your organization already pays for.`;
@@ -128,6 +134,8 @@ export function AiSettingsView(props: AiSettingsViewProps) {
   const claudeProblem = claudeAgentProblem(props.claudeAgent);
   const deviceCount = local.length + Number(showAuto) + Number(claudeConnected);
   const rowsBusy = props.busy || props.providerAuthBusy || props.disconnectingProviderId !== null;
+  const organizationLabel = props.organizationName || "your organization";
+  const shareState = (providerId: string) => props.shareRows?.get(providerId)?.state ?? null;
   const needsCredentialRecovery = (providerId: string) => providerHealth(providerId) === "rejected"
     && props.localProviderStates?.get(providerId) !== "managed_by_organization"
     && props.localProviderStates?.get(providerId) !== "not_on_engine";
@@ -136,7 +144,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
     <SettingsPanel>
       <SettingsPanelHeading className="max-w-xl">
         <SettingsPanelTitle>{getSettingsTabLabel("ai")}</SettingsPanelTitle>
-        <SettingsPanelDescription>{aiProvidersDescription({ signedIn, organizationName: props.organizationName })}</SettingsPanelDescription>
+        <SettingsPanelDescription>{aiProvidersDescription({ signedIn, organizationName: props.organizationName, canShare: Boolean(props.shareRows?.size) })}</SettingsPanelDescription>
       </SettingsPanelHeading>
       <Button className="shrink-0 self-start" disabled={locked || props.busy || props.providerAuthBusy || (!ready && !props.claudeAgent)} onClick={() => void props.onOpenProviderAuth()}>
         {locked ? <Lock className="size-4" /> : <Plus className="size-4" />}Connect a provider
@@ -152,7 +160,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           <h2 id="ai-providers-device" className="text-base font-medium text-dls-text">On this device</h2>
           {ready ? <span className="text-xs text-muted-foreground">{deviceCount === 1 ? "1 provider" : `${deviceCount} providers`}</span> : null}
         </div>
-        <p className="text-sm text-muted-foreground">{signedIn ? "Signed in or pasted by you. Keys never leave this device and only you can disconnect them." : "Works without an account. Keys you paste never leave this device and only you can disconnect them."}</p>
+        <p className="text-sm text-muted-foreground">{signedIn ? props.shareRows?.size ? "Signed in or pasted by you. A key stays on this device unless you share it, and only you can disconnect it." : "Signed in or pasted by you. Keys never leave this device and only you can disconnect them." : "Works without an account. Keys you paste never leave this device and only you can disconnect them."}</p>
       </div>
 
       {loading && !props.connectedProviders.length ? <div role="status" aria-label={t("settings.loading_providers")} className="grid gap-2">{[0, 1].map((key) => <div key={key} className="h-16 animate-pulse rounded-2xl bg-muted" />)}</div> : null}
@@ -192,12 +200,15 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           tile={<ProviderTile providerId={provider.id} name={provider.name} />}
           name={provider.name}
           status={<LocalProviderStatus state={props.localProviderStates?.get(provider.id)} organizationName={props.organizationName} credentialHealth={providerHealth(provider.id)} />}
-          meta={<ProviderMeta id={provider.id} parts={[deviceSourceLabel(provider.source), props.organizationProviderIds?.has(provider.id) ? `also available from ${props.organizationName || "your organization"}` : null, needsCredentialRecovery(provider.id) && provider.source === "env" ? "Update the environment credential, then restart the workspace." : null]} />}
+          meta={<ProviderMeta id={provider.id} parts={[deviceSourceLabel(provider.source), shareState(provider.id) === "shared" ? `also available from ${organizationLabel}` : props.organizationProviderIds?.has(provider.id) ? `also available from ${organizationLabel}` : null, needsCredentialRecovery(provider.id) && provider.source === "env" ? "Update the environment credential, then restart the workspace." : null]} />}
           actions={needsCredentialRecovery(provider.id) && provider.source === "env"
             ? <span className="text-xs text-muted-foreground" title="Update the environment credential, then restart the workspace.">Update environment</span>
             : needsCredentialRecovery(provider.id)
             ? <Button variant="outline" disabled={rowsBusy || !ready || locked || !props.onReplaceProviderKey} onClick={() => void props.onReplaceProviderKey?.(provider.id)}>Replace key</Button>
-            : <Button variant="ghost" disabled={rowsBusy || !ready || !props.canDisconnectProvider(provider)} onClick={() => void props.onDisconnectProvider(provider.id)}>{props.disconnectingProviderId === provider.id ? t("settings.disconnecting") : props.canDisconnectProvider(provider) ? t("settings.disconnect") : t("settings.managed_by_env")}</Button>}
+            : <>
+              {shareState(provider.id) === "shareable" && props.onShareProvider ? <Button variant="outline" data-testid={`share-provider-${provider.id}`} disabled={rowsBusy} onClick={() => props.onShareProvider?.({ id: provider.id, name: provider.name })}>Share with {organizationLabel}</Button> : null}
+              <Button variant="ghost" disabled={rowsBusy || !ready || !props.canDisconnectProvider(provider)} onClick={() => void props.onDisconnectProvider(provider.id)}>{props.disconnectingProviderId === provider.id ? t("settings.disconnecting") : props.canDisconnectProvider(provider) ? t("settings.disconnect") : t("settings.managed_by_env")}</Button>
+            </>}
         />)}
         {disabled.map((provider) => <ProviderRow
           key={`disabled:${provider.id}`}

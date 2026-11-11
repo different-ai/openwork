@@ -3530,9 +3530,14 @@ function createRoutes(
     if (!session) throw new ApiError(401, "no_session", "Sign in to OpenWork first");
     if (session.orgId !== body.orgId) throw new ApiError(403, "organization_mismatch", "The active organization changed");
     return jsonResponse(await shareDeviceProvider({
-      // After "Confirm it's you" the app holds a newer sign-in for the same account and Den.
-      session: typeof body.token === "string" ? { ...session, token: body.token.trim() } : session,
+      session,
+      // The share service verifies this belongs to the same account, before reading a key.
+      verifiedToken: typeof body.token === "string" ? body.token.trim() : undefined,
       providerId: ctx.params.id,
+      isCurrentSession: () => {
+        const current = cloudProviderSync.currentSession();
+        return current?.baseUrl === session.baseUrl && current.orgId === session.orgId && current.token === session.token;
+      },
       readApiKey: async (providerId) => (await readLocalProviderApiKeys()).get(providerId) ?? null,
     }));
   });

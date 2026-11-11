@@ -18,6 +18,7 @@ import {
 } from "../../react-app/domains/session/surface/model-removal-inventory";
 export type { ModelRemovalInventory } from "../../react-app/domains/session/surface/model-removal-inventory";
 import { activationStateSchema, type ActivationEventRequest, type ActivationState } from "@openwork/types/den/activation";
+import { deviceShareOptionsSchema, type DeviceShareOptions } from "@openwork/types/den/device-provider-share";
 import {
   remoteSessionStatusResultSchema,
   type RemoteSessionStatusRequest,
@@ -3470,6 +3471,27 @@ export function createDenClient(options: {
         return getDenOrgGatewayProviders(payload);
       } catch (error) {
         if (!options.requireCompleteInventory && error instanceof DenApiError && [404, 405, 501].includes(error.status)) return [];
+        throw error;
+      }
+    },
+
+    /**
+     * What the caller may share from this device with the organization (feature
+     * shareDeviceProvider). null when the feature is off or Den predates it, so
+     * the app offers nothing. Never carries a key.
+     */
+    async getDeviceShareOptions(orgId: string, providerIds: readonly string[]): Promise<DeviceShareOptions | null> {
+      try {
+        const payload = await requestJson<unknown>(baseUrls, `/v1/inference-providers/device-share-options?providerIds=${encodeURIComponent(providerIds.join(","))}`, {
+          method: "GET",
+          token,
+          organizationId: orgId,
+          cache: "no-store",
+        });
+        const options = deviceShareOptionsSchema.safeParse(payload);
+        return options.success ? options.data : null;
+      } catch (error) {
+        if (error instanceof DenApiError && [400, 404, 405, 501].includes(error.status)) return null;
         throw error;
       }
     },

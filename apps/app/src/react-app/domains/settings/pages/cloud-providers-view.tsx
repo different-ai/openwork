@@ -28,6 +28,7 @@ import type {
 } from "@/react-app/domains/connections/provider-auth/store";
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
 import { credentialHealthKey, useProviderCredentialHealth, type ProviderCredentialHealth } from "@/react-app/domains/connections/provider-auth/credential-health";
+import type { OrganizationShareEmptyState } from "@/react-app/domains/settings/provider-share/device-provider-share";
 
 /** "Everyone", the team names, or a member count; null when Den did not say. */
 export function providerAccessLabel(access: DenOrgLlmProviderAccess | undefined): string | null {
@@ -98,6 +99,9 @@ export type CloudProvidersViewProps = {
   onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
   onOpenDen?: () => void;
   onOpenModelConnections?: () => void;
+  /** Den feature shareDeviceProvider: what to offer while nothing is shared with the organization. */
+  shareEmptyState?: OrganizationShareEmptyState;
+  onShareProvider?: (provider: { id: string; name: string }) => void;
 };
 
 export function CloudProvidersView({
@@ -119,6 +123,8 @@ export function CloudProvidersView({
   onConnectGatewayProvider,
   onOpenDen,
   onOpenModelConnections,
+  shareEmptyState,
+  onShareProvider,
 }: CloudProvidersViewProps) {
   const { activeOrganization, isSignedIn } = useCloudSession();
   const [busy, setBusy] = React.useState(false);
@@ -277,6 +283,8 @@ export function CloudProvidersView({
       onRetry={retryProvider}
       onOpenDen={onOpenDen}
       onOpenModelConnections={onOpenModelConnections}
+      shareEmptyState={shareEmptyState}
+      onShareProvider={onShareProvider}
       lastVerifiedAt={serverSync?.lastVerifiedAt}
       additionalCount={gatewayConnectProviders.length}
       additionalRows={gatewayConnectProviders.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={onConnectGatewayProvider} />)}

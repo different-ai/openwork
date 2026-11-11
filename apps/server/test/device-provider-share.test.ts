@@ -96,7 +96,7 @@ test("Den's refusals of the create come back as what the person can do, never wi
     { create: { status: 403, body: { error: "reauth", reason: "fresh_auth_required", message: "For security, confirm it's you before changing workspace settings." } }, expected: [403, "verification_required"] },
     { create: { status: 403, body: { error: "forbidden" } }, expected: [403, "forbidden"] },
     { create: { status: 403, body: { error: "gateway_not_enabled" } }, expected: [409, "gateway_unavailable"] },
-    { create: { status: 500, body: { error: "internal_error", message: `failed for ${DEVICE_KEY}` } }, expected: [502, "share_failed"] },
+    { create: { status: 500, body: { error: "internal_error", message: `failed for ${DEVICE_KEY}` } }, expected: [502, "share_unconfirmed"] },
     { create: { status: 201, body: { inferenceProvider: {} } }, expected: [502, "share_unconfirmed"] },
   ];
   for (const entry of cases) {
@@ -112,4 +112,60 @@ test("an unreachable Den shares nothing", async () => {
   const error = await refusal(shareDeviceProvider({ session, providerId: "anthropic", fetchImpl, readApiKey: async () => DEVICE_KEY }));
   assert.deepEqual([error.status, error.code], [502, "den_unreachable"]);
   assert.ok(!error.message.includes(DEVICE_KEY));
+});
+
+test("an older sign-in never even reads the device key before verification", async () => {
+  const answer = shareable();
+  answer.body.verificationRequired = true;
+  const { calls, fetchImpl } = den({ options: answer });
+  let reads = 0;
+  const error = await refusal(shareDeviceProvider({ session, providerId: "anthropic", fetchImpl, readApiKey: async () => { reads++; return DEVICE_KEY; } }));
+  assert.equal(error.code, "verification_required");
+  assert.equal(reads, 0);
+  assert.equal(calls.length, 1);
+});
+
+test("a verification token cannot substitute a different account", async () => {
+  for (const matches of [true, false]) {
+    const { calls, fetchImpl: providerFetch } = den({ options: shareable(), create: { status: 201, body: { inferenceProvider: { id: "ipr_verified", name: "Anthropic" } } } });
+    const fetchImpl = Object.assign(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith("/v1/me")) {
+        const isOriginal = new Headers(init?.headers).get("authorization") === `Bearer ${session.token}`;
+        return Response.json({ user: { id: isOriginal || matches ? "usr_original" : "usr_other" } });
+      }
+      return providerFetch(url, init);
+    }, { preconnect: fetch.preconnect });
+    let reads = 0;
+    const run = shareDeviceProvider({ session, providerId: "anthropic", verifiedToken: "fresh-token", fetchImpl, readApiKey: async () => { reads++; return DEVICE_KEY; } });
+    if (matches) {
+      assert.equal((await run).inferenceProviderId, "ipr_verified");
+      assert.equal(reads, 1);
+      assert.ok(calls.every((call) => call.authorization === "Bearer fresh-token"));
+    } else {
+      assert.equal((await refusal(run)).code, "account_mismatch");
+      assert.equal(reads, 0);
+      assert.equal(calls.length, 0);
+    }
+  }
+});
+
+test("switching the active account or organization during the read sends nothing", async () => {
+  let current = true;
+  const { calls, fetchImpl } = den({ options: shareable() });
+  const error = await refusal(shareDeviceProvider({ session, providerId: "anthropic", fetchImpl, isCurrentSession: () => current,
+    readApiKey: async () => { current = false; return DEVICE_KEY; },
+  }));
+  assert.equal(error.code, "organization_mismatch");
+  assert.deepEqual(calls.map((call) => call.method), ["GET"]);
+});
+
+test("a lost create response is unconfirmed, never a claim that nothing was shared", async () => {
+  const { fetchImpl: optionsFetch } = den({ options: shareable() });
+  const fetchImpl = Object.assign(async (url: string | URL | Request, init?: RequestInit) => {
+    if (init?.method === "POST") throw new Error("response lost after commit");
+    return optionsFetch(url, init);
+  }, { preconnect: fetch.preconnect });
+  const error = await refusal(shareDeviceProvider({ session, providerId: "anthropic", fetchImpl, readApiKey: async () => DEVICE_KEY }));
+  assert.equal(error.code, "share_unconfirmed");
+  assert.ok(!error.message.includes("Nothing was shared"));
 });

@@ -5,7 +5,6 @@ import type { Hono } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
-import { requireFeature } from "../../features.js"
 import { gatewayManagementUnavailable } from "../../gateway-deployment.js"
 import { deviceShareProviders } from "../../llm/device-provider-share.js"
 import { getModelsDevProviders } from "../../llm/models-dev.js"
@@ -39,11 +38,13 @@ export function registerOrgDeviceProviderShareRoutes<T extends { Variables: OrgR
     }),
     orgMemberRoute(),
     userSessionRoute(),
-    requireFeature("shareDeviceProvider"),
     queryValidator(querySchema),
     async (c) => {
       const actor = c.get("organizationContext")
       if (!actor) return c.json({ error: "organization_not_found" }, 404)
+      // Not requireFeature(): Settings reads this on every visit, which is not a use
+      // of the feature. The app reports the use when a person actually shares.
+      if (!actor.features.shareDeviceProvider) return c.json({ error: "feature_disabled", feature: "shareDeviceProvider" }, 404)
       c.header("Cache-Control", "no-store")
       const organizationId = actor.organization.id
       const blocker = !(await hasPermission(c, "gateway_providers.manage")) ? "no_permission" as const

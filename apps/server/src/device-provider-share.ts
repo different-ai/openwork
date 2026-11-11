@@ -36,6 +36,10 @@ type Input = {
   /** The API key saved on this computer for a provider id, or null. */
   readApiKey: (providerId: string) => Promise<string | null>;
   signal?: AbortSignal;
+  /** A newer sign-in from the same person's browser verification. Never changes the destination or organization. */
+  verifiedToken?: string;
+  /** Checked again before reading and before sending the key, after asynchronous work. */
+  isCurrentSession?: () => boolean;
 };
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -66,7 +70,10 @@ async function denRequest(input: Input, path: string, init: { method: "GET" | "P
       redirect: "error",
     });
   } catch {
-    throw new ApiError(502, "den_unreachable", "Could not reach OpenWork Cloud. Nothing was shared.");
+    // A lost POST response is not evidence that the transaction rolled back.
+    throw init.method === "POST"
+      ? new ApiError(502, "share_unconfirmed", "OpenWork Cloud did not confirm the share. Check AI Providers before trying again.")
+      : new ApiError(502, "den_unreachable", "Could not reach OpenWork Cloud. Nothing was shared.");
   }
   const body: unknown = await response.json().catch(() => null);
   return { status: response.status, body };
@@ -83,11 +90,31 @@ function refused(status: number, body: unknown): ApiError {
 }
 
 export async function shareDeviceProvider(input: Input): Promise<DeviceProviderShareResult> {
+  const assertCurrent = () => {
+    if (input.isCurrentSession?.() === false) throw new ApiError(409, "organization_mismatch", "Your account or organization changed. Nothing was shared.");
+  };
+  assertCurrent();
   const providerId = input.providerId.trim();
   if (!DEVICE_PROVIDER_ID.test(providerId) || ORGANIZATION_PROVIDER_ID.test(providerId)) {
     throw new ApiError(400, "invalid_provider", "A provider connected on this device is required");
   }
 
+  // A browser reauthentication token is not an authority to substitute another
+  // account. Verify both against the same Den before reading any device key.
+  if (input.verifiedToken && input.verifiedToken !== input.session.token) {
+    const verified = { ...input, session: { ...input.session, token: input.verifiedToken } };
+    const [originalUser, verifiedUser] = await Promise.all([
+      denRequest(input, "/v1/me", { method: "GET" }),
+      denRequest(verified, "/v1/me", { method: "GET" }),
+    ]);
+    const userId = (body: unknown) => record(body) && record(body.user) && typeof body.user.id === "string" ? body.user.id : null;
+    const originalId = userId(originalUser.body);
+    if (originalUser.status !== 200 || verifiedUser.status !== 200 || !originalId || originalId !== userId(verifiedUser.body)) {
+      throw new ApiError(403, "account_mismatch", "Verify with the account already signed in on this device.");
+    }
+    input = verified;
+  }
+  assertCurrent();
   const asked = await denRequest(input, `/v1/inference-providers/device-share-options?providerIds=${encodeURIComponent(providerId)}`, { method: "GET" });
   if (asked.status !== 200) throw refused(asked.status, asked.body);
   const options = deviceShareOptionsSchema.safeParse(asked.body);
@@ -101,15 +128,19 @@ export async function shareDeviceProvider(input: Input): Promise<DeviceProviderS
   if (provider?.status === "shared") throw new ApiError(409, "already_shared", "Your organization already has this provider.");
   if (provider?.status !== "shareable") throw new ApiError(409, "not_shareable", "This provider can't be shared from this device. Add it in AI Gateway instead.");
 
-  // Only now, with Den's yes, read the key.
+  if (options.data.verificationRequired) throw new ApiError(403, "verification_required", "Confirm it's you in your browser, then share.");
+  // Only now, with Den's yes and the same account/organization, read the key.
+  assertCurrent();
   const apiKey = (await input.readApiKey(providerId))?.trim();
   if (!apiKey) throw new ApiError(409, "no_device_key", "No API key for this provider is saved on this device.");
+  assertCurrent();
 
   const name = deviceShareProviderName(provider.name, providerId);
   const created = await denRequest(input, "/v1/inference-providers", {
     method: "POST",
     body: { name, providerId, credential: { kind: "api_key", secret: apiKey }, allMembers: true },
   });
+  if (created.status >= 500) throw new ApiError(502, "share_unconfirmed", "OpenWork Cloud did not confirm the share. Check AI Providers before trying again.");
   if (created.status !== 201) throw refused(created.status, created.body);
   const inferenceProvider = record(created.body) && record(created.body.inferenceProvider) ? created.body.inferenceProvider : null;
   const inferenceProviderId = inferenceProvider && typeof inferenceProvider.id === "string" ? inferenceProvider.id : null;

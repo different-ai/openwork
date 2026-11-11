@@ -104,3 +104,21 @@ test("an older sign-in is told verification comes first", { timeout: 60_000 }, a
   assert.equal(refused.status, 403, summary(refused))
   assert.equal(field(refused.body, "error"), "reauth")
 })
+
+test("sharing grants never cross organizations and a member cannot upload a device key", { timeout: 60_000 }, async () => {
+  const denied = await memberCall("POST", "/v1/inference-providers", {
+    name: "Not mine to share", providerId: "anthropic", credential: { kind: "api_key", secret: DEVICE_KEY }, allMembers: true,
+  });
+  assert.equal(denied.status, 403, summary(denied));
+  const other = await den.createOrg(await den.signUp("Morgan Owner"), "Other workspace");
+  assert.equal((await den.setFeature(other.orgId, "shareDeviceProvider", true)).status, 200);
+  const otherCall = den.as(other.owner, other.orgId);
+  const options = await otherCall("GET", `${OPTIONS}?providerIds=openai`);
+  assert.equal(options.status, 200, summary(options));
+  assert.deepEqual(list(field(options.body, "providers")), [{ providerId: "openai", name: "OpenAI", status: "shareable" }], "the first organization's existing OpenAI provider cannot leak into this one");
+  const catalog = await otherCall("GET", "/v1/inference-providers?scope=usable");
+  assert.deepEqual(list(field(catalog.body, "inferenceProviders")), []);
+  const foreign = await den.request(member.token, "GET", `${OPTIONS}?providerIds=openai`, { orgId: other.orgId });
+  assert.ok(foreign.status === 403 || foreign.status === 404, summary(foreign));
+  assert.ok(!JSON.stringify(foreign.body).includes(DEVICE_KEY));
+});
