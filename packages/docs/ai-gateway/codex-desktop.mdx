@@ -1,0 +1,101 @@
+---
+title: "Use the Codex app with AI Gateway"
+description: "Run Codex in the ChatGPT desktop app on your organization's models: save your AI Gateway API key in the macOS Keychain and add a provider to ~/.codex/config.toml."
+keywords: ["Codex app", "Codex desktop", "ChatGPT desktop", "config.toml", "Keychain", "AI Gateway API key", "3rd party tools"]
+---
+
+Codex in the ChatGPT desktop app can use the models your organization gives you,
+through an [AI Gateway API key](/ai-gateway/third-party-tools). The app, the
+[Codex CLI](/ai-gateway/codex) and the IDE extension read the same
+`~/.codex/config.toml`, so setting up one sets up all of them.
+
+OpenAI models get Codex's requests as they are. Other models (Claude, Gemini
+and the rest) work too: AI Gateway translates for them, including the app's own
+tools.
+
+## Set it up (macOS)
+
+Create a key in **My Library › Models** and pick **Codex app** under **Start
+using this key**. Already have a key? Open its menu and select **Set up**.
+
+1. **Save the key in the Keychain.** An app opened from the Dock doesn't
+   always see variables from your shell profile, so the app reads the key from
+   the macOS Keychain instead. Run this in Terminal:
+
+   ```bash
+   security add-generic-password -U -a "$USER" -s openwork-ai-gateway -w "<your API key>"
+   ```
+
+   `-U` replaces a key saved earlier, so run it again to change the key.
+
+2. **Add the provider to Codex.** Choose a model (and a thinking level, for
+   models that have levels) on the page, then put the configuration it shows at
+   the top of `~/.codex/config.toml`, replacing any `model` or `model_provider`
+   lines already there. Provider settings only work in this file, not in a
+   project's `.codex/config.toml`. It looks like this:
+
+   ```toml
+   model_provider = "openwork"
+   model = "openwork/gpt-5.5-k3f9"
+   model_reasoning_effort = "high"
+
+   [model_providers.openwork]
+   name = "OpenWork"
+   base_url = "https://<your AI Gateway>/api/v1/codex"
+   wire_api = "responses"
+
+   [model_providers.openwork.auth]
+   command = "/usr/bin/security"
+   args = ["find-generic-password", "-s", "openwork-ai-gateway", "-w"]
+   ```
+
+3. **Quit ChatGPT completely** with **⌘Q** (closing the window isn't enough),
+   then open it again. The app reads the key and `config.toml` when it starts.
+4. **Pick your model** in the model menu under Codex's message box.
+
+The Codex CLI works with this configuration too. Its background server reads
+the key the same way; run `codex app-server daemon restart` after changing
+`config.toml`.
+
+### Already set up the Codex CLI?
+
+If you followed the [Codex CLI steps](/ai-gateway/codex) (the key in
+`~/.zshrc` and `echo $OPENWORK_API_KEY` in the `auth` block), the app can use
+them as they are: it loads your shell profile for Codex when it starts. Quit it
+with **⌘Q** and open it again after changing the key. If the app answers
+`401 Unauthorized`, switch to the Keychain steps above.
+
+### On Windows
+
+Set the key with `setx OPENWORK_API_KEY "<your API key>"`, sign out of Windows
+and back in (so apps started from the Start menu see it), and use this `auth`
+block in `%USERPROFILE%\.codex\config.toml`:
+
+```toml
+[model_providers.openwork.auth]
+command = "powershell"
+args = ["-NoProfile", "-Command", "Write-Output $env:OPENWORK_API_KEY"]
+```
+
+Then quit the app fully and open it again.
+
+## What works
+
+- Chat, running commands, editing files, and multi-turn conversations, on
+  OpenAI and other models. You can switch models in the same conversation.
+- The app's own tools (threads, automations, artifacts and the rest) are
+  offered to every model.
+- **Web search** isn't available through AI Gateway: it runs on OpenAI's side.
+- The app names conversations with its own OpenAI model. That request isn't
+  one of your models, so AI Gateway refuses it; conversations may keep a
+  default title.
+
+## When it doesn't work
+
+| The app shows | What to do |
+| --- | --- |
+| `401 Unauthorized` / `invalid_api_key` | The app started without the key. Check `security find-generic-password -s openwork-ai-gateway -w` prints it in Terminal, then quit ChatGPT with **⌘Q** and open it again. Also check the key isn't revoked or expired. |
+| Old models, an old key, or a `config.toml` change not picked up | The app keeps what it read when it started. Quit with **⌘Q**, not by closing the window. If it still uses the old settings, open Activity Monitor, end any remaining `ChatGPT` or `Codex` processes, and open the app again. |
+| `model_not_found: … is not one of your OpenWork models` | The model name isn't one of yours anymore. Copy the configuration again from the page, then quit and reopen the app. |
+| `input_schema does not support oneOf, allOf, or anyOf at the top level` | Claude refused one of the app's tools. AI Gateway now reshapes those tools for Claude, Gemini and Bedrock; if you still see it, tell your admin which model you used. |
+| `404 … not available for this organization` | 3rd party tools are turned off for your organization. Ask an admin. |

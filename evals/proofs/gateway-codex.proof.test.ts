@@ -115,3 +115,45 @@ test("a member creates a key, picks Codex, and Codex's requests with that config
     expect(world.anthropicRequests().at(-1)).toMatchObject({ model: "claude-haiku-5-5", authenticated: true });
   });
 });
+
+test("a member picks the Codex app: the key goes to the macOS Keychain and the same config reads it from there", async ({ world, user, probe, step, evidence }) => {
+  await step("the member creates a key and picks Codex app under Start using this key", async () => {
+    await user.see({ testId: "library-gateway-api-keys" }, { timeoutMs: 60_000 });
+    await user.click({ testId: "gateway-api-keys-create" });
+    await user.see({ testId: "gateway-api-key-dialog" }, { timeoutMs: 15_000 });
+    await user.type({ role: "textbox", label: "Name" }, "Codex app");
+    await user.click({ testId: "gateway-api-key-submit" });
+    await user.see({ testId: "gateway-api-key-start" }, { timeoutMs: 30_000 });
+    await user.see({ text: "Every model, in Codex in the ChatGPT app" });
+    await user.click({ testId: "gateway-tool-codex-app" });
+    await user.see({ testId: "gateway-tool-codex-app-config" }, { timeoutMs: 30_000 });
+  });
+
+  await step("the steps show the Keychain command with the key, a config whose auth reads the Keychain, and quitting the app", async () => {
+    const keychain = (await probe.dom('[data-testid="gateway-tool-codex-app-keychain"]')).elements[0]?.text ?? "";
+    const text = (await probe.dom('[data-testid="gateway-tool-codex-app-config"]')).elements[0]?.text ?? "";
+    const config = tomlValues(text);
+    await user.see({ text: /Quit ChatGPT completely/ });
+    evidence.recordAssertionEvidence(
+      "the Codex app steps",
+      `keychain ${keychain.slice(0, 80)}…; config:\n${text}`,
+      config.base_url === `${world.gatewayUrl}/api/v1/codex` && text.includes('command = "/usr/bin/security"'),
+    );
+    expect(keychain).toMatch(/^security add-generic-password -U -a "\$USER" -s openwork-ai-gateway -w "ow_gw_[^"]+"$/);
+    expect(config.model_provider).toBe("openwork");
+    expect(config.base_url).toBe(`${world.gatewayUrl}/api/v1/codex`);
+    expect(config.wire_api).toBe("responses");
+    expect(config.model).toMatch(/^openwork\/[a-z0-9.-]+-[0-9a-z]{4}$/);
+    expect(text).toContain("[model_providers.openwork.auth]");
+    expect(text).toContain('args = ["find-generic-password", "-s", "openwork-ai-gateway", "-w"]');
+    expect(text).not.toContain("OPENWORK_API_KEY");
+    await user.screenshot();
+
+    // What the Keychain command stores is what the auth command returns: the key works on the endpoint.
+    const key = keychain.replace(/^.* -w "/, "").replace(/"$/, "");
+    const catalog = await world.callAsCodex(key, `${config.base_url}/models?client_version=0.166.0`);
+    const slugs = isRecord(catalog.json) && Array.isArray(catalog.json.models) ? catalog.json.models.filter(isRecord).map((model) => String(model.slug)) : [];
+    expect(catalog.status).toBe(200);
+    expect(slugs).toContain(config.model);
+  });
+});
