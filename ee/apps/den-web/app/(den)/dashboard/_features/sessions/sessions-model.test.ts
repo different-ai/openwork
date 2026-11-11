@@ -36,7 +36,7 @@ import {
 
 const session = (overrides: Partial<MemberSession>): MemberSession => ({
   key: "k", computerId: "cmp_1", computerLabel: "Work laptop", workspaceId: "ws_1", workspaceName: "Docs", sessionId: "ses_1", title: "Task",
-  origin: "remote", reach: "reachable", commandId: "cmd_1", state: "idle", waitingFor: null, pending: null, latestStep: null, updatedAt: 1000, ...overrides,
+  origin: "remote", reach: "reachable", commandId: "cmd_1", state: "idle", waitingFor: null, pending: null, latestStep: null, updatedAt: new Date(1000).toISOString(), ...overrides,
 });
 
 test("each computer says why it reaches less than chosen, or where to change it", () => {
@@ -49,14 +49,23 @@ test("each computer says why it reaches less than chosen, or where to change it"
 
 test("sessions that need the member come first, then the rest, newest first", () => {
   const { needsYou, rest } = groupSessions([
-    session({ key: "old", updatedAt: 10 }),
-    session({ key: "waiting-old", state: "waiting", updatedAt: 5 }),
+    session({ key: "old", updatedAt: new Date(10).toISOString() }),
+    session({ key: "waiting-old", state: "waiting", updatedAt: new Date(5).toISOString() }),
     session({ key: "never", updatedAt: null }),
-    session({ key: "new", state: "running", updatedAt: 30 }),
-    session({ key: "waiting-new", state: "waiting", updatedAt: 20 }),
+    session({ key: "new", state: "running", updatedAt: new Date(30).toISOString() }),
+    session({ key: "waiting-new", state: "waiting", updatedAt: new Date(20).toISOString() }),
   ]);
   assert.deepEqual(needsYou.map((entry) => entry.key), ["waiting-new", "waiting-old"]);
   assert.deepEqual(rest.map((entry) => entry.key), ["new", "old", "never"]);
+});
+
+test("session ordering compares RFC 3339 instants rather than timestamp text", () => {
+  const { rest } = groupSessions([
+    session({ key: "older", updatedAt: "2026-11-11T13:00:00+02:00" }),
+    session({ key: "newer", updatedAt: "2026-11-11T12:00:00Z" }),
+    session({ key: "never", updatedAt: null }),
+  ]);
+  assert.deepEqual(rest.map((entry) => entry.key), ["newer", "older", "never"]);
 });
 
 test("every state has its badge and an unreported one has none", () => {

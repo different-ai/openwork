@@ -509,6 +509,7 @@ test("attach queues one command for the computer, reuses a queued one, and repor
   const again = await call("attach", attachBody, repeated.dependencies)
   assert.equal(again.payload.state, "queued")
   assert.equal(again.payload.commandId, pending.id)
+  assert.equal(again.payload.expiresAt, pending.expiresAt === null ? null : new Date(pending.expiresAt).toISOString())
   assert.equal(repeated.attached.length, 0)
 
   // Reachable already, through an attach or because the caller started it remotely: no new command.
@@ -590,6 +591,22 @@ test("an attached command's receipt is refused once access is gone, while a queu
   assert.deepEqual(receipt.payload.error, failed.error)
 })
 
+test("the member's session timestamps serialize epoch zero and preserve unreported times", async () => {
+  const listed = memberSessionListResponseSchema.parse(await listMemberRemoteSessions(
+    { organizationId, userId },
+    accessDeps({ computers: [openComputer({ lastSeenAt: 0, sessionsUpdatedAt: 0, sessions: [
+      { ...localSession, sessionId: "ses_epoch", updatedAt: 0 },
+    ] }), openComputer({ computerId: "never-reported", lastSeenAt: null, sessionsUpdatedAt: undefined, sessions: [] })] }).dependencies,
+  ))
+  assert.deepEqual(listed.computers.map(({ lastSeenAt, sessionsUpdatedAt }) => ({ lastSeenAt, sessionsUpdatedAt })), [
+    { lastSeenAt: "1970-01-01T00:00:00.000Z", sessionsUpdatedAt: "1970-01-01T00:00:00.000Z" },
+    { lastSeenAt: null, sessionsUpdatedAt: null },
+  ])
+  assert.deepEqual(listed.sessions.map(({ sessionId, updatedAt }) => ({ sessionId, updatedAt })), [
+    { sessionId: "ses_epoch", updatedAt: "1970-01-01T00:00:00.000Z" },
+  ])
+})
+
 test("the member's session list holds their reachable, connecting and attachable sessions, and nothing the settings no longer allow", async () => {
   const runnerComputerId = automationRunnerRowId({ organizationId, ownerMemberId, runnerId: "synthetic-runner" })
   const mine = openComputer({ computerId: runnerComputerId, sessions: [
@@ -614,8 +631,8 @@ test("the member's session list holds their reachable, connecting and attachable
   const listed = memberSessionListResponseSchema.parse(await listMemberRemoteSessions({ organizationId, userId }, accessDeps({ computers: [mine], commands }).dependencies))
   assert.equal(listed.ceiling, "all")
   assert.deepEqual(listed.computers, [{
-    computerId: runnerComputerId, label: "Synthetic OpenCode", platform: "linux", online: true, lastSeenAt: mine.lastSeenAt,
-    supportsAccess: true, access: "all", effectiveAccess: "all", sessionsUpdatedAt: 4_000,
+    computerId: runnerComputerId, label: "Synthetic OpenCode", platform: "linux", online: true, lastSeenAt: new Date(mine.lastSeenAt ?? 0).toISOString(),
+    supportsAccess: true, access: "all", effectiveAccess: "all", sessionsUpdatedAt: "1970-01-01T00:00:04.000Z",
   }])
   assert.deepEqual(listed.sessions.map((session) => [session.sessionId, session.origin, session.reach, session.state, session.commandId]), [
     ["ses_remote", "remote", "reachable", "waiting", remote.id],
@@ -628,7 +645,7 @@ test("the member's session list holds their reachable, connecting and attachable
   const [waiting, attachedRow, , attachable, untitled] = listed.sessions
   assert.deepEqual([waiting?.waitingFor, waiting?.pending, waiting?.latestStep], ["permission", { kind: "permission", requestId: "per_1", title: "Run a command" }, "Ran the tests"])
   assert.deepEqual([attachedRow?.title, attachedRow?.workspaceName, attachedRow?.computerLabel], ["Attached on the computer", "Project", "Synthetic OpenCode"])
-  assert.deepEqual([attachable?.title, attachable?.computerId, attachable?.updatedAt], ["Refactor the parser", runnerComputerId, 5_000])
+  assert.deepEqual([attachable?.title, attachable?.computerId, attachable?.updatedAt], ["Refactor the parser", runnerComputerId, "1970-01-01T00:00:05.000Z"])
   assert.equal(untitled?.title, null)
   assert.equal(new Set(listed.sessions.map((session) => session.key)).size, listed.sessions.length, "keys are unique")
   assert.equal(listed.sessions.filter((session) => session.sessionId === "ses_remote").length, 1, "a remotely started session the computer also reports is listed once")

@@ -76,7 +76,8 @@ export const organizationRemoteSessionSettingsResponseSchema = z.object({
 export type OrganizationRemoteSessionSettingsResponse = z.infer<typeof organizationRemoteSessionSettingsResponseSchema>
 
 const idSchema = z.string().trim().min(1).max(240)
-const timestampSchema = z.number().int().nonnegative()
+// Public Den responses use RFC 3339; the runner protocol keeps its epoch milliseconds.
+const timestampSchema = z.string().datetime({ offset: true })
 
 /** One of the member's own computers that can run or reach sessions. */
 export const memberSessionComputerSchema = z.object({

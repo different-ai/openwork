@@ -12,13 +12,13 @@ const now = Date.parse("2026-11-10T12:10:00Z");
 const base: MemberSession = {
   key: "remote-1", computerId: "cmp_1", computerLabel: "Work laptop", workspaceId: "ws_1", workspaceName: "Docs", sessionId: "ses_1",
   title: "Update the release notes", origin: "remote", reach: "reachable", commandId: "cmd_1", state: "running", waitingFor: null, pending: null,
-  latestStep: "Ran List the release notes", updatedAt: now - 2 * 60_000,
+  latestStep: "Ran List the release notes", updatedAt: new Date(now - 2 * 60_000).toISOString(),
 };
 const local: MemberSession = {
-  ...base, key: "local-1", sessionId: "ses_2", title: "Refactor the importer", origin: "local", reach: "attachable", commandId: null, state: "unknown", latestStep: null, updatedAt: now - 3 * 3_600_000,
+  ...base, key: "local-1", sessionId: "ses_2", title: "Refactor the importer", origin: "local", reach: "attachable", commandId: null, state: "unknown", latestStep: null, updatedAt: new Date(now - 3 * 3_600_000).toISOString(),
 };
 const computer: MemberSessionComputer = {
-  computerId: "cmp_1", label: "Work laptop", platform: "darwin", online: true, lastSeenAt: now, supportsAccess: true, access: "created", effectiveAccess: "created", sessionsUpdatedAt: null,
+  computerId: "cmp_1", label: "Work laptop", platform: "darwin", online: true, lastSeenAt: new Date(now).toISOString(), supportsAccess: true, access: "created", effectiveAccess: "created", sessionsUpdatedAt: null,
 };
 
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
@@ -108,9 +108,9 @@ test("Connect hands back the session it was pressed on, and a session keeps one 
 });
 
 test("sessions that wait come first under Needs you, each with what it waits for", () => {
-  const permission: MemberSession = { ...base, key: "waits-permission", state: "waiting", waitingFor: "permission", updatedAt: now - 60 * 60_000, latestStep: null,
+  const permission: MemberSession = { ...base, key: "waits-permission", state: "waiting", waitingFor: "permission", updatedAt: new Date(now - 60 * 60_000).toISOString(), latestStep: null,
     pending: { kind: "permission", requestId: "per_1", title: "Run pnpm test in ~/work" } };
-  const question: MemberSession = { ...base, key: "waits-question", state: "waiting", waitingFor: "question", updatedAt: now - 60_000, latestStep: null,
+  const question: MemberSession = { ...base, key: "waits-question", state: "waiting", waitingFor: "question", updatedAt: new Date(now - 60_000).toISOString(), latestStep: null,
     pending: { kind: "question", requestId: "que_1", question: "Which branch should I use?", options: ["main", "dev"], multiple: false, custom: false, questionCount: 1 } };
   const html = renderToStaticMarkup(<SessionsList sessions={[base, permission, local, question]} {...rows} />);
   const page = text(html);

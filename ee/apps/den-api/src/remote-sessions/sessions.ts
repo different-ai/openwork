@@ -116,7 +116,7 @@ function commandSession(
     computerLabel: computer ? computerLabel(computer) : null,
     origin: command.kind === "attach" ? "local" as const : "remote" as const,
     commandId: command.id,
-    updatedAt: command.updatedAt,
+    updatedAt: new Date(command.updatedAt).toISOString(),
   }
   if (command.status !== "delivered") {
     const workspaceId = command.targetWorkspaceId
@@ -156,7 +156,7 @@ function newestFirst(left: MemberSession, right: MemberSession): number {
   if (left.updatedAt === right.updatedAt) return left.key.localeCompare(right.key)
   if (left.updatedAt === null) return 1
   if (right.updatedAt === null) return -1
-  return right.updatedAt - left.updatedAt
+  return Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
 }
 
 export function memberSessionComputers(
@@ -169,9 +169,9 @@ export function memberSessionComputers(
     label: computerLabel(computer),
     platform: computer.platform,
     online: computerOnline(computer, now),
-    lastSeenAt: computer.lastSeenAt,
+    lastSeenAt: computer.lastSeenAt === null ? null : new Date(computer.lastSeenAt).toISOString(),
     ...sessionAccessOf(computer, policy),
-    sessionsUpdatedAt: computer.sessionsUpdatedAt ?? null,
+    sessionsUpdatedAt: computer.sessionsUpdatedAt == null ? null : new Date(computer.sessionsUpdatedAt).toISOString(),
   }))
 }
 
@@ -207,7 +207,7 @@ export function memberSessionList(input: {
       waitingFor: null,
       pending: null,
       latestStep: null,
-      updatedAt: session.updatedAt,
+      updatedAt: new Date(session.updatedAt).toISOString(),
     })
   }
   return {

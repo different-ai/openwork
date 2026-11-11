@@ -87,7 +87,7 @@ export function sessionsStateLine(sessions: readonly Pick<MemberSession, "state"
 }
 
 function newestFirst(left: MemberSession, right: MemberSession): number {
-  return (right.updatedAt ?? -1) - (left.updatedAt ?? -1);
+  return (right.updatedAt === null ? -1 : Date.parse(right.updatedAt)) - (left.updatedAt === null ? -1 : Date.parse(left.updatedAt));
 }
 
 /** Sessions waiting on the member come first, then everything else; newest first within each. */

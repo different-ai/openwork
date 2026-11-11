@@ -1389,7 +1389,7 @@ async function attachDesktopSession(
     targetWorkspaceId: body.workspaceId,
     targetSessionId: body.sessionId,
   })
-  return jsonResult({ target: "desktop", state: "queued", commandId: command.id, ...identity, expiresAt: command.expiresAt })
+  return jsonResult({ target: "desktop", state: "queued", commandId: command.id, ...identity, expiresAt: command.expiresAt === null ? null : new Date(command.expiresAt).toISOString() })
 }
 
 /** `GET /v1/sessions`: the caller's own sessions across their computers. */

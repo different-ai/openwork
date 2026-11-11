@@ -62,7 +62,7 @@ const page = {
 };
 const list: MemberSessionListResponse = {
   ceiling: "created",
-  computers: [{ computerId: "cmp_1", label: "Work laptop", platform: "darwin", online: true, lastSeenAt: 1, supportsAccess: true, access: "created", effectiveAccess: "created", sessionsUpdatedAt: null }],
+  computers: [{ computerId: "cmp_1", label: "Work laptop", platform: "darwin", online: true, lastSeenAt: new Date(1).toISOString(), supportsAccess: true, access: "created", effectiveAccess: "created", sessionsUpdatedAt: null }],
   sessions: [],
 };
 
@@ -164,7 +164,7 @@ test("Connect names the computer, workspace and session, and reports why it was 
   assert.deepEqual(calls, [{ path: "/v1/remote-sessions/attach", method: "POST", org: "org_1", body: target }]);
   assert.equal(result.state, "attached");
   assert.equal(result.commandId, "cmd_7");
-  const queued = await withDen([{ body: { ...attached, state: "queued", expiresAt: 5 } }], () => attachRemoteSession("org_1", target));
+  const queued = await withDen([{ body: { ...attached, state: "queued", expiresAt: new Date(5).toISOString() } }], () => attachRemoteSession("org_1", target));
   assert.equal(queued.result.state, "queued");
   for (const code of ["feature_disabled", "unknown_computer", "desktop_offline", "desktop_update_required", "session_access_denied", "session_unavailable"]) {
     const refused = await failure(async () => (await withDen([{ status: 409, body: { error: code, message: `Refused: ${code}` } }], () => attachRemoteSession("org_1", target))).result);

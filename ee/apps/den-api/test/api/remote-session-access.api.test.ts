@@ -270,7 +270,7 @@ test("the session a computer reports is attachable for its owner and invisible t
   assert.deepEqual({ ...session, key: "" }, {
     key: "", computerId: laptop.computerId, computerLabel: "Milo's MacBook Pro", workspaceId: WORKSPACE, workspaceName: "Notes",
     sessionId: LOCAL_SESSION, title: "Draft the release notes", origin: "local", reach: "attachable", commandId: null,
-    state: "idle", waitingFor: null, pending: null, latestStep: null, updatedAt: localSession.updatedAt,
+    state: "idle", waitingFor: null, pending: null, latestStep: null, updatedAt: new Date(localSession.updatedAt).toISOString(),
   })
 
   // Another member of the same organization, and its admin and owner, see only their own computers and sessions.
@@ -295,7 +295,7 @@ test("attaching queues one command for that computer, whoever asks again", async
   assert.equal(first.status, 200, summary(first))
   const queued = remoteSessionAttachResponseSchema.parse(first.body)
   assert.deepEqual({ ...queued, commandId: "", expiresAt: 0 }, { target: "desktop", state: "queued", commandId: "", ...attachBody, expiresAt: 0 })
-  assert.ok(queued.expiresAt && queued.expiresAt > Date.now())
+  assert.ok(queued.expiresAt && Date.parse(queued.expiresAt) > Date.now())
   attachCommandId = queued.commandId
 
   const again = remoteSessionAttachResponseSchema.parse((await asMilo("POST", "/v1/remote-sessions/attach", attachBody)).body)
