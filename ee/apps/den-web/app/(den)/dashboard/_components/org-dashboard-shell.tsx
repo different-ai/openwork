@@ -1,6 +1,7 @@
 "use client";
 
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
+import { workbotSettingsInTeams } from "../_lib/workbot-settings-rollout";
 
 import { Popover } from "@base-ui/react/popover";
 import Link from "next/link";
@@ -486,6 +487,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
 
     desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),
+    workbotSettingsInTeams: workbotSettingsInTeams(orgContext),
     workbotEntry: workbot.entry,
     myBot: myAgentAvailable(orgContext),
   });

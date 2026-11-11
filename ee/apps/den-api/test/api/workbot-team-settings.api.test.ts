@@ -7,8 +7,8 @@
  * Workbot on or off (PUT /v1/org/workbot-settings/everyone and a team's `enabled`): a member whose Workbot is off
  * gets `enabled: false` from the session and a refusal from every other /v1/workbot route, from My agent and from
  * their agent's checks; admins keep their settings routes.
- * A team's step limit (`maxSteps`) needs workbotStepLimit as well: without it the write is refused, the view omits
- * it, and the session clears a limit a team gave the member.
+ * A step limit is no longer a setting: a write that carries one is refused, and a limit saved before (for the
+ * organization or in a team's row) is shown nowhere, reaches no member and is dropped on the team's next change.
  * A team's own policy for its members' agents (GET / PUT /v1/org/workbot-settings/teams/:teamId/agent) needs
  * workbotProactive as well: a team follows Everyone's until its first save copies it, its members' agents then
  * follow the team's (My agent, discovery and each wake), and `agent: { inherit: true }` removes it.
@@ -218,22 +218,13 @@ test("a member gets their team's model and name, two teams that differ give the 
   assert.equal(team(after, research).conflictingMemberCount, 0)
 })
 
-test("a team's step limit needs the step limit feature too; its members get it, a conflict gives the organization's", { timeout: 180_000 }, async () => {
+test("a step limit is not a setting any more: a write with one is refused, and one saved before is shown nowhere and reaches no member", { timeout: 180_000 }, async () => {
   const { orgId, owner, call, luna } = await workspace("Steps")
   await setFeature(orgId, true)
   const ada = await den.newMember(owner, orgId, "Steps Ada")
   const ben = await den.newMember(owner, orgId, "Steps Ben")
-  const cal = await den.newMember(owner, orgId, "Steps Cal")
   const short = await den.createTeam(owner, orgId, "Short", [ada.memberId, ben.memberId])
   const long = await den.createTeam(owner, orgId, "Long", [ben.memberId])
-  const setStepLimitFeature = async (enabled: boolean) => {
-    const changed = await den.setFeature(orgId, "workbotStepLimit", enabled)
-    assert.equal(changed.status, 200, summary(changed))
-  }
-  const setEveryones = async (maxSteps: number | null) => {
-    const saved = await call("PUT", "/v1/org/workbot-settings", { maxSteps })
-    assert.equal(saved.status, 200, summary(saved))
-  }
   /** What Workbot is told about one member's step limit; undefined when it is told nothing. */
   const stepLimit = async (member: Member) => {
     const result = await den.request(await den.mintMcpToken(member, orgId), "GET", "/v1/workbot/session")
@@ -241,80 +232,38 @@ test("a team's step limit needs the step limit feature too; its members get it, 
     return field(result.body, "maxSteps")
   }
 
-  // The step limit feature off: the write is refused whole, and the view has no step limit.
-  for (const body of [{ maxSteps: own(100) }, { maxSteps: inherit }, { name: own("Scout"), maxSteps: own(100) }]) {
+  // The write is refused whole: nothing else in it is saved either.
+  for (const body of [{ maxSteps: own(100) }, { maxSteps: inherit }, { maxSteps: 250 }, { name: own("Scout"), maxSteps: own(100) }]) {
     const refused = await call("PUT", `${path}/${short}`, body)
     assert.equal(refused.status, 400, `${JSON.stringify(body)}: ${summary(refused)}`)
-    assert.deepEqual(refused.body, { error: "invalid_request", message: "Workbot's step limit isn't on for this organization.", details: [] })
   }
   assert.deepEqual(await storedRows(short), [])
-  const without = await call("GET", path)
-  assert.deepEqual(field(without.body, "organization"), { model: luna, name: null, enabled: true })
-  assert.deepEqual(team(without, short), { teamId: short, teamName: "Short", memberCount: 2, model: inherit, name: inherit, enabled: inherit, conflictingMemberCount: 0 })
-  assert.equal(await stepLimit(ada), undefined)
 
-  // Both features on: the view carries the organization's limit and each team's.
-  await setStepLimitFeature(true)
-  await setEveryones(500)
-  const initial = await call("GET", path)
-  assert.deepEqual(field(initial.body, "organization"), { model: luna, name: null, enabled: true, maxSteps: 500 })
-  assert.deepEqual(team(initial, short).maxSteps, inherit)
-  assert.deepEqual([await stepLimit(ada), await stepLimit(cal)], [500, 500])
+  // Limits saved while Workbot had a step limit: 500 for the organization, 100 for Short and none for Long.
+  assert.equal((await call("PUT", `${path}/${short}`, { name: own("Scout") })).status, 200)
+  const { db } = await import("../../src/db.js")
+  const organizationId = normalizeDenTypeId("organization", orgId)
+  const [organization] = await db.$primary.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId))
+  const metadata = isRecord(organization?.metadata) ? organization.metadata : {}
+  await db.update(OrganizationTable).set({ metadata: { ...metadata, workbot: { ...(isRecord(metadata.workbot) ? metadata.workbot : {}), maxSteps: 500 } } }).where(eq(OrganizationTable.id, organizationId))
+  await db.update(WorkbotTeamSettingTable).set({ settings: { name: "Scout", maxSteps: 100 } }).where(eq(WorkbotTeamSettingTable.teamId, normalizeDenTypeId("team", short)))
+  await db.insert(WorkbotTeamSettingTable).values({ id: createDenTypeId("workbotTeamSetting"), organizationId, teamId: normalizeDenTypeId("team", long), settings: { maxSteps: 0 } })
 
-  const saved = await call("PUT", `${path}/${short}`, { maxSteps: own(100) })
-  assert.deepEqual(team(saved, short), { teamId: short, teamName: "Short", memberCount: 2, model: inherit, name: inherit, enabled: inherit, maxSteps: own(100), conflictingMemberCount: 0 })
-  assert.deepEqual(team(saved, long).maxSteps, inherit)
-  // Ben's other team follows the organization, so Short's limit is his too.
-  assert.deepEqual([await stepLimit(ada), await stepLimit(ben), await stepLimit(cal)], [100, 100, 500])
+  // Shown nowhere, no conflict for Ben (on both teams), and told to no member.
+  const view = await call("GET", path)
+  assert.deepEqual(field(view.body, "organization"), { model: luna, name: null, enabled: true })
+  assert.deepEqual(team(view, short), { teamId: short, teamName: "Short", memberCount: 2, model: inherit, name: own("Scout"), enabled: inherit, conflictingMemberCount: 0 })
+  assert.deepEqual(team(view, long), { teamId: long, teamName: "Long", memberCount: 1, model: inherit, name: inherit, enabled: inherit, conflictingMemberCount: 0 })
+  assert.equal(field(await call("GET", "/v1/org/workbot-settings").then((read) => read.body), "maxSteps"), undefined)
+  assert.deepEqual([await stepLimit(ada), await stepLimit(ben)], [undefined, undefined])
+  assert.deepEqual(await workbotSession(ada, orgId), { model: luna, name: "Scout" })
 
-  // Ben's teams differ: he gets the organization's. No limit is a value of its own.
-  const differing = await call("PUT", `${path}/${long}`, { maxSteps: own(0) })
-  assert.deepEqual(team(differing, long).maxSteps, own(0))
-  assert.deepEqual([team(differing, short).conflictingMemberCount, team(differing, long).conflictingMemberCount], [1, 1])
-  assert.deepEqual([await stepLimit(ada), await stepLimit(ben)], [100, 500])
-  const agreeing = await call("PUT", `${path}/${long}`, { maxSteps: own(100) })
-  assert.equal(team(agreeing, short).conflictingMemberCount, 0)
-  assert.equal(await stepLimit(ben), 100)
-  // The deployment's default is a team's choice too, not "use the organization's".
-  assert.equal((await call("PUT", `${path}/${long}`, { maxSteps: inherit })).status, 200)
-  assert.deepEqual(team(await call("PUT", `${path}/${short}`, { maxSteps: own(null) }), short).maxSteps, own(null))
-  assert.deepEqual([await stepLimit(ada), await stepLimit(cal)], [null, 500])
-
-  for (const body of [{ maxSteps: 250 }, { maxSteps: own(-1) }, { maxSteps: own(2.5) }, { maxSteps: own(100_001) }, { maxSteps: own("250") }, { maxSteps: { inherit: true, value: 250 } }]) {
-    const invalid = await call("PUT", `${path}/${short}`, body)
-    assert.equal(invalid.status, 400, `${JSON.stringify(body)}: ${summary(invalid)}`)
-  }
-
-  // "Use the organization's" removes the team's limit, and with it the team's row.
-  const cleared = await call("PUT", `${path}/${short}`, { maxSteps: inherit })
-  assert.deepEqual(team(cleared, short).maxSteps, inherit)
-  assert.deepEqual(await storedRows(short), [])
-  assert.equal(await stepLimit(ada), 500)
-
-  // The step limit feature off with only team limits saved: kept, hidden, not counted, and cleared for the
-  // members a team gave one to. A member no limit reached is told nothing.
-  await setEveryones(null)
-  assert.equal((await call("PUT", `${path}/${short}`, { maxSteps: own(100) })).status, 200)
-  assert.equal((await call("PUT", `${path}/${long}`, { maxSteps: own(0) })).status, 200)
-  await setStepLimitFeature(false)
-  assert.deepEqual([await stepLimit(ada), await stepLimit(cal)], [null, undefined])
-  const hidden = await call("PUT", `${path}/${short}`, { name: own("Scout") })
-  assert.deepEqual(field(hidden.body, "organization"), { model: luna, name: null, enabled: true })
-  assert.deepEqual(team(hidden, short), { teamId: short, teamName: "Short", memberCount: 2, model: inherit, name: own("Scout"), enabled: inherit, conflictingMemberCount: 0 })
-  assert.equal(team(hidden, long).conflictingMemberCount, 0)
-  assert.equal((await storedRows(long)).length, 1)
-
-  // On again: the saved team limits are back, also after a save of another setting.
-  await setStepLimitFeature(true)
-  const back = await call("GET", path)
-  assert.deepEqual([team(back, short).maxSteps, team(back, long).maxSteps], [own(100), own(0)])
-  assert.equal(team(back, short).conflictingMemberCount, 1)
-  assert.deepEqual([await stepLimit(ada), await stepLimit(ben), await stepLimit(cal)], [100, null, null])
-
-  // Team settings off: everyone has the organization's limit and no team is read.
-  await setEveryones(250)
-  await setFeature(orgId, false)
-  assert.deepEqual([await stepLimit(ada), await stepLimit(ben), await stepLimit(cal)], [250, 250, 250])
+  // The team's next change drops the retired key from its row; a row left with nothing goes.
+  assert.equal((await call("PUT", `${path}/${short}`, { enabled: own(true) })).status, 200)
+  const [kept] = await db.$primary.select({ settings: WorkbotTeamSettingTable.settings }).from(WorkbotTeamSettingTable).where(eq(WorkbotTeamSettingTable.teamId, normalizeDenTypeId("team", short)))
+  assert.deepEqual(kept?.settings, { name: "Scout", enabled: true })
+  assert.equal((await call("PUT", `${path}/${long}`, { name: inherit })).status, 200)
+  assert.deepEqual(await storedRows(long), [])
 })
 
 /** Every member-facing Workbot route but the session, with what it answers a member whose Workbot is off. */
@@ -569,11 +518,11 @@ test("a team follows Everyone's agent settings until its first save copies them;
   assert.deepEqual(await storedRows(research), [])
 
   // The first save is the override: Everyone's policy and template as they are now, with the change on top.
-  const saved = await call("PUT", agentOf(research), { startHour: 10, sources: { chat: "off" } })
+  const saved = await call("PUT", agentOf(research), { startHour: 10, sources: { calendar: "off" } })
   assert.equal(saved.status, 200, summary(saved))
   assert.equal(saved.headers.get("cache-control"), "no-store")
   assert.equal(field(saved.body, "inherit"), false)
-  const expected = { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS, enabled: true, dailyCap: 5, startHour: 10, sources: { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS.sources, chat: "off" } }
+  const expected = { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS, enabled: true, dailyCap: 5, startHour: 10, sources: { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS.sources, calendar: "off" } }
   assert.deepEqual(field(saved.body, "settings"), expected)
   assert.equal(field(saved.body, "template", "instructions"), "Ignore newsletters.", "Everyone's template is copied with the policy")
   assert.deepEqual(field(saved.body, "template", "responsibilities"), DEFAULT_AGENT_TEMPLATE.responsibilities)
@@ -657,15 +606,18 @@ test("a team's agent change is checked exactly like the organization's, and only
   for (const body of [
     { sources: { connections: { [foreignId]: "everyone" } } },
     { sources: { connections: { emc_01k0000000000000000000000: "off" } } },
-    { sources: { coreConnections: { calendar: [foreignId] } } },
     { sources: { otherConnections: [foreignId] } },
-    { sources: { coreDefaults: { email: foreignId } } },
+    // No longer settings: the calendar's app isn't picked, and mail and chat are read through their connections.
+    { sources: { coreConnections: { calendar: [foreignId] } } },
+    { sources: { coreDefaults: { calendar: foreignId } } },
+    { sources: { email: "off" } },
+    { sources: { chat: "members" } },
     { sources: { toolOverrides: { [foreignId]: { list_issues: "allow" } } } },
     { brief: { text: "Only deadlines." } },
     { startHour: 18, endHour: 9 },
     { leadMinutes: 7 },
     { dailyCap: 50 },
-    { sources: { email: "sometimes" } },
+    { sources: { calendar: "sometimes" } },
     { unknown: true },
     { instructions: "x".repeat(601) },
     { destination: { kind: "slack_channel", connectionId: "emc_01k0000000000000000000000", channel: "C0SHARED" } },

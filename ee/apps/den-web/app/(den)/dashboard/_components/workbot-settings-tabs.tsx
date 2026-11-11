@@ -9,7 +9,7 @@ export function workbotSettingsTabsEnabled(orgContext: DenOrgContext | null | un
   return Boolean(orgContext) && orgFeatureEnabled(orgContext ?? null, "workbotSettingsTabs");
 }
 
-/** General, Agents and Data sources, with one sentence on what the open tab is for: on Manage › Workbot and on a team's (or Everyone's) Workbot section. */
+/** General, Proactive Mode and Connectors, with one sentence on what the open tab is for: on Manage › Workbot and on a team's (or Everyone's) Workbot section. */
 export function WorkbotSettingsTabs({ activeTab, onChange }: { activeTab: WorkbotSettingsTab; onChange: (tab: WorkbotSettingsTab) => void }) {
   return (
     <div data-testid="workbot-settings-tabs">

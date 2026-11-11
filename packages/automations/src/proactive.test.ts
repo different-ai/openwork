@@ -179,8 +179,10 @@ describe("calendar events only wake the agent early", () => {
 
 const SOURCES: AgentPromptSource[] = [
   { id: "calendar", name: "Calendar", via: ["Google Calendar"], instruction: "", lastReadAt: at("2026-10-20T10:45:00") },
-  { id: "email", name: "Email", via: ["Gmail"], instruction: "", lastReadAt: at("2026-10-20T10:45:00") },
-  { id: "chat", name: "Team chat", via: ["Slack"], instruction: "", lastReadAt: null },
+  // Mail and chat are read through their connections: the service says what to read there and how to search since the last read.
+  { id: "emc_google", name: "Google Workspace", via: [], service: "google-workspace", instruction: "", lastReadAt: at("2026-10-20T10:45:00") },
+  { id: "emc_slack", name: "Slack", via: [], service: "slack", instruction: "", lastReadAt: null },
+  { id: "emc_m365", name: "Microsoft 365", via: [], service: "microsoft-365", instruction: "", lastReadAt: at("2026-10-20T10:45:00") },
   { id: "emc_notes", name: "Meeting notes", via: [], instruction: "Use my meeting notes for context and action items.", lastReadAt: null },
 ]
 
@@ -200,8 +202,11 @@ describe("the turn", () => {
     assert.ok(prompt.startsWith(`${AGENT_WAKE_MARKER} Scheduled check.`))
     assert.match(prompt, /A meeting \(calendar event move\) moved to tomorrow at 3:00 PM \(was tomorrow at 2:00 PM\) \(source calendar, id move:1, preset calendar_changes\)/)
     assert.doesNotMatch(prompt, /Quarterly review|Northwind/, "invite text written by outsiders never reaches the prompt")
-    assert.match(prompt, /- email: Email through Gmail: their inbox\. last read today at 10:45 AM \(Gmail search after:\d+\)\./)
-    assert.match(prompt, /- chat: Team chat through Slack: DMs to them, mentions of them and threads they're in\. never read yet\./)
+    assert.match(prompt, /- calendar: Calendar through Google Calendar: their meetings today and tomorrow\. last read today at 10:45 AM \(2026-10-20T14:45:00\.000Z\)\./)
+    assert.match(prompt, /- emc_google: Google Workspace: their inbox first, then anything else there the brief asks for\. last read today at 10:45 AM \(2026-10-20T14:45:00\.000Z; Gmail search after:\d+\)\./)
+    assert.match(prompt, /- emc_slack: Slack: DMs to them, mentions of them and threads they're in\. never read yet\./)
+    assert.match(prompt, /- emc_m365: Microsoft 365: their inbox and Teams chats first, then anything else there the brief asks for\. last read today at 10:45 AM \(2026-10-20T14:45:00\.000Z\)\./)
+    assert.doesNotMatch(prompt, /- (email|chat): /, "mail and chat are not sources of their own")
     assert.match(prompt, /- emc_notes: Meeting notes\. never read yet\. .* The person's instruction for it, in their own words: """Use my meeting notes for context and action items\."""/)
     assert.match(prompt, /Turned on but not readable now, so don't try: Issue tracker \(not connected\)\./)
     assert.match(prompt, /- calendar_changes: /)

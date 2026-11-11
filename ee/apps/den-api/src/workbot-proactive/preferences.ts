@@ -75,7 +75,7 @@ export type StoredSourceChoice = z.infer<typeof storedSourceSchema>
 const storedPreferencesSchema = z.object({
   v: z.literal(1),
   words: agentPreferencesSchema,
-  /** By source id: `calendar`, `email`, `chat`, or a connection id. */
+  /** By source id: `calendar`, or a connection id. Choices saved for `email` or `chat` before they were removed are ignored. */
   sources: z.record(z.string().max(64), storedSourceSchema).default({}),
   log: z.array(storedChangeSchema),
   /**
@@ -314,7 +314,7 @@ export type MemberAgentChangeResult =
       message: string
     }
 
-const ADMIN_PLACE = "An admin can change it in Manage › Workbot."
+const ADMIN_PLACE = "An admin can change it in Workbot's settings."
 
 /** The names of the connections the member's core sources can read from, by connection id. */
 export function sourceConnectionNames(sources: readonly ResolvedSource[]): Map<string, string> {
@@ -435,13 +435,13 @@ export function applyMemberAgentChange(input: {
     if (source.policy === "off" && (wanted.on === true || wanted.instruction || wanted.connectionId)) {
       return { ok: false, status: 400, error: "source_not_allowed", message: `${source.name} isn't allowed for agents in your organization. ${ADMIN_PLACE}` }
     }
-    // "Read my calendar from this connection": only a core source, and only one of the connections the admin allowed.
+    // "Read my calendar from this connection": only the calendar, and only one of the organization's calendar apps.
     const connection = wanted.connectionId ? source.options.find((option) => option.id === wanted.connectionId) : undefined
     if (wanted.connectionId && source.kind === "other") {
-      return { ok: false, status: 400, error: "connection_not_allowed", message: `${source.name} always reads its own connection. Only calendar, email and team chat read from a connection you pick.` }
+      return { ok: false, status: 400, error: "connection_not_allowed", message: `${source.name} always reads its own connection. Only the calendar reads from a connection you pick.` }
     }
     if (wanted.connectionId && !connection) {
-      return { ok: false, status: 400, error: "connection_not_allowed", message: `${source.name} can't read from that connection in your organization. An admin chooses the allowed apps in Manage › Workbot.` }
+      return { ok: false, status: 400, error: "connection_not_allowed", message: `${source.name} can't read from that connection. Choose one of your organization's calendar apps.` }
     }
     if (source.policy === "everyone" && wanted.on === false) {
       return { ok: false, status: 400, error: "source_locked", message: `${source.name} is on for everyone in your organization. ${ADMIN_PLACE}` }

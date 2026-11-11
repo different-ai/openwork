@@ -136,24 +136,28 @@ function guardConnectorTools(scenario: DayScenario, offered: ReadonlySet<string>
 function sourcesFor(scenario: DayScenario, lastReadAt: number | null, anyConnector = false): AgentPromptSource[] {
   return [
     { id: "calendar", name: "Calendar", via: ["Google Calendar"], instruction: "", lastReadAt },
-    { id: "email", name: "Email", via: ["Gmail"], instruction: "", lastReadAt },
-    { id: "chat", name: "Team chat", via: ["Slack"], instruction: "", lastReadAt },
+    // The member's Google Workspace and Slack connections, where mail and chat are read; the scenarios call them `email` and `chat`.
+    { id: "email", name: "Google Workspace", via: [], service: "google-workspace", instruction: "", lastReadAt },
+    { id: "chat", name: "Slack", via: [], service: "slack", instruction: "", lastReadAt },
     ...(scenario.github?.length ? [{ id: "conn_github", name: "GitHub", via: [], instruction: "", lastReadAt }] : []),
     ...(anyConnector ? (scenario.connectors ?? []).map((connector) => ({ id: connector.id, name: connector.name, via: [], instruction: "", lastReadAt })) : []),
   ];
 }
 
 /**
- * What Den's findSource does with a source as step 2 wrote it: its id, its name ("Team chat", "GitHub"), the names
- * people use ("slack", "gmail", "my email"), or the start of another source's name.
+ * What Den's findSource does with a source as step 2 wrote it: its id, its name ("Slack", "GitHub"), the calendar by
+ * its app's name, or the start of a connection's name ("google").
  */
 function resolveSource(source: string, scenario?: DayScenario): string | null {
   const needle = source.trim().toLowerCase().replace(/^my\s+/, "");
   const connector = (scenario?.connectors ?? []).find((entry) => entry.id === needle || entry.name.toLowerCase() === needle || (needle.length > 2 && entry.name.toLowerCase().startsWith(needle)));
   if (connector) return connector.id;
-  const sources: Record<string, string> = { calendar: "calendar", email: "email", chat: "chat", conn_github: "conn_github", "team chat": "chat", github: "conn_github" };
-  const aliases: Record<string, string> = { slack: "chat", teams: "chat", gmail: "email", outlook: "email", mail: "email", inbox: "email", "outlook mail": "email", "google calendar": "calendar", "outlook calendar": "calendar" };
-  return sources[needle] ?? aliases[needle] ?? ("github".startsWith(needle) && needle.length > 0 ? "conn_github" : null);
+  const sources: Record<string, string> = { calendar: "calendar", email: "email", chat: "chat", conn_github: "conn_github", "google workspace": "email", slack: "chat", github: "conn_github" };
+  const aliases: Record<string, string> = { "google calendar": "calendar", "outlook calendar": "calendar" };
+  const named = sources[needle] ?? aliases[needle];
+  if (named) return named;
+  if (!needle) return null;
+  return [["google workspace", "email"], ["slack", "chat"], ["github", "conn_github"]].find(([name]) => name?.startsWith(needle))?.[1] ?? null;
 }
 
 function conversationAt(scenario: DayScenario, sent: readonly DeliveredMessage[], now: number): AgentConversationTurn[] {

@@ -388,12 +388,17 @@ function describeWishes(wishes: AgentPersonWishes): string {
   ].join("\n")
 }
 
+/** The services a connection's prompt line knows how to read: mail and chat live in these, not in sources of their own. */
+export type AgentPromptService = "google-workspace" | "microsoft-365" | "slack"
+
 /** One source the agent may read this pass, as the wake prompt lists it. */
 export type AgentPromptSource = {
-  /** `calendar`, `email`, `chat`, or a connection id: what items name as their source. */
+  /** `calendar`, or a connection id: what items name as their source. */
   id: string
-  /** "Calendar", "Team chat", "Granola". */
+  /** "Calendar", "Slack", "Granola". */
   name: string
+  /** A connection whose service is known, so the prompt can say what to read there and how to search since the last read. */
+  service?: AgentPromptService
   /** The connections it reads through: "Google Calendar", "Slack". */
   via: readonly string[]
   /** The member's instruction for this source, in their own words. */
@@ -405,28 +410,24 @@ export type AgentPromptSource = {
 export type AgentPromptUnavailable = { name: string; why: string }
 
 /** What a source reads by default, so the agent knows where to look without being told how. */
-const SOURCE_SCOPE: Record<AgentCoreSource, string> = {
+const SOURCE_SCOPE: Record<AgentCoreSource | AgentPromptService, string> = {
   calendar: "their meetings today and tomorrow",
-  email: "their inbox",
-  chat: "DMs to them, mentions of them and threads they're in",
-}
-
-function isCoreSource(id: string): id is AgentCoreSource {
-  return id === "calendar" || id === "email" || id === "chat"
+  "google-workspace": "their inbox first, then anything else there the brief asks for",
+  "microsoft-365": "their inbox and Teams chats first, then anything else there the brief asks for",
+  slack: "DMs to them, mentions of them and threads they're in",
 }
 
 /** Search hints that make "since the last read" exact where a provider supports it. */
 function sinceHint(source: AgentPromptSource, at: number) {
-  const via = source.via.join(" ").toLowerCase()
-  if (source.id === "email" && via.includes("gmail")) return ` (Gmail search after:${Math.floor(at / 1000)})`
-  if (source.id === "chat" && via.includes("slack")) return ` (Slack search after:${new Date(at - 86_400_000).toISOString().slice(0, 10)}, then skip anything older than ${new Date(at).toISOString()})`
+  if (source.service === "google-workspace") return ` (${new Date(at).toISOString()}; Gmail search after:${Math.floor(at / 1000)})`
+  if (source.service === "slack") return ` (Slack search after:${new Date(at - 86_400_000).toISOString().slice(0, 10)}, then skip anything older than ${new Date(at).toISOString()})`
   return ` (${new Date(at).toISOString()})`
 }
 
 /** One source as a wake prompt lists it: what it reads, when it was last read (with an exact search hint), the member's instruction. */
 export function describeSource(source: AgentPromptSource, now: number, timeZone: string) {
   const via = source.via.length ? ` through ${source.via.join(" and ")}` : ""
-  const scope = isCoreSource(source.id) ? `: ${SOURCE_SCOPE[source.id]}` : ""
+  const scope = source.id === "calendar" ? `: ${SOURCE_SCOPE.calendar}` : source.service ? `: ${SOURCE_SCOPE[source.service]}` : ""
   const read = source.lastReadAt === null
     ? "never read yet. Take note of what is there; report only what is from today."
     : `last read ${formatWhen(source.lastReadAt, now, timeZone)}${sinceHint(source, source.lastReadAt)}.`
@@ -485,7 +486,8 @@ const itemPresetSchema = z.unknown().transform((value) => {
 const sourceItemSchema = z.object({ source: z.string().trim().min(1).max(64), id: itemIdSchema, preset: itemPresetSchema.optional() })
 /** Items as agents wrote them before sources (responsibility + ref); read so a long-lived session's habit still parses. */
 const legacyItemSchema = z.object({ responsibility: agentResponsibilitySchema, ref: itemIdSchema })
-const LEGACY_SOURCE: Record<AgentResponsibility, AgentCoreSource> = {
+/** `email` names no source any more: Den resolves it to the connection that reads mail when that is one of the check's sources, and drops the item otherwise. */
+const LEGACY_SOURCE: Record<AgentResponsibility, string> = {
   morning_brief: "calendar",
   meeting_prep: "calendar",
   calendar_changes: "calendar",

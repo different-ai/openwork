@@ -18,20 +18,19 @@ import { ServiceReadinessNotice } from "../../_components/service-readiness-noti
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenCombobox } from "../../_components/ui/combobox";
-import { DenSelect } from "../../_components/ui/select";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { effectiveWorkbotModel, isWorkbotModelListed, workbotDisplayName, workbotModelName, workbotModelOptions } from "./workbot-model-options";
-import { useSaveWorkbotModel, useSaveWorkbotStepLimit, useTestWorkbotDefaultModel, useWorkbotSettings } from "./workbot-settings-data";
-import { STEP_LIMIT_HELP, stepLimitChoices, stepLimitLabel, stepLimitValue } from "./workbot-step-limit-options";
+import { useSaveWorkbotModel, useTestWorkbotDefaultModel, useWorkbotSettings } from "./workbot-settings-data";
+import { useSaveWorkbotProactive, useWorkbotProactive } from "./workbot-proactive-data";
+import { AgentCalendarPolicy, calendarStateLine } from "./workbot-proactive-sources";
 import { useWorkbotTeamSettings } from "./workbot-team-settings-data";
 import { workbotTeamsOverridingCount, workbotTeamsOverridingLabel } from "./workbot-team-settings-presentation";
 import { WorkbotProactiveSection } from "./workbot-proactive-section";
 import { WorkbotProactiveHealthSection } from "./workbot-proactive-health";
 import { AGENT_HEALTH_ANCHOR } from "./workbot-agent-scope";
 import { WorkbotSettingsTabs, workbotSettingsTabsEnabled } from "./workbot-settings-tabs";
-import { HelpTip } from "./help-tip";
-import { WORKBOT_SETTING_HELP, workbotSettingsParts, workbotSettingsTabForHash, type WorkbotSettingsTab } from "./workbot-settings-tabs-model";
+import { workbotSettingsParts, workbotSettingsTabForHash, type WorkbotSettingsTab } from "./workbot-settings-tabs-model";
 import { FeatureIntroGate, useFeatureIntroRuntime } from "../_features/feature-intros";
 import { useWorkbotIntroFacts } from "./workbot-intro-facts";
 
@@ -61,14 +60,14 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim() ? error.message : fallback;
 }
 
-function SettingsRow({ label, labelId, help, children }: { label: string; labelId?: string; help?: string | false; children: React.ReactNode }) {
+function SettingsRow({ label, labelId, stateLine, children }: { label: string; labelId?: string; stateLine?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 px-6 py-3">
-      <span className="flex min-w-0 items-center gap-1.5">
+    <div className="px-6 py-3">
+      <div className="flex min-h-6 flex-wrap items-center justify-between gap-3">
         <span id={labelId} className="text-[13px] font-medium text-gray-900">{label}</span>
-        {help ? <HelpTip label={label}>{help}</HelpTip> : null}
-      </span>
-      <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">{children}</div>
+        <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">{children}</div>
+      </div>
+      {stateLine ? <p className="mt-2 text-[13px] text-gray-500">{stateLine}</p> : null}
     </div>
   );
 }
@@ -84,14 +83,12 @@ export function WorkbotSettingsScreen() {
   const canManage = access.canManageModelsSettings;
   const query = useWorkbotSettings(orgId, Boolean(orgId));
   const save = useSaveWorkbotModel(orgId);
-  const saveStepLimit = useSaveWorkbotStepLimit(orgId);
   const modelTest = useTestWorkbotDefaultModel(orgId);
   // With settings per team on, the page says how many teams changed Workbot's settings for their members.
   const teamSettings = useWorkbotTeamSettings(orgId, orgFeatureEnabled(orgContext, "workbotTeamSettings"));
   const teamsOverriding = teamSettings.data ? workbotTeamsOverridingCount(teamSettings.data) : 0;
   const resetTest = modelTest.reset;
   const labelId = useId();
-  const stepLimitLabelId = useId();
   const [draft, setDraft] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ previous: string | null } | null>(null);
@@ -112,8 +109,9 @@ export function WorkbotSettingsScreen() {
   const proactive = orgFeatureEnabled(orgContext, "workbotProactive") && orgContext?.capabilities.workbot === true;
   // Tabs split Workbot's own settings from members' agents and what they read, where there are agents to show.
   const tabs = workbotSettingsTabsEnabled(orgContext) && proactive;
-  // An "i" beside each row's label saying what the setting does.
-  const help = workbotSettingsTabsEnabled(orgContext);
+  // Whether members' agents read the calendar: the calendar setting of Everyone's policy, as a row on General.
+  const agentPolicy = useWorkbotProactive(orgId, proactive && Boolean(orgId));
+  const saveAgentPolicy = useSaveWorkbotProactive(orgId);
   const [tab, setTab] = useState<WorkbotSettingsTab>("general");
   const parts = workbotSettingsParts(tabs, tab);
   // "See the last 7 days" on Everyone's page links to a section under Members' agents.
@@ -133,20 +131,6 @@ export function WorkbotSettingsScreen() {
       setSaved({ previous });
     } catch (error) {
       setSaveError(errorMessage(error, "Couldn't save the default model. Try again."));
-    }
-  }
-
-  // Saved on pick; the select shows the pick while it saves and goes back to the saved limit if that fails.
-  const savedStepLimit = settings?.maxSteps;
-  const stepLimit = saveStepLimit.isPending && saveStepLimit.variables !== undefined ? saveStepLimit.variables : savedStepLimit;
-
-  async function storeStepLimit(maxSteps: number | null) {
-    setSaveError(null);
-    setSaved(null);
-    try {
-      await saveStepLimit.mutateAsync(maxSteps);
-    } catch (error) {
-      setSaveError(errorMessage(error, "Couldn't save the step limit. Try again."));
     }
   }
 
@@ -189,7 +173,7 @@ export function WorkbotSettingsScreen() {
             />
           ) : (
             <div id="workbot-default-model" className="scroll-mt-6 divide-y divide-gray-100 overflow-hidden rounded-2xl border border-gray-100 bg-white" data-section="workbot-default-model">
-              <SettingsRow label="Default model" labelId={labelId} help={help && WORKBOT_SETTING_HELP.model}>
+              <SettingsRow label="Default model" labelId={labelId}>
                 {!settings ? (
                   <DenSkeleton className="h-10 w-80 max-w-full" data-testid="workbot-model-skeleton" />
                 ) : (
@@ -232,7 +216,7 @@ export function WorkbotSettingsScreen() {
                 )}
               </SettingsRow>
               {settings ? (
-                <SettingsRow label="Completion check" help={help && WORKBOT_SETTING_HELP.modelTest}>
+                <SettingsRow label="Completion check">
                   <span role="status" className="text-[13px] text-gray-600" data-testid="workbot-model-test-result">
                     {modelTest.isPending ? "Testing a short paid request"
                       : modelTest.isError ? errorMessage(modelTest.error, "Couldn't test the model. Try again.")
@@ -255,27 +239,7 @@ export function WorkbotSettingsScreen() {
                   </dl>
                 </details>
               ) : null}
-              {stepLimit !== undefined && savedStepLimit !== undefined ? (
-                <SettingsRow label="Step limit" labelId={stepLimitLabelId} help={help && STEP_LIMIT_HELP}>
-                  <div className="w-40" title={STEP_LIMIT_HELP} data-testid="workbot-step-limit">
-                    <DenSelect
-                      aria-labelledby={stepLimitLabelId}
-                      menuWidth="trigger"
-                      value={stepLimitValue(stepLimit)}
-                      disabled={!canManage || saveStepLimit.isPending}
-                      onChange={(event) => {
-                        const choice = stepLimitChoices(savedStepLimit).find((entry) => stepLimitValue(entry) === event.target.value);
-                        if (choice !== undefined && choice !== savedStepLimit) void storeStepLimit(choice);
-                      }}
-                    >
-                      {stepLimitChoices(savedStepLimit).map((choice) => (
-                        <option key={stepLimitValue(choice)} value={stepLimitValue(choice)}>{stepLimitLabel(choice)}</option>
-                      ))}
-                    </DenSelect>
-                  </div>
-                </SettingsRow>
-              ) : null}
-              <SettingsRow label="Name" help={help && WORKBOT_SETTING_HELP.name}>
+              <SettingsRow label="Name">
                 <span className="text-[13px] text-gray-900" data-testid="workbot-name">{name}</span>
                 <Link
                   href={getBrandAppearanceRoute(orgSlug)}
@@ -284,6 +248,11 @@ export function WorkbotSettingsScreen() {
                   Change in Brand appearance
                 </Link>
               </SettingsRow>
+              {proactive && agentPolicy.data ? (
+                <SettingsRow label="Calendar" stateLine={<span data-testid="workbot-calendar-state">{calendarStateLine(agentPolicy.data)}</span>}>
+                  <AgentCalendarPolicy view={agentPolicy.data} disabled={!canManage || saveAgentPolicy.isPending} onChange={(change) => saveAgentPolicy.mutate(change)} />
+                </SettingsRow>
+              ) : null}
             </div>
           )}
 

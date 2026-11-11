@@ -1,13 +1,9 @@
 import {
   AGENT_CORE_SOURCES,
   AGENT_CORE_SOURCE_COPY,
-  AGENT_SOURCE_SLOTS,
   DEFAULT_AGENT_SOURCES_POLICY,
-  agentCoreConnections,
-  agentCoreDefault,
   agentOtherConnections,
   agentSourcePolicy,
-  mergeAgentSourcesPolicy,
   type AgentCoreSource,
   type AgentCoreSourceConnection,
   type AgentOtherSourceConnection,
@@ -23,21 +19,20 @@ import {
 import { agentReadableConnection, serviceLinkDomains } from "../mcp/agent-read-sources.js"
 
 /**
- * Sources, not categories: what a member's agent reads. The admin sets guardrails and each member picks within them.
- * For calendar, email and team chat the admin allows connections (every Google Workspace, Microsoft 365 or Slack
- * connection that serves it until they pick some; an MCP connection whose read tools we reviewed can be allowed too)
- * and may set a default; each member's agent then reads exactly one of the allowed connections: the one the member
- * picked, else the default when their account on it is ready, else one they already connected, else the default for
- * them to connect. A member is never asked to connect an app they don't use, and a second account they also connected
- * never stands in for the one they read. Other context is the connections the admin added there (every service with
- * reviewed read tools, such as Linear, Notion, GitHub or Granola, until they pick), each a source of its own. An MCP
- * without reviewed read tools is never a source. The admin decides per source (on for everyone, members choose, not
- * allowed); the member turns the ones they may choose on or off and steers each with an instruction in their own words.
+ * Sources, not categories: what a member's agent reads. The calendar is one source, read through whichever calendar
+ * app the organization connected (Google Workspace or Microsoft 365): no admin picks the app. Each member's agent reads
+ * exactly one of them: the one the member picked, else the one most members connected when their account on it is
+ * ready, else one they already connected, else that most-connected one for them to connect. A member is never asked to
+ * connect an app they don't use. Every other source is a connection (Linear, Notion, GitHub, Granola, Slack…), each a
+ * source of its own under its own policy. Mail and chat are not sources of their own: an agent reads them through the
+ * Google Workspace, Microsoft 365 or Slack connection, when that connection is one of its sources. An MCP without
+ * reviewed read tools is never a source. The admin decides per source (on for everyone, members choose, not allowed);
+ * the member turns the ones they may choose on or off and steers each with an instruction in their own words.
  *
  * With `workbotAgentBrief` (`mode: "any"`), any connected connector is a source, with no hand-picked list: every MCP
- * connection, custom ones included, and Den's own providers for what isn't calendar, email or chat (their Drive, Docs,
- * OneDrive…). Each is in Other context under its own policy (members choose unless an admin decided); a reviewed
- * connection an admin had taken out of Other context stays not allowed. Which tools each may use is decided per tool
+ * connection, custom ones included, and Den's own providers for what isn't the calendar (their mail, chat, Drive,
+ * Docs, OneDrive…). Each is under its own policy (members choose unless an admin decided); a reviewed connection an
+ * admin had taken out of Other context stays not allowed. Which tools each may use is decided per tool
  * (@openwork/automations/agent-read-tools); a connection with none still shows.
  *
  * Pure: the database reads live in sources-repository.ts. The wake builds the turn's read allowlist and its prompt from
@@ -57,35 +52,34 @@ export type MemberConnection = {
   state: "connected" | "needs_connection" | "reconnect"
 }
 
-/** The member's choice for one source, as stored with their preferences; `connectionId` only for a core source. */
+/** The member's choice for one source, as stored with their preferences; `connectionId` only for the calendar. */
 export type MemberSourceChoice = { on?: boolean; instruction?: string; connectionId?: string }
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname.toLowerCase()
-  } catch {
-    return ""
-  }
-}
-
-export function isSlackConnection(connection: { url: string; native: string | null }) {
-  return connection.native === null && hostOf(connection.url) === "mcp.slack.com"
-}
-
-/** The core sources a connection serves; none for every other connection, which is its own source. */
+/** The core sources a connection serves: Den's own providers serve the calendar; every other connection is its own source. */
 export function coreSourcesOf(connection: { url: string; native: string | null }): AgentCoreSource[] {
-  if (connection.native === "google-workspace") return ["calendar", "email"]
-  if (connection.native === "microsoft-365") return ["calendar", "email", "chat"]
-  if (isSlackConnection(connection)) return ["chat"]
-  return []
+  return connection.native === "google-workspace" || connection.native === "microsoft-365" ? ["calendar"] : []
 }
 
-/** What a connection is called for one source, in messages and on the page: "Google Calendar", "Gmail", "Teams". */
+/** What a connection is called for one source, in messages and on the page: "Google Calendar", "Outlook calendar". */
 export function connectionSourceName(connection: { name: string; url: string; native: string | null }, kind: AgentCoreSource | null): string {
-  if (connection.native === "google-workspace") return kind === "email" ? "Gmail" : kind === "calendar" ? "Google Calendar" : connection.name
-  if (connection.native === "microsoft-365") return kind === "email" ? "Outlook mail" : kind === "calendar" ? "Outlook calendar" : kind === "chat" ? "Teams" : connection.name
-  if (isSlackConnection(connection)) return "Slack"
+  if (kind !== "calendar") return connection.name
+  if (connection.native === "google-workspace") return "Google Calendar"
+  if (connection.native === "microsoft-365") return "Outlook calendar"
   return connection.name
+}
+
+/**
+ * The service behind a connection that is a source of its own, where the check's prompt knows what to read there: mail
+ * and chat live in these connections. Null for every other connection.
+ */
+export function connectionService(connection: { url: string; native: string | null }): "google-workspace" | "microsoft-365" | "slack" | null {
+  if (connection.native === "google-workspace" || connection.native === "microsoft-365") return connection.native
+  if (connection.native !== null) return null
+  try {
+    return new URL(connection.url).hostname.toLowerCase() === "mcp.slack.com" ? "slack" : null
+  } catch {
+    return null
+  }
 }
 
 /** Domains a message may link to when it drew on a connection: the service behind it, from a fixed list. */
@@ -97,7 +91,7 @@ export function connectionLinkDomains(connection: { url: string; native: string 
 
 /**
  * Whether a connection can be a source of its own: today, an MCP whose service's read tools we reviewed
- * (agent-read-sources.ts), with Den's own providers read through Den per core source only. `any`: every connection.
+ * (agent-read-sources.ts), with Den's own providers read through Den for the calendar only. `any`: every connection.
  */
 export function canBeSource(connection: { url: string; native: string | null }, mode: SourceMode = "reviewed"): boolean {
   if (mode === "any") return true
@@ -105,22 +99,21 @@ export function canBeSource(connection: { url: string; native: string | null }, 
 }
 
 /**
- * Other context before an admin picks: today, every connection whose read tools we reviewed and that isn't a core
- * source. `any`: every connection except one whose whole service is a core source (Slack is team chat); Den's own
- * providers are, for what isn't calendar, email or chat.
+ * Other context before an admin picks: today, every MCP connection whose read tools we reviewed. `any`: every
+ * connection; Den's own providers are, for what isn't the calendar.
  */
 export function defaultOther(connection: { url: string; native: string | null }, mode: SourceMode = "reviewed") {
-  if (mode === "any") return connection.native !== null || coreSourcesOf(connection).length === 0
-  return connection.native === null && coreSourcesOf(connection).length === 0 && agentReadableConnection(connection.url)
+  if (mode === "any") return true
+  return connection.native === null && agentReadableConnection(connection.url)
 }
 
 /**
- * Where an admin can add a connection: Den's own providers for what they serve (and, `any`, Other context); a reviewed
- * MCP anywhere (`any`: every MCP).
+ * Where an admin can add a connection: Other context for an MCP agents can read (`any`: every connection). Den's own
+ * providers serve the calendar on their own, with no admin pick.
  */
 export function sourceSlotsOf(connection: { url: string; native: string | null }, mode: SourceMode = "reviewed"): AgentSourceSlot[] {
   if (connection.native !== null) return mode === "any" ? [...coreSourcesOf(connection), "other"] : coreSourcesOf(connection)
-  return canBeSource(connection, mode) ? [...AGENT_SOURCE_SLOTS] : []
+  return canBeSource(connection, mode) ? ["other"] : []
 }
 
 /**
@@ -138,15 +131,9 @@ export function otherSourcePolicy(policy: AgentSourcesPolicy, connection: { id: 
 
 type SourceShape = { id: string; url: string; native: string | null }
 
-/**
- * The connections allowed behind a core source: the admin's list (Den's own providers only for what they serve, an
- * MCP only when agents can read it), or every connection that serves it before they pick one. In the order given.
- */
-export function allowedConnections<T extends SourceShape>(connections: readonly T[], policy: AgentSourcesPolicy, kind: AgentCoreSource, mode: SourceMode = "reviewed"): T[] {
-  const picked = agentCoreConnections(policy, kind)
-  return connections.filter((connection) => picked === null
-    ? coreSourcesOf(connection).includes(kind)
-    : picked.includes(connection.id) && (connection.native === null ? canBeSource(connection, mode) : coreSourcesOf(connection).includes(kind)))
+/** The connections that serve a core source, in the order given. */
+export function allowedConnections<T extends SourceShape>(connections: readonly T[], kind: AgentCoreSource): T[] {
+  return connections.filter((connection) => coreSourcesOf(connection).includes(kind))
 }
 
 /** Den's provider set up before connections had rows (its id is the provider's key), then Den's own, then an MCP. */
@@ -156,9 +143,9 @@ function nativeRank(connection: SourceShape) {
 }
 
 /**
- * The automatic default among allowed connections: the one most members connected (a count that isn't known counts as
- * none). Ties go to Den's own providers, then to the first in order, so the admin's page and every member's agent
- * agree on it whatever order each lists connections in. Null when nothing is allowed.
+ * The connection a core source reads when the member hasn't picked one: the one most members connected (a count that
+ * isn't known counts as none). Ties go to Den's own providers, then to the first in order, so every member's agent
+ * agrees on it whatever order each lists connections in. Null when nothing serves it.
  */
 export function automaticDefault<T extends SourceShape>(allowed: readonly T[], connectedMembers?: ReadonlyMap<string, number>): T | null {
   const ranked = allowed
@@ -167,17 +154,10 @@ export function automaticDefault<T extends SourceShape>(allowed: readonly T[], c
   return ranked[0]?.connection ?? null
 }
 
-/** The default a core source uses now: the admin's while it is still allowed, else the automatic one. */
-export function effectiveDefault<T extends SourceShape>(allowed: readonly T[], policy: AgentSourcesPolicy, kind: AgentCoreSource, connectedMembers?: ReadonlyMap<string, number>): T | null {
-  const admin = agentCoreDefault(policy, kind)
-  return allowed.find((connection) => connection.id === admin) ?? automaticDefault(allowed, connectedMembers)
-}
-
 /**
- * The organization's connections behind each source, for the admin's "What agents read": per source, what serves it
- * before an admin picks (each under its own name, so two Google Workspace connections can be told apart) with how many
- * members connected each, `all`, every connection an admin can add, with where it can go, and the default each core
- * source uses now under the admin's policy.
+ * The organization's connections behind each source, for the admin's settings: the calendar apps (each under its own
+ * name, so two Google Workspace connections can be told apart) with how many members connected each, every connection
+ * that is a source of its own, and `all`, every connection an admin can add, with where it can go.
  */
 export function groupSourceConnections(
   connections: readonly (AgentSourceConnection & { native: string | null })[],
@@ -185,7 +165,7 @@ export function groupSourceConnections(
 ): NonNullable<WorkbotProactiveView["sourceConnections"]> {
   const mode = context.mode ?? "reviewed"
   const policy = context.policy ?? DEFAULT_AGENT_SOURCES_POLICY
-  const groups: Record<AgentCoreSource, AgentCoreSourceConnection[]> & { other: AgentOtherSourceConnection[]; all: AgentSourceOption[] } = { calendar: [], email: [], chat: [], other: [], all: [] }
+  const groups: Record<AgentCoreSource, AgentCoreSourceConnection[]> & { other: AgentOtherSourceConnection[]; all: AgentSourceOption[] } = { calendar: [], other: [], all: [] }
   const counted = (id: string) => context.connectedMembers?.get(id) ?? null
   for (const connection of connections) {
     const entry = { id: connection.id, name: connection.name, url: connection.url }
@@ -197,21 +177,17 @@ export function groupSourceConnections(
     const slots = sourceSlotsOf(connection, mode)
     if (slots.length) groups.all.push({ ...entry, native: connection.native !== null, slots, connectedMembers: counted(connection.id) })
   }
-  const defaultOf = (kind: AgentCoreSource) => effectiveDefault(allowedConnections(connections, policy, kind, mode), policy, kind, context.connectedMembers)?.id ?? null
-  return { ...groups, defaults: { calendar: defaultOf("calendar"), email: defaultOf("email"), chat: defaultOf("chat") } }
+  return groups
 }
 
 /**
- * An admin's change to what agents read, checked against the organization's connections, before and after it applies:
- * every id is the organization's own and can go where it was put, an MCP is only a source when its read tools are
- * reviewed, and a core source's default is one of its allowed connections. Taking the default out of the allowed ones
- * is refused unless the same change picks another default. Null when it is fine, else what is wrong.
+ * An admin's change to what agents read, checked against the organization's connections: every id is the
+ * organization's own and can go where it was put, and an MCP is only a source when its read tools are reviewed. Null
+ * when it is fine, else what is wrong.
  */
 export function checkSourcesChange(input: {
   change: AgentSourcesPolicyInput | undefined
   connections: readonly (AgentSourceConnection & { native: string | null })[]
-  /** The saved policy the change applies to; the defaults when absent. */
-  current?: AgentSourcesPolicy
   mode?: SourceMode
 }): string | null {
   const { change } = input
@@ -220,13 +196,6 @@ export function checkSourcesChange(input: {
   if (change.toolOverrides && mode !== "any") return "Choosing tools for agents isn't on for this organization."
   const byId = new Map(input.connections.map((connection) => [connection.id, connection]))
   const unknown = (id: string) => `No connection ${id} in this organization.`
-  for (const kind of AGENT_CORE_SOURCES) {
-    for (const id of change.coreConnections?.[kind] ?? []) {
-      const connection = byId.get(id)
-      if (!connection) return unknown(id)
-      if (!sourceSlotsOf(connection, mode).includes(kind)) return `${connection.name} can't serve ${AGENT_CORE_SOURCE_COPY[kind].label.toLowerCase()}.`
-    }
-  }
   for (const id of change.otherConnections ?? []) {
     const connection = byId.get(id)
     if (!connection) return unknown(id)
@@ -240,43 +209,22 @@ export function checkSourcesChange(input: {
   for (const id of Object.keys(change.toolOverrides ?? {})) {
     if (!byId.has(id)) return unknown(id)
   }
-  for (const kind of AGENT_CORE_SOURCES) {
-    const id = change.coreDefaults?.[kind]
-    if (!id) continue
-    const connection = byId.get(id)
-    if (!connection) return unknown(id)
-    if (!sourceSlotsOf(connection, mode).includes(kind)) return `${connection.name} can't serve ${AGENT_CORE_SOURCE_COPY[kind].label.toLowerCase()}.`
-  }
-  // After the change: each default is still one of its source's allowed connections.
-  const current = input.current ?? DEFAULT_AGENT_SOURCES_POLICY
-  const next = mergeAgentSourcesPolicy(current, change)
-  for (const kind of AGENT_CORE_SOURCES) {
-    const id = agentCoreDefault(next, kind)
-    if (!id || allowedConnections(input.connections, next, kind, mode).some((connection) => connection.id === id)) continue
-    const label = AGENT_CORE_SOURCE_COPY[kind].label.toLowerCase()
-    const name = byId.get(id)?.name ?? id
-    if (change.coreDefaults?.[kind]) return `${name} isn't allowed for ${label}. Allow it first.`
-    // A default that stopped being allowed some other way (its connection removed) falls back to automatic on its own;
-    // this change only may not be the one that takes it away.
-    const allowedBefore = allowedConnections(input.connections, current, kind, mode).some((connection) => connection.id === id)
-    if (allowedBefore) return `${name} is the default for ${label}. Choose another default first.`
-  }
   return null
 }
 
 export type ResolvedSource = {
-  /** `calendar`, `email`, `chat`, or the connection's id. */
+  /** `calendar`, or the connection's id. */
   id: string
   kind: AgentCoreSource | "other"
   name: string
   /**
-   * The connection it reads, named for this source ("Gmail", "Slack"). A core source reads exactly one (none when
-   * nothing allowed is usable by the member); another source reads its own connection.
+   * The connection it reads. The calendar reads exactly one, named for it ("Google Calendar"; none when no calendar
+   * app is usable by the member); another source reads its own connection.
    */
   connections: MemberConnection[]
-  /** A core source's allowed connections the member can pick from, each under its own name. Empty for the rest. */
+  /** The calendar apps the member can pick from, each under its own name. Empty for the rest. */
   options: MemberConnection[]
-  /** A core source: who picked the connection it reads. Null for the rest, or when nothing could be picked. */
+  /** The calendar: who picked the connection it reads. Null for the rest, or when nothing could be picked. */
   chosenBy: AgentSourceChosenBy | null
   policy: AgentSourcePolicy
   /** On: the admin's "on for everyone", or the member's choice where members choose. */
@@ -298,26 +246,22 @@ export function sourceOn(policy: AgentSourcePolicy, choice: MemberSourceChoice |
 }
 
 /**
- * The one connection a core source reads for a member, among the allowed ones they can use: (1) their own pick while
- * it is still allowed; else (2) the default (the admin's while allowed, else the automatic one) when their account on
- * it is ready; else (3) the first allowed one they already connected; else (4) the default, for them to connect.
+ * The one connection a core source reads for a member, among the ones that serve it: (1) their own pick while it still
+ * serves it; else (2) the one most members connected when their account on it is ready; else (3) the first one they
+ * already connected; else (4) the most-connected one, for them to connect.
  */
 export function chooseCoreConnection(input: {
   options: readonly MemberConnection[]
-  policy: AgentSourcesPolicy
-  kind: AgentCoreSource
   choice: MemberSourceChoice | undefined
   connectedMembers?: ReadonlyMap<string, number>
 }): { connection: MemberConnection; chosenBy: AgentSourceChosenBy } | null {
   const mine = input.choice?.connectionId ? input.options.find((connection) => connection.id === input.choice?.connectionId) : undefined
   if (mine) return { connection: mine, chosenBy: "member" }
-  const admin = agentCoreDefault(input.policy, input.kind)
-  const fallback = effectiveDefault(input.options, input.policy, input.kind, input.connectedMembers)
-  const by: AgentSourceChosenBy = fallback !== null && fallback.id === admin ? "admin" : "auto"
-  if (fallback?.state === "connected") return { connection: fallback, chosenBy: by }
+  const fallback = automaticDefault(input.options, input.connectedMembers)
+  if (fallback?.state === "connected") return { connection: fallback, chosenBy: "auto" }
   const connected = input.options.find((connection) => connection.state === "connected")
   if (connected) return { connection: connected, chosenBy: "auto" }
-  return fallback ? { connection: fallback, chosenBy: by } : null
+  return fallback ? { connection: fallback, chosenBy: "auto" } : null
 }
 
 /** Every source the member could have, with its policy, whether it is on, and what they told it. */
@@ -334,13 +278,13 @@ export function resolveMemberSources(input: {
   const core = AGENT_CORE_SOURCES.map((kind): ResolvedSource => {
     const policy = input.policy[kind]
     const choice = input.choices[kind]
-    const options = allowedConnections(input.connections, input.policy, kind, mode)
-    const chosen = chooseCoreConnection({ options, policy: input.policy, kind, choice, connectedMembers: input.connectedMembers })
+    const options = allowedConnections(input.connections, kind)
+    const chosen = chooseCoreConnection({ options, choice, connectedMembers: input.connectedMembers })
     return {
       id: kind,
       kind,
       name: AGENT_CORE_SOURCE_COPY[kind].label,
-      // Named for this source ("Gmail", "Google Calendar"): it is the only one read, so messages needn't say which.
+      // Named for this source ("Google Calendar"): it is the only one read, so messages needn't say which.
       connections: chosen ? [{ ...chosen.connection, name: connectionSourceName(chosen.connection, kind) }] : [],
       options: [...options],
       chosenBy: chosen?.chosenBy ?? null,
@@ -379,7 +323,7 @@ export function readableConnections(source: ResolvedSource): MemberConnection[] 
 
 /**
  * What the turn's token may read: the core sources that are readable, the connections behind every readable source,
- * and which core source each connection may be read for (email through one account, calendar through another).
+ * and which connection the calendar may be read through.
  */
 export function readAllowlist(sources: readonly ResolvedSource[]): { kinds: AgentCoreSource[]; connectionIds: string[]; pairs: { kind: AgentCoreSource; connectionId: string }[] } {
   const kinds: AgentCoreSource[] = []
@@ -407,7 +351,7 @@ export function withConnectionState(sources: readonly ResolvedSource[], connecti
 
 /**
  * Connections a source that is on needs before the agent can read it: the member hasn't connected their account, or it
- * needs reconnecting. One per connection, naming every source it holds up ("Gmail and Google Calendar").
+ * needs reconnecting. One per connection, naming every source it holds up ("Google Calendar and Google Workspace").
  */
 export function blockedConnections(sources: readonly ResolvedSource[]): { connection: MemberConnection; sources: { id: string; name: string }[] }[] {
   const blocked = new Map<string, { connection: MemberConnection; sources: { id: string; name: string }[] }>()
@@ -422,20 +366,34 @@ export function blockedConnections(sources: readonly ResolvedSource[]): { connec
   return [...blocked.values()]
 }
 
-/** Finds a source by id or by what the member would call it ("Granola", "team chat", "Slack", "my email"). */
+/** What a member, or an agent with an older habit, calls mail and chat: the services whose connection reads them, first match wins. */
+const SERVICE_WORDS: Record<string, readonly NonNullable<ReturnType<typeof connectionService>>[]> = {
+  gmail: ["google-workspace"],
+  email: ["google-workspace", "microsoft-365"],
+  mail: ["google-workspace", "microsoft-365"],
+  inbox: ["google-workspace", "microsoft-365"],
+  outlook: ["microsoft-365"],
+  "outlook mail": ["microsoft-365"],
+  teams: ["microsoft-365"],
+  slack: ["slack"],
+  chat: ["slack", "microsoft-365"],
+  "team chat": ["slack", "microsoft-365"],
+}
+
+/**
+ * Finds a source by id or by what the member would call it ("Granola", "my calendar", "Slack", "Google Calendar").
+ * Mail and chat words ("my email", "Gmail", "team chat") find the connection that reads them.
+ */
 export function findSource(sources: readonly ResolvedSource[], wanted: string): ResolvedSource | null {
   const needle = wanted.trim().toLowerCase().replace(/^my\s+/, "")
   const byId = sources.find((source) => source.id.toLowerCase() === needle)
   if (byId) return byId
   const byName = sources.find((source) => source.name.toLowerCase() === needle)
   if (byName) return byName
-  const aliases: Record<string, AgentCoreSource> = {
-    slack: "chat", teams: "chat", chat: "chat", "team chat": "chat",
-    gmail: "email", outlook: "email", mail: "email", inbox: "email", "outlook mail": "email",
-    "google calendar": "calendar", "outlook calendar": "calendar",
+  if (needle === "google calendar" || needle === "outlook calendar") return sources.find((source) => source.id === "calendar") ?? null
+  for (const service of SERVICE_WORDS[needle] ?? []) {
+    const match = sources.find((source) => source.kind === "other" && source.connections.some((connection) => connectionService(connection) === service))
+    if (match) return match
   }
-  const alias = aliases[needle]
-  if (alias) return sources.find((source) => source.id === alias) ?? null
   return sources.find((source) => source.kind === "other" && source.name.toLowerCase().startsWith(needle)) ?? null
 }
-

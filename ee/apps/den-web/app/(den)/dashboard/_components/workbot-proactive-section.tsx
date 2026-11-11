@@ -20,7 +20,7 @@ import { DenSelect } from "../../_components/ui/select";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { agentsSwitchLabel, type AgentPolicyScope } from "./workbot-agent-scope";
+import { AGENTS_SWITCH_LABEL, type AgentPolicyScope } from "./workbot-agent-scope";
 import type { WorkbotAgentsPart } from "./workbot-settings-tabs-model";
 import { useSaveWorkbotProactive, useWorkbotProactive } from "./workbot-proactive-data";
 import { PROACTIVE_PREVIEW_KINDS, WorkbotProactivePreview } from "./workbot-proactive-preview";
@@ -32,9 +32,9 @@ import { getLibraryConnectorRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 /**
- * Manage › Workbot › Your agent: every member gets a background agent that reads their calendar, email, team chat and
- * the connections they turn on, on a schedule, and messages them only when something needs them. One switch for the
- * organization, what agents tell people about, where messages go, when and how often, a preview, and what agents read.
+ * Manage › Workbot › Your agent: every member gets a background agent that reads their calendar and the connectors
+ * they turn on, on a schedule, and messages them only when something needs them. One switch (Proactive Mode), what
+ * agents tell people about, where messages go, when and how often, a preview, and the connectors agents read.
  *
  * Members › Teams › Everyone (or a team) › Workbot shows the same section for a `scope`: Everyone's policy, or one
  * team's own, which starts from Everyone's the first time the team changes a control.
@@ -118,7 +118,7 @@ export function WorkbotProactivePanel({
   // With Your agent's brief on (the server sends `brief`), one rhythm and a text replace the message types.
   if (view.brief && grouped) return <WorkbotAgentSettingsGroups view={view} brief={view.brief} canManage={canManage} saving={saving} onChange={onChange} connectorsHref={connectorsHref} scope={scope} />;
   if (view.brief) return <WorkbotAgentBriefPanel view={view} brief={view.brief} canManage={canManage} saving={saving} onChange={onChange} connectorsHref={connectorsHref} scope={scope} />;
-  const switchLabel = agentsSwitchLabel(scope);
+  const switchLabel = AGENTS_SWITCH_LABEL;
   const { settings, template, slackReady, runnerReady } = view;
   const locked = !canManage || saving;
   const switchNote = !runnerReady
@@ -275,7 +275,7 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 export function WorkbotProactiveSection({ orgId, canManage, connectorsHref, scope = EVERYONE, headerAside, belowHeader, busy = false, onEdit, show = "all" }: {
-  /** With Workbot's settings in tabs: only how agents work ("policy"), or only what they read ("sources"). */
+  /** With Workbot's settings in tabs: only how agents work ("policy"), or only the connectors they read ("sources"). */
   show?: WorkbotAgentsPart;
   orgId: string;
   canManage: boolean;
@@ -302,10 +302,10 @@ export function WorkbotProactiveSection({ orgId, canManage, connectorsHref, scop
   };
   // In a tab, the tab already names the part: no heading on its own, and beside a team's chip it says whose settings these are.
   const inTab = show !== "all";
-  const heading = <h2 id={headingId} className="px-1 text-[13px] font-medium text-gray-500">{inTab ? (show === "sources" ? "Data sources" : "Agents") : "Members' agents"}</h2>;
+  const heading = <h2 id={headingId} className="px-1 text-[13px] font-medium text-gray-500">{inTab ? (show === "sources" ? "Connectors" : "Proactive Mode") : "Members' agents"}</h2>;
 
   return (
-    <section aria-labelledby={inTab && !headerAside ? undefined : headingId} aria-label={inTab && !headerAside ? (show === "sources" ? "Data sources" : "Agents") : undefined} className="grid gap-2" data-section="workbot-proactive">
+    <section aria-labelledby={inTab && !headerAside ? undefined : headingId} aria-label={inTab && !headerAside ? (show === "sources" ? "Connectors" : "Proactive Mode") : undefined} className="grid gap-2" data-section="workbot-proactive">
       {inTab && !headerAside ? null : headerAside ? (
         <div className="flex min-h-6 flex-wrap items-center justify-between gap-3 pr-1">
           {heading}

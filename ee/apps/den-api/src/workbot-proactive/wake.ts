@@ -40,7 +40,7 @@ import {
   type MemberConnection,
   type ResolvedSource,
 } from "./sources.js"
-import { checkSources, noticeUnreadableSources, readMemberCalendar } from "./wake-shared.js"
+import { checkSources, noticeUnreadableSources, readMemberCalendar, sourcePromptService } from "./wake-shared.js"
 import type { AgentCheckCount, AgentInstanceRow, AgentSettle, DeliveryOutcome } from "./repository.js"
 import type { AgentTemplateVersion } from "./template.js"
 import type { AgentTurnResult } from "./turn.js"
@@ -262,6 +262,7 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
         id: source.id,
         name: source.name,
         via: source.kind === "other" ? [] : readableConnections(source).map((connection) => connection.name),
+        ...sourcePromptService(source),
         instruction: source.instruction,
         lastReadAt: source.lastReadAt,
       })),
