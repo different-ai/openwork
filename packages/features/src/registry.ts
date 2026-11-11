@@ -930,6 +930,17 @@ export const FEATURES = defineFeatures({
     deployments: ["cloud"],
     default: false,
   },
+  sandboxModelChoice: {
+    label: "Sandboxes: choose each sandbox's models",
+    description: "A platform admin picks which AI Gateway models a new sandbox organization gets when creating it, instead of every sandbox getting the deployment's list. Sandboxes that already exist keep their models. Turning this off gives new sandboxes the deployment's list again.",
+    category: "models",
+    added: "2026-11-11",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/sandbox-model-choice/README.md",
+    deployments: ["cloud"],
+    default: false,
+  },
   connectStandardTools: {
     label: "Connect: standard tools",
     description: "Claude Code and standalone OpenCode discover connected actions, Workflows and Apps as individual tools; OpenWork Desktop, Web and automation runs keep capability search. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas.",

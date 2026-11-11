@@ -22,7 +22,8 @@ import { createExternalMcpConnection } from "./capability-sources/external-mcp-c
 import { assertPublicUrl } from "./capability-sources/url-guard.js"
 import { db } from "./db.js"
 import { appLogger } from "./observability/logger.js"
-import { addSandboxGatewayProvider, sandboxGatewayConfigured } from "./sandbox-gateway.js"
+import { GatewayWriteError } from "./llm/gateway-matrix.js"
+import { addSandboxGatewayProvider, assertSandboxGatewayModels, sandboxGatewayConfigured } from "./sandbox-gateway.js"
 import { createSandboxModelKey, deleteSandboxModelKey, readSandboxModelKey, sandboxMintsModelKeys, updateSandboxModelKey } from "./sandbox-model-keys.js"
 import { setOrganizationPlanByAdmin } from "./admin-organization-plan.js"
 import { utcDate } from "./organization-plan.js"
@@ -33,7 +34,7 @@ import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { createOrganizationForUser, isEmailAllowedForOrganization, updateOrganizationMemberRole } from "./orgs.js"
 import { getInvitationOrigin } from "./routes/org/shared.js"
-import { organizationFeatureEnabled } from "./features.js"
+import { deploymentFeatureEnabled, organizationFeatureEnabled } from "./features.js"
 import { addSandboxMicrosoft365, SANDBOX_MICROSOFT_APP_KEYS, SANDBOX_MICROSOFT_EXTERNAL_KEY, SandboxMicrosoftUnavailableError } from "./sandbox-microsoft-365.js"
 import { getExternalMcpConnectionByExternalKey } from "./capability-sources/external-mcp-connections.js"
 
@@ -233,13 +234,19 @@ export async function closeExpiredSandboxes(now = new Date()) {
   }
 }
 
-export function sandboxDefaults(): SandboxDefaults {
+/** Whether a platform admin may choose a new sandbox's models: `sandboxModelChoice` is on and the deployment has a sandbox model key. */
+async function sandboxModelChoiceOn() {
+  return sandboxGatewayConfigured() && await deploymentFeatureEnabled("sandboxModelChoice")
+}
+
+export async function sandboxDefaults(): Promise<SandboxDefaults> {
   const gateway = sandboxGatewayConfigured() ? env.sandbox.gateway : null
   return {
     workplaceUrl: env.sandbox.workplaceUrl,
     gatewayModels: gateway?.modelIds ?? [],
     gatewayProviderId: gateway?.providerId ?? null,
     creditUsd: sandboxMintsModelKeys() ? gateway?.creditUsd ?? null : null,
+    modelChoice: await sandboxModelChoiceOn(),
   }
 }
 
@@ -258,7 +265,7 @@ export async function getSandbox(id: DenTypeId<"sandboxOrganization">): Promise<
  * Creates an ordinary organization owned by the admin, then makes it a sandbox: the Enterprise plan until it
  * ends, included models on (Workbot defaults to them), Free Auto until the sandbox closes or expires, AI Gateway
  * models for everyone (from the sandbox's own capped OpenRouter key when the deployment mints them, else the
- * shared sandbox key), one per-person OAuth connector for each fictional workplace app, and a join link. Every
+ * shared sandbox key; the deployment's list, or `modelIds` when `sandboxModelChoice` is on), one per-person OAuth connector for each fictional workplace app, and a join link. Every
  * member connects their own account, so each person's workplace data stays separate.
  *
  * With `sandboxMicrosoft365` on, Outlook, Calendar and Drive come as one Microsoft 365 connector signed in at the
@@ -274,6 +281,15 @@ export async function createSandbox(actor: UserId, input: SandboxCreateInput, op
     }
   }
   if (env.orgMode === "single_org") throw new SandboxInputError("This deployment has one organization; sandboxes need multi-organization mode.")
+  // Chosen models are checked before the organization exists: a mistyped id must not leave a sandbox without models.
+  if (input.modelIds) {
+    if (!await sandboxModelChoiceOn()) throw new SandboxInputError("Choosing a sandbox's models is not turned on for this deployment.")
+    try { await assertSandboxGatewayModels(input.modelIds) }
+    catch (error) {
+      if (error instanceof GatewayWriteError) throw new SandboxInputError(error.message)
+      throw error
+    }
+  }
 
   const organizationId = await createOrganizationForUser({ userId: actor, name: input.name })
   const expiresAt = new Date(Date.now() + input.days * DAY_MS)
@@ -295,7 +311,7 @@ export async function createSandbox(actor: UserId, input: SandboxCreateInput, op
   if (!owner) throw new Error("sandbox_owner_missing")
   // Models through the AI Gateway for everyone, from the deployment's sandbox key. A failure leaves the sandbox on
   // its included models and is visible as zero model providers in /admin.
-  await addSandboxModels({ id, organizationId, ownerMemberId: owner.id, name: input.name, creditUsd: input.creditUsd }).catch((error: unknown) => {
+  await addSandboxModels({ id, organizationId, ownerMemberId: owner.id, name: input.name, creditUsd: input.creditUsd, modelIds: input.modelIds }).catch((error: unknown) => {
     appLogger.error("sandbox gateway provider failed", { organization_id: organizationId, error: error instanceof Error ? error.message : "unknown" })
   })
   let microsoft = false
@@ -334,15 +350,15 @@ export async function createSandbox(actor: UserId, input: SandboxCreateInput, op
  * Gives the sandbox its AI Gateway models. When the deployment mints keys, the sandbox gets its own OpenRouter key
  * capped at the chosen credit; its hash is recorded before the provider is added so closing can always disable it.
  */
-async function addSandboxModels(input: { id: DenTypeId<"sandboxOrganization">; organizationId: DenTypeId<"organization">; ownerMemberId: DenTypeId<"member">; name: string; creditUsd?: number }) {
+async function addSandboxModels(input: { id: DenTypeId<"sandboxOrganization">; organizationId: DenTypeId<"organization">; ownerMemberId: DenTypeId<"member">; name: string; creditUsd?: number; modelIds?: string[] }) {
   if (!sandboxMintsModelKeys()) {
-    await addSandboxGatewayProvider({ organizationId: input.organizationId, ownerMemberId: input.ownerMemberId })
+    await addSandboxGatewayProvider({ organizationId: input.organizationId, ownerMemberId: input.ownerMemberId, modelIds: input.modelIds })
     return
   }
   const limitUsd = input.creditUsd ?? env.sandbox.gateway?.creditUsd ?? 50
   const key = await createSandboxModelKey({ organizationId: input.organizationId, name: input.name, limitUsd })
   await db.update(SandboxOrganizationTable).set({ modelKeyHash: key.hash, modelCreditUsd: limitUsd }).where(eq(SandboxOrganizationTable.id, input.id))
-  await addSandboxGatewayProvider({ organizationId: input.organizationId, ownerMemberId: input.ownerMemberId, apiKey: key.key })
+  await addSandboxGatewayProvider({ organizationId: input.organizationId, ownerMemberId: input.ownerMemberId, apiKey: key.key, modelIds: input.modelIds })
 }
 
 /** Sets the cap on the sandbox's own model key (the total, not an increment). Null when the sandbox is missing; throws when it has no key of its own. */

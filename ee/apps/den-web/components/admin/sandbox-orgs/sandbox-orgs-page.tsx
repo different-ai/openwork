@@ -7,6 +7,7 @@ import {
   SANDBOX_MAX_CREDIT_USD,
   SANDBOX_MAX_DAYS,
   SANDBOX_MAX_MEMBERS,
+  SANDBOX_MAX_MODELS,
   sandboxCreatedSchema,
   sandboxJoinRoleSchema,
   sandboxListSchema,
@@ -26,8 +27,10 @@ const parseList = (value: unknown) => { const result = sandboxListSchema.safePar
 const date = (value: string) => new Date(value).toLocaleDateString(undefined, { dateStyle: "medium" });
 const stateLabel = { open: "Open", expired: "Ended", closed: "Closed" } as const;
 
-type Draft = { name: string; connectorBaseUrl: string; days: string; memberLimit: string; domains: string; joinRole: SandboxJoinRole; creditUsd: string };
-const freshDraft = (defaults: SandboxList["defaults"]): Draft => ({ name: "", connectorBaseUrl: defaults?.workplaceUrl ?? "", days: "14", memberLimit: "50", domains: "", joinRole: "super-admin", creditUsd: defaults?.creditUsd ? String(defaults.creditUsd) : "" });
+type Draft = { name: string; connectorBaseUrl: string; days: string; memberLimit: string; domains: string; joinRole: SandboxJoinRole; creditUsd: string; models: string };
+const freshDraft = (defaults: SandboxList["defaults"]): Draft => ({ name: "", connectorBaseUrl: defaults?.workplaceUrl ?? "", days: "14", memberLimit: "50", domains: "", joinRole: "super-admin", creditUsd: defaults?.creditUsd ? String(defaults.creditUsd) : "", models: defaults?.gatewayModels.join(", ") ?? "" });
+/** Model ids typed in the form, in order, without repeats. */
+const modelList = (value: string) => [...new Set(value.split(/[\s,]+/).map(entry => entry.trim()).filter(Boolean))];
 const dollars = (value: number) => `$${value.toFixed(value % 1 === 0 ? 0 : 2)}`;
 const CREDIT_STEP_USD = 25;
 const roleLabel: Record<SandboxJoinRole, string> = { member: "Members", admin: "Admins", "super-admin": "Super admins" };
@@ -47,6 +50,8 @@ export function SandboxOrgsPage() {
   const savingRef = useRef(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [notice, setNotice] = useState("");
+  // sandboxModelChoice: the admin picks this sandbox's AI Gateway models instead of the deployment's list.
+  const canChooseModels = Boolean(data?.defaults?.modelChoice && data.defaults.gatewayModels.length);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -86,6 +91,7 @@ export function SandboxOrgsPage() {
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!draft) return;
+    const modelsChosen = canChooseModels && modelList(draft.models).join(",") !== (data?.defaults?.gatewayModels ?? []).join(",");
     const body: SandboxCreateInput = {
       name: draft.name.trim(),
       connectorBaseUrl: draft.connectorBaseUrl.trim() || null,
@@ -94,6 +100,8 @@ export function SandboxOrgsPage() {
       allowedEmailDomains: draft.domains.split(/[\s,]+/).map(value => value.trim().toLowerCase()).filter(Boolean),
       joinRole: draft.joinRole,
       ...(draft.creditUsd ? { creditUsd: Number(draft.creditUsd) } : {}),
+      // Sent only when the admin changed the list, so an unchanged form creates what it always did.
+      ...(modelsChosen ? { modelIds: modelList(draft.models) } : {}),
     };
     if (await mutate(base, body, `Created ${body.name}. Copy its join link below.`)) setDraft(null);
   }
@@ -139,12 +147,14 @@ export function SandboxOrgsPage() {
           <label className="grid gap-2 text-xs">Name<DenInput aria-label="Sandbox name" required minLength={2} maxLength={120} placeholder="OpenWork Sandbox" value={draft.name} disabled={saving} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
           <label className="grid gap-2 text-xs">Sample work apps address<DenInput aria-label="Sample work apps address" type="url" placeholder="https://workplace.example.com" value={draft.connectorBaseUrl} disabled={saving} onChange={event => setDraft({ ...draft, connectorBaseUrl: event.target.value })} />
             <span className="text-[color:var(--dls-text-secondary)]">Adds Outlook, Calendar, Drive, Jira and Confluence. Each person signs in to their own copy. Leave empty for no connectors.</span></label>
-          <div className="grid gap-1 text-xs" data-testid="admin-sandbox-models">
+          {canChooseModels ? <label className="grid gap-2 text-xs" data-testid="admin-sandbox-model-choice">Models<DenInput aria-label="Sandbox models" required placeholder={data.defaults?.gatewayModels.join(", ")} value={draft.models} disabled={saving} onChange={event => setDraft({ ...draft, models: event.target.value })} />
+            <span className="text-[color:var(--dls-text-secondary)]">{`Everyone gets these through AI Gateway (${data.defaults?.gatewayProviderId ?? "provider"})${data.defaults?.creditUsd ? ", on the sandbox's own key" : ""}, plus included models. Model ids separated by commas, up to ${SANDBOX_MAX_MODELS}.`}</span></label>
+          : <div className="grid gap-1 text-xs" data-testid="admin-sandbox-models">
             <span>Models</span>
             <span className="text-[color:var(--dls-text-secondary)]">{data.defaults?.gatewayModels.length
               ? `Included models, plus ${data.defaults.gatewayModels.join(", ")} through AI Gateway (${data.defaults.gatewayProviderId ?? "provider"}) for everyone${data.defaults.creditUsd ? ", on the sandbox's own key" : ""}.`
               : "Included models only. Add OPENROUTER_MANAGEMENT_API_KEY (one capped key per sandbox) or DEN_SANDBOX_GATEWAY_API_KEY (one shared key) on this deployment to give every sandbox an AI Gateway provider."}</span>
-          </div>
+          </div>}
           {data.defaults?.creditUsd ? <label className="grid gap-2 text-xs">Model credit (USD)<DenInput aria-label="Model credit in US dollars" type="number" required min={1} max={SANDBOX_MAX_CREDIT_USD} step={1} value={draft.creditUsd} disabled={saving} onChange={event => setDraft({ ...draft, creditUsd: event.target.value })} />
             <span className="text-[color:var(--dls-text-secondary)]">The sandbox's models stop when this is spent. You can add more later.</span></label> : null}
           <div className="grid grid-cols-2 gap-3">

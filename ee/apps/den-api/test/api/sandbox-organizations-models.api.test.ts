@@ -170,6 +170,49 @@ test("deleting a sandbox's organization deletes its key at OpenRouter", async ()
   assert.ok(!listed.some((entry) => entry.organizationId === orgId), "the sandbox row goes with the organization")
 })
 
+test("with sandboxModelChoice on, a platform admin chooses a new sandbox's models; off, every sandbox gets the deployment's list", async () => {
+  const defaults = async () => field((await den.request(admin.token, "GET", "/v1/admin/sandbox-orgs")).body, "defaults")
+  const sandboxCount = async () => list(field((await den.request(admin.token, "GET", "/v1/admin/sandbox-orgs")).body, "sandboxes")).length
+  const setChoice = (enabled: boolean) => den.request(admin.token, "PUT", "/v1/admin/features/sandboxModelChoice", { body: { enabled } })
+  /** The sandbox provider's models as someone who joined sees them. */
+  async function sandboxModels(orgId: string, memberName: string) {
+    const member = await den.newMember(admin, orgId, memberName)
+    const usable = await den.as(member, orgId)("GET", "/v1/inference-providers?scope=usable")
+    assert.equal(usable.status, 200, summary(usable))
+    const provider = list(field(usable.body, "inferenceProviders")).find((entry) => entry.name === "Sandbox models")
+    assert.ok(provider, summary(usable))
+    return list(provider.models).map((model) => model.upstreamModelId).sort()
+  }
+
+  assert.equal(field(await defaults(), "modelChoice"), false, "off until a platform admin turns it on")
+  const before = await sandboxCount()
+  const refusedOff = await create({ modelIds: ["openai/gpt-5.5"] })
+  assert.equal(refusedOff.status, 400, summary(refusedOff))
+  assert.equal(await sandboxCount(), before, "nothing is created when the choice is refused")
+
+  assert.equal((await setChoice(true)).status, 200)
+  try {
+    assert.equal(field(await defaults(), "modelChoice"), true)
+
+    const chosen = await create({ modelIds: ["openai/gpt-5.5"] })
+    assert.equal(chosen.status, 200, summary(chosen))
+    assert.deepEqual(await sandboxModels(text(field(chosen.body, "sandbox", "organizationId"), "organization id"), "Chosen Models Member"), ["openai/gpt-5.5"], "only the chosen model")
+
+    const unchanged = await create({})
+    assert.equal(unchanged.status, 200, summary(unchanged))
+    assert.deepEqual(await sandboxModels(text(field(unchanged.body, "sandbox", "organizationId"), "organization id"), "Default Models Member"), ["anthropic/claude-sonnet-5.5", "openai/gpt-5.5"], "no choice keeps the deployment's list")
+
+    const count = await sandboxCount()
+    const unknown = await create({ modelIds: ["openai/not-a-model"] })
+    assert.equal(unknown.status, 400, summary(unknown))
+    assert.match(String(field(unknown.body, "message")), /not-a-model/, "the refusal names the model")
+    assert.equal(await sandboxCount(), count, "an unknown model creates nothing")
+  } finally {
+    assert.equal((await setChoice(false)).status, 200)
+  }
+  assert.equal(field(await defaults(), "modelChoice"), false)
+})
+
 test("the admin MCP creates, credits and closes sandboxes with the same results", async () => {
   const owned = await den.createOrg(admin, "Admin home")
   const token = await den.mintMcpToken(admin, owned.orgId)

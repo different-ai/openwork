@@ -811,6 +811,16 @@
               ],
               "description": "Sandboxes: sample Microsoft 365 for Workbot: New sandbox organizations get one Microsoft 365 connector for the sample Outlook, Calendar and Drive instead of three separate ones, so Workbot chat, Calendar, Documents and the first hello read each person's own sample mail, calendar and files. Each person approves once in their own browser. Only sandbox organizations are affected; every other organization keeps Microsoft's real sign-in. Turning it off stops the sample connector without sending anything to Microsoft. Renders DEN_FEATURE_SANDBOX_MICROSOFT365."
             },
+            "sandboxModelChoice": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Sandboxes: choose each sandbox's models: A platform admin picks which AI Gateway models a new sandbox organization gets when creating it, instead of every sandbox getting the deployment's list. Sandboxes that already exist keep their models. Turning this off gives new sandboxes the deployment's list again. Renders DEN_FEATURE_SANDBOX_MODEL_CHOICE."
+            },
             "connectStandardTools": {
               "enum": [
                 "",
