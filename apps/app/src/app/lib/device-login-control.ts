@@ -24,6 +24,9 @@ export function createDeviceLoginControl(input: {
     // A scoped failure includes ownership mismatch. Do not turn it into an
     // unscoped read/cancel of whichever newer flow happens to be running.
     if (requestId !== undefined && current.state === "failed") return current;
+    // Before admission no code exists: let awaited live discovery report OFF
+    // itself, rather than turning its unsupported result into cancellation.
+    if (current.state === "pending" && input.flow.admittedAt() === null) return current;
     const feature = input.deploymentFeature();
     // An OFF cached before this start/live admission cannot overrule its newer
     // anonymous ON response. Unknown (including errors with stale data) cannot kill.

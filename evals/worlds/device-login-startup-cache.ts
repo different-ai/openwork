@@ -115,7 +115,7 @@ export async function deviceLoginStartupCache(seed: Seed) {
   const desktopSandbox = sandbox;
   const den = await seed.den({ org: { name: "Startup cache diagnostic", admin: { name: "Startup Approver" }, members: {} } });
   async function setEnabled(enabled: boolean) {
-    const result = await denFetch(den.admin, "/v1/admin/features/remoteDesktopDeviceLogin", { method: "PUT", body: JSON.stringify({ enabled, killed: false }), signal: AbortSignal.timeout(10_000) });
+    const result = await denFetch(den.admin, "/v1/admin/features/remoteDesktopDeviceLogin", { method: "PUT", headers: { authorization: `Bearer ${den.admin.token}` }, body: JSON.stringify({ enabled, killed: false }), signal: AbortSignal.timeout(10_000) });
     if (!result.response.ok) throw new Error(`Set isolated deployment flag: HTTP ${result.response.status}`);
   }
   async function confirmFeatures(expectedEnabled: boolean) {
