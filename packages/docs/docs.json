@@ -217,6 +217,7 @@
             "pages": [
               "cloud/share-with-your-team/managed-llm-provider",
               "cloud/share-with-your-team/custom-llm-provider",
+              "cloud/share-with-your-team/custom-provider-local-keys",
               "cloud/share-with-your-team/per-member-llm-credentials",
               "cloud/share-with-your-team/truefoundry-per-member-keys"
             ]

@@ -8,6 +8,10 @@ Use this when you need a custom endpoint or model definition outside the support
 
 Providers created with this legacy custom-provider form sync the key to members' apps and have no AI Gateway usage tracking. Before using it, check the [provider support matrix](/ai-gateway/provider-support): Gateway supports compatible catalog endpoint overrides, a dedicated [LiteLLM integration](/ai-gateway/litellm), Azure OpenAI, and [Claude on Microsoft Foundry](/ai-gateway/microsoft-foundry), while keeping upstream credentials on the server. See [Adding a managed LLM provider](/cloud/share-with-your-team/managed-llm-provider) for how the two paths compare.
 
+If each Desktop user needs their own upstream key instead of a shared key,
+follow [Share a custom provider with Desktop-local keys](/cloud/share-with-your-team/custom-provider-local-keys).
+That guide keeps the endpoint and models central without storing an organization credential.
+
 ## Create the custom provider
 
 1. In OpenWork Cloud, open **AI Gateway › AI Providers**.
