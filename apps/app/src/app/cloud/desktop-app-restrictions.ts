@@ -1,6 +1,8 @@
 import {
   desktopPolicyKeyEnforced,
   desktopPolicyUserNotices,
+  isLocalModelProviderId,
+  localModelsAllowed,
   type DesktopPolicyKey,
 } from "@openwork/types/den/desktop-policies";
 import type { DenDesktopConfig } from "../lib/den";
@@ -23,6 +25,9 @@ export function checkDesktopAppRestriction(input: {
   // and the engine's disabled providers), regardless of organization policy.
   if (input.restriction === "allowZenModel") {
     return true;
+  }
+  if (input.restriction === "allowLocalModels") {
+    return Boolean(input.config) && !localModelsAllowed(input.config);
   }
   return desktopPolicyKeyEnforced(input.restriction) && input.config?.[input.restriction] === false;
 }
@@ -72,6 +77,10 @@ export function isDesktopProviderBlocked(input: {
 
   if (providerId === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
     return input.checkRestriction({ restriction: "allowZenModel" });
+  }
+  // Ollama and LM Studio follow the organization's local models switch.
+  if (isLocalModelProviderId(providerId)) {
+    return input.checkRestriction({ restriction: "allowLocalModels" });
   }
 
   return false;

@@ -90,7 +90,7 @@ import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
 import { deviceProviders, useLocalProviderEngineStates } from "@/react-app/domains/connections/provider-auth/local-provider-engine-state";
 // Side-effect imports: register extension config components into the registry.
-import { OllamaConfig } from "@/react-app/domains/settings/ollama-config";
+import { LocalModelsBlocked, OllamaConfig } from "@/react-app/domains/settings/ollama-config";
 import "@/react-app/domains/settings/browser-extension-config";
 import { useSettingsExtensionController } from "@/react-app/domains/settings/settings-extension-controller";
 import { buildExtensionItems } from "@/react-app/domains/settings/extension-items";
@@ -2344,6 +2344,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           </>
         );
       case "ollama":
+        if (checkDesktopRestriction({ restriction: "allowLocalModels" })) {
+          return <LocalModelsBlocked organizationName={cloudSession.activeOrgName} />;
+        }
         return (
           <OllamaConfig
             busy={localProviderBusy}

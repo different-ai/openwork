@@ -192,6 +192,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  localModelsPolicy: {
+    label: "AI Gateway: limit local models (Ollama, LM Studio)",
+    description: "Admins turn local models on or off in AI Gateway › Who can use models, separately from members adding their own provider keys. Off: local models follow the provider setting (\"Only models you provide\" blocks them).",
+    category: "models",
+    added: "2026-11-10",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/local-models-policy/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   shareDeviceProvider: {
     label: "Desktop: share a provider key with your organization",
     description: "In Settings › AI Providers, a person who manages AI Gateway shares an API key already saved on their device with everyone in the organization, after confirming who can use it and who pays. People they invite get those models without anyone pasting the key again. Off: sharing means adding the provider again in AI Gateway.",

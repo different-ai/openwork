@@ -494,6 +494,9 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
 
       return c.json({
         ...desktopPolicy,
+        // Local models (Ollama, LM Studio) get their own switch only with the
+        // rollout on; otherwise they follow the provider setting, as before.
+        allowLocalModels: features.localModelsPolicy ? desktopPolicy.allowLocalModels : desktopPolicy.allowCustomProviders,
         // The Automations page shows when either kind is allowed; only Desktop Automations make this desktop a runner.
         automationsEnabled: env.automations.enabled && (automations.desktop || automations.cloud),
         desktopAutomationsEnabled: automations.desktop,

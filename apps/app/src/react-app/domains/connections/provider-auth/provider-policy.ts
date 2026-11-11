@@ -1,3 +1,4 @@
+import { isLocalModelProviderId } from "@openwork/types/den/desktop-policies";
 import {
   DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID,
   isDesktopProviderBlocked,
@@ -41,6 +42,8 @@ export function isProviderAllowedByDesktopPolicy(input: ProviderDesktopPolicyInp
 
   if (!input.restrictToCloud) return true;
   if (isCloudManagedProviderKey(providerId)) return true;
+  // Under "Only models you provide", local models run only when their own switch allows them (checked above).
+  if (isLocalModelProviderId(providerId)) return true;
   return providerId.toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID;
 }
 

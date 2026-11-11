@@ -26,6 +26,12 @@ A personal provider stays personal until its owner explicitly shares it.
 - **Invitees:** receive models through the existing grant-aware Gateway catalog
   and sync. An invite does not copy the inviter's upstream key to another device.
 
+![The share confirmation](confirmation.png)
+
+![Shared models in Add member](invite-preview.png)
+
+![A member sees who manages AI providers](member-locked.png)
+
 The Get set up checklist's Share action now starts in desktop AI Providers,
 using the saved key when possible and the Gateway form otherwise.
 

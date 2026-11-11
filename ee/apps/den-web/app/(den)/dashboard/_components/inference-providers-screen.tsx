@@ -168,6 +168,9 @@ export function GatewayProvidersSection() {
     <div>
       {error ? <DenNotice message="Could not load your providers. Your saved configuration has not changed." tone="error" presentation="inline" className="mb-6" action={<DenButton size="sm" variant="secondary" onClick={() => void reloadProviders()}>Retry</DenButton>} /> : null}
 
+      {/* Who can use models also governs personal keys and local models, so with
+          localModelsPolicy on it is reachable before any provider exists. */}
+      {empty && orgFeatureEnabled(orgContext, "localModelsPolicy") ? <div className="mb-6"><GatewayWhoCanUseModels /></div> : null}
       {/* With feature intros on, the AI providers intro replaces the empty state (DESIGN.md I1). */}
       <FeatureIntroGate introKey="ai-gateway.ai-providers" facts={loaded ? { providers: inferenceProviders.length } : null}>
         {empty ? <EmptyState orgSlug={orgSlug} /> : (
