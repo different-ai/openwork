@@ -1,10 +1,13 @@
 import {
+  COMPUTER_DISCONNECTED_ERROR,
   REMOTE_DEVICE_COMPUTER_READINESS,
   REMOTE_DEVICE_REPORT_INTERVAL_SECONDS,
   remoteDeviceDesktopReportSchema,
   type RemoteDeviceDesktopReport,
 } from "@openwork/types/den/remote-devices"
 import type { ComputerDevicesSnapshot, DesktopDeviceIdentity } from "@openwork/types/desktop-ipc"
+
+import { DenApiError, isDenSessionRevokedError } from "@/app/lib/den"
 
 type ReportedComputerUse = RemoteDeviceDesktopReport["computerUse"]
 type ReportedComputer = NonNullable<ReportedComputerUse>["computers"][number]
@@ -113,7 +116,21 @@ export type DeviceReportOutcome =
   | { kind: "rate_limited"; retryAfterSeconds: number | null }
   /** The organization does not have the feature: stop until that changes. */
   | { kind: "feature_off" }
+  /** This computer was disconnected from the organization: stop until someone signs in on it again. */
+  | { kind: "disconnected" }
+  /** Den did not accept the sign-in: have it checked, and wait like any failure. */
+  | { kind: "sign_in_refused" }
   | { kind: "failed" }
+
+/** What a report Den did not accept means for the reporter. */
+export function deviceReportFailure(error: unknown): DeviceReportOutcome {
+  if (!(error instanceof DenApiError)) return { kind: "failed" }
+  if (error.status === 429) return { kind: "rate_limited", retryAfterSeconds: error.retryAfterSeconds ?? null }
+  if (error.status === 404 && error.code === "feature_disabled") return { kind: "feature_off" }
+  if (error.status === 403 && error.code === COMPUTER_DISCONNECTED_ERROR) return { kind: "disconnected" }
+  if (isDenSessionRevokedError(error)) return { kind: "sign_in_refused" }
+  return { kind: "failed" }
+}
 
 export type DeviceReporterOptions = {
   readIdentity: () => Promise<DesktopDeviceIdentity>
@@ -122,6 +139,10 @@ export type DeviceReporterOptions = {
   send: (report: RemoteDeviceDesktopReport) => Promise<DeviceReportOutcome>
   /** The id Den lists this desktop under. */
   onReported: (deviceId: string) => void
+  /** Den refuses this computer: nothing more is sent by this reporter. */
+  onDisconnected?: () => void
+  /** Den refused the sign-in the report was sent with. */
+  onSignInRefused?: () => void
   now?: () => number
   timers?: Timers
 }
@@ -130,7 +151,8 @@ export type DeviceReporterOptions = {
  * Keeps this desktop current in its organization's devices list: once at
  * start, again when the server asks (every few minutes), and sooner when
  * `check()` sees its computer use changed. Failures are silent: it waits and
- * tries again, and stops for good when the organization has the feature off.
+ * tries again, and stops for good when the organization has the feature off
+ * or this computer was disconnected from it.
  * One reporter serves one sign-in; make a new one when the organization or
  * the feature changes.
  */
@@ -190,12 +212,16 @@ export function createDeviceReporter(options: DeviceReporterOptions) {
       options.onReported(outcome.deviceId)
     } else if (outcome.kind === "feature_off") {
       halted = true
+    } else if (outcome.kind === "disconnected") {
+      halted = true
+      options.onDisconnected?.()
     } else if (outcome.kind === "rate_limited") {
       const seconds = outcome.retryAfterSeconds !== null && Number.isFinite(outcome.retryAfterSeconds) && outcome.retryAfterSeconds > 0 ? outcome.retryAfterSeconds : RATE_LIMIT_FALLBACK_SECONDS
       notBefore = now() + seconds * 1000
     } else {
       failures += 1
       notBefore = now() + deviceReportBackoffMs(failures)
+      if (outcome.kind === "sign_in_refused") options.onSignInRefused?.()
     }
     plan()
   }

@@ -1,27 +1,35 @@
-import { Laptop, MonitorSmartphone } from "lucide-react";
-import { DenTable } from "../../../../_components/ui/table";
+import { Cloud, Laptop, MonitorSmartphone, Server } from "lucide-react";
+import { LANE, ListRow, OwnerLane, RowLaneLabel, RowList, RowListHeader, StatusLane } from "../../computers/computer-rows";
 import { defineFeatureIntro } from "../types";
 
+/* The examples are the pages' own rows with sample data: a tile, a name over what it is, then the lanes. */
+
+/** The owner lane, kept on at the example's width: who owns each computer is the point of the team list. */
+const EXAMPLE_OWNER_LANE = "flex w-[72px]";
+
 function ComputersExample() {
-  return <DenTable columns={[
-    { key: "computer", header: "Computer", render: (row) => row.name },
-    { key: "owner", header: "Owner", render: (row) => row.owner },
-    { key: "status", header: "Availability", render: (row) => row.status },
-  ]} rows={[
-    { id: "desktop", name: "Design laptop", owner: "Alex", status: "Online" },
-    { id: "virtual", name: "Research computer", owner: "Sam", status: "Paused" },
-  ]} getRowKey={(row) => row.id} density="compact" />;
+  return <RowList label="Example of a team's computers" header={<RowListHeader lead="Computer">
+    <RowLaneLabel lane={EXAMPLE_OWNER_LANE}>Owner</RowLaneLabel>
+    <RowLaneLabel lane={LANE.status}>Status</RowLaneLabel>
+  </RowListHeader>}>
+    <ListRow icon={Laptop} name="Design laptop" secondLine="Mac" lanes={<>
+      <OwnerLane lane={EXAMPLE_OWNER_LANE} device={{ owner: { name: "Alex", email: null }, shared: false }} />
+      <StatusLane label="Online" tone="success" />
+    </>} />
+    <ListRow icon={Cloud} name="Research computer" secondLine="Workbot's computer" lanes={<>
+      <OwnerLane lane={EXAMPLE_OWNER_LANE} device={{ owner: { name: "Sam", email: null }, shared: false }} />
+      <StatusLane label="Paused" tone="neutral" />
+    </>} />
+  </RowList>;
 }
 
 function MyComputersExample() {
-  return <DenTable columns={[
-    { key: "computer", header: "Computer", render: (row) => row.name },
-    { key: "belongs", header: "Belongs to", render: (row) => row.belongs },
-    { key: "status", header: "Availability", render: (row) => row.status },
-  ]} rows={[
-    { id: "desktop", name: "Work laptop", belongs: "You", status: "Online" },
-    { id: "shared", name: "Research computer", belongs: "Shared with your organization", status: "Not checked yet" },
-  ]} getRowKey={(row) => row.id} density="compact" />;
+  return <RowList label="Example of your computers" header={<RowListHeader lead="Computer">
+    <RowLaneLabel lane={LANE.status}>Status</RowLaneLabel>
+  </RowListHeader>}>
+    <ListRow icon={Laptop} name="Work laptop" secondLine="Mac" lanes={<StatusLane label="Online" tone="success" />} />
+    <ListRow icon={Server} name="Research computer" secondLine="Shared with your organization" lanes={<StatusLane label="Not checked yet" tone="neutral" />} />
+  </RowList>;
 }
 
 export const computersIntros = [defineFeatureIntro({

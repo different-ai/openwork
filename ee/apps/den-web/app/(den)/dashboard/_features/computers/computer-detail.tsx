@@ -1,9 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { X } from "lucide-react";
 import {
-  REMOTE_DEVICE_AVAILABILITY_LABELS,
   organizationComputerDetailResponseSchema,
   remoteDeviceTypeLabel,
   type RemoteDeviceDiagnostics,
@@ -14,17 +12,19 @@ import { DenSkeleton } from "../../../_components/ui/skeleton";
 import type { z } from "zod";
 import { useComputer } from "./computers-data";
 import type { OrganizationComputerEvent } from "./computers-format";
+import { Unplug, X } from "lucide-react";
 import { CopyableId, StatusDot, TimeAgo, focusRing, hairline, secondaryText } from "./computer-parts";
 import {
   ACTOR_LABELS,
-  AVAILABILITY_TONE,
   EVENT_LEVEL_LABELS,
   EVENT_LEVEL_TONE,
   PROVIDER_LABELS,
   SOURCE_LABELS,
   absoluteTime,
+  computerStatus,
   countLabel,
   eventDataEntries,
+  ownerEmail,
   ownerLabel,
   platformLabel,
   readinessLabel,
@@ -129,21 +129,29 @@ function DetailSkeleton() {
   </div>;
 }
 
-/** One computer's supported inventory, without credentials or impersonation. `standalone` adds what its row in the list would have shown. */
+/**
+ * One computer's supported inventory, without credentials or impersonation.
+ * `standalone` adds what its row in the list would have shown. The owner,
+ * last contact and full app version are always here: a narrow list drops those lanes.
+ */
 export function ComputerDetailView({ detail, now, standalone = false }: { detail: Detail; now: number; standalone?: boolean }) {
   const device = detail.device;
+  const status = computerStatus(device);
   return <>
     <Rows flush>
       {standalone ? <>
         <Row label="Type">{remoteDeviceTypeLabel(device)}</Row>
-        <Row label="Owner">{ownerLabel(device)}</Row>
-        <Row label="Availability">
-          <span className="inline-flex items-center gap-2"><StatusDot tone={AVAILABILITY_TONE[device.availability]} />{REMOTE_DEVICE_AVAILABILITY_LABELS[device.availability]}</span>
-          {device.statusDetail ? <span className={`ml-2 ${secondaryText}`}>{device.statusDetail}</span> : null}
+        <Row label="Status">
+          <span className="inline-flex items-center gap-2">
+            {status.disconnected ? <Unplug size={14} strokeWidth={1.5} aria-hidden="true" className={secondaryText} /> : <StatusDot tone={status.tone} />}{status.label}
+          </span>
+          {status.detail ? <span className={`ml-2 ${secondaryText}`}>{status.detail}</span> : null}
         </Row>
-        <Row label="Last heard from"><TimeAgo iso={device.lastSeenAt} now={now} /></Row>
-        {device.appVersion ? <Row label="App version">{device.appVersion}</Row> : null}
       </> : null}
+      <Row label="Owner"><span title={ownerEmail(device)}>{ownerLabel(device)}</span></Row>
+      <Row label="Last contact"><TimeAgo iso={device.lastSeenAt} now={now} /></Row>
+      {device.appVersion ? <Row label="App version"><span className="break-all">{device.appVersion}</span></Row> : null}
+      {device.disconnectedAt ? <Row label="Disconnected"><time dateTime={device.disconnectedAt}>{absoluteTime(device.disconnectedAt)}</time></Row> : null}
       <Row label="Provider">{PROVIDER_LABELS[device.provider]}</Row>
       <Row label="Source">{SOURCE_LABELS[device.source]}</Row>
       <Row label="Platform">{platformLabel(device.platform)}</Row>
@@ -187,20 +195,26 @@ export function ComputerDetailView({ detail, now, standalone = false }: { detail
 }
 
 /**
- * Everything Den knows that explains one computer's state. Read-only. Inside the list it sits under the
- * computer's row; `onClose` is given when the computer is not on the page shown, so it stands on its own.
+ * Everything Den knows that explains one computer's state. Inside the list it sits under the computer's
+ * row; `onClose` is given when the computer is not on the page shown, so it stands on its own. `actions`
+ * is what the viewer may do to it, at the top right: given the loaded computer, since a standalone one has no row.
  */
-export function ComputerDetail({ orgId, deviceId, onClose }: {
+export function ComputerDetail({ orgId, deviceId, onClose, actions }: {
   orgId: string;
   deviceId: string;
   onClose?: () => void;
+  actions?: (device: Detail["device"]) => ReactNode;
 }) {
   const query = useComputer(orgId, deviceId);
   const detail = query.data;
+  const controls = detail && actions ? actions(detail.device) : null;
   return <div className="max-w-3xl text-[13px] text-[color:var(--dls-text-primary)]" aria-busy={query.isFetching} data-testid={`computer-detail-${deviceId}`}>
-    {onClose ? <div className="mb-2 flex items-center justify-between gap-3">
-      <h2 className="min-w-0 break-words text-sm font-medium">{detail?.device.label ?? "Computer"}</h2>
-      <DenButton variant="ghost" size="sm" icon={X} onClick={onClose}>Close</DenButton>
+    {onClose || controls ? <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+      {onClose ? <h2 className="min-w-0 break-words text-sm font-medium">{detail?.device.label ?? "Computer"}</h2> : <span />}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {controls}
+        {onClose ? <DenButton variant="ghost" size="sm" icon={X} onClick={onClose}>Close</DenButton> : null}
+      </div>
     </div> : null}
     {query.error ? <div role="alert" className="mb-3 flex flex-wrap items-center gap-3">
       <p>{query.error.message}{detail ? " Showing the last known report." : ""}</p>

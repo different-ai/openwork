@@ -120,7 +120,10 @@ declare global {
         onEvent?: (callback: (payload: SpeechDictationEvent) => void) => () => void;
       };
       automationRunner?: {
-        onCredentialRejected?: (callback: () => void) => () => void;
+        /** `computer_disconnected`: Den refuses this computer until someone signs in on it again. */
+        onCredentialRejected?: (
+          callback: (rejection?: { reason: "computer_disconnected" | "credential_rejected" }) => void,
+        ) => () => void;
       };
       remoteSessionAccess?: {
         get?: () => Promise<RemoteSessionAccessState>;

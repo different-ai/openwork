@@ -28,6 +28,7 @@ import {
   type MemberSessionListResponse,
   type RemoteSessionAttachRequest,
 } from "@openwork/types/den/remote-sessions"
+import { COMPUTER_DISCONNECTED_ERROR } from "@openwork/types/den/remote-devices"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
@@ -43,6 +44,7 @@ import {
 // its `effect` dependency) into every spec that imports this module, which
 // the evals layer rules forbid.
 import { automationRepository, automationRunnerRowId } from "../automations/repository.js"
+import { COMPUTER_DISCONNECTED_SESSION_MESSAGE, computerDisconnected, runnerDisconnected } from "../computer-disconnect.js"
 import { cloudHostingAvailable } from "../capability-sources/cloud-hosting.js"
 import {
   COMPUTER_SESSION_ACCESS_DENIED_MESSAGE,
@@ -497,6 +499,8 @@ type DesktopRunnerState = {
   /** The runner honours session access: attaches, dismissals and its owner's choice. */
   accessCapable?: boolean
   sessionAccess?: RemoteSessionAccessMode | null
+  /** The computer was disconnected from the organization: nothing reaches it until someone signs in on it again. */
+  disconnected?: boolean
 }
 
 export type RemoteSessionExecuteDeps = {
@@ -541,6 +545,8 @@ export type RemoteSessionExecuteDeps = {
   }) => Promise<RemoteSessionAccessPolicy>
   /** Whether this deployment can run cloud remote sessions; defaults to the deployment config. */
   cloudAvailable?: () => boolean
+  /** Whether a computer the member names, and no longer has, was disconnected; defaults to computer-disconnect.ts. */
+  computerDisconnected?: (scope: { organizationId: string; ownerMemberId: string; computerId: string }) => Promise<boolean>
 }
 
 export type RemoteSessionToolResult = {
@@ -784,7 +790,8 @@ async function defaultDesktopRunner(scope: {
   runnerId: string
 }): Promise<DesktopRunnerState> {
   const runner = await automationRepository.desktopRunnerById(scope)
-  if (!runner) return { connected: false, controlCapable: false }
+  // A disconnected computer has no registration; say so rather than "update" or "offline".
+  if (!runner) return { connected: false, controlCapable: false, disconnected: await runnerDisconnected(scope) }
   return {
     connected: desktopRunnerConnected({ lastSeenAt: runner.lastSeenAt, now: Date.now() }),
     controlCapable: runner.capabilities.includes(REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY),
@@ -813,6 +820,7 @@ export const DEFAULT_REMOTE_SESSION_DEPS: RemoteSessionExecuteDeps = {
   desktopTargets: defaultDesktopTargets,
   sessionAccess: defaultSessionAccess,
   cloudAvailable: cloudRemoteSessionsAvailable,
+  computerDisconnected,
 }
 
 function targetsPayload(
@@ -964,6 +972,23 @@ function sessionDisconnected(identity: Record<string, unknown>): RemoteSessionTo
   return errorResult({ target: "desktop", ...identity, error: "session_unavailable", message: DETACHED_MESSAGE, retryable: false })
 }
 
+/** The computer was disconnected from the organization. Retrying cannot help: someone has to sign in on it again. */
+function computerDisconnectedResult(identity: Record<string, unknown>): RemoteSessionToolResult {
+  return errorResult({ target: "desktop", ...identity, error: COMPUTER_DISCONNECTED_ERROR, message: COMPUTER_DISCONNECTED_SESSION_MESSAGE, retryable: false })
+}
+
+/** A computer the member names that is not among theirs: null unless it is one of theirs that was disconnected. */
+async function disconnectedTargetRefusal(
+  deps: RemoteSessionExecuteDeps,
+  input: Pick<RemoteSessionExecuteInput, "organizationId">,
+  targets: RemoteSessionDesktopTargets,
+  computerId: string,
+): Promise<RemoteSessionToolResult | null> {
+  if (!targets.ownerMemberId || targets.computers.some((computer) => computer.computerId === computerId)) return null
+  const disconnected = await (deps.computerDisconnected ?? computerDisconnected)({ organizationId: input.organizationId, ownerMemberId: targets.ownerMemberId, computerId })
+  return disconnected ? computerDisconnectedResult({ computerId }) : null
+}
+
 /** `attached`: the request went through an attach command rather than one that started the session. */
 function desktopRequestResult(request: RemoteSessionRequest, options: { attached: boolean }): RemoteSessionToolResult {
   const identity = {
@@ -1002,7 +1027,9 @@ function desktopRequestResult(request: RemoteSessionRequest, options: { attached
       retryable: !["unknown_session", "unknown_receipt", "invalid_cursor", "cursor_unavailable", "message_conflict", "session_conflict", "ambiguous_creation", "ambiguous_send",
         "stale_request", "invalid_answer", "answer_unsupported", "ambiguous_answer",
         // The computer's own refusals of a session its owner no longer shares, or that is gone.
-        "session_access_denied", "session_unavailable"].includes(error.code),
+        "session_access_denied", "session_unavailable",
+        // Disconnecting the computer failed the request.
+        COMPUTER_DISCONNECTED_ERROR].includes(error.code),
     })
   }
   const outcome = request.outcome
@@ -1297,7 +1324,9 @@ async function attachedCommandRefusal(
   const runner = command.claimedByRunnerId
     ? await deps.desktopRunner({ organizationId: input.organizationId, ownerMemberId: command.ownerMemberId, runnerId: command.claimedByRunnerId })
     : null
-  return attachedSessionRefusal(deps, callerScope(input), runner, { commandId: command.id, sessionId: command.sessionId })
+  const identity = { commandId: command.id, sessionId: command.sessionId }
+  if (runner?.disconnected) return computerDisconnectedResult(identity)
+  return attachedSessionRefusal(deps, callerScope(input), runner, identity)
 }
 
 const ATTACH_FEATURE_DISABLED_MESSAGE = "Reaching sessions that were started on a computer is not turned on for your organization."
@@ -1321,6 +1350,8 @@ async function attachDesktopSession(
   if (!policy.enabled) return errorResult({ error: "feature_disabled", message: ATTACH_FEATURE_DISABLED_MESSAGE, retryable: false })
   if (policy.ceiling !== "all") return sessionAccessDenied(ORGANIZATION_SESSION_ACCESS_DENIED_MESSAGE, {})
   const targets = await (deps.desktopTargets ?? defaultDesktopTargets)({ ...scope, sessions: true })
+  const disconnected = await disconnectedTargetRefusal(deps, input, targets, body.computerId)
+  if (disconnected) return disconnected
   // Only the caller's own computers are ever read, so someone else's is as unknown as one that does not exist.
   const computer = targets.computers.find((candidate) => candidate.computerId === body.computerId)
   if (!targets.ownerMemberId || !computer) {
@@ -1554,6 +1585,7 @@ async function executeRemoteSession(
     const session = await findDesktopSession(input, parsedBody.data, deps)
     if (session) {
       const runner = await deps.desktopRunner({ organizationId: input.organizationId, ownerMemberId: session.ownerMemberId, runnerId: session.runnerId })
+      if (runner.disconnected) return computerDisconnectedResult({ commandId: session.commandId, sessionId: session.sessionId })
       if (session.kind === "attach") {
         const identity = { commandId: session.commandId, sessionId: session.sessionId }
         const refusal = await attachedSessionRefusal(deps, callerScope(input), runner, identity)
@@ -1582,6 +1614,8 @@ async function executeRemoteSession(
     const body = createBodySchema.parse(parsedBody.data)
     if (body.target === "registered" || (body.target === "desktop" && (body.computerId !== undefined || body.workspaceId !== undefined))) {
       const targets = await (deps.desktopTargets ?? defaultDesktopTargets)({ organizationId: input.organizationId, userId: input.userId })
+      const disconnected = body.computerId === undefined ? null : await disconnectedTargetRefusal(deps, input, targets, body.computerId)
+      if (disconnected) return disconnected
       // Registered admission has separate access rules. Never let that alias
       // select a legacy desktop that still requires Web access.
       const computers = body.target === "registered"

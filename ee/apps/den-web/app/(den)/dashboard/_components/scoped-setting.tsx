@@ -16,9 +16,11 @@ import { scopeChipState, scopeConflictLine, type TeamScope } from "./team-scope"
  */
 
 /** One setting: its label on the left, its chip and one control on the right, an optional line of state under it. */
-export function SettingRow({ label, labelId, aside, stateLine, children }: {
+export function SettingRow({ label, labelId, aside, stateLine, children, flush = false }: {
   label: string;
   labelId: string;
+  /** No side padding, for a row that sits straight on the page beside flat lists rather than in a panel. */
+  flush?: boolean;
   /** Shown beside the label. */
   aside?: ReactNode;
   /** One line of state under the row, only while it is true. */
@@ -26,7 +28,7 @@ export function SettingRow({ label, labelId, aside, stateLine, children }: {
   children: ReactNode;
 }) {
   return (
-    <div className="px-6 py-3">
+    <div className={flush ? "py-3" : "px-6 py-3"}>
       <div className="flex min-h-6 flex-wrap items-center justify-between gap-3">
         <span className="flex min-w-0 items-center gap-2">
           <span id={labelId} className="text-[13px] font-medium text-gray-900">{label}</span>

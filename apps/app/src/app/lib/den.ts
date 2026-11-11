@@ -44,12 +44,14 @@ import { gatewayUsageStatusSchema, gatewayUsageResetRequestSchema } from "@openw
 import {
   remoteDeviceDesktopReportResponseSchema,
   remoteDeviceDetailResponseSchema,
+  remoteDeviceDisconnectResponseSchema,
   remoteDeviceListResponseSchema,
   remoteDeviceResponseSchema,
   type RemoteDevice,
   type RemoteDeviceDesktopReport,
   type RemoteDeviceDesktopReportResponse,
   type RemoteDeviceDetailResponse,
+  type RemoteDeviceDisconnectResponse,
   type RemoteDeviceRegisterRequest,
 } from "@openwork/types/den/remote-devices";
 
@@ -3313,6 +3315,16 @@ export function createDenClient(options: {
       return remoteDeviceResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}`, {
         method: "PATCH", token, organizationId: orgId, body: { label },
       })).device;
+    },
+
+    /**
+     * Disconnects one of the member's own signed-in desktops: it takes no tasks and shares no
+     * sessions until someone signs in on it again. `signedOut` says whether OpenWork there was signed out too.
+     */
+    async disconnectRemoteDevice(orgId: string, deviceId: string): Promise<RemoteDeviceDisconnectResponse> {
+      return remoteDeviceDisconnectResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}/disconnect`, {
+        method: "POST", token, organizationId: orgId, body: {},
+      }));
     },
 
     /** Takes a computer off the list. The computer itself keeps running. */

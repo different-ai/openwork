@@ -26,11 +26,13 @@ import {
   runnerSessionReportResponseSchema,
   runnerSessionReportSchema,
 } from "@openwork/types/automations"
+import { COMPUTER_DISCONNECTED_ERROR } from "@openwork/types/den/remote-devices"
 import { jsonValidator, orgMemberRoute, paramValidator, type OrganizationContextVariables } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, textResponse } from "../../openapi.js"
 import type { AutomationService } from "../../automations/service.js"
 import { automationRunnerComputerIds } from "../../automations/repository.js"
 import { automationRunnerAudienceFromRequest, automationRunnerAuth } from "../../automations/runner-auth.js"
+import { computerDisconnectedBody, dropDisconnectedRunner, findDisconnection, reconnectIfSignedInAgain, signInSessionOf, type SignInSession } from "../../computer-disconnect.js"
 import { env } from "../../env.js"
 import { readRemoteSessionAccessPolicy, type RemoteSessionAccessPolicy } from "../../remote-sessions/access.js"
 import { databaseRemoteSessionCommandStore, RemoteSessionAttachClaimRefusedError, type RemoteSessionCommand, type RemoteSessionCommandStore } from "../../remote-sessions/commands.js"
@@ -55,6 +57,13 @@ const REMOTE_SESSION_PUSH_HEADER = "x-openwork-remote-session-push"
 const REMOTE_SESSION_PUSH_CHECK_MS = 5_000
 
 const idParamsSchema = z.object({ id: z.string().min(1).max(160) })
+const computerDisconnectedSchema = z.object({ error: z.literal(COMPUTER_DISCONNECTED_ERROR), message: z.string() })
+
+/** True while the install is disconnected; a sign-in made after the disconnect connects it again and answers false. */
+async function refusesDisconnected(runner: { organizationId: string; ownerMemberId: string; runnerId: string }, session: SignInSession | null) {
+  const disconnection = await findDisconnection(runner.organizationId, runner.ownerMemberId, runner.runnerId)
+  return disconnection !== null && await reconnectIfSignedInAgain(disconnection, session) === "refused"
+}
 
 export function registerSessionRunnerRoutes<T extends { Variables: Partial<OrganizationContextVariables> }>(
   app: Hono<T>,
@@ -90,9 +99,10 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
       tags: sessionOnly ? ["Internal"] : ["Automations"], "x-mcp": false,
       operationId: sessionOnly ? "mintSessionRunnerToken" : "mintAutomationRunnerToken",
       summary: sessionOnly ? "Connect this computer as an interactive session runner" : "Connect this desktop as an Automation runner",
-      description: "Mints the existing time-limited runner-only credential. Session runners never execute scheduled Automations.",
+      description: "Mints the existing time-limited runner-only credential. Session runners never execute scheduled Automations. A computer that was disconnected from the organization is refused with 403 computer_disconnected and nothing is registered, unless the request comes with a sign-in made after the disconnect, which connects it again.",
       responses: {
         200: jsonResponse("Runner credential minted.", automationRunnerTokenResponseSchema),
+        403: jsonResponse("This computer was disconnected from the organization. Signing in on it again connects it.", computerDisconnectedSchema),
         409: jsonResponse("Runner identity conflict.", invalidRequestSchema),
       },
     }),
@@ -109,13 +119,22 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
       const registration = sessionOnly
         ? automationDesktopRunnerRegistrationSchema.parse({ ...body, capabilities: [...new Set([...body.capabilities, REMOTE_SESSION_ONLY_RUNNER_CAPABILITY])] })
         : body
+      // A disconnected computer gets no credential and no registration until someone signs in on it again.
+      const session = signInSessionOf(c)
+      const runner = { ...scope, runnerId: registration.runnerId }
+      if (await refusesDisconnected(runner, session)) return c.json(computerDisconnectedBody, 403)
       try {
-        await service.registerDesktopRunner(scope, registration)
+        await service.registerDesktopRunner(scope, registration, session?.id ?? null)
       } catch (error) {
         if (error instanceof Error && error.message === "automation_runner_identity_conflict") {
           return c.json({ error: error.message, message: "This desktop runner identity is already registered to a different organization member." }, 409)
         }
         throw error
+      }
+      // A disconnect that landed while the registration was being written wins.
+      if (await refusesDisconnected(runner, session)) {
+        await dropDisconnectedRunner(runner)
+        return c.json(computerDisconnectedBody, 403)
       }
       return c.json(automationRunnerAuth.issue(
         { ...scope, runnerId: registration.runnerId, capabilities: registration.capabilities },
@@ -190,7 +209,8 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
           while (!stream.aborted) {
             if (Date.now() >= identity.expiresAt) break
             if (Date.now() - lastOwnerCheckAt >= 15_000) {
-              if (!await service.isActiveRunnerOwner(identity)) break
+              // An inactive owner or a disconnected computer ends the stream; reconnecting is told why.
+              if (await service.runnerStanding(identity) !== "active") break
               // The kill switch ends the stream; the desktop reconnects, gets 404 and polls.
               if (wantsPush && !await pushEnabled(identity.organizationId)) break
               announceAttach = wantsPush && await sessionAccessFor(identity) !== null

@@ -1,10 +1,14 @@
 import type { z } from "zod";
 import {
   REMOTE_DEVICE_AVAILABILITIES,
+  REMOTE_DEVICE_AVAILABILITY_LABELS,
+  REMOTE_DEVICE_DISCONNECTED_LABEL,
   REMOTE_DEVICE_KINDS,
   REMOTE_DEVICE_PROVIDERS,
   organizationComputerListResponseSchema,
   organizationComputerDetailResponseSchema,
+  shortAppVersion,
+  type RemoteDevice,
   type RemoteDeviceAvailability,
   type RemoteDeviceComputerReadiness,
   type RemoteDeviceEventActor,
@@ -26,6 +30,8 @@ export type ComputerFilters = {
   page: number;
   instancePage: number;
   device: string;
+  /** Also list desktops nobody has heard from for 30 days (`stale=include`). */
+  stale: boolean;
 };
 
 type QueryReader = { get: (key: string) => string | null };
@@ -47,6 +53,7 @@ export function readComputerFilters(params: QueryReader): ComputerFilters {
     page: page && /^[1-9]\d*$/.test(page) ? Math.min(999, Number(page)) : 1,
     instancePage: instancePage && /^[1-9]\d*$/.test(instancePage) ? Math.min(999, Number(instancePage)) : 1,
     device: params.get("device")?.trim() ?? "",
+    stale: params.get("stale") === "include",
   };
 }
 
@@ -59,6 +66,7 @@ export function writeComputerFilters(filters: ComputerFilters): string {
   if (filters.page > 1) query.set("page", String(Math.min(999, filters.page)));
   if (filters.instancePage > 1) query.set("instancePage", String(Math.min(999, filters.instancePage)));
   if (filters.device) query.set("device", filters.device);
+  if (filters.stale) query.set("stale", "include");
   return query.toString();
 }
 
@@ -73,7 +81,7 @@ export function hasComputerFilters(filters: ComputerFilters): boolean {
   return Boolean(filters.search.trim()) || filters.kind !== "all" || filters.provider !== "all" || filters.availability !== "all" || filters.page > 1;
 }
 export function clearComputerFilters(): ComputerFilters {
-  return { search: "", kind: "all", provider: "all", availability: "all", page: 1, instancePage: 1, device: "" };
+  return { search: "", kind: "all", provider: "all", availability: "all", page: 1, instancePage: 1, device: "", stale: false };
 }
 
 export function devicePageCount(total: number, pageSize: number): number {
@@ -108,13 +116,115 @@ export function absoluteTime(iso: string | null, locale?: string): string {
   return Number.isFinite(time.getTime()) ? time.toLocaleString(locale, { dateStyle: "medium", timeStyle: "medium" }) : "";
 }
 
-/** Who the computer belongs to: their name, else their email, else everyone, else someone who has left. */
-export function ownerLabel(device: Pick<OrganizationComputer, "owner" | "shared">): string {
-  const name = device.owner?.name?.trim();
-  if (name) return name;
-  const email = device.owner?.email?.trim();
-  if (email) return email;
-  return device.shared ? "Shared with the organization" : "Former member";
+export const SHARED_COMPUTER_LABEL = "Shared with your organization";
+export const FORMER_MEMBER_LABEL = "Former member";
+
+/** Whose computer it is, as the team list and the instances list both report an owner. */
+export type ComputerOwner = { owner: { memberId?: string | null; name: string | null; email: string | null; former?: boolean } | null; shared: boolean };
+
+/** A member who left keeps a placeholder address ending in `.invalid`; it is never shown as their name. */
+function placeholderEmail(email: string | null | undefined): boolean {
+  return Boolean(email?.trim().toLowerCase().endsWith(".invalid"));
+}
+
+/** The owner has left the organization, or Den no longer knows who they were. */
+export function isFormerOwner(device: ComputerOwner): boolean {
+  if (device.shared) return false;
+  return !device.owner || device.owner.former === true || placeholderEmail(device.owner.email);
+}
+
+/** Who the computer belongs to: everyone, someone who has left, else their name, else their email. */
+export function ownerLabel(device: ComputerOwner): string {
+  if (device.shared) return SHARED_COMPUTER_LABEL;
+  if (isFormerOwner(device)) return FORMER_MEMBER_LABEL;
+  return device.owner?.name?.trim() || device.owner?.email?.trim() || FORMER_MEMBER_LABEL;
+}
+
+/** The owner's address for a tooltip; nothing for a shared computer or a placeholder. */
+export function ownerEmail(device: ComputerOwner): string | undefined {
+  if (device.shared || isFormerOwner(device)) return undefined;
+  return device.owner?.email?.trim() || undefined;
+}
+
+/** "0.18.66 alpha" for a list; the full string belongs in a `title` or the detail. */
+export function versionLabel(version: string | null | undefined): string {
+  return shortAppVersion(version) ?? "Not reported";
+}
+
+export const DISCONNECTED_HINT = "Sign in on it again to reconnect";
+
+/**
+ * A computer's status lane. Disconnected wins over availability and stays
+ * neutral: it was blocked on purpose, which is not a failure.
+ */
+export function computerStatus(device: Pick<RemoteDevice, "availability" | "statusDetail" | "disconnectedAt">): {
+  label: string;
+  tone: DeviceTone;
+  detail: string | null;
+  disconnected: boolean;
+} {
+  if (device.disconnectedAt) return { label: REMOTE_DEVICE_DISCONNECTED_LABEL, tone: "neutral", detail: DISCONNECTED_HINT, disconnected: true };
+  return {
+    label: REMOTE_DEVICE_AVAILABILITY_LABELS[device.availability],
+    tone: AVAILABILITY_TONE[device.availability],
+    detail: device.statusDetail?.trim() || null,
+    disconnected: false,
+  };
+}
+
+/** "Added 3 Nov", with the year once it is not this one. */
+export function addedLabel(iso: string, now = Date.now()): string | null {
+  const added = new Date(iso);
+  if (!Number.isFinite(added.getTime())) return null;
+  const day = `${added.getDate()} ${added.toLocaleDateString("en-US", { month: "short" })}`;
+  return added.getFullYear() === new Date(now).getFullYear() ? `Added ${day}` : `Added ${day} ${added.getFullYear()}`;
+}
+
+/**
+ * What tells apart computers of one owner that share a name (an old install
+ * beside the new one): when each was added. Keyed by computer id; a computer
+ * whose name is its owner's only one has no entry.
+ */
+export function duplicateNameNotes<T extends { id: string; label: string; createdAt: string }>(
+  devices: readonly T[],
+  ownerKey: (device: T) => string,
+  now = Date.now(),
+): Map<string, string> {
+  const groups = new Map<string, T[]>();
+  for (const device of devices) {
+    const key = `${ownerKey(device)}\n${device.label.trim().toLowerCase()}`;
+    groups.set(key, [...(groups.get(key) ?? []), device]);
+  }
+  const notes = new Map<string, string>();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    for (const device of group) {
+      const note = addedLabel(device.createdAt, now);
+      if (note) notes.set(device.id, note);
+    }
+  }
+  return notes;
+}
+
+/** The team list's owner key: the member, or everyone for a shared computer. */
+export function teamOwnerKey(device: Pick<OrganizationComputer, "owner" | "shared">): string {
+  return device.shared ? "shared" : device.owner?.memberId ?? "former";
+}
+
+/**
+ * The one line of state under a page title: "6 of 17 online". An API from
+ * before the online count existed sends none: then it is just "17 computers".
+ */
+export function computersStateLine(input: { online?: number; total: number; filtered?: boolean }): string {
+  if (input.total === 0) return input.filtered ? "No computers match" : "No computers yet";
+  if (input.online === undefined) return countLabel(input.total, input.filtered ? "matching computer" : "computer");
+  if (input.filtered) return `${countLabel(input.total, "matching computer")}, ${whole.format(input.online)} online`;
+  return `${whole.format(input.online)} of ${whole.format(input.total)} online`;
+}
+
+/** "3 not heard from in 30 days". */
+export function staleLine(count: number): string {
+  return `${whole.format(count)} not heard from in 30 days`;
 }
 
 export type DeviceTone = "success" | "warning" | "danger" | "neutral";

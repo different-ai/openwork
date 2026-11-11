@@ -1616,9 +1616,10 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
   // Remote-session callers choose a computer by this label, then a workspace and model.
   describeComputer: describeThisComputer,
   log: (state) => console.info(`[automation-runner] ${state}`),
-  onCredentialRejected: () => {
+  // `reason` tells a disconnected computer (wait for a new sign-in) from a credential to replace now.
+  onCredentialRejected: (rejection) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.webContents.send(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT);
+    mainWindow.webContents.send(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT, rejection);
   },
 });
 

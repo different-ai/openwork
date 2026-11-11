@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isValidElement } from "react";
+import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { mapFeatures } from "@openwork/features";
 import type { MemberSession, MemberSessionComputer } from "@openwork/types/den/remote-sessions";
 import { parseOrgContextPayload, type DenOrgContext } from "../../../_lib/den-org";
-import { MySessions, MySessionsPage, SessionComputers, SessionsList, SessionsTable } from "./my-sessions-screen";
-import { attachAnswered, attachRequested, sessionIdentity, settleAttachAttempts, type AttachAttempt, type AttachAttempts } from "./sessions-model";
+import { MySessions, MySessionsPage, SessionComputers, SessionRows, SessionsList } from "./my-sessions-screen";
+import { attachAnswered, attachRequested, sessionIdentity, sessionsStateLine, settleAttachAttempts, type AttachAttempt, type AttachAttempts } from "./sessions-model";
 
 const now = Date.parse("2026-11-10T12:10:00Z");
 const base: MemberSession = {
@@ -22,41 +22,61 @@ const computer: MemberSessionComputer = {
 };
 
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
-const rows = { now, attemptFor: () => undefined, onConnect: () => {}, hrefFor: (commandId: string) => `/dashboard/my-sessions?session=${commandId}` };
-const row = (html: string, key: string) => html.split("<tr").find((part) => part.includes(`session-row-${key}"`)) ?? "";
+const rows = { now, attemptFor: (): AttachAttempt | undefined => undefined, onConnect: () => {}, hrefFor: (commandId: string) => `/dashboard/my-sessions?session=${commandId}` };
+/** One session's row: everything from its `role="row"` to the next. */
+const row = (html: string, key: string) => html.split('role="row"').find((part) => part.includes(`session-row-${key}"`)) ?? "";
+const list = (sessions: MemberSession[], overrides: Partial<typeof rows> = {}) => renderToStaticMarkup(<SessionRows label="Sessions" sessions={sessions} {...rows} {...overrides} />);
 
-test("a reachable session opens from its row and shows where it runs, its state, when it changed and its last step", () => {
-  const html = renderToStaticMarkup(<SessionsTable sessions={[base]} {...rows} />);
-  assert.match(text(html), /Session.*Computer.*State.*Updated.*Connection/);
-  assert.match(text(html), /Update the release notes Ran List the release notes Work laptop Docs Working 2 min ago/);
+type AnyElement = ReactElement<Record<string, unknown>>;
+/** Every element a hook-free component renders, with the plain components inside it rendered too. */
+function elements(node: ReactNode): AnyElement[] {
+  if (Array.isArray(node)) return node.flatMap(elements);
+  if (!isValidElement(node)) return [];
+  const element = node as AnyElement;
+  const own = [element, ...Object.values(element.props).flatMap((value) => elements(value as ReactNode))];
+  if (typeof element.type !== "function") return own;
+  try {
+    return [...own, ...elements((element.type as (props: unknown) => ReactNode)(element.props))];
+  } catch {
+    return own;
+  }
+}
+
+test("a reachable session opens from its row and shows where it runs, its last step, its state and when it changed", () => {
+  const html = list([base]);
+  assert.match(text(row(html, "remote-1")), /Update the release notes Work laptop Docs Ran List the release notes Working 2 min ago/);
+  // The title is the link, and it covers the row.
   assert.match(html, /<a[^>]*href="\/dashboard\/my-sessions\?session=cmd_1"[^>]*>Update the release notes<\/a>/);
-  assert.doesNotMatch(html, /Connect<|Connecting|Started on this computer|Not connected/);
+  assert.match(row(html, "remote-1"), /data-reach="reachable"/);
+  assert.doesNotMatch(html, /Connect<|Connecting|Started on this computer|Not connected|<button/);
   // Ids stay out of the page: the member reads names.
   assert.doesNotMatch(text(html), /cmp_1|ws_1|ses_1/);
+  assert.doesNotMatch(html, /<table|<td/);
 });
 
-test("every state reads as its badge, and an untitled session still has a name", () => {
-  const states: Array<[MemberSession["state"], string]> = [["starting", "Starting"], ["running", "Working"], ["waiting", "Needs you"], ["idle", "Idle"], ["error", "Error"]];
-  for (const [state, label] of states) {
-    const html = renderToStaticMarkup(<SessionsTable sessions={[{ ...base, state }]} {...rows} />);
-    assert.match(row(html, "remote-1"), new RegExp(`rounded-full[^>]*>${label}<`), state);
+test("every state reads as a dot and a word, not a pill, and an untitled session still has a name", () => {
+  const states: Array<[MemberSession["state"], string, string]> = [["starting", "Starting", "opacity-50"], ["running", "Working", "ow-success"], ["waiting", "Needs you", "ow-warning"], ["idle", "Idle", "opacity-50"], ["error", "Error", "ow-danger"]];
+  for (const [state, label, dot] of states) {
+    const html = row(list([{ ...base, state }]), "remote-1");
+    assert.match(html, new RegExp(`rounded-full[^"]*${dot}[^>]*></span><span[^>]*>${label}<`), state);
+    assert.doesNotMatch(html, /px-2 py-0\.5|bg-amber-50|bg-blue-50/, state);
   }
   // A reachable session whose computer has not reported yet shows no state rather than a guess.
-  const unknown = renderToStaticMarkup(<SessionsTable sessions={[{ ...base, state: "unknown", title: null, updatedAt: null, computerLabel: null, workspaceName: null, latestStep: null }]} {...rows} />);
-  assert.match(text(unknown), /Untitled session Not reported Not reported/);
-  assert.doesNotMatch(unknown, /rounded-full|Not connected/);
+  const unknown = list([{ ...base, state: "unknown", title: null, updatedAt: null, computerLabel: null, workspaceName: null, latestStep: null }]);
+  assert.match(text(row(unknown, "remote-1")), /Untitled session Computer not reported Not reported/);
+  assert.doesNotMatch(row(unknown, "remote-1"), /rounded-full|Not connected/);
 });
 
 test("a session being connected says so and cannot be opened yet", () => {
-  const html = renderToStaticMarkup(<SessionsTable sessions={[{ ...local, reach: "connecting", commandId: "cmd_2" }]} {...rows} />);
-  assert.match(text(html), /Refactor the importer Started on this computer .*Connecting…/);
+  const html = list([{ ...local, reach: "connecting", commandId: "cmd_2" }]);
+  assert.match(text(html), /Refactor the importer Work laptop Docs Started on this computer .*Connecting…/);
   assert.doesNotMatch(html, /<a |<button|Not connected/);
 });
 
 test("a session started on its computer is labelled and offers Connect, through each step of connecting", () => {
-  const render = (attempt: AttachAttempt | undefined) => renderToStaticMarkup(<SessionsTable sessions={[local]} {...rows} attemptFor={() => attempt} />);
+  const render = (attempt: AttachAttempt | undefined) => list([local], { attemptFor: () => attempt });
   const idle = render(undefined);
-  assert.match(text(idle), /Refactor the importer Started on this computer Work laptop Docs Not connected 3 hours ago Connect/);
+  assert.match(text(row(idle, "local-1")), /Refactor the importer Work laptop Docs Started on this computer Not connected 3 hours ago Connect/);
   assert.match(idle, /<button[^>]*data-testid="session-connect-local-1"[^>]*>/);
   assert.match(idle, /aria-label="Connect to Refactor the importer"/);
   assert.doesNotMatch(idle, /<a |disabled=""/);
@@ -77,10 +97,10 @@ test("a session started on its computer is labelled and offers Connect, through 
 
 test("Connect hands back the session it was pressed on, and a session keeps one identity while it connects", () => {
   const pressed: MemberSession[] = [];
-  const table = SessionsTable({ sessions: [local], ...rows, onConnect: (session) => pressed.push(session) });
-  const columns: Array<{ key: string; render: (session: MemberSession) => unknown }> = table.props.columns;
-  const cell = columns.find((column) => column.key === "connection")?.render(local) as { props: { onConnect: () => void } };
-  cell.props.onConnect();
+  const tree = SessionRows({ label: "Sessions", sessions: [local], ...rows, onConnect: (session) => pressed.push(session) });
+  const connect = elements(tree).find((element) => element.props["data-testid"] === "session-connect-local-1");
+  assert.ok(connect, "No Connect button");
+  (connect.props.onClick as () => void)();
   assert.deepEqual(pressed, [local]);
   assert.equal(sessionIdentity(local), sessionIdentity({ ...local, key: "cmd_2" }));
   assert.notEqual(sessionIdentity(local), sessionIdentity(base));
@@ -94,14 +114,25 @@ test("sessions that wait come first under Needs you, each with what it waits for
     pending: { kind: "question", requestId: "que_1", question: "Which branch should I use?", options: ["main", "dev"], multiple: false, custom: false, questionCount: 1 } };
   const html = renderToStaticMarkup(<SessionsList sessions={[base, permission, local, question]} {...rows} />);
   const page = text(html);
-  assert.match(page, /Needs you .*Which branch should I use\?.*Run pnpm test in ~\/work.*Other sessions .*Update the release notes.*Refactor the importer/);
+  assert.match(page, /Needs you 2 .*Which branch should I use\?.*Run pnpm test in ~\/work.*Other sessions 2 .*Update the release notes.*Refactor the importer/);
   const needsYou = html.split('data-testid="my-sessions-rest"')[0] ?? "";
   assert.equal(needsYou.match(/data-testid="session-row-/g)?.length, 2);
   assert.doesNotMatch(needsYou, /session-row-remote-1|session-row-local-1/);
+  assert.match(html, /data-testid="my-sessions-list"/);
+  assert.match(html, /data-testid="my-sessions-needs-you"/);
 
   const calm = text(renderToStaticMarkup(<SessionsList sessions={[base, local]} {...rows} />));
   assert.doesNotMatch(calm, /Needs you|Other sessions/);
-  assert.match(calm, /Sessions /);
+  assert.match(calm, /Sessions 2 /);
+});
+
+test("the line under the title counts what waits and what works, or says that nothing waits", () => {
+  const waiting: MemberSession = { ...base, state: "waiting" };
+  assert.equal(sessionsStateLine([waiting, base, { ...base, state: "starting" }, { ...base, state: "idle" }]), "1 needs you, 2 working");
+  assert.equal(sessionsStateLine([waiting, waiting]), "2 need you");
+  assert.equal(sessionsStateLine([base]), "1 working");
+  assert.equal(sessionsStateLine([{ ...base, state: "idle" }, local]), "No sessions waiting");
+  assert.equal(sessionsStateLine([]), "No sessions yet");
 });
 
 test("with no sessions the page says where they come from, without promising access", () => {
@@ -110,24 +141,25 @@ test("with no sessions the page says where they come from, without promising acc
   assert.doesNotMatch(page, /grant|gives? (you )?access/i);
 });
 
-test("the computers strip says what other devices can reach on each computer, and why", () => {
+test("the computers rows say what other devices can reach on each computer, and why", () => {
   const html = renderToStaticMarkup(<SessionComputers ceiling="created" computers={[
     computer,
     { ...computer, computerId: "cmp_2", label: "Mac mini", online: false, access: "all" },
     { ...computer, computerId: "cmp_3", label: "Old PC", supportsAccess: false },
   ]} />);
   const page = text(html);
-  assert.match(page, /Your computers Computer Status Other devices can reach/);
-  assert.match(page, /Work laptop Online Only sessions started remotely Your organization only allows sessions started remotely\./);
+  assert.match(page, /Your computers /);
+  assert.match(html, /data-testid="my-sessions-computers"/);
+  assert.match(page, /Work laptop Other devices can reach: Only sessions started remotely Your organization only allows sessions started remotely\. Online/);
   const widened = text(renderToStaticMarkup(<SessionComputers ceiling="all" computers={[computer]} />));
-  assert.match(widened, /Work laptop Online Only sessions started remotely Change this in Settings › Devices on that computer\./);
-  assert.match(page, /Mac mini Offline Only sessions started remotely Your organization only allows sessions started remotely\./);
-  assert.match(page, /Old PC Online Only sessions started remotely Update OpenWork on this computer to choose\./);
+  assert.match(widened, /Work laptop Other devices can reach: Only sessions started remotely Change this in Settings › Devices on that computer\. Online/);
+  assert.match(page, /Mac mini Other devices can reach: Only sessions started remotely Your organization only allows sessions started remotely\. Offline/);
+  assert.match(page, /Old PC Other devices can reach: Only sessions started remotely Update OpenWork on this computer to choose\. Online/);
   // Read-only here: the choice is made on the computer.
-  assert.doesNotMatch(html, /<button|<input|<select|<a /);
+  assert.doesNotMatch(html, /<button|<input|<select|<a |<table/);
 
   const open = text(renderToStaticMarkup(<SessionComputers ceiling="all" computers={[{ ...computer, access: "all", effectiveAccess: "all" }]} />));
-  assert.match(open, /Work laptop Online All sessions/);
+  assert.match(open, /Work laptop Other devices can reach: All sessions Online/);
   assert.doesNotMatch(open, /Change this|only allows|Update OpenWork/);
   assert.match(text(renderToStaticMarkup(<SessionComputers ceiling="created" computers={[]} />)), /No computers yet\./);
 });
@@ -148,7 +180,8 @@ test("with remoteSessionAccess off the page is a locked notice and nothing that 
   const html = renderToStaticMarkup(<MySessionsPage orgId="org_1" orgContext={off} />);
   assert.match(html, /data-testid="my-sessions-locked"/);
   assert.match(text(html), /My Sessions My Sessions is not enabled for this organization\. Ask an organization owner or admin about availability\./);
-  assert.doesNotMatch(html, /<table|<a |<button|Your computers|data-testid="my-sessions"/);
+  assert.doesNotMatch(html, /role="table"|<a |<button|Your computers|data-testid="my-sessions"/);
+  assert.equal(html.match(/<h1/g)?.length, 1);
   const locked = MySessionsPage({ orgId: "org_1", orgContext: off });
   assert.ok(isValidElement(locked));
   assert.notEqual(locked.type, MySessions);

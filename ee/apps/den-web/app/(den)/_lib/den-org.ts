@@ -173,6 +173,8 @@ export type DenOrgAccessFlags = {
   canManageWebOrigins: boolean;
   /** `computers.view`: inspect every member's registered computers. */
   canViewComputers: boolean;
+  /** `computers.disconnect`: disconnect a member's signed-in computer and remove computers from the team list. */
+  canDisconnectComputers: boolean;
   /** `desktop_policies.view` */
   canViewDesktopPolicies: boolean;
   /** `desktop_policies.manage` */
@@ -739,6 +741,7 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
     canViewWebOrigins: can("web_origins.view"),
     canManageWebOrigins: can("web_origins.manage"),
     canViewComputers: can("computers.view"),
+    canDisconnectComputers: can("computers.disconnect"),
     canViewDesktopPolicies: can("desktop_policies.view"),
     canManageDesktopPolicies: can("desktop_policies.manage"),
     canViewDeployments: can("deployments.view"),

@@ -60,6 +60,7 @@ const ADMIN_SCOPE_KEYS = [
   "billing.manage",
   "billing.view",
   "billing_invoices.view",
+  "computers.disconnect",
   "computers.view",
   "connections.disconnect",
   "connections.manage",
@@ -140,6 +141,8 @@ test("recent sign-in matches the old freshness rules", () => {
   assert.equal(PERMISSIONS["permissions.manage"].sensitive, true)
   assert.equal(isPermissionSensitive("llm_provider_credentials.manage"), true)
   assert.equal(isPermissionSensitive("connections.disconnect"), true)
+  assert.equal(isPermissionSensitive("computers.disconnect"), true)
+  assert.equal(isPermissionSensitive("computers.view"), false)
   assert.equal(isPermissionSensitive("billing_portal.use"), true)
   assert.equal(isPermissionSensitive("permissions.view"), false)
   assert.equal(isPermissionSensitive("connections.manage"), false)

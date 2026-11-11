@@ -39,6 +39,11 @@ remote session lifecycle.
 - Runner tokens are time-limited, audience-bound credentials. Every runner
   request rechecks the owner's active membership. Credentials are not stored
   in execution journals.
+- A computer can be disconnected by its owner or an authorized admin
+  ([docs](features/remote-devices/README.md)). Den then refuses that install
+  at the token mint, on every runner route and on its device report with
+  `403 computer_disconnected`, ends the sign-in it used when known, and
+  accepts it again only after a new sign-in on that computer.
 - A standalone Location registers only its approved directory. The local
   ownership guard prevents two hosts from concurrently owning that target.
 - Remote-only registrations cannot advertise presence or claim scheduled

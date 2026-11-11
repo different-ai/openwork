@@ -28,7 +28,7 @@ function runner(
 ): AuditRouteDeclaration {
   return route(method, path, auditClass, action, kind, type, idParam, "handler", {
     ...extra,
-    notes: `Runner-token route: authenticateRunner() verifies the token, then attributes actor automation-runner:<runnerId> for the owner member.${extra.notes ? ` ${extra.notes}` : ""}`,
+    notes: `Runner-token route: authenticateRunner() verifies the token, then attributes actor automation-runner:<runnerId> for the owner member. A token of a disconnected computer is refused with 403 computer_disconnected before attribution.${extra.notes ? ` ${extra.notes}` : ""}`,
   })
 }
 
@@ -82,14 +82,14 @@ export const contentAuditRoutes: readonly AuditRouteDeclaration[] = [
   // Automation runners
   member("GET", "/v1/automation-runners", "tenant_read", "automation_runner.list", "automation.runner", "automation_runner", null, { notes: "Read may prune stale runner and notification rows." }),
   member("GET", "/v1/automation-runners/presence", "tenant_read", "automation_runner.presence.read", "automation.runner", "automation_runner", null),
-  member("POST", "/v1/automation-runners/token", "tenant_access", "automation_runner.token.issue", "automation.runner", "automation_runner", null, { notes: "Registers the desktop runner and returns a stateless HMAC runner bearer token (credential issuance; never snapshot the token). Blocked from MCP." }),
+  member("POST", "/v1/automation-runners/token", "tenant_access", "automation_runner.token.issue", "automation.runner", "automation_runner", null, { notes: "Registers the desktop runner and returns a stateless HMAC runner bearer token (credential issuance; never snapshot the token). A disconnected computer is refused (403 computer_disconnected) and nothing is registered, unless the request comes with a sign-in made after the disconnect, which ends the disconnection. Blocked from MCP." }),
   runner("GET", "/v1/automation-runners/events", "tenant_signal", "automation_runner.events.stream", "automation.runner", "automation_runner", null, { notes: "Long-lived text/event-stream; observed is recorded when the stream response is returned." }),
   runner("GET", "/v1/automation-runner/work", "tenant_signal", "automation_runner.work.poll", "automation.runner", "automation_runner", null, { notes: "Frequent poll; writes last_seen_at presence. Lists pending automation runs and remote-session commands/requests." }),
   runner("PUT", "/v1/automation-runner/inventory", "tenant_signal", "automation_runner.inventory.update", "automation.runner", "automation_runner", null, { notes: "High-frequency device inventory; read by MCP remote-session:targets." }),
 
   // Independent session-runner aliases retain the same credential and actor
   // attribution as released Automation runners; they never schedule work.
-  member("POST", "/v1/session-runners/token", "tenant_access", "automation_runner.token.issue", "automation.runner", "automation_runner", null, { notes: "Registers a remote-only session target and issues an audience-bound runner credential. Never snapshot the token. Blocked from MCP." }),
+  member("POST", "/v1/session-runners/token", "tenant_access", "automation_runner.token.issue", "automation.runner", "automation_runner", null, { notes: "Registers a remote-only session target and issues an audience-bound runner credential. Never snapshot the token. A disconnected computer is refused (403 computer_disconnected) and nothing is registered, unless the request comes with a sign-in made after the disconnect, which ends the disconnection. Blocked from MCP." }),
   runner("GET", "/v1/session-runners/work", "tenant_signal", "automation_runner.work.poll", "automation.runner", "automation_runner", null, { notes: "Owner-scoped remote command/request discovery and sticky recovery; updates presence, never lists scheduled Automations." }),
   runner("PUT", "/v1/session-runners/inventory", "tenant_signal", "automation_runner.inventory.update", "automation.runner", "automation_runner", null, { notes: "Reports the opted-in client's approved workspaces and models for remote-session:targets." }),
   runner("PUT", "/v1/session-runners/sessions", "tenant_signal", "automation_runner.sessions.report", "automation.runner", "automation_runner", null, { notes: "remoteSessionAccess: the computer's session access in force and, while that is all, its session ids, titles and last-changed times (user content; never snapshot the body). Stored on the runner's own row and shown only to its owner; while the organization's ceiling is created, created and an empty list are stored whatever was sent. A report of created also settles the attach commands this runner delivered as failed (detached). Frequent report." }),

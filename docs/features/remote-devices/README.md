@@ -30,8 +30,10 @@ this PR have been removed. Existing, unrelated diagnostics are unchanged.
 member's own view: the computers they have connected to OpenWork and the ones
 shared with their organization, with what each is, whether it can be reached,
 when it was last heard from, its OpenWork version, and its recent activity in
-plain sentences. It needs only the `remoteDevices` feature, no permission. It
-is view only: adding, renaming and removing stay in OpenWork Desktop. It reads
+plain sentences. It needs only the `remoteDevices` feature, no permission. A
+member can rename a computer they registered, disconnect a signed-in desktop
+of their own and remove an entry that will not come back; adding one stays in
+OpenWork Desktop. It reads
 the same member-scoped routes as Desktop and Workbot, so a member never sees
 another member's computers or the team's registered instances there. Owners
 and admins also get a link from it to the team page.
@@ -49,6 +51,49 @@ members.
 ![Settings → Devices on Desktop](desktop-devices.png)
 
 ![Devices in Workbot](workbot-devices.png)
+
+## Disconnecting a computer
+
+A signed-in desktop can be **disconnected**: by its owner from any of their
+devices (Den **My Computers**, or **Settings → Devices** on another of their
+desktops), and by anyone with **Disconnect team computers**
+(`computers.disconnect`: admins by default, and it asks for a recent sign-in)
+from **Manage → Computers**.
+
+![Disconnecting a member's computer](den-computer-disconnect.png)
+
+Disconnecting takes effect at once and on the server:
+
+- Den refuses that install as the member's computer: its runner token, a new
+  runner token, its live event stream and its own report all answer
+  `403 computer_disconnected`. It takes no remote tasks, shares no sessions
+  and reports nothing.
+- Sessions on it that were opened from elsewhere are disconnected, queued and
+  claimed work for it is failed, and a scheduled run it held is released.
+- Where Den knows the sign-in the desktop uses, and it is not the one making
+  the request, that sign-in is ended, so OpenWork is signed out on that
+  computer. A desktop shares its sign-in with the browser that signed it in, so
+  that browser is signed out too. The result says which happened.
+- The computer stays in the lists as **Disconnected**.
+
+Only a new sign-in on that computer reconnects it. An older sign-in, including
+the one that performed the disconnect, stays refused.
+
+The desktop app recognises the refusal: it stops retrying, says the computer
+was disconnected and offers to sign out and in again.
+
+**Remove from list** is a separate action that only hides an entry. It is
+offered where the entry will not simply come back: a disconnected desktop, a
+former member's computer, a registered virtual computer, or a desktop not
+heard from for 30 days.
+
+## The team list
+
+**Manage → Computers** leaves out desktops nobody has heard from for 30 days
+(old installs of the same computer, mostly) behind a "not heard from in 30
+days · Show" line, names an owner who has left as **Former member** instead of
+showing a placeholder address, and shows versions as release and channel
+(`0.18.66 alpha`), with the full string in the detail.
 
 ## Sources and identity
 
@@ -77,6 +122,10 @@ fixed codes and bounded diagnostic metadata.
 - A device from another organization is not readable through the team detail
   route, even when its ID is known. Caller-supplied filter parameters cannot
   select a different organization's inventory.
+- Disconnecting or removing another member's computer needs
+  `computers.disconnect`, the feature, the same organization and a recent
+  sign-in. A member can only disconnect their own. Both are recorded in the
+  audit log, as is the sign-in that was ended.
 - Ordinary members cannot read team-wide inventory. Their existing personal
   routes still return only owned/shared computers.
 - A desktop cannot take over another member's entry or change a shared entry
@@ -109,6 +158,11 @@ records remain. Existing computer use and remote tasks work as before.
 - `evals/proofs/den-computers.proof.test.ts`: actual regular Den navigation, the
   organization-admin Computers page, and an ordinary member's My Computers
   page with only their own and shared computers.
+- `ee/apps/den-api/test/api/computer-disconnect.api.test.ts` and
+  `evals/proofs/den-computer-disconnect.proof.test.ts`: disconnect by an admin
+  and by the owner, the refusals a disconnected desktop receives, the ended
+  sign-in, reconnecting by signing in again, permissions and isolation,
+  removal, and the folded-away old installs.
 - `evals/proofs/remote-devices-desktop.proof.test.ts` and
   `evals/proofs/remote-devices-workbot.proof.test.ts`: preserved personal views.
 

@@ -50,6 +50,7 @@ function deps(overrides: Partial<RemoteSessionExecuteDeps> = {}): RemoteSessionE
     desktopTargets: async () => ({ ownerMemberId, computers: [computer()] }),
     cloudAvailable: () => true,
     linkDesktopCommand: undefined,
+    computerDisconnected: async () => false,
     ...overrides,
   }
 }
@@ -719,6 +720,81 @@ for (const action of ["read", "send", "stop", "answer"] as const) {
     }
   })
 }
+
+// A disconnected computer has no runner registration: the caller is told what happened, not to update or wait.
+const COMPUTER_DISCONNECTED = "That computer was disconnected from your organization. Sign in on it again to reach it."
+const disconnectedRunner = { connected: false, controlCapable: false, disconnected: true } as const
+
+for (const action of ["read", "send", "stop", "answer"] as const) {
+  test(`${action} for a session on a disconnected computer says the computer was disconnected, and sends nothing`, async () => {
+    const body = { sessionId: "ses_local", workspaceId: "synthetic-workspace",
+      ...(action === "send" ? { prompt: "Follow up" } : {}),
+      ...(action === "answer" ? { kind: "permission", requestId: "per_1", decision: "once" } : {}) }
+    for (const session of [detachedSession, { ...detachedSession, kind: "create", detached: false }] as const) {
+      const result = await call(action, body, deps({
+        getOpenWorkWebAccess: async () => { throw new Error("A desktop session must never fall back to Cloud") },
+        sessionAccess: async () => { throw new Error("Access is not what stands in the way") },
+        commandStore: { ...DEFAULT_REMOTE_SESSION_DEPS.commandStore, findDesktopSession: async () => session },
+        desktopRunner: async () => disconnectedRunner,
+        requestStore: { ...DEFAULT_REMOTE_SESSION_DEPS.requestStore, enqueue: async () => { throw new Error("Nothing is sent to a disconnected computer") } },
+      }))
+      assert.deepEqual(
+        [result.error, result.payload.error, result.payload.message, result.payload.retryable, result.payload.target, result.payload.sessionId],
+        [true, "computer_disconnected", COMPUTER_DISCONNECTED, false, "desktop", "ses_local"],
+        session.kind,
+      )
+    }
+  })
+}
+
+test("attaching to or starting a task on a disconnected computer says so; a computer that was never the member's stays unknown", async () => {
+  const asked: unknown[] = []
+  for (const disconnected of [true, false]) {
+    const dependencies = deps({
+      sessionAccess: async () => allowAll,
+      desktopTargets: async () => ({ ownerMemberId, computers: [computer("another-computer")] }),
+      computerDisconnected: async (scope) => { asked.push(scope); return disconnected },
+      commandStore: {
+        ...DEFAULT_REMOTE_SESSION_DEPS.commandStore,
+        enqueue: async () => { throw new Error("Nothing is queued for a computer the member does not have") },
+        enqueueAttach: async () => { throw new Error("Nothing is queued for a computer the member does not have") },
+      },
+    })
+    for (const [action, body] of [
+      ["attach", attachBody],
+      ["create", { target: "registered", computerId: "synthetic-computer", prompt: "Summarize the inbox" }],
+      ["create", { target: "desktop", computerId: "synthetic-computer", prompt: "Summarize the inbox" }],
+    ] as const) {
+      const result = await call(action, body, { ...dependencies, getOpenWorkWebAccess: async () => ({ hasAccess: true }) })
+      assert.equal(result.error, true)
+      assert.deepEqual(
+        [result.payload.error, result.payload.retryable],
+        disconnected ? ["computer_disconnected", false] : ["unknown_computer", false],
+        `${action} ${disconnected}`,
+      )
+      if (disconnected) assert.deepEqual([result.payload.message, result.payload.computerId], [COMPUTER_DISCONNECTED, "synthetic-computer"])
+    }
+  }
+  assert.deepEqual(asked[0], { organizationId, ownerMemberId, computerId: "synthetic-computer" }, "only the caller's own member is asked about")
+
+  // A computer the member still has is never looked up.
+  const present = await call("attach", attachBody, accessDeps({ computers: [openComputer({ sessionAccess: "created" })] }).dependencies)
+  assert.equal(present.payload.error, "session_access_denied")
+})
+
+test("a request that failed because its computer was disconnected is final", async () => {
+  const result = await call("read", { sessionId: "ses_local", workspaceId: "synthetic-workspace" }, deps({
+    sessionAccess: async () => allowAll,
+    commandStore: { ...DEFAULT_REMOTE_SESSION_DEPS.commandStore, findDesktopSession: async () => ({ ...detachedSession, kind: "create", detached: false }) },
+    desktopRunner: async () => sharingRunner,
+    requestWait: { timeoutMs: 0, pollMs: 1 },
+    requestStore: { ...DEFAULT_REMOTE_SESSION_DEPS.requestStore, enqueue: async (input) => ({
+      ...input, id: "synthetic-request", status: "failed", outcome: null, error: { code: "computer_disconnected", message: COMPUTER_DISCONNECTED },
+      expiresAt: Date.now() + input.ttlMs, claimedAt: 1, completedAt: 2, createdAt: 1, updatedAt: 2,
+    }) },
+  }))
+  assert.deepEqual([result.payload.error, result.payload.message, result.payload.retryable], ["computer_disconnected", COMPUTER_DISCONNECTED, false])
+})
 
 test("unknown_receipt from the computer means connect again for an attached session, and stays as it is for one started remotely", async () => {
   const failing = (kind: "create" | "attach") => deps({

@@ -90,3 +90,26 @@ export const RemoteDeviceEventTable = mysqlTable(
     index("remote_device_event_organization").on(table.organizationId, table.createdAt),
   ],
 )
+
+/**
+ * Signed-in desktops that were disconnected from their organization. A row
+ * means "this install is refused": Den mints it no runner credential, honours
+ * none it still holds and takes no report from it, until someone signs in on
+ * that computer again, which deletes the row.
+ */
+export const ComputerDisconnectionTable = mysqlTable(
+  "computer_disconnection",
+  {
+    /** The install's runner row id (`rnr_…`): `automation_runner.id`, and `remote_device.external_id` for a desktop. */
+    id: varchar("id", { length: 160 }).notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    ownerMemberId: denTypeIdColumn("member", "owner_member_id").notNull(),
+    disconnectedAt: timestamp("disconnected_at", { fsp: 3 }).notNull(),
+    /** The member who disconnected it: its owner, or someone with Disconnect team computers. */
+    disconnectedByMemberId: denTypeIdColumn("member", "disconnected_by_member_id"),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("computer_disconnection_owner").on(table.organizationId, table.ownerMemberId),
+  ],
+)

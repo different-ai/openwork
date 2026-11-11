@@ -98,6 +98,16 @@ export const remoteDeviceSchema = z.object({
   workbotChat: z.string().nullable(),
   canRename: z.boolean(),
   canRemove: z.boolean(),
+  /**
+   * When this desktop was disconnected: its sign-in to the organization was
+   * revoked and it takes no tasks, shares no sessions and reports nothing
+   * until someone signs in on it again. Null while connected, and always null
+   * for computers that never sign in (virtual computers, Workbot's). Absent
+   * from servers that cannot disconnect, which reads as connected.
+   */
+  disconnectedAt: timestampSchema.nullable().default(null),
+  /** The caller may disconnect it: a signed-in desktop that is not disconnected yet. Absent from older servers. */
+  canDisconnect: z.boolean().default(false),
 }).meta({ ref: "RemoteDevice" })
 export type RemoteDevice = z.infer<typeof remoteDeviceSchema>
 
@@ -108,7 +118,7 @@ export type RemoteDeviceEventActor = (typeof REMOTE_DEVICE_EVENT_ACTORS)[number]
 
 /** Stable event names; the message is the human sentence. */
 export const REMOTE_DEVICE_EVENT_TYPES = [
-  "registered", "renamed", "removed", "restored",
+  "registered", "renamed", "removed", "restored", "disconnected",
   "state_changed", "app_updated", "computer_changed",
   "viewer_opened", "paused", "resumed", "rebuilt", "continued", "failed",
 ] as const
@@ -249,10 +259,18 @@ const organizationComputerEventSchema = remoteDeviceEventSchema.extend({
 })
 export type OrganizationComputerEvent = z.infer<typeof organizationComputerEventSchema>
 
-export const organizationComputerSchema = remoteDeviceSchema.omit({ access: true, canRename: true, canRemove: true }).extend({
+export const organizationComputerSchema = remoteDeviceSchema.omit({ access: true, canRename: true }).extend({
+  /** The caller may remove it from the team list. Absent from older servers, which have no such action. */
+  canRemove: z.boolean().default(false),
   organization: z.object({ id: z.string(), name: z.string() }),
-  /** Null for a computer shared with the whole organization, and when the owner has left. */
-  owner: z.object({ memberId: z.string(), name: z.string().nullable(), email: z.string().nullable() }).nullable(),
+  /** Null for a computer shared with the whole organization. */
+  owner: z.object({
+    memberId: z.string(),
+    name: z.string().nullable(),
+    email: z.string().nullable(),
+    /** The owner is no longer a member of the organization. Their computer can no longer act for them. */
+    former: z.boolean().default(false),
+  }).nullable(),
   shared: z.boolean(),
   externalId: z.string(),
   removedAt: timestampSchema.nullable(),
@@ -263,6 +281,44 @@ export const organizationComputerSchema = remoteDeviceSchema.omit({ access: true
 export type OrganizationComputerRecord = z.infer<typeof organizationComputerSchema>
 
 export const ORGANIZATION_COMPUTER_PAGE_SIZE = 50
+
+/**
+ * Disconnect a signed-in desktop from the organization
+ * (`POST /v1/remote-devices/:deviceId/disconnect` for its owner,
+ * `POST /v1/org/computers/:deviceId/disconnect` with `computers.disconnect`).
+ *
+ * Den stops accepting that install as the member's computer at once: no remote
+ * tasks, no session access, no reports. Where Den knows the sign-in the
+ * desktop uses, and it is not the caller's own, that sign-in is ended too, so
+ * the app on that computer is signed out. Signing in on the computer again
+ * connects it again; nothing else does.
+ */
+export const remoteDeviceDisconnectResponseSchema = z.object({
+  device: remoteDeviceSchema,
+  /**
+   * `true`: the sign-in the desktop used was ended. `false`: Den did not know
+   * it, or it is the sign-in the caller is using right now; the app there stays
+   * signed in but is refused as a computer until someone signs in on it again.
+   */
+  signedOut: z.boolean(),
+}).meta({ ref: "RemoteDeviceDisconnectResponse" })
+export type RemoteDeviceDisconnectResponse = z.infer<typeof remoteDeviceDisconnectResponseSchema>
+
+export const organizationComputerDisconnectResponseSchema = z.object({
+  device: organizationComputerSchema,
+  signedOut: z.boolean(),
+}).meta({ ref: "OrganizationComputerDisconnectResponse" })
+export type OrganizationComputerDisconnectResponse = z.infer<typeof organizationComputerDisconnectResponseSchema>
+
+/**
+ * What a disconnected desktop is told, with HTTP 403, when it asks for a
+ * runner token, calls a runner route or reports itself. The app stops
+ * retrying and tells its user to sign in again.
+ */
+export const COMPUTER_DISCONNECTED_ERROR = "computer_disconnected"
+
+/** Computers a team list leaves out unless asked: desktops nobody has heard from for this long. */
+export const ORGANIZATION_COMPUTER_STALE_MS = 30 * 24 * 60 * 60_000
 
 export const organizationComputerDetailResponseSchema = z.object({
   device: organizationComputerSchema,
@@ -319,6 +375,14 @@ export const organizationComputerInstanceDetailResponseSchema = z.object({ insta
 export const organizationComputerListResponseSchema = z.object({
   devices: z.array(organizationComputerSchema),
   total: z.number().int().nonnegative(),
+  /** Of `total`, how many answered in the last ten minutes. Absent from older servers. */
+  online: z.number().int().nonnegative().optional(),
+  /**
+   * Desktops matching the same filters that were left out because nobody has
+   * heard from them for 30 days. Zero when the request asked for them
+   * (`stale=include`) and from older servers, which list everything.
+   */
+  staleHidden: z.number().int().nonnegative().default(0),
   page: z.number().int().positive(),
   pageSize: z.number().int().positive(),
   instances: z.array(organizationComputerInstanceSchema),
@@ -334,6 +398,21 @@ export const REMOTE_DEVICE_AVAILABILITY_LABELS: Record<RemoteDeviceAvailability,
   needs_setup: "Needs setup",
   offline: "Offline",
   unknown: "Not checked yet",
+}
+export const REMOTE_DEVICE_DISCONNECTED_LABEL = "Disconnected"
+
+/**
+ * The version a list shows: release and channel, without the build. The full
+ * string stays available where detail is shown.
+ * `0.18.66-alpha.4137+053df1c` -> `0.18.66 alpha`.
+ */
+export function shortAppVersion(version: string | null | undefined): string | null {
+  const full = version?.trim()
+  if (!full) return null
+  const [core = "", ...rest] = full.split("+")[0]?.split("-") ?? []
+  const channel = rest.join("-").split(".")[0]?.trim()
+  if (!/^\d+(\.\d+)*$/.test(core)) return full
+  return channel && /^[a-z]+$/i.test(channel) ? `${core} ${channel}` : core
 }
 
 /** What a person calls the computer, from its kind, provider and platform. */

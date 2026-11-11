@@ -68,6 +68,9 @@ test("every member route answers as if it did not exist while the feature is off
     ["GET", "/v1/org/computers", undefined],
     ["GET", "/v1/org/computers/rdv_01h2xcejqtf2nbrexx3vqjhp41", undefined],
     ["GET", "/v1/org/computers/instances/wrk_01h2xcejqtf2nbrexx3vqjhp41", undefined],
+    ["POST", "/v1/org/computers/rdv_01h2xcejqtf2nbrexx3vqjhp41/disconnect", undefined],
+    ["DELETE", "/v1/org/computers/rdv_01h2xcejqtf2nbrexx3vqjhp41", undefined],
+    ["POST", "/v1/remote-devices/rdv_01h2xcejqtf2nbrexx3vqjhp41/disconnect", undefined],
     ["GET", "/v1/remote-devices", undefined],
     ["POST", "/v1/remote-devices", { label: "VM", provider: "freestyle", platform: "linux", externalId: "vm-1" }],
     ["PUT", "/v1/remote-devices/this-computer", desktopReport()],
@@ -90,9 +93,11 @@ test("a desktop reports itself, and what changes afterwards is recorded once", a
   const [listed] = devicesOf(await asMember("GET", "/v1/remote-devices"))
   assert.ok(listed)
   assert.deepEqual(
-    { id: listed.id, kind: listed.kind, provider: listed.provider, label: listed.label, access: listed.access, availability: listed.availability, appVersion: listed.appVersion, canRename: listed.canRename, canRemove: listed.canRemove },
-    { id, kind: "desktop", provider: "openwork_desktop", label: "Milo's MacBook Pro", access: "mine", availability: "online", appVersion: "1.4.0", canRename: false, canRemove: true },
+    { id: listed.id, kind: listed.kind, provider: listed.provider, label: listed.label, access: listed.access, availability: listed.availability, appVersion: listed.appVersion, canRename: listed.canRename },
+    { id, kind: "desktop", provider: "openwork_desktop", label: "Milo's MacBook Pro", access: "mine", availability: "online", appVersion: "1.4.0", canRename: false },
   )
+  // A signed-in desktop would only report itself back, so it is disconnected, not removed.
+  assert.deepEqual([listed.canRemove, listed.canDisconnect, listed.disconnectedAt], [false, true, null])
   assert.equal(listed.computerId, null, "a desktop without a runner takes no remote tasks")
 
   // The same report again changes nothing and records nothing.
@@ -162,11 +167,17 @@ test("the desktop and its runner are one computer, and a desktop that only regis
   await set(31 * 24 * 60 * 60_000)
   assert.equal(devicesOf(await asMember("GET", "/v1/remote-devices")).some((device) => device.id === studio.id), false)
   for (const as of [asOwner, asAdmin]) {
-    const inventory = organizationComputerListResponseSchema.parse((await as("GET", "/v1/org/computers")).body)
+    // The team list leaves a desktop nobody has heard from for 30 days out, says how many, and lists it when asked.
+    const listed = organizationComputerListResponseSchema.parse((await as("GET", "/v1/org/computers")).body)
+    assert.equal(listed.devices.some((device) => device.id === studio.id), false)
+    assert.deepEqual([listed.staleHidden, listed.total], [1, listed.devices.length])
+    const inventory = organizationComputerListResponseSchema.parse((await as("GET", "/v1/org/computers?stale=include")).body)
+    assert.deepEqual([inventory.staleHidden, inventory.total], [0, listed.total + 1])
     const stale = inventory.devices.find((device) => device.id === studio.id)
     assert.equal(stale?.availability, "offline", "team inventory retains registered offline computers")
     assert.equal(stale?.appVersion, "1.2.0")
     assert.ok(stale?.lastSeenAt && Date.parse(stale.lastSeenAt) < Date.now() - 30 * 24 * 60 * 60_000)
+    assert.deepEqual([stale.canRemove, stale.canDisconnect], [true, true], "a desktop that has been quiet for a month can be taken off the list")
   }
   // A retained old runner that never had a registry row must be imported for team inventory too.
   const retained = await asMember("POST", "/v1/session-runners/token", {
@@ -177,8 +188,9 @@ test("the desktop and its runner are one computer, and a desktop that only regis
   const retainedRunner = (await db.select().from(AutomationRunnerTable)).find((runner) => runner.app_version === "0.9.0")!
   await db.update(AutomationRunnerTable).set({ last_seen_at: new Date(Date.now() - 40 * 24 * 60 * 60_000) }).where(eq(AutomationRunnerTable.id, retainedRunner.id))
   assert.equal(devicesOf(await asMember("GET", "/v1/remote-devices")).some((device) => device.appVersion === "0.9.0"), false)
-  const inventory = organizationComputerListResponseSchema.parse((await asAdmin("GET", "/v1/org/computers")).body)
+  const inventory = organizationComputerListResponseSchema.parse((await asAdmin("GET", "/v1/org/computers?stale=include")).body)
   assert.equal(inventory.devices.find((device) => device.appVersion === "0.9.0")?.availability, "offline")
+  assert.equal(organizationComputerListResponseSchema.parse((await asAdmin("GET", "/v1/org/computers")).body).staleHidden, 2)
   assert.equal(devicesOf(await asMember("GET", "/v1/remote-devices")).some((device) => device.appVersion === "0.9.0"), false)
 })
 
@@ -323,6 +335,7 @@ test("Workbot lists the same computers and reports what happens to its own", asy
   const before = devicesOf(await den.request(token, "GET", "/v1/workbot/devices"))
   assert.deepEqual(before.map((device) => device.id).sort(), devicesOf(await asMember("GET", "/v1/remote-devices")).map((device) => device.id).sort())
   assert.ok(before.filter((device) => device.access === "shared").every((device) => !device.canRename && !device.canRemove), "Workbot never manages shared computers")
+  assert.ok(before.every((device) => device.disconnectedAt === null && typeof device.canDisconnect === "boolean"), "the same fields as the member's own list")
 
   assert.equal((await report({ event: "viewer_opened", view: "computer" })).status, 204)
   const computer = devicesOf(await den.request(token, "GET", "/v1/workbot/devices")).find((device) => device.provider === "workbot")
@@ -414,6 +427,8 @@ test("owners and regular org admins inspect all members and shared computers, ne
     assert.equal(all.status, 200, summary(all))
     const page = organizationComputerListResponseSchema.parse(all.body)
     assert.equal(page.total, page.devices.length)
+    assert.equal(page.online, page.devices.filter((device) => device.availability === "online" || device.availability === "needs_setup").length)
+    assert.ok(page.staleHidden >= 1, "desktops nobody has heard from for a month are counted, not listed")
     assert.equal(field(all.body, "summary"), undefined, "no deployment aggregates")
     assert.ok(page.devices.every((device) => device.organization.id === orgId))
     assert.ok(page.devices.some((device) => device.owner?.email === member.email))
@@ -421,6 +436,12 @@ test("owners and regular org admins inspect all members and shared computers, ne
     const macbook = page.devices.find((device) => device.label === "Milo's MacBook Pro")!
     assert.ok(macbook)
     assert.deepEqual([macbook.owner?.email, macbook.shared, macbook.availability], [member.email, false, "online"])
+    // Both hold Disconnect team computers: a live desktop is disconnected, never just removed.
+    assert.deepEqual([macbook.owner?.former, macbook.disconnectedAt, macbook.canDisconnect, macbook.canRemove], [false, null, true, false])
+    const sandbox = page.devices.find((device) => device.label === "Mac sandbox")
+    assert.deepEqual([sandbox?.canDisconnect, sandbox?.canRemove], [false, true], "a computer registered by hand can be taken off the list")
+    const workbot = organizationComputerListResponseSchema.parse((await as("GET", "/v1/org/computers?provider=workbot")).body).devices
+    assert.ok(workbot.every((device) => !device.canDisconnect && !device.canRemove), "Workbot's computers are neither disconnected nor removed here")
     assert.ok(macbook.recentProblems >= 1)
     assert.equal(page.devices.find((device) => device.label === "Mac sandbox")?.owner, null)
     for (const availability of REMOTE_DEVICE_AVAILABILITIES) {

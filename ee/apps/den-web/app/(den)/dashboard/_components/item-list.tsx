@@ -158,6 +158,7 @@ export type ItemMenuEntry = {
   disabled?: boolean;
   /** Ask before running onSelect. */
   confirm?: { title: string; description: string; action: string };
+  testId?: string;
 };
 
 /** Remove menu entry that asks first; the same copy everywhere an item can be removed. */
@@ -227,7 +228,7 @@ export function ConfirmDialog({ confirm, destructive = false, onConfirm, onClose
   );
 }
 
-export function ItemMenu({ label, entries, size = "sm" }: { label: string; entries: ItemMenuEntry[]; size?: "sm" | "md" }) {
+export function ItemMenu({ label, entries, size = "sm", testId }: { label: string; entries: ItemMenuEntry[]; size?: "sm" | "md"; testId?: string }) {
   const [confirming, setConfirming] = useState<ItemMenuEntry | null>(null);
   if (entries.length === 0) return null;
   const trigger = size === "md"
@@ -236,7 +237,7 @@ export function ItemMenu({ label, entries, size = "sm" }: { label: string; entri
   return (
     <>
     <Menu.Root>
-      <Menu.Trigger aria-label={label} className={trigger}>
+      <Menu.Trigger aria-label={label} data-testid={testId} className={trigger}>
         <MoreHorizontal className="h-4 w-4" aria-hidden />
       </Menu.Trigger>
       <Menu.Portal>
@@ -246,6 +247,7 @@ export function ItemMenu({ label, entries, size = "sm" }: { label: string; entri
               <Menu.Item
                 key={entry.label}
                 disabled={entry.disabled}
+                data-testid={entry.testId}
                 render={<Link href={entry.href} />}
                 className="flex cursor-pointer items-center rounded-lg px-3 py-2 text-gray-700 outline-none data-[highlighted]:bg-gray-50 data-[highlighted]:text-gray-900"
               >
@@ -255,6 +257,7 @@ export function ItemMenu({ label, entries, size = "sm" }: { label: string; entri
               <Menu.Item
                 key={entry.label}
                 disabled={entry.disabled}
+                data-testid={entry.testId}
                 onClick={() => (entry.confirm ? setConfirming(entry) : void entry.onSelect?.())}
                 className={`flex cursor-pointer items-center rounded-lg px-3 py-2 outline-none data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50 data-[highlighted]:bg-gray-50 ${entry.destructive ? "text-red-600" : "text-gray-700 data-[highlighted]:text-gray-900"}`}
               >

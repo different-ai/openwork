@@ -98,6 +98,10 @@ export const AutomationRunnerTable = mysqlTable(
     /** The computer's latest session list, reported only while its access is `all`. */
     sessions: compatJsonColumn<RunnerReportedSession[]>("sessions"),
     sessions_updated_at: timestamp("sessions_updated_at", { fsp: 3 }),
+    /** The install's own id, as its runner credential carries it; null on rows registered before it was kept. */
+    install_id: varchar("install_id", { length: 160 }),
+    /** The sign-in session the desktop last registered or reported with, so disconnecting the computer can end it. */
+    auth_session_id: denTypeIdColumn("session", "auth_session_id"),
     ...timestamps,
   },
   (table) => [

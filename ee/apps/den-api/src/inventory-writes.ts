@@ -57,6 +57,7 @@ export const INVENTORY_IRRELEVANT_TABLES: ReadonlySet<string> = new Set([
   "free_auto_limit_events", "free_auto_purchases",
   // Runs, runner presence and remote sessions.
   "automation_runner", "automation_runner_notification", "automation_run", "automation_run_event", "workflow_run",
+  "computer_disconnection",
   "remote_session_command", "remote_session_request", "daytona_sandbox", "cloud_runtime_instance",
   "managed_deployment_event", "managed_deployment_health", "managed_deployment_run",
   "connector_sync_event", "scim_sync_event",

@@ -4,6 +4,7 @@ import type { RemoteDeviceRegisterRequest } from "@openwork/types/den/remote-dev
 
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events"
 import type { AutomationsDenContext } from "@/react-app/domains/automations/use-automations"
+import { useComputerConnectionStore } from "./computer-connection-store"
 
 const DEVICES_STALE_MS = 30_000
 const DEVICES_REFRESH_MS = 60_000
@@ -39,7 +40,10 @@ export function useRemoteDevicesQuery(context: AutomationsDenContext, enabled: b
     window.addEventListener(denSessionUpdatedEvent, refresh)
     window.addEventListener(denSettingsChangedEvent, refresh)
     window.addEventListener("focus", focus)
+    // This computer being disconnected or connected again changes its own row.
+    const unsubscribeConnection = useComputerConnectionStore.subscribe(refresh)
     return () => {
+      unsubscribeConnection()
       window.removeEventListener(denSessionUpdatedEvent, refresh)
       window.removeEventListener(denSettingsChangedEvent, refresh)
       window.removeEventListener("focus", focus)
@@ -78,6 +82,10 @@ export function useRemoteDeviceMutations(context: AutomationsDenContext) {
     }),
     rename: useMutation({
       mutationFn: (input: { deviceId: string; label: string }) => { const { client, organizationId } = ready(context); return client.renameRemoteDevice(organizationId, input.deviceId, input.label) },
+      onSuccess,
+    }),
+    disconnect: useMutation({
+      mutationFn: (deviceId: string) => { const { client, organizationId } = ready(context); return client.disconnectRemoteDevice(organizationId, deviceId) },
       onSuccess,
     }),
     remove: useMutation({

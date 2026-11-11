@@ -16,8 +16,10 @@ test("Computers registers its Den route, live example, docs and truthful Desktop
   assert.ok(intro.example);
   const Example = intro.example.Component;
   const html = renderToStaticMarkup(<Example />);
-  assert.match(html, /<table/);
-  assert.match(html, /Alex|Sam/);
+  // The example is the page's own rows: a tile, a name over what it is, then owner and status lanes.
+  assert.match(html, /role="table"/);
+  assert.doesNotMatch(html, /<table|<button|<a /);
+  assert.match(html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " "), /Computer Owner Status Design laptop Mac A Alex Online Research computer Workbot(&#x27;|')s computer S Sam Paused/);
   assert.doesNotMatch(html, /<img|<video|<iframe/);
   assert.equal(computersIntros.length, 2);
   assert.ok(getOrgAccessFlags("admin", false).canViewComputers);
@@ -33,6 +35,5 @@ test("My Computers has its own intro for every member, with no permission lock a
   assert.ok(intro.example);
   const Example = intro.example.Component;
   const text = renderToStaticMarkup(<Example />).replace(/<[^>]+>/g, " ");
-  assert.match(text, /Work laptop/);
-  assert.match(text, /Shared with your organization/);
+  assert.match(text.replace(/\s+/g, " "), /Work laptop Mac Online Research computer Shared with your organization Not checked yet/);
 });

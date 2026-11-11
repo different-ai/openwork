@@ -55,6 +55,7 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   workbot_usage_day: { reason: "runtime" },
   remote_device: { reason: "runtime", note: "computers that registered themselves or were registered by a member; state, not configuration" },
   remote_device_event: { reason: "runtime" },
+  computer_disconnection: { reason: "runtime", note: "signed-in desktops that were disconnected; ends when someone signs in on the computer again" },
   gateway_usage_audit: { reason: "runtime" },
   gateway_usage_bucket: { reason: "runtime" },
   gateway_usage_bucket_charge: { reason: "runtime" },

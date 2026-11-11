@@ -93,7 +93,10 @@ function panel(overrides: Partial<SessionPanelViewProps> = {}): SessionPanelView
 test("an open session shows where it runs, the conversation and a follow-up box", () => {
   const html = renderToStaticMarkup(<SessionPanelView {...panel()} />);
   const page = text(html);
-  assert.match(page, /Back to My Sessions Update the release notes Work laptop Docs Idle/);
+  // The same header as a page: the title, then one line of state and where it runs.
+  assert.match(page, /Back to My Sessions Update the release notes Idle Work laptop Docs/);
+  assert.match(html, /<h2[^>]*>Update the release notes<\/h2><p[^>]*data-testid="session-state-line"/);
+  assert.doesNotMatch(html, /<h1|px-2 py-0\.5/);
   assert.match(page, /You 1 min ago Update the release notes OpenWork 1 min ago Done\. The notes are updated\./);
   assert.match(html, /<textarea[^>]*aria-label="Follow-up message"/);
   assert.match(html, /<button[^>]*type="submit"[^>]*disabled=""[^>]*>|<button[^>]*disabled=""[^>]*type="submit"[^>]*>/);
@@ -249,7 +252,9 @@ test("every open item gets its own card above the follow-up box, in the computer
   assert.deepEqual([...html.matchAll(/data-testid="session-pending-([a-z0-9_]+)"/g)].map((match) => match[1]), ["per_1", "que_1", "per_2"]);
   assert.ok(html.indexOf('data-testid="session-pending-per_2"') < html.indexOf("<textarea"));
   assert.ok(html.indexOf('role="log"') < html.indexOf('data-testid="session-pending-per_1"'));
-  assert.match(text(html), /Needs you/);
+  assert.match(text(html), /Update the release notes Waiting for you Work laptop Docs/);
   assert.match(text(html), /This was already answered\./);
+  // Flat sections between hairlines, not boxed cards.
+  assert.doesNotMatch(html, /<section class="rounded-lg border /);
   assert.equal(renderToStaticMarkup(<PendingCards items={[]} stateFor={() => IDLE_CARD_STATE} onAnswer={() => {}} onRetry={() => {}} />), "");
 });

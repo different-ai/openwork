@@ -52,6 +52,40 @@ export function sessionStateBadge(state: MemberSessionState): { label: string; t
   return state === "unknown" ? null : SESSION_STATE_BADGES[state];
 }
 
+/** A dot's colour: amber for what waits on the member, red for a failure, green for work in progress, neutral otherwise. */
+export type SessionDotTone = "success" | "warning" | "danger" | "neutral";
+
+const SESSION_STATE_TONES: Record<Exclude<MemberSessionState, "unknown">, SessionDotTone> = {
+  starting: "neutral",
+  running: "success",
+  waiting: "warning",
+  idle: "neutral",
+  error: "danger",
+};
+
+/** A session's state in a row: a dot and one word. `unknown` has none. */
+export function sessionStateDot(state: MemberSessionState): { label: string; tone: SessionDotTone } | null {
+  return state === "unknown" ? null : { label: SESSION_STATE_BADGES[state].label, tone: SESSION_STATE_TONES[state] };
+}
+
+/** The same state as the line under an open session's title, said to the person reading it. */
+export function sessionStateLine(state: MemberSessionState): { label: string; tone: SessionDotTone } | null {
+  if (state === "unknown") return null;
+  return { label: state === "waiting" ? "Waiting for you" : SESSION_STATE_BADGES[state].label, tone: SESSION_STATE_TONES[state] };
+}
+
+/** The one line of state under the page title: "1 needs you, 2 working", or that nothing waits. */
+export function sessionsStateLine(sessions: readonly Pick<MemberSession, "state">[]): string {
+  if (sessions.length === 0) return "No sessions yet";
+  const needs = sessions.filter((session) => session.state === "waiting").length;
+  const working = sessions.filter((session) => session.state === "running" || session.state === "starting").length;
+  const parts = [
+    ...(needs ? [`${needs} ${needs === 1 ? "needs" : "need"} you`] : []),
+    ...(working ? [`${working} working`] : []),
+  ];
+  return parts.length ? parts.join(", ") : "No sessions waiting";
+}
+
 function newestFirst(left: MemberSession, right: MemberSession): number {
   return (right.updatedAt ?? -1) - (left.updatedAt ?? -1);
 }
