@@ -35,6 +35,7 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   config_blob_export: { reason: "config_blobs_internal" },
 
   // Members: later phases.
+  permission_set_member: { reason: "not_yet", note: "direct member role assignments are not included in members.roles exports" },
   scim_group: { reason: "runtime", note: "owned by the IdP through SCIM" },
   scim_group_member: { reason: "runtime", note: "owned by the IdP through SCIM" },
   scim_group_role: { reason: "runtime", note: "pushed by the identity provider over SCIM; exported read-only by settings.auth-security" },
