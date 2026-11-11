@@ -24,6 +24,7 @@ import {
   getSsoOidcRedirectUrl,
   getSsoProviderForConnection,
   listOrganizationSsoConnections,
+  OidcConfigurationError,
   registerOrganizationSsoConnection,
   renameOrganizationSsoConnection,
   type SsoRegistrationTarget,
@@ -32,6 +33,8 @@ import {
   getSsoDomainVerificationDnsName,
   getSsoDomainVerificationHost,
 } from "../../sso-domain-verification.js"
+import { createGuardedFetch, createRealmSafeFetch } from "../../capability-sources/url-guard.js"
+import { checkOidcDiscovery } from "../../sso-oidc-discovery.js"
 import { defaultSsoConnectionName, normalizeSsoDomains, parseSsoDomains, serializeSsoDomains } from "../../sso-domains.js"
 import {
   beginOrganizationSsoTestIntent,
@@ -57,6 +60,9 @@ type SsoConnection = typeof SsoConnectionTable.$inferSelect
 type OrganizationPayload = NonNullable<OrgRouteVariables["organizationContext"]>
 
 const MULTIPLE_SSO_CONNECTIONS = "multipleSsoConnections"
+const OIDC_SETUP_CHECK = "ssoOidcSetupCheck"
+// Private addresses are reachable only where the deployment allows them (dev mode, or the operator's opt-in).
+const oidcDiscoveryFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
 
 const passThrough: MiddlewareHandler = async (_c, next) => {
   await next()
@@ -106,6 +112,31 @@ function hasDomain(value: { domain?: string; domains?: string[] }) {
 }
 
 const domainRequired = { message: "Enter the email domain this connection signs in.", path: ["domain"] }
+
+const oidcCheckBodySchema = z.object({
+  issuer: z.string().trim().min(1).max(2048).describe("The identity provider's issuer, or its discovery URL ending in /.well-known/openid-configuration."),
+}).meta({ ref: "CheckOrganizationOidcSsoBody" })
+
+const oidcCheckResponseSchema = z.discriminatedUnion("ok", [
+  z.object({
+    ok: z.literal(true),
+    issuer: z.string().describe("The issuer the discovery document names; this is what a save stores."),
+    discoveryUrl: z.string(),
+    fromDiscoveryUrl: z.boolean().describe("True when the address given was the discovery URL rather than the issuer."),
+    authorizationEndpoint: z.string(),
+    tokenEndpoint: z.string(),
+    jwksEndpoint: z.string(),
+    userInfoEndpoint: z.string().nullable(),
+  }),
+  z.object({
+    ok: z.literal(false),
+    code: z.enum(["invalid_url", "not_found", "http_error", "unreachable", "blocked", "invalid_document", "issuer_mismatch"]),
+    message: z.string(),
+    discoveryUrl: z.string().nullable().describe("The exact address that was tried."),
+    status: z.number().nullable(),
+    reportedIssuer: z.string().nullable().describe("issuer_mismatch: the issuer the provider reports."),
+  }),
+]).meta({ ref: "CheckOrganizationOidcSsoResponse" })
 
 const samlRegistrationSchema = z.object({
   ...baseRegistrationShape,
@@ -393,7 +424,30 @@ export async function registerConnection(request: RegistrationRequest): Promise<
   const name = multiple ? (parsed.data.name?.trim() || null) : undefined
 
   const previous = request.capture ? await getSsoConnectionAuditState(request.target === undefined ? await getOrganizationSsoConnection(payload.organization.id) : request.target) : null
-  const { domains: _domains, domain: _domain, name: _name, ...config } = parsed.data
+  let data = parsed.data
+  if ("clientId" in data && await organizationFeatureEnabled(payload.organization.id, OIDC_SETUP_CHECK, { userId: payload.currentMember.userId })) {
+    if (data.skipDiscovery) {
+      // Manual endpoints skip discovery, so nothing else would catch a
+      // discovery URL saved as the issuer; sign-in then fails on every token.
+      if (data.issuer.includes("/.well-known/")) {
+        return { ok: false, status: 400, body: invalidRequest("The issuer is the provider's base address, not its discovery URL.", ["issuer"]) }
+      }
+    } else {
+      const check = await checkOidcDiscovery(data.issuer, oidcDiscoveryFetch)
+      if (!check.ok) return { ok: false, status: 400, body: invalidRequest(check.message, ["issuer"]) }
+      // Save what the provider reports, so registration needs no second fetch.
+      data = {
+        ...data,
+        issuer: check.issuer,
+        skipDiscovery: true,
+        authorizationEndpoint: check.authorizationEndpoint,
+        tokenEndpoint: check.tokenEndpoint,
+        jwksEndpoint: check.jwksEndpoint,
+        userInfoEndpoint: check.userInfoEndpoint ?? undefined,
+      }
+    }
+  }
+  const { domains: _domains, domain: _domain, name: _name, ...config } = data
   const common = {
     organizationId: payload.organization.id,
     organizationSlug: payload.organization.slug,
@@ -403,9 +457,16 @@ export async function registerConnection(request: RegistrationRequest): Promise<
     name,
     reuseVerifiedDomains: multiple,
   }
-  const connection = "entryPoint" in config
-    ? await registerOrganizationSsoConnection({ ...common, ...config, kind: "saml" })
-    : await registerOrganizationSsoConnection({ ...common, ...config, kind: "oidc" })
+  let connection: SsoConnection
+  try {
+    connection = "entryPoint" in config
+      ? await registerOrganizationSsoConnection({ ...common, ...config, kind: "saml" })
+      : await registerOrganizationSsoConnection({ ...common, ...config, kind: "oidc" })
+  } catch (error) {
+    // The administrator's OIDC settings were unusable: their mistake to fix, not a server error.
+    if (error instanceof OidcConfigurationError) return { ok: false, status: 400, body: invalidRequest(error.message, ["issuer"]) }
+    throw error
+  }
   // Registration runs through better-auth's adapter and several short
   // transactions: the after-snapshot is appended in a fresh transaction.
   const auditEventIds = await appendDomainChangesAfterCommit(request.capture, "sso_connection.registered", async () => {
@@ -614,6 +675,34 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       const connection = await resolveConnection("connection", payload.organization.id, c.req.param("connectionId"))
       if (!connection) return c.json(notFoundBody("connection"), 404)
       return c.json({ connection: await buildConnectionPayload(connection) })
+    },
+  )
+
+  app.post(
+    "/v1/sso/oidc/check",
+    describeRoute({
+      tags: ["SSO"],
+      summary: "Check an OIDC issuer or discovery URL",
+      description: "Reads the identity provider's OIDC discovery document from an issuer or a discovery URL and reports the issuer and endpoints found, or why none were. Nothing is saved. Requires ssoOidcSetupCheck.",
+      security: [{ bearerAuth: [] }],
+      responses: {
+        200: { description: "What the provider's discovery document says, or why it could not be read", content: { "application/json": { schema: resolver(oidcCheckResponseSchema) } } },
+        ...sharedErrorResponses,
+        402: planRequired,
+        403: manageForbidden,
+        404: connectionNotFound,
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature(OIDC_SETUP_CHECK),
+    requireOrgPermission("sso.manage"),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const entitlement = checkEntitlement(payload.organization.metadata, "sso")
+      if (!entitlement.ok) return c.json(entitlement.response, 402)
+      const parsed = oidcCheckBodySchema.safeParse(await c.req.json().catch(() => null))
+      if (!parsed.success) return c.json(invalidRequest("Enter the issuer or discovery URL.", ["issuer"]), 400)
+      return c.json(await checkOidcDiscovery(parsed.data.issuer, oidcDiscoveryFetch))
     },
   )
 
