@@ -8,6 +8,7 @@ import { test } from "node:test"
 import { createHeadlessThreadClient } from "@openwork/headless-threads"
 import { createSessionRunner, emptyJournal } from "@openwork/remote-sessions"
 import { createDesktopSessionAdapter } from "../electron/session-runner-adapter.mjs"
+import { computerRequestPending, createComputerRequestAnswers } from "../electron/session-runner-computer-requests.mjs"
 import { createDesktopSessionJournal, desktopSessionRunnerPartition } from "../electron/session-runner-journal.mjs"
 import { createDesktopAutomationRunner, watchRemoteSession } from "../electron/automation-runner.mjs"
 import { stageRuntimeNodeModules } from "../scripts/prepare-runtime-node-modules.mjs"
@@ -360,6 +361,110 @@ test("a v1 question and permission reply on the workspace's own reply routes", a
     ["/workspace/workspace_fixture/opencode/permission/per_v1/reply", { reply: "reject" }],
     ["/workspace/workspace_fixture/opencode/question/que_v1/reply", { answers: [["Short", "A custom note"]] }],
   ])
+})
+
+test("a helper's permission holds the task: it is reported and the reply goes to the helper", async () => {
+  const calls = []
+  let asked = true
+  const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
+  const client = createHeadlessThreadClient({
+    baseUrl: "http://localhost:8787", token: "fixture-token", workspaceId: "workspace_fixture", engine: "v2",
+    fetch: async (input, init = {}) => {
+      const url = new URL(String(input))
+      const path = url.pathname.replace("/workspace/workspace_fixture/opencode2/api", "")
+      calls.push({ path, method: init.method ?? "GET", body: init.body ? JSON.parse(init.body) : null })
+      if (path === "/session" && url.searchParams.get("parentID") === "ses_task") {
+        // An engine that ignores the filter lists unrelated sessions too.
+        return response({ data: [{ id: "ses_helper", parentID: "ses_task" }, { id: "ses_done", parentID: "ses_task" }, { id: "ses_unrelated" }] })
+      }
+      if (path === "/session") return response({ data: [] })
+      if (path === "/session/active") return response({ data: { ses_task: { type: "running" }, ses_helper: { type: "running" } } })
+      if (path === "/session/ses_helper/permission") return response({ data: asked ? [{ id: "per_helper", action: "bash", resources: ["pnpm build"] }] : [] })
+      if (path === "/session/ses_helper/permission/per_helper/reply") { asked = false; return response({}) }
+      if (path.endsWith("/permission") || path.endsWith("/form")) return response({ data: [] })
+      return response({ message: "unexpected" }, 404)
+    },
+  })
+  assert.deepEqual(await client.getThreadPending("ses_task"), { kind: "permission", requestId: "per_helper", title: "Run a command", detail: "", command: "pnpm build" })
+  assert.equal(await client.getThreadWaitingFor("ses_task"), "permission")
+  assert.equal(calls.some((call) => call.path.startsWith("/session/ses_done/") || call.path.startsWith("/session/ses_unrelated/")), false,
+    "only helpers that still run are read")
+  await client.answerThread("ses_task", { kind: "permission", requestId: "per_helper", decision: "once" })
+  assert.deepEqual(calls.filter((call) => call.method === "POST").map((call) => [call.path, call.body]),
+    [["/session/ses_helper/permission/per_helper/reply", { decision: "once", reply: "once" }]])
+  assert.equal(await client.getThreadPending("ses_task"), null)
+})
+
+test("a v1 helper's question is the task's, another session's is not", async () => {
+  const calls = []
+  const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
+  const client = createHeadlessThreadClient({
+    baseUrl: "http://localhost:8787", token: "fixture-token", workspaceId: "workspace_fixture", engine: "v1",
+    fetch: async (input, init = {}) => {
+      const url = new URL(String(input))
+      calls.push({ path: url.pathname, method: init.method ?? "GET", body: init.body ? JSON.parse(init.body) : null })
+      if (url.pathname.endsWith("/opencode/permission")) return response([{ id: "per_other", sessionID: "ses_other", permission: "bash", patterns: ["rm"] }])
+      if (url.pathname.endsWith("/opencode/question")) return response([{ id: "que_helper", sessionID: "ses_nested", questions: [{ question: "Which file?", options: [{ label: "notes.md" }] }] }])
+      if (url.pathname.endsWith("/opencode/session/ses_nested")) return response({ id: "ses_nested", parentID: "ses_helper" })
+      if (url.pathname.endsWith("/opencode/session/ses_helper")) return response({ id: "ses_helper", parentID: "ses_v1" })
+      if (url.pathname.endsWith("/opencode/session/ses_other")) return response({ id: "ses_other" })
+      if (url.pathname.endsWith("/opencode/question/que_helper/reply")) return response(true)
+      return response({ message: "unexpected" }, 404)
+    },
+  })
+  assert.equal((await client.getThreadPending("ses_v1"))?.requestId, "que_helper")
+  await client.answerThread("ses_v1", { kind: "question", requestId: "que_helper", answers: [["notes.md"]] })
+  assert.equal(calls.filter((call) => call.path.includes("/opencode/session/")).length, 3, "each session's parent is read once")
+  assert.equal(calls.at(-1).path, "/workspace/workspace_fixture/opencode/question/que_helper/reply")
+})
+
+test("a computer-use approval on this computer is reported and answered once from the other one", async () => {
+  const native = nativeFixture()
+  const answers = []
+  let request = { id: "req_script", reason: "script", computer: "This Mac", placement: "local", standing: false, script: { app: "jxa", code: "Application('Notes').activate()" } }
+  const control = {
+    pendingRequest: ({ sessionId }) => sessionId === native.sessionId ? request : null,
+    answerRequest: async (input) => { answers.push(input); request = null },
+  }
+  const adapter = createDesktopSessionAdapter({ ...native, computerRequests: createComputerRequestAnswers(control) })
+  const signal = new AbortController().signal
+  const receipt = await adapter.create(command(), signal)
+  await adapter.send(receipt, { prompt: "first turn", messageId: "msg_firstturn", model: null }, signal)
+  native.active = true
+  const pending = { kind: "permission", requestId: "req_script", title: "Run a JavaScript for Automation script",
+    detail: "It runs on that computer as you and can change your files and apps.", command: "Application('Notes').activate()" }
+  const waiting = await adapter.observe(receipt, signal)
+  assert.equal(waiting.status, "waiting")
+  assert.equal(waiting.waitingFor, "permission")
+  assert.deepEqual(waiting.pending, pending)
+  assert.deepEqual((await adapter.read(receipt, { from: "end", cursor: null, limit: 5 }, signal)).pending, pending)
+  await assert.rejects(adapter.answer(receipt, { kind: "permission", requestId: "req_old", decision: "once" }, signal), { code: "stale_request" })
+  assert.deepEqual(answers, [], "an answer to another request approves nothing")
+  await adapter.answer(receipt, { kind: "permission", requestId: "req_script", decision: "once" }, signal)
+  assert.deepEqual(answers, [{ sessionId: receipt.sessionId, answer: "allow", id: "req_script" }])
+  assert.equal((await adapter.observe(receipt, signal)).pending, null)
+
+  request = { id: "req_setup", reason: "setup", computer: "This Mac", placement: "local" }
+  assert.equal((await adapter.observe(receipt, signal)).pending.title, "Set up computer use")
+  await assert.rejects(adapter.answer(receipt, { kind: "permission", requestId: "req_setup", decision: "once" }, signal), { code: "invalid_answer" })
+  await adapter.answer(receipt, { kind: "permission", requestId: "req_setup", decision: "reject" }, signal)
+  assert.deepEqual(answers.at(-1), { sessionId: receipt.sessionId, answer: "dismiss", id: "req_setup" })
+})
+
+test("a computer-use approval is shown whole or not approved from afar", () => {
+  const base = { id: "req", computer: "This Mac", placement: "local" }
+  assert.deepEqual(computerRequestPending({ ...base, reason: "files", files: { app: "example.com", names: ["/Users/me/a.pdf", "/Users/me/b\u202Etxt.exe"] } }), {
+    pending: { kind: "permission", requestId: "req", title: "Give 2 files to example.com",
+      detail: "The agent chose them on that computer. example.com can upload what it receives. It has 1 hidden character, shown as <U+…>. Don't approve it unless you expected that.",
+      command: "/Users/me/a.pdf\n/Users/me/b<U+202E>txt.exe" },
+    allow: true,
+  })
+  assert.deepEqual(computerRequestPending({ ...base, reason: "credential", credential: { site: "https://accounts.example.com" } }).pending.command, "https://accounts.example.com")
+  assert.equal(computerRequestPending({ ...base, reason: "credential", standing: false, credential: { app: "Notes", appId: "com.example.notes" } }).pending.command, "Notes (com.example.notes)")
+  const long = computerRequestPending({ ...base, reason: "script", script: { app: "applescript", code: "x".repeat(2001) } })
+  assert.equal(long.allow, false)
+  assert.equal(long.pending.command, undefined)
+  assert.equal(computerRequestPending({ ...base, reason: "setup" }).allow, false)
 })
 
 test("native stop compares the current turn; restart probes the original owning engine", async () => {

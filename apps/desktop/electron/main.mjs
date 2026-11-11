@@ -72,6 +72,7 @@ import {
   createLinuxDesktopIntegration,
 } from "./linux-desktop-integration.mjs";
 import { automationRunnerDisabledReason, createComputerDescriber, createDesktopAutomationRunner, normalizeRunnerBaseUrl } from "./automation-runner.mjs";
+import { createComputerRequestAnswers } from "./session-runner-computer-requests.mjs";
 import { applyDesktopEngineForcePolicy } from "./engine-force-policy.mjs";
 import {
   desktopActivationRequired,
@@ -1588,6 +1589,9 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
   getJournalRoot: () => path.join(app.getPath("userData"), "session-runner"),
   // Start remote-session tasks as soon as Den announces them (Den's remoteSessionPush feature).
   remoteSessionPush: true,
+  // A task started from another computer reports the computer-use approval it waits on,
+  // so the person can answer it where they are instead of coming to this computer.
+  computerRequests: createComputerRequestAnswers(computerControl),
   getLocalRuntime: async () => {
     const server = await runtimeManager.openworkServerInfo();
     return { baseUrl: server.baseUrl, token: server.clientToken ?? server.ownerToken };

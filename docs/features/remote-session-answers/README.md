@@ -40,6 +40,8 @@ After allowing it once, the task finishes:
 ## How it works
 
 - The runner on the other computer (desktop app or `opencode-openwork`) reports what the session waits on (`pending`) with its progress and in transcript reads, and takes an `answer` request. It replies through the same native paths a local chat uses: v1 question and permission replies, v2 form replies by field key and option value, v2 permission replies. Answers are checked against the live request; a request that is no longer pending is refused (`stale_request`). A remote surface never sends "always".
+- A request from a helper the task started counts as the task's: the runner reads the helpers that still run, and the reply goes to the helper that asked.
+- The desktop app also reports the computer-use approval a task waits on (run a script, hand files to an app or site, type a password or code, set up permissions) as a permission. The script, file names or site are shown whole, with hidden characters written as their code points; a request too long to show, and permission setup, can only be approved on that computer. "Allow once" never becomes a standing approval there.
 - The runner journals the answer like a follow-up, idempotent by the pending requestId: a lost reply is replayed safely, because a native request is answered at most once.
 - Den routes `answer` requests only to runners that register `remote_session_answer_v1`. Older runners get `answer_unsupported` and keep "Answer it on that computer".
 - `remote-session:status` carries a short `pending` summary (question and option labels, or the permission's title); a new request changes the status version.

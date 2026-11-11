@@ -935,12 +935,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       revision: grant.revision, enabled: featureEnabled && (grant.enabled && head(grant).enabled || Boolean(handoff)),
       ...(grant.timing ? { timing: structuredClone(grant.timing) } : {}),
       entry: await permissionEntry().then(({ name, ours }) => ({ name, ours }), () => ({ name: "OpenWork", ours: false })),
-      request: (() => {
-        const pending = scriptRequests.get(chatKey(grant));
-        if (pending) return pending.request;
-        const request = requests.get(chatKey(grant));
-        return request?.published ? describeRequest(grant, request) : null;
-      })(),
+      request: requestOf(grant),
       targetId: target.id,
       targets: offered().map(({ id, label, placement }) => ({ id, label, placement })),
       placement: target.placement,
@@ -1303,6 +1298,13 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       ...(request.reason === "setup" && target.placement === "remote" && request.detail ? { detail: request.detail } : {}),
       ...(request.appId ? { appId: request.appId } : {}), ...(request.purpose ? { purpose: request.purpose } : {}) };
   }
+  /** What the chat waits on the person for right now: an approval before setup. */
+  function requestOf(grant) {
+    const pending = scriptRequests.get(chatKey(grant));
+    if (pending) return pending.request;
+    const request = requests.get(chatKey(grant));
+    return request?.published ? describeRequest(grant, request) : null;
+  }
   /**
    * One in-chat request per chat. It resolves "ready" once macOS permissions
    * are granted and the chat is allowed, without the agent asking again.
@@ -1632,6 +1634,17 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       return parallelAgents;
     },
     parallelAgents() { return parallelAgents; },
+    /**
+     * The request a chat's card shows right now, for a surface other than that card
+     * (a task started from another computer). Only reads: a session computer use has
+     * not served has none.
+     * @param {ChatInput} input
+     * @returns {ComputerRequest | null}
+     */
+    pendingRequest({ sessionId } = {}) {
+      const grant = typeof sessionId === "string" ? grants.get(sessionId) : undefined;
+      return grant ? requestOf(grant) : null;
+    },
     /**
      * The person's answer to an in-chat request: allow this chat, always
      * allow, or not now. Setup itself is answered by macOS permissions.

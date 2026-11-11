@@ -663,9 +663,12 @@ test("organization ask shows every exact script, runs only on Run and never reme
   assert.deepEqual(asked.script, { app: "jxa", code: "first" }, "the person sees the exact full script");
   assert.equal(asked.standing, false);
   assert.deepEqual(ran, [], "nothing runs before the answer");
+  assert.deepEqual(f.control.pendingRequest({ sessionId: "chat" }), asked, "another surface reads the request the card shows");
+  assert.equal(f.control.pendingRequest({ sessionId: "never-used" }), null);
   await assert.rejects(f.control.answerRequest({ sessionId: "chat", answer: "allow", id: "another-request" }), /changed/);
   await f.control.answerRequest({ sessionId: "chat", answer: "dismiss", id: asked.id });
   assert.equal((await declined).error.code, "script_declined");
+  assert.equal(f.control.pendingRequest({ sessionId: "chat" }), null);
   for (const code of ["second", "third"]) {
     const pending = f.control.script({ sessionId: "chat", app: "jxa", code }, { approveEachScript: true });
     const request = await scriptRequest(f, code);

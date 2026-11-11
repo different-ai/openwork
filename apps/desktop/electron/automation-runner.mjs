@@ -1387,6 +1387,7 @@ export function createDesktopAutomationRunner(options) {
       return createSessionRunner({
         adapter: createDesktopSessionAdapter({
           getLocalRuntime: options.getLocalRuntime, fetchImpl, now,
+          computerRequests: options.computerRequests,
           creationOwner: journal.desktopSessionRunnerPartition(baseUrl, account),
         }),
         store,
