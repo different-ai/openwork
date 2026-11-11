@@ -29,6 +29,7 @@ import {
   getBillingRoute,
   getConfigRoute,
   getComputersRoute,
+  getMyComputersRoute,
   getCustomLlmProvidersRoute,
   getDiagnosticsRoute,
   getDeploymentsRoute,
@@ -281,6 +282,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getAiGatewayRoute(orgSlug))) {
     return "AI Gateway";
+  }
+  if (pathname.startsWith(getMyComputersRoute(orgSlug))) {
+    return "My Computers";
   }
   if (pathname.startsWith(getComputersRoute(orgSlug))) {
     return "Computers";

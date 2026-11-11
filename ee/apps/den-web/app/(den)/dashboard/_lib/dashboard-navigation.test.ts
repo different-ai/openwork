@@ -110,3 +110,23 @@ test("Computers belongs to regular Den Manage and needs both remoteDevices and c
   assert.ok(!canOpenAdminRoute("/dashboard/computers", getOrgAccessFlags("member", false, ["desktop_policies.view"])));
   assert.match(adminRouteLockedMessage("/dashboard/computers"), /View team computers/);
 });
+
+test("My Computers is under Work for every member whenever remoteDevices is on, whatever their permissions", () => {
+  for (const remoteDevices of [false, true]) {
+    for (const permissions of [[], ["computers.view"]] as const) {
+      const sections = buildDashboardNavSections({
+        orgSlug: "workspace", access: getOrgAccessFlags("member", false, [...permissions]),
+        capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, remoteDevices,
+      });
+      const mine = sections.find((section) => section.label === "Work")?.items.find((item) => item.label === "My Computers");
+      assert.equal(Boolean(mine), remoteDevices);
+      // Never in Manage: the member view is not an admin page.
+      assert.ok(!sections.find((section) => section.label === "Manage")?.items.some((item) => item.label === "My Computers"));
+      if (mine) {
+        assert.equal(mine.href, "/dashboard/my-computers");
+        assert.equal(mine.testId, "dashboard-nav-my-computers");
+        assert.ok(flattenNavigationForSearch(sections).find((item) => item.label === "My Computers")?.keywords.includes("my devices"));
+      }
+    }
+  }
+});

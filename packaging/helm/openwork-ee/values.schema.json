@@ -729,7 +729,7 @@
                 true,
                 false
               ],
-              "description": "Computers: Computers in Den lets organization owners and admins view their team's reported desktops, cloud computers, registered virtual computers and OpenWork instances, with owners, status, last contact, versions and supported inventory. Desktop Settings > Devices and Workbot's Devices page show each member their own and shared computers. Registration does not provision a computer or grant provider access. Off, these views are hidden and desktop reports stop; existing computer use and remote tasks are unchanged. Renders DEN_FEATURE_REMOTE_DEVICES."
+              "description": "Computers: Computers in Den lets organization owners and admins view their team's reported desktops, cloud computers, registered virtual computers and OpenWork instances, with owners, status, last contact, versions and supported inventory. My Computers in Den, Desktop Settings > Devices and Workbot's Devices page show each member their own and shared computers. Registration does not provision a computer or grant provider access. Off, these views are hidden and desktop reports stop; existing computer use and remote tasks are unchanged. Renders DEN_FEATURE_REMOTE_DEVICES."
             },
             "remoteSessionPush": {
               "enum": [

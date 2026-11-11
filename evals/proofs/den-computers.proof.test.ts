@@ -18,7 +18,7 @@ test("an ordinary organization admin manages Computers in the Den team dashboard
   });
   await step("from the normal Den team dashboard, click Manage › Computers", async () => {
     await admin.see({ text: "Manage" }, { timeoutMs: 60_000 });
-    await admin.click({ role: "link", label: "Computers" });
+    await admin.click({ testId: "dashboard-nav-computers" });
     await admin.see({ role: "heading", label: "Computers" }, { timeoutMs: 60_000 });
     for (const label of ["Alex's MacBook Pro", "Riley's Windows laptop", "Casey's Freestyle VM", "Alex's Daytona VM", "Studio shared Mac"]) await admin.see({ text: label });
     for (const text of ["Alex Morgan", "Riley Chen", "Casey Rivera", "Online", "Needs setup", "Not checked yet", "Last contact", "App version", "1.5.2", "1.4.9"]) await admin.see({ text });
@@ -73,9 +73,26 @@ test("an ordinary organization admin manages Computers in the Den team dashboard
     expect(bypassList.devices.every(device => device.organization.id === world.organizationId)).toBe(true);
     evidence.recordAssertionEvidence("An organization parameter cannot escape membership scope", `filtered Riley rows=${search.total}; foreign detail=${foreign.response.status}; foreign detail with organizationId=${bypassDetail.response.status}; foreign list rows=0; foreign instance detail=${foreignInstance.response.status}`, search.total === 1 && foreign.response.status === 404 && bypassDetail.response.status === 404 && foreignInstance.response.status === 404 && bypassList.devices.every(device => device.organization.id === world.organizationId) && !bypassList.instances.some(instance => instance.id === world.foreignInstanceId));
   });
+  await step("an ordinary member opens Work › My Computers and sees only their own laptop and the shared Mac", async () => {
+    const memberProbe = probe.on(world.member);
+    await member.see({ text: "Fieldnotes Studio" }, { timeoutMs: 60_000 });
+    await member.click({ testId: "dashboard-nav-my-computers" });
+    await member.see({ role: "heading", label: "My Computers" }, { timeoutMs: 60_000 });
+    for (const text of ["Riley's Windows laptop", "Windows PC", "Needs setup", "1.4.9", "Studio shared Mac", "Shared with your organization", "Not checked yet"]) await member.see({ text });
+    for (const text of ["Alex's MacBook Pro", "Alex's Daytona VM", "Casey's Freestyle VM", "Studio local OpenWork"]) await member.notSee({ text });
+    const rows = await memberProbe.dom('[data-testid^="my-computer-row-"]');
+    const path = new URL(await memberProbe.url()).pathname;
+    await member.click({ testId: `my-computer-row-${world.devices.windows.id}` });
+    await member.see({ text: "Needs setup: Computer use needs setup" }, { timeoutMs: 30_000 });
+    await member.see({ text: "Signed in on OpenWork 1.4.9" });
+    const ok = rows.elements.length === 2 && path === "/dashboard/my-computers";
+    evidence.recordAssertionEvidence("Members view their own computers in Den, and nobody else's", `path=${path}; rows=${rows.elements.length} (own Windows laptop, shared Mac); other members' computers and team instances absent; recent activity opens in place`, ok);
+    expect(ok).toBe(true);
+    await member.screenshot();
+  });
   await step("ordinary members have no team-management entry and retain only their own and shared personal computers", async () => {
     await member.see({ text: "Fieldnotes Studio" }, { timeoutMs: 60_000 });
-    await member.notSee({ role: "link", label: "Computers" });
+    await member.notSee({ testId: "dashboard-nav-computers" });
     const list = await world.memberRequest("/v1/org/computers");
     const detail = await world.memberRequest(`/v1/org/computers/${world.devices.mac.id}`);
     expect(list.response.status).toBe(403);
@@ -94,8 +111,12 @@ test("an ordinary organization admin manages Computers in the Den team dashboard
     expect(disabled.response.status).toBe(404);
     await admin.reload();
     await admin.see({ testId: "computers-locked" });
-    await admin.notSee({ role: "link", label: "Computers" });
-    evidence.recordAssertionEvidence("Team management requires both permission and rollout", `remoteDevices=false; org-admin API=${disabled.response.status}; normal dashboard page locked and navigation absent`, disabled.response.status === 404);
+    await admin.notSee({ testId: "dashboard-nav-computers" });
+    await admin.notSee({ testId: "dashboard-nav-my-computers" });
+    await member.navigate(world.url("/dashboard/my-computers"));
+    await member.see({ testId: "my-computers-locked" }, { timeoutMs: 60_000 });
+    await member.notSee({ text: "Riley's Windows laptop" });
+    evidence.recordAssertionEvidence("Team management requires both permission and rollout", `remoteDevices=false; org-admin API=${disabled.response.status}; team page and My Computers locked, both navigation entries absent`, disabled.response.status === 404);
     await admin.screenshot();
   });
 });

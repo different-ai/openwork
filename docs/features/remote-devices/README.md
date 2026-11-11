@@ -24,10 +24,24 @@ provider reference blobs, endpoints or filesystem paths.
 The misplaced platform-admin Devices page and tools originally introduced in
 this PR have been removed. Existing, unrelated diagnostics are unchanged.
 
+## Every member: My Computers
+
+**Regular Den → Work → My Computers**, at `/dashboard/my-computers`, is every
+member's own view: the computers they have connected to OpenWork and the ones
+shared with their organization, with what each is, whether it can be reached,
+when it was last heard from, its OpenWork version, and its recent activity in
+plain sentences. It needs only the `remoteDevices` feature, no permission. It
+is view only: adding, renaming and removing stay in OpenWork Desktop. It reads
+the same member-scoped routes as Desktop and Workbot, so a member never sees
+another member's computers or the team's registered instances there. Owners
+and admins also get a link from it to the team page.
+
+![My Computers in regular Den](den-my-computers.png)
+
 ## Member views stay personal
 
-Desktop **Settings → Devices** and Workbot **Devices** remain available.
-They show only the member's own computers and computers registered as shared
+Den **My Computers**, Desktop **Settings → Devices** and Workbot **Devices**
+show only the member's own computers and computers registered as shared
 with the organization. An organization admin's team-wide visibility in Den
 does not make the admin's personal Desktop or Workbot list impersonate other
 members.
@@ -92,8 +106,9 @@ records remain. Existing computer use and remote tasks work as before.
 - `ee/apps/den-api/test/api/remote-devices.api.test.ts`: organization RBAC,
   all-member visibility, personal visibility, cross-organization isolation,
   report identity, shared-write restrictions, races and event retention.
-- `evals/proofs/den-computers.proof.test.ts`: actual regular Den navigation and
-  the organization-admin Computers page, including member restrictions.
+- `evals/proofs/den-computers.proof.test.ts`: actual regular Den navigation, the
+  organization-admin Computers page, and an ordinary member's My Computers
+  page with only their own and shared computers.
 - `evals/proofs/remote-devices-desktop.proof.test.ts` and
   `evals/proofs/remote-devices-workbot.proof.test.ts`: preserved personal views.
 

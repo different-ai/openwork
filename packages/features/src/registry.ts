@@ -833,7 +833,7 @@ export const FEATURES = defineFeatures({
   },
   remoteDevices: {
     label: "Computers",
-    description: "Computers in Den lets organization owners and admins view their team's reported desktops, cloud computers, registered virtual computers and OpenWork instances, with owners, status, last contact, versions and supported inventory. Desktop Settings > Devices and Workbot's Devices page show each member their own and shared computers. Registration does not provision a computer or grant provider access. Off, these views are hidden and desktop reports stop; existing computer use and remote tasks are unchanged.",
+    description: "Computers in Den lets organization owners and admins view their team's reported desktops, cloud computers, registered virtual computers and OpenWork instances, with owners, status, last contact, versions and supported inventory. My Computers in Den, Desktop Settings > Devices and Workbot's Devices page show each member their own and shared computers. Registration does not provision a computer or grant provider access. Off, these views are hidden and desktop reports stop; existing computer use and remote tasks are unchanged.",
     category: "computerUse",
     added: "2026-11-10",
     since: "2026-11",

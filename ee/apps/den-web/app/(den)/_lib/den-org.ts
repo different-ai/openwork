@@ -900,6 +900,11 @@ export function getComputersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/computers`;
 }
 
+/** Every member's own and shared computers; the team-wide list is `getComputersRoute`. */
+export function getMyComputersRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/my-computers`;
+}
+
 export function getDesktopPoliciesRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/desktop-policies`;
 }

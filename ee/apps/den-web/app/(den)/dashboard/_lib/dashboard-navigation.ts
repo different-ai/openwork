@@ -8,6 +8,7 @@ import {
   LibraryBig,
   LockKeyhole,
   MessageCircle,
+  MonitorSmartphone,
   ScrollText,
   Server,
   Plug,
@@ -36,6 +37,7 @@ import {
   getMarketplacesRoute,
   getMcpConnectionsRoute,
   getMembersRoute,
+  getMyComputersRoute,
   getOrgSettingsRoute,
   getPermissionsRoute,
   getPluginsRoute,
@@ -96,7 +98,7 @@ export type BuildDashboardNavSectionsInput = {
   /** The managedDeployments feature is on for this organization. */
   managedDeployments?: boolean;
   desktopPolicyScreenRemoved?: boolean;
-  /** Team computer inventory; remoteDevices is off by default. */
+  /** My Computers for every member and the team inventory for admins; remoteDevices is off by default. */
   remoteDevices?: boolean;
   /** Workbot's settings are on Members › Teams › Everyone for this viewer, so Manage has no Workbot entry. */
   workbotSettingsInTeams?: boolean;
@@ -152,6 +154,10 @@ export function buildDashboardNavSections({
     },
     ...(workflowsEnabled && orgSlug
       ? [{ href: getAutomationsRoute(orgSlug), label: "My Automations", icon: CalendarClock }]
+      : []),
+    // Every member sees their own and shared computers; the team-wide list is Manage › Computers.
+    ...(remoteDevices && orgSlug
+      ? [{ href: getMyComputersRoute(orgSlug), label: "My Computers", icon: MonitorSmartphone, testId: "dashboard-nav-my-computers" }]
       : []),
     ...(showWeb
       ? [{ href: orgSlug ? getWebRoute(orgSlug) : "#", label: "OpenWork Web", icon: Globe }]
@@ -267,6 +273,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Models: ["llm", "provider", "byok", "api key"],
   Permissions: ["access", "roles", "teams", "admin", "rbac"],
   "My Automations": ["schedule", "recurring", "tasks"],
+  "My Computers": ["devices", "my devices", "laptop", "desktop", "virtual computers", "workbot computer"],
   "My bot": ["agent", "my agent", "morning brief", "meeting prep", "proactive", "notifications"],
   "My Library": ["skills", "plugins", "connections"],
   "OpenWork Models": ["llm", "provider", "managed", "inference"],
