@@ -91,6 +91,7 @@ const EnvSchema = z.object({
   DEN_MAINTENANCE_TOKEN: z.string().optional(),
   DEN_HEADLESS_RUNNER_TOKEN: z.string().optional(),
   DEN_HEADLESS_RUNNER_CALLBACK_TOKEN: z.string().optional(),
+  DEN_AGENT_CHECK_GATE_API_KEY: z.string().optional(),
   DEN_GATEWAY_KEY: z.string().optional(),
   DEN_GATEWAY_ORIGIN: z.string().optional(),
   DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
@@ -774,6 +775,8 @@ export const env = {
   },
   maintenanceToken,
   headlessRunnerCallbackToken,
+  // Vercel AI Gateway key for Your agent's check gate (workbotAgentCheckGate). Unset: only "nothing arrived" skips a check.
+  agentCheckGateApiKey: optionalString(parsed.DEN_AGENT_CHECK_GATE_API_KEY),
   gatewayKey: optionalString(parsed.DEN_GATEWAY_KEY),
   gatewayOrigin: normalizeOptionalHttpsOrigin("DEN_GATEWAY_ORIGIN", parsed.DEN_GATEWAY_ORIGIN),
   planGatingEnabled,

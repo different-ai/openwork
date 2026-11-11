@@ -5,7 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { AGENT_INSTRUCTIONS, agentLedgerKey, agentWakePrompt, parseAgentReply, parseAgentState, type AgentState } from "@openwork/automations/proactive"
-import type { AgentCheckRequest, AgentConversationTurn } from "@openwork/automations/proactive-brief"
+import type { AgentCheckGateRequest, AgentCheckGateVerdict, AgentCheckRequest, AgentConversationTurn } from "@openwork/automations/proactive-brief"
 import type { AgentReadToolInput } from "@openwork/automations/agent-read-tools"
 import {
   AGENT_BRIEF_OFF_LINES,
@@ -26,6 +26,7 @@ import {
 import type { AgentCheckRecord } from "../src/workbot-proactive/checks.js"
 import type { AgentInstanceRow, AgentSettle } from "../src/workbot-proactive/repository.js"
 import type { MemberConnection } from "../src/workbot-proactive/sources.js"
+import type { MemberMailArrivals } from "../src/routes/org/google-workspace.js"
 import type { AgentRawTurnResult } from "../src/workbot-proactive/turn.js"
 import type { AgentBriefWakeDeps } from "../src/workbot-proactive/wake-brief.js"
 
@@ -44,6 +45,7 @@ await auth.$context
 bootstrapSelect.mock.restore()
 const { wakeAgentBrief, AGENT_MESSAGE_SCOPES } = await import("../src/workbot-proactive/wake-brief.js")
 const { wakeMemberAgent } = await import("../src/workbot-proactive/worker.js")
+const { createCheckGateModel } = await import("../src/workbot-proactive/check-gate.js")
 const { agentSessionId, agentMessageSessionId } = await import("../src/workbot-proactive/turn.js")
 const preferences = await import("../src/workbot-proactive/preferences.js")
 const { memberNextChecks, memberRhythm, memberBriefLines } = await import("../src/workbot-proactive/brief.js")
@@ -97,6 +99,8 @@ type Harness = {
   briefOn: boolean[]
   /** Connections whose tools the wake listed. */
   listed: string[]
+  /** The check gate: each look at the member's mail, and each question put to the evaluation model. */
+  gate: { looks: { connectionId: string; since: number }[]; asked: AgentCheckGateRequest[] }
 }
 
 function harness(input: {
@@ -113,8 +117,15 @@ function harness(input: {
   connections?: MemberConnection[]
   /** What each MCP connection lists, by connection id (null: its server didn't answer). Slack's by default. */
   tools?: Record<string, readonly AgentReadToolInput[] | null>
+  /**
+   * The check gate: what its look at Gmail returns (nothing new by default) and the evaluation model's verdict (no
+   * model by default); null: the feature is off for the member. Left out: Den has no gate at all.
+   */
+  checkGate?: { mail?: MemberMailArrivals | (() => MemberMailArrivals); model?: (request: AgentCheckGateRequest) => AgentCheckGateVerdict } | null
+  /** What Google Calendar returns for the check's own read and the gate's look. */
+  calendarItems?: unknown[]
 }) {
-  const h: Harness = { clock: MORNING, row: agentRow(input.row), checks: [], messageTurns: [], ended: [], delivered: [], ledger: new Map(), records: [], counters: [], settles: [], requests: [], briefOn: input.briefOn ?? [], listed: [] }
+  const h: Harness = { clock: MORNING, row: agentRow(input.row), checks: [], messageTurns: [], ended: [], delivered: [], ledger: new Map(), records: [], counters: [], settles: [], requests: [], briefOn: input.briefOn ?? [], gate: { looks: [], asked: [] }, listed: [] }
   const checks = [...(input.checks ?? ["NO_FINDINGS"])]
   const replies = [...(input.replies ?? ["NO_REPLY"])]
   let briefCalls = 0
@@ -124,7 +135,7 @@ function harness(input: {
     settings: async () => ({ ...settingsOn, ...input.settings }),
     template: async () => ({ ...(input.template ?? DEFAULT_AGENT_TEMPLATE), versionId: null, version: 1 }),
     user: async () => userId,
-    calendar: async () => ({ kind: "ok", json: { timeZone: TZ, items: [] } }),
+    calendar: async () => ({ kind: "ok", json: { timeZone: TZ, items: input.calendarItems ?? [] } }),
     model: async () => "openai/gpt-6-luna",
     turn: async () => parseAgentReply("NO_REPLY"),
     connections: async () => input.connections ?? [GOOGLE, SLACK],
@@ -185,6 +196,23 @@ function harness(input: {
       const tools = { [SLACK.id]: SLACK_TOOLS, ...input.tools }
       return connection.id in tools ? tools[connection.id] ?? null : null
     },
+    ...(input.checkGate === undefined ? {} : {
+      checkGate: async () => {
+        const gate = input.checkGate
+        if (!gate) return null
+        const { model } = gate
+        return {
+          mail: async (look) => {
+            h.gate.looks.push({ connectionId: look.connectionId, since: look.since })
+            return typeof gate.mail === "function" ? gate.mail() : gate.mail ?? { kind: "ok", messages: [], more: false }
+          },
+          model: model ? async (request) => {
+            h.gate.asked.push(request)
+            return { verdict: model(request), durationMs: 35, inputTokens: 240 }
+          } : null,
+        }
+      },
+    }),
   }
   return { h, deps, run: () => wakeAgentBrief(h.row, deps) }
 }
@@ -400,6 +428,153 @@ describe("Your agent's brief: a check, then maybe a message (workbotAgentBrief)"
   test("the messenger's token reads nothing; the check's token carries its sources", () => {
     const messenger = agentReadAllowlist(new Set(AGENT_MESSAGE_SCOPES))
     assert.deepEqual([messenger?.kinds.size, messenger?.connectionIds.size], [0, 0])
+  })
+})
+
+describe("the check gate: a scheduled check runs only when something that could matter arrived (workbotAgentCheckGate)", () => {
+  const TEN = at("2026-10-20T10:00:00")
+  const NOON = at("2026-10-20T12:00:00")
+  const TWO = at("2026-10-20T14:00:00")
+  const gateOn = { settings: { checkGate: true }, connections: [GOOGLE] }
+  const mail = (...messages: { from: string; subject: string; snippet?: string; labels?: string[] }[]): MemberMailArrivals => ({
+    kind: "ok", more: false, messages: messages.map((message) => ({ snippet: "", labels: ["INBOX"], ...message })),
+  })
+  const NEWSLETTER = { from: "Fabrikam News <news@fabrikam.example>", subject: "October product update", labels: ["INBOX", "CATEGORY_PROMOTIONS"] }
+  const ASK = { from: "Dana <dana@northwind.example>", subject: "Pricing for 60 seats?", snippet: "Can you send numbers before 11?" }
+  /** The first check of the day at 8 AM always runs; the gate's turn comes at 10. */
+  async function afterMorning(input: Parameters<typeof harness>[0]) {
+    const made = harness(input)
+    await made.run()
+    assert.equal(made.h.checks.length, 1, "the first check of the day ran")
+    assert.equal(made.h.gate.looks.length, 0, "and Den did not look first")
+    made.h.clock = TEN
+    return made
+  }
+
+  test("nothing arrived: no agent turn and no model; nothing is marked as read; after two skips the check runs again", async () => {
+    const { h, run } = await afterMorning({ ...gateOn, checkGate: {} })
+    assert.deepEqual(await run(), { status: "ran", reasons: ["scheduled"], reply: "quiet", delivered: null })
+    assert.equal(h.checks.length, 1, "no step 1 at 10")
+    assert.deepEqual(h.gate.looks, [{ connectionId: GOOGLE.id, since: MORNING }])
+    assert.deepEqual([state(h).skips, state(h).lastPassAt, state(h).lastLook], [1, TEN, { calendar: MORNING, email: MORNING }])
+    assert.equal(h.row.nextWakeAt.getTime(), NOON)
+    assert.deepEqual(h.records.at(-1) && [h.records.at(-1)?.kind, h.records.at(-1)?.reason, h.records.at(-1)?.summary], ["scheduled", "nothing_new", "Stayed quiet: nothing new."])
+    assert.deepEqual(h.counters.at(-1), { responsibility: "rhythm", checks: 1, quiet: 1, sent: 0 })
+
+    h.clock = NOON
+    await run()
+    assert.equal(h.checks.length, 1, "no step 1 at noon either")
+    assert.deepEqual(h.gate.looks.at(-1), { connectionId: GOOGLE.id, since: MORNING }, "the same window again: a skip marks nothing as read")
+    assert.equal(state(h).skips, 2)
+
+    h.clock = TWO
+    await run()
+    assert.equal(h.checks.length, 2, "two skipped in a row: the agent looks for itself")
+    assert.equal(h.gate.looks.length, 2, "without Den looking first")
+    assert.match(h.checks[1]?.prompt ?? "", /8:00 AM/, "and it reads from where it last looked, at 8")
+    assert.deepEqual([state(h).skips, state(h).lastLook], [0, { calendar: TWO, email: TWO }])
+  })
+
+  test("only routine mail arrived and the model is confident: skipped; the model sees senders and subjects, never more", async () => {
+    const { h, run } = await afterMorning({ ...gateOn, checkGate: { mail: mail(NEWSLETTER), model: () => ({ kind: "skip", why: "routine" }) } })
+    await run()
+    assert.equal(h.checks.length, 1)
+    assert.equal(state(h).skips, 1)
+    assert.deepEqual(h.gate.asked.map((request) => request.state.arrivals), [[{ source: "email", from: NEWSLETTER.from, subject: NEWSLETTER.subject, firstWords: "", category: "promotions" }]])
+    assert.match(h.gate.asked[0]?.state.brief ?? "", /^Tell me about things that need me soon:/)
+  })
+
+  test("mail that may matter, no answer from the model, or no model on the deployment: the check runs", async () => {
+    for (const checkGate of [
+      { mail: mail(NEWSLETTER, ASK), model: (): AgentCheckGateVerdict => ({ kind: "run", why: "may_matter" }) },
+      { mail: mail(NEWSLETTER), model: (): AgentCheckGateVerdict => ({ kind: "run", why: "no_answer" }) },
+      { mail: mail(NEWSLETTER) },
+    ]) {
+      const { h, run } = await afterMorning({ ...gateOn, checkGate })
+      await run()
+      assert.equal(h.checks.length, 2)
+      assert.equal(state(h).skips, 0)
+    }
+  })
+
+  test("a meeting that changed since the last look is an arrival too", async () => {
+    const changed = {
+      id: "evt_review", status: "confirmed", summary: "Northwind review", created: "2026-10-01T13:00:00Z", updated: "2026-10-20T13:30:00Z",
+      start: { dateTime: "2026-10-20T15:00:00-04:00" }, end: { dateTime: "2026-10-20T15:30:00-04:00" },
+      attendees: [{ email: "sam@acme.example", self: true, responseStatus: "accepted" }, { email: "dana@northwind.example", responseStatus: "accepted" }],
+    }
+    const { h, run } = await afterMorning({ ...gateOn, calendarItems: [changed], checkGate: { model: () => ({ kind: "run", why: "may_matter" }) } })
+    await run()
+    assert.deepEqual(h.gate.asked[0]?.state.arrivals, [{ source: "calendar", change: "\"Northwind review\", today at 3:00 PM, 1 other person, 1 from outside the company: changed" }])
+    assert.equal(h.checks.length, 2)
+  })
+
+  test("a source Den can't look at itself, a failed look, or a full inbox: the check runs", async () => {
+    const chat = await afterMorning({ settings: { checkGate: true }, checkGate: {} })
+    await chat.run()
+    assert.equal(chat.h.checks.length, 2, "team chat is readable, and Den can't look at it")
+    assert.equal(chat.h.gate.looks.length, 0)
+    for (const arrivals of [{ kind: "google_api_error" as const }, { ...mail(NEWSLETTER), more: true }]) {
+      const { h, run } = await afterMorning({ ...gateOn, checkGate: { mail: arrivals, model: () => ({ kind: "skip", why: "routine" }) } })
+      await run()
+      assert.equal(h.checks.length, 2)
+      assert.equal(h.gate.asked.length, 0)
+    }
+    const thrown = await afterMorning({ ...gateOn, checkGate: { mail: () => { throw new Error("timeout") } } })
+    await thrown.run()
+    assert.equal(thrown.h.checks.length, 2)
+  })
+
+  test("off until the policy turns it on, and with the feature off for the member: every check runs and Den never looks", async () => {
+    const policyOff = await afterMorning({ connections: [GOOGLE], checkGate: {} })
+    await policyOff.run()
+    const featureOff = await afterMorning({ ...gateOn, checkGate: null })
+    await featureOff.run()
+    for (const { h } of [policyOff, featureOff]) {
+      assert.equal(h.checks.length, 2)
+      assert.equal(h.gate.looks.length, 0)
+    }
+  })
+
+  test("a check the agent asked for always runs", async () => {
+    const { h, run } = await afterMorning({ ...gateOn, checkGate: {} })
+    const request: AgentCheckRequest = { at: at("2026-10-20T09:15:00"), why: "before the 9:30 with Northwind", requestedAt: MORNING }
+    h.row = { ...h.row, state: JSON.stringify({ ...state(h), requests: [request] }) }
+    h.clock = request.at
+    await run()
+    assert.equal(h.checks.length, 2)
+    assert.equal(h.gate.looks.length, 0)
+  })
+
+  test("the model request: one POST with the question, no retention, no redirects; no usable answer runs the check", async () => {
+    const request: AgentCheckGateRequest = {
+      state: { brief: "Never tell me about newsletters.", arrivals: [{ source: "email", from: NEWSLETTER.from, subject: NEWSLETTER.subject, firstWords: "", category: "promotions" }] },
+      questions: { needed: { type: "boolean", instructions: "Could any arrival matter?" } },
+    }
+    const calls: { url: string; init: RequestInit | undefined }[] = []
+    const model = createCheckGateModel({
+      apiKey: "synthetic-gateway-key",
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init })
+        return Response.json({ answers: { needed: { type: "boolean", probability: 0.04 } }, usage: { inputTokens: 212 } })
+      },
+    })
+    const answer = await model(request)
+    assert.deepEqual([answer.verdict, answer.inputTokens], [{ kind: "skip", why: "routine" }, 212])
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0]?.url, "https://ai-gateway.vercel.sh/v4/ai/evaluation-model")
+    assert.equal(calls[0]?.init?.redirect, "error")
+    const headers = new Headers(calls[0]?.init?.headers)
+    assert.deepEqual([headers.get("authorization"), headers.get("ai-model-id")], ["Bearer synthetic-gateway-key", "typesafe-ai/jev"])
+    assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), { ...request, providerOptions: { gateway: { zeroDataRetention: true } } })
+
+    const refused = createCheckGateModel({ apiKey: "synthetic-gateway-key", fetch: async () => new Response("quota exceeded for key synthetic-gateway-key", { status: 402 }) })
+    const unreadable = createCheckGateModel({ apiKey: "synthetic-gateway-key", fetch: async () => new Response("<html>", { status: 200 }) })
+    const down = createCheckGateModel({ apiKey: "synthetic-gateway-key", fetch: async () => { throw new Error("connect ECONNREFUSED") } })
+    for (const failing of [refused, unreadable, down]) {
+      const failed = await failing(request)
+      assert.deepEqual([failed.verdict, failed.inputTokens], [{ kind: "run", why: "no_answer" }, null])
+    }
   })
 })
 

@@ -35,6 +35,12 @@ export function everyLabel(hours: number) {
   return hours === 1 ? "Every hour" : `Every ${hours} hours`;
 }
 
+/** The check gate's row (`workbotAgentCheckGate`), worded the same in both layouts. */
+export const CHECK_GATE_ROW = {
+  label: "Skip checks when nothing new arrived",
+  help: "Before a scheduled check, Workbot looks at what reached the member's Gmail and Google Calendar since the last one. With nothing new, or only routine mail, the agent doesn't run. The first check of the day and checks the agent asked for always run, and so does a check after two skipped in a row.",
+} as const;
+
 function Row({ label, labelId, note, children, testId }: { label: string; labelId?: string; note?: ReactNode; children: ReactNode; testId?: string }) {
   return (
     <div className="px-6 py-3" data-testid={testId}>
@@ -210,6 +216,12 @@ export function WorkbotAgentBriefPanel({
           </DenSelect>
         </div>
       </Row>
+
+      {view.checkGate ? (
+        <Row label={CHECK_GATE_ROW.label} testId="workbot-agent-check-gate">
+          <DenSwitch aria-label={CHECK_GATE_ROW.label} checked={settings.checkGate === true} disabled={locked} onChange={(checkGate) => onChange({ checkGate })} />
+        </Row>
+      ) : null}
 
       <Row label="Members start" labelId={ids.members} testId="workbot-proactive-members">
         <div className="w-36">

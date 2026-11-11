@@ -404,6 +404,24 @@ test("grouped: yes or no settings are switches, the schedule is one row per sett
   for (const about of ["On for members by default", "Send messages in Slack", "Daily message limit", "Check for updates", "Working hours", "Working days", "Extra checks"]) assert.ok(html.includes(`aria-label="About ${about}"`), about);
 });
 
+test("the check gate is one switch, off until an admin turns it on, in both layouts, and absent while its feature is off", () => {
+  const label = "Skip checks when nothing new arrived";
+  for (const layout of [render, renderGrouped]) {
+    assert.ok(!text(layout(briefOn)).includes(label), "no row while the server doesn't offer it");
+    const offered = layout({ ...briefOn, checkGate: { model: false } });
+    assert.match(switchFor(offered, label) ?? "", /aria-checked="false"/);
+    assert.doesNotMatch(switchFor(offered, label) ?? "", /disabled=""/);
+    assert.match(switchFor(layout({ ...briefOn, settings: { ...briefOn.settings, checkGate: true }, checkGate: { model: true } }), label) ?? "", /aria-checked="true"/);
+  }
+  assert.ok(renderGrouped({ ...briefOn, checkGate: { model: true } }).includes(`aria-label="About ${label}"`), "the grouped row explains itself");
+});
+
+test("Undo for Use Everyone's carries the team's check gate choice only while the server offers it", () => {
+  const team = { ...briefOn, settings: { ...briefOn.settings, checkGate: true } };
+  assert.equal(agentPolicyRestoreChange({ ...team, checkGate: { model: true } }, briefOn).checkGate, true);
+  assert.equal("checkGate" in agentPolicyRestoreChange(team, briefOn), false);
+});
+
 test("grouped: with messages going nowhere and members opting in themselves, both switches are off", () => {
   const html = renderGrouped({ ...briefOn, settings: { ...briefOn.settings, enabled: false, destination: null, membersStart: "opted_out" } });
   assert.match(switchFor(html, "Send messages in Slack") ?? "", /aria-checked="false"/);

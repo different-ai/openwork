@@ -934,6 +934,11 @@ const agentStateSchema = z.object({
    * later is reported again instead of lost (the next check reads only what's new). Member content, encrypted.
    */
   lastReport: z.object({ at: z.number(), text: z.string().max(4_000) }).nullable().optional(),
+  /**
+   * `workbotAgentCheckGate`: scheduled checks skipped in a row because nothing that could matter had arrived. A check
+   * that runs sets it back to 0, so the gate can only skip a few before the agent looks for itself.
+   */
+  skips: z.number().int().min(0).max(100).optional(),
 })
 export type AgentState = z.infer<typeof agentStateSchema>
 

@@ -561,6 +561,16 @@
               ],
               "description": "Workbot: Your agent's brief and check rhythm: With Your agent on, it checks on one rhythm (every 2 hours in working hours by default, plus up to 3 extra checks it asks for) instead of four fixed message types, and follows a plain-text brief: the organization's default plus each member's own lines, set in Manage › Workbot, My bot or chat. Each check researches first and then writes at most a few short messages, each one finding with a lock-screen first sentence. Messages per day and hours stay hard limits. Renders DEN_FEATURE_WORKBOT_AGENT_BRIEF."
             },
+            "workbotAgentCheckGate": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: Your agent skips checks when nothing new arrived: With Your agent's brief on, admins can turn on Skip checks when nothing new arrived in Manage › Workbot. Before a scheduled check, Workbot looks at what reached the member's Gmail and Google Calendar since the agent last looked. With nothing new, or only routine mail, the agent doesn't run for that check. The first check of the day, checks the agent asked for, and a check after two skipped in a row always run. Renders DEN_FEATURE_WORKBOT_AGENT_CHECK_GATE."
+            },
             "workbotSlackAnswerReply": {
               "enum": [
                 "",

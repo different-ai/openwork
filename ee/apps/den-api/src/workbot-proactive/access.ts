@@ -3,6 +3,7 @@ import { AuthUserTable, MemberTable, OrganizationTable } from "@openwork-ee/den-
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { readWorkbotProactiveSettings, type WorkbotProactiveSettings } from "@openwork/types/den/workbot-proactive"
 import { db } from "../db.js"
+import { env } from "../env.js"
 import { getOrganizationFeatures, organizationFeatureEnabled } from "../features.js"
 import { headlessRunnerConfig } from "../headless-runner/client.js"
 import { workbotOrigin } from "../workbot/config.js"
@@ -35,6 +36,19 @@ export async function proactiveAllowed(organizationId: string, userId?: string) 
  */
 export async function agentBriefAllowed(organizationId: string, userId?: string) {
   return organizationFeatureEnabled(organizationId, "workbotAgentBrief", userId ? { userId } : {})
+}
+
+/**
+ * Your agent's check gate (`workbotAgentCheckGate`) for this member: on top of the brief, never instead. The policy's
+ * own switch (`settings.checkGate`) is checked where the gate runs.
+ */
+export async function agentCheckGateAllowed(organizationId: string, userId?: string) {
+  return organizationFeatureEnabled(organizationId, "workbotAgentCheckGate", userId ? { userId } : {})
+}
+
+/** Whether this deployment has the key for the gate's evaluation model; without it only "nothing arrived" skips a check. */
+export function agentCheckGateModelReady() {
+  return Boolean(env.agentCheckGateApiKey)
 }
 
 export async function readProactiveSettings(organizationId: DenTypeId<"organization">): Promise<WorkbotProactiveSettings> {

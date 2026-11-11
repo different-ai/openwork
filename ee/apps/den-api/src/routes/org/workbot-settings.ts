@@ -24,7 +24,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, paramValidator, requireOrgPermission, userSessionRoute } from "../../middleware/index.js"
-import { agentBriefAllowed, proactiveRunnerReady, readProactiveSettings } from "../../workbot-proactive/access.js"
+import { agentBriefAllowed, agentCheckGateAllowed, agentCheckGateModelReady, proactiveRunnerReady, readProactiveSettings } from "../../workbot-proactive/access.js"
 import { AGENT_RHYTHM_COUNTER } from "../../workbot-proactive/repository.js"
 import { workbotSlackAppReady } from "../../slack-assistant/direct-message.js"
 import { readAgentTemplate, saveAgentTemplate, type AgentTemplateVersion } from "../../workbot-proactive/template.js"
@@ -85,13 +85,15 @@ export const INVALID_WORKING_HOURS_MESSAGE = "The workday must end after it star
 export const CONNECTION_NOT_FOUND_MESSAGE = "No such connection in this organization."
 
 /** A members'-agents policy as admins see it: the organization's, or one team's own (workbot-team-settings.ts). */
-export async function proactiveView(organizationId: DenTypeId<"organization">, settings: WorkbotProactiveSettings, template: AgentTemplateVersion, canViewConnections: boolean, briefOn: boolean): Promise<WorkbotProactiveView> {
+export async function proactiveView(organizationId: DenTypeId<"organization">, settings: WorkbotProactiveSettings, template: AgentTemplateVersion, canViewConnections: boolean, briefOn: boolean, checkGateOn = false): Promise<WorkbotProactiveView> {
   const { versionId, version, responsibilities, instructions } = template
   // What admins saved under `brief` is shown resolved (`brief` below), never raw.
   const { brief: _saved, ...policy } = settings
   return {
     settings: policy,
     ...(briefOn ? { brief: { ...resolveAgentBrief(settings, template), defaultText: DEFAULT_AGENT_BRIEF } } : {}),
+    // The gate decides whether the brief's check runs, so it is offered only with both features on.
+    ...(briefOn && checkGateOn ? { checkGate: { model: agentCheckGateModelReady() } } : {}),
     template: { versionId, version, responsibilities, instructions },
     slackReady: await workbotSlackAppReady(organizationId),
     runnerReady: proactiveRunnerReady(),
@@ -167,6 +169,11 @@ export async function saveWorkbotDefaultModel(input: { organizationId: DenTypeId
   return { choice: "ok" as const, model: readWorkbotModel(metadata), maxSteps: readWorkbotMaxSteps(metadata), catalog }
 }
 
+/** Why a change to the check gate's switch is refused, or null: the feature (with the brief) is off for the caller. */
+export function refusedCheckGateChange(requested: WorkbotProactiveSettingsInput, allowed: boolean): string | null {
+  return requested.checkGate !== undefined && !allowed ? "Skipping checks when nothing new arrived isn't on for this organization." : null
+}
+
 /**
  * What refuses an admin's change to a members'-agents policy before it is merged, with the answer to give (400):
  * the brief while its feature is off, or a sources change the organization's connections don't allow (every id is
@@ -178,9 +185,13 @@ export async function refusedProactiveChange(input: {
   organizationId: DenTypeId<"organization">
   requested: WorkbotProactiveSettingsInput
   briefOn: boolean
+  /** `workbotAgentCheckGate` for the caller; its switch is refused while the feature is off. */
+  checkGateOn: boolean
   currentSources: () => Promise<AgentSourcesPolicy>
 }): Promise<{ error: "invalid_request"; message: string; details: never[] } | { error: "invalid_request"; message: string } | null> {
   if (input.requested.brief && !input.briefOn) return { error: "invalid_request", message: "Your agent's brief isn't on for this organization.", details: [] }
+  const checkGate = refusedCheckGateChange(input.requested, input.briefOn && input.checkGateOn)
+  if (checkGate) return { error: "invalid_request", message: checkGate }
   const invalid = checkSourcesChange({
     change: input.requested.sources,
     connections: await listOrganizationSourceConnections(input.organizationId),
@@ -243,8 +254,9 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       c.header("Cache-Control", "no-store")
       const organizationId = c.get("organizationContext").organization.id
       const canViewConnections = (await memberPermissionsForRequest(c))?.has("connections.view") ?? false
-      const briefOn = await agentBriefAllowed(organizationId, c.get("organizationContext").currentMember.userId)
-      return c.json(await proactiveView(organizationId, await readProactiveSettings(organizationId), await readAgentTemplate(organizationId), canViewConnections, briefOn))
+      const userId = c.get("organizationContext").currentMember.userId
+      const [briefOn, checkGateOn] = await Promise.all([agentBriefAllowed(organizationId, userId), agentCheckGateAllowed(organizationId, userId)])
+      return c.json(await proactiveView(organizationId, await readProactiveSettings(organizationId), await readAgentTemplate(organizationId), canViewConnections, briefOn, checkGateOn))
     },
   )
 
@@ -346,13 +358,17 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
     async (c) => {
       c.header("Cache-Control", "no-store")
       const { organization, currentMember } = c.get("organizationContext")
-      const saved = await saveWorkbotProactiveSettings({ organizationId: organization.id, memberId: currentMember.id, userId: currentMember.userId, change: c.req.valid("json") })
+      const change = c.req.valid("json")
+      const checkGateOn = await agentCheckGateAllowed(organization.id, currentMember.userId)
+      const checkGate = refusedCheckGateChange(change, checkGateOn && await agentBriefAllowed(organization.id, currentMember.userId))
+      if (checkGate) return c.json({ error: "invalid_request" as const, message: checkGate }, 400)
+      const saved = await saveWorkbotProactiveSettings({ organizationId: organization.id, memberId: currentMember.id, userId: currentMember.userId, change })
       if (!saved.ok) {
         if (saved.error === "invalid_working_hours") return c.json({ error: "invalid_working_hours" as const, message: saved.message }, 400)
         if (saved.error === "brief_off") return c.json({ error: "invalid_request" as const, message: saved.message, details: [] }, 400)
         return c.json({ error: "invalid_request" as const, message: saved.message }, 400)
       }
-      return c.json(await proactiveView(organization.id, saved.settings, saved.template, (await memberPermissionsForRequest(c))?.has("connections.view") ?? false, saved.briefOn))
+      return c.json(await proactiveView(organization.id, saved.settings, saved.template, (await memberPermissionsForRequest(c))?.has("connections.view") ?? false, saved.briefOn, checkGateOn))
     },
   )
 

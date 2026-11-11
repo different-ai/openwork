@@ -463,6 +463,11 @@ const workbotProactiveFieldsSchema = z.object({
    * field: a field not saved is carried over from the settings above and the template (`resolveAgentBrief`).
    */
   brief: storedAgentBriefSchema.optional(),
+  /**
+   * `workbotAgentCheckGate`: before a scheduled check, Den looks at what reached the member since their agent last
+   * looked and skips the check when nothing that could matter arrived. Absent means off.
+   */
+  checkGate: z.boolean().optional(),
 })
 
 const hoursInOrder = (value: { startHour: number; endHour: number }) => value.endHour > value.startHour
@@ -557,6 +562,12 @@ export const workbotProactiveViewSchema = z.object({
    * servers before it.
    */
   brief: agentBriefViewSchema.optional(),
+  /**
+   * `workbotAgentCheckGate` only: `model` is whether this deployment can also judge new mail as routine (it has the
+   * key for the evaluation model); without it a check is skipped only when nothing arrived. Absent while the feature
+   * is off, and from servers before it; `settings.checkGate` is the switch.
+   */
+  checkGate: z.object({ model: z.boolean() }).optional(),
 })
 export type WorkbotProactiveView = z.infer<typeof workbotProactiveViewSchema>
 

@@ -16,7 +16,7 @@ import { getOrganizationFeatures, requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, paramValidator, requireOrgPermission } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { updateOrganizationMetadata } from "../../organization-metadata.js"
-import { agentBriefAllowed, readProactiveSettings } from "../../workbot-proactive/access.js"
+import { agentBriefAllowed, agentCheckGateAllowed, readProactiveSettings } from "../../workbot-proactive/access.js"
 import { workbotOrigin } from "../../workbot/config.js"
 import { checkWorkbotModelChoice, workbotModelCatalog } from "../../workbot/model.js"
 import { listWorkbotTeamSettings, readEveryoneAgentPolicy, readTeamAgentPolicy, saveTeamAgentPolicy, saveWorkbotTeamSettings } from "../../workbot/team-settings.js"
@@ -191,9 +191,10 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       if (!await findOrganizationTeamForDefaultModel(organization.id, teamId)) return c.json({ error: "team_not_found" }, 404)
       const canViewConnections = (await memberPermissionsForRequest(c))?.has("connections.view") ?? false
       const briefOn = await agentBriefAllowed(organization.id, currentMember.userId)
+      const checkGateOn = await agentCheckGateAllowed(organization.id, currentMember.userId)
       const own = await readTeamAgentPolicy(organization.id, teamId)
       const policy = own ?? await readEveryoneAgentPolicy(organization.id)
-      return c.json({ ...await proactiveView(organization.id, policy.settings, policy.template, canViewConnections, briefOn), inherit: !own })
+      return c.json({ ...await proactiveView(organization.id, policy.settings, policy.template, canViewConnections, briefOn, checkGateOn), inherit: !own })
     },
   )
 
@@ -265,12 +266,14 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       if (!await findOrganizationTeamForDefaultModel(organization.id, teamId)) return c.json({ error: "team_not_found" }, 404)
       const requested = c.req.valid("json")
       const briefOn = await agentBriefAllowed(organization.id, currentMember.userId)
+      const checkGateOn = await agentCheckGateAllowed(organization.id, currentMember.userId)
       // What the change applies to: the team's own policy, or the organization's for a team that had none.
       const everyone = await readEveryoneAgentPolicy(organization.id)
       const refused = await refusedProactiveChange({
         organizationId: organization.id,
         requested,
         briefOn,
+        checkGateOn,
         currentSources: async () => ((await readTeamAgentPolicy(organization.id, teamId)) ?? everyone).settings.sources,
       })
       if (refused) return c.json(refused, 400)
@@ -282,7 +285,7 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       })
       if (!saved) return c.json({ error: "invalid_working_hours" as const, message: INVALID_WORKING_HOURS_MESSAGE }, 400)
       const canViewConnections = (await memberPermissionsForRequest(c))?.has("connections.view") ?? false
-      return c.json({ ...await proactiveView(organization.id, saved.settings, saved.template, canViewConnections, briefOn), inherit: false })
+      return c.json({ ...await proactiveView(organization.id, saved.settings, saved.template, canViewConnections, briefOn, checkGateOn), inherit: false })
     },
   )
 

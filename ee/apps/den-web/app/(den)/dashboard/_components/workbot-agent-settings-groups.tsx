@@ -17,7 +17,7 @@ import { DenSelect } from "../../_components/ui/select";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { HelpTip } from "./help-tip";
-import { BriefPreview, everyLabel, hourLabel } from "./workbot-agent-brief-panel";
+import { BriefPreview, CHECK_GATE_ROW, everyLabel, hourLabel } from "./workbot-agent-brief-panel";
 import { agentsSwitchLabel, type AgentPolicyScope } from "./workbot-agent-scope";
 
 /**
@@ -218,6 +218,11 @@ export function WorkbotAgentSettingsGroups({ view, brief, canManage, saving, onC
             </DenSelect>
           </div>
         </Row>
+        {view.checkGate ? (
+          <Row label={CHECK_GATE_ROW.label} help={CHECK_GATE_ROW.help} testId="workbot-agent-check-gate">
+            <DenSwitch aria-label={CHECK_GATE_ROW.label} checked={settings.checkGate === true} disabled={locked} onChange={(checkGate) => onChange({ checkGate })} />
+          </Row>
+        ) : null}
       </Group>
 
       <Group>
