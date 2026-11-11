@@ -266,3 +266,35 @@ test("flag on: only an admin signed in through the organization's SSO can requir
   await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: false })
   await setFlag(ssoOrgId, false)
 })
+
+test("re-authentication lists the person's SSO organizations, with SSO offered (not only required) once the flag is on", async () => {
+  const signIns = async (session: Session) => {
+    const response = await den.request(session.token, "GET", "/v1/me/sso-sign-in")
+    assert.equal(response.status, 200, summary(response))
+    const organizations = field(response.body, "organizations")
+    assert.ok(Array.isArray(organizations), summary(response))
+    return organizations
+  }
+  // The email preflight gives no link while SSO is only offered; this route still does.
+  await setFlag(ssoOrgId, true)
+  await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: false })
+  const bothSession = await passwordSession(both)
+  const preflight = await den.request(null, "GET", `/v1/orgs/sso/resolve?email=${encodeURIComponent(both.email)}`)
+  assert.equal(field(preflight.body, "signInUrl"), undefined)
+  const offered = await signIns(bothSession)
+  assert.equal(offered.length, 1, "only the SSO organization, never the one without SSO")
+  assert.equal(field(offered[0], "organizationId"), ssoOrgId)
+  assert.equal(field(offered[0], "ssoOnly"), false)
+  assert.match(String(field(offered[0], "signInUrl")), /\/sso\//)
+
+  await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: true })
+  assert.equal(field((await signIns(ssoAdmin))[0], "ssoOnly"), true)
+  await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: false })
+
+  // Flag off: members must use SSO.
+  await setFlag(ssoOrgId, false)
+  assert.equal(field((await signIns(ssoAdmin))[0], "ssoOnly"), true)
+
+  assert.deepEqual(await signIns(otherOwner), [], "a person without SSO organizations gets none")
+  assert.equal((await den.request(null, "GET", "/v1/me/sso-sign-in")).status, 401)
+})

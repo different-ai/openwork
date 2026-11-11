@@ -141,6 +141,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   // Session-only user routes and org creation
   readOnly("/v1/me", "user.read", "platform.user", "user", null),
   userScoped("PATCH", "/v1/me/profile", "user.profile.update", "platform.user", "user", "audit/domain/account.ts", "Direct database update (no better-auth hook): the handler appends account.profile_updated (name before/after) to every organization where the user is an active member."),
+  platform("GET", "/v1/me/sso-sign-in", "user.sso_sign_in.list", "platform.user", "organization", null, "Lists the caller's member organizations with ready SSO and their sign-in URLs, for re-authentication; no tenant is chosen."),
   platform("GET", "/v1/me/invitations", "user.invitation.list", "platform.user", "invitation", null, "Lists pending invitations addressed to the caller's verified email; no tenant until one is accepted."),
   platform("GET", "/v1/me/orgs", "user.organization.list", "platform.user", "organization", null, "Lists the caller's memberships; may hydrate the session active org."),
   userScoped("POST", "/v1/me/active-organization", "session.active_organization.update", "platform.user", "auth_session", "audit/domain/sessions.ts", "The handler appends session.organization_entered in the destination organization only (membership verified); the previous organization is never recorded and an unchanged organization records nothing. Automatic active-organization repair (GET /v1/me/orgs, resolveUserOrganizationsMiddleware) is not a user switch and records nothing."),
