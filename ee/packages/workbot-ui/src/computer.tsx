@@ -37,7 +37,7 @@ export function openBrowserPage(id: string) {
  * Both views belong to the main conversation's computer. noVNC carries the desktop's pixels and native input;
  * watching the browser streams the page itself instead.
  */
-export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onViewChange, onContextChange, task, onClose, onStop, expanded = false, onExpand }: {
+export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onViewChange, onContextChange, task, surface = "browser", onClose, onStop, expanded = false, onExpand }: {
   onTeachingChange?(context: BrowserTeachingContext | undefined): void;
   onRun?(text: string): void | Promise<void>;
   canTeach?: boolean;
@@ -45,6 +45,8 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   /** The tab in front of the Browser view, for the chat beside it; null when none is on screen. */
   onContextChange?(context: WorkbotViewContext | null): void;
   task?: { id: string; title: string; status: "working" | "completed" | "failed"; reason?: string };
+  /** Which view a task's card opened beside the chat: its browser, or the rest of its computer. Only with `task`. */
+  surface?: ComputerView;
   onClose?(): void;
   onStop?(): void | Promise<void>;
   expanded?: boolean;
@@ -62,18 +64,18 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   const [stopping, setStopping] = useState(false);
   const [stopped, setStopped] = useState(false);
   const views = computerViews(host);
-  const [view, setViewState] = useState<ComputerView>(() => task ? "browser" : viewFromLocation(views));
-  useEffect(() => { if (task) setViewState("browser"); }, [task?.id]);
+  const [view, setViewState] = useState<ComputerView>(() => task ? surface : viewFromLocation(views));
+  useEffect(() => { if (task) setViewState(surface); }, [task?.id, surface]);
   const setView = (next: ComputerView) => {
     if (next === view) return;
     window.history.pushState(null, "", `/${next}${window.location.search}`);
     setViewState(next);
   };
   useEffect(() => {
-    const sync = () => { if (/^\/(browser(\/[a-z0-9]{1,16})?|computer)\/?$/.test(window.location.pathname)) setViewState(task ? "browser" : viewFromLocation(computerViews(workbotHost()))); };
+    const sync = () => { if (/^\/(browser(\/[a-z0-9]{1,16})?|computer)\/?$/.test(window.location.pathname)) setViewState(task ? surface : viewFromLocation(computerViews(workbotHost()))); };
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
-  }, [task]);
+  }, [task, surface]);
   useEffect(() => { onViewChange?.(view); }, [view, onViewChange]);
   const [control, setControl] = useState(false);
   const [teachOpen, setTeachOpen] = useState(false);
@@ -89,16 +91,18 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   const [changing, setChanging] = useState(false);
   const [livePage, setLivePage] = useState<ScreencastPage | null>(null);
   const previewEnabled = Boolean(host.identity && (view === "browser" || host.browserPreview));
+  // A browser task keeps its own pictures; the computer's are kept for the view, where its cards read them.
+  const frameTask = view === "browser" ? task?.id : undefined;
   const [denied, setDenied] = useState(() => viewFramesDenied(glimpseKey(chat, view)));
   const deniedRef = useRef(denied);
-  const [snapshot, setSnapshot] = useState(() => previewEnabled ? lastFrame(glimpseKey(chat, view, task?.id)) : null);
+  const [snapshot, setSnapshot] = useState(() => previewEnabled ? lastFrame(glimpseKey(chat, view, frameTask)) : null);
   // A past task keeps its own final picture even when today's browser is opened from that card.
   const captureKey = useRef(glimpseKey(chat, view));
-  captureKey.current = glimpseKey(chat, view, task?.status === "working" ? task.id : undefined);
+  captureKey.current = glimpseKey(chat, view, task?.status === "working" ? frameTask : undefined);
   const [stream, setStream] = useState<ScreencastViewer | null>(null);
   const identity = host.identity ? `${host.identity.organizationId}:${host.identity.principalId}` : "";
   useLayoutEffect(() => {
-    const key = glimpseKey(chat, view, task?.id);
+    const key = glimpseKey(chat, view, frameTask);
     const read = () => {
       const blocked = viewFramesDenied(key);
       deniedRef.current = blocked; setDenied(blocked);
@@ -107,7 +111,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
     };
     read();
     return subscribeFrame(key, read);
-  }, [identity, chat, view, task?.id, previewEnabled]);
+  }, [identity, chat, view, frameTask, previewEnabled]);
   useEffect(() => { setLivePage(null); }, [chat, view, identity]);
   useEffect(() => { setStopped(false); }, [task?.id, task?.title, task?.status, chat]);
   useEffect(() => {
@@ -131,14 +135,14 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
     const target = screen.current;
     // Nobody watching a hidden tab, so stop streaming until it is shown again.
     if (!target || paused || away) return;
-    setSnapshot(previewEnabled ? lastFrame(glimpseKey(chat, view, task?.id)) : null);
+    setSnapshot(previewEnabled ? lastFrame(glimpseKey(chat, view, frameTask)) : null);
     setError(null); setConnected(false); setReconnecting(false); setUpdating(false); setStarting(false); setStream(null);
     const disconnect = connectDesktopViewer(target, host, { view, control, chat, wake: true }, {
       paused: () => setPaused(true),
       agentPaused: setAgentPaused,
       connected: () => { deniedRef.current = false; setDenied(false); setConnected(true); setReconnecting(false); setUpdating(false); setStarting(false); setError(null); },
       starting: () => setStarting(true),
-      reconnecting: () => { if (previewEnabled && !deniedRef.current) { captureFrame(target, captureKey.current); setSnapshot(lastFrame(glimpseKey(chat, view, task?.id))); } setConnected(false); setReconnecting(true); },
+      reconnecting: () => { if (previewEnabled && !deniedRef.current) { captureFrame(target, captureKey.current); setSnapshot(lastFrame(glimpseKey(chat, view, frameTask))); } setConnected(false); setReconnecting(true); },
       updating: () => { setConnected(false); setUpdating(true); },
       failed: (message, blocked = false) => {
         if (blocked) { deniedRef.current = true; setDenied(true); setSnapshot(null); setLivePage(null); setStream(null); }

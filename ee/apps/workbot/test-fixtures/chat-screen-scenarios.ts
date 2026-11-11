@@ -64,6 +64,21 @@ export const scenarios: Record<string, () => FixtureThread> = {
       ], { modelSteps: 2 })),
     ],
   }),
+  /** Work on the rest of Workbot's computer (not its browser): a finished Computer card, then one still working. */
+  "computer-use": () => ({
+    name: "Workbot", organizationName: "Example Team", status: "busy", hasEarlier: false, filesEnabled: true,
+    turns: [
+      hello(),
+      turn("c1", "Open Blender on the computer for me", ago(600), [
+        said("Sure, opening Blender on the computer now."),
+        { kind: "steps", steps: [{ ...computerStep(["Opening Blender", "Waiting for Blender to finish loading"], false, ago(590)), label: "Using my computer", shown: true }] },
+      ], { modelSteps: 2 }),
+      working(turn("c2", "Draw a lake around the duck, by hand in the menus", ago(40), [
+        said("Got it, no shortcuts this time. I'll do it by hand in Blender's menus so you can watch."),
+        { kind: "steps", steps: [{ ...computerStep(["Adding a cylinder", "Flattening the lake and setting it level"], true, ago(30)), label: "Using my computer", shown: true }] },
+      ], { modelSteps: 2 })),
+    ],
+  }),
   /** Deterministic running task for preview ownership/control proofs; no external identity. */
   "browser-lifecycle": () => ({
     name: "Workbot", organizationName: "Example Team", status: "busy", hasEarlier: false, filesEnabled: true,

@@ -4,6 +4,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import { Check, ChevronRight, CircleSlash, CircleX, Clock3, Globe, Monitor, X } from "lucide-react";
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { useRetainedSurface, workbotHost } from "./host";
+import { useBrowserPreview } from "./browser-preview-context";
 import { useStopWorkbotTask } from "./data";
 import { ConnectorIcon } from "./connector-line";
 import type { ActivityStep, ActivityTask, WorkbotActivity } from "./activity";
@@ -233,10 +234,18 @@ export function ActivityDetails({ name, activity }: { name: string; activity: Wo
   </>;
 }
 
-/** Native-screen watching only. Browser tasks open from their persistent inline Open preview card. */
+/**
+ * Native-screen watching only. Browser tasks open from their persistent inline Open preview card. The screen opens
+ * where the browser's does: beside the chat (a sheet on a phone); without that panel, on its own page.
+ */
 export function WatchButton({ watch, onDone }: { watch: "browser" | "computer"; onDone(): void }) {
+  const preview = useBrowserPreview();
   if (watch === "browser") return null;
-  return <button type="button" onClick={() => { onDone(); window.history.pushState(null, "", `/${watch}${window.location.search}`); window.dispatchEvent(new PopStateEvent("popstate")); }}
+  return <button type="button" onClick={() => {
+    onDone();
+    if (preview) { preview.open({ id: "computer:watch", title: "Workbot's computer", status: "working" }, "computer"); return; }
+    window.history.pushState(null, "", `/${watch}${window.location.search}`); window.dispatchEvent(new PopStateEvent("popstate"));
+  }}
     className="flex h-9 w-full items-center justify-center gap-2 rounded-full bg-[var(--wb-chip)] text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-watch>
     <Monitor size={14} aria-hidden />Watch the screen
   </button>;
