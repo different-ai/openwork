@@ -302,6 +302,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  signInEmailSync: {
+    label: "Sign-in: account email follows Google or SSO",
+    description: "When someone's email changes at Google or at their company's identity provider, their OpenWork account moves to the new email the next time they sign in that way, so signing in with the new email opens the same account instead of creating a second one. Off: the account keeps the email it was created with.",
+    category: "administration",
+    added: "2026-11-10",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/sign-in-email-sync/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   multipleSsoConnections: {
     label: "SSO: several connections per organization",
     description: "An organization can set up more than one SSO connection: several identity providers, and each one covering one or more email domains. Each connection is verified, tested and turned on by itself, and sign-in shows one button per identity provider. Off: the SSO page manages a single connection.",
