@@ -17,18 +17,19 @@ import { requestAdmin, withStoredBearer, type AdminResult } from "./admin-reques
 import { useAdminSessionCookie } from "./admin-shell";
 import { recordAdminOrganizationVisit } from "./admin-recent-organizations";
 import { AdminOrganizationBilling } from "./admin-organization-billing";
+import { AdminDevicesList } from "./devices/admin-devices-page";
 import { formatPlanDate, planName } from "../../app/(den)/_lib/plan-display";
 
 const AdminOrganizationInsights = lazy(() => import("./admin-organization-insights").then((module) => ({ default: module.AdminOrganizationInsights })));
 
-type Section = "members" | "usage" | "insights" | "features" | "billing";
+type Section = "members" | "usage" | "insights" | "features" | "devices" | "billing";
 type DataSection = Extract<Section, "members" | "usage" | "insights">;
 type Organization = AdminOrganizationDetail["organization"];
 type PageData = AdminOrganizationDetail & { usage?: AdminOrganizationUsage["usage"]; insights?: InsightReport["insights"] };
 type Member = AdminOrganizationDetail["members"][number];
 const SECTIONS: { id: Section; label: string }[] = [
   { id: "members", label: "Members" }, { id: "usage", label: "Usage" }, { id: "insights", label: "Insights" },
-  { id: "features", label: "Features" }, { id: "billing", label: "Billing" },
+  { id: "features", label: "Features" }, { id: "devices", label: "Devices" }, { id: "billing", label: "Billing" },
 ];
 const zeroUsage: AdminOrganizationUsageTotals = { requests: 0, tokens: 0, costMicroUsd: 0, unreportedRequests: 0, unpricedRequests: 0 };
 const count = (value: number) => new Intl.NumberFormat().format(value);
@@ -59,7 +60,7 @@ function usersSummary(organization: Organization) {
 }
 
 function sectionPath(organizationId: string, section: Section, search: string, offset: number) {
-  if (section === "features" || section === "billing") return null;
+  if (section === "features" || section === "devices" || section === "billing") return null;
   const listed = section !== "insights";
   const query = new URLSearchParams({ limit: listed ? String(ADMIN_LIST_PAGE_SIZE) : "1", offset: listed ? String(offset) : "0" });
   if (listed && search.trim()) query.set("search", search.trim());
@@ -289,6 +290,7 @@ export function AdminOrganizationPage({ organizationId, section }: { organizatio
   }, [path, section, search, refreshKey, fail]);
 
   if (section === "features") return <OrganizationFeatures organizationId={organizationId} refreshKey={refreshKey} fail={fail} />;
+  if (section === "devices") return <AdminDevicesList key={organizationId} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} />;
   if (section === "billing") return organization ? <AdminOrganizationBilling key={organizationId} organization={organization} onSaved={refresh} onAccessFailure={fail} /> : <SectionSkeleton label="Loading billing" />;
 
   const data = snapshot && (snapshot.trusted || verified) ? snapshot.data : null;
