@@ -218,6 +218,61 @@ from a shell with the variable fixed it (`codex exec` is not affected: it reads
 the shell's environment). The steps now have a restart step. Not checked: Azure OpenAI, Windows, images, and Codex's own OpenAI
 models chosen in `/model` when the member has the same model.
 
+## Codex app (ChatGPT desktop)
+
+Same endpoint and config as the CLI; Den web offers it as **Codex app**
+(`CodexAppSteps`, test ids `gateway-tool-codex-app*`). The steps save the key
+in the macOS Keychain (`security add-generic-password -U -a "$USER" -s
+openwork-ai-gateway -w "<key>"`) and the `auth` block runs `/usr/bin/security
+find-generic-password -s openwork-ai-gateway -w`, then quit the app with ⌘Q.
+Public docs: `packages/docs/ai-gateway/codex-desktop.mdx`.
+
+Checked 2026-11-10 with ChatGPT 26.1027 (bundled `codex-cli 0.166.0-alpha`)
+against a local Den and Gateway with real OpenAI and Anthropic keys, through a
+logging proxy:
+
+- The app runs its own `codex app-server` as a child process (not the CLI's
+  `~/.codex` daemon, so `codex app-server daemon restart` does nothing for the
+  app). ⌘Q ends it; reopening starts a fresh one that reads the config and
+  runs the auth command again. No leftover processes were seen.
+- The app process itself has no shell variables, but it starts its app-server
+  with the login shell's environment: `OPENWORK_API_KEY` from `~/.zshrc` was in
+  the app-server's environment after a Dock launch. So the CLI steps work for
+  the app too; the Keychain is the documented path because it doesn't depend
+  on the shell profile, keeps the key out of dotfiles, and works the same for
+  the app, the CLI and the daemon. `launchctl setenv` (OpenRouter's guide) was
+  not needed.
+- `supports_websockets` defaults to false for custom providers (codex-rs
+  `model-provider-info`), and the app made no WebSocket attempt, so the config
+  doesn't set it.
+- What the app sends that the CLI doesn't: ~58 tools (CLI ~10) in namespaces
+  `mcp__codex_app` (threads, automations, worktrees, artifacts),
+  `mcp__cua_repl`, `mcp__node_repl`, `mcp__artifact_session`, plus goals and
+  `request_user_input`; extra developer messages (client time context); a
+  `client_version` of 0.167.0; and a conversation-title request with a fixed
+  OpenAI model (`gpt-6-luna`, `text.format` JSON schema, `additional_tools`
+  input item), which the Gateway answers `model_not_found` (harmless).
+- The error people hit with Claude, `tools.18.custom.input_schema:
+  input_schema does not support oneOf, allOf, or anyOf at the top level`, was
+  `mcp__codex_app__automation_update`: `{type: object, properties: {}, oneOf:
+  [4 $refs], $defs}`, a discriminated union nesting another union.
+  `mcp__cua_repl__js` also has a root `oneOf`. Fixed in the translators for
+  every client in #7255 (`auto-router/tool-schema.ts`, used by the Anthropic, Bedrock
+  and Gemini translators): the root union becomes one object with every
+  branch's properties, required only when all branches require them, and the
+  argument sets listed in the schema's description; `allOf` merged; root
+  `$ref` inlined; `$defs` kept; draft-04/07 forms Anthropic rejects as invalid
+  2020-12 (tuple `items`, boolean `exclusiveMinimum`, boolean `required`,
+  unknown types) rewritten. Probed against the Messages API: root `type` must
+  be `"object"` (not `["object","null"]`), root combinators are refused,
+  nested ones, `$ref`/`definitions`, root `not`/`if` are accepted.
+- After the fix: Claude Haiku 4.5 (translated) answered, ran parallel
+  `exec_command` calls to write and list a file, and answered a follow-up;
+  switching to GPT-5 mini in the same thread (passed through, `apply_patch`
+  added) appended to the file.
+
+Not checked: Windows, the IDE extension, images, Gemini and Bedrock live.
+
 ## Turning it off
 
 Turning off `gatewayMemberApiKeys` (or the organization setting) stops member

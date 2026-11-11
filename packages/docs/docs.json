@@ -200,6 +200,7 @@
               "ai-gateway/cursor",
               "ai-gateway/claude-code",
               "ai-gateway/codex",
+              "ai-gateway/codex-desktop",
               "ai-gateway/provider-support",
               "ai-gateway/compare-litellm-bifrost",
               "ai-gateway/litellm",
