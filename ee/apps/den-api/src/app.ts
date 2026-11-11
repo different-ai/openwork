@@ -450,6 +450,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },
       { name: "Managed deployments", description: "OpenWork installations in an organization's own cloud account: launch approval, installer milestones and health reports." },
       { name: "Automations", description: "Scheduled Automations, their runs, and desktop runner presence." },
+      { name: "Devices", description: "Personal and shared computers, plus permission-gated team computer inventory for the current organization, including registered OpenWork instances. Inventory grants no control or access to private content." },
       { name: "Documents", description: "Connected Drive documents, inline editing and file-bound temporary Office sessions." },
       { name: "Workbot", description: "The signed-in member's single Workbot conversation." },
       { name: "Workflows", description: "Saved Workflows (Code Mode scripts), their versions, snapshots, and views." },

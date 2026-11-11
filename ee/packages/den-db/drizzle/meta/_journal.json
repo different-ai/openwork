@@ -1338,6 +1338,13 @@
       "when": 1794352331660,
       "tag": "0191_workbot_usage_day",
       "breakpoints": true
+    },
+    {
+      "idx": 192,
+      "version": "5",
+      "when": 1794364751118,
+      "tag": "0192_remote_devices",
+      "breakpoints": true
     }
   ]
 }

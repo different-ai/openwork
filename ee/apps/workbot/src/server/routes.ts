@@ -24,6 +24,7 @@ import { mcpAppIdSchema } from "@openwork/types/mcp-app"
 import type { AppEnv, Member } from "./auth.js"
 import type { Config } from "./config.js"
 import { DenAppError, type Den } from "./den.js"
+import { COMPUTER_ACTION_EVENTS, createComputerReporter } from "./device-reports.js"
 import { observedRunnerFetch, reportError } from "./error-reporting.js"
 
 /**
@@ -312,6 +313,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       remoteTasks: who.enabled && who.remoteTasks,
       profileNav: who.enabled && who.profileSheet && who.profileNav,
       quietCalendar: who.enabled && who.calendar === true && who.quietCalendar,
+      devices: who.enabled && who.devices,
       commandPalette: true,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })
@@ -348,11 +350,22 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     // Each view is its own rollout: the browser (browserUse) and the native desktop apps (computerUse).
     const requestedView = viewer.success ? viewer.data.view : null
     const client = runnerClientFor(member)
+    // Den's devices registry hears what happens to this chat's computer (`remoteDevices`), going by Den's latest
+    // answer for this person. Never awaited: a report that fails or is slow changes nothing here.
+    let devices = member.den.devices
+    const report = createComputerReporter({ enabled: () => devices, send: body => den.reportComputer(member.accessToken, body) })
+    /** The chat's computer, once this request knows which runner session it is. */
+    let computer: { sessionId: string; chat: WorkbotChat } | null = null
+    const failed = (code: string, rebuilt = false) => {
+      if (computer) report(computer, { event: "failed", code })
+      return desktopFailure(c, operation, code, rebuilt)
+    }
     /** The views Den allows right now, or null when this request isn't allowed. The runner is told only these. */
     const allowedViews = async () => {
       const fresh = await den.session(member.accessToken)
       const views = desktopViewsOf(fresh)
       const allowed = fresh.enabled && (requestedView ? views.includes(requestedView) : views.length > 0) && fresh.organization.id === member.den.organization.id && fresh.memberId === member.den.memberId
+      devices = allowed && fresh.devices
       return allowed ? views : null
     }
     try {
@@ -360,13 +373,17 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       if (!views) return c.json({ error: "feature_disabled" }, 403)
       const workbot = workbotFor(member, views)
       let sessionId = await workbot.sessionIdOf(actorOf(member), scope.chat)
+      computer = { sessionId, chat: scope.chat }
       const existing = await client.readSession(sessionId, { turns: 1, limit: 1, outputs: "none" })
-      if (!existing.ok && existing.status === 404) sessionId = await workbot.ensureComputer(actorOf(member), scope.chat)
-      else {
-        if (!existing.ok) return desktopFailure(c, operation, existing.error)
+      if (!existing.ok && existing.status === 404) {
+        sessionId = await workbot.ensureComputer(actorOf(member), scope.chat)
+        computer = { sessionId, chat: scope.chat }
+      } else {
+        if (!existing.ok) return failed(existing.error)
         const updated = await workbot.allowDesktopViews(sessionId, views)
-        if (!updated.ok) return desktopFailure(c, operation, updated.error)
+        if (!updated.ok) return failed(updated.error)
       }
+      const target = computer
       // An outdated computer never connects or resumes and rebuilding is the only fix, so do it instead of asking. Not
       // under a running turn, though: rebuilding stops it, so that stays the person's Rebuild.
       const canRebuild = !existing.ok || existing.value.status !== "busy"
@@ -376,6 +393,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
           console.error("[workbot] rebuilding an outdated computer", { operation })
           rebuilding = client.desktopAction(sessionId, "rebuild").finally(() => autoRebuilds.delete(sessionId))
           autoRebuilds.set(sessionId, rebuilding)
+          // Reported by the request that started it, once: others waiting on the same rebuild say nothing.
+          rebuilding.then(result => { if (result.ok) report(target, { event: "rebuilt" }) }, () => undefined)
         }
         return rebuilding
       }
@@ -395,19 +414,21 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         // asking the person to press Resume only adds a round trip. The chat's live glimpse never wakes it.
         if (wake && result.ok && result.value.state === "paused") {
           let resumed = await client.desktopAction(sessionId, "resume")
-          if (!resumed.ok && resumed.error === "desktop_outdated" && canRebuild) resumed = await rebuildOutdated()
-          if (!resumed.ok) return desktopFailure(c, operation, resumed.error)
+          if (resumed.ok) report(target, { event: "resumed" })
+          else if (resumed.error === "desktop_outdated" && canRebuild) resumed = await rebuildOutdated()
+          if (!resumed.ok) return failed(resumed.error)
           result = await open()
         }
         if (!result.ok && result.error === "desktop_outdated" && canRebuild) {
           const rebuilt = await rebuildOutdated()
-          if (!rebuilt.ok) return desktopFailure(c, operation, rebuilt.error, true)
+          if (!rebuilt.ok) return failed(rebuilt.error, true)
           result = await open()
-          if (!result.ok) return desktopFailure(c, operation, result.error, true)
+          if (!result.ok) return failed(result.error, true)
         }
-        if (!result.ok) return desktopFailure(c, operation, result.error)
+        if (!result.ok) return failed(result.error)
         // A cold VM may take longer than the membership cache: verify again before sharing its stream.
         if (!await allowedViews()) return c.json({ error: "feature_disabled" }, 403)
+        report(target, result.value.state === "connected" ? { event: "viewer_opened", view: view.view, control: view.control } : { event: "paused" })
         return c.json(result.value)
       }
       const body = action
@@ -421,10 +442,13 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         result = await rebuildOutdated()
         rebuilt = true
       }
-      return result.ok ? c.json({ ok: true }) : desktopFailure(c, operation, result.error, rebuilt)
+      if (!result.ok) return failed(result.error, rebuilt)
+      // A resume that had to rebuild instead is reported as the rebuild it was, by the request that started it.
+      if (body.data.action === "rebuild" || !rebuilt) report(target, { event: COMPUTER_ACTION_EVENTS[body.data.action] })
+      return c.json({ ok: true })
     } catch (error) {
       console.error("[workbot] desktop request failed", { operation, error: error instanceof Error ? error.message : "unknown" })
-      return desktopFailure(c, operation, "desktop_unavailable")
+      return failed("desktop_unavailable")
     }
   })
 
@@ -440,6 +464,14 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     const member = c.get("member")
     if (!member.den.enabled) return c.json({ error: "feature_disabled" }, 404)
     const result = await den.activation(member.accessToken)
+    return new Response(JSON.stringify(result.payload), { status: result.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } })
+  })
+  /** The Devices page: the computers the person can reach, as Den lists them (Den enforces the feature too). */
+  app.get("/v1/workbot/devices", async (c) => {
+    c.header("Cache-Control", "no-store")
+    const member = c.get("member")
+    if (!member.den.enabled || !member.den.devices) return c.json({ error: "feature_disabled" }, 403)
+    const result = await den.devices(member.accessToken)
     return new Response(JSON.stringify(result.payload), { status: result.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } })
   })
   /** Only the events Workbot itself observes (its first answer) and hiding the checklist; Den validates the body. */
@@ -517,8 +549,14 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     const member = c.get("member")
     if (!member.den.sideChats) return c.json({ error: "feature_disabled" }, 404)
     try {
-      const result = await workbotFor(member).removeChat(actorOf(member), c.req.param("chatId"))
+      const chatId = c.req.param("chatId")
+      const workbot = workbotFor(member)
+      // Where Devices is on, the chat's computer leaves Den's registry with it. Its runner session is looked up before
+      // the chat goes (the same lookup removing it makes, remembered), and a lookup that fails only skips the report.
+      const sessionId = member.den.devices && WORKBOT_CHAT_ID.test(chatId) ? await workbot.sessionIdOf(actorOf(member), chatId).catch(() => null) : null
+      const result = await workbot.removeChat(actorOf(member), chatId)
       if (!result.ok) return c.json({ error: result.code }, result.code === "busy" ? 409 : 404)
+      if (sessionId) createComputerReporter({ enabled: () => true, send: body => den.reportComputer(member.accessToken, body) })({ sessionId, chat: chatId }, { event: "removed" })
       return c.json({ ok: true as const })
     } catch (error) {
       if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)

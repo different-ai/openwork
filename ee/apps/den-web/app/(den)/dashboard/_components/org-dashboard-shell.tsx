@@ -28,6 +28,8 @@ import {
   getBrandAppearanceRoute,
   getBillingRoute,
   getConfigRoute,
+  getComputersRoute,
+  getMyComputersRoute,
   getCustomLlmProvidersRoute,
   getDiagnosticsRoute,
   getDeploymentsRoute,
@@ -281,6 +283,12 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getAiGatewayRoute(orgSlug))) {
     return "AI Gateway";
   }
+  if (pathname.startsWith(getMyComputersRoute(orgSlug))) {
+    return "My Computers";
+  }
+  if (pathname.startsWith(getComputersRoute(orgSlug))) {
+    return "Computers";
+  }
   if (pathname.startsWith(getDesktopPoliciesRoute(orgSlug))) {
     return "Desktop policies";
   }
@@ -481,6 +489,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     orgMode: runtimeConfig.orgMode,
     runtimeConfigLoaded,
 
+    remoteDevices: orgFeatureEnabled(orgContext, "remoteDevices"),
     managedDeployments: orgFeatureEnabled(orgContext, "managedDeployments"),
     authSecuritySettings: orgFeatureEnabled(orgContext, "authSecuritySettings"),
     configBlobs: orgFeatureEnabled(orgContext, "configBlobs"),

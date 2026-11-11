@@ -204,6 +204,7 @@ export const SETTINGS_TAB_VALUES = [
   "appearance",
   "shortcuts",
   "computer",
+  "devices",
   "updates",
   "recovery",
   "debug",

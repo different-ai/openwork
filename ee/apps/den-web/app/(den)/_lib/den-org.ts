@@ -171,6 +171,8 @@ export type DenOrgAccessFlags = {
   canViewWebOrigins: boolean;
   /** `web_origins.manage` */
   canManageWebOrigins: boolean;
+  /** `computers.view`: inspect every member's registered computers. */
+  canViewComputers: boolean;
   /** `desktop_policies.view` */
   canViewDesktopPolicies: boolean;
   /** `desktop_policies.manage` */
@@ -736,6 +738,7 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
     canManageBranding: can("branding.update"),
     canViewWebOrigins: can("web_origins.view"),
     canManageWebOrigins: can("web_origins.manage"),
+    canViewComputers: can("computers.view"),
     canViewDesktopPolicies: can("desktop_policies.view"),
     canManageDesktopPolicies: can("desktop_policies.manage"),
     canViewDeployments: can("deployments.view"),
@@ -891,6 +894,15 @@ export function getLibraryLlmProviderRoute(orgSlug: string | null | undefined, p
 
 export function getLlmProvidersRoute(orgSlug?: string | null): string {
   return getCustomLlmProvidersRoute(orgSlug);
+}
+
+export function getComputersRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/computers`;
+}
+
+/** Every member's own and shared computers; the team-wide list is `getComputersRoute`. */
+export function getMyComputersRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/my-computers`;
 }
 
 export function getDesktopPoliciesRoute(orgSlug?: string | null): string {

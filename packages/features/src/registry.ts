@@ -831,6 +831,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  remoteDevices: {
+    label: "Computers",
+    description: "Computers in Den lets organization owners and admins view their team's reported desktops, cloud computers, registered virtual computers and OpenWork instances, with owners, status, last contact, versions and supported inventory. My Computers in Den, Desktop Settings > Devices and Workbot's Devices page show each member their own and shared computers. Registration does not provision a computer or grant provider access. Off, these views are hidden and desktop reports stop; existing computer use and remote tasks are unchanged.",
+    category: "computerUse",
+    added: "2026-11-10",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/remote-devices/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   remoteSessionPush: {
     label: "Desktop: start tasks from other computers right away",
     description: "A task sent to this person's desktop from another computer, Workbot or an agent starts within a second or two instead of up to a minute later. Den tells the desktop the moment the task is queued over the runner's event stream; the desktop still checks every minute as a fallback.",

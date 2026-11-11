@@ -221,7 +221,20 @@ function deadline(ms) {
  *   setup?: (permission: "accessibility" | "screenRecording") => Promise<{ setupId: string }>,
  *   dismissSetup?: (setupId?: string) => Promise<void>,
  *   connect: (options: { signal: AbortSignal, presence: { name: string, color: string } | null, background?: boolean, onUi: (value: unknown) => void, onClose: () => void }) => Promise<ComputerTransport>,
+ *   device?: { provider: "freestyle" | "daytona", externalId: string },
  * }} ComputerAdapter
+ * @typedef {{
+ *   enabled: boolean,
+ *   remoteEnabled: boolean,
+ *   selectedId: string | null,
+ *   permissions: { accessibility: boolean, screenRecording: boolean } | null,
+ *   computers: Array<{
+ *     id: string, label: string, placement: "local" | "remote",
+ *     readiness: "ready" | "setup-required" | "unsupported" | "unavailable" | null,
+ *     detail: string | null,
+ *     provider: "freestyle" | "daytona" | null, externalId: string | null,
+ *   }>,
+ * }} ComputerDevices
  */
 
 
@@ -250,6 +263,8 @@ const STAGE_LIMIT = 6;
  * locks each window and keeps input apart, so each chat gets its own session
  * there and control calls take turns at the keyboard and pointer, one call at
  * a time, never through the model's thinking. Other computers serve one chat.
+ * A remote VM's adapter may name its `device`: who runs the VM and the
+ * provider's id for it, which is all the organization's devices list is told.
  * @param {{
  *   adapters: ComputerAdapter[],
  *   runProgram?: (request: import("@openwork/computer-use/runtime").ProgramRequest, host: import("@openwork/computer-use/runtime").ProgramHost, signal: AbortSignal, options: import("@openwork/computer-use/runtime").ProgramOptions) => Promise<import("@openwork/computer-use/runtime").ProgramResult>,
@@ -278,7 +293,11 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       || candidate.protocol !== COMPUTER_PROTOCOL || ["readiness", "connect"].some((name) => typeof candidate[name] !== "function")) {
       throw new Error("Computer adapters need a unique id, a label, a placement, the supported protocol, readiness and connect.");
     }
-    targets.set(candidate.id, Object.freeze({ ...candidate }));
+    const device = candidate.device;
+    if (device !== undefined && (!device || typeof device !== "object" || [device.provider, device.externalId].some((value) => typeof value !== "string" || !value.trim()))) {
+      throw new Error("A computer adapter's device needs a provider and the provider's id for the computer.");
+    }
+    targets.set(candidate.id, Object.freeze({ ...candidate, ...(device ? { device: Object.freeze({ provider: device.provider.trim(), externalId: device.externalId.trim() }) } : {}) }));
   }
   if (!targets.size) throw new Error("At least one trusted computer adapter is required.");
   const defaultTarget = [...targets.values()].find((target) => target.placement === "local") ?? [...targets.values()][0];
@@ -964,12 +983,16 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     const frame = current.presentation?.id === id ? current.presentation.frame : null;
     return frame ? { mimeType: frame.mimeType, data: frame.data, width: frame.width, height: frame.height } : null;
   }
+  /** The computer chosen in Settings, or this computer while remote computers are off. */
+  async function settingsTarget() {
+    const state = await choices();
+    const chosen = targets.get(state.computer ?? "") ?? firstTarget;
+    return chosen.placement === "remote" && !remoteEnabled ? defaultTarget : chosen;
+  }
   /** The computer every chat uses and whether it is set up, with no chat involved. */
   async function computerStatus() {
     if (closed || resetting) throw new Error("Computer use is stopping.");
-    const state = await choices();
-    const chosen = targets.get(state.computer ?? "") ?? firstTarget;
-    const target = chosen.placement === "remote" && !remoteEnabled ? defaultTarget : chosen;
+    const target = await settingsTarget();
     const status = await readiness(target);
     return {
       enabled: featureEnabled,
@@ -979,6 +1002,40 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       placement: target.placement,
       readiness: status.readiness, ...(status.permissions ? { permissions: status.permissions } : {}),
       detail: status.detail,
+    };
+  }
+  /**
+   * The computers this desktop offers, for the organization's devices list. Only reads:
+   * this computer and the one chats use are probed, through the same cached readiness
+   * as Settings. Another VM is listed unprobed, because a probe runs a command on it,
+   * and nothing is probed while computer use is off.
+   * @returns {Promise<ComputerDevices>}
+   */
+  async function computerDevices() {
+    if (closed || resetting) throw new Error("Computer use is stopping.");
+    const selected = await settingsTarget();
+    const listed = offered();
+    const probed = new Map(!featureEnabled ? [] : await Promise.all(listed
+      .filter((target) => target === selected || target.placement === "local")
+      .map(async (target) => /** @type {const} */ ([target.id, await readiness(target)]))));
+    const local = listed.find((target) => target.placement === "local");
+    const permissions = local ? probed.get(local.id)?.permissions : undefined;
+    return {
+      enabled: featureEnabled,
+      remoteEnabled,
+      selectedId: listed.includes(selected) ? selected.id : null,
+      permissions: permissions ? { accessibility: permissions.accessibility, screenRecording: permissions.screenRecording } : null,
+      computers: listed.map((target) => {
+        const status = probed.get(target.id);
+        const detail = status && status.readiness !== "ready" ? status.detail.trim().slice(0, 300).trim() : "";
+        return {
+          id: target.id, label: target.label, placement: target.placement,
+          readiness: status?.readiness ?? null,
+          detail: detail || null,
+          provider: target.device?.provider ?? null,
+          externalId: target.device?.externalId ?? null,
+        };
+      }),
     };
   }
   async function run(call, signal, limit) {
@@ -1513,6 +1570,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     },
     /** Settings: the computer chats use and its setup, without a chat. */
     async status() { return computerStatus(); },
+    /** The computers this desktop offers and how they are doing, for the organization's devices list. */
+    async devices() { return computerDevices(); },
     /** Whether the renderer reported the `computerUse` feature on. */
     featureEnabled() { return featureEnabled && !closed; },
     /**

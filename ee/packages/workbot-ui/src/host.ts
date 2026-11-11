@@ -90,6 +90,11 @@ export type WorkbotHost = {
    * Workbot panel opens on demand. Narrow widths get an agenda list (`workbotQuietCalendar`). Off when unset.
    */
   quietCalendar?: boolean
+  /**
+   * The Devices page: the computers the person can reach through OpenWork (their own desktops, Workbot's cloud
+   * computers, registered virtual computers), read-only (`remoteDevices`). Off when unset.
+   */
+  devices?: boolean
   /** The person can start side chats next to their main chat (on while Workbot is on). Off when unset. */
   sideChats?: boolean
   /**

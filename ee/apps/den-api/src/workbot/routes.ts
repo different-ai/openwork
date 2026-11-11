@@ -42,6 +42,9 @@ import { getNativeOAuthProvider } from "../capability-sources/provider-registry.
 import { activationEventRequestSchema } from "@openwork/types/den/activation"
 import { activationResponseSchema } from "../routes/me/activation.js"
 import { readActivationState, recordActivationEvent } from "../activation.js"
+import { remoteDeviceListResponseSchema, remoteDeviceWorkbotReportSchema } from "@openwork/types/den/remote-devices"
+import { markFeaturesUsed } from "../feature-usage.js"
+import { listMemberRemoteDevices, reportWorkbotComputer } from "../remote-devices.js"
 
 /**
  * What Den tells the Workbot app (ee/apps/workbot) about a signed-in person. Workbot calls these server-to-server
@@ -113,6 +116,8 @@ const sessionSchema = z.object({
   openworkApps: z.boolean().optional(),
   /** Meetings own the calendar grid, runs are quiet dots (`workbotQuietCalendar`); older Dens omit it: off. */
   quietCalendar: z.boolean().optional(),
+  /** The Devices page and reports about Workbot's computers (`remoteDevices`); older Dens omit it: off. */
+  devices: z.boolean().optional(),
   /** Always true for older Workbot clients; the command palette is available by default. */
   commandPalette: z.boolean().optional(),
   /**
@@ -510,6 +515,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         profileNav: features.workbotProfileNav && features.workbotProfileSheet && features.workbotWorkingStatus,
         openworkApps: features.workbotApps,
         quietCalendar: features.workbotQuietCalendar,
+        devices: on && features.remoteDevices,
         commandPalette: true,
         model,
         gatewayModels: true,
@@ -567,6 +573,58 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       if (context instanceof Response) return context
       await recordActivationEvent({ organizationId: context.resolved.organization.id, memberId: context.resolved.memberId }, c.req.valid("json"), "workbot")
       return c.json(await readActivationState(context))
+    },
+  )
+
+  /** The member behind a Workbot token with Devices on for them; `feature_disabled` otherwise, as on the member routes. */
+  const devicesFor = async (c: Context, write: boolean) => {
+    c.header("Cache-Control", "no-store")
+    const resolved = await resolveMember(c)
+    if (resolved instanceof Response) return resolved
+    const auditBlocked = await attributeWorkbot(c, resolved)
+    if (auditBlocked) return auditBlocked
+    if (!resolved.scopes.has(DEN_MCP_READ_SCOPE) || (write && !resolved.scopes.has(DEN_MCP_WRITE_SCOPE))) return c.json({ error: "insufficient_scope" }, 403)
+    if (!resolved.features.remoteDevices) return c.json({ error: "feature_disabled", feature: "remoteDevices" }, 404)
+    const actor = { organizationId: resolved.organization.id, memberId: normalizeDenTypeId("member", resolved.memberId) }
+    markFeaturesUsed({ organizationId: actor.organizationId, memberId: actor.memberId, keys: ["remoteDevices"] })
+    return actor
+  }
+  const deviceResponses = {
+    401: jsonResponse("The token or membership is invalid.", unauthorizedSchema),
+    403: jsonResponse("The sign-in grant does not allow this, or Workbot is off for the member.", z.union([insufficientScopeSchema, workbotOffSchema])),
+    404: jsonResponse("Devices is off for the member.", signedOutSchema),
+  }
+  app.get(
+    "/v1/workbot/devices",
+    describeWorkbotRoute({
+      tags: ["Workbot"], operationId: "listWorkbotDevices", "x-mcp": false,
+      summary: "The computers the person can reach, for Workbot",
+      description: "For the Workbot app only. With a live Workbot member token (read scope), returns the same list as GET /v1/remote-devices for the token's organization and member: their desktops, Workbot's cloud computers and registered virtual computers, with whether each is online. Workbot shows the list; renaming and removing happen in OpenWork Desktop.",
+      responses: { 200: jsonResponse("The computers.", remoteDeviceListResponseSchema), ...deviceResponses },
+    }),
+    tokenRoute,
+    async (c) => {
+      const actor = await devicesFor(c, false)
+      if (actor instanceof Response) return actor
+      return c.json({ devices: await listMemberRemoteDevices(actor, { canManageShared: false }) })
+    },
+  )
+  app.post(
+    "/v1/workbot/devices/computer",
+    describeWorkbotRoute({
+      tags: ["Workbot"], operationId: "reportWorkbotComputer", "x-mcp": false,
+      summary: "Report what happened to a chat's cloud computer",
+      description: "For the Workbot app only. With a live Workbot member token (read and write scopes), records that a view of the chat's cloud computer was opened, that it was paused, resumed, rebuilt or handed back to Workbot, that it could not connect (a fixed code, never error text), or that it was removed with its chat. The computer is listed for the member from its first report. Repeated viewer renewals are recorded once per sitting.",
+      responses: { 204: { description: "Recorded." }, 400: jsonResponse("The report was invalid.", signedOutSchema), ...deviceResponses },
+    }),
+    tokenRoute,
+    bodyLimit({ maxSize: 1024 }),
+    jsonValidator(remoteDeviceWorkbotReportSchema),
+    async (c) => {
+      const actor = await devicesFor(c, true)
+      if (actor instanceof Response) return actor
+      if (!await reportWorkbotComputer(actor, c.req.valid("json"))) return c.json({ error: "remote_device_forbidden" }, 403)
+      return c.body(null, 204)
     },
   )
 

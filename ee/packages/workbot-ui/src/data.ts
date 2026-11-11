@@ -7,6 +7,7 @@ import { workbotDocumentNavigationSchema, workbotViewContextSchema, WORKBOT_MAX_
 import { errorMessage as getErrorMessage, hostFetch, workbotHost } from "./host";
 import { liveRetryDelay, liveStreamOff, retryAfterMs } from "./live-retry";
 import { workbotAccessFailureSchema, type WorkbotAccessReason } from "@openwork/types/den/workbot-settings";
+import { remoteDeviceListResponseSchema } from "@openwork/types/den/remote-devices";
 import { loadThreadSnapshot, saveThreadSnapshot } from "./thread-cache";
 import { workbotLiveReadiness } from "./live-readiness";
 import { nextWorking } from "./computer-work";
@@ -619,6 +620,27 @@ export function useWorkbotMemory(enabled: boolean) {
       return memorySchema.parse(payload).files;
     },
     staleTime: 0,
+    retry: 1,
+  });
+}
+
+/**
+ * The computers the person can reach through OpenWork, for the Devices page (`remoteDevices`). Mounted only by that
+ * page, so the list is re-read every minute, and when the window is looked at again, only while it is on screen.
+ */
+export function useWorkbotDevices() {
+  const host = workbotHost();
+  return useQuery({
+    queryKey: ["workbot", "devices", host.identity?.organizationId, host.identity?.principalId],
+    enabled: host.devices === true,
+    queryFn: async () => {
+      const { response, payload } = await requestJson("/v1/workbot/devices", { method: "GET" }, 15_000);
+      if (!response.ok) throw new Error("Couldn't load your computers.");
+      return remoteDeviceListResponseSchema.parse(payload).devices;
+    },
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 }

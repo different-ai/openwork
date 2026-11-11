@@ -51,7 +51,7 @@ export function desktopRestrictionNotice(restriction: DesktopAppRestrictionKey) 
  * Cloud features that are not desktop settings; every other tab is hidden and
  * redirected.
  */
-const SETTINGS_TABS_WITHOUT_CONTROL = new Set<SettingsTab>(["cloud-account", "usage"]);
+const SETTINGS_TABS_WITHOUT_CONTROL = new Set<SettingsTab>(["cloud-account", "usage", "devices"]);
 
 export const SETTINGS_TAB_WITHOUT_CONTROL: SettingsTab = "cloud-account";
 

@@ -18,6 +18,7 @@ import {
   MessageCircle,
   MessagesSquare,
   Monitor,
+  MonitorSmartphone,
   Paperclip,
   PenLine,
   Plug,
@@ -47,7 +48,7 @@ import { useRetainedSurface } from "./host";
  * Base UI's Dialog and Autocomplete own focus, the combobox/listbox roles and arrow-key navigation (DESIGN P5).
  */
 
-export type WorkbotPaletteTab = "home" | "calendar" | "documents" | "computer";
+export type WorkbotPaletteTab = "home" | "calendar" | "documents" | "computer" | "devices";
 type Page = "root" | "chats" | "tasks";
 
 type Entry = Rankable & {
@@ -97,18 +98,20 @@ export type WorkbotCommandPaletteProps = {
   connectionsHref: string | null;
 };
 
-const TAB_LABEL: Record<WorkbotPaletteTab, string> = { home: "Home", calendar: "Calendar", documents: "Documents", computer: "Computer" };
+const TAB_LABEL: Record<WorkbotPaletteTab, string> = { home: "Home", calendar: "Calendar", documents: "Documents", computer: "Computer", devices: "Devices" };
 const TAB_ICON: Record<WorkbotPaletteTab, ReactNode> = {
   home: <House size={16} strokeWidth={1.5} aria-hidden />,
   calendar: <CalendarDays size={16} strokeWidth={1.5} aria-hidden />,
   documents: <FileText size={16} strokeWidth={1.5} aria-hidden />,
   computer: <Monitor size={16} strokeWidth={1.5} aria-hidden />,
+  devices: <MonitorSmartphone size={16} strokeWidth={1.5} aria-hidden />,
 };
 const TAB_KEYWORDS: Record<WorkbotPaletteTab, string> = {
   home: "chat conversation main start",
   calendar: "week meetings schedule automations",
   documents: "drive files docs sheets",
   computer: "browser desktop screen web page",
+  devices: "computers laptop mac pc virtual machine sandbox online",
 };
 /** The computer page's icon where it goes by "Browser" (the browser is its only view); "computer" stays a keyword. */
 const BROWSER_ICON = <Globe size={16} strokeWidth={1.5} aria-hidden />;

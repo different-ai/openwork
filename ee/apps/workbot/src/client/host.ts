@@ -49,6 +49,8 @@ export const meSchema = z.object({
   profileNav: z.boolean().default(false),
   /** Quiet calendar (`workbotQuietCalendar`); absent means off. */
   quietCalendar: z.boolean().default(false),
+  /** The Devices page (`remoteDevices`, while Workbot is on); absent means off. */
+  devices: z.boolean().default(false),
   denUrl: z.string().nullable(),
 })
 export type Me = z.infer<typeof meSchema>
@@ -185,6 +187,7 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     remoteTasks: me.remoteTasks,
     profileNav: me.profileNav,
     quietCalendar: me.quietCalendar,
+    devices: me.devices,
     account: me.accountMenu ? { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace } : undefined,
     identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
   }
