@@ -33,6 +33,8 @@ import type {
   AutomationRun,
   AutomationRunReceipt,
   AutomationRunnerTokenResponse,
+  AutomationShareAccess,
+  AutomationSharing,
   CreateAutomation,
   CreateCloudAutomation,
   RunAutomationNow,
@@ -3504,6 +3506,51 @@ export function createDenClient(options: {
         organizationId: orgId,
         automationModelAttentionCapable: true,
       });
+    },
+
+    /** Automations other members shared with a team this member is on (`automationTeamSharing`). */
+    async listSharedAutomations(orgId: string, options: { limit?: number } = {}): Promise<AutomationList> {
+      const query = options.limit ? `?limit=${options.limit}` : "";
+      return requestJson<AutomationList>(baseUrls, `/v1/shared-automations${query}`, {
+        method: "GET",
+        token,
+        organizationId: orgId,
+        automationModelAttentionCapable: true,
+      });
+    },
+
+    /** The teams the owner's Automation is shared with, and the teams they can share it with. */
+    async getAutomationSharing(orgId: string, automationId: string): Promise<AutomationSharing> {
+      return requestJson<AutomationSharing>(
+        baseUrls,
+        `/v1/automations/${encodeURIComponent(automationId)}/sharing`,
+        { method: "GET", token, organizationId: orgId },
+      );
+    },
+
+    async shareAutomationWithTeam(orgId: string, automationId: string, teamId: string, access: AutomationShareAccess): Promise<AutomationSharing> {
+      return requestJson<AutomationSharing>(
+        baseUrls,
+        `/v1/automations/${encodeURIComponent(automationId)}/sharing/teams/${encodeURIComponent(teamId)}`,
+        { method: "PUT", token, organizationId: orgId, body: { access } },
+      );
+    },
+
+    async stopSharingAutomationWithTeam(orgId: string, automationId: string, teamId: string): Promise<AutomationSharing> {
+      return requestJson<AutomationSharing>(
+        baseUrls,
+        `/v1/automations/${encodeURIComponent(automationId)}/sharing/teams/${encodeURIComponent(teamId)}`,
+        { method: "DELETE", token, organizationId: orgId },
+      );
+    },
+
+    /** The caller becomes the owner of an Automation their team manages; it comes back paused. */
+    async takeOverAutomation(orgId: string, automationId: string): Promise<AutomationDetail> {
+      return requestJson<AutomationDetail>(
+        baseUrls,
+        `/v1/automations/${encodeURIComponent(automationId)}/take-over`,
+        { method: "POST", token, organizationId: orgId, body: {}, automationModelAttentionCapable: true },
+      );
     },
 
     /**

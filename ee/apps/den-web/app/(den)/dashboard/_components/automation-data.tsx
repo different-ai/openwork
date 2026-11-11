@@ -26,6 +26,15 @@ export function useAutomations({ enabled = true }: { enabled?: boolean } = {}) {
   });
 }
 
+/** Automations teammates shared with a team the member is on (`automationTeamSharing`). */
+export function useSharedAutomations({ enabled }: { enabled: boolean }) {
+  return useQuery({
+    enabled,
+    queryKey: ["automations", "shared"],
+    queryFn: async () => automationListSchema.parse(await payload("/v1/shared-automations?limit=100")),
+  });
+}
+
 export function useAutomation(automationId: string | null) {
   return useQuery({
     queryKey: ["automations", "detail", automationId],

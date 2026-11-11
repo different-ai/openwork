@@ -1,11 +1,13 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, CalendarClock, Cloud, ExternalLink, Monitor, Square } from "lucide-react";
+import { ArrowLeft, CalendarClock, Cloud, ExternalLink, Monitor, Square, Users } from "lucide-react";
 import { formatAutomationSchedule } from "@openwork/types/automation-schedule";
-import type { AutomationList } from "@openwork/types/automations";
+import { automationRoleAllows, type AutomationAccess, type AutomationList } from "@openwork/types/automations";
 import { DenButton } from "../../_components/ui/button";
+import { orgFeatureEnabled } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FeatureIntroGate } from "../_features/feature-intros";
 import { WorkflowArtifactResult } from "./workflow-artifact-result";
 import {
@@ -15,6 +17,7 @@ import {
   useAutomationRuns,
   useAutomations,
   useCancelAutomationRun,
+  useSharedAutomations,
 } from "./automation-data";
 
 type AutomationListItem = AutomationList["items"][number];
@@ -42,6 +45,37 @@ function ManageLink({ item, openworkWebUrl }: { item: { automation: { id: string
   return <span className="inline-flex items-center gap-1.5 text-[12px] text-gray-400"><Monitor className="h-3.5 w-3.5" />Manage in OpenWork Desktop</span>;
 }
 
+/** Whose a shared Automation is and which of the member's teams has it, e.g. "Olive Owner · Sales". */
+function sharedByLabel(access: AutomationAccess) {
+  const teams = access.teams.map((team) => team.teamName);
+  return `${access.owner.name?.trim() || "A teammate"} · ${teams.length > 2 ? `${teams.length} teams` : teams.join(" and ")}`;
+}
+
+function AutomationCard({ item, shared, onOpen }: { item: AutomationListItem; shared?: boolean; onOpen: () => void }) {
+  const sharedWith = !shared && item.access?.teams.length ? item.access.teams.map((team) => team.teamName) : null;
+  return (
+    <button type="button" onClick={onOpen} data-automation-shared={shared ? item.access?.role : undefined} className="rounded-2xl border border-gray-100 bg-white p-4 text-left transition hover:border-gray-200 hover:bg-gray-50">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-[14px] font-semibold text-gray-900">{item.automation.name}</h3>
+          <p className="mt-1 line-clamp-2 text-[12px] text-gray-400">{item.revision.action?.kind === "saved_script" ? `Exact Workflow version ${item.revision.action.script.configObjectVersionId.slice(0, 8)}` : item.revision.instructions}</p>
+        </div>
+        <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone(item.automation.state)}`}>{item.automation.state.replace("_", " ")}</span>
+      </div>
+      <p className="mt-3 text-[11px] text-gray-400">{formatAutomationSchedule(item.revision.schedule)}</p>
+      {shared && item.access ? (
+        <p className="mt-2 flex items-center gap-1 text-[11px] text-gray-500"><Users className="h-3 w-3" />{sharedByLabel(item.access)}</p>
+      ) : sharedWith ? (
+        <p className="mt-2 flex items-center gap-1 text-[11px] text-gray-500"><Users className="h-3 w-3" />Shared with {sharedWith.length > 2 ? `${sharedWith.length} teams` : sharedWith.join(" and ")}</p>
+      ) : null}
+      <div className="mt-2 flex items-center justify-between text-[11px] text-gray-400">
+        <span>{item.latestRun ? `Last run ${item.latestRun.status}` : item.automation.nextDueAt ? `Next ${new Date(item.automation.nextDueAt).toLocaleString()}` : "Not run yet"}</span>
+        <span className="flex items-center gap-1"><PlacementIcon executionTarget={item.revision.executionTarget} />{placementLabel(item.revision.executionTarget)}</span>
+      </div>
+    </button>
+  );
+}
+
 /** Groups the monitor list by what needs eyes first: running, needs attention, scheduled, paused. */
 function groupItems(items: AutomationListItem[]) {
   const running: AutomationListItem[] = [];
@@ -66,9 +100,13 @@ export function AutomationsScreen() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { runtimeConfig } = useDenFlow();
+  const { orgContext } = useOrgDashboard();
+  // Off: everything listed is the member's own, as before.
+  const sharingEnabled = orgFeatureEnabled(orgContext, "automationTeamSharing");
   const automationId = searchParams.get("automation")?.trim() || null;
   const runId = searchParams.get("run")?.trim() || null;
   const listQuery = useAutomations();
+  const sharedQuery = useSharedAutomations({ enabled: sharingEnabled });
   const detailQuery = useAutomation(automationId);
   const runsQuery = useAutomationRuns(automationId);
   const runQuery = useAutomationRun(runId);
@@ -92,10 +130,11 @@ export function AutomationsScreen() {
   if (!automationId) {
     const items = listQuery.data?.items.filter((item) => item.automation.state !== "archived") ?? [];
     const groups = groupItems(items);
+    const shared = sharingEnabled ? sharedQuery.data?.items ?? [] : [];
     // With feature intros on, the My Automations intro replaces the list while there are none (DESIGN.md I1, I2);
     // with the flag off, the page and its empty line render as before.
     return (
-      <FeatureIntroGate introKey="automations" facts={listQuery.data ? { automations: items.length } : null}>
+      <FeatureIntroGate introKey="automations" facts={listQuery.data && (!sharingEnabled || sharedQuery.data || sharedQuery.error) ? { automations: items.length + shared.length } : null}>
         <div className="mx-auto max-w-[980px] px-6 py-8 md:px-8" data-automations-monitor>
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -103,31 +142,28 @@ export function AutomationsScreen() {
               <p className="mt-1 text-[13px] text-gray-400">What Den is running and has scheduled for you. Create and edit Cloud Automations in OpenWork Web; Desktop Automations are managed in the desktop app.</p>
             </div>
           </div>
-          {items.length === 0 ? (
+          {items.length === 0 && shared.length === 0 ? (
             <div className="mt-6 rounded-2xl border border-gray-100 bg-white p-8 text-center text-[13px] text-gray-400">No Automations yet. Create one in OpenWork Web or in the desktop app; it will show up here once Den is scheduling it.</div>
           ) : groups.map((group) => (
             <section key={group.title} className="mt-6">
               <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-gray-400">{group.title}</h2>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 {group.items.map((item) => (
-                  <button key={item.automation.id} type="button" onClick={() => setQuery(item.automation.id)} className="rounded-2xl border border-gray-100 bg-white p-4 text-left transition hover:border-gray-200 hover:bg-gray-50">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-[14px] font-semibold text-gray-900">{item.automation.name}</h3>
-                        <p className="mt-1 line-clamp-2 text-[12px] text-gray-400">{item.revision.action?.kind === "saved_script" ? `Exact Workflow version ${item.revision.action.script.configObjectVersionId.slice(0, 8)}` : item.revision.instructions}</p>
-                      </div>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone(item.automation.state)}`}>{item.automation.state.replace("_", " ")}</span>
-                    </div>
-                    <p className="mt-3 text-[11px] text-gray-400">{formatAutomationSchedule(item.revision.schedule)}</p>
-                    <div className="mt-2 flex items-center justify-between text-[11px] text-gray-400">
-                      <span>{item.latestRun ? `Last run ${item.latestRun.status}` : item.automation.nextDueAt ? `Next ${new Date(item.automation.nextDueAt).toLocaleString()}` : "Not run yet"}</span>
-                      <span className="flex items-center gap-1"><PlacementIcon executionTarget={item.revision.executionTarget} />{placementLabel(item.revision.executionTarget)}</span>
-                    </div>
-                  </button>
+                  <AutomationCard key={item.automation.id} item={sharingEnabled ? item : { ...item, access: undefined }} onOpen={() => setQuery(item.automation.id)} />
                 ))}
               </div>
             </section>
           ))}
+          {shared.length > 0 ? (
+            <section className="mt-6" data-automations-shared>
+              <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-gray-400">Shared with my teams</h2>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                {shared.map((item) => (
+                  <AutomationCard key={item.automation.id} item={item} shared onOpen={() => setQuery(item.automation.id)} />
+                ))}
+              </div>
+            </section>
+          ) : null}
         </div>
       </FeatureIntroGate>
     );
@@ -135,6 +171,9 @@ export function AutomationsScreen() {
 
   if (detailQuery.isLoading || !detailQuery.data) return <div className="mx-auto max-w-[980px] px-6 py-8 text-[13px] text-gray-400">Loading Automation…</div>;
   const detail = detailQuery.data;
+  const access = sharingEnabled ? detail.access : undefined;
+  const sharedWithMe = access && access.role !== "owner" ? access : null;
+  const canManage = automationRoleAllows(access?.role, "manage");
   const runs = runsQuery.data ?? [];
   const activeRun = runQuery.data?.run && ACTIVE_RUN_STATUSES.has(runQuery.data.run.status) ? runQuery.data.run : null;
   return (
@@ -148,6 +187,11 @@ export function AutomationsScreen() {
               <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone(detail.automation.state)}`}>{detail.automation.state.replace("_", " ")}</span>
             </div>
             <p className="mt-1 text-[12px] text-gray-400">Revision {detail.revision.version} · {placementLabel(detail.revision.executionTarget)} · {formatAutomationSchedule(detail.revision.schedule)}</p>
+            {sharedWithMe ? (
+              <p className="mt-1 flex items-center gap-1 text-[12px] text-gray-500" data-automation-shared-access={sharedWithMe.role}>
+                <Users className="h-3.5 w-3.5" />{sharedByLabel(sharedWithMe)} · {canManage ? "Your team can manage it" : "View only"}
+              </p>
+            ) : null}
           </div>
         </div>
         <ManageLink item={detail} openworkWebUrl={runtimeConfig.openworkWebUrl} />
@@ -191,7 +235,7 @@ export function AutomationsScreen() {
         <section className="h-fit rounded-2xl border border-gray-100 bg-white p-5">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-[14px] font-semibold text-gray-900">Run receipt</h2>
-            {activeRun ? <DenButton variant="destructive" size="sm" loading={cancelRun.isPending} onClick={() => void cancelRun.mutateAsync(activeRun.id)}><Square className="h-3 w-3" />Cancel run</DenButton> : null}
+            {activeRun && canManage ? <DenButton variant="destructive" size="sm" loading={cancelRun.isPending} onClick={() => void cancelRun.mutateAsync(activeRun.id)}><Square className="h-3 w-3" />Cancel run</DenButton> : null}
           </div>
           {!runId ? <p className="mt-8 text-center text-[13px] text-gray-400">Select a run to inspect its durable receipt.</p> : runQuery.isLoading ? <p className="mt-4 text-[13px] text-gray-400">Loading receipt…</p> : runQuery.data ? (
             <div className="mt-4 space-y-4">

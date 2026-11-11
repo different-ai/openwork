@@ -58,6 +58,16 @@ export function useAutomationListQuery(context: AutomationsDenContext) {
   })
 }
 
+/** Automations teammates shared with this member's teams; off until the organization has team sharing. */
+export function useSharedAutomationListQuery(context: AutomationsDenContext, enabled: boolean) {
+  return useQuery({
+    queryKey: [...context.queryRoot, "shared"],
+    queryFn: () => context.client!.listSharedAutomations(context.organizationId!, { limit: 100 }),
+    enabled: context.ready && enabled,
+    refetchInterval: AUTOMATIONS_SLOW_POLL_MS,
+  })
+}
+
 export function useAutomationDetailQuery(context: AutomationsDenContext, automationId: string | null) {
   return useQuery({
     queryKey: [...context.queryRoot, "detail", automationId],
