@@ -219,7 +219,7 @@ export const remoteDeviceWorkbotReportSchema = z.object({
 }).strict().meta({ ref: "RemoteDeviceWorkbotReport" })
 export type RemoteDeviceWorkbotReport = z.infer<typeof remoteDeviceWorkbotReportSchema>
 
-/** What the latest desktop report said, kept for platform admins. */
+/** What the latest desktop report said, kept for authorized organization inventory readers. */
 export const remoteDeviceDiagnosticsSchema = z.object({
   reportedAt: timestampSchema,
   osVersion: z.string().nullable(),
@@ -242,14 +242,14 @@ export const remoteDeviceDiagnosticsSchema = z.object({
 })
 export type RemoteDeviceDiagnostics = z.infer<typeof remoteDeviceDiagnosticsSchema>
 
-const adminEventSchema = remoteDeviceEventSchema.extend({
+const organizationComputerEventSchema = remoteDeviceEventSchema.extend({
   /** Fixed codes and ids recorded with the event; never content. */
   data: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).nullable(),
   actorId: z.string().nullable(),
 })
-export type AdminRemoteDeviceEvent = z.infer<typeof adminEventSchema>
+export type OrganizationComputerEvent = z.infer<typeof organizationComputerEventSchema>
 
-export const adminRemoteDeviceSchema = remoteDeviceSchema.omit({ access: true, canRename: true, canRemove: true }).extend({
+export const organizationComputerSchema = remoteDeviceSchema.omit({ access: true, canRename: true, canRemove: true }).extend({
   organization: z.object({ id: z.string(), name: z.string() }),
   /** Null for a computer shared with the whole organization, and when the owner has left. */
   owner: z.object({ memberId: z.string(), name: z.string().nullable(), email: z.string().nullable() }).nullable(),
@@ -258,31 +258,17 @@ export const adminRemoteDeviceSchema = remoteDeviceSchema.omit({ access: true, c
   removedAt: timestampSchema.nullable(),
   /** Warnings and errors in the last 24 hours. */
   recentProblems: z.number().int().nonnegative(),
-  lastEvent: adminEventSchema.nullable(),
+  lastEvent: organizationComputerEventSchema.nullable(),
 })
-export type AdminRemoteDevice = z.infer<typeof adminRemoteDeviceSchema>
+export type OrganizationComputerRecord = z.infer<typeof organizationComputerSchema>
 
-export const ADMIN_REMOTE_DEVICE_PAGE_SIZE = 50
+export const ORGANIZATION_COMPUTER_PAGE_SIZE = 50
 
-export const adminRemoteDeviceListResponseSchema = z.object({
-  devices: z.array(adminRemoteDeviceSchema),
-  total: z.number().int().nonnegative(),
-  page: z.number().int().positive(),
-  pageSize: z.number().int().positive(),
-  /** Across the whole deployment, whatever the filters. */
-  summary: z.object({
-    total: z.number().int().nonnegative(),
-    online: z.number().int().nonnegative(),
-    withProblems: z.number().int().nonnegative(),
-  }),
-})
-export type AdminRemoteDeviceListResponse = z.infer<typeof adminRemoteDeviceListResponseSchema>
-
-export const adminRemoteDeviceDetailResponseSchema = z.object({
-  device: adminRemoteDeviceSchema,
+export const organizationComputerDetailResponseSchema = z.object({
+  device: organizationComputerSchema,
   diagnostics: remoteDeviceDiagnosticsSchema.nullable(),
   /** Newest first, at most 100. */
-  events: z.array(adminEventSchema),
+  events: z.array(organizationComputerEventSchema),
   /** The desktop's runner registration, when it has one: what remote sessions and Automations see. */
   runner: z.object({
     computerId: z.string(),
@@ -296,7 +282,6 @@ export const adminRemoteDeviceDetailResponseSchema = z.object({
   session: z.object({
     sessionId: z.string(),
     kind: z.string(),
-    title: z.string(),
     updatedAt: timestampSchema,
     activeTurnSince: timestampSchema.nullable(),
     deletedAt: timestampSchema.nullable(),
@@ -310,7 +295,38 @@ export const adminRemoteDeviceDetailResponseSchema = z.object({
     sandboxGateway: z.boolean(),
   }),
 })
-export type AdminRemoteDeviceDetailResponse = z.infer<typeof adminRemoteDeviceDetailResponseSchema>
+export type OrganizationComputerDetailResponse = z.infer<typeof organizationComputerDetailResponseSchema>
+
+/** Registered OpenWork worker hosts; status is reported, not inferred online/OS. */
+export const organizationComputerInstanceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  destination: z.enum(["local", "cloud"]),
+  status: z.enum(["provisioning", "healthy", "failed", "stopped"]),
+  owner: z.object({ memberId: z.string().nullable(), name: z.string().nullable(), email: z.string().nullable() }).nullable(),
+  version: z.string().nullable(),
+  provider: z.string().nullable(),
+  region: z.string().nullable(),
+  lastSeenAt: timestampSchema.nullable(),
+  lastActiveAt: timestampSchema.nullable(),
+  createdAt: timestampSchema,
+})
+export type OrganizationComputerInstance = z.infer<typeof organizationComputerInstanceSchema>
+export type OrganizationRegisteredInstance = OrganizationComputerInstance
+export const organizationComputerInstanceDetailResponseSchema = z.object({ instance: organizationComputerInstanceSchema })
+
+/** Current organization's team inventory; each inventory category is paged independently. */
+export const organizationComputerListResponseSchema = z.object({
+  devices: z.array(organizationComputerSchema),
+  total: z.number().int().nonnegative(),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive(),
+  instances: z.array(organizationComputerInstanceSchema),
+  instancesTotal: z.number().int().nonnegative(),
+  instancePage: z.number().int().positive(),
+  instancePageSize: z.number().int().positive(),
+})
+export type OrganizationComputerListResponse = z.infer<typeof organizationComputerListResponseSchema>
 
 export const REMOTE_DEVICE_AVAILABILITY_LABELS: Record<RemoteDeviceAvailability, string> = {
   online: "Online",

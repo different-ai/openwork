@@ -1,15 +1,16 @@
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
 import { desc, eq } from "@openwork-ee/den-db/drizzle"
-import { AutomationRunnerTable, HeadlessSessionIndexTable, RemoteDeviceEventTable, RemoteDeviceTable } from "@openwork-ee/den-db/schema"
+import { AutomationRunnerTable, HeadlessSessionIndexTable, RemoteDeviceEventTable, RemoteDeviceTable, WorkerTable, CloudRuntimeInstanceTable } from "@openwork-ee/den-db/schema"
 import { workbotSessionId, workbotSideChatSessionId } from "@openwork-ee/headless-protocol/workbot-routing"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   REMOTE_DEVICE_AVAILABILITIES,
   REMOTE_DEVICE_EVENT_LIMIT,
   REMOTE_DEVICE_ONLINE_WINDOW_MS,
-  adminRemoteDeviceDetailResponseSchema,
-  adminRemoteDeviceListResponseSchema,
+  organizationComputerDetailResponseSchema,
+  organizationComputerInstanceDetailResponseSchema,
+  organizationComputerListResponseSchema,
   remoteDeviceAvailability,
   remoteDeviceDetailResponseSchema,
   remoteDeviceListResponseSchema,
@@ -17,7 +18,7 @@ import {
 import { bootDen, field, list, summary, text } from "./harness.js"
 
 /**
- * Devices (feature `remoteDevices`): what a member, Workbot and a platform admin
+ * Devices (feature `remoteDevices`): what a member, Workbot and an organization admin
  * see of the same registry, through the real routes and a real database.
  */
 const den = await bootDen()
@@ -31,6 +32,8 @@ const other = await den.newMember(owner, orgId, "Olive Other")
 const asOwner = den.as(owner, orgId)
 const asMember = den.as(member, orgId)
 const asOther = den.as(other, orgId)
+const admin = await den.newMember(owner, orgId, "Ari Org Admin", "admin")
+const asAdmin = den.as(admin, orgId)
 const elsewhere = await den.createOrg(await den.signUp("Zed Elsewhere"), "Another organization")
 const asElsewhere = den.as(elsewhere.owner, elsewhere.orgId)
 
@@ -62,6 +65,9 @@ async function eventsOf(as: typeof asMember, id: string) {
 
 test("every member route answers as if it did not exist while the feature is off", async () => {
   for (const [method, path, body] of [
+    ["GET", "/v1/org/computers", undefined],
+    ["GET", "/v1/org/computers/rdv_01h2xcejqtf2nbrexx3vqjhp41", undefined],
+    ["GET", "/v1/org/computers/instances/wrk_01h2xcejqtf2nbrexx3vqjhp41", undefined],
     ["GET", "/v1/remote-devices", undefined],
     ["POST", "/v1/remote-devices", { label: "VM", provider: "freestyle", platform: "linux", externalId: "vm-1" }],
     ["PUT", "/v1/remote-devices/this-computer", desktopReport()],
@@ -155,6 +161,25 @@ test("the desktop and its runner are one computer, and a desktop that only regis
   assert.equal(devicesOf(await asMember("GET", "/v1/remote-devices")).find((device) => device.id === studio.id)?.availability, "offline")
   await set(31 * 24 * 60 * 60_000)
   assert.equal(devicesOf(await asMember("GET", "/v1/remote-devices")).some((device) => device.id === studio.id), false)
+  for (const as of [asOwner, asAdmin]) {
+    const inventory = organizationComputerListResponseSchema.parse((await as("GET", "/v1/org/computers")).body)
+    const stale = inventory.devices.find((device) => device.id === studio.id)
+    assert.equal(stale?.availability, "offline", "team inventory retains registered offline computers")
+    assert.equal(stale?.appVersion, "1.2.0")
+    assert.ok(stale?.lastSeenAt && Date.parse(stale.lastSeenAt) < Date.now() - 30 * 24 * 60 * 60_000)
+  }
+  // A retained old runner that never had a registry row must be imported for team inventory too.
+  const retained = await asMember("POST", "/v1/session-runners/token", {
+    runnerId: "install-retained-before-devices", protocolVersion: 1, supportedExecutionTargets: ["desktop"], capabilities: [],
+    appVersion: "0.9.0", platform: "darwin", concurrency: 1,
+  })
+  assert.equal(retained.status, 200, summary(retained))
+  const retainedRunner = (await db.select().from(AutomationRunnerTable)).find((runner) => runner.app_version === "0.9.0")!
+  await db.update(AutomationRunnerTable).set({ last_seen_at: new Date(Date.now() - 40 * 24 * 60 * 60_000) }).where(eq(AutomationRunnerTable.id, retainedRunner.id))
+  assert.equal(devicesOf(await asMember("GET", "/v1/remote-devices")).some((device) => device.appVersion === "0.9.0"), false)
+  const inventory = organizationComputerListResponseSchema.parse((await asAdmin("GET", "/v1/org/computers")).body)
+  assert.equal(inventory.devices.find((device) => device.appVersion === "0.9.0")?.availability, "offline")
+  assert.equal(devicesOf(await asMember("GET", "/v1/remote-devices")).some((device) => device.appVersion === "0.9.0"), false)
 })
 
 test("virtual computers are registered by hand: for me, or by an admin for everyone", async () => {
@@ -378,68 +403,68 @@ test("Workbot cannot preclaim sessions or disclose another owner or tenant's tit
   await asMember("DELETE", `/v1/remote-devices/${cellRow.id}`)
 })
 
-test("a platform admin sees every device with what explains its state, and nobody else does", async () => {
-  for (const as of [asOwner, asMember]) {
-    assert.equal((await as("GET", "/v1/admin/remote-devices")).status, 403)
-    assert.equal((await as("GET", "/v1/admin/remote-devices/rdv_01h2xcejqtf2nbrexx3vqjhp41")).status, 403)
+test("owners and regular org admins inspect all members and shared computers, never other organizations", async () => {
+  const macbookRunner = devicesOf(await asMember("GET", "/v1/remote-devices")).find((device) => device.label === "Milo's MacBook Pro")!.computerId!
+  await db.update(AutomationRunnerTable).set({ inventory: {
+    computer: { label: "Milo's MacBook Pro", platform: "darwin", appVersion: "1.5.0" },
+    workspaces: [{ workspaceId: "private-workspace-id", name: "Private customer project", active: true, engine: "v2", defaultModel: null, models: [] }],
+  }, inventory_updated_at: new Date() }).where(eq(AutomationRunnerTable.id, macbookRunner))
+  for (const as of [asOwner, asAdmin]) {
+    const all = await as("GET", "/v1/org/computers")
+    assert.equal(all.status, 200, summary(all))
+    const page = organizationComputerListResponseSchema.parse(all.body)
+    assert.equal(page.total, page.devices.length)
+    assert.equal(field(all.body, "summary"), undefined, "no deployment aggregates")
+    assert.ok(page.devices.every((device) => device.organization.id === orgId))
+    assert.ok(page.devices.some((device) => device.owner?.email === member.email))
+    assert.ok(page.devices.some((device) => device.owner?.email === other.email))
+    const macbook = page.devices.find((device) => device.label === "Milo's MacBook Pro")!
+    assert.ok(macbook)
+    assert.deepEqual([macbook.owner?.email, macbook.shared, macbook.availability], [member.email, false, "online"])
+    assert.ok(macbook.recentProblems >= 1)
+    assert.equal(page.devices.find((device) => device.label === "Mac sandbox")?.owner, null)
+    for (const availability of REMOTE_DEVICE_AVAILABILITIES) {
+      const filtered = organizationComputerListResponseSchema.parse((await as("GET", `/v1/org/computers?availability=${availability}`)).body)
+      assert.deepEqual(filtered.devices.map((device) => device.id).sort(), page.devices.filter((device) => device.availability === availability).map((device) => device.id).sort())
+    }
+    const searched = organizationComputerListResponseSchema.parse((await as("GET", `/v1/org/computers?search=${encodeURIComponent(member.email)}`)).body)
+    assert.ok(searched.devices.length > 0 && searched.devices.every((device) => device.owner?.email === member.email))
+    assert.equal(organizationComputerListResponseSchema.parse((await as("GET", "/v1/org/computers?kind=vm&provider=mac_host")).body).devices.length, 1)
+    assert.equal((await as("GET", "/v1/org/computers?availability=sleepy")).status, 400)
+    const detail = organizationComputerDetailResponseSchema.parse((await as("GET", `/v1/org/computers/${macbook.id}`)).body)
+    assert.equal(detail.diagnostics?.osVersion, "25.1.0")
+    assert.equal(detail.diagnostics?.arch, "arm64")
+    assert.deepEqual(detail.diagnostics?.computerUse?.computers.map((computer) => computer.id), ["this-mac", "freestyle-vm", "daytona-sandbox"])
+    assert.ok(detail.runner?.capabilities.includes("remote_session_v1"))
+    assert.equal(detail.runner?.workspaces, 1)
+    assert.equal(JSON.stringify(detail).includes("Private customer project"), false)
+    assert.equal(JSON.stringify(detail).includes("private-workspace-id"), false)
+    assert.equal(detail.features.remoteDevices, true)
+    assert.equal(detail.features.computerUse, false)
+    assert.ok(detail.events.some((event) => event.type === "app_updated" && event.data?.to === "1.5.0"))
+    const removed = (await db.select({ id: RemoteDeviceTable.id }).from(RemoteDeviceTable).where(eq(RemoteDeviceTable.externalId, workbotSessionId(orgId, member.memberId))))[0]!
+    const removedDetail = organizationComputerDetailResponseSchema.parse((await as("GET", `/v1/org/computers/${removed.id}`)).body)
+    assert.equal(typeof removedDetail.device.removedAt, "string")
+    assert.equal(field(removedDetail, "session", "title"), undefined)
+    assert.equal(JSON.stringify(removedDetail).includes("Private cell title"), false)
+    const forged = await as("GET", `/v1/org/computers?organizationId=${elsewhere.orgId}&orgId=${elsewhere.orgId}`, undefined, { "x-organization-id": elsewhere.orgId, "x-org-id": elsewhere.orgId })
+    assert.equal(forged.status, 200, summary(forged))
+    assert.ok(organizationComputerListResponseSchema.parse(forged.body).devices.every((device) => device.organization.id === orgId))
+    const foreign = devicesOf(await asElsewhere("GET", "/v1/remote-devices"))[0]!
+    assert.equal((await as("GET", `/v1/org/computers/${foreign.id}`)).status, 404)
+    assert.equal((await as("GET", "/v1/org/computers/rdv_01h2xcejqtf2nbrexx3vqjhp41")).status, 404)
+    assert.equal((await as("GET", "/v1/org/computers/not-an-id")).status, 400)
+    for (const device of page.devices) assert.equal(device.availability, remoteDeviceAvailability({ kind: device.kind, provider: device.provider, state: device.state, lastSeenAt: device.lastSeenAt ? Date.parse(device.lastSeenAt) : null, now: Date.now() }))
   }
-  const all = await den.asPlatformAdmin("GET", "/v1/admin/remote-devices")
-  assert.equal(all.status, 200, summary(all))
-  const page = adminRemoteDeviceListResponseSchema.parse(all.body)
-  assert.equal(page.total, page.devices.length)
-  assert.equal(page.summary.total, page.total)
-  assert.deepEqual([...new Set(page.devices.map((device) => device.organization.name))].sort(), ["Another organization", "Devices organization"])
-
-  const scoped = adminRemoteDeviceListResponseSchema.parse((await den.asPlatformAdmin("GET", `/v1/admin/remote-devices?organizationId=${orgId}`)).body)
-  assert.ok(scoped.devices.every((device) => device.organization.id === orgId))
-  const macbook = scoped.devices.find((device) => device.label === "Milo's MacBook Pro")
-  assert.ok(macbook)
-  assert.deepEqual([macbook.owner?.email, macbook.shared, macbook.availability], [member.email, false, "online"])
-  assert.ok(macbook.recentProblems >= 1, "the Screen Recording warning counts as a recent problem")
-  assert.equal(scoped.devices.find((device) => device.label === "Mac sandbox")?.owner, null)
-
-  // The availability filter and count are computed in SQL; they must agree with what each row says.
-  for (const availability of REMOTE_DEVICE_AVAILABILITIES) {
-    const filtered = adminRemoteDeviceListResponseSchema.parse((await den.asPlatformAdmin("GET", `/v1/admin/remote-devices?organizationId=${orgId}&availability=${availability}`)).body)
-    assert.deepEqual(filtered.devices.map((device) => device.id).sort(), scoped.devices.filter((device) => device.availability === availability).map((device) => device.id).sort(), availability)
-  }
-  assert.equal(page.summary.online, page.devices.filter((device) => device.availability === "online").length)
-  const problems = adminRemoteDeviceListResponseSchema.parse((await den.asPlatformAdmin("GET", "/v1/admin/remote-devices?problems=true")).body)
-  assert.deepEqual(problems.devices.map((device) => device.id).sort(), page.devices.filter((device) => device.recentProblems > 0).map((device) => device.id).sort())
-  assert.equal(page.summary.withProblems, problems.total)
-  const searched = adminRemoteDeviceListResponseSchema.parse((await den.asPlatformAdmin("GET", `/v1/admin/remote-devices?search=${encodeURIComponent(member.email)}`)).body)
-  assert.ok(searched.devices.length > 0 && searched.devices.every((device) => device.owner?.email === member.email))
-  assert.equal(adminRemoteDeviceListResponseSchema.parse((await den.asPlatformAdmin("GET", "/v1/admin/remote-devices?kind=vm&provider=mac_host")).body).devices.length, 1)
-  assert.equal((await den.asPlatformAdmin("GET", "/v1/admin/remote-devices?organizationId=nope")).status, 400)
-  assert.equal((await den.asPlatformAdmin("GET", "/v1/admin/remote-devices?availability=sleepy")).status, 400)
-
-  const detailCall = await den.asPlatformAdmin("GET", `/v1/admin/remote-devices/${macbook.id}`)
-  assert.equal(detailCall.status, 200, summary(detailCall))
-  const detail = adminRemoteDeviceDetailResponseSchema.parse(detailCall.body)
-  assert.equal(detail.diagnostics?.osVersion, "25.1.0")
-  assert.deepEqual(detail.diagnostics?.computerUse?.computers.map((computer) => computer.id), ["this-mac", "freestyle-vm", "daytona-sandbox"])
-  assert.equal(detail.runner?.computerId, macbook.computerId)
-  assert.ok(detail.runner?.capabilities.includes("remote_session_v1"))
-  assert.equal(detail.features.remoteDevices, true)
-  assert.equal(detail.features.computerUse, false)
-  assert.ok(detail.events.some((event) => event.type === "app_updated" && event.data?.to === "1.5.0"))
-  assert.equal(detail.session, null)
-
-  // A removed device is still readable by id, with its removal and its conversation's index row.
-  const removed = (await db.select({ id: RemoteDeviceTable.id }).from(RemoteDeviceTable).where(eq(RemoteDeviceTable.externalId, workbotSessionId(orgId, member.memberId))))[0]
-  assert.ok(removed)
-  const removedDetail = adminRemoteDeviceDetailResponseSchema.parse((await den.asPlatformAdmin("GET", `/v1/admin/remote-devices/${removed.id}`)).body)
-  assert.equal(typeof removedDetail.device.removedAt, "string")
-  assert.equal(removedDetail.events[0]?.message, "Removed with its chat")
-  assert.equal(page.devices.some((device) => device.id === removed.id), false, "removed devices leave the list")
-  assert.equal((await den.asPlatformAdmin("GET", "/v1/admin/remote-devices/rdv_01h2xcejqtf2nbrexx3vqjhp41")).status, 404)
-  assert.equal((await den.asPlatformAdmin("GET", "/v1/admin/remote-devices/not-an-id")).status, 400)
-
-  // The SQL availability and the shared function are the same rule.
-  const now = Date.now()
-  for (const device of page.devices) {
-    assert.equal(device.availability, remoteDeviceAvailability({ kind: device.kind, provider: device.provider, state: device.state, lastSeenAt: device.lastSeenAt ? Date.parse(device.lastSeenAt) : null, now }), device.label)
-  }
+  assert.equal((await asMember("GET", "/v1/org/computers")).status, 403)
+  const otherDesktop = devicesOf(await asOther("GET", "/v1/remote-devices")).find((device) => device.label === "Olive's laptop")!
+  assert.ok(otherDesktop)
+  assert.equal((await asMember("GET", `/v1/org/computers/${otherDesktop.id}`)).status, 403)
+  assert.equal(devicesOf(await asMember("GET", "/v1/remote-devices")).some((device) => device.id === otherDesktop.id), false)
+  assert.equal((await asMember("GET", `/v1/remote-devices/${otherDesktop.id}`)).status, 404)
+  const forgedHeader = await den.request(owner.token, "GET", "/v1/org/computers", { orgId: elsewhere.orgId })
+  assert.equal(forgedHeader.status, 404, "an unverified organization header cannot select another tenant")
+  assert.equal((await den.asPlatformAdmin("GET", "/v1/admin/remote-devices")).status, 404)
 })
 
 test("member agents discover read-only Devices capabilities", async () => {
@@ -449,40 +474,51 @@ test("member agents discover read-only Devices capabilities", async () => {
   assert.ok(matches.some((entry) => entry.path === "/v1/remote-devices" && entry.method === "GET"), found.raw)
   assert.ok(matches.some((entry) => entry.path === "/v1/remote-devices/{deviceId}" && entry.method === "GET"), found.raw)
   assert.ok(matches.filter((entry) => String(entry.path).startsWith("/v1/remote-devices")).every((entry) => entry.method === "GET"), found.raw)
+  const ownerToken = await den.mintMcpToken(owner, orgId)
+  const team = await den.callMcpTool(ownerToken, "search_capabilities", { query: "team computers inventory", limit: 20 })
+  const teamMatches = list(field(team.body, "matches"))
+  assert.ok(teamMatches.some((entry) => entry.path === "/v1/org/computers" && entry.method === "GET"), team.raw)
+  assert.ok(teamMatches.some((entry) => entry.path === "/v1/org/computers/{deviceId}" && entry.method === "GET"), team.raw)
 })
 
-test("the admin MCP tools answer the same questions for an agent, for platform admins only", async () => {
-  const call = (token: string, name: string, args: Record<string, unknown>) => den.request(token, "POST", "/mcp/admin", {
-    headers: { accept: "application/json, text/event-stream" },
-    body: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } },
-  })
-  const result = (response: Awaited<ReturnType<typeof call>>): unknown => {
-    const line = response.text.split("\n").find((entry) => entry.startsWith("data:"))
-    const envelope: unknown = line ? JSON.parse(line.slice(5)) : response.body
-    assert.notEqual(field(envelope, "result", "isError"), true, response.text)
-    const content = field(envelope, "result", "content")
-    assert.ok(Array.isArray(content))
-    return JSON.parse(text(field(content[0], "text"), "tool result"))
+test("registered local and cloud OpenWork instances are bounded sanitized team inventory, never personal computers", async () => {
+  const id = createDenTypeId("worker")
+  const foreignId = createDenTypeId("worker")
+  const cloudId = createDenTypeId("worker")
+  const now = new Date()
+  await db.insert(WorkerTable).values([
+    { id, org_id: normalizeDenTypeId("organization", orgId), created_by_user_id: normalizeDenTypeId("user", member.userId), name: "Local registered instance", destination: "local", status: "healthy", workspace_path: "/private/member/files", image_version: "test-image", last_heartbeat_at: now },
+    { id: cloudId, org_id: normalizeDenTypeId("organization", orgId), created_by_user_id: normalizeDenTypeId("user", other.userId), name: "Cloud registered instance", destination: "cloud", status: "provisioning" },
+    { id: foreignId, org_id: normalizeDenTypeId("organization", elsewhere.orgId), name: "Foreign cloud instance", destination: "cloud", status: "stopped" },
+  ])
+  await db.insert(CloudRuntimeInstanceTable).values({ id: createDenTypeId("cloudRuntimeInstance"), worker_id: cloudId, provider_id: "test-provider", provider_ref: { secret: "DO-NOT-EXPOSE" }, workspace_volume_id: "private-volume", data_volume_id: "data-volume", endpoint_url: "https://private.invalid/secret", endpoint_expires_at: now, endpoint_kind: "test", region: "test-region" })
+  for (const as of [asOwner, asAdmin]) {
+    const response = await as("GET", `/v1/org/computers?organizationId=${elsewhere.orgId}`)
+    const inventory = organizationComputerListResponseSchema.parse(response.body)
+    assert.equal(inventory.instancesTotal, 2)
+    assert.deepEqual(inventory.instances.map((instance) => instance.id).sort(), [id, cloudId].sort())
+    const local = inventory.instances.find((instance) => instance.id === id)!
+    const cloud = inventory.instances.find((instance) => instance.id === cloudId)!
+    assert.equal(local.owner?.email, member.email)
+    assert.equal(local.owner?.memberId, member.memberId)
+    assert.equal(cloud.owner?.email, other.email)
+    assert.equal(cloud.provider, "test-provider")
+    assert.equal(local.status, "healthy")
+    assert.equal(local.lastSeenAt, now.toISOString())
+    assert.equal(field(local, "availability"), undefined, "healthy does not imply online")
+    const detail = await as("GET", `/v1/org/computers/instances/${id}`)
+    assert.deepEqual(organizationComputerInstanceDetailResponseSchema.parse(detail.body).instance, local)
+    for (const secret of ["/private/member/files", "DO-NOT-EXPOSE", "private.invalid", "private-volume", "provider_ref", "workspace_path"]) {
+      assert.equal(JSON.stringify(response.body).includes(secret), false)
+      assert.equal(JSON.stringify(detail.body).includes(secret), false)
+    }
+    assert.equal((await as("GET", `/v1/org/computers/instances/${foreignId}`)).status, 404)
+    assert.equal(organizationComputerListResponseSchema.parse((await as("GET", "/v1/org/computers?instancePage=2")).body).instances.length, 0)
+    assert.equal(organizationComputerListResponseSchema.parse((await as("GET", "/v1/org/computers?instanceDestination=cloud")).body).instancesTotal, 1)
   }
-  const forbidden = await call(await den.mintMcpToken(owner, orgId), "den_devices_list", {})
-  assert.equal(forbidden.status, 403, summary(forbidden))
-
-  const adminEmail = `platform-admin+${den.stamp}@example.test`
-  const signedIn = await den.signIn(adminEmail)
-  assert.equal(signedIn.status, 200, summary(signedIn))
-  const admin = { token: text(field(signedIn.body, "token"), "admin token"), cookie: "", email: adminEmail, name: "Platform Admin", userId: text(field(signedIn.body, "user", "id"), "admin id") }
-  const adminToken = await den.mintMcpToken(admin, (await den.createOrg(admin, "Admin workspace")).orgId)
-
-  const listed = adminRemoteDeviceListResponseSchema.parse(result(await call(adminToken, "den_devices_list", { org: "Devices organization", kind: "desktop" })))
-  // The desktop nobody has heard from in a month is gone here too.
-  assert.deepEqual(listed.devices.map((device) => device.label).sort(), ["Milo's MacBook Pro", "Olive's laptop"])
-  const macbook = listed.devices.find((device) => device.label === "Milo's MacBook Pro")
-  assert.ok(macbook)
-  const detail = adminRemoteDeviceDetailResponseSchema.parse(result(await call(adminToken, "den_device_detail", { deviceId: macbook.id })))
-  assert.equal(detail.device.owner?.email, member.email)
-  assert.ok(detail.events.length > 0)
-  const missing = await call(adminToken, "den_device_detail", { deviceId: "nope" })
-  assert.match(missing.text, /Invalid device id/)
+  assert.equal((await asMember("GET", `/v1/org/computers/instances/${id}`)).status, 403)
+  assert.equal(devicesOf(await asMember("GET", "/v1/remote-devices")).some((device) => String(device.id) === String(id)), false)
+  assert.equal((await db.select().from(RemoteDeviceTable).where(eq(RemoteDeviceTable.externalId, id))).length, 0)
 })
 
 test("events are bounded per device, and turning the feature off hides everything and keeps what is stored", async () => {
@@ -525,11 +561,11 @@ test("events are bounded per device, and turning the feature off hides everythin
   assert.equal(field((await den.request(token, "GET", "/v1/workbot/session")).body, "devices"), false)
   assert.equal((await den.request(token, "GET", "/v1/workbot/devices")).status, 404)
   assert.equal((await db.select().from(RemoteDeviceTable)).length, stored)
-  // /admin keeps working: it is how the feature is debugged, on or off.
-  assert.equal((await den.asPlatformAdmin("GET", `/v1/admin/remote-devices?organizationId=${orgId}`)).status, 200)
+  assert.equal((await asOwner("GET", "/v1/org/computers")).status, 404)
+  assert.equal((await asAdmin("GET", `/v1/org/computers/${device.id}`)).status, 404)
 
   // Deleting an organization takes its devices and their events with it.
-  assert.equal(list(field((await den.asPlatformAdmin("GET", `/v1/admin/remote-devices?organizationId=${elsewhere.orgId}`)).body, "devices")).length, 1)
+  assert.equal(devicesOf(await asElsewhere("GET", "/v1/remote-devices")).length, 1)
   const deleted = await asElsewhere("DELETE", "/v1/org", { confirmation: "Another organization" })
   assert.ok(deleted.status < 300, summary(deleted))
   const elsewhereId = normalizeDenTypeId("organization", elsewhere.orgId)

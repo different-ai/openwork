@@ -11,16 +11,16 @@ import {
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY } from "@openwork/types/automations"
 import {
-  ADMIN_REMOTE_DEVICE_PAGE_SIZE,
+  ORGANIZATION_COMPUTER_PAGE_SIZE,
   REMOTE_DEVICE_DESKTOP_RETENTION_MS,
   REMOTE_DEVICE_EVENT_LIMIT,
   REMOTE_DEVICE_EVENT_RETENTION_MS,
   REMOTE_DEVICE_ONLINE_WINDOW_MS,
   remoteDeviceAvailability,
-  type AdminRemoteDevice,
-  type AdminRemoteDeviceDetailResponse,
-  type AdminRemoteDeviceEvent,
-  type AdminRemoteDeviceListResponse,
+  type OrganizationComputerRecord,
+  type OrganizationComputerDetailResponse,
+  type OrganizationComputerEvent,
+  type OrganizationComputerListResponse,
   type RemoteDevice,
   type RemoteDeviceAvailability,
   type RemoteDeviceDesktopReport,
@@ -42,6 +42,7 @@ import { automationRunnerRowId } from "./automations/repository.js"
 import { withDeadlockRetry } from "./utils/deadlock-retry.js"
 import { db } from "./db.js"
 import { getOrganizationFeatures } from "./features.js"
+import { listOrganizationComputerInstances, type OrganizationInstanceFilters } from "./organization-computer-instances.js"
 
 /**
  * Remote devices (feature `remoteDevices`): Den's registry of the computers a
@@ -152,7 +153,7 @@ function eventView(row: typeof RemoteDeviceEventTable.$inferSelect): RemoteDevic
   return { id: row.id, type: row.type, level: row.level, message: row.message, actor: row.actor, createdAt: row.createdAt.toISOString() }
 }
 
-function adminEventView(row: typeof RemoteDeviceEventTable.$inferSelect): AdminRemoteDeviceEvent {
+function organizationComputerEventView(row: typeof RemoteDeviceEventTable.$inferSelect): OrganizationComputerEvent {
   return { ...eventView(row), data: row.data ?? null, actorId: row.actorId }
 }
 
@@ -204,10 +205,10 @@ export async function pruneRemoteDeviceEvents(deviceId: DeviceId, now = new Date
 /**
  * Copies desktops that registered a runner but never reported as a device, so
  * a desktop on an older app version (or asleep since the feature came on) is
- * still listed. Scoped to one member, one organization or, for platform admins,
- * the whole deployment; bounded per call.
+ * still listed. Personal reads retain their age window; team inventory reconciles
+ * all retained registrations in its organization in bounded batches.
  */
-async function syncDesktopsFromRunners(scope: { organizationId?: OrganizationId; memberId?: MemberId }, now: Date) {
+async function syncDesktopsFromRunners(scope: { organizationId: OrganizationId; memberId?: MemberId; includeStale?: boolean }, now: Date) {
   const cutoff = new Date(now.getTime() - REMOTE_DEVICE_DESKTOP_RETENTION_MS)
   const missing = await db.select({
     id: AutomationRunnerTable.id,
@@ -227,7 +228,7 @@ async function syncDesktopsFromRunners(scope: { organizationId?: OrganizationId;
       isNull(RemoteDeviceTable.id),
       // Rows from before runner ids were scoped are replaced on the desktop's next registration.
       sql`${AutomationRunnerTable.id} like 'rnr|_%' escape '|'`,
-      gte(AutomationRunnerTable.last_seen_at, cutoff),
+      scope.includeStale ? undefined : gte(AutomationRunnerTable.last_seen_at, cutoff),
       scope.organizationId ? eq(AutomationRunnerTable.organization_id, scope.organizationId) : undefined,
       scope.memberId ? eq(AutomationRunnerTable.owner_member_id, scope.memberId) : undefined,
     ))
@@ -249,6 +250,7 @@ async function syncDesktopsFromRunners(scope: { organizationId?: OrganizationId;
     createdAt: now,
     updatedAt: now,
   }))).onDuplicateKeyUpdate({ set: { id: sql`${RemoteDeviceTable.id}` } })
+  if (scope.includeStale && missing.length === SYNC_LIMIT) await syncDesktopsFromRunners(scope, now)
 }
 
 async function runnerFacts(ids: readonly string[]): Promise<Map<string, RunnerFacts>> {
@@ -639,10 +641,10 @@ export async function deleteOrganizationRemoteDevices(database: Database, organi
   await database.delete(RemoteDeviceTable).where(eq(RemoteDeviceTable.organizationId, organizationId))
 }
 
-// Platform admin views (/admin › Devices and the admin MCP tools). Read-only.
+// Organization team inventory. Every read is scoped before querying the registry.
 
-export type AdminRemoteDeviceFilters = {
-  organizationId?: OrganizationId
+export type OrganizationComputerFilters = OrganizationInstanceFilters & {
+  organizationId: OrganizationId
   search?: string
   kind?: RemoteDeviceKind
   provider?: RemoteDeviceProvider
@@ -676,6 +678,8 @@ function likePattern(search: string) {
 const runnerJoin = and(
   eq(RemoteDeviceTable.kind, "desktop"),
   eq(AutomationRunnerTable.id, RemoteDeviceTable.externalId),
+  eq(AutomationRunnerTable.organization_id, RemoteDeviceTable.organizationId),
+  eq(AutomationRunnerTable.owner_member_id, RemoteDeviceTable.ownerMemberId),
 )
 
 function problemsSince(now: Date) {
@@ -684,10 +688,11 @@ function problemsSince(now: Date) {
 
 function hasProblemsSql(now: Date) {
   return sql`exists (select 1 from ${RemoteDeviceEventTable} where ${RemoteDeviceEventTable.deviceId} = ${RemoteDeviceTable.id}
+    and ${RemoteDeviceEventTable.organizationId} = ${RemoteDeviceTable.organizationId}
     and ${RemoteDeviceEventTable.level} in ('warning', 'error') and ${RemoteDeviceEventTable.createdAt} >= ${sql.param(problemsSince(now), RemoteDeviceEventTable.createdAt)})`
 }
 
-type AdminRow = {
+type OrganizationComputerRow = {
   device: DeviceRow
   runnerSeenAt: Date | null
   runnerCapabilities: readonly string[] | null
@@ -697,7 +702,7 @@ type AdminRow = {
   ownerEmail: string | null
 }
 
-const adminColumns = {
+const organizationComputerColumns = {
   device: RemoteDeviceTable,
   runnerSeenAt: AutomationRunnerTable.last_seen_at,
   runnerCapabilities: AutomationRunnerTable.capabilities,
@@ -707,25 +712,24 @@ const adminColumns = {
   ownerEmail: AuthUserTable.email,
 }
 
-function adminQuery(where: SQL | undefined) {
-  return db.select(adminColumns).from(RemoteDeviceTable)
+function organizationComputerQuery(where: SQL | undefined) {
+  return db.select(organizationComputerColumns).from(RemoteDeviceTable)
     .leftJoin(AutomationRunnerTable, runnerJoin)
     .leftJoin(OrganizationTable, eq(OrganizationTable.id, RemoteDeviceTable.organizationId))
-    .leftJoin(MemberTable, eq(MemberTable.id, RemoteDeviceTable.ownerMemberId))
+    .leftJoin(MemberTable, and(eq(MemberTable.id, RemoteDeviceTable.ownerMemberId), eq(MemberTable.organizationId, RemoteDeviceTable.organizationId)))
     .leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
     .where(where)
 }
 
-async function adminViews(rows: readonly AdminRow[], now: Date): Promise<AdminRemoteDevice[]> {
+async function organizationComputerViews(rows: readonly OrganizationComputerRow[], now: Date, organizationId: OrganizationId): Promise<OrganizationComputerRecord[]> {
   const ids = rows.map((row) => row.device.id)
   const since = problemsSince(now)
-  const [titles, problems, lastEvents] = await Promise.all([
-    sessionTitles(rows.map((row) => row.device)),
+  const [problems, lastEvents] = await Promise.all([
     ids.length === 0 ? [] : db.select({ deviceId: RemoteDeviceEventTable.deviceId, total: sql<number>`count(*)` }).from(RemoteDeviceEventTable)
-      .where(and(inArray(RemoteDeviceEventTable.deviceId, ids), inArray(RemoteDeviceEventTable.level, ["warning", "error"]), gte(RemoteDeviceEventTable.createdAt, since)))
+      .where(and(eq(RemoteDeviceEventTable.organizationId, organizationId), inArray(RemoteDeviceEventTable.deviceId, ids), inArray(RemoteDeviceEventTable.level, ["warning", "error"]), gte(RemoteDeviceEventTable.createdAt, since)))
       .groupBy(RemoteDeviceEventTable.deviceId),
-    // One short indexed read per device on the page; a page is at most ADMIN_REMOTE_DEVICE_PAGE_SIZE.
-    Promise.all(ids.map(async (id) => (await db.select().from(RemoteDeviceEventTable).where(eq(RemoteDeviceEventTable.deviceId, id))
+    // One short indexed read per device on the page; a page is at most ORGANIZATION_COMPUTER_PAGE_SIZE.
+    Promise.all(ids.map(async (id) => (await db.select().from(RemoteDeviceEventTable).where(and(eq(RemoteDeviceEventTable.organizationId, organizationId), eq(RemoteDeviceEventTable.deviceId, id)))
       .orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(1))[0] ?? null)),
   ])
   const problemCount = new Map(problems.map((row) => [row.deviceId, Number(row.total)]))
@@ -739,7 +743,7 @@ async function adminViews(rows: readonly AdminRow[], now: Date): Promise<AdminRe
       provider: device.provider,
       source: device.source,
       platform: device.platform,
-      label: labelOf(device, titles.get(device.id) ?? null),
+      label: labelOf(device, null),
       availability: availabilityOf(device, lastSeenAt, now.getTime()),
       state: device.state,
       statusDetail: device.statusDetail,
@@ -754,25 +758,21 @@ async function adminViews(rows: readonly AdminRow[], now: Date): Promise<AdminRe
       externalId: device.externalId,
       removedAt: iso(device.removedAt),
       recentProblems: problemCount.get(device.id) ?? 0,
-      lastEvent: lastEvent ? adminEventView(lastEvent) : null,
+      lastEvent: lastEvent ? organizationComputerEventView(lastEvent) : null,
     }
   })
 }
 
-/** Every device on the deployment for platform admins: filtered, searched and paged on the server. */
-export async function listAdminRemoteDevices(filters: AdminRemoteDeviceFilters, now = new Date()): Promise<AdminRemoteDeviceListResponse> {
-  await syncDesktopsFromRunners({ organizationId: filters.organizationId }, now)
-  const pageSize = Math.max(1, Math.min(ADMIN_REMOTE_DEVICE_PAGE_SIZE, filters.pageSize ?? ADMIN_REMOTE_DEVICE_PAGE_SIZE))
-  const page = Math.max(1, Math.min(200, filters.page ?? 1))
+/** All members and shared computers in this organization, filtered and paged on the server. */
+export async function listOrganizationComputerRecords(filters: OrganizationComputerFilters, now = new Date()): Promise<OrganizationComputerListResponse> {
+  await syncDesktopsFromRunners({ organizationId: filters.organizationId, includeStale: true }, now)
+  const pageSize = Math.max(1, Math.min(ORGANIZATION_COMPUTER_PAGE_SIZE, filters.pageSize ?? ORGANIZATION_COMPUTER_PAGE_SIZE))
+  const page = Math.max(1, filters.page ?? 1)
   const pattern = filters.search?.trim() ? likePattern(filters.search.trim()) : null
-  const live = and(
-    isNull(RemoteDeviceTable.removedAt),
-    // Desktops unheard from for a month have left the member's list too.
-    sql`(${RemoteDeviceTable.kind} <> 'desktop' or ${seenSql} >= ${sql.param(new Date(now.getTime() - REMOTE_DEVICE_DESKTOP_RETENTION_MS), RemoteDeviceTable.lastSeenAt)})`,
-  )
+  const live = isNull(RemoteDeviceTable.removedAt)
   const where = and(
     live,
-    filters.organizationId ? eq(RemoteDeviceTable.organizationId, filters.organizationId) : undefined,
+    eq(RemoteDeviceTable.organizationId, filters.organizationId),
     filters.kind ? eq(RemoteDeviceTable.kind, filters.kind) : undefined,
     filters.provider ? eq(RemoteDeviceTable.provider, filters.provider) : undefined,
     filters.availability ? sql`${availabilitySql(now)} = ${filters.availability}` : undefined,
@@ -784,42 +784,41 @@ export async function listAdminRemoteDevices(filters: AdminRemoteDeviceFilters, 
   const counted = (condition: SQL | undefined) => db.select({ total: sql<number>`count(*)` }).from(RemoteDeviceTable)
     .leftJoin(AutomationRunnerTable, runnerJoin)
     .leftJoin(OrganizationTable, eq(OrganizationTable.id, RemoteDeviceTable.organizationId))
-    .leftJoin(MemberTable, eq(MemberTable.id, RemoteDeviceTable.ownerMemberId))
+    .leftJoin(MemberTable, and(eq(MemberTable.id, RemoteDeviceTable.ownerMemberId), eq(MemberTable.organizationId, RemoteDeviceTable.organizationId)))
     .leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
     .where(condition)
-  const [rows, matching, total, online, withProblems] = await Promise.all([
-    adminQuery(where).orderBy(desc(seenSql), desc(RemoteDeviceTable.createdAt), desc(RemoteDeviceTable.id)).limit(pageSize).offset((page - 1) * pageSize),
+  const [rows, matching] = await Promise.all([
+    organizationComputerQuery(where).orderBy(desc(seenSql), desc(RemoteDeviceTable.createdAt), desc(RemoteDeviceTable.id)).limit(pageSize).offset((page - 1) * pageSize),
     counted(where),
-    counted(live),
-    counted(and(live, sql`${availabilitySql(now)} = 'online'`)),
-    counted(and(live, hasProblemsSql(now))),
   ])
   return {
-    devices: await adminViews(rows, now),
+    devices: await organizationComputerViews(rows, now, filters.organizationId),
+    ...await listOrganizationComputerInstances(filters.organizationId, filters),
     total: Number(matching[0]?.total ?? 0),
     page,
     pageSize,
-    summary: { total: Number(total[0]?.total ?? 0), online: Number(online[0]?.total ?? 0), withProblems: Number(withProblems[0]?.total ?? 0) },
   }
 }
 
 /** One device with everything Den knows that explains its state: the last report, its events, runner and session rows, and the owner's features. */
-export async function readAdminRemoteDevice(deviceId: DeviceId, now = new Date()): Promise<AdminRemoteDeviceDetailResponse | null> {
-  const [row] = await adminQuery(eq(RemoteDeviceTable.id, deviceId)).limit(1)
+export async function readOrganizationComputerRecord(organizationId: OrganizationId, deviceId: DeviceId, now = new Date()): Promise<OrganizationComputerDetailResponse | null> {
+  const [row] = await organizationComputerQuery(and(eq(RemoteDeviceTable.organizationId, organizationId), eq(RemoteDeviceTable.id, deviceId))).limit(1)
   if (!row) return null
   const device = row.device
   const [[view], events, runnerRows, sessionRows, ownerRows] = await Promise.all([
-    adminViews([row], now),
-    db.select().from(RemoteDeviceEventTable).where(eq(RemoteDeviceEventTable.deviceId, device.id)).orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(100),
+    organizationComputerViews([row], now, organizationId),
+    db.select().from(RemoteDeviceEventTable).where(and(eq(RemoteDeviceEventTable.organizationId, organizationId), eq(RemoteDeviceEventTable.deviceId, device.id))).orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(100),
     device.kind === "desktop"
       ? db.select({
           id: AutomationRunnerTable.id, capabilities: AutomationRunnerTable.capabilities, appVersion: AutomationRunnerTable.app_version,
-          lastSeenAt: AutomationRunnerTable.last_seen_at, inventory: AutomationRunnerTable.inventory, inventoryUpdatedAt: AutomationRunnerTable.inventory_updated_at,
-        }).from(AutomationRunnerTable).where(eq(AutomationRunnerTable.id, device.externalId)).limit(1)
+          lastSeenAt: AutomationRunnerTable.last_seen_at,
+          workspaceCount: sql<number | null>`json_length(${AutomationRunnerTable.inventory}, '$.workspaces')`,
+          inventoryUpdatedAt: AutomationRunnerTable.inventory_updated_at,
+        }).from(AutomationRunnerTable).where(and(eq(AutomationRunnerTable.organization_id, organizationId), device.ownerMemberId ? eq(AutomationRunnerTable.owner_member_id, device.ownerMemberId) : isNull(AutomationRunnerTable.owner_member_id), eq(AutomationRunnerTable.id, device.externalId))).limit(1)
       : [],
     device.provider === "workbot"
       ? db.select({
-          sessionId: HeadlessSessionIndexTable.sessionId, kind: HeadlessSessionIndexTable.kind, title: HeadlessSessionIndexTable.title,
+          sessionId: HeadlessSessionIndexTable.sessionId, kind: HeadlessSessionIndexTable.kind,
           updatedAt: HeadlessSessionIndexTable.updatedAt, activeTurnSince: HeadlessSessionIndexTable.activeTurnSince, deletedAt: HeadlessSessionIndexTable.deletedAt,
         }).from(HeadlessSessionIndexTable).where(and(
           eq(HeadlessSessionIndexTable.sessionId, device.externalId), eq(HeadlessSessionIndexTable.organizationId, device.organizationId),
@@ -828,7 +827,7 @@ export async function readAdminRemoteDevice(deviceId: DeviceId, now = new Date()
         )).limit(1)
       : [],
     device.ownerMemberId
-      ? db.select({ userId: MemberTable.userId }).from(MemberTable).where(eq(MemberTable.id, device.ownerMemberId)).limit(1)
+      ? db.select({ userId: MemberTable.userId }).from(MemberTable).where(and(eq(MemberTable.organizationId, organizationId), eq(MemberTable.id, device.ownerMemberId))).limit(1)
       : [],
   ])
   if (!view) return null
@@ -839,17 +838,17 @@ export async function readAdminRemoteDevice(deviceId: DeviceId, now = new Date()
   return {
     device: view,
     diagnostics: device.diagnostics ?? null,
-    events: events.map(adminEventView),
+    events: events.map(organizationComputerEventView),
     runner: runner ? {
       computerId: runner.id,
       capabilities: runner.capabilities ?? [],
       appVersion: runner.appVersion,
       lastSeenAt: runner.lastSeenAt.toISOString(),
-      workspaces: runner.inventory ? runner.inventory.workspaces.length : null,
+      workspaces: runner.workspaceCount === null ? null : Number(runner.workspaceCount),
       inventoryUpdatedAt: iso(runner.inventoryUpdatedAt),
     } : null,
     session: session ? {
-      sessionId: session.sessionId, kind: session.kind, title: session.title, updatedAt: session.updatedAt.toISOString(),
+      sessionId: session.sessionId, kind: session.kind, updatedAt: session.updatedAt.toISOString(),
       activeTurnSince: iso(session.activeTurnSince), deletedAt: iso(session.deletedAt),
     } : null,
     features: {

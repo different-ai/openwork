@@ -54,6 +54,7 @@ export type FeatureIntroKey =
   | "automations"
   | "home"
   | "web"
+  | "computers"
   | "desktop-policies"
   | "deployments"
   | "org-settings"

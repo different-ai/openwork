@@ -60,6 +60,7 @@ const ADMIN_SCOPE_KEYS = [
   "billing.manage",
   "billing.view",
   "billing_invoices.view",
+  "computers.view",
   "connections.disconnect",
   "connections.manage",
   "connections.view",

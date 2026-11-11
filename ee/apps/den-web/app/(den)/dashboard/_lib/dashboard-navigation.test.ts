@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { getOrgAccessFlags, type DenOrgCapabilities } from "../../_lib/den-org";
-import { buildDashboardNavSections } from "./dashboard-navigation";
+import { buildDashboardNavSections, flattenNavigationForSearch } from "./dashboard-navigation";
+import { adminRouteLockedMessage, canOpenAdminRoute } from "./admin-route-access";
 
 const capabilities: DenOrgCapabilities = {
   auditLogs: false, installLinks: false, mcpConnections: false, workflows: true,
@@ -85,4 +86,27 @@ test("Config appears under Settings after Advanced only with configBlobs on and 
   assert.equal(labels.indexOf("Config"), labels.indexOf("Advanced") + 1);
   assert.ok(!configChildren(["organization.update"], false).some((item) => item.label === "Config"));
   assert.ok(!configChildren(["sharing.manage_all"], true).some((item) => item.label === "Config"));
+});
+
+test("Computers belongs to regular Den Manage and needs both remoteDevices and computers.view", () => {
+  for (const remoteDevices of [false, true]) {
+    for (const permitted of [false, true]) {
+      const sections = buildDashboardNavSections({
+        orgSlug: "workspace", access: getOrgAccessFlags("member", false, permitted ? ["computers.view"] : []),
+        capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, remoteDevices,
+      });
+      const manage = sections.find((section) => section.label === "Manage");
+      const computers = manage?.items.find((item) => item.label === "Computers");
+      assert.equal(Boolean(computers), remoteDevices && permitted);
+      if (computers) {
+        assert.equal(computers.href, "/dashboard/computers");
+        assert.ok(flattenNavigationForSearch(sections).find((item) => item.label === "Computers")?.keywords.includes("inventory"));
+      }
+    }
+  }
+  const admin = getOrgAccessFlags("admin", false);
+  assert.ok(admin.canViewComputers);
+  assert.ok(canOpenAdminRoute("/dashboard/computers", admin));
+  assert.ok(!canOpenAdminRoute("/dashboard/computers", getOrgAccessFlags("member", false, ["desktop_policies.view"])));
+  assert.match(adminRouteLockedMessage("/dashboard/computers"), /View team computers/);
 });

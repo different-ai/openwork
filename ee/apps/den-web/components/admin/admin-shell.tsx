@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { Activity, ArrowLeft, Building2, ChartNoAxesCombined, Flag, FlaskConical, LayoutDashboard, MonitorSmartphone, ScanSearch, Server, ShieldAlert, Users } from "lucide-react";
+import { Activity, ArrowLeft, Building2, ChartNoAxesCombined, Flag, FlaskConical, LayoutDashboard, ScanSearch, Server, ShieldAlert, Users } from "lucide-react";
 import { AdminBreadcrumbs } from "./admin-breadcrumbs";
 import { AdminAccessScreen } from "./admin-access-screen";
 import { requestAdmin, withStoredBearer, type AdminResult } from "./admin-request";
@@ -15,7 +15,6 @@ const SECTIONS = [
   { label: "Overview", href: "/admin", icon: LayoutDashboard },
   { label: "Users", href: "/admin/users", icon: Users },
   { label: "Organizations", href: "/admin/organizations", icon: Building2 },
-  { label: "Devices", href: "/admin/devices", icon: MonitorSmartphone },
   { label: "Opportunities", href: "/admin/opportunities", icon: ScanSearch },
   { label: "Sandboxes", href: "/admin/sandbox-orgs", icon: FlaskConical },
   { label: "Features", href: "/admin/feature-usage", icon: Activity },

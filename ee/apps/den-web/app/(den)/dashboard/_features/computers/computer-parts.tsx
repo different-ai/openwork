@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Check, Copy } from "lucide-react";
-import { absoluteTime, relativeTime, type DeviceTone } from "./devices-format";
+import { absoluteTime, relativeTime, type DeviceTone } from "./computers-format";
 
 export const secondaryText = "text-[color:var(--dls-text-secondary)]";
 export const hairline = "border-[var(--dls-border)]";
