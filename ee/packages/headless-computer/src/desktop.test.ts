@@ -120,6 +120,41 @@ test("an uncertain provider timeout is health-checked without replaying startup"
   }
 })
 
+test("a start gets one overall time limit, however many steps it needs", async t => {
+  t.mock.timers.enable({ apis: ["Date"] })
+  /** A computer that answers slowly: each command takes `takes` of the mocked clock, and gets `timeoutMs` to finish. */
+  const slow = (takes: { health: number; start: number }) => {
+    const limits: Array<[string, number | undefined]> = []
+    const provider = {
+      describe: () => ({ platform: { os: "linux" } }),
+      blocks: {
+        files: { write: async () => {} },
+        run: async (_box: SandboxHandle, { command, timeoutMs }: { command: string; timeoutMs?: number }) => {
+          const step = command.includes("call '/health'") ? "health" : command.includes(" start ") ? "start" : command.includes(" install ") ? "install" : "other"
+          if (step !== "other") limits.push([step, timeoutMs])
+          if (step === "health") { t.mock.timers.tick(takes.health); return { exitCode: 1, stdout: "", stderr: "" } }
+          if (step !== "start") return { exitCode: 0, stdout: "", stderr: "" }
+          if (limits.filter(([name]) => name === "start").length === 1) {
+            t.mock.timers.tick(takes.start)
+            return { exitCode: 1, stdout: "", stderr: "The desktop guest is out of date. Install this runner's guest.\n" }
+          }
+          t.mock.timers.tick(timeoutMs ?? 0)
+          throw new SandboxError({ providerId: "fake", code: "timeout", message: "Command deadline exceeded" })
+        },
+      },
+    } as unknown as SandboxProvider
+    return { desktop: new Desktop(provider), limits }
+  }
+
+  const hung = slow({ health: 9_000, start: 10_000 })
+  await assert.rejects(hung.desktop.start(box), unresponsive)
+  assert.deepEqual(hung.limits, [["health", 9_000], ["start", 31_000], ["install", 21_000], ["start", 21_000], ["health", 9_000]], "the second start gets what is left, not another 45 s")
+
+  const spent = slow({ health: 9_000, start: 30_500 })
+  await assert.rejects(spent.desktop.start(box), unresponsive)
+  assert.deepEqual(spent.limits.map(([step]) => step), ["health", "start"], "nothing more is tried once the time is up")
+})
+
 test("other runtime failures are not retried or mistaken for a missing snapshot", async () => {
   for (const failure of ["Cloud display did not start", "The desktop network guard needs iptables", new Error("Provider unavailable")]) {
     const computer = coldStart({ failures: [failure] })

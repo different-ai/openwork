@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { z } from "zod"
 import type { RunnerSnapshot } from "@openwork-ee/headless-protocol"
 import { buildWorkbotTurns, toWorkbotPageEvent } from "@openwork-ee/workbot-server"
-import { browserTask, computerWork, finishedSummary, keepsCard, nextWorking } from "../../../packages/workbot-ui/src/computer-work.js"
+import { browserTask, computerWork, finishedSummary, keepsCard, nextWorking, taskHeader } from "../../../packages/workbot-ui/src/computer-work.js"
 import { workbotActivity } from "../../../packages/workbot-ui/src/activity.js"
 import { threadSchema, type LiveText, type WorkbotTurn } from "../../../packages/workbot-ui/src/data.js"
 
@@ -203,6 +203,19 @@ test("browser task has one title through Working, Completed and Failed, without 
   assert.equal(browserTask([{ status: "failed" }], { title, working: false }).status, "failed", "the helper also tolerates an older experimental failed status")
   for (const status of ["failed", "stopped"] as const) assert.equal(browserTask([{ status: "done" }], { title, working: false, status }).status, "failed")
   assert.equal(browserTask([{ status: "running" }], { title, working: false }).status, "failed")
+})
+
+test("a task the person rebuilt the computer under reads as stopped, not as a failure the rebuild didn't fix", () => {
+  const failed = { status: "failed" as const, reason: "The computer action couldn't finish." }
+  assert.deepEqual(taskHeader(failed, false), { status: "Failed", failed: true, reason: failed.reason })
+  for (const task of [failed, { status: "working" as const }]) {
+    const header = taskHeader(task, true)
+    assert.deepEqual([header?.status, header?.failed], ["Stopped", false])
+    assert.match(header?.reason ?? "", /rebuilt.*Ask again/)
+  }
+  assert.deepEqual(taskHeader({ status: "completed" }, true), { status: "Completed", failed: false }, "finished work stays finished")
+  assert.equal(taskHeader({ status: "working" }, false), null, "a running task shows the live computer's state")
+  assert.equal(taskHeader(undefined, true), null)
 })
 
 test("browser tool failures and cut-off calls survive server storage without leaking raw errors or becoming Computer", () => {

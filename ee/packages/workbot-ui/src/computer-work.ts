@@ -136,6 +136,18 @@ export function browserTask(
 }
 
 /**
+ * What a task's view says above the screen, or null while the live computer's state speaks instead. `rebuilt`: the
+ * person rebuilt the computer from this view, which stopped the task. "Failed" above the new computer would read as
+ * if rebuilding hadn't helped.
+ */
+export function taskHeader(task: Pick<BrowserTask, "status" | "reason"> | undefined, rebuilt: boolean): { status: "Completed" | "Failed" | "Stopped"; failed: boolean; reason?: string } | null {
+  if (!task) return null;
+  if (task.status === "completed") return { status: "Completed", failed: false };
+  if (rebuilt) return { status: "Stopped", failed: false, reason: "Your computer was rebuilt, which stopped this task. Ask again to run it on the new computer." };
+  return task.status === "failed" ? { status: "Failed", failed: true, ...(task.reason ? { reason: task.reason } : {}) } : null;
+}
+
+/**
  * What finished work on a screen comes to, in one line: the page it opened ("Opened google.com", "Opened
  * google.com and 2 more"), else the last thing it said it did, else that it used its browser or computer.
  */

@@ -36,6 +36,10 @@ const UPDATING = "This computer is updating to a new version, which starts once 
  */
 const IDLE_REPLACEMENT_RETRY_MS = 24 * 60 * 60_000
 const NEEDED_REPLACEMENT_RETRY_MS = 10 * 60_000
+/** A computer replaced because its desktop wouldn't start isn't replaced again this soon: another fresh one won't do better. */
+const RECOVERY_RETRY_MS = 10 * 60_000
+/** How long a computer whose desktop won't start gets to hand its workspace and browser profile to its replacement. */
+const RECOVERY_CARRY_MS = 20_000
 
 const WORKSPACE = "/workspace"
 const FILES_DIR = `${WORKSPACE}/files`
@@ -87,6 +91,12 @@ export class Computers {
   private readonly working = new Map<string, number>()
   /** The replacement under way for each session, which concurrent callers (the view and the chat's glimpse) share. */
   private readonly replacing = new Map<string, Promise<SandboxHandle | null>>()
+  /** Of each session's operations in flight (`working`), those still waiting for its desktop to start. */
+  private readonly awaitingDesktop = new Map<string, number>()
+  /** The decision under way on a computer whose desktop won't start, which everyone waiting on that start shares. */
+  private readonly recovering = new Map<string, Promise<SandboxHandle | null>>()
+  /** When each session's computer was last replaced for a desktop that wouldn't start. */
+  private readonly recovered = new Map<string, number>()
 
   private readonly snapshot: string
   private readonly files?: ComputerFiles
@@ -397,31 +407,69 @@ export class Computers {
     }
   }
 
-  private async runningJobs(box: SandboxHandle) {
-    const jobs = await this.execute(box, { command: `ls ${WORKSPACE}/.jobs/*.running 2>/dev/null | wc -l`, activity: "maintenance", timeoutMs: 10_000 })
+  private async runningJobs(box: SandboxHandle, timeoutMs = 10_000) {
+    const jobs = await this.execute(box, { command: `ls ${WORKSPACE}/.jobs/*.running 2>/dev/null | wc -l`, activity: "maintenance", timeoutMs })
     return Number(jobs.stdout?.trim() ?? "0")
   }
 
   /**
    * Starts the session's desktop on `box` and returns the computer it runs on. One whose image can't serve this runner
    * is replaced at once when nothing else is running on it (`self`: the caller's own operations in flight), carrying
-   * its browser profile and workspace over; otherwise the caller hears that it is updating.
+   * its browser profile and workspace over; otherwise the caller hears that it is updating. One whose desktop won't
+   * start is replaced the same way (`recover`), so the person isn't left to rebuild it themselves.
    */
   private async startDesktop(sessionId: string, box: SandboxHandle, self = 0): Promise<SandboxHandle> {
     const desktop = this.desktop
     if (!desktop) throw new Error("Desktop access is not configured.")
+    this.awaitingDesktop.set(sessionId, (this.awaitingDesktop.get(sessionId) ?? 0) + self)
     try {
       this.desktops.set(sessionId, await desktop.start(box))
       return box
     } catch (error) {
-      if (!(error instanceof DesktopError) || error.desktopCode !== "desktop_outdated") throw error
+      if (!(error instanceof DesktopError)) throw error
+      if (error.desktopCode === "desktop_unresponsive") {
+        const fresh = await this.recover(sessionId, box)
+        if (!fresh) throw error
+        this.desktops.set(sessionId, await desktop.start(fresh))
+        return fresh
+      }
+      if (error.desktopCode !== "desktop_outdated") throw error
       if ((this.working.get(sessionId) ?? 0) > self || await this.runningJobs(box).catch(() => 1) > 0) throw new DesktopError("desktop_updating", UPDATING)
       if (await desktop.replacedInVain(box, NEEDED_REPLACEMENT_RETRY_MS)) throw error
       const fresh = await this.replace(sessionId, box, { required: true })
       if (!fresh) throw error
       this.desktops.set(sessionId, await desktop.start(fresh))
       return fresh
+    } finally {
+      const left = (this.awaitingDesktop.get(sessionId) ?? self) - self
+      if (left > 0) this.awaitingDesktop.set(sessionId, left)
+      else this.awaitingDesktop.delete(sessionId)
     }
+  }
+
+  /**
+   * The replacement for a computer whose desktop won't start, or null when the computer stays: something other than
+   * that start is running on it, or it is itself a replacement made moments ago.
+   */
+  private recover(sessionId: string, box: SandboxHandle): Promise<SandboxHandle | null> {
+    let pending = this.recovering.get(sessionId)
+    if (!pending) {
+      pending = this.replaceUnresponsive(sessionId, box).finally(() => this.recovering.delete(sessionId))
+      this.recovering.set(sessionId, pending)
+    }
+    return pending
+  }
+
+  private async replaceUnresponsive(sessionId: string, box: SandboxHandle) {
+    if ((this.working.get(sessionId) ?? 0) > (this.awaitingDesktop.get(sessionId) ?? 0)) return null
+    // Remembered by this process only: requests close enough together to replace it over and over keep the process alive.
+    if (Date.now() - (this.recovered.get(sessionId) ?? 0) < RECOVERY_RETRY_MS) return null
+    // One that still answers may be running a background job; one that doesn't has nothing it can hand over.
+    const jobs = await this.runningJobs(box, 5_000).catch(() => null)
+    if (jobs) return null
+    this.recovered.set(sessionId, Date.now())
+    console.log("[headless-computer] replacing a computer whose desktop didn't start", { sessionId, answers: jobs !== null })
+    return this.replace(sessionId, box, { required: true, carryWithinMs: jobs === null ? 0 : RECOVERY_CARRY_MS })
   }
 
   /**
@@ -444,9 +492,10 @@ export class Computers {
   /**
    * Moves the session onto a new computer from the current snapshot, carrying the browser profile and workspace over
    * as far as the old computer can export them; the person's Files are copied in again on next use. When the move is
-   * optional (`required: false`), it only happens with everything carried, and otherwise returns null.
+   * optional (`required: false`), it only happens with everything carried, and otherwise returns null. `carryWithinMs`
+   * limits how long the old computer gets to export them.
    */
-  private replace(sessionId: string, box: SandboxHandle, options: { required: boolean }): Promise<SandboxHandle | null> {
+  private replace(sessionId: string, box: SandboxHandle, options: { required: boolean; carryWithinMs?: number }): Promise<SandboxHandle | null> {
     let pending = this.replacing.get(sessionId)
     if (!pending) {
       pending = this.move(sessionId, box, options).finally(() => this.replacing.delete(sessionId))
@@ -455,11 +504,12 @@ export class Computers {
     return pending
   }
 
-  private async move(sessionId: string, box: SandboxHandle, options: { required: boolean }): Promise<SandboxHandle | null> {
+  private async move(sessionId: string, box: SandboxHandle, options: { required: boolean; carryWithinMs?: number }): Promise<SandboxHandle | null> {
     const started = Date.now()
     const carried: Array<[CarriedState, Uint8Array]> = []
     for (const name of ["workspace", "profile"] as const) {
-      const bytes = await this.desktop?.exportState(box, name).catch(() => null)
+      const left = options.carryWithinMs === undefined ? undefined : started + options.carryWithinMs - Date.now()
+      const bytes = left !== undefined && left <= 0 ? null : await this.desktop?.exportState(box, name, left).catch(() => null)
       if (bytes) carried.push([name, bytes])
       else if (!options.required) return null
     }
