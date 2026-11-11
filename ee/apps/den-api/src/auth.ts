@@ -1036,6 +1036,8 @@ export const auth = betterAuth({
           // One fewer user: billing follows the lower count.
           await cache.org.deleteMembers(organizationId);
           await syncOrganizationBillingQuantities({ organizationId });
+          // Leaving, and any other deletion made through Better Auth: they keep no cloud computer.
+          removeMemberWorkbotComputersInBackground({ organizationId, memberId: normalizeDenTypeId("member", member.id) });
         },
       },
     },
@@ -1445,7 +1447,6 @@ export const auth = betterAuth({
             organizationId: member.organizationId,
             orgMembershipId: member.id,
           });
-          removeMemberWorkbotComputersInBackground({ organizationId: member.organizationId, memberId: member.id });
         }
         return;
       }
