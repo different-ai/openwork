@@ -10,8 +10,8 @@ const desktop = organizationComputerDetailResponseSchema.parse({
   device: {
     id: "rdv_desktop1", kind: "desktop", provider: "openwork_desktop", source: "desktop_app", platform: "darwin", label: "Design laptop",
     availability: "needs_setup", state: "setup_required", statusDetail: "Screen Recording is off", lastSeenAt: reported, createdAt: reported,
-    appVersion: "0.14.2", computerId: "cmp_install1", workbotChat: null,
-    organization: { id: "org_example", name: "Example" }, owner: { memberId: "mem_alex", name: "Alex", email: "alex@example.com" }, shared: false,
+    appVersion: "0.14.2-alpha.31+9f2c1ab", computerId: "cmp_install1", workbotChat: null, canRemove: false, disconnectedAt: null, canDisconnect: true,
+    organization: { id: "org_example", name: "Example" }, owner: { memberId: "mem_alex", name: "Alex", email: "alex@example.com", former: false }, shared: false,
     externalId: "install-4f2a", removedAt: null, recentProblems: 1, lastEvent: null,
   },
   diagnostics: {
@@ -32,7 +32,7 @@ const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " "
 test("computer detail renders supported inventory without platform navigation or raw JSON", () => {
   const html = renderToStaticMarkup(<ComputerDetailView detail={desktop} now={now} standalone />);
   const plain = text(html);
-  assert.match(plain, /Owner Alex Availability Needs setup/);
+  assert.match(plain, /Type Mac Status Needs setup Screen Recording is off Owner Alex Last contact 2 min ago App version 0\.14\.2-alpha\.31\+9f2c1ab/);
   assert.match(plain, /Platform macOS/);
   assert.match(plain, /Operating system macOS 15\.1 arm64/);
   assert.match(plain, /Screen Recording Not granted/);
@@ -47,4 +47,19 @@ test("session inventory exposes kind and report time, not conversation content",
   const html = renderToStaticMarkup(<ComputerDetailView detail={{ ...desktop, diagnostics: null, runner: null, session: { sessionId: "session_a", kind: "workbot", updatedAt: reported, activeTurnSince: null, deletedAt: null } }} now={now} />);
   assert.match(text(html), /Workbot conversation Kind workbot Updated 2 min ago/);
   assert.doesNotMatch(html, /Title|Accessibility|Workspaces/);
+});
+
+test("inside the list the detail still names the owner, last contact and the full version, which a narrow list drops", () => {
+  const plain = text(renderToStaticMarkup(<ComputerDetailView detail={desktop} now={now} />));
+  assert.match(plain, /^ ?Owner Alex Last contact 2 min ago App version 0\.14\.2-alpha\.31\+9f2c1ab Provider OpenWork Desktop/);
+  assert.doesNotMatch(plain, /Type Mac|Disconnected/);
+});
+
+test("a disconnected computer says so in neutral ink, with when, and a former member is never an address", () => {
+  const cut = { ...desktop, device: { ...desktop.device, availability: "offline" as const, disconnectedAt: "2026-11-09T09:00:00Z", canDisconnect: false,
+    owner: { memberId: "mem_gone", name: null, email: "retired-duplicate-usr_01@deleted.invalid", former: true } } };
+  const html = renderToStaticMarkup(<ComputerDetailView detail={cut} now={now} standalone />);
+  assert.match(text(html), /Status Disconnected Sign in on it again to reconnect Owner Former member/);
+  assert.match(text(html), /Disconnected (Nov 9, 2026|9 Nov 2026)/);
+  assert.doesNotMatch(html, /deleted\.invalid|ow-danger|Offline/);
 });

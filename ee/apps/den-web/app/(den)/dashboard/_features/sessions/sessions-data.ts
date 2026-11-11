@@ -175,6 +175,17 @@ export function useMySessions(orgId: string, memberId: string, enabled: boolean)
 }
 
 /**
+ * The same list for a page that only needs each computer's access (My
+ * Computers): read once, not polled. It shares the list's cache.
+ */
+export function useMySessionComputers(orgId: string, memberId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: mySessionsQueryKey(orgId, memberId), enabled, retry: false, staleTime: 30_000,
+    queryFn: ({ signal }) => fetchMySessions(orgId, signal),
+  });
+}
+
+/**
  * One open session: its newest page, merged into the messages already loaded.
  * `live` keeps reading while it works or waits and its computer is connected.
  */

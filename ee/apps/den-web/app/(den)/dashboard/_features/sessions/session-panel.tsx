@@ -5,7 +5,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Square } from "lucide-react";
 import type { RemoteSessionAnswerInput, RemoteSessionPending, RemoteSessionTranscriptMessage } from "@openwork/types/automations";
 import type { MemberSession, MemberSessionComputer, MemberSessionState } from "@openwork/types/den/remote-sessions";
-import { DenBadge } from "../../../_components/ui/badge";
 import { DenButton } from "../../../_components/ui/button";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { DenTextarea } from "../../../_components/ui/textarea";
@@ -25,7 +24,7 @@ import {
   appendSentMessage,
   mergeEarlierPage,
   pendingItemsOf,
-  sessionStateBadge,
+  sessionStateLine,
   sessionTitle,
   toolStatusLabel,
   transcriptSteps,
@@ -142,7 +141,7 @@ export type SessionPanelViewProps = {
 
 /** One session: what was said, what it waits on, and a box to follow up. Everything is given; nothing is fetched here. */
 export function SessionPanelView({ title, computerLabel, workspaceName, state, offline, view, loading, error, retrying, onRetry, earlier, pending, notice, followUp, stop, onClose, now }: SessionPanelViewProps) {
-  const badge = sessionStateBadge(state);
+  const stateLine = sessionStateLine(state);
   const running = view?.read.status === "running";
   const canSend = !offline && !followUp.sending && followUp.draft.trim().length > 0;
   function sendOnChord(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -152,15 +151,14 @@ export function SessionPanelView({ title, computerLabel, workspaceName, state, o
   }
   return <section className="min-w-0 max-w-3xl text-[13px] text-[color:var(--dls-text-primary)]" data-testid="session-panel" aria-busy={loading}>
     <DenButton variant="ghost" size="inline" icon={ArrowLeft} onClick={onClose}>Back to My Sessions</DenButton>
-    <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
-      <div className="min-w-0">
-        <h2 className="break-words text-base font-medium">{title}</h2>
-        <p className={`mt-0.5 flex flex-wrap gap-x-3 text-xs ${secondaryText}`}>
-          {computerLabel ? <span className="break-words">{computerLabel}</span> : null}
-          {workspaceName ? <span className="break-words">{workspaceName}</span> : null}
-        </p>
-      </div>
-      {badge ? <DenBadge tone={badge.tone} size="sm">{badge.label}</DenBadge> : null}
+    {/* The same header as a page: the title, then one line of state. */}
+    <div className="mt-2 min-w-0">
+      <h2 className="break-words text-base font-semibold tracking-tight">{title}</h2>
+      <p className={`mt-0.5 flex flex-wrap items-center gap-x-3 text-[12px] leading-4 ${secondaryText}`} data-testid="session-state-line">
+        {stateLine ? <span className="inline-flex items-center gap-2 text-[color:var(--dls-text-primary)]"><StatusDot tone={stateLine.tone} />{stateLine.label}</span> : null}
+        {computerLabel ? <span className="break-words">{computerLabel}</span> : null}
+        {workspaceName ? <span className="break-words">{workspaceName}</span> : null}
+      </p>
     </div>
 
     {offline ? <p role="status" className={`mt-3 flex items-center gap-2 ${secondaryText}`} data-testid="session-offline">
@@ -179,7 +177,7 @@ export function SessionPanelView({ title, computerLabel, workspaceName, state, o
     </div> : null}
 
     {notice ? <p role="status" className={`mt-3 ${secondaryText}`}>{notice}</p> : null}
-    {pending.items.length ? <div className="mt-4"><PendingCards {...pending} /></div> : null}
+    {pending.items.length ? <PendingCards {...pending} /> : null}
 
     <form className="mt-4" aria-label="Follow up" onSubmit={(event) => { event.preventDefault(); if (canSend) followUp.onSend(); }}>
       <DenTextarea aria-label="Follow-up message" placeholder="Send a follow-up" rows={3} maxLength={100_000}

@@ -31,7 +31,8 @@ export type PendingCardState = {
 };
 export const IDLE_CARD_STATE: PendingCardState = { sending: null, error: null };
 
-const cardClass = `rounded-lg border ${hairline} p-4 text-[13px]`;
+/** Flat, like the rest of the page: each open request is a section closed by a hairline, under the conversation's own. */
+const cardClass = `border-b ${hairline} py-4 text-[13px]`;
 
 function CardError({ message, busy, onRetry }: { message: string; busy: boolean; onRetry: () => void }) {
   return <div role="alert" className="mt-3 flex flex-wrap items-center gap-3">
@@ -134,7 +135,7 @@ export function PendingCards({ items, stateFor, onAnswer, onRetry }: {
   onRetry: (requestId: string) => void;
 }) {
   if (items.length === 0) return null;
-  return <div className="space-y-3" data-testid="session-pending">
+  return <div data-testid="session-pending">
     {items.map((item) => item.kind === "permission"
       ? <PermissionCard key={item.requestId} item={item} state={stateFor(item.requestId)} onAnswer={onAnswer} onRetry={() => onRetry(item.requestId)} />
       : <QuestionCard key={item.requestId} item={item} state={stateFor(item.requestId)} onAnswer={onAnswer} onRetry={() => onRetry(item.requestId)} />)}

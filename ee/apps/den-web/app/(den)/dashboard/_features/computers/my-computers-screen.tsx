@@ -2,27 +2,36 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ChevronRight, LockKeyhole, RefreshCw } from "lucide-react";
-import { REMOTE_DEVICE_AVAILABILITY_LABELS, remoteDeviceTypeLabel, type RemoteDevice, type RemoteDeviceEvent } from "@openwork/types/den/remote-devices";
+import { useQueryClient } from "@tanstack/react-query";
+import { LockKeyhole } from "lucide-react";
+import type { RemoteSessionAccessMode } from "@openwork/types/automations";
+import { remoteDeviceTypeLabel, type RemoteDevice, type RemoteDeviceEvent } from "@openwork/types/den/remote-devices";
+import type { MemberSessionComputer } from "@openwork/types/den/remote-sessions";
 import { DenButton } from "../../../_components/ui/button";
+import { DenPageHeader } from "../../../_components/ui/page-header";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
-import { DenTable, type DenTableColumn } from "../../../_components/ui/table";
 import { getComputersRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../../_lib/den-org";
+import { useDenToast } from "../../_components/den-toast";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { FeatureIntroGate } from "../feature-intros/feature-intro-gate";
+import { useMySessionComputers } from "../sessions/sessions-data";
+import { ACCESS_LABELS, computerAccessNote } from "../sessions/sessions-model";
+import { AddComputerDialog, ComputerMenu, type ComputerActionSet } from "./computer-action-controls";
+import { disconnectOwnConfirm, disconnectedLine, myComputerActions, removeConfirm } from "./computer-actions";
 import { StatusDot, TimeAgo, focusRing, hairline, secondaryText } from "./computer-parts";
-import { AVAILABILITY_TONE, countLabel, type DeviceTone } from "./computers-format";
-import { useMyComputerActivity, useMyComputers } from "./my-computers-data";
+import { LANE, ListRow, RowLaneLabel, RowList, RowListHeader, RowListSkeleton, StatusLane, TimeLane, VersionLane, computerIcon } from "./computer-rows";
+import { SHARED_COMPUTER_LABEL, computerStatus, computersStateLine, duplicateNameNotes, type DeviceTone } from "./computers-format";
+import { ComputersPageHeader, SecondLine } from "./computers-screen";
+import { disconnectMyComputer, myComputersQueryKey, removeMyComputer, renameMyComputer, useMyComputerActivity, useMyComputers } from "./my-computers-data";
 
-const SKELETON_ROWS = ["1", "2", "3"].map((id) => ({ id }));
 const EVENT_TONE: Record<RemoteDeviceEvent["level"], DeviceTone> = { info: "neutral", warning: "warning", error: "danger" };
 const EVENT_LABEL: Record<RemoteDeviceEvent["level"], string> = { info: "Information", warning: "Needs attention", error: "Problem" };
 
 /** What happened to one computer lately, in the sentences Den recorded. No ids or codes: those are for admins. */
 export function MyComputerActivity({ events, now }: { events: readonly RemoteDeviceEvent[]; now: number }) {
   if (events.length === 0) return <p className={`py-2 text-[13px] ${secondaryText}`}>Nothing recorded yet.</p>;
-  return <ul className={`max-w-2xl border-t ${hairline} text-[13px]`} aria-label="Recent activity">
-    {events.map((event) => <li key={event.id} className={`flex min-w-0 items-start gap-3 border-b ${hairline} py-2`} data-level={event.level}>
+  return <ul className="max-w-2xl text-[13px]" aria-label="Recent activity">
+    {events.map((event) => <li key={event.id} className={`flex min-w-0 items-start gap-3 border-b ${hairline} py-2 last:border-b-0`} data-level={event.level}>
       <span className="flex h-5 w-2 shrink-0 items-center"><StatusDot tone={EVENT_TONE[event.level]} label={EVENT_LABEL[event.level]} /></span>
       <p className="min-w-0 flex-1 break-words">{event.message}</p>
       <TimeAgo iso={event.createdAt} now={now} className={`shrink-0 text-right tabular-nums ${secondaryText}`} />
@@ -30,33 +39,54 @@ export function MyComputerActivity({ events, now }: { events: readonly RemoteDev
   </ul>;
 }
 
+/**
+ * What this account's other devices can reach on one computer, as My Sessions
+ * says it, with the same note about why and where to change it. Read-only.
+ */
+export function MyComputerAccessLine({ computer, ceiling }: { computer: Pick<MemberSessionComputer, "supportsAccess" | "access" | "effectiveAccess">; ceiling: RemoteSessionAccessMode }) {
+  const note = computerAccessNote(computer, ceiling);
+  return <p className="mb-3 max-w-2xl text-[13px]" data-testid="my-computer-access">
+    <span className={secondaryText}>Other devices can reach: </span>{ACCESS_LABELS[computer.effectiveAccess]}
+    {note ? <span className={`block text-[12px] leading-4 ${secondaryText}`}>{note}</span> : null}
+  </p>;
+}
+
+/** How many of a member's computers answer right now. A disconnected one never does. */
+export function onlineCount(devices: readonly Pick<RemoteDevice, "availability" | "disconnectedAt">[]): number {
+  return devices.filter((device) => device.availability === "online" && !device.disconnectedAt).length;
+}
+
 /** The member's own and shared computers as rows. `detail` renders under the open row. */
-export function MyComputersTable({ devices, now, openId, onToggle, detail }: {
+export function MyComputerRows({ devices, now, openId, onToggle, action, detail }: {
   devices: readonly RemoteDevice[];
   now: number;
   openId: string;
   onToggle: (deviceId: string) => void;
+  /** The row's `…` menu, in its fixed lane. */
+  action: (device: RemoteDevice) => ReactNode;
   detail: (device: RemoteDevice) => ReactNode;
 }) {
-  const columns: DenTableColumn<RemoteDevice>[] = [
-    { key: "computer", header: "Computer", render: (device) => <button type="button" aria-expanded={device.id === openId} aria-controls={`my-computer-activity-${device.id}`} onClick={() => onToggle(device.id)}
-      data-testid={`my-computer-row-${device.id}`} className={`flex min-w-48 max-w-sm items-start gap-2 rounded-sm text-left ${focusRing}`}>
-      <ChevronRight size={16} strokeWidth={1.5} aria-hidden className={`mt-0.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none ${device.id === openId ? "rotate-90" : ""}`} />
-      <span className="min-w-0">
-        <span className="block break-words font-medium">{device.label}</span>
-        <span className={`mt-0.5 block text-xs ${secondaryText}`}>{remoteDeviceTypeLabel(device)}</span>
-      </span>
-    </button> },
-    { key: "access", header: "Belongs to", render: (device) => device.access === "shared" ? "Shared with your organization" : "You" },
-    { key: "availability", header: "Availability", render: (device) => <div className="min-w-32 max-w-xs">
-      <span className="inline-flex items-center gap-2"><StatusDot tone={AVAILABILITY_TONE[device.availability]} />{REMOTE_DEVICE_AVAILABILITY_LABELS[device.availability]}</span>
-      {device.statusDetail ? <p className={`mt-0.5 text-xs ${secondaryText}`}>{device.statusDetail}</p> : null}
-    </div> },
-    { key: "lastSeen", header: "Last contact", render: (device) => <TimeAgo iso={device.lastSeenAt} now={now} className="whitespace-nowrap tabular-nums" /> },
-    { key: "version", header: "App version", render: (device) => device.appVersion ?? "Not reported" },
-  ];
-  return <DenTable columns={columns} rows={devices} getRowKey={(device) => device.id} density="compact"
-    renderRowDetail={(device) => device.id === openId ? <div id={`my-computer-activity-${device.id}`} className="pb-2 pl-6 pt-1">{detail(device)}</div> : null} />;
+  const notes = duplicateNameNotes(devices, (device) => device.access, now);
+  return <RowList label="My computers" header={<RowListHeader lead="Computer" menu chevron>
+    <RowLaneLabel lane={LANE.status}>Status</RowLaneLabel>
+    <RowLaneLabel lane={LANE.time}>Last contact</RowLaneLabel>
+    <RowLaneLabel lane={LANE.version}>App version</RowLaneLabel>
+  </RowListHeader>}>
+    {devices.map((device) => {
+      const open = device.id === openId;
+      return <ListRow key={device.id} icon={computerIcon(device)} name={device.label} testId={`my-computer-row-${device.id}`}
+        secondLine={<SecondLine parts={[remoteDeviceTypeLabel(device), device.access === "shared" ? SHARED_COMPUTER_LABEL : null, notes.get(device.id)]} />}
+        toggle={{ expanded: open, controls: `my-computer-activity-${device.id}`, onToggle: () => onToggle(device.id) }}
+        lanes={<>
+          <StatusLane {...computerStatus(device)} />
+          <TimeLane lane={LANE.time} iso={device.lastSeenAt} now={now} />
+          <VersionLane lane={LANE.version} version={device.appVersion} />
+        </>}
+        action={action(device) ?? null}>
+        {open ? detail(device) : null}
+      </ListRow>;
+    })}
+  </RowList>;
 }
 
 function Activity({ orgId, memberId, deviceId }: { orgId: string; memberId: string; deviceId: string }) {
@@ -66,47 +96,83 @@ function Activity({ orgId, memberId, deviceId }: { orgId: string; memberId: stri
   return <MyComputerActivity events={activity.data} now={Date.now()} />;
 }
 
+/** An open row: what other devices can reach there, when My Sessions lists this computer, then its recent activity. */
+function OpenComputer({ orgId, memberId, device, sessionAccess }: { orgId: string; memberId: string; device: RemoteDevice; sessionAccess: boolean }) {
+  const sessions = useMySessionComputers(orgId, memberId, sessionAccess && Boolean(device.computerId));
+  const computer = device.computerId ? sessions.data?.computers.find((entry) => entry.computerId === device.computerId) : undefined;
+  return <>
+    {computer && sessions.data ? <MyComputerAccessLine computer={computer} ceiling={sessions.data.ceiling} /> : null}
+    <Activity orgId={orgId} memberId={memberId} deviceId={device.id} />
+  </>;
+}
+
 /**
  * My Computers: every member's own view in Den of the computers they have
- * connected to OpenWork and the ones shared with their organization. View
- * only; adding, renaming and removing stay in OpenWork Desktop. The team-wide
- * list for owners and admins is Manage › Computers.
+ * connected to OpenWork and the ones shared with their organization. They
+ * rename, disconnect and remove their own here; the team-wide list for owners
+ * and admins is Manage › Computers.
  */
 export function MyComputersScreen() {
-  const { orgId, orgContext, activeOrg } = useOrgDashboard();
+  const { orgId, orgContext, activeOrg, runReauthableAction } = useOrgDashboard();
+  const queryClient = useQueryClient();
+  const toast = useDenToast();
   const [openId, setOpenId] = useState("");
+  const [adding, setAdding] = useState(false);
   const memberId = orgContext?.currentMember.id ?? "";
   const enabled = Boolean(orgId && orgContext && orgContext.organization.id === orgId && orgFeatureEnabled(orgContext, "remoteDevices"));
   const query = useMyComputers(orgId ?? "", memberId, enabled);
-  if (!orgId || !orgContext) return <div aria-busy="true" aria-label="My Computers"><DenSkeleton className="mb-6 h-5 w-32" />{SKELETON_ROWS.map(({ id }) => <DenSkeleton key={id} className="mb-3 h-10 w-full" />)}</div>;
+  if (!orgId || !orgContext) return <div aria-busy="true" aria-label="My Computers"><DenSkeleton className="mb-8 h-6 w-36" /><RowListSkeleton rows={3} /></div>;
   if (!orgFeatureEnabled(orgContext, "remoteDevices")) return <section className="space-y-4" data-testid="my-computers-locked">
-    <h1 className="text-base font-medium">My Computers</h1>
-    <p className={`flex items-start gap-2 text-sm ${secondaryText}`}><LockKeyhole size={16} strokeWidth={1.5} aria-hidden className="mt-0.5 shrink-0" />
+    <DenPageHeader size="compact" title="My Computers" />
+    <p className={`flex items-start gap-2 text-[13px] ${secondaryText}`}><LockKeyhole size={16} strokeWidth={1.5} aria-hidden className="mt-0.5 shrink-0" />
       Computers is not enabled for this organization. Ask an organization owner or admin about availability.
     </p>
   </section>;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
+  const sessionAccess = orgFeatureEnabled(orgContext, "remoteSessionAccess");
   const devices = query.data ?? [];
   const now = Date.now();
-  const skeletonColumns: DenTableColumn<{ id: string }>[] = ["Computer", "Belongs to", "Availability", "Last contact", "App version"].map((header) => ({ key: header, header, render: () => <DenSkeleton className="h-4 w-24" /> }));
+  const refresh = () => queryClient.invalidateQueries({ queryKey: myComputersQueryKey(orgId, memberId) });
+
+  const actionsFor = (device: RemoteDevice): ComputerActionSet => ({
+    actions: myComputerActions(device),
+    name: device.label,
+    disconnectConfirm: disconnectOwnConfirm(device.label),
+    removeConfirm: removeConfirm(device.label),
+    onDisconnect: async () => {
+      const result: { signedOut: boolean | null } = { signedOut: null };
+      await runReauthableAction("disconnect-my-computer", async () => { result.signedOut = (await disconnectMyComputer(orgId, device.id)).signedOut; });
+      if (result.signedOut !== null) toast({ title: disconnectedLine(result.signedOut) });
+      await refresh();
+    },
+    onRemove: async () => {
+      await runReauthableAction("remove-my-computer", async () => { await removeMyComputer(orgId, device.id); });
+      toast({ title: `Removed ${device.label} from the list` });
+      setOpenId((current) => current === device.id ? "" : current);
+      await refresh();
+    },
+    onRename: async (label) => {
+      await runReauthableAction("rename-my-computer", async () => { await renameMyComputer(orgId, device.id, label); });
+      await refresh();
+    },
+  });
+
   return <section className="min-w-0 text-[color:var(--dls-text-primary)]" data-testid="my-computers" aria-busy={query.isFetching}>
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <h1 className="text-base font-medium">My Computers</h1>
-      <DenButton size="sm" variant="secondary" icon={RefreshCw} loading={query.isFetching} onClick={() => void query.refetch()}>Refresh</DenButton>
-    </div>
-    {query.error ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-sm"><p>{query.error.message}{query.data ? " Showing the last known list." : ""}</p><DenButton variant="secondary" size="sm" onClick={() => void query.refetch()}>Try again</DenButton></div> : null}
+    <ComputersPageHeader title="My Computers" state={query.data ? computersStateLine({ online: onlineCount(devices), total: devices.length }) : null}
+      refreshing={query.isFetching} onRefresh={() => void query.refetch()} onAdd={() => setAdding(true)} />
+    <AddComputerDialog open={adding} onClose={() => setAdding(false)} />
+    {query.error ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-[13px]"><p>{query.error.message}{query.data ? " Showing the last known list." : ""}</p><DenButton variant="secondary" size="sm" onClick={() => void query.refetch()}>Try again</DenButton></div> : null}
     <FeatureIntroGate introKey="my-computers" facts={query.data ? { computers: query.data.length } : null}>
-      {query.data ? <p className={`mb-3 text-xs tabular-nums ${secondaryText}`}>{countLabel(devices.length, "computer")}</p> : null}
       <div className="min-w-0">
-        {!query.data ? query.isPending ? <div aria-hidden="true"><DenTable columns={skeletonColumns} rows={SKELETON_ROWS} getRowKey={(row) => row.id} density="compact" /></div> : null
-          : devices.length ? <MyComputersTable devices={devices} now={now} openId={openId} onToggle={(id) => setOpenId((current) => current === id ? "" : id)}
-              detail={(device) => <Activity orgId={orgId} memberId={memberId} deviceId={device.id} />} />
-            : <p className={`py-6 text-sm ${secondaryText}`}>No computers yet. Sign in to OpenWork Desktop with this organization and this computer appears here.</p>}
+        {!query.data ? query.isPending ? <RowListSkeleton rows={3} /> : null
+          : devices.length ? <MyComputerRows devices={devices} now={now} openId={openId} onToggle={(id) => setOpenId((current) => current === id ? "" : id)}
+              action={(device) => <ComputerMenu set={actionsFor(device)} idPrefix="my-computer" id={device.id} />}
+              detail={(device) => <OpenComputer orgId={orgId} memberId={memberId} device={device} sessionAccess={sessionAccess} />} />
+            : <p className={`border-y ${hairline} py-6 text-[13px] ${secondaryText}`}>No computers yet. Sign in to OpenWork on a computer with this organization and it appears here.</p>}
       </div>
-      <p className={`mt-6 max-w-2xl text-xs ${secondaryText}`}>
-        Add, rename or remove computers in OpenWork Desktop, under Settings › Devices. Being listed here does not start a computer or grant access to it.
-        {access.canViewComputers ? <> Your whole team&apos;s computers are in <Link href={getComputersRoute(activeOrg?.slug)} className={`underline underline-offset-2 ${focusRing}`}>Manage › Computers</Link>.</> : null}
-      </p>
+      {access.canViewComputers ? <p className={`mt-4 text-[12px] leading-4 ${secondaryText}`}>
+        Your whole team&apos;s computers are in <Link href={getComputersRoute(activeOrg?.slug)} className={`underline underline-offset-2 ${focusRing}`}>Manage &gt; Computers</Link>.
+      </p> : null}
     </FeatureIntroGate>
   </section>;
 }

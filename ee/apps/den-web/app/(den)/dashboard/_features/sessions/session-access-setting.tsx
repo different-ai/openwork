@@ -1,13 +1,14 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useState, type ReactNode } from "react";
 import { LockKeyhole } from "lucide-react";
 import type { RemoteSessionAccessMode } from "@openwork/types/automations";
 import { DenButton } from "../../../_components/ui/button";
-import { DenOptionCard } from "../../../_components/ui/option-card";
+import { DenSelect } from "../../../_components/ui/select";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { orgFeatureEnabled, permissionLockReason, type DenOrgContext } from "../../../_lib/den-org";
-import { SavedUndoLine } from "../../_components/scoped-setting";
+import { ItemSection } from "../../_components/item-list";
+import { SavedUndoLine, SettingRow } from "../../_components/scoped-setting";
 import { hairline, secondaryText } from "../computers/computer-parts";
 import { useRemoteSessionSettings, useSaveRemoteSessionSettings } from "./sessions-data";
 
@@ -30,12 +31,28 @@ export const SESSION_ACCESS_OPTIONS: ReadonlyArray<{ value: RemoteSessionAccessM
   },
 ];
 
+export const SESSION_ACCESS_LABEL = "Sessions other devices can reach";
+const LABEL_ID = "session-access-label";
+
 const SAVED_LINES: Record<RemoteSessionAccessMode, string> = {
   created: "Saved. Other devices reach only sessions started remotely.",
   all: "Saved. Members can now choose all sessions for their own computers.",
 };
 
-export function SessionAccessSettingView({ access, canEdit, saving, saved, error, onChange, onUndo, groupName = "session-access" }: {
+function parseAccess(value: string): RemoteSessionAccessMode | null {
+  return SESSION_ACCESS_OPTIONS.find((option) => option.value === value)?.value ?? null;
+}
+
+/** The "Remote access" group on Manage › Computers: a rule heading over its one settings row. */
+function Section({ busy, children }: { busy?: boolean; children: ReactNode }) {
+  return <div className="mb-8" aria-busy={busy || undefined}>
+    <ItemSection variant="rule" title="Remote access" testId="session-access-setting">
+      <div className={`border-b ${hairline}`}>{children}</div>
+    </ItemSection>
+  </div>;
+}
+
+export function SessionAccessSettingView({ access, canEdit, saving, saved, error, onChange, onUndo }: {
   access: RemoteSessionAccessMode;
   canEdit: boolean;
   saving: boolean;
@@ -44,22 +61,24 @@ export function SessionAccessSettingView({ access, canEdit, saving, saved, error
   error: string | null;
   onChange: (access: RemoteSessionAccessMode) => void;
   onUndo: () => void;
-  /** Groups the two radios; unique per instance so another group on the page cannot uncheck them. */
-  groupName?: string;
 }) {
-  return <section className={`mt-10 border-t ${hairline} pt-6`} aria-labelledby="session-access-heading" data-testid="session-access-setting">
-    <h2 id="session-access-heading" className="mb-3 text-sm font-medium">Sessions other devices can reach</h2>
-    {!canEdit ? <p className={`mb-3 flex items-start gap-2 text-sm ${secondaryText}`} data-testid="session-access-locked">
+  const current = SESSION_ACCESS_OPTIONS.find((option) => option.value === access) ?? SESSION_ACCESS_OPTIONS[0];
+  return <Section>
+    {/* One line of what the current value means, under the row. */}
+    <SettingRow flush label={SESSION_ACCESS_LABEL} labelId={LABEL_ID} stateLine={<span data-testid="session-access-meaning">{current?.description}</span>}>
+      <div className="w-72 max-w-full">
+        <DenSelect size="sm" aria-labelledby={LABEL_ID} data-testid="session-access-select" value={access} disabled={!canEdit || saving}
+          onChange={(event) => { const next = parseAccess(event.target.value); if (next && next !== access) onChange(next); }}>
+          {SESSION_ACCESS_OPTIONS.map((option) => <option key={option.value} value={option.value} data-testid={`session-access-${option.value}`}>{option.title}</option>)}
+        </DenSelect>
+      </div>
+    </SettingRow>
+    {!canEdit ? <p className={`flex items-start gap-2 pb-3 text-[13px] ${secondaryText}`} data-testid="session-access-locked">
       <LockKeyhole size={16} strokeWidth={1.5} aria-hidden className="mt-0.5 shrink-0" />{permissionLockReason("organization.update")}
     </p> : null}
-    <div role="radiogroup" aria-labelledby="session-access-heading" className="grid max-w-2xl gap-2">
-      {SESSION_ACCESS_OPTIONS.map((option) => <DenOptionCard key={option.value} type="radio" name={groupName} testId={`session-access-${option.value}`}
-        title={option.title} description={option.description} checked={access === option.value} disabled={!canEdit || saving}
-        onChange={(checked) => { if (checked && option.value !== access) onChange(option.value); }} />)}
-    </div>
-    {error ? <p role="alert" className="mt-3 max-w-2xl break-words text-sm text-[var(--ow-danger)]">{error}</p> : null}
-    {saved && !error ? <div className="mt-3 max-w-2xl"><SavedUndoLine message={SAVED_LINES[saved]} pending={saving} onUndo={onUndo} /></div> : null}
-  </section>;
+    {error ? <p role="alert" className="break-words pb-3 text-[13px] text-[var(--ow-danger)]">{error}</p> : null}
+    {saved && !error ? <div className="-mx-1 pb-3"><SavedUndoLine message={SAVED_LINES[saved]} pending={saving} onUndo={onUndo} /></div> : null}
+  </Section>;
 }
 
 /** Manage › Computers: which sessions members may let their other devices reach. Saves on change, with Undo. */
@@ -68,7 +87,6 @@ export function SessionAccessSetting({ orgId }: { orgId: string }) {
   const save = useSaveRemoteSessionSettings(orgId);
   const [saved, setSaved] = useState<{ access: RemoteSessionAccessMode; previous: RemoteSessionAccessMode } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const groupName = useId();
   const current = query.data?.settings.access;
 
   async function change(next: RemoteSessionAccessMode, undo: boolean) {
@@ -82,11 +100,12 @@ export function SessionAccessSetting({ orgId }: { orgId: string }) {
     }
   }
 
-  if (!query.data || !current) return <section className={`mt-10 border-t ${hairline} pt-6`} aria-labelledby="session-access-heading" data-testid="session-access-setting" aria-busy={query.isPending}>
-    <h2 id="session-access-heading" className="mb-3 text-sm font-medium">Sessions other devices can reach</h2>
-    {query.error ? <div role="alert" className="flex flex-wrap items-center gap-3 text-sm"><p>{query.error.message}</p><DenButton variant="secondary" size="sm" loading={query.isFetching} onClick={() => void query.refetch()}>Try again</DenButton></div>
-      : <div aria-hidden="true" className="grid max-w-2xl gap-2"><DenSkeleton className="h-16 w-full" /><DenSkeleton className="h-16 w-full" /></div>}
-  </section>;
+  if (!query.data || !current) return <Section busy={query.isPending}>
+    <SettingRow flush label={SESSION_ACCESS_LABEL} labelId={LABEL_ID}>
+      {query.error ? <div role="alert" className="flex flex-wrap items-center justify-end gap-3 text-[13px]"><p>{query.error.message}</p><DenButton variant="secondary" size="sm" loading={query.isFetching} onClick={() => void query.refetch()}>Try again</DenButton></div>
+        : <DenSkeleton className="h-8 w-72 max-w-full rounded-lg" />}
+    </SettingRow>
+  </Section>;
 
   return <SessionAccessSettingView
     access={save.isPending && save.variables ? save.variables : current}
@@ -96,7 +115,6 @@ export function SessionAccessSetting({ orgId }: { orgId: string }) {
     error={error}
     onChange={(next) => void change(next, false)}
     onUndo={() => { if (saved) void change(saved.previous, true); }}
-    groupName={groupName}
   />;
 }
 

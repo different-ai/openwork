@@ -1,18 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, LockKeyhole } from "lucide-react";
+import { ArrowLeft, ChevronRight, Laptop, LockKeyhole, MessageSquare } from "lucide-react";
 import type { RemoteSessionAccessMode } from "@openwork/types/automations";
 import type { MemberSession, MemberSessionComputer } from "@openwork/types/den/remote-sessions";
-import { DenBadge } from "../../../_components/ui/badge";
 import { DenButton } from "../../../_components/ui/button";
+import { DenPageHeader } from "../../../_components/ui/page-header";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
-import { DenTable, type DenTableColumn } from "../../../_components/ui/table";
 import { orgFeatureEnabled, type DenOrgContext } from "../../../_lib/den-org";
+import { ItemSection } from "../../_components/item-list";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
-import { StatusDot, TimeAgo, focusRing, secondaryText } from "../computers/computer-parts";
+import { StatusDot, TimeAgo, hairline, secondaryText } from "../computers/computer-parts";
+import { LANE, ListRow, RowLane, RowLaneLabel, RowList, RowListHeader, RowListSkeleton, StatusLane } from "../computers/computer-rows";
 import { FeatureIntroGate } from "../feature-intros/feature-intro-gate";
 import { SessionPanel } from "./session-panel";
 import { attachRemoteSession, useMySessions } from "./sessions-data";
@@ -28,38 +28,38 @@ import {
   lostAttachFailure,
   pendingSummaryLine,
   sessionIdentity,
-  sessionStateBadge,
+  sessionStateDot,
   sessionTitle,
+  sessionsStateLine,
   settleAttachAttempts,
   startedOnComputer,
   type AttachAttempt,
   type AttachAttempts,
 } from "./sessions-model";
 
-const SKELETON_ROWS = ["1", "2", "3"].map((id) => ({ id }));
 const SESSION_PARAM = "session";
+const spaced = "mr-2 last:mr-0";
 
 /**
  * The member's computers and what other devices can reach on each. Read-only:
  * the owner makes that choice on the computer, and this page never changes it.
  */
 export function SessionComputers({ computers, ceiling }: { computers: readonly MemberSessionComputer[]; ceiling: RemoteSessionAccessMode }) {
-  const columns: DenTableColumn<MemberSessionComputer>[] = [
-    { key: "computer", header: "Computer", render: (computer) => <span className="block min-w-40 max-w-xs break-words font-medium">{computer.label}</span> },
-    { key: "status", header: "Status", render: (computer) => <span className="inline-flex items-center gap-2 whitespace-nowrap"><StatusDot tone={computer.online ? "success" : "neutral"} />{computer.online ? "Online" : "Offline"}</span> },
-    { key: "access", header: "Other devices can reach", render: (computer) => {
-      const note = computerAccessNote(computer, ceiling);
-      return <div className="min-w-48 max-w-md">
-        <span className="block">{ACCESS_LABELS[computer.effectiveAccess]}</span>
-        {note ? <span className={`mt-0.5 block text-xs ${secondaryText}`}>{note}</span> : null}
-      </div>;
-    } },
-  ];
-  return <section className="mb-8 min-w-0" aria-labelledby="my-sessions-computers-heading" data-testid="my-sessions-computers">
-    <h2 id="my-sessions-computers-heading" className="mb-3 text-sm font-medium">Your computers</h2>
-    {computers.length ? <DenTable columns={columns} rows={computers} getRowKey={(computer) => computer.computerId} density="compact" />
-      : <p className={`text-sm ${secondaryText}`}>No computers yet. Sign in to OpenWork Desktop with this organization and that computer appears here.</p>}
-  </section>;
+  return <div className="mb-8">
+    <ItemSection variant="rule" title="Your computers" testId="my-sessions-computers">
+      {computers.length ? <RowList label="Your computers" header={<RowListHeader lead="Computer" visuallyHidden><RowLaneLabel lane={LANE.sessionStatus}>Status</RowLaneLabel></RowListHeader>}>
+        {computers.map((computer) => {
+          const note = computerAccessNote(computer, ceiling);
+          return <ListRow key={computer.computerId} icon={Laptop} name={computer.label} secondLineWrap="all"
+            secondLine={<>
+              <span>Other devices can reach: </span><span className={`${spaced} text-[color:var(--dls-text-primary)]`}>{ACCESS_LABELS[computer.effectiveAccess]}</span>
+              {note ? <span className={spaced}>{note}</span> : null}
+            </>}
+            lanes={<StatusLane lane={LANE.sessionStatus} label={computer.online ? "Online" : "Offline"} tone={computer.online ? "success" : "neutral"} />} />;
+        })}
+      </RowList> : <p className={`py-4 text-[13px] ${secondaryText}`}>No computers yet. Sign in to OpenWork on a computer with this organization and it appears here.</p>}
+    </ItemSection>
+  </div>;
 }
 
 type SessionRowsProps = {
@@ -71,73 +71,74 @@ type SessionRowsProps = {
   hrefFor: (commandId: string) => string;
 };
 
+/** The right end of a session's row: a chevron when it opens, Connect when it has to be connected first, or that it is connecting. */
 function SessionConnection({ session, attempt, onConnect }: { session: MemberSession; attempt: AttachAttempt | undefined; onConnect: () => void }) {
-  if (session.reach === "reachable") return null;
+  if (session.reach === "reachable") return <ChevronRight size={16} strokeWidth={1.5} aria-hidden="true" className={`${secondaryText} transition-colors duration-150 group-hover:text-[color:var(--dls-text-primary)]`} />;
   if (session.reach === "connecting" || attempt?.phase === "queued") return <span className={`whitespace-nowrap ${secondaryText}`} role="status">Connecting…</span>;
-  return <div className="flex flex-col items-end gap-1">
-    <DenButton variant="secondary" size="sm" loading={attempt?.phase === "requesting"} onClick={onConnect}
-      aria-label={`Connect to ${sessionTitle(session.title)}`} data-testid={`session-connect-${session.key}`}>Connect</DenButton>
-    {attempt?.phase === "failed" ? <p role="alert" className="max-w-56 break-words text-right text-xs">{attempt.message}</p> : null}
-  </div>;
+  return <DenButton variant="secondary" size="sm" loading={attempt?.phase === "requesting"} onClick={onConnect}
+    aria-label={`Connect to ${sessionTitle(session.title)}`} data-testid={`session-connect-${session.key}`}>Connect</DenButton>;
 }
 
 /**
  * Sessions as rows. Titles, steps and questions are text from the member's computers, shown as text.
- * The columns after the first keep fixed lanes so the two lists on the page line up.
+ * The lanes keep fixed widths so the two lists on the page line up.
  */
-export function SessionsTable({ sessions, now, attemptFor, onConnect, hrefFor }: SessionRowsProps & { sessions: readonly MemberSession[] }) {
-  const columns: DenTableColumn<MemberSession>[] = [
-    { key: "session", header: "Session", render: (session) => {
-      const title = sessionTitle(session.title);
+export function SessionRows({ sessions, label, now, attemptFor, onConnect, hrefFor }: SessionRowsProps & { sessions: readonly MemberSession[]; label: string }) {
+  return <RowList label={label} header={<RowListHeader lead="Session" visuallyHidden>
+    <RowLaneLabel lane={LANE.state}>State</RowLaneLabel>
+    <RowLaneLabel lane={LANE.time}>Updated</RowLaneLabel>
+    <RowLaneLabel lane={LANE.connection}>Connection</RowLaneLabel>
+  </RowListHeader>}>
+    {sessions.map((session) => {
+      const attempt = attemptFor(session);
+      const state = sessionStateDot(session.state);
       const waitsFor = session.state === "waiting" ? pendingSummaryLine(session.pending) : null;
-      return <div className="min-w-48 max-w-md" data-testid={`session-row-${session.key}`} data-reach={session.reach}>
-        {session.reach === "reachable" && session.commandId
-          ? <Link href={hrefFor(session.commandId)} scroll={false} className={`break-words rounded-sm font-medium underline-offset-2 hover:underline ${focusRing}`}>{title}</Link>
-          : <span className="break-words font-medium">{title}</span>}
-        {startedOnComputer(session) ? <span className={`mt-0.5 block text-xs ${secondaryText}`}>Started on this computer</span> : null}
-        {waitsFor ? <span className="mt-0.5 line-clamp-2 break-words text-xs">{waitsFor}</span> : null}
-        {session.latestStep?.trim() ? <span className={`mt-0.5 line-clamp-2 break-words text-xs ${secondaryText}`}>{session.latestStep}</span> : null}
-      </div>;
-    } },
-    { key: "computer", header: "Computer", width: "22%", render: (session) => <div className="min-w-32 max-w-xs">
-      <span className="block break-words">{session.computerLabel?.trim() || "Not reported"}</span>
-      {session.workspaceName?.trim() ? <span className={`mt-0.5 block break-words text-xs ${secondaryText}`}>{session.workspaceName}</span> : null}
-    </div> },
-    { key: "state", header: "State", width: "13%", render: (session) => {
-      const badge = sessionStateBadge(session.state);
-      if (badge) return <DenBadge tone={badge.tone} size="sm">{badge.label}</DenBadge>;
-      return session.reach === "attachable" ? <span className={`whitespace-nowrap ${secondaryText}`}>Not connected</span> : null;
-    } },
-    { key: "updated", header: "Updated", width: "13%", render: (session) => session.updatedAt === null ? <span className={secondaryText}>Not reported</span>
-      : <TimeAgo iso={new Date(session.updatedAt).toISOString()} now={now} className="whitespace-nowrap tabular-nums" /> },
-    { key: "connection", header: "Connection", align: "right", width: "18%", render: (session) => <SessionConnection session={session} attempt={attemptFor(session)} onConnect={() => onConnect(session)} /> },
-  ];
-  return <DenTable columns={columns} rows={sessions} getRowKey={(session) => session.key} density="compact" />;
+      const step = session.latestStep?.trim();
+      return <ListRow key={session.key} icon={MessageSquare} name={sessionTitle(session.title)} wrapName secondLineWrap="two"
+        rowTestId={`session-row-${session.key}`} rowData={{ "data-reach": session.reach }}
+        href={session.reach === "reachable" && session.commandId ? hrefFor(session.commandId) : undefined}
+        secondLine={<>
+          <span className={spaced}>{session.computerLabel?.trim() || "Computer not reported"}</span>
+          {session.workspaceName?.trim() ? <span className={spaced}>{session.workspaceName}</span> : null}
+          {startedOnComputer(session) ? <span className={spaced}>Started on this computer</span> : null}
+          {waitsFor ? <span className={`${spaced} text-[color:var(--dls-text-primary)]`}>{waitsFor}</span> : step ? <span className={spaced}>{step}</span> : null}
+        </>}
+        note={attempt?.phase === "failed" ? <p role="alert" className="relative mt-0.5 break-words text-[12px] leading-4 text-[var(--ow-danger)]">{attempt.message}</p> : null}
+        lanes={<>
+          <RowLane lane={LANE.state} className="items-center gap-2">
+            {state ? <><StatusDot tone={state.tone} /><span className="truncate">{state.label}</span></>
+              : session.reach === "attachable" ? <span className={`truncate ${secondaryText}`}>Not connected</span> : null}
+          </RowLane>
+          <RowLane lane={LANE.time} className={`truncate tabular-nums ${secondaryText}`}>
+            {session.updatedAt === null ? "Not reported" : <TimeAgo iso={new Date(session.updatedAt).toISOString()} now={now} />}
+          </RowLane>
+          <RowLane lane={LANE.connection} className="relative items-center">
+            <SessionConnection session={session} attempt={attempt} onConnect={() => onConnect(session)} />
+          </RowLane>
+        </>} />;
+    })}
+  </RowList>;
 }
 
 /** Sessions that wait on the member first, then the rest, newest first. */
 export function SessionsList({ sessions, ...rows }: SessionRowsProps & { sessions: readonly MemberSession[] }) {
   const { needsYou, rest } = groupSessions(sessions);
-  if (sessions.length === 0) return <p className={`max-w-2xl py-6 text-sm ${secondaryText}`} data-testid="my-sessions-empty">
+  if (sessions.length === 0) return <p className={`max-w-2xl border-y ${hairline} py-6 text-[13px] ${secondaryText}`} data-testid="my-sessions-empty">
     No sessions yet. Tasks you start on another computer show up here. Sessions started on a computer appear once that computer allows all sessions.
   </p>;
   return <div className="min-w-0 space-y-8" data-testid="my-sessions-list">
-    {needsYou.length ? <section aria-labelledby="my-sessions-needs-you-heading" data-testid="my-sessions-needs-you">
-      <h2 id="my-sessions-needs-you-heading" className="mb-3 text-sm font-medium">Needs you</h2>
-      <SessionsTable sessions={needsYou} {...rows} />
-    </section> : null}
-    {rest.length ? <section aria-labelledby="my-sessions-rest-heading" data-testid="my-sessions-rest">
-      <h2 id="my-sessions-rest-heading" className="mb-3 text-sm font-medium">{needsYou.length ? "Other sessions" : "Sessions"}</h2>
-      <SessionsTable sessions={rest} {...rows} />
-    </section> : null}
+    {needsYou.length ? <ItemSection variant="rule" title="Needs you" meta={needsYou.length} testId="my-sessions-needs-you">
+      <SessionRows label="Sessions that need you" sessions={needsYou} {...rows} />
+    </ItemSection> : null}
+    {rest.length ? <ItemSection variant="rule" title={needsYou.length ? "Other sessions" : "Sessions"} meta={rest.length} testId="my-sessions-rest">
+      <SessionRows label={needsYou.length ? "Other sessions" : "Sessions"} sessions={rest} {...rows} />
+    </ItemSection> : null}
   </div>;
 }
 
-function Heading() {
-  return <div className="mb-6">
-    <h1 className="text-base font-medium">My Sessions</h1>
-    <p className={`mt-1 max-w-2xl text-sm ${secondaryText}`}>Sessions on your computers that you can follow and answer from here.</p>
-  </div>;
+/** The page title with one line of state under it. `state` is null while the list loads. */
+function Heading({ state }: { state: string | null }) {
+  return <DenPageHeader size="compact" title="My Sessions" className="mb-6" state={state ?? <DenSkeleton className="mt-1 h-3 w-24" />} />;
 }
 
 /**
@@ -160,10 +161,10 @@ export function MySessionsPage({ orgId, orgContext }: {
   orgId: string | null;
   orgContext: Pick<DenOrgContext, "features" | "organization" | "currentMember"> | null;
 }) {
-  if (!orgId || !orgContext) return <div aria-busy="true" aria-label="My Sessions"><DenSkeleton className="mb-6 h-5 w-32" />{SKELETON_ROWS.map(({ id }) => <DenSkeleton key={id} className="mb-3 h-10 w-full" />)}</div>;
+  if (!orgId || !orgContext) return <div aria-busy="true" aria-label="My Sessions"><DenSkeleton className="mb-8 h-6 w-36" /><RowListSkeleton rows={3} /></div>;
   if (!orgFeatureEnabled(orgContext, "remoteSessionAccess")) return <section className="space-y-4" data-testid="my-sessions-locked">
-    <h1 className="text-base font-medium">My Sessions</h1>
-    <p className={`flex items-start gap-2 text-sm ${secondaryText}`}><LockKeyhole size={16} strokeWidth={1.5} aria-hidden className="mt-0.5 shrink-0" />
+    <DenPageHeader size="compact" title="My Sessions" />
+    <p className={`flex items-start gap-2 text-[13px] ${secondaryText}`}><LockKeyhole size={16} strokeWidth={1.5} aria-hidden className="mt-0.5 shrink-0" />
       My Sessions is not enabled for this organization. Ask an organization owner or admin about availability.
     </p>
   </section>;
@@ -211,6 +212,7 @@ export function MySessions({ orgId, memberId, ready }: { orgId: string; memberId
   const sessions = data?.sessions ?? [];
   const now = Date.now();
   const close = () => router.push(pathname, { scroll: false });
+  const stateLine = data ? sessionsStateLine(sessions) : null;
 
   if (openCommandId) {
     const session = findSessionByCommand(sessions, openCommandId);
@@ -218,7 +220,7 @@ export function MySessions({ orgId, memberId, ready }: { orgId: string; memberId
       ? { ...session, commandId: session.commandId, sessionId: session.sessionId, workspaceId: session.workspaceId }
       : null;
     return <section className="min-w-0 text-[color:var(--dls-text-primary)]" data-testid="my-sessions">
-      <Heading />
+      <Heading state={stateLine} />
       {reachable ? <SessionPanel key={reachable.commandId} orgId={orgId} memberId={memberId} session={reachable} onClose={close}
         computer={data?.computers.find((computer) => computer.computerId === reachable.computerId) ?? null} />
         : !data && query.isPending ? <div aria-hidden="true" className="max-w-3xl space-y-3"><DenSkeleton className="h-5 w-64" /><DenSkeleton className="h-4 w-2/3" /><DenSkeleton className="h-4 w-1/2" /></div>
@@ -231,17 +233,16 @@ export function MySessions({ orgId, memberId, ready }: { orgId: string; memberId
 
   // A Connect whose session left the list has no row to report on.
   const lost = lostAttachFailure(attempts, sessions);
-  const skeletonColumns: DenTableColumn<{ id: string }>[] = ["Session", "Computer", "State", "Updated", "Connection"].map((header) => ({ key: header, header, render: () => <DenSkeleton className="h-4 w-24" /> }));
   return <section className="min-w-0 text-[color:var(--dls-text-primary)]" data-testid="my-sessions" aria-busy={query.isPending}>
-    <Heading />
-    {query.error ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-sm"><p>{query.error.message}{data ? " Showing the last known list." : ""}</p><DenButton variant="secondary" size="sm" onClick={() => void query.refetch()}>Try again</DenButton></div> : null}
+    <Heading state={stateLine} />
+    {query.error ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-[13px]"><p>{query.error.message}{data ? " Showing the last known list." : ""}</p><DenButton variant="secondary" size="sm" onClick={() => void query.refetch()}>Try again</DenButton></div> : null}
     {data ? <SessionComputers computers={data.computers} ceiling={data.ceiling} /> : null}
-    {lost ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-sm">
+    {lost ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-[13px]">
       <p>{lost.message}</p>
       <DenButton variant="ghost" size="sm" onClick={() => setAttempts((current) => attachDismissed(current, lost.identity))}>Dismiss</DenButton>
     </div> : null}
     <FeatureIntroGate introKey="my-sessions" facts={data ? { sessions: data.sessions.length } : null}>
-      {!data ? query.isPending ? <div aria-hidden="true"><DenTable columns={skeletonColumns} rows={SKELETON_ROWS} getRowKey={(row) => row.id} density="compact" /></div> : null
+      {!data ? query.isPending ? <RowListSkeleton rows={3} /> : null
         : <SessionsList sessions={sessions} now={now} hrefFor={hrefFor} onConnect={(session) => void connect(session)} attemptFor={(session) => attempts[sessionIdentity(session)]} />}
     </FeatureIntroGate>
   </section>;

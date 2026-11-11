@@ -5,7 +5,8 @@ import { Check, Copy } from "lucide-react";
 import { absoluteTime, relativeTime, type DeviceTone } from "./computers-format";
 
 export const secondaryText = "text-[color:var(--dls-text-secondary)]";
-export const hairline = "border-[var(--dls-border)]";
+/** One hairline between rows; it follows the dashboard shell so flat lists read the same on a tinted or a white canvas. */
+export const hairline = "border-[var(--den-list-line)]";
 export const focusRing = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--dls-text-secondary)]";
 
 const DOT_TONE: Record<DeviceTone, string> = {

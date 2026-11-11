@@ -293,3 +293,18 @@ test("a failed Connect whose session left the list is reported by the page, sinc
   assert.equal(lostAttachFailure(attachRequested({}, identity), []), null);
   assert.equal(lostAttachFailure({}, []), null);
 });
+
+test("a state is one word with a dot whose colour marks only what needs attention", async () => {
+  const { sessionStateDot, sessionStateLine } = await import("./sessions-model");
+  assert.deepEqual(sessionStateDot("waiting"), { label: "Needs you", tone: "warning" });
+  assert.deepEqual(sessionStateDot("running"), { label: "Working", tone: "success" });
+  assert.deepEqual(sessionStateDot("idle"), { label: "Idle", tone: "neutral" });
+  assert.deepEqual(sessionStateDot("starting"), { label: "Starting", tone: "neutral" });
+  assert.deepEqual(sessionStateDot("error"), { label: "Error", tone: "danger" });
+  assert.equal(sessionStateDot("unknown"), null);
+  // Under an open session's title the same state is said to the person reading it.
+  assert.deepEqual(sessionStateLine("waiting"), { label: "Waiting for you", tone: "warning" });
+  assert.deepEqual(sessionStateLine("running"), { label: "Working", tone: "success" });
+  assert.deepEqual(sessionStateLine("idle"), { label: "Idle", tone: "neutral" });
+  assert.equal(sessionStateLine("unknown"), null);
+});

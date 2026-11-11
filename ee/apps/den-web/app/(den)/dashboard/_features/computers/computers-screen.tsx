@@ -1,31 +1,43 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, LockKeyhole, RefreshCw, Search } from "lucide-react";
-import { REMOTE_DEVICE_AVAILABILITIES, REMOTE_DEVICE_AVAILABILITY_LABELS, REMOTE_DEVICE_KINDS, REMOTE_DEVICE_PROVIDERS, remoteDeviceTypeLabel, type RemoteDeviceKind } from "@openwork/types/den/remote-devices";
-import { DenButton, buttonVariants } from "../../../_components/ui/button";
-import { DenInput } from "../../../_components/ui/input";
+import { LockKeyhole, Plus, RefreshCw } from "lucide-react";
+import { REMOTE_DEVICE_AVAILABILITIES, REMOTE_DEVICE_AVAILABILITY_LABELS, REMOTE_DEVICE_KINDS, REMOTE_DEVICE_REGISTERABLE_PROVIDERS, remoteDeviceTypeLabel, type RemoteDeviceKind, type RemoteDeviceProvider } from "@openwork/types/den/remote-devices";
+import { DenButton } from "../../../_components/ui/button";
+import { DenPageHeader } from "../../../_components/ui/page-header";
 import { DenSelect } from "../../../_components/ui/select";
 import { DenSegmented } from "../../../_components/ui/segmented";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
-import { DenTable, type DenTableColumn } from "../../../_components/ui/table";
 import { getOrgAccessFlags, orgFeatureEnabled, permissionLockReason, type DenOrgContext } from "../../../_lib/den-org";
+import { useDenToast } from "../../_components/den-toast";
+import { FilterInput } from "../../_components/item-list";
+import { TeamsListLocked } from "../../_components/teams-list-row";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { FeatureIntroGate } from "../feature-intros/feature-intro-gate";
-import { ComputerDetail } from "./computer-detail";
-import { RegisteredInstances } from "./registered-instances";
 import { OrgSessionAccessSetting } from "../sessions/session-access-setting";
-import { StatusDot, TimeAgo, focusRing, hairline, secondaryText } from "./computer-parts";
-import { useComputers } from "./computers-data";
-import { AVAILABILITY_TONE, KIND_LABELS, PROVIDER_LABELS, clearComputerFilters, countLabel, devicePageCount, hasComputerFilters, ownerLabel, parseDeviceAvailability, parseDeviceProvider, readComputerFilters, writeComputerFilters, type ComputerFilters, type OrganizationComputer } from "./computers-format";
+import { AddComputerDialog, ComputerActionButtons, ComputerMenu, type ComputerActionSet } from "./computer-action-controls";
+import { disconnectLocked, disconnectOwnerName, disconnectTeamConfirm, disconnectedLine, removeConfirm, teamComputerActions } from "./computer-actions";
+import { ComputerDetail } from "./computer-detail";
+import { focusRing, hairline, secondaryText } from "./computer-parts";
+import { LANE, ListRow, OwnerLane, RowLaneLabel, RowList, RowListHeader, RowListSkeleton, StatusLane, TimeLane, VersionLane, computerIcon } from "./computer-rows";
+import { disconnectOrganizationComputer, removeOrganizationComputer, useComputers } from "./computers-data";
+import { KIND_LABELS, PROVIDER_LABELS, clearComputerFilters, computerStatus, computersStateLine, devicePageCount, duplicateNameNotes, hasComputerFilters, parseDeviceAvailability, parseDeviceProvider, readComputerFilters, staleLine, teamOwnerKey, writeComputerFilters, type ComputerFilters, type OrganizationComputer } from "./computers-format";
+import { RegisteredInstances } from "./registered-instances";
 
 const KIND_OPTIONS: Array<{ value: RemoteDeviceKind | "all"; label: string }> = [
   { value: "all", label: "All computers" },
   ...REMOTE_DEVICE_KINDS.map((kind) => ({ value: kind, label: KIND_LABELS[kind] })),
 ];
-const SKELETON_ROWS = ["1", "2", "3", "4", "5"].map((id) => ({ id }));
+/** Who can run a virtual computer: Workbot's own, then the ones a member registers. */
+const VIRTUAL_PROVIDERS: readonly RemoteDeviceProvider[] = ["workbot", ...REMOTE_DEVICE_REGISTERABLE_PROVIDERS];
+
+/** What a computer is, then what else its lanes do not say. Spaced apart rather than punctuated. */
+export function SecondLine({ parts }: { parts: ReadonlyArray<string | null | undefined | false> }) {
+  const shown = parts.filter((part): part is string => Boolean(part));
+  return <>{shown.map((part, index) => <span key={index} className="mr-2 last:mr-0">{part}</span>)}</>;
+}
 
 /** Team inventory stays in Den's organization scope; Desktop and Workbot keep their personal inventory. */
 export function ComputersScreen() {
@@ -33,20 +45,108 @@ export function ComputersScreen() {
   if (!orgId || !orgContext) return <ComputersSkeleton />;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
   if (!access.canViewComputers || !orgFeatureEnabled(orgContext, "remoteDevices")) return <section className="space-y-4" data-testid="computers-locked">
-    <h1 className="text-base font-medium">Computers</h1>
-    <p className={`flex items-start gap-2 text-sm ${secondaryText}`}><LockKeyhole size={16} strokeWidth={1.5} aria-hidden className="mt-0.5 shrink-0" />
+    <DenPageHeader size="compact" title="Computers" />
+    <p className={`flex items-start gap-2 text-[13px] ${secondaryText}`}><LockKeyhole size={16} strokeWidth={1.5} aria-hidden className="mt-0.5 shrink-0" />
       {!access.canViewComputers ? permissionLockReason("computers.view") : "Computers is not enabled for this organization. Ask an organization owner or admin about availability."}
     </p>
   </section>;
-  return <ComputersList key={orgId} orgId={orgId} orgContext={orgContext} />;
+  return <ComputersList key={orgId} orgId={orgId} orgContext={orgContext} canDisconnectComputers={access.canDisconnectComputers} />;
 }
 
 function ComputersSkeleton() {
-  return <div aria-busy="true" aria-label="Computers"><DenSkeleton className="mb-6 h-5 w-28" />{SKELETON_ROWS.map(({ id }) => <DenSkeleton key={id} className="mb-3 h-10 w-full" />)}</div>;
+  return <div aria-busy="true" aria-label="Computers"><DenSkeleton className="mb-8 h-6 w-32" /><RowListSkeleton rows={5} /></div>;
 }
 
-function ComputersList({ orgId, orgContext }: { orgId: string; orgContext: Pick<DenOrgContext, "features"> }) {
+/** A computers page's title, one line of state under it, and how to add a computer. */
+export function ComputersPageHeader({ title, state, refreshing, onRefresh, onAdd }: {
+  title: string;
+  /** Null while the list is loading. */
+  state: string | null;
+  refreshing: boolean;
+  onRefresh: () => void;
+  onAdd: () => void;
+}) {
+  return <DenPageHeader size="compact" title={title} className="mb-6"
+    state={state ?? <DenSkeleton className="mt-1 h-3 w-24" />}
+    action={<div className="flex items-center gap-1">
+      {/* The list is read when the page opens and after each change; this reads it again on request. */}
+      <button type="button" aria-label="Refresh" title="Refresh" aria-busy={refreshing || undefined} onClick={onRefresh} data-testid="computers-refresh"
+        className={`flex size-8 items-center justify-center rounded-lg ${secondaryText} transition-colors hover:bg-[var(--dls-hover)] hover:text-[color:var(--dls-text-primary)] ${focusRing}`}>
+        <RefreshCw size={16} strokeWidth={1.5} aria-hidden="true" className={refreshing ? "motion-safe:animate-spin" : ""} />
+      </button>
+      {/* On a phone the button keeps its plus and its name for assistive tech; the words come back when there is room. */}
+      <DenButton size="sm" variant="secondary" icon={Plus} onClick={onAdd} aria-label="Add a computer" data-testid="computers-add"><span className="hidden sm:inline">Add a computer</span></DenButton>
+    </div>} />;
+}
+
+/**
+ * A team row's one control: the `…` menu when the viewer may act on the
+ * computer; a lock with the reason on a connected desktop they could
+ * disconnect with the permission; otherwise nothing.
+ */
+export function TeamComputerControl({ device, set, canDisconnectComputers, actionsReported = true }: {
+  device: OrganizationComputer;
+  set: ComputerActionSet;
+  canDisconnectComputers: boolean;
+  /** False while the API is one from before computers could be disconnected: there is no permission to point at yet. */
+  actionsReported?: boolean;
+}) {
+  if (set.actions.length) return <ComputerMenu set={set} idPrefix="computer" id={device.id} />;
+  if (actionsReported && disconnectLocked(device, canDisconnectComputers)) return <span data-testid={`computer-locked-${device.id}`}><TeamsListLocked reason={permissionLockReason("computers.disconnect")} /></span>;
+  return null;
+}
+
+/** The team's computers as rows: who owns each, its status, last contact and version, and what the viewer may do to it. */
+export function TeamComputerRows({ devices, now, openId, onToggle, action, detail }: {
+  devices: readonly OrganizationComputer[];
+  now: number;
+  openId: string;
+  onToggle: (deviceId: string) => void;
+  /** The row's control, in its fixed lane. */
+  action: (device: OrganizationComputer) => ReactNode;
+  detail: (device: OrganizationComputer) => ReactNode;
+}) {
+  const notes = duplicateNameNotes(devices, teamOwnerKey, now);
+  return <RowList label="Computers" header={<RowListHeader lead="Computer" menu chevron>
+    <RowLaneLabel lane={LANE.owner}>Owner</RowLaneLabel>
+    <RowLaneLabel lane={LANE.status}>Status</RowLaneLabel>
+    <RowLaneLabel lane={LANE.teamTime}>Last contact</RowLaneLabel>
+    <RowLaneLabel lane={LANE.teamVersion}>App version</RowLaneLabel>
+  </RowListHeader>}>
+    {devices.map((device) => {
+      const status = computerStatus(device);
+      const open = device.id === openId;
+      return <ListRow key={device.id} icon={computerIcon(device)} name={device.label} testId={`computer-row-${device.id}`}
+        secondLine={<SecondLine parts={[remoteDeviceTypeLabel(device), device.removedAt ? "Removed" : null, notes.get(device.id)]} />}
+        toggle={{ expanded: open, controls: `computer-detail-region-${device.id}`, onToggle: () => onToggle(device.id) }}
+        lanes={<>
+          <OwnerLane device={device} />
+          <StatusLane {...status} />
+          <TimeLane lane={LANE.teamTime} iso={device.lastSeenAt} now={now} />
+          <VersionLane lane={LANE.teamVersion} version={device.appVersion} />
+        </>}
+        action={action(device) ?? null}>
+        {open ? detail(device) : null}
+      </ListRow>;
+    })}
+  </RowList>;
+}
+
+/** Under the list: desktops left out because nobody has heard from them for 30 days, and the way to see them. */
+export function StaleComputersLine({ hidden, shown, onShow, onHide }: { hidden: number; shown: boolean; onShow: () => void; onHide: () => void }) {
+  if (!shown && hidden <= 0) return null;
+  return <p className={`mt-3 flex flex-wrap items-center gap-x-2 text-[12px] leading-4 ${secondaryText}`} data-testid="computers-stale">
+    {shown ? "Showing computers not heard from in 30 days" : staleLine(hidden)}
+    {shown
+      ? <DenButton variant="ghost" size="inline" onClick={onHide} data-testid="computers-hide-stale">Hide</DenButton>
+      : <DenButton variant="ghost" size="inline" onClick={onShow} data-testid="computers-show-stale">Show</DenButton>}
+  </p>;
+}
+
+function ComputersList({ orgId, orgContext, canDisconnectComputers }: { orgId: string; orgContext: Pick<DenOrgContext, "features">; canDisconnectComputers: boolean }) {
   const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+  const toast = useDenToast();
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["organization-computers", orgId] });
   const router = useRouter();
   const pathname = usePathname();
@@ -75,62 +175,81 @@ function ComputersList({ orgId, orgContext }: { orgId: string; orgContext: Pick<
     const timeout = window.setTimeout(() => { writtenSearch.current = search; narrow({ search }); }, 300);
     return () => window.clearTimeout(timeout);
   }, [search, narrow]);
+  const [adding, setAdding] = useState(false);
 
   const query = useComputers(orgId, filters, true);
   const data = query.data;
   const devices = data?.devices ?? [];
   const filtered = hasComputerFilters(filters);
-  const clear = () => { writtenSearch.current = ""; setSearch(""); apply(clearComputerFilters()); };
+  const clear = () => { writtenSearch.current = ""; setSearch(""); apply({ ...clearComputerFilters(), stale: filters.stale }); };
   const toggle = (device: string) => apply({ device: filters.device === device ? "" : device });
   const pages = data ? devicePageCount(data.total, data.pageSize) : 1;
   const now = Date.now();
-  const columns: DenTableColumn<OrganizationComputer>[] = [
-    { key: "computer", header: "Computer", render: (device) => <button type="button" aria-expanded={device.id === filters.device} aria-controls={`computer-detail-${device.id}`} onClick={() => toggle(device.id)}
-      data-testid={`computer-row-${device.id}`} className={`flex min-w-48 max-w-xs items-start gap-2 rounded-sm text-left ${focusRing}`}>
-      <ChevronRight size={16} strokeWidth={1.5} aria-hidden className={`mt-0.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none ${device.id === filters.device ? "rotate-90" : ""}`} />
-      <span className="min-w-0"><span className="block break-words font-medium">{device.label}</span><span className={`mt-0.5 block text-xs ${secondaryText}`}>{remoteDeviceTypeLabel(device)}{device.removedAt ? " (removed)" : ""}</span></span>
-    </button> },
-    { key: "owner", header: "Owner", render: (device) => <span title={device.owner?.email ?? undefined}>{ownerLabel(device)}</span> },
-    { key: "availability", header: "Availability", render: (device) => <div className="min-w-32 max-w-xs"><span className="inline-flex items-center gap-2"><StatusDot tone={AVAILABILITY_TONE[device.availability]} />{REMOTE_DEVICE_AVAILABILITY_LABELS[device.availability]}</span>{device.statusDetail ? <p className={`mt-0.5 text-xs ${secondaryText}`}>{device.statusDetail}</p> : null}</div> },
-    { key: "lastSeen", header: "Last contact", render: (device) => <TimeAgo iso={device.lastSeenAt} now={now} className="whitespace-nowrap tabular-nums" /> },
-    { key: "version", header: "App version", render: (device) => device.appVersion ?? "Not reported" },
-  ];
-  const skeletonColumns: DenTableColumn<{ id: string }>[] = columns.map(({ key, header }) => ({ key, header, render: () => <DenSkeleton className="h-4 w-24" /> }));
+  // The provider only narrows virtual computers; it stays visible while one is still applied from the address bar.
+  const showProvider = filters.kind === "vm" || filters.provider !== "all";
+
+  const actionsFor = (device: OrganizationComputer): ComputerActionSet => ({
+    actions: teamComputerActions(device),
+    name: device.label,
+    disconnectConfirm: disconnectTeamConfirm(device.label, disconnectOwnerName(device), device.organization.name),
+    removeConfirm: removeConfirm(device.label),
+    onDisconnect: async () => {
+      const result: { signedOut: boolean | null } = { signedOut: null };
+      // A sensitive permission: a sign-in that is no longer fresh is confirmed first, then this runs again.
+      await runReauthableAction("disconnect-computer", async () => {
+        result.signedOut = (await disconnectOrganizationComputer(orgId, device.id)).signedOut;
+      });
+      if (result.signedOut !== null) toast({ title: disconnectedLine(result.signedOut) });
+      await refresh();
+    },
+    onRemove: async () => {
+      await runReauthableAction("remove-computer", async () => { await removeOrganizationComputer(orgId, device.id); });
+      toast({ title: `Removed ${device.label} from the list` });
+      if (latestFilters.current.device === device.id) apply({ device: "" });
+      await refresh();
+    },
+  });
+  const detailActions = (device: OrganizationComputer) => <ComputerActionButtons set={actionsFor(device)} idPrefix="computer" id={device.id} />;
+
   return <section className="min-w-0 text-[color:var(--dls-text-primary)]" data-testid="computers" aria-busy={query.isFetching}>
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h1 className="text-base font-medium">Computers</h1>
-      <DenButton size="sm" variant="secondary" icon={RefreshCw} loading={query.isFetching} onClick={() => void refresh()}>Refresh</DenButton>
-    </div>
-    <details className={`mb-5 border-b ${hairline} pb-3 text-sm`}>
-      <summary className={`w-fit cursor-pointer rounded-sm ${focusRing}`}>Register a computer</summary>
-      <div className={`mt-3 max-w-xl space-y-3 ${secondaryText}`}>
-        <p>Sign in to OpenWork Desktop with this organization, add an existing virtual computer in Desktop Settings → Devices, or let Workbot use its cloud computer. Reported computers appear here.</p>
-        <p>Registration does not create a virtual machine or grant remote access. The owner sets up access in Desktop or Workbot.</p>
-        <a href="openwork://open" className={buttonVariants({ variant: "secondary", size: "sm", className: focusRing })}>Open OpenWork Desktop</a>
+    <ComputersPageHeader title="Computers" state={data ? computersStateLine({ online: data.online, total: data.total, filtered }) : null}
+      refreshing={query.isFetching} onRefresh={() => void refresh()} onAdd={() => setAdding(true)} />
+    <AddComputerDialog open={adding} onClose={() => setAdding(false)} />
+    {/* The organization's ceiling for what members may let their other devices reach; renders only with remoteSessionAccess on. */}
+    <OrgSessionAccessSetting orgId={orgId} orgContext={orgContext} />
+    {query.error ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-[13px]"><p>{query.error.message}{data ? " Showing the last known list." : ""}</p><DenButton variant="secondary" size="sm" onClick={() => void query.refetch()}>Try again</DenButton></div> : null}
+    <FeatureIntroGate introKey="computers" facts={data && !filtered ? { computers: data.total + data.staleHidden + data.instancesTotal } : null}>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2" role="group" aria-label="Computer filters">
+        <FilterInput className="w-64 max-w-full" placeholder="Filter by name or owner" value={search} onChange={(value) => setSearch(value.slice(0, 160))} />
+        <div className="flex flex-wrap items-center gap-2">
+          {filtered ? <DenButton size="sm" variant="ghost" onClick={clear}>Clear filters</DenButton> : null}
+          <DenSegmented aria-label="Kind of computer" options={KIND_OPTIONS} value={filters.kind}
+            onChange={(kind) => narrow({ kind, provider: kind === "vm" ? latestFilters.current.provider : "all" })} />
+          {showProvider ? <div className="w-36"><DenSelect size="sm" aria-label="Provider" data-testid="computers-provider" value={filters.provider} onChange={(event) => narrow({ provider: parseDeviceProvider(event.target.value) })}>
+            <option value="all">Any provider</option>
+            {VIRTUAL_PROVIDERS.map((provider) => <option key={provider} value={provider}>{PROVIDER_LABELS[provider]}</option>)}
+          </DenSelect></div> : null}
+          <div className="w-36"><DenSelect size="sm" aria-label="Status" data-testid="computers-status" value={filters.availability} onChange={(event) => narrow({ availability: parseDeviceAvailability(event.target.value) })}>
+            <option value="all">Any status</option>
+            {REMOTE_DEVICE_AVAILABILITIES.map((availability) => <option key={availability} value={availability}>{REMOTE_DEVICE_AVAILABILITY_LABELS[availability]}</option>)}
+          </DenSelect></div>
+        </div>
       </div>
-    </details>
-    {query.error ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-sm"><p>{query.error.message}{data ? " Showing the last known list." : ""}</p><DenButton variant="secondary" size="sm" onClick={() => void query.refetch()}>Try again</DenButton></div> : null}
-    <FeatureIntroGate introKey="computers" facts={data && !filtered ? { computers: data.total + data.instancesTotal } : null}>
-      <div className="mb-5 w-full max-w-sm"><DenInput icon={Search} type="search" aria-label="Search computers and instances" placeholder="Name or computer owner" maxLength={160} value={search} onChange={(event) => setSearch(event.target.value)} /></div>
-      <h2 className="mb-3 text-sm font-medium">Desktop and virtual computers</h2>
-      <div className="flex flex-wrap items-center gap-2" aria-label="Computer filters">
-        <DenSegmented aria-label="Kind of computer" options={KIND_OPTIONS} value={filters.kind} onChange={(kind) => narrow({ kind })} />
-        <div className="w-44"><DenSelect aria-label="Provider" value={filters.provider} onChange={(event) => narrow({ provider: parseDeviceProvider(event.target.value) })}><option value="all">All providers</option>{REMOTE_DEVICE_PROVIDERS.map((provider) => <option key={provider} value={provider}>{PROVIDER_LABELS[provider]}</option>)}</DenSelect></div>
-        <div className="w-44"><DenSelect aria-label="Availability" value={filters.availability} onChange={(event) => narrow({ availability: parseDeviceAvailability(event.target.value) })}><option value="all">All availability</option>{REMOTE_DEVICE_AVAILABILITIES.map((availability) => <option key={availability} value={availability}>{REMOTE_DEVICE_AVAILABILITY_LABELS[availability]}</option>)}</DenSelect></div>
-        {filtered ? <DenButton size="sm" variant="ghost" onClick={clear}>Clear filters</DenButton> : null}
+      {data && filters.device && !devices.some((device) => device.id === filters.device) ? <div className={`mb-4 border-y ${hairline} py-4`}>
+        <ComputerDetail orgId={orgId} deviceId={filters.device} onClose={() => toggle(filters.device)} actions={detailActions} />
+      </div> : null}
+      <div className="min-w-0">
+        {!data ? query.isPending ? <RowListSkeleton rows={5} /> : null
+          : devices.length ? <TeamComputerRows devices={devices} now={now} openId={filters.device} onToggle={toggle}
+              action={(device) => <TeamComputerControl device={device} set={actionsFor(device)} canDisconnectComputers={canDisconnectComputers} actionsReported={data.actionsReported} />}
+              detail={(device) => <ComputerDetail orgId={orgId} deviceId={device.id} actions={detailActions} />} />
+            : <p className={`border-y ${hairline} py-6 text-[13px] ${secondaryText}`}>{filtered ? "No computers match these filters." : "No computers yet. Sign in to OpenWork on a computer with this organization and it appears here."}</p>}
       </div>
-      {data ? <p className={`mt-4 text-xs tabular-nums ${secondaryText}`}>{countLabel(data.total, filtered ? "matching computer" : "computer")}</p> : null}
-      {data && filters.device && !devices.some((device) => device.id === filters.device) ? <div className={`mt-4 border-t ${hairline} pt-4`}><ComputerDetail orgId={orgId} deviceId={filters.device} onClose={() => toggle(filters.device)} /></div> : null}
-      <div className="mt-3 min-w-0">
-        {!data ? query.isPending ? <DenTable columns={skeletonColumns} rows={SKELETON_ROWS} getRowKey={(row) => row.id} density="compact" /> : null
-          : devices.length ? <DenTable columns={columns} rows={devices} getRowKey={(device) => device.id} density="compact" renderRowDetail={(device) => device.id === filters.device ? <div id={`computer-detail-${device.id}`} className="pb-2 pl-6 pt-2"><ComputerDetail orgId={orgId} deviceId={device.id} /></div> : null} />
-            : <p className={`py-6 text-sm ${secondaryText}`}>{filtered ? "No computers match these filters. Clear filters to see all team computers." : "Computers appear after a signed-in desktop or Workbot reports them. Open registration above to get started."}</p>}
-      </div>
+      {data ? <StaleComputersLine hidden={data.staleHidden} shown={filters.stale} onShow={() => narrow({ stale: true })} onHide={() => narrow({ stale: false })} /> : null}
       {data && pages > 1 ? <nav aria-label="Computer pages" className={`mt-4 flex items-center justify-end gap-3 text-xs ${secondaryText}`}>
         <span>Page {data.page} of {pages}</span><DenButton size="sm" variant="secondary" disabled={query.isFetching || data.page <= 1} onClick={() => apply({ page: data.page - 1, device: "" })}>Previous</DenButton><DenButton size="sm" variant="secondary" disabled={query.isFetching || data.page >= pages} onClick={() => apply({ page: data.page + 1, device: "" })}>Next</DenButton>
       </nav> : null}
-      {data ? <RegisteredInstances instances={data.instances} total={data.instancesTotal} page={data.instancePage} pageSize={data.instancePageSize} busy={query.isFetching} onPage={(instancePage) => apply({ instancePage })} now={now} /> : null}
+      {data ? <RegisteredInstances instances={data.instances} total={data.instancesTotal} filtered={Boolean(filters.search.trim())} page={data.instancePage} pageSize={data.instancePageSize} busy={query.isFetching} onPage={(instancePage) => apply({ instancePage })} now={now} /> : null}
     </FeatureIntroGate>
-    {/* The organization's ceiling for what members may let their other devices reach; renders only with remoteSessionAccess on. */}
-    <OrgSessionAccessSetting orgId={orgId} orgContext={orgContext} />
   </section>;
 }

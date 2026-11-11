@@ -32,8 +32,10 @@ test("My Sessions has an intro for every member that never promises access", () 
   assert.ok(intro.example);
   const Example = intro.example.Component;
   const html = renderToStaticMarkup(<Example />);
-  assert.match(html, /<table/);
-  assert.match(html.replace(/<[^>]+>/g, " "), /Needs you/);
+  // The example is the page's own rows: a title over where it runs, then its state as a dot and a word.
+  assert.match(html, /role="table"/);
+  assert.doesNotMatch(html, /<table|<button/);
+  assert.match(html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " "), /Update the release notes Work laptop Needs you Summarize this week(&#x27;|')s tickets Mac mini Working Draft the launch email Work laptop Idle/);
   assert.doesNotMatch(html, /<img|<video|<iframe|<a /);
 });
 

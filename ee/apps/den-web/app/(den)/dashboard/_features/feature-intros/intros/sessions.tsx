@@ -1,6 +1,8 @@
-import { MessagesSquare } from "lucide-react";
-import { DenTable } from "../../../../_components/ui/table";
+import { MessageSquare, MessagesSquare } from "lucide-react";
 import { getMySessionsRoute } from "../../../../_lib/den-org";
+import { StatusDot } from "../../computers/computer-parts";
+import { LANE, ListRow, RowLane, RowLaneLabel, RowList, RowListHeader } from "../../computers/computer-rows";
+import { sessionStateDot } from "../../sessions/sessions-model";
 import { defineFeatureIntro } from "../types";
 import { OPENWORK_DOCS_URL } from "./docs";
 
@@ -9,16 +11,21 @@ export type SessionsFacts = {
   sessions?: number;
 };
 
+const EXAMPLE_SESSIONS = [
+  { id: "waiting", title: "Update the release notes", where: "Work laptop", state: "waiting" },
+  { id: "running", title: "Summarize this week's tickets", where: "Mac mini", state: "running" },
+  { id: "idle", title: "Draft the launch email", where: "Work laptop", state: "idle" },
+] as const;
+
+/** The page's own rows with sample data: a title over where it runs, then its state as a dot and a word. */
 function MySessionsExample() {
-  return <DenTable columns={[
-    { key: "session", header: "Session", render: (row) => row.title },
-    { key: "computer", header: "Computer", render: (row) => row.computer },
-    { key: "state", header: "State", render: (row) => row.state },
-  ]} rows={[
-    { id: "waiting", title: "Update the release notes", computer: "Work laptop", state: "Needs you" },
-    { id: "running", title: "Summarize this week's tickets", computer: "Mac mini", state: "Working" },
-    { id: "idle", title: "Draft the launch email", computer: "Work laptop", state: "Idle" },
-  ]} getRowKey={(row) => row.id} density="compact" />;
+  return <RowList label="Example of your sessions" header={<RowListHeader lead="Session"><RowLaneLabel lane={LANE.state}>State</RowLaneLabel></RowListHeader>}>
+    {EXAMPLE_SESSIONS.map((session) => {
+      const state = sessionStateDot(session.state);
+      return <ListRow key={session.id} icon={MessageSquare} name={session.title} secondLine={session.where}
+        lanes={<RowLane lane={LANE.state} className="items-center gap-2">{state ? <><StatusDot tone={state.tone} /><span className="truncate">{state.label}</span></> : null}</RowLane>} />;
+    })}
+  </RowList>;
 }
 
 /*
