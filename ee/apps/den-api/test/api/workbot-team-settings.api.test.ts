@@ -461,7 +461,8 @@ test("a team's agent settings need both features; off, they are refused and the 
   await setFeature(orgId, true)
   const shown = await call("GET", path)
   assert.equal(field(shown.body, "organization", "agentEnabled"), false)
-  assert.deepEqual(team(shown, research).agent, { inherit: true, enabled: false })
+  assert.deepEqual(team(shown, research).agent, { inherit: true, enabled: false, calendar: "everyone" })
+  assert.equal(field(shown.body, "organization", "agentCalendar"), "everyone")
 
   // Members' agents off: refused like the organization's own routes, nothing saved, and the list omits the group.
   assert.equal((await den.setFeature(orgId, "workbotProactive", false)).status, 200)
@@ -557,8 +558,10 @@ test("a team follows Everyone's agent settings until its first save copies them;
   // The list says which teams have their own and whether agents are on under the policy each has now.
   const listed = await call("GET", path)
   assert.equal(field(listed.body, "organization", "agentEnabled"), true)
-  assert.deepEqual(team(listed, research).agent, { inherit: false, enabled: false })
-  assert.deepEqual(team(listed, design).agent, { inherit: true, enabled: true })
+  // The team's own Calendar choice, next to Everyone's: what the Calendar row's chip compares.
+  assert.deepEqual(team(listed, research).agent, { inherit: false, enabled: false, calendar: "off" })
+  assert.equal(field(listed.body, "organization", "agentCalendar"), "everyone")
+  assert.deepEqual(team(listed, design).agent, { inherit: true, enabled: true, calendar: "everyone" })
 
   // The team's other settings and its agent policy are saved apart and kept apart.
   assert.equal((await call("PUT", `${path}/${research}`, { name: own("Scout") })).status, 200)
@@ -568,7 +571,7 @@ test("a team follows Everyone's agent settings until its first save copies them;
 
   // Back to Everyone's: the policy goes, the name stays; with nothing left the row goes too.
   const back = await call("PUT", `${path}/${research}`, { agent: inherit })
-  assert.deepEqual(team(back, research).agent, { inherit: true, enabled: true })
+  assert.deepEqual(team(back, research).agent, { inherit: true, enabled: true, calendar: "everyone" })
   assert.deepEqual(team(back, research).name, own("Scout"))
   assert.equal(field(await storedSettings(research), "agent"), undefined)
   const again = await call("GET", agentOf(research))

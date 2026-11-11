@@ -21,6 +21,8 @@ import {
   workbotTeamNameToSave,
   workbotTeamRow,
   workbotTeamSavedMessage,
+  workbotTeamCalendarChanged,
+  workbotTeamsCalendarChanged,
   workbotTeamsChanged,
   workbotTeamsOnCount,
   workbotTeamsOverridingCount,
@@ -185,6 +187,29 @@ const withAgents: WorkbotTeamSettingsView = {
   organization: { ...view.organization, agentEnabled: false },
   teams: view.teams.map((team) => ({ ...team, agent: team.teamName === "Design" ? { inherit: false, enabled: true } : { inherit: true, enabled: false } })),
 };
+
+test("the Calendar chip names only teams whose Calendar choice differs from Everyone's, not every team with its own agent settings", () => {
+  const calendars: WorkbotTeamSettingsView = {
+    ...view,
+    organization: { ...view.organization, agentEnabled: true, agentCalendar: "everyone" },
+    teams: view.teams.map((team) => ({
+      ...team,
+      // Sales has its own settings with the same Calendar choice; Design chose differently; the rest follow Everyone.
+      agent: team.teamName === "Sales" ? { inherit: false, enabled: true, calendar: "everyone" as const }
+        : team.teamName === "Design" ? { inherit: false, enabled: true, calendar: "members" as const }
+          : { inherit: true, enabled: true, calendar: "everyone" as const },
+    })),
+  };
+  assert.deepEqual(workbotTeamsChanged(calendars, "agent"), ["Sales", "Design"]);
+  assert.deepEqual(workbotTeamsCalendarChanged(calendars), ["Design"]);
+  const row = (teamName: string) => calendars.teams.find((team) => team.teamName === teamName) ?? { agent: undefined };
+  assert.equal(workbotTeamCalendarChanged(calendars, row("Sales")), false);
+  assert.equal(workbotTeamCalendarChanged(calendars, row("Design")), true);
+  assert.equal(workbotTeamCalendarChanged(calendars, row("Support")), false);
+  // A server from before the field says nothing about the calendar: no chip.
+  assert.deepEqual(workbotTeamsCalendarChanged(withAgents), []);
+  assert.equal(workbotTeamCalendarChanged(view, { agent: undefined }), false);
+});
 
 test("the Members' agents section is there only while the view carries it", () => {
   assert.equal(WORKBOT_AGENTS_LABEL, "Members' agents");

@@ -44,11 +44,13 @@ import {
   workbotOnOffLabel,
   workbotTeamAgentsChanged,
   workbotTeamAgentsSavedMessage,
+  workbotTeamCalendarChanged,
   workbotTeamEnabled,
   workbotTeamModel,
   workbotTeamNameToSave,
   workbotTeamRow,
   workbotTeamSavedMessage,
+  workbotTeamsCalendarChanged,
   workbotTeamsChanged,
   workbotTeamsOnCount,
   type WorkbotEveryoneChange,
@@ -274,7 +276,7 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit,
           )}
         </SettingRow>
         {data && workbotAgentsShown(data) ? (
-          <CalendarRow orgId={orgId} scope={scope} canEdit={canEdit} chip={<ScopeChip scope={scope} changed={false} changedTeams={workbotTeamsChanged(data, "agent")} />} />
+          <CalendarRow orgId={orgId} scope={scope} canEdit={canEdit} chip={<ScopeChip scope={scope} changed={false} changedTeams={workbotTeamsCalendarChanged(data)} />} />
         ) : null}
       </DenCard>
 
@@ -519,7 +521,7 @@ function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, par
           )}
         </SettingRow>
         {data && row && workbotAgentsShown(data) ? (
-          <CalendarRow orgId={orgId} scope={scope} canEdit={canEdit} chip={<ScopeChip scope={scope} changed={row.agent?.inherit === false} />} />
+          <CalendarRow orgId={orgId} scope={scope} canEdit={canEdit} chip={<ScopeChip scope={scope} changed={workbotTeamCalendarChanged(data, row)} />} />
         ) : null}
         <ConflictLine count={row?.conflictingMemberCount ?? 0} setting={WORKBOT_CONFLICT_SETTING} testId="team-workbot-conflicts" />
       </DenCard>

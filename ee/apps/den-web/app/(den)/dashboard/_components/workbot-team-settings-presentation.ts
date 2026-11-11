@@ -149,6 +149,22 @@ export function workbotTeamsChanged(view: Pick<WorkbotTeamSettingsView, "teams">
   return view.teams.filter((team) => team[setting]?.inherit === false).map((team) => team.teamName);
 }
 
+/**
+ * The names of the teams whose members' agents read the calendar differently from Everyone's, for the chip on
+ * Everyone's Calendar row. A team with its own settings for members' agents but the same Calendar choice is not one.
+ */
+export function workbotTeamsCalendarChanged(view: Pick<WorkbotTeamSettingsView, "organization" | "teams">): string[] {
+  const everyones = view.organization.agentCalendar;
+  return view.teams
+    .filter((team) => team.agent?.inherit === false && team.agent.calendar !== undefined && team.agent.calendar !== everyones)
+    .map((team) => team.teamName);
+}
+
+/** Whether a team's Calendar choice is its own: it has its own settings for members' agents, and they differ from Everyone's here. */
+export function workbotTeamCalendarChanged(view: Pick<WorkbotTeamSettingsView, "organization">, row: Pick<WorkbotTeamSettingsTeam, "agent">): boolean {
+  return row.agent?.inherit === false && row.agent.calendar !== undefined && row.agent.calendar !== view.organization.agentCalendar;
+}
+
 /** How many teams turned Workbot on for themselves. */
 export function workbotTeamsOnCount(view: Pick<WorkbotTeamSettingsView, "teams">): number {
   return view.teams.filter((team) => !team.enabled.inherit && team.enabled.value).length;
