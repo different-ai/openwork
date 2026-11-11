@@ -276,8 +276,9 @@ Not checked: Windows, the IDE extension, images, Gemini and Bedrock live.
 ## Turning it off
 
 Turning off `gatewayMemberApiKeys` (or the organization setting) stops member
-keys at the Gateway, and `/api/v1/cursor/*`, `/api/v1/claude-code/*` and `/api/v1/codex/*` answer
-`404` within 15 seconds. The setup screens go with the API keys section. Nothing else is stored
+keys at the Gateway. Requests to `/api/v1/cursor/*`, `/api/v1/claude-code/*`
+and `/api/v1/codex/*` using those keys receive `401 invalid_api_key` within
+15 seconds. The setup screens go with the API keys section. Nothing else is stored
 for Cursor, so the model names people added to Cursor work again when it is
 turned back on.
 
