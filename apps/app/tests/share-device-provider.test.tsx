@@ -128,7 +128,8 @@ test("a shareable key gets one action naming the organization, and a shared one 
     onShareProvider={() => {}}
   />);
   expect(markup).toContain('data-testid="share-provider-anthropic"');
-  expect(markup).toContain("Share with Acme");
+  expect(markup).toContain('aria-label="Share Anthropic with Acme"');
+  expect(markup).toContain(">Share<");
   expect(markup).not.toContain('data-testid="share-provider-openai"');
   expect(markup).toContain("API key · also available from Acme");
   // The section no longer promises what a share changes.
@@ -138,18 +139,31 @@ test("a shareable key gets one action naming the organization, and a shared one 
   expect(markup.match(/>Disconnect</g)?.length).toBe(2);
 });
 
-test("the empty organization section gives direction to an owner and a locked line to a member", () => {
-  const share = renderToStaticMarkup(<OrganizationShareEmpty state={{ kind: "share", provider: { id: "anthropic", name: "Anthropic" } }} organizationName="Acme" onShareProvider={() => {}} />);
-  expect(share).toContain("No organization models are available here yet. People you invite can&#x27;t use the keys on this device.");
-  expect(share).toContain("Share Anthropic with Acme");
+test("each role gets one clear next step when nothing is shared with the organization", () => {
+  // Owner or admin with a shareable key: the key's own row has Share, so this line adds state, not a second button.
+  const share = renderToStaticMarkup(<OrganizationShareEmpty state={{ kind: "share", provider: { id: "anthropic", name: "Anthropic" } }} organizationName="Acme" onOpenDen={() => {}} />);
+  expect(share).toContain("Nothing shared with Acme yet. Teammates can&#x27;t use the keys on this device.");
+  expect(share).not.toContain("<button");
+  // Owner or admin without a shareable key: one action, to AI Gateway.
   const add = renderToStaticMarkup(<OrganizationShareEmpty state={{ kind: "add" }} organizationName="Acme" onOpenDen={() => {}} />);
-  expect(add).toContain("Add or grant access to a provider in AI Gateway.");
+  expect(add).toContain("Nothing shared with Acme yet.");
+  expect(add.match(/<button/g)?.length).toBe(1);
   expect(add).toContain("Add a provider<");
-  const locked = renderToStaticMarkup(<OrganizationShareEmpty state={{ kind: "locked", managerName: "Avery Owner" }} organizationName="Acme" onShareProvider={() => {}} onOpenDen={() => {}} />);
+  // Member: locked, names who manages it, no action they cannot complete.
+  const locked = renderToStaticMarkup(<OrganizationShareEmpty state={{ kind: "locked", managerName: "Avery Owner" }} organizationName="Acme" onOpenDen={() => {}} />);
   expect(locked).toContain('data-state="locked"');
-  expect(locked).toContain("Avery Owner manages AI providers for Acme. Nothing is shared with you yet.");
+  expect(locked).toContain("Avery Owner manages AI providers for Acme.");
   expect(locked).not.toContain("<button");
-  // Blocked is neutral ink, never red.
   expect(locked).toContain("text-muted-foreground");
   expect(locked).not.toMatch(/text-red|destructive/);
 });
+
+test("a member's own key never gets a Share action", () => {
+  const member = renderToStaticMarkup(<AiSettingsView {...view} shareRows={deviceProviderShareRows(member_options(), [anthropic])} onShareProvider={() => {}} />);
+  expect(member).not.toContain("share-provider-");
+  expect(member).toContain("Keys never leave this device");
+});
+
+function member_options(): DeviceShareOptions {
+  return { canShare: false, blocker: "no_permission", managerName: "Avery Owner", verificationRequired: false, providers: [] };
+}

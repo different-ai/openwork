@@ -65,7 +65,7 @@ test("Member credentials never inherit inviter's ready token; sign-in remains pe
   p.credentialSets[0].credentialMode = "member";
   const row = inviteModelAccess([p], null)[0];
   assert.equal(row.state, "member_sign_in");
-  assert.match(inviteModelAccessStateLabel(row.state), /pending/);
+  assert.match(inviteModelAccessStateLabel(row.state), /^Each person signs in$/);
   p.credentialSets[0].configured = false;
   assert.equal(inviteModelAccess([p], null)[0].state, "member_setup");
 });
@@ -90,7 +90,7 @@ test("Provider universe intersects group models; empty is unrestricted and unkno
   const unknown = inviteModelAccess([p], null)[0];
   assert.deepEqual(unknown.modelIds, []);
   assert.equal(unknown.state, "selection_unverified");
-  assert.equal(inviteModelAccessStateLabel(unknown.state), "Model selection could not be verified");
+  assert.equal(inviteModelAccessStateLabel(unknown.state), "Couldn't verify models");
 });
 
 test("Uses upstream model display names, but never borrows an unrelated caller model name or its access", () => {

@@ -54,10 +54,10 @@ export function inviteModelAccess(providers: GatewayAccessProvider[], teamId: st
 
 export function inviteModelAccessStateLabel(state: InviteModelAccess["state"]): string {
   switch (state) {
-    case "shared_configured": return "Shared credential configured";
-    case "member_sign_in": return "Member sign-in or setup pending";
-    case "member_setup": return "Admin setup and member sign-in pending";
-    case "setup_required": return "Admin setup required";
-    case "selection_unverified": return "Model selection could not be verified";
+    case "shared_configured": return "Shared key added";
+    case "member_sign_in": return "Each person signs in";
+    case "member_setup": return "Needs admin setup";
+    case "setup_required": return "Needs admin setup";
+    case "selection_unverified": return "Couldn't verify models";
   }
 }

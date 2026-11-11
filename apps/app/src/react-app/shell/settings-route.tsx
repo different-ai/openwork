@@ -1872,10 +1872,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     organizationName: cloudSession.activeOrgName,
     share: providerAuthStore.shareDeviceProvider,
   });
-  // Plain members go to their own model library, not an admin-only page.
-  const openProviderCloudPage = deviceShare.resolved && !deviceShare.canShare
-    ? () => { void platform.openLink(denDashboardUrl(cloudSession.baseUrl, "modelConnections")); }
-    : openProvidersInDen;
+  // Someone who cannot manage AI Gateway already has "My model connections";
+  // a second link to an admin-only page would only bounce them (DESIGN P4).
+  const openProviderCloudPage = deviceShare.resolved && !deviceShare.canShare ? undefined : openProvidersInDen;
   // "Share" in Get set up lands here with ?share=1: open the confirmation for a
   // key on this device, or AI Gateway's own form when nothing here is one key.
   const shareRequested = route.tab === "ai" && new URLSearchParams(location.search).get("share") === "1";
@@ -2339,7 +2338,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 runCloudProviderSync={providerAuthStore.runCloudProviderSync}
                 serverSync={providerAuthSnapshot.cloudProviderServerSync}
                 shareEmptyState={deviceShare.emptyState}
-                onShareProvider={deviceShare.open}
               />
             }
           />

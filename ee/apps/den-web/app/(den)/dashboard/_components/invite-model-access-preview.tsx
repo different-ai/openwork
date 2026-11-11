@@ -34,44 +34,58 @@ function inviteModelNames(row: InviteModelAccess): string {
   return [...known, ...(unavailable ? [`${unavailable} model ${unavailable === 1 ? "name" : "names"} unavailable`] : [])].join(", ");
 }
 
+/**
+ * What an invitee gets from shared Gateway grants (Everyone + the chosen team).
+ * State in rows, one quiet scope line, no paragraph (DESIGN P1, P6). Never a
+ * live readiness claim, and never the inviter's own grants or desktop keys.
+ */
 export function InviteModelAccessPreviewView({ teamName, state }: { teamName: string | null; state: PreviewState }) {
+  const scope = teamName ? `Everyone + ${teamName}` : "Everyone";
+  const rows = state.status === "configured" ? state.rows : [];
   return (
-    <section className="grid gap-2 border-t border-border pt-4 text-sm" aria-label="Shared AI model access" data-testid="invite-model-access">
+    <section className="grid gap-2 border-t border-border pt-4 text-sm" aria-label="Shared models" data-testid="invite-model-access">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="font-medium text-foreground">Shared AI model access only</span>
-        <span className="text-muted-foreground">{teamName ? `Everyone + ${teamName}` : "Everyone"}</span>
+        <span className="font-medium text-foreground">Shared models</span>
+        <span className="text-muted-foreground">{scope}</span>
       </div>
       {state.status === "locked" ? (
-        <p className="flex items-start gap-1.5 text-muted-foreground"><Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{`Preview locked. ${permissionLockReason("gateway_providers.view")}`}</p>
+        <p className="flex items-start gap-1.5 text-muted-foreground"><Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{permissionLockReason("gateway_providers.view")}</p>
       ) : state.status === "unavailable" ? (
-        <p className="text-muted-foreground">Shared model access could not be verified on this deployment.</p>
+        <p className="text-muted-foreground">AI Gateway isn't set up on this deployment.</p>
       ) : state.status === "checking" ? (
-        <div className="grid gap-2" role="status" aria-label="Checking shared model access"><DenSkeleton className="h-4 w-3/4" /><DenSkeleton className="h-4 w-1/2" /></div>
+        <div className="grid gap-2" role="status" aria-label="Checking shared models"><DenSkeleton className="h-4 w-3/4" /><DenSkeleton className="h-4 w-1/2" /></div>
       ) : state.status === "error" ? (
         <div className="flex items-center justify-between gap-3">
-          <p className="text-muted-foreground">Shared model access could not be verified. You can still send the invite.</p>
+          <p className="text-muted-foreground">Couldn't check shared models. You can still send the invite.</p>
           <DenButton variant="secondary" size="sm" onClick={state.retry}>Try again</DenButton>
         </div>
-      ) : state.status === "configured" && state.rows.length === 0 ? (
-        <p className="text-muted-foreground">No shared models configured for {teamName ? `Everyone or ${teamName}` : "Everyone"}.</p>
+      ) : rows.length === 0 ? (
+        <p className="text-muted-foreground">Nothing shared with {scope} yet.</p>
       ) : (
-        <details open={state.status === "configured" && state.rows.length <= 2} data-testid="invite-model-access-details">
-          <summary className="cursor-pointer text-muted-foreground">{state.status === "configured" ? state.rows.length : 0} shared model groups</summary>
-          <ul className="mt-2 grid max-h-48 gap-3 overflow-y-auto overscroll-contain" aria-label="Configured model grants" tabIndex={0}>
-            {(state.status === "configured" ? state.rows : []).map((row) => (
-              <li key={row.key} className="grid gap-1">
-                <div className="font-medium text-foreground">{row.providerName} · {row.groupName}</div>
-                {row.modelIds.length > 0 ? <div className="break-words text-muted-foreground">{inviteModelNames(row)}</div> : null}
-                <div className="text-muted-foreground">{inviteModelAccessStateLabel(row.state)} · {row.source === "everyone" ? "From Everyone" : `From ${teamName}`}</div>
+        <details open={rows.length <= 2} data-testid="invite-model-access-details">
+          <summary className="cursor-pointer text-muted-foreground">{rows.length} shared {rows.length === 1 ? "provider" : "providers"}</summary>
+          <ul className="mt-2 grid max-h-48 gap-2 overflow-y-auto overscroll-contain" aria-label="Configured model grants" tabIndex={0}>
+            {rows.map((row) => (
+              <li key={row.key} className="grid gap-0.5">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                  <span className="font-medium text-foreground">{row.providerName}</span>
+                  <span className="text-muted-foreground">{inviteModelAccessStateLabel(row.state)}</span>
+                </div>
+                {row.modelIds.length > 0 ? (
+                  <details className="text-muted-foreground">
+                    <summary className="cursor-pointer">{row.modelIds.length} {row.modelIds.length === 1 ? "model" : "models"} · {row.source === "everyone" ? "Everyone" : teamName}</summary>
+                    <p className="mt-1 break-words">{inviteModelNames(row)}</p>
+                  </details>
+                ) : null}
               </li>
             ))}
           </ul>
-          {state.status === "configured" && state.rows.some((row) => row.state === "selection_unverified") && state.retry ? (
+          {rows.some((row) => row.state === "selection_unverified") && state.status === "configured" && state.retry ? (
             <DenButton variant="secondary" size="sm" onClick={state.retry}>Try again</DenButton>
           ) : null}
         </details>
       )}
-      <p className="text-muted-foreground">Personal desktop keys are not shared by an invite. Existing members may have other personal grants not shown here. Shared configuration only, not a live model test; usage limits still apply.</p>
+      <p className="text-muted-foreground">Keys on someone's own computer aren't shared by inviting them.</p>
     </section>
   );
 }

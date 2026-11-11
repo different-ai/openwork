@@ -101,7 +101,6 @@ export type CloudProvidersViewProps = {
   onOpenModelConnections?: () => void;
   /** Den feature shareDeviceProvider: what to offer while nothing is shared with the organization. */
   shareEmptyState?: OrganizationShareEmptyState;
-  onShareProvider?: (provider: { id: string; name: string }) => void;
 };
 
 export function CloudProvidersView({
@@ -124,7 +123,6 @@ export function CloudProvidersView({
   onOpenDen,
   onOpenModelConnections,
   shareEmptyState,
-  onShareProvider,
 }: CloudProvidersViewProps) {
   const { activeOrganization, isSignedIn } = useCloudSession();
   const [busy, setBusy] = React.useState(false);
@@ -284,7 +282,6 @@ export function CloudProvidersView({
       onOpenDen={onOpenDen}
       onOpenModelConnections={onOpenModelConnections}
       shareEmptyState={shareEmptyState}
-      onShareProvider={onShareProvider}
       lastVerifiedAt={serverSync?.lastVerifiedAt}
       additionalCount={gatewayConnectProviders.length}
       additionalRows={gatewayConnectProviders.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={onConnectGatewayProvider} />)}

@@ -76,7 +76,7 @@ export function ShareProviderDialog(props: ShareProviderDialogProps) {
   return (
     <Dialog open={provider !== null} onOpenChange={(next) => { if (!next) close(); }}>
       {provider ? (
-        <DialogContent data-testid="share-provider-dialog" showCloseButton={!pending}>
+        <DialogContent data-testid="share-provider-dialog" className="max-h-[90dvh] overflow-y-auto" showCloseButton={!pending}>
           <DialogHeader className="flex-row items-center gap-3">
             <ProviderTile providerId={provider.id} name={provider.name} />
             <DialogTitle className="leading-snug">Share {provider.name} with {organization}?</DialogTitle>

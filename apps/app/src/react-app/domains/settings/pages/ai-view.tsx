@@ -206,7 +206,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
             : needsCredentialRecovery(provider.id)
             ? <Button variant="outline" disabled={rowsBusy || !ready || locked || !props.onReplaceProviderKey} onClick={() => void props.onReplaceProviderKey?.(provider.id)}>Replace key</Button>
             : <>
-              {shareState(provider.id) === "shareable" && props.onShareProvider ? <Button variant="outline" data-testid={`share-provider-${provider.id}`} disabled={rowsBusy} onClick={() => props.onShareProvider?.({ id: provider.id, name: provider.name })}>Share with {organizationLabel}</Button> : null}
+              {shareState(provider.id) === "shareable" && props.onShareProvider ? <Button variant="outline" data-testid={`share-provider-${provider.id}`} aria-label={`Share ${provider.name} with ${organizationLabel}`} title={`Share ${provider.name} with ${organizationLabel}`} disabled={rowsBusy} onClick={() => props.onShareProvider?.({ id: provider.id, name: provider.name })}>Share</Button> : null}
               <Button variant="ghost" disabled={rowsBusy || !ready || !props.canDisconnectProvider(provider)} onClick={() => void props.onDisconnectProvider(provider.id)}>{props.disconnectingProviderId === provider.id ? t("settings.disconnecting") : props.canDisconnectProvider(provider) ? t("settings.disconnect") : t("settings.managed_by_env")}</Button>
             </>}
         />)}

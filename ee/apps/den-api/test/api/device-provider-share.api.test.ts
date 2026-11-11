@@ -146,3 +146,34 @@ test("parallel device shares and retries never duplicate a provider; ordinary cr
   const retained = await call("GET", "/v1/inference-providers?scope=manageable");
   assert.equal(list(field(retained.body, "inferenceProviders")).length, 2, "turning sharing off retains deliberate existing grants");
 });
+
+test("an admin who is not the owner can share; demoting them to member locks it again", { timeout: 60_000 }, async () => {
+  const workspace = await den.createOrg(await den.signUp("Casey Owner"), "Role workspace");
+  assert.equal((await den.setFeature(workspace.orgId, "shareDeviceProvider", true)).status, 200);
+  const admin = await den.newMember(workspace.owner, workspace.orgId, "Drew Admin", "admin");
+  const adminCall = den.as(admin, workspace.orgId);
+  const adminOptions = await adminCall("GET", `${OPTIONS}?providerIds=anthropic`);
+  assert.equal(adminOptions.status, 200, summary(adminOptions));
+  assert.equal(field(adminOptions.body, "canShare"), true);
+  assert.deepEqual(list(field(adminOptions.body, "providers")), [{ providerId: "anthropic", name: "Anthropic", status: "shareable" }]);
+  const shared = await adminCall("POST", "/v1/inference-providers", { name: "Anthropic", providerId: "anthropic", credential: { kind: "api_key", secret: DEVICE_KEY }, allMembers: true, shareFromDevice: true });
+  assert.equal(shared.status, 201, summary(shared));
+  const demoted = await den.as(workspace.owner, workspace.orgId)("POST", `/v1/members/${admin.memberId}/role`, { role: "member" });
+  assert.equal(demoted.status, 200, summary(demoted));
+  // A role change ends the person's sessions; they sign in again as a member.
+  assert.equal((await adminCall("GET", `${OPTIONS}?providerIds=openai`)).status, 401);
+  const again = await den.signIn(admin.email);
+  assert.equal(again.status, 200, summary(again));
+  const token = field(again.body, "token");
+  assert.equal(typeof token, "string");
+  if (typeof token !== "string") throw new Error("expected a session token");
+  const memberCall = den.as({ ...admin, token }, workspace.orgId);
+  const after = await memberCall("GET", `${OPTIONS}?providerIds=openai`);
+  assert.deepEqual(after.body, { canShare: false, blocker: "no_permission", managerName: "Casey Owner", verificationRequired: false, providers: [] });
+  const refused = await memberCall("POST", "/v1/inference-providers", { name: "OpenAI", providerId: "openai", credential: { kind: "api_key", secret: DEVICE_KEY }, allMembers: true, shareFromDevice: true });
+  assert.equal(refused.status, 403, summary(refused));
+  // The demoted person still receives what the organization shares with Everyone.
+  const usable = await memberCall("GET", "/v1/inference-providers?scope=usable");
+  assert.deepEqual(list(field(usable.body, "inferenceProviders")).map((provider) => provider.providerId), ["anthropic"]);
+  assert.ok(!JSON.stringify(usable.body).includes(DEVICE_KEY));
+});
