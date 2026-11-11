@@ -5,8 +5,10 @@
  * - Carried: allowed email domains, allowed desktop versions, which kinds of
  *   Automations are allowed, and the legacy `desktopAppRestrictions` (read
  *   only: Desktop policies replaced it and nothing writes it any more).
- * - Never carried: name, slug, SSO requirements and session settings. They are
- *   the target organization's identity and sign-in policy (decision D5).
+ * - Never carried: name, slug, SSO requirements, session settings and the
+ *   ceiling on which sessions of members' computers other devices may reach
+ *   (`remoteSessions`). They are the target organization's identity, sign-in
+ *   and access policy (decision D5): an import never widens them.
  * - The item id is the organization id; it matches across organizations by
  *   its natural key (there is always exactly one). A "create" therefore
  *   updates the target's settings, and delete is refused.

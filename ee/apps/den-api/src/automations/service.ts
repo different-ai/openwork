@@ -19,6 +19,7 @@ import type {
   AutomationScheduleKind,
   CreateAutomationDefinition,
   DesktopRunnerInventory,
+  RunnerSessionReport,
   UpdateAutomation,
 } from "@openwork/types/automations"
 import { env } from "../env.js"
@@ -689,6 +690,17 @@ export class AutomationService {
       ownerMemberId: scope.ownerMemberId,
       runnerId: scope.runnerId,
       inventory,
+      now: Date.now(),
+    })
+  }
+
+  /** False when the runner has no registration to attach the report to. */
+  saveDesktopRunnerSessions(scope: DesktopRunnerScope, report: RunnerSessionReport) {
+    return automationRepository.saveDesktopRunnerSessions({
+      organizationId: scope.organizationId,
+      ownerMemberId: scope.ownerMemberId,
+      runnerId: scope.runnerId,
+      ...report,
       now: Date.now(),
     })
   }

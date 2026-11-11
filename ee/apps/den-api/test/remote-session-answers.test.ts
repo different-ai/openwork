@@ -22,7 +22,7 @@ const organizationId = createDenTypeId("organization")
 const userId = createDenTypeId("user")
 const ownerMemberId = createDenTypeId("member")
 const session: RemoteSessionDesktopSession = {
-  commandId: "synthetic-command", ownerMemberId, runnerId: "synthetic-runner", sessionId: "synthetic-session",
+  commandId: "synthetic-command", ownerMemberId, runnerId: "synthetic-runner", kind: "create", detached: false, sessionId: "synthetic-session",
   workspaceId: "synthetic-workspace", title: "Synthetic session", engine: "v2", status: "waiting", updatedAt: 1,
 }
 const question: RemoteSessionPending = { kind: "question", requestId: "form_1", questions: [{ header: "Branch", question: "Which branch?", multiple: false, custom: false,
@@ -37,7 +37,7 @@ function request(input: Partial<RemoteSessionRequest> & Pick<RemoteSessionReques
   } satisfies RemoteSessionRequest
 }
 
-function desktopDeps(options: { answerCapable?: boolean; complete?: (enqueued: RemoteSessionRequest) => RemoteSessionRequest } = {}) {
+function desktopDeps(options: { answerCapable?: boolean; accessCapable?: boolean; complete?: (enqueued: RemoteSessionRequest) => RemoteSessionRequest } = {}) {
   const enqueued: RemoteSessionRequest[] = []
   const deps: RemoteSessionExecuteDeps = {
     ...DEFAULT_REMOTE_SESSION_DEPS,
@@ -48,7 +48,7 @@ function desktopDeps(options: { answerCapable?: boolean; complete?: (enqueued: R
       // Owner-only: the lookup is scoped to the caller, so another member never resolves this session.
       return scope.createdByUserId === userId && scope.sessionId === session.sessionId ? session : null
     } },
-    desktopRunner: async () => ({ connected: true, controlCapable: true, registered: true, answerCapable: options.answerCapable ?? true }),
+    desktopRunner: async () => ({ connected: true, controlCapable: true, registered: true, answerCapable: options.answerCapable ?? true, accessCapable: options.accessCapable ?? false }),
     requestWait: { timeoutMs: 50, pollMs: 1 },
     requestStore: {
       ...DEFAULT_REMOTE_SESSION_DEPS.requestStore,
@@ -97,6 +97,14 @@ test("a stale requestId comes back as a final stale_request refusal", async () =
   assert.equal(result.payload.retryable, false)
 })
 
+test("a computer that no longer shares the session refuses for good, so the caller does not retry", async () => {
+  for (const code of ["session_access_denied", "session_unavailable"]) {
+    const { deps } = desktopDeps({ complete: (last) => ({ ...last, status: "failed", error: { code, message: "This computer only allows sessions that were started remotely." } }) })
+    const result = await answer({ sessionId: session.sessionId, kind: "permission", requestId: "per_1", decision: "once" }, deps)
+    assert.deepEqual([result.payload.error, result.payload.retryable], [code, false])
+  }
+})
+
 test("a remote surface can never approve always, and answers need write scope", async () => {
   const { deps, enqueued } = desktopDeps()
   const always = await answer({ sessionId: session.sessionId, kind: "permission", requestId: "per_1", decision: "always" }, deps)
@@ -111,6 +119,52 @@ test("a computer that can't take answers is told to update, without enqueuing an
   const result = await answer({ sessionId: session.sessionId, kind: "permission", requestId: "per_1", decision: "once" }, deps)
   assert.equal(result.payload.error, "answer_unsupported")
   assert.equal(enqueued.length, 0)
+})
+
+test("a question is dismissed only on a computer that understands dismissals; older apps are told so without enqueuing", async () => {
+  const dismissal = { sessionId: session.sessionId, workspaceId: session.workspaceId, kind: "dismiss", requestId: "form_1" }
+  const older = desktopDeps({ accessCapable: false })
+  const refused = await answer(dismissal, older.deps)
+  assert.equal(refused.error, true)
+  assert.deepEqual(
+    { target: refused.payload.target, sessionId: refused.payload.sessionId, error: refused.payload.error, retryable: refused.payload.retryable },
+    { target: "desktop", sessionId: session.sessionId, error: "answer_unsupported", retryable: false },
+  )
+  assert.equal(older.enqueued.length, 0)
+  // The same computer still takes ordinary answers.
+  assert.equal((await answer({ ...dismissal, kind: "question", answers: [["main"]] }, older.deps)).error, false)
+  assert.equal(older.enqueued.length, 1)
+
+  const capable = desktopDeps({
+    accessCapable: true,
+    complete: (last) => ({ ...last, status: "done", outcome: { action: "answer", result: { requestId: "form_1", alreadyAnswered: false } } }),
+  })
+  const dismissed = await answer(dismissal, capable.deps)
+  assert.equal(dismissed.payload.state, "answered")
+  assert.deepEqual(capable.enqueued.map((entry) => [entry.action, entry.input]), [["answer", { kind: "dismiss", requestId: "form_1" }]])
+  // A dismissal carries nothing else: a decision sent along with it never reaches the computer.
+  assert.equal((await answer({ ...dismissal, decision: "always" }, capable.deps)).payload.state, "answered")
+  assert.deepEqual(capable.enqueued.at(-1)?.input, { kind: "dismiss", requestId: "form_1" })
+})
+
+test("every open question and permission a computer lists reaches the caller, each answerable by its requestId", async () => {
+  const permission: RemoteSessionPending = { kind: "permission", requestId: "per_2", title: "Run a command", detail: "", command: "pnpm test" }
+  const page = { title: "Synthetic", status: "waiting", waitingFor: "question", lastError: null, messageCount: 0, from: "end", messages: [], nextCursor: null,
+    pending: question, pendingItems: [question, permission] } as const
+  const { remoteSessionRequestCompleteRequestSchema } = await import("@openwork/types/automations")
+  const completed = remoteSessionRequestCompleteRequestSchema.parse({ status: "done", outcome: { action: "read", result: page } })
+  assert.ok(completed.status === "done" && completed.outcome.action === "read")
+  assert.deepEqual(completed.outcome.result.pendingItems, [question, permission], "the runner's completion keeps the list")
+  const outcome = completed.outcome
+  const { deps, enqueued } = desktopDeps({ accessCapable: true, complete: (last) => ({ ...last, status: "done", outcome }) })
+  const result = await executeRemoteSessionCapability({ action: "read", organizationId, userId, hasWriteScope: false,
+    body: { sessionId: session.sessionId, workspaceId: session.workspaceId } }, deps)
+  assert.equal(result.isError, undefined)
+  assert.deepEqual(result.structuredContent?.pendingItems, [question, permission])
+  assert.deepEqual(result.structuredContent?.pending, question)
+  // The second open item is answered by its own requestId, not the first one's.
+  await answer({ sessionId: session.sessionId, kind: "permission", requestId: "per_2", decision: "reject" }, deps)
+  assert.deepEqual(enqueued.at(-1)?.input, { kind: "permission", requestId: "per_2", decision: "reject" })
 })
 
 test("another member cannot answer the owner's task: it never reaches the owner's computer", async () => {
@@ -143,9 +197,38 @@ test("Cloud answers through the worker's native reply and maps a stale request",
   const ok = await answer({ sessionId: "cloud-session", kind: "question", requestId: "que_1", answers: [["dev"]] }, deps)
   assert.equal(ok.payload.state, "answered")
   assert.deepEqual(replies, [{ kind: "question", requestId: "que_1", answers: [["dev"]] }])
+  // A dismissal goes to the worker's own reply path like any answer.
+  const dismissed = await answer({ sessionId: "cloud-session", kind: "dismiss", requestId: "que_1" }, deps)
+  assert.equal(dismissed.payload.state, "answered")
+  assert.deepEqual(replies.at(-1), { kind: "dismiss", requestId: "que_1" })
   stale = true
   const refused = await answer({ sessionId: "cloud-session", kind: "question", requestId: "que_1", answers: [["dev"]] }, deps)
   assert.equal(refused.payload.error, "stale_request")
+})
+
+test("a Cloud read lists every open request where the worker can, the first one as pending", async () => {
+  const permission: RemoteSessionPending = { kind: "permission", requestId: "per_2", title: "Run a command", detail: "" }
+  const snapshot = (status: "busy" | "idle") => ({ threadId: "cloud-session", title: "Synthetic", directory: null, status: { type: status }, todos: [], messages: [] })
+  const read = (client: Partial<RemoteSessionThreadClient>) => executeRemoteSessionCapability({ action: "read", organizationId, userId, hasWriteScope: false, body: { sessionId: "cloud-session" } }, {
+    ...DEFAULT_REMOTE_SESSION_DEPS,
+    getOpenWorkWebAccess: async () => ({ hasAccess: true }),
+    commandStore: { ...DEFAULT_REMOTE_SESSION_DEPS.commandStore, findDesktopSession: async () => null },
+    resolveRuntime: async () => ({ ok: true, runtime: { workerId: "w", baseUrl: "http://worker", workspaceId: "ws", clientToken: "c", hostToken: "h" } }),
+    createClient: () => ({
+      createThread: async () => { throw new Error("unused") },
+      sendTurn: async () => { throw new Error("unused") },
+      getThreadSnapshot: async () => snapshot("busy"),
+      ...client,
+    }),
+  })
+  const listed = (await read({ getThreadPendingItems: async () => [question, permission] })).structuredContent
+  assert.deepEqual([listed?.pending, listed?.pendingItems], [question, [question, permission]])
+  const settled = (await read({ getThreadSnapshot: async () => snapshot("idle"), getThreadPendingItems: async () => { throw new Error("An idle session waits on nobody") } })).structuredContent
+  assert.deepEqual([settled?.pending, settled?.pendingItems], [null, []])
+  // A worker that names only one request keeps answering as before.
+  const single = (await read({ getThreadPending: async () => question })).structuredContent
+  assert.equal(single?.pending, question)
+  assert.equal(single && "pendingItems" in single, false)
 })
 
 test("remote-session:status is always listed without rollout options", () => {
@@ -158,16 +241,30 @@ test("remote-session:answer is listed only in allowed calling contexts, and tell
   const match = searchRemoteSessionCapabilities("answer remote session question", 10, { answer: true }).find((entry) => entry.name === "remote-session:answer")
   assert.ok(match)
   assert.match(match.summary, /Ask the person first/)
+  assert.match(match.summary, /any open item can be answered by its requestId/)
+  assert.match(match.summary, /kind dismiss closes a question without answering it/)
+  assert.doesNotMatch(match.summary, /always/i, "a remote answer never approves permanently")
+  const schema = match.argumentsSchema
+  assert.ok(schema && typeof schema === "object" && "properties" in schema)
+  assert.deepEqual(schema.properties, {
+    sessionId: { type: "string", description: "Session id of the remote session." },
+    workspaceId: { type: "string", description: "Desktop sessions: the session's workspaceId." },
+    kind: { type: "string", enum: ["question", "permission", "dismiss"], description: "question and permission answer one; dismiss closes a question without an answer." },
+    requestId: { type: "string", description: "The requestId of the open question or permission: from pending or pendingItems of remote-session:read, or from status." },
+    answers: { type: "array", items: { type: "array", items: { type: "string" } }, description: "Questions: one array per question with the chosen option labels (or the person's own words where custom answers are allowed)." },
+    decision: { type: "string", enum: ["once", "reject"], description: "Permissions: allow once or deny." },
+  })
   assert.equal(listRemoteSessionCapabilities().some((entry) => entry.action === "answer"), false)
+  assert.match(listRemoteSessionCapabilities().find((entry) => entry.action === "read")?.summary ?? "", /pendingItems lists every open question and permission/)
 })
 
 function waitingCommand(pending: RemoteSessionPending): RemoteSessionCommand {
   return {
-    id: "synthetic-command", organizationId, ownerMemberId, createdByUserId: userId, status: "delivered", title: "Synthetic", prompt: null,
-    model: null, idempotencyKey: null, targetComputerId: null, targetWorkspaceId: null, expiresAt: Date.now() + 60_000,
+    id: "synthetic-command", organizationId, ownerMemberId, createdByUserId: userId, status: "delivered", kind: "create", title: "Synthetic", prompt: null,
+    model: null, idempotencyKey: null, targetComputerId: null, targetWorkspaceId: null, targetSessionId: null, expiresAt: Date.now() + 60_000,
     claimedByRunnerId: null, claimedAt: null, sessionId: session.sessionId, workspaceId: session.workspaceId, resultSummary: null, error: null,
     session: { status: "waiting", waitingFor: pending.kind, engine: "v2", model: null, finalText: null, lastError: null,
-      messageCount: 3, pending, observedAt: 10 },
+      messageCount: 3, latestStep: null, pending, observedAt: 10 },
     createdAt: 1, updatedAt: 1,
   }
 }

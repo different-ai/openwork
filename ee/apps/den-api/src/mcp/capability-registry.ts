@@ -6,6 +6,7 @@ import { Effect } from "effect"
 import type { Hono } from "hono"
 import { z } from "zod"
 import type { FeatureMap } from "../features.js"
+import { markFeaturesUsed } from "../feature-usage.js"
 import { AuditUnavailableError, auditUnavailableToolResult, runMcpServiceAction, serviceAuditResourceId, serviceErrorStatus, toolResultStatus, type McpAuditPrincipal } from "../audit/mcp-service-audit.js"
 import type { AuditServiceActionName } from "../audit/service-actions.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
@@ -153,6 +154,8 @@ export type CapabilityRegistryContext = {
   managedDeploymentsEnabled: boolean
   /** remote-session:answer: the member's agent answers a task's question for the person, after asking them. */
   remoteSessionAnswersAllowed: boolean
+  /** remote-session:attach: the member's agent reaches a session started on their computer, in a chat with them (remoteSessionAccess). */
+  remoteSessionAttachAllowed: boolean
   resolvePlatformAdmin: () => Promise<boolean>
   resolveNamespaceContext: () => Promise<CodemodeConnectionNamespaceContext>
   /** Set only by MCP transports: direct service mutations are audited for this caller (src/audit/service-actions.ts). */
@@ -171,7 +174,7 @@ export type CapabilityRegistryContextInput = {
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   /** Effective features of the organization (see features.ts). */
-  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "outlookAttachments">>
+  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "outlookAttachments" | "remoteSessionAccess">>
   /** MCP transports pass the verified caller; route and Automation contexts omit it (their route records the request). */
   audit?: McpAuditPrincipal | null
   /**
@@ -212,6 +215,8 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     managedDeploymentsEnabled: input.organizationFeatures.managedDeployments === true,
     // Only a chat with the person in it may answer: never an Automation, a Workflow run or an App.
     remoteSessionAnswersAllowed: input.usageSource === "agent",
+    // The same rule, and only where the organization has sessions on members' computers turned on.
+    remoteSessionAttachAllowed: input.usageSource === "agent" && input.organizationFeatures.remoteSessionAccess === true,
     resolvePlatformAdmin,
     resolveNamespaceContext,
     audit: input.audit ?? null,
@@ -260,6 +265,7 @@ export function slackSendAsBotAvailable(ctx: Pick<CapabilityRegistryContext, "me
 
 const remoteSessionAuditActions: Partial<Record<RemoteSessionAction, AuditServiceActionName>> = {
   create: "remote_session.create", send: "remote_session.send", stop: "remote_session.stop", answer: "remote_session.answer",
+  attach: "remote_session.attach",
 }
 
 function remoteSessionResourceId(body: unknown): string | null {
@@ -769,7 +775,7 @@ const remoteSessionSource: CapabilitySource = {
   },
   search: async (ctx, query, limit) => {
     if (!ctx.sourceFilter.api || !ctx.member) return []
-    return searchRemoteSessionCapabilities(query, limit, { answer: ctx.remoteSessionAnswersAllowed })
+    return searchRemoteSessionCapabilities(query, limit, { answer: ctx.remoteSessionAnswersAllowed, attach: ctx.remoteSessionAttachAllowed })
   },
   // Deliberately absent from the confined-script tool tree in v1: remote
   // sessions are long-lived side effects that agents should drive through
@@ -778,11 +784,16 @@ const remoteSessionSource: CapabilitySource = {
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "remoteSession")) return unknownCapabilityResult(input.name)
     if (parsed.action === "answer" && !ctx.remoteSessionAnswersAllowed) return unknownCapabilityResult(input.name)
+    if (parsed.action === "attach" && !ctx.remoteSessionAttachAllowed) return unknownCapabilityResult(input.name)
     if (!ctx.member) {
       return capabilityErrorResult({
         error: "membership_required",
         message: "Remote sessions require an active organization membership.",
       })
+    }
+    // An attach is a use of the feature that no gated route sees.
+    if (parsed.action === "attach") {
+      markFeaturesUsed({ organizationId: ctx.organizationId, memberId: ctx.member.orgMembershipId, keys: ["remoteSessionAccess"] })
     }
     const run = () => executeRemoteSessionCapability({
       action: parsed.action,
