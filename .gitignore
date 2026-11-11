@@ -58,6 +58,8 @@ vendor/opencode/
 # OpenCode local deps
 .opencode/node_modules/
 .opencode/bun.lock
+.opencode/package.json
+.opencode/package-lock.json
 
 # OpenWork workspace-local artifacts
 .opencode/openwork/

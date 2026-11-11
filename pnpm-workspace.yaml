@@ -91,7 +91,7 @@ overrides:
   "engine.io@>=6.0.0 <6.6.11": 6.6.11
   "browserslist@<=4.28.6": 4.28.7
   "fast-uri@>=3.0.0 <3.1.9": 3.1.9
-  "fast-xml-parser@>=5.0.0 <5.7.0": 5.7.0
+  "fast-xml-parser@>=5.0.0 <5.12.0": 5.12.0
   "follow-redirects@<1.16.2": 1.16.2
   "form-data@>=4.0.0 <4.0.6": 4.0.6
   "glob@>=9.0.0 <14.0.2": 14.0.2
@@ -157,3 +157,4 @@ patchedDependencies:
   '@better-auth/sso@1.7.7': patches/@better-auth__sso@1.7.7.patch
   '@modelcontextprotocol/client@2.3.1': patches/@modelcontextprotocol__client@2.3.1.patch
   '@modelcontextprotocol/sdk': patches/@modelcontextprotocol__sdk.patch
+  deepmerge@4.3.1: patches/deepmerge@4.3.1.patch
