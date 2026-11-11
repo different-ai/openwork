@@ -2866,7 +2866,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const orgId = readDenSettings().activeOrgId;
     const client = options.openworkServer.getSnapshot().openworkServerClient;
     if (!orgId || !client) throw new Error("Sign in to OpenWork before sharing this provider.");
-    if (getOpenworkGatewayOrigin() || !isLoopbackOpenworkServerUrl(client.baseUrl)) throw new Error("Share keys from this device's local workspace, or add a provider in AI Gateway.");
+    const workspaceClient = options.nativeOpenworkClient?.();
+    if (getOpenworkGatewayOrigin() || !isLoopbackOpenworkServerUrl(client.baseUrl)
+      || (workspaceClient && workspaceClient.baseUrl !== client.baseUrl)) {
+      throw new Error("Share keys from this device's local workspace, or add a provider in AI Gateway.");
+    }
     const contextKey = getCloudProviderSyncContextKey();
     const isCurrent = () => !disposed && contextKey === getCloudProviderSyncContextKey();
     if (!isCurrent() || !await pushDenSession() || !isCurrent()) {

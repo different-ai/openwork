@@ -1867,7 +1867,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   );
   // Den feature shareDeviceProvider: a key saved here can go to the organization in one confirmation.
   const deviceShare = useDeviceProviderShareFlow({
-    providers: connectedProviders,
+    providers: selectedWorkspace && selectedWorkspace.workspaceType !== "local" ? [] : connectedProviders,
     runtimeWorkspaceId,
     organizationName: cloudSession.activeOrgName,
     share: providerAuthStore.shareDeviceProvider,
