@@ -6,7 +6,7 @@ import { env } from "../../env.js"
 import { adminRoute, jsonValidator } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { resolvePublicOrigin } from "../../capability-sources/generic-oauth.js"
-import { addMicrosoft365ToSandbox, closeSandbox, createSandbox, extendSandbox, listSandboxes, rotateSandboxLink, SandboxInputError, sandboxDefaults, sandboxModelOptions, setSandboxCredit, setSandboxJoinRole } from "../../sandbox-organizations.js"
+import { addMicrosoft365ToSandbox, addSlackToSandbox, closeSandbox, createSandbox, extendSandbox, listSandboxes, rotateSandboxLink, SandboxInputError, sandboxDefaults, sandboxModelOptions, setSandboxCredit, setSandboxJoinRole } from "../../sandbox-organizations.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const base = "/v1/admin/sandbox-orgs"
@@ -88,6 +88,19 @@ export function registerAdminSandboxOrganizationRoutes<T extends { Variables: Au
     if (!isDenTypeId("sandboxOrganization", id)) return c.json({ error: "invalid_request", message: "Invalid sandbox id." }, 400)
     try {
       const sandbox = await addMicrosoft365ToSandbox(normalizeDenTypeId("sandboxOrganization", id), resolvePublicOrigin(c.req.raw, env.apiPublicUrl))
+      return sandbox ? c.json({ sandbox }) : c.json({ error: "not_found", message: "Sandbox not found." }, 404)
+    } catch (error) {
+      if (error instanceof SandboxInputError) return c.json({ error: "invalid_request", message: error.message }, 400)
+      throw error
+    }
+  })
+
+  app.post(`${base}/:sandboxId/slack`, updated("Add sample Slack to a sandbox", "Adds a per-person Slack connector at the sandbox's sample work apps and installs the Workbot Slack app against it with a sample bot token, so Proactive Mode can be turned on and each member's agent messages arrive on their sample Slack page. Needs an open sandbox with a sample work apps address and Sandboxes: sample Slack (sandboxSlack) on for its organization. Does nothing when it is already there. Platform administrators only."), adminRoute(), async c => {
+    if (env.features.deployment !== "cloud") return c.json(disabled, 404)
+    const id = c.req.param("sandboxId")
+    if (!isDenTypeId("sandboxOrganization", id)) return c.json({ error: "invalid_request", message: "Invalid sandbox id." }, 400)
+    try {
+      const sandbox = await addSlackToSandbox(normalizeDenTypeId("sandboxOrganization", id))
       return sandbox ? c.json({ sandbox }) : c.json({ error: "not_found", message: "Sandbox not found." }, 404)
     } catch (error) {
       if (error instanceof SandboxInputError) return c.json({ error: "invalid_request", message: error.message }, 400)

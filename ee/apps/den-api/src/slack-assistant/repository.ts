@@ -21,7 +21,8 @@ import {
   type ExternalMcpConnectionRow,
 } from "../capability-sources/external-mcp-connections.js"
 import { listTeamsForMember } from "../orgs.js"
-import { canUseSlackAssistant, scopeKey, slackClient, type SlackEvent } from "./protocol.js"
+import { canUseSlackAssistant, isSandboxSlackToken, scopeKey, slackClient, type SlackCall, type SlackEvent } from "./protocol.js"
+import { sandboxSlackApiBase } from "./sandbox-api.js"
 import { CLAIMABLE_STATUSES, THREAD_ACTIVE_STATUSES } from "./statuses.js"
 
 export type InstallationRow = typeof Installation.$inferSelect
@@ -39,6 +40,29 @@ export function isSlackConnection(connection: ExternalMcpConnectionRow) {
     new URL(connection.url).hostname === "mcp.slack.com"
   )
 }
+/**
+ * A connection the assistant can answer and message members from: Slack's own, or a sandbox's sample Slack, whose
+ * installation holds a sample bot token (only sandbox setup writes one). The setup and install routes keep the
+ * stricter isSlackConnection, so a real Slack app is never installed on a sample connector.
+ */
+export function isSlackAssistantConnection(connection: ExternalMcpConnectionRow, installation: Pick<InstallationRow, "botToken"> | null | undefined) {
+  if (isSlackConnection(connection)) return true
+  return (
+    isSandboxSlackToken(installation?.botToken) &&
+    connection.credentialMode === "per_member" &&
+    connection.authType === "oauth" &&
+    connection.oauthIssuerReviewRequiredAt === null
+  )
+}
+/**
+ * A member's own Slack calls with their connector token: Slack's API, or the sandbox's sample Slack when the
+ * installation is a sample app. Null when that sample Slack can't be used now.
+ */
+async function memberSlackCall(installation: InstallationRow, token: string, client: (token: string) => SlackCall): Promise<SlackCall | null> {
+  if (!isSandboxSlackToken(installation.botToken)) return client(token)
+  const baseUrl = await sandboxSlackApiBase(installation.connectionId)
+  return baseUrl ? slackClient(token, fetch, baseUrl) : null
+}
 
 // Called only after the member completes the existing user OAuth flow. MCP's
 // oauth.v2.user.access has a standard token response; auth.test recovers the
@@ -47,16 +71,18 @@ export function isSlackConnection(connection: ExternalMcpConnectionRow) {
 export async function bindSlackOAuthMember(
   connection: ExternalMcpConnectionRow,
   memberId: DenTypeId<"member">,
-  client = slackClient,
+  client: (token: string) => SlackCall = slackClient,
 ) {
-  if (!isSlackConnection(connection)) return
   const installation = await getInstallation(connection.id)
+  if (!isSlackAssistantConnection(connection, installation)) return
   if (!installation?.teamId) return
   const account = await readConnectedAccountForExternalMcpIdentity({ connection, orgMembershipId: memberId })
   if (!account.current || !account.value?.accessToken) return
+  const slack = await memberSlackCall(installation, account.value.accessToken, client)
+  if (!slack) return
   const actor = z
     .object({ user_id: z.string(), team_id: z.string(), bot_id: z.string().optional() })
-    .parse(await client(account.value.accessToken)("auth.test", {}))
+    .parse(await slack("auth.test", {}))
   if (actor.bot_id || actor.team_id !== installation.teamId) throw new Error("slack_assistant_wrong_workspace")
   await db.transaction(async (tx) => {
     // Share the connector deletion lock so a late OAuth callback cannot
@@ -66,13 +92,14 @@ export async function bindSlackOAuthMember(
       .from(ExternalMcpConnectionTable)
       .where(eq(ExternalMcpConnectionTable.id, connection.id))
       .for("update")
-    if (!current || !isSlackConnection(current)) throw new Error("slack_assistant_connection_changed")
+    if (!current) throw new Error("slack_assistant_connection_changed")
     const [installed] = await tx
       .select()
       .from(Installation)
       .where(eq(Installation.connectionId, connection.id))
       .for("update")
-    if (!installed || installed.teamId !== actor.team_id) throw new Error("slack_assistant_connection_changed")
+    if (!installed || !isSlackAssistantConnection(current, installed) || installed.teamId !== actor.team_id)
+      throw new Error("slack_assistant_connection_changed")
     const existing = await tx
       .select()
       .from(Identity)
@@ -118,7 +145,7 @@ const lastLinkBackfill = new Map<string, number>()
  * (auth.test through bindSlackOAuthMember, which also replays their pending requests). Runs at most once
  * per installation every ten minutes per process. Returns how many members were newly linked.
  */
-export async function linkConnectedSlackMembers(installation: InstallationRow, client = slackClient, now = Date.now) {
+export async function linkConnectedSlackMembers(installation: InstallationRow, client: (token: string) => SlackCall = slackClient, now = Date.now) {
   const last = lastLinkBackfill.get(installation.connectionId)
   if (last !== undefined && now() - last < LINK_BACKFILL_INTERVAL_MS) return 0
   lastLinkBackfill.set(installation.connectionId, now())
@@ -126,7 +153,7 @@ export async function linkConnectedSlackMembers(installation: InstallationRow, c
     organizationId: installation.organizationId,
     connectionId: installation.connectionId,
   })
-  if (!connection || !isSlackConnection(connection) || !installation.teamId) return 0
+  if (!connection || !isSlackAssistantConnection(connection, installation) || !installation.teamId) return 0
   const [accounts, linked] = await Promise.all([
     db
       .select({ memberId: ConnectedAccountTable.orgMembershipId })
@@ -159,7 +186,7 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
     organizationId: installation.organizationId,
     connectionId: installation.connectionId,
   })
-  if (!connection || !isSlackConnection(connection)) return null
+  if (!connection || !isSlackAssistantConnection(connection, installation)) return null
   // primary: events re-queued by bindSlackOAuthMember run right away, and a revoked identity must stop at once.
   const identities = await db.$primary
     .select()

@@ -10,6 +10,7 @@ import { createSnapshotStore } from "./workshop-store.mjs";
 import { fileURLToPath } from "node:url";
 import { createWorkshopAuth } from "./workshop-auth.mjs";
 import { createWorkshopMicrosoft } from "./workshop-microsoft.mjs";
+import { createWorkshopSlack } from "./workshop-slack.mjs";
 import { workshopPage as page, escapeHtml as escape } from "./workshop-html.mjs";
 
 const MAX_BODY = 10 * 1024 * 1024;
@@ -97,7 +98,7 @@ export async function startWorkshop({ participants = [], origin, host = "127.0.0
   storage?.write("workshop-sample-clock", sampleClock);
   const stacks = new Map(), uploads = new Map(), active = new Map(), resetting = new Set(), idleTimers = new Map(), disposals = new Map();
   const handlers = new Set(), cleanups = new Set();
-  let auth, microsoft, closing = false, resetAll = false, admissions = Promise.resolve();
+  let auth, microsoft, slack, closing = false, resetAll = false, admissions = Promise.resolve();
   function cancelIdle(id) { clearTimeout(idleTimers.get(id)); idleTimers.delete(id); }
   function scheduleIdle(id) {
     cancelIdle(id);
@@ -267,6 +268,7 @@ export async function startWorkshop({ participants = [], origin, host = "127.0.0
       const workers = stacks.size;
       await Promise.all([...stacks.keys()].map(disposeStack));
       uploads.clear();
+      slack.clearMessages();
       if (dataDir) {
         const root = join(dataDir, "participants");
         trash = join(dataDir, `participants-reset-${Date.now()}-${randomBytes(8).toString("hex")}`);
@@ -293,10 +295,12 @@ export async function startWorkshop({ participants = [], origin, host = "127.0.0
       if (!req.url?.startsWith("/") || req.url.startsWith("//") || /\\|%2f|%5c|%2e|[\x00-\x20]/i.test(req.url.split("?")[0])) return send(res, 400, { error: "invalid_path" });
       const url = new URL(req.url, publicOrigin);
       if (url.pathname === "/_workshop/reset-all") return await operatorReset(req, res, url);
-      if (url.pathname === "/health" && req.method === "GET") return send(res, auth?.isReady() ? 200 : 503, { ok: Boolean(auth?.isReady()), service: "open-workplace-workshop", isolated: true, storage: dataDir ? "sqlite" : "memory", joinMode, startedAt, microsoftSignIn: Boolean(microsoft) });
+      if (url.pathname === "/health" && req.method === "GET") return send(res, auth?.isReady() ? 200 : 503, { ok: Boolean(auth?.isReady()), service: "open-workplace-workshop", isolated: true, storage: dataDir ? "sqlite" : "memory", joinMode, startedAt, microsoftSignIn: Boolean(microsoft), slack: Boolean(slack) });
       if (await auth.handle(req, res, url)) return;
       // Den's Microsoft 365 connector: Entra-compatible sign-in, then Graph with a bearer token for one workspace.
       if (await microsoft.handle(req, res, url)) return;
+      // A sample Slack app registering, and the Slack Web API with a bot's or a person's connector token.
+      if (await slack.handle(req, res, url)) return;
       // Assigned workshop tokens and browser sessions first; then a Microsoft 365 bearer token for Graph.
       participant = auth.authenticate(req);
       const graphBearer = !participant && microsoft.isGraphBearer(req, url);
@@ -332,16 +336,19 @@ export async function startWorkshop({ participants = [], origin, host = "127.0.0
         if (entry.inFlight) return send(res, 409, { error: "upload_in_progress" });
         entry.inFlight = true; claimedUpload = entry;
       }
-      if (url.pathname === "/" && req.method === "GET") return send(res, 200, page(participant.name, `<p class="muted">Private workshop sandbox · Fictional sample data</p>${joinMode === "automatic" ? '<p>Your private workspace is remembered in this browser. No password or account card is needed.</p><p class="muted">Use a separate browser profile per person. Clearing cookies or switching devices starts a new workspace.</p>' : ''}<nav><a href="/outlook">Open Outlook</a><a href="/calendar">Open Calendar</a><a href="/drive">Open Drive</a><a href="/jira">Open Jira</a><a href="/confluence">Open Confluence</a></nav><details><summary>Connect to OpenWork</summary><p>Use OAuth with these connector addresses:</p><ul>${["outlook", "calendar", "drive", "jira", "confluence"].map((name) => `<li>${escape(publicOrigin)}/${name}/mcp</li>`).join("")}</ul></details><p><a href="/_workshop/reset">Reset my sample data</a></p>${joinMode === "automatic" ? '<p><a href="/_workshop/leave">Forget this browser’s workspace</a></p>' : '<form method="post" action="/logout"><button>Sign out</button></form>'}`));
+      if (url.pathname === "/" && req.method === "GET") return send(res, 200, page(participant.name, `<p class="muted">Private workshop sandbox · Fictional sample data</p>${joinMode === "automatic" ? '<p>Your private workspace is remembered in this browser. No password or account card is needed.</p><p class="muted">Use a separate browser profile per person. Clearing cookies or switching devices starts a new workspace.</p>' : ''}<nav><a href="/outlook">Open Outlook</a><a href="/calendar">Open Calendar</a><a href="/drive">Open Drive</a><a href="/jira">Open Jira</a><a href="/confluence">Open Confluence</a><a href="/slack">Open Slack</a></nav><details><summary>Connect to OpenWork</summary><p>Use OAuth with these connector addresses:</p><ul>${["outlook", "calendar", "drive", "jira", "confluence", "slack"].map((name) => `<li>${escape(publicOrigin)}/${name}/mcp</li>`).join("")}</ul></details><p><a href="/_workshop/reset">Reset my sample data</a></p>${joinMode === "automatic" ? '<p><a href="/_workshop/leave">Forget this browser’s workspace</a></p>' : '<form method="post" action="/logout"><button>Sign out</button></form>'}`));
+      // Open Slack lives in the gateway (a bot's message has to reach whichever workspace it is for), not in a worker.
+      if (await slack.serve(req, res, url, participant)) return;
       if (joinMode === "automatic" && url.pathname === "/_workshop/leave" && req.method === "GET") return send(res, 200, page("Forget this browser’s workspace?", '<p>This removes this browser’s access to the current private workspace. Opening the link again will create a different workspace. There is no password or sign-in account to recover this browser access.</p><p>Saved data is not deleted. Connected apps keep their independent OAuth grants until they expire or are revoked.</p><form method="post" action="/logout"><button>Forget this browser’s workspace</button></form><p><a href="/">Keep my workspace</a></p>'));
       if (url.pathname === "/_workshop/reset") {
-        if (req.method === "GET") return send(res, 200, page("Reset my sample data?", '<p>This deletes your workshop changes in all five services. Other participants are not affected.</p><form method="post"><button>Reset my sample data</button></form><p><a href="/">Keep my changes</a></p>'));
+        if (req.method === "GET") return send(res, 200, page("Reset my sample data?", '<p>This deletes your workshop changes in all five services and your sample Slack messages. Other participants are not affected.</p><form method="post"><button>Reset my sample data</button></form><p><a href="/">Keep my changes</a></p>'));
         if (req.method !== "POST") return send(res, 405, { error: "method_not_allowed" });
         if ((active.get(participant.id) || 0) > 1) return send(res, 409, { error: "sandbox_busy", message: "Finish your current requests before resetting." });
         resetting.add(participant.id);
         try {
           await disposeStack(participant.id);
           if (dataDir) await rm(join(dataDir, "participants", participant.id), { recursive: true, force: true });
+          slack.clearParticipant(participant.id);
         } finally { resetting.delete(participant.id); }
         return send(res, 303, "", { location: "/" });
       }
@@ -370,6 +377,7 @@ export async function startWorkshop({ participants = [], origin, host = "127.0.0
   try {
     auth = createWorkshopAuth({ origin: publicOrigin, participants: roster, storage, automaticJoin: joinMode === "automatic" });
     microsoft = createWorkshopMicrosoft({ origin: publicOrigin, auth, storage });
+    slack = createWorkshopSlack({ origin: publicOrigin, auth, storage, personName: (participant) => workplacePerson(participant).split("|")[0] });
   }
   catch (error) {
     server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); storage?.close(); throw error;
