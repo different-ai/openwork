@@ -141,7 +141,9 @@ before running the new runtime. Do not deploy it against the old table names.
   `POST /api/v1/claude-code/v1/messages` and `/v1/messages/count_tokens` accept
   only `ow_gw_` keys and answer in Anthropic's shapes. Same names as Cursor, with
   `[1m]` on 1M models; Messages providers get the request as it is, others are
-  translated through Chat Completions and back.
+  translated through Chat Completions and back. Claude Desktop's Gateway mode
+  uses this endpoint as its Gateway base URL (its picker lists only Claude
+  models).
 - Codex CLI (same feature): `GET /api/v1/codex/models` (Codex's own catalog
   shape, `{models: [ModelInfo]}`) and `POST /api/v1/codex/responses` accept only
   `ow_gw_` keys. Same names as Cursor; OpenAI and Azure models get the Responses

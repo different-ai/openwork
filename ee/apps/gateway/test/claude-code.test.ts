@@ -4,7 +4,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { claudeCodeBaseUrl, claudeCodeModelName, parseClaudeCodeModelName } from "@openwork/types/den/gateway-cursor"
+import { claudeCodeBaseUrl, claudeCodeModelName, claudeDesktopListsModel, parseClaudeCodeModelName } from "@openwork/types/den/gateway-cursor"
 import type { GatewayCredential, GatewayProvider } from "../src/gateway.js"
 import type { InferenceAuthVariables } from "../src/middleware/inference-auth.js"
 import type { OrganizationVariables } from "../src/middleware/org-context.js"
@@ -230,4 +230,56 @@ test("with member API keys off the endpoint does not exist", async () => {
   assert.equal((await api.request("/api/v1/claude-code/v1/models")).status, 404)
   assert.equal((await messages({ model: name(opus), max_tokens: 10, messages: [{ role: "user", content: "hi" }] })).status, 404)
   assert.equal(sent.length, 0)
+})
+
+// Claude Desktop's Gateway mode uses this endpoint as its Gateway base URL. Its requests, as captured
+// from Claude Desktop 5.1231: the model list with ?limit=1000, a one-token "Test connection" call, and
+// chats from the Claude Code it runs inside (?beta=true, thinking, tools, its betas and headers).
+test("Claude Desktop's model list, test connection and chat requests", async () => {
+  const sonnet = accessRow(anthropicId, { modelId: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" })
+  const deepseek = accessRow(deepseekId, { modelId: "deepseek-v4", name: "DeepSeek V4" })
+  const { api, sent } = app([sonnet, deepseek])
+  const desktopHeaders = { authorization: "Bearer ow_gw_fixture", "anthropic-version": "2023-06-01", "content-type": "application/json" }
+
+  const list = await json(await api.request("/api/v1/claude-code/v1/models?limit=1000", { headers: desktopHeaders }))
+  const ids = Array.isArray(list.data) ? list.data.map((entry: unknown) => typeof entry === "object" && entry !== null ? String(Reflect.get(entry, "id")) : "") : []
+  assert.deepEqual(ids, [name(sonnet), name(deepseek)])
+  assert.equal(list.has_more, false)
+  assert.equal(list.last_id, name(deepseek))
+  // Claude Desktop keeps only the Claude model for its picker.
+  assert.deepEqual(ids.filter(claudeDesktopListsModel), [name(sonnet)])
+
+  const probe = await api.request("/api/v1/claude-code/v1/messages", { method: "POST", headers: desktopHeaders, body: JSON.stringify({ model: name(sonnet), max_tokens: 1, messages: [{ role: "user", content: "." }] }) })
+  assert.equal(probe.status, 200)
+
+  const chat = {
+    model: name(sonnet), max_tokens: 32000, stream: false,
+    thinking: { type: "enabled", budget_tokens: 31999 },
+    system: [{ type: "text", text: "You are Claude." }, { type: "text", text: "Cowork", cache_control: { type: "ephemeral" } }],
+    tools: [{ name: "mcp__workspace__bash", description: "Run a command", input_schema: { type: "object", properties: { command: { type: "string" } } } }],
+    metadata: { user_id: "{\"session_id\":\"s\"}" },
+    messages: [{ role: "user", content: [{ type: "text", text: "list files", cache_control: { type: "ephemeral" } }] }],
+  }
+  const answer = await api.request("/api/v1/claude-code/v1/messages?beta=true", {
+    method: "POST",
+    headers: { ...desktopHeaders, "anthropic-beta": "interleaved-thinking-2025-05-14,claude-code-20250219", "x-app": "cli", "anthropic-client-platform": "desktop_app" },
+    body: JSON.stringify(chat),
+  })
+  assert.equal(answer.status, 200)
+  const upstream = sent.at(-1)
+  assert.equal(upstream?.url, "https://api.anthropic.com/v1/messages")
+  assert.equal(upstream?.headers.get("anthropic-beta"), "interleaved-thinking-2025-05-14,claude-code-20250219")
+  const forwarded = await json(upstream ?? new Response("{}"))
+  assert.equal(forwarded.model, "claude-sonnet-4-5")
+  assert.deepEqual(forwarded.thinking, chat.thinking)
+  assert.deepEqual(forwarded.tools, chat.tools)
+  assert.deepEqual(forwarded.system, chat.system)
+})
+
+test("which models Claude Desktop's picker shows", () => {
+  assert.equal(claudeDesktopListsModel("openwork/claude-sonnet-4.5-k3f9"), true)
+  assert.equal(claudeDesktopListsModel("openwork/claude-opus-5.5-k3f9[1m]"), true)
+  assert.equal(claudeDesktopListsModel("openwork/gpt-5-mini-f1ng"), false)
+  assert.equal(claudeDesktopListsModel("openwork/deepseek-v4-flash-a2b3"), false)
+  assert.equal(claudeDesktopListsModel("openwork/kimi-k2.5-sonnet-like-a2b3"), false)
 })

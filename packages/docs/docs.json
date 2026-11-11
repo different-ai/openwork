@@ -199,6 +199,7 @@
               "ai-gateway/third-party-tools",
               "ai-gateway/cursor",
               "ai-gateway/claude-code",
+              "ai-gateway/claude-desktop",
               "ai-gateway/codex",
               "ai-gateway/codex-desktop",
               "ai-gateway/provider-support",

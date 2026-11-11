@@ -48,7 +48,7 @@ Shared code: `packages/types/src/den/gateway-cursor.ts`.
 
 **Right after creating a key** (while it can still be shown), the dialog moves
 to **Start using this key**: the key once, then a large button per tool:
-Cursor, OpenAI Codex, Claude Code and Another tool. Picking one shows that
+Cursor, OpenAI Codex, Claude Code, Claude Desktop and Another tool. Picking one shows that
 tool's steps with the key, URLs and model ids already filled in, each with a
 copy button; **Choose another tool** goes back.
 
@@ -64,12 +64,17 @@ copy button; **Choose another tool** goes back.
 - **Claude Code:** a project settings file (`.claude/settings.local.json`) for
   a main and a fast model chosen from dropdowns, pointing at the Gateway's
   Claude Code endpoint (below). Every model is offered.
+- **Claude Desktop:** the menu path to its Gateway settings, the Gateway base
+  URL (the Claude Code endpoint) and the key to paste, auth scheme `bearer` and
+  credential kind `Static API key`, the relaunch, and the member's models Claude
+  Desktop will list (Claude models only, see below).
 - **Another tool:** the key, both base URLs, and a model to choose with its id
   to copy.
 
 ![Cursor's steps](./cursor-steps.png)
 
-Cursor, Claude Code and Codex each have their own endpoint.
+Cursor, Claude Code and Codex each have their own endpoint; Claude Desktop uses
+Claude Code's.
 
 ![Claude Code's steps](./claude-code-steps.png)
 
@@ -149,6 +154,62 @@ file only after its first-run sign-in screen; a key in the shell or in
 `ANTHROPIC_AUTH_TOKEN="<key>" claude`. Not checked: an existing Claude account
 login next to the settings file (the steps follow OpenRouter: `/status`, then
 `/logout` if needed).
+
+## Claude Desktop
+
+Claude Desktop's Gateway mode (**Developer › Configure Third-Party Inference…**,
+Connection **Gateway**) points at the Claude Code endpoint: **Gateway base
+URL** `<gateway>/api/v1/claude-code`, the key as **Gateway API key**, auth
+scheme `bearer`, credential kind `Static API key`. No Gateway code of its own:
+what it sends is what Claude Code sends. Public docs:
+`packages/docs/ai-gateway/claude-desktop.mdx`.
+
+What Claude Desktop 5.1231 sends (captured with a logging proxy, and read in
+its app bundle):
+
+- Settings live in `~/Library/Application Support/Claude-3p/configLibrary/<id>.json`
+  as flat keys (`inferenceProvider: "gateway"`, `inferenceGatewayBaseUrl`,
+  `inferenceGatewayApiKey` sealed with the OS keychain, `inferenceGatewayAuthScheme`,
+  `inferenceCredentialKind: "static"`). Gateway mode runs on its own profile
+  (`Claude-3p`), apart from a signed-in Claude account's. `http://127.0.0.1`
+  base URLs are accepted; other `http` URLs are not.
+- `GET {base}/v1/models?limit=1000` with `Authorization: Bearer` and
+  `anthropic-version`, paging with `after_id` while `has_more`. It reads `id`,
+  `display_name`, `description`, `supports_1m` / `max_input_tokens`,
+  `anthropic_family_tier` and `is_family_default`.
+- **Only Claude models reach the picker.** Discovery keeps an id that contains
+  claude, opus, sonnet, haiku or anthropic and no other family (gpt, openai,
+  gemini, deepseek…), or one with an `anthropic_family_tier`; the picker then
+  applies the id check again, without the tier exception. Tried live: GPT-5
+  mini with `anthropic_family_tier: "sonnet"` was "4 found; picker = 3". So
+  the setup lists the member's Claude models (`claudeDesktopListsModel` in
+  `packages/types/src/den/gateway-cursor.ts` mirrors the check) and points to
+  Claude Code, Cursor or Codex for the rest. The Gateway does not rename models
+  to get past the check.
+- **Test connection** and each launch: the model list, then `POST
+  {base}/v1/messages` with `max_tokens: 1` on one of the listed models.
+- Chats and Cowork tasks run Claude Code inside the app: `POST
+  {base}/v1/messages?beta=true`, streamed, `anthropic-beta:
+  interleaved-thinking-2025-05-14,claude-code-20250219`, `x-app: cli`,
+  `thinking: {type: "enabled", budget_tokens: 31999}`, `max_tokens: 32000`, about
+  40 tools (Bash in its VM, files, web, MCP), cache control; a title request
+  without `?beta=true`; and `HEAD {base}/api/hello` without a key (answered
+  `401`; Claude Desktop carries on).
+
+Checked on 2026-11-10 with Claude Desktop 5.1231.0 (macOS) on a local Den and
+Gateway with real Anthropic and OpenAI keys, set up through its own
+Configure Third-Party Inference window: **Test connection**, model discovery
+(Claude Haiku 4.5, Claude Sonnet 4.5 and a mock Claude listed; GPT-5 mini
+hidden), a Cowork chat on Claude Haiku 4.5 that ran a shell tool and answered
+(passed through), switching to Claude Sonnet 4.5 mid-conversation, and the
+same request shape sent straight to GPT-5 mini through the endpoint (translated,
+tool use) to show the endpoint would serve it. Nothing broke, so the Gateway is
+unchanged. Found there: Claude Desktop hides non-Claude models; after Apply it
+relaunched straight into Gateway mode (no start screen); Gateway mode has its
+own Developer Mode, so the Developer menu disappears there (the account menu's
+**Inference configuration** opens the settings); the auth middleware's `401` is
+not an Anthropic error body (Claude Desktop shows its status). Not checked:
+Windows, the OIDC sign-in kinds, and Claude Desktop's Code tab.
 
 ## Codex endpoint
 
@@ -309,4 +370,6 @@ on a real Den and AI Gateway. `ee/apps/gateway/test/claude-code.test.ts` and
 (a Claude model passed through, a DeepSeek model translated), and
 `ee/apps/gateway/test/codex.test.ts` and `evals/proofs/gateway-codex.proof.test.ts`
 for Codex (an OpenAI model passed through, a Claude model translated, with the
-config read from the page).
+config read from the page). `evals/proofs/gateway-claude-desktop.proof.test.ts`
+reads Claude Desktop's base URL and key from its steps and sends Claude
+Desktop's requests with them (model list, test connection, a streamed chat).
