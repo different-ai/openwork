@@ -177,6 +177,8 @@ import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeO
 import { findManagedEngineWorkspace, hasExternalOpencode, managedEngineRootWorkspace } from "./workspaces.js";
 import { startThreadApprovalReplayer, type ThreadApprovalReplayer } from "./thread-approvals.js";
 import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
+import { shareDeviceProvider } from "./device-provider-share.js";
+import { readLocalProviderApiKeys } from "./opencode-v2-local-auth.js";
 import { createEngineV2Preview, shouldSyncLiveProviderOwnerTransition, type EngineV2Preview } from "./engine-v2-preview.js";
 import { MACHINE_PROVIDER_TEMPLATE_OWNERSHIP, providerConfigFingerprint } from "./provider-config-templates.js";
 import pkg from "../package.json" with { type: "json" };
@@ -3506,6 +3508,33 @@ function createRoutes(
       throw new ApiError(400, "invalid_payload", "Only the active orgId and optional credentialSetId are accepted");
     }
     return jsonResponse(await cloudProviderSync.startProviderOAuth(ctx.params.id, body.orgId, body.credentialSetId));
+  });
+
+  // Den feature shareDeviceProvider: the person confirmed in the app; the key
+  // goes from this computer's credential store straight to the Den it is
+  // signed in to, never through the app's window (device-provider-share.ts).
+  addRoute(routes, "POST", "/cloud-provider-sync/device-providers/:id/share", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const origin = ctx.request.headers.get("origin");
+    if (origin && origin !== new URL(ctx.request.url).origin && !config.corsOrigins.includes("*") && !config.corsOrigins.includes(origin)) {
+      throw new ApiError(403, "invalid_origin", "This origin cannot share a provider");
+    }
+    if (ctx.request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") {
+      throw new ApiError(415, "invalid_content_type", "A JSON request is required");
+    }
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.orgId !== "string" || (body.token !== undefined && (typeof body.token !== "string" || !body.token.trim())) || Object.keys(body).some((key) => key !== "orgId" && key !== "token")) {
+      throw new ApiError(400, "invalid_payload", "Only the active orgId and an optional freshly verified token are accepted");
+    }
+    const session = cloudProviderSync.currentSession();
+    if (!session) throw new ApiError(401, "no_session", "Sign in to OpenWork first");
+    if (session.orgId !== body.orgId) throw new ApiError(403, "organization_mismatch", "The active organization changed");
+    return jsonResponse(await shareDeviceProvider({
+      // After "Confirm it's you" the app holds a newer sign-in for the same account and Den.
+      session: typeof body.token === "string" ? { ...session, token: body.token.trim() } : session,
+      providerId: ctx.params.id,
+      readApiKey: async (providerId) => (await readLocalProviderApiKeys()).get(providerId) ?? null,
+    }));
   });
 
   addRoute(routes, "POST", "/experimental/session-stop-fence/check", "client", async (ctx) => {

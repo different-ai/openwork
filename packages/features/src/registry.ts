@@ -192,6 +192,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  shareDeviceProvider: {
+    label: "Desktop: share a provider key with your organization",
+    description: "In Settings › AI Providers, a person who manages AI Gateway shares an API key already saved on their device with everyone in the organization, after confirming who can use it and who pays. People they invite get those models without anyone pasting the key again. Off: sharing means adding the provider again in AI Gateway.",
+    category: "models",
+    added: "2026-11-10",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/share-device-provider/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   plainFreeModel: {
     label: "Desktop: OpenWork Free listed like any other model",
     description: "The free model shows in the model picker under its own name (GPT-6 Luna) with the same row as every other model, stays selectable when its usage limit is used up, and the limit message appears in the chat after sending.",

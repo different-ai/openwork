@@ -311,6 +311,14 @@
       "development": "./src/den/activation.ts",
       "default": "./src/den/activation.ts"
     },
+    "./den/device-provider-share": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/device-provider-share.d.ts",
+        "default": "./src/den/device-provider-share.ts"
+      },
+      "development": "./src/den/device-provider-share.ts",
+      "default": "./src/den/device-provider-share.ts"
+    },
     "./den/gateway-custom-providers": {
       "types": {
         "openwork-build": "./dist/types/src/den/gateway-custom-providers.d.ts",

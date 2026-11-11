@@ -46,6 +46,7 @@ import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgGatewayUsageRoutes } from "./gateway-usage.js"
 import { registerOrgGatewayUsageLimitRoutes } from "./gateway-usage-limits.js"
 import { registerOrgProviderInventoryRoutes } from "./provider-inventory.js"
+import { registerOrgDeviceProviderShareRoutes } from "./device-provider-share.js"
 import { credentialPromptSchema } from "@openwork/types/den/credential-prompt"
 import { GatewayProviderUsageLimitsError, GatewayUsageError, lockUsageOrganization } from "@openwork-ee/den-db/gateway-usage-limits"
 import { GATEWAY_PROVIDER_HAS_USAGE_LIMITS, GATEWAY_PROVIDER_REMOVAL_LIMIT_ACTIONS, gatewayProviderHasUsageLimitsSchema, type GatewayProviderRemovalLimitChoice } from "@openwork/types/den/gateway-usage-limits"
@@ -446,6 +447,7 @@ function awsSsoWriteError(error: unknown): unknown {
 
 export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   registerOrgProviderInventoryRoutes(app)
+  registerOrgDeviceProviderShareRoutes(app)
   registerCustomProviderRoutes(app)
   registerOrgGatewayUsageRoutes(app)
   registerOrgGatewayUsageLimitRoutes(app)
