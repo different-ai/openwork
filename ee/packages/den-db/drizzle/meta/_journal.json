@@ -1345,6 +1345,13 @@
       "when": 1794364751118,
       "tag": "0192_remote_devices",
       "breakpoints": true
+    },
+    {
+      "idx": 193,
+      "version": "5",
+      "when": 1794376055148,
+      "tag": "0193_remote_session_access",
+      "breakpoints": true
     }
   ]
 }

@@ -130,3 +130,33 @@ test("My Computers is under Work for every member whenever remoteDevices is on, 
     }
   }
 });
+
+test("My Sessions sits next to My Computers under Work for every member, only with remoteSessionAccess on", () => {
+  for (const remoteSessionAccess of [false, true]) {
+    for (const permissions of [[], ["computers.view"]] as const) {
+      const sections = buildDashboardNavSections({
+        orgSlug: "workspace", access: getOrgAccessFlags("member", false, [...permissions]),
+        capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, remoteDevices: true, remoteSessionAccess,
+      });
+      const work = sections.find((section) => section.label === "Work")?.items ?? [];
+      const mine = work.find((item) => item.label === "My Sessions");
+      assert.equal(Boolean(mine), remoteSessionAccess);
+      // A member page, never an admin one.
+      assert.ok(!sections.filter((section) => section.label !== "Work").some((section) => section.items.some((item) => item.label === "My Sessions")));
+      assert.ok(!flattenNavigationForSearch(sections).some((item) => item.label === "My Sessions") || remoteSessionAccess);
+      if (mine) {
+        assert.equal(mine.href, "/dashboard/my-sessions");
+        assert.equal(mine.testId, "dashboard-nav-my-sessions");
+        assert.equal(work.indexOf(mine), work.findIndex((item) => item.label === "My Computers") + 1);
+        assert.ok(flattenNavigationForSearch(sections).find((item) => item.label === "My Sessions")?.keywords.includes("needs you"));
+      }
+    }
+  }
+  // Its own feature: it does not ride on remoteDevices, and is off unless asked for.
+  const alone = buildDashboardNavSections({
+    orgSlug: "workspace", access: getOrgAccessFlags("member", false, []), capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, remoteSessionAccess: true,
+  }).flatMap((section) => section.items);
+  assert.ok(alone.some((item) => item.label === "My Sessions"));
+  assert.ok(!alone.some((item) => item.label === "My Computers"));
+  assert.ok(!navigation([]).some((item) => item.label === "My Sessions"));
+});

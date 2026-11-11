@@ -2,6 +2,9 @@ import assert from "node:assert/strict"
 import { setImmediate } from "node:timers/promises"
 import { test } from "node:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import type { RunnerReportedSession } from "@openwork/types/automations"
+import { memberSessionListResponseSchema, remoteSessionAttachResponseSchema } from "@openwork/types/den/remote-sessions"
+import type { RemoteSessionAccessPolicy } from "../src/remote-sessions/access.js"
 import type { RemoteSessionCommand, RemoteSessionDesktopSession } from "../src/remote-sessions/commands.js"
 import type { RemoteSessionExecuteDeps, RemoteSessionDesktopRecord } from "../src/mcp/remote-session-capabilities.js"
 
@@ -14,7 +17,8 @@ process.env.DEN_DB_ENCRYPTION_KEY ??= "synthetic-remote-session-test-key-0000000
 process.env.BETTER_AUTH_SECRET ??= "synthetic-remote-session-test-secret-000000"
 process.env.DEN_BASE_URL ??= "http://127.0.0.1:3005"
 
-const { DEFAULT_REMOTE_SESSION_DEPS, executeRemoteSessionCapability, searchRemoteSessionCapabilities } = await import("../src/mcp/remote-session-capabilities.js")
+const { DEFAULT_REMOTE_SESSION_DEPS, executeRemoteSessionCapability, listMemberRemoteSessions, listRemoteSessionCapabilities, searchRemoteSessionCapabilities } = await import("../src/mcp/remote-session-capabilities.js")
+const { automationRunnerRowId } = await import("../src/automations/repository.js")
 const organizationId = createDenTypeId("organization")
 const userId = createDenTypeId("user")
 const ownerMemberId = createDenTypeId("member")
@@ -22,8 +26,8 @@ const ownerMemberId = createDenTypeId("member")
 function command(): RemoteSessionCommand {
   return {
     id: createDenTypeId("remoteSessionCommand"), organizationId, ownerMemberId, createdByUserId: userId,
-    status: "pending", title: "Synthetic native session", prompt: null, model: null, idempotencyKey: null,
-    targetComputerId: "synthetic-computer", targetWorkspaceId: "synthetic-workspace", expiresAt: Date.now() + 60_000,
+    status: "pending", kind: "create", title: "Synthetic native session", prompt: null, model: null, idempotencyKey: null,
+    targetComputerId: "synthetic-computer", targetWorkspaceId: "synthetic-workspace", targetSessionId: null, expiresAt: Date.now() + 60_000,
     claimedByRunnerId: null, claimedAt: null, sessionId: null, workspaceId: null, resultSummary: null,
     error: null, session: null, createdAt: Date.now(), updatedAt: Date.now(),
   }
@@ -50,7 +54,7 @@ function deps(overrides: Partial<RemoteSessionExecuteDeps> = {}): RemoteSessionE
   }
 }
 
-async function call(action: "create" | "read" | "send" | "stop" | "targets" | "list", body: unknown, dependencies: RemoteSessionExecuteDeps, hasWriteScope = true) {
+async function call(action: "create" | "read" | "send" | "stop" | "targets" | "list" | "attach" | "answer", body: unknown, dependencies: RemoteSessionExecuteDeps, hasWriteScope = true) {
   const result = await executeRemoteSessionCapability({ action, organizationId, userId, hasWriteScope, body }, dependencies)
   assert.ok(result.structuredContent)
   return { error: result.isError === true, payload: result.structuredContent }
@@ -204,7 +208,7 @@ for (const action of desktopSessionActions) {
   ]) {
     test(`${action} resolves ${scenario.name} ownership and runner only once per request`, async () => {
       const session: RemoteSessionDesktopSession = {
-        commandId: "synthetic-command", ownerMemberId, runnerId: "synthetic-runner", sessionId: "synthetic-session",
+        commandId: "synthetic-command", ownerMemberId, runnerId: "synthetic-runner", kind: "create", detached: false, sessionId: "synthetic-session",
         workspaceId: "synthetic-workspace", title: "Synthetic session", engine: "v2", status: "idle", updatedAt: 1,
       }
       let lookups = 0
@@ -228,6 +232,8 @@ for (const action of desktopSessionActions) {
           assert.deepEqual(scope, { organizationId, ownerMemberId, runnerId: session.runnerId })
           return scenario
         },
+        // A session that was started remotely is reachable whatever the access settings say: they are never read.
+        sessionAccess: async () => { throw new Error("A session started remotely must not read session access") },
         requestWait: { timeoutMs: 0, pollMs: 1 },
         requestStore: { ...DEFAULT_REMOTE_SESSION_DEPS.requestStore, enqueue: async (input) => {
           enqueued++
@@ -398,4 +404,358 @@ test("a runner's read result keeps its ordered steps through Den; older results 
   assert.ok(legacy.status === "done" && legacy.outcome.action === "read")
   assert.equal(legacy.outcome.result.messages[0]?.parts, undefined)
   assert.equal(remoteSessionRequestCompleteRequestSchema.safeParse(page([{ ...message, parts: Array.from({ length: 201 }, () => parts[0]) }])).success, false)
+})
+
+// Sessions on my computers (feature remoteSessionAccess).
+const allowAll: RemoteSessionAccessPolicy = { enabled: true, ceiling: "all" }
+const localSession: RunnerReportedSession = { workspaceId: "synthetic-workspace", sessionId: "ses_local", title: "  Refactor the parser  ", engine: "v2", updatedAt: 5_000, working: false }
+const accessCapabilities = ["remote_session_v1", "remote_session_control_v1", "remote_session_recovery_v1", "remote_session_answer_v1", "remote_session_access_v1"]
+
+/** One of the caller's computers, on an app that understands session access, whose owner allows every session. */
+function openComputer(overrides: Partial<RemoteSessionDesktopRecord> = {}): RemoteSessionDesktopRecord {
+  return { ...computer(), capabilities: accessCapabilities, sessionAccess: "all", sessions: [localSession], sessionsUpdatedAt: 4_000, ...overrides }
+}
+
+function accessDeps(options: {
+  policy?: RemoteSessionAccessPolicy
+  computers?: RemoteSessionDesktopRecord[]
+  existing?: RemoteSessionCommand[]
+  commands?: RemoteSessionCommand[]
+  delivered?: RemoteSessionDesktopSession[]
+} = {}) {
+  const attached: Array<Parameters<RemoteSessionExecuteDeps["commandStore"]["enqueueAttach"]>[0]> = []
+  const dependencies = deps({
+    sessionAccess: async (scope) => {
+      assert.deepEqual(scope, { organizationId, userId })
+      return options.policy ?? allowAll
+    },
+    desktopTargets: async (scope) => {
+      assert.equal(scope.userId, userId, "only the caller's own computers are ever read")
+      return { ownerMemberId, computers: options.computers ?? [openComputer()] }
+    },
+    commandStore: {
+      ...DEFAULT_REMOTE_SESSION_DEPS.commandStore,
+      listForSession: async (scope) => {
+        assert.equal(scope.createdByUserId, userId)
+        return options.existing ?? []
+      },
+      listForCreator: async (scope) => {
+        assert.equal(scope.createdByUserId, userId)
+        return options.commands ?? []
+      },
+      listDesktopSessions: async (scope) => {
+        assert.equal(scope.createdByUserId, userId)
+        return options.delivered ?? []
+      },
+      enqueueAttach: async (input) => {
+        attached.push(input)
+        return { ...command(), kind: "attach", title: input.title, targetComputerId: input.targetComputerId,
+          targetWorkspaceId: input.targetWorkspaceId, targetSessionId: input.targetSessionId }
+      },
+    },
+  })
+  return { dependencies, attached }
+}
+
+const attachBody = { computerId: "synthetic-computer", workspaceId: "synthetic-workspace", sessionId: "ses_local" }
+
+test("attach is refused, in order, by the feature, the organization, ownership, the app, presence and the computer's owner", async () => {
+  const stale = Date.now() - 60 * 60_000
+  for (const [name, options, error, retryable] of [
+    ["feature off", { policy: { enabled: false, ceiling: "created" }, computers: [] }, "feature_disabled", false],
+    ["organization ceiling", { policy: { enabled: true, ceiling: "created" }, computers: [] }, "session_access_denied", false],
+    ["someone else's computer", { computers: [openComputer({ computerId: "another-computer" })] }, "unknown_computer", false],
+    ["an app without session access", { computers: [openComputer({ capabilities: accessCapabilities.slice(0, 4), lastSeenAt: stale, sessionAccess: "created" })] }, "desktop_update_required", false],
+    ["an app without recovery", { computers: [openComputer({ registered: false })] }, "desktop_update_required", false],
+    ["an offline computer", { computers: [openComputer({ lastSeenAt: stale, sessionAccess: "created" })] }, "desktop_offline", true],
+    ["the owner's choice", { computers: [openComputer({ sessionAccess: "created" })] }, "session_access_denied", false],
+    ["a computer that never reported", { computers: [openComputer({ sessionAccess: null })] }, "session_access_denied", false],
+  ] as const) {
+    const { dependencies, attached } = accessDeps(options)
+    const result = await call("attach", attachBody, dependencies)
+    assert.equal(result.error, true, name)
+    assert.equal(result.payload.error, error, name)
+    assert.equal(result.payload.retryable, retryable, name)
+    assert.equal(typeof result.payload.message, "string", name)
+    assert.equal(attached.length, 0, `${name}: nothing is queued`)
+  }
+  const organization = await call("attach", attachBody, accessDeps({ policy: { enabled: true, ceiling: "created" } }).dependencies)
+  assert.equal(organization.payload.message, "Your organization only allows sessions that were started remotely.")
+  const owner = await call("attach", attachBody, accessDeps({ computers: [openComputer({ sessionAccess: "created" })] }).dependencies)
+  assert.equal(owner.payload.message, "That computer only allows sessions that were started remotely. Its owner can change this in Settings > Devices on that computer.")
+  const readOnly = await call("attach", attachBody, accessDeps().dependencies, false)
+  assert.equal(readOnly.payload.error, "insufficient_mcp_scope")
+})
+
+test("attach queues one command for the computer, reuses a queued one, and reports a session that is already reachable", async () => {
+  const fresh = accessDeps()
+  const queued = await call("attach", attachBody, fresh.dependencies)
+  assert.equal(queued.error, false)
+  assert.equal(remoteSessionAttachResponseSchema.safeParse(queued.payload).success, true)
+  assert.equal(queued.payload.state, "queued")
+  assert.deepEqual(fresh.attached, [{
+    organizationId, ownerMemberId, createdByUserId: userId, title: "Refactor the parser", ttlMs: 10 * 60_000,
+    targetComputerId: "synthetic-computer", targetWorkspaceId: "synthetic-workspace", targetSessionId: "ses_local",
+  }])
+
+  // A session the computer did not report still gets a title the runner accepts.
+  const unlisted = accessDeps({ computers: [openComputer({ sessions: [] })] })
+  await call("attach", attachBody, unlisted.dependencies)
+  assert.equal(unlisted.attached[0]?.title, "Session")
+
+  const pending: RemoteSessionCommand = { ...command(), kind: "attach", targetSessionId: "ses_local" }
+  const repeated = accessDeps({ existing: [pending] })
+  const again = await call("attach", attachBody, repeated.dependencies)
+  assert.equal(again.payload.state, "queued")
+  assert.equal(again.payload.commandId, pending.id)
+  assert.equal(repeated.attached.length, 0)
+
+  // Reachable already, through an attach or because the caller started it remotely: no new command.
+  for (const kind of ["attach", "create"] as const) {
+    const delivered: RemoteSessionCommand = { ...command(), kind, status: "delivered", claimedByRunnerId: "synthetic-runner",
+      sessionId: "ses_local", workspaceId: "synthetic-workspace" }
+    const computerId = automationRunnerRowId({ organizationId, ownerMemberId, runnerId: "synthetic-runner" })
+    const reachable = accessDeps({ existing: [delivered], computers: [openComputer({ computerId })] })
+    const result = await call("attach", { ...attachBody, computerId }, reachable.dependencies)
+    assert.equal(remoteSessionAttachResponseSchema.safeParse(result.payload).success, true)
+    assert.deepEqual([result.payload.state, result.payload.commandId, result.payload.expiresAt], ["attached", delivered.id, null])
+    assert.equal(reachable.attached.length, 0)
+  }
+
+  // The same session id delivered on another of the caller's computers does not count.
+  const elsewhere: RemoteSessionCommand = { ...command(), kind: "attach", status: "delivered", claimedByRunnerId: "another-runner",
+    sessionId: "ses_local", workspaceId: "synthetic-workspace" }
+  const other = accessDeps({ existing: [elsewhere] })
+  assert.equal((await call("attach", attachBody, other.dependencies)).payload.state, "queued")
+  assert.equal(other.attached.length, 1)
+})
+
+for (const action of ["read", "send", "stop", "answer"] as const) {
+  test(`${action} through an attached session needs the organization and the computer's owner to still allow it`, async () => {
+    const session: RemoteSessionDesktopSession = {
+      commandId: "synthetic-command", ownerMemberId, runnerId: "synthetic-runner", kind: "attach", detached: false, sessionId: "ses_local",
+      workspaceId: "synthetic-workspace", title: "Local session", engine: "v2", status: "idle", updatedAt: 1,
+    }
+    const body = { sessionId: session.sessionId, workspaceId: session.workspaceId,
+      ...(action === "send" ? { prompt: "Follow up" } : {}),
+      ...(action === "answer" ? { kind: "permission", requestId: "per_1", decision: "once" } : {}) }
+    for (const [name, policy, runnerAccess, accessCapable, message] of [
+      ["allowed", allowAll, "all", true, null],
+      ["feature off", { enabled: false, ceiling: "created" }, "all", true, /Your organization only allows/],
+      ["ceiling lowered", { enabled: true, ceiling: "created" }, "all", true, /Your organization only allows/],
+      ["owner narrowed", allowAll, "created", true, /That computer only allows/],
+      ["app downgraded", allowAll, "all", false, /That computer only allows/],
+    ] as const) {
+      let enqueued = 0
+      const result = await call(action, body, deps({
+        getOpenWorkWebAccess: async () => { throw new Error("A registered desktop session must not read Web access") },
+        resolveRuntime: async () => { throw new Error("An owned desktop session must never fall back to Cloud") },
+        sessionAccess: async () => policy,
+        commandStore: { ...DEFAULT_REMOTE_SESSION_DEPS.commandStore, findDesktopSession: async () => session },
+        desktopRunner: async () => ({ connected: true, controlCapable: true, registered: true, answerCapable: true, accessCapable, sessionAccess: runnerAccess }),
+        requestWait: { timeoutMs: 0, pollMs: 1 },
+        requestStore: { ...DEFAULT_REMOTE_SESSION_DEPS.requestStore, enqueue: async (input) => {
+          enqueued++
+          return { ...input, id: "synthetic-request", status: "pending", outcome: null, error: null,
+            expiresAt: Date.now() + input.ttlMs, claimedAt: null, completedAt: null, createdAt: 1, updatedAt: 1 }
+        } },
+      }))
+      if (message === null) {
+        assert.equal(result.error, false, name)
+        assert.equal(enqueued, 1, name)
+        continue
+      }
+      assert.equal(result.payload.error, "session_access_denied", name)
+      assert.equal(result.payload.retryable, false, name)
+      assert.match(String(result.payload.message), message, name)
+      assert.equal(enqueued, 0, `${name}: nothing reaches the computer`)
+    }
+  })
+}
+
+test("an attached command's receipt is refused once access is gone, while a queued or failed attach stays readable", async () => {
+  const delivered: RemoteSessionCommand = { ...command(), kind: "attach", status: "delivered", claimedByRunnerId: "synthetic-runner",
+    sessionId: "ses_local", workspaceId: "synthetic-workspace", targetSessionId: "ses_local" }
+  const read = (stored: RemoteSessionCommand, policy: RemoteSessionAccessPolicy) => call("read", { commandId: stored.id }, deps({
+    sessionAccess: async () => policy,
+    commandStore: { ...DEFAULT_REMOTE_SESSION_DEPS.commandStore, get: async () => stored },
+    desktopRunner: async () => ({ connected: true, controlCapable: true, registered: true, accessCapable: true, sessionAccess: "all" }),
+  }))
+  assert.equal((await read(delivered, allowAll)).payload.state, "delivered")
+  assert.equal((await read(delivered, { enabled: true, ceiling: "created" })).payload.error, "session_access_denied")
+  const failed: RemoteSessionCommand = { ...delivered, status: "failed", sessionId: null, workspaceId: null, error: { code: "session_unavailable", message: "That session no longer exists." } }
+  const receipt = await read(failed, { enabled: false, ceiling: "created" })
+  assert.equal(receipt.payload.state, "failed")
+  assert.deepEqual(receipt.payload.error, failed.error)
+})
+
+test("the member's session list holds their reachable, connecting and attachable sessions, and nothing the settings no longer allow", async () => {
+  const runnerComputerId = automationRunnerRowId({ organizationId, ownerMemberId, runnerId: "synthetic-runner" })
+  const mine = openComputer({ computerId: runnerComputerId, sessions: [
+    localSession,
+    // The computer lists the session Milo started remotely too: it must appear once, as the remote one.
+    { workspaceId: "synthetic-workspace", sessionId: "ses_remote", title: "Started from another device", engine: "v2", updatedAt: 9_500, working: true },
+    { workspaceId: "synthetic-workspace", sessionId: "ses_attached", title: "Attached on the computer", engine: "v2", updatedAt: 9_000, working: true },
+    { workspaceId: "synthetic-workspace", sessionId: "ses_connecting", title: "Being attached", engine: "v2", updatedAt: 3_000 },
+    { workspaceId: "synthetic-workspace", sessionId: "ses_unknown", title: "", engine: "v1", updatedAt: 2_000 },
+  ] })
+  const base = (): RemoteSessionCommand => ({ ...command(), targetComputerId: runnerComputerId })
+  const remote: RemoteSessionCommand = { ...base(), status: "delivered", claimedByRunnerId: "synthetic-runner", sessionId: "ses_remote",
+    workspaceId: "synthetic-workspace", updatedAt: 8_000, session: { status: "waiting", waitingFor: "permission", engine: "v2", model: null, finalText: null,
+      lastError: null, messageCount: 2, latestStep: "Ran the tests", observedAt: 7_900,
+      pending: { kind: "permission", requestId: "per_1", title: "Run a command", detail: "", command: "pnpm test" } } }
+  const attached: RemoteSessionCommand = { ...base(), kind: "attach", status: "delivered", claimedByRunnerId: "synthetic-runner", title: "Attached",
+    sessionId: "ses_attached", workspaceId: "synthetic-workspace", targetSessionId: "ses_attached", updatedAt: 7_000 }
+  const connecting: RemoteSessionCommand = { ...base(), kind: "attach", status: "pending", title: "Being attached", targetSessionId: "ses_connecting", updatedAt: 6_000 }
+  const starting: RemoteSessionCommand = { ...base(), status: "claimed", claimedByRunnerId: "synthetic-runner", title: "New task", updatedAt: 1_000 }
+  const commands = [remote, attached, connecting, starting]
+
+  const listed = memberSessionListResponseSchema.parse(await listMemberRemoteSessions({ organizationId, userId }, accessDeps({ computers: [mine], commands }).dependencies))
+  assert.equal(listed.ceiling, "all")
+  assert.deepEqual(listed.computers, [{
+    computerId: runnerComputerId, label: "Synthetic OpenCode", platform: "linux", online: true, lastSeenAt: mine.lastSeenAt,
+    supportsAccess: true, access: "all", effectiveAccess: "all", sessionsUpdatedAt: 4_000,
+  }])
+  assert.deepEqual(listed.sessions.map((session) => [session.sessionId, session.origin, session.reach, session.state, session.commandId]), [
+    ["ses_remote", "remote", "reachable", "waiting", remote.id],
+    ["ses_attached", "local", "reachable", "running", attached.id],
+    ["ses_connecting", "local", "connecting", "starting", connecting.id],
+    ["ses_local", "local", "attachable", "idle", null],
+    ["ses_unknown", "local", "attachable", "unknown", null],
+    [null, "remote", "connecting", "starting", starting.id],
+  ])
+  const [waiting, attachedRow, , attachable, untitled] = listed.sessions
+  assert.deepEqual([waiting?.waitingFor, waiting?.pending, waiting?.latestStep], ["permission", { kind: "permission", requestId: "per_1", title: "Run a command" }, "Ran the tests"])
+  assert.deepEqual([attachedRow?.title, attachedRow?.workspaceName, attachedRow?.computerLabel], ["Attached on the computer", "Project", "Synthetic OpenCode"])
+  assert.deepEqual([attachable?.title, attachable?.computerId, attachable?.updatedAt], ["Refactor the parser", runnerComputerId, 5_000])
+  assert.equal(untitled?.title, null)
+  assert.equal(new Set(listed.sessions.map((session) => session.key)).size, listed.sessions.length, "keys are unique")
+  assert.equal(listed.sessions.filter((session) => session.sessionId === "ses_remote").length, 1, "a remotely started session the computer also reports is listed once")
+  assert.equal(waiting?.title, "Started from another device")
+  const again = await listMemberRemoteSessions({ organizationId, userId }, accessDeps({ computers: [mine], commands }).dependencies)
+  assert.deepEqual(again.sessions.map((session) => session.key), listed.sessions.map((session) => session.key), "keys are stable")
+
+  // The organization lowers the ceiling, or the owner narrows the computer: local sessions leave the list at once.
+  for (const options of [
+    { policy: { enabled: true, ceiling: "created" } as const, computers: [mine] },
+    { computers: [{ ...mine, sessionAccess: "created" as const }] },
+    { computers: [{ ...mine, capabilities: accessCapabilities.slice(0, 4) }] },
+  ]) {
+    const narrowed = await listMemberRemoteSessions({ organizationId, userId }, accessDeps({ ...options, commands }).dependencies)
+    assert.deepEqual(narrowed.sessions.map((session) => [session.sessionId, session.reach]), [
+      ["ses_remote", "reachable"], ["ses_connecting", "connecting"], [null, "connecting"],
+    ])
+    assert.equal(narrowed.computers[0]?.effectiveAccess, "created")
+  }
+})
+
+test("remote-session:list keeps its fields and adds origin, reach and computerId, with attachable sessions only where allowed", async () => {
+  const computerId = automationRunnerRowId({ organizationId, ownerMemberId, runnerId: "synthetic-runner" })
+  // The computer reports the remotely started session as well: it is listed once, as the remote one.
+  const mine = openComputer({ computerId, sessions: [localSession, { ...localSession, sessionId: "ses_remote", title: "Also on the computer", updatedAt: 9_500 }] })
+  const delivered: RemoteSessionDesktopSession[] = [
+    { commandId: "command-remote", ownerMemberId, runnerId: "synthetic-runner", kind: "create", detached: false, sessionId: "ses_remote", workspaceId: "synthetic-workspace", title: "Remote", engine: "v2", status: "idle", updatedAt: 9_000 },
+    { commandId: "command-attached", ownerMemberId, runnerId: "synthetic-runner", kind: "attach", detached: false, sessionId: "ses_attached", workspaceId: "synthetic-workspace", title: "Attached", engine: "v2", status: null, updatedAt: 8_000 },
+  ]
+  const open = await call("list", { target: "desktop" }, accessDeps({ computers: [mine], delivered }).dependencies)
+  assert.deepEqual(open.payload, { target: "desktop", sessions: [
+    { sessionId: "ses_remote", workspaceId: "synthetic-workspace", commandId: "command-remote", title: "Remote", status: "idle", updatedAt: 9_000, origin: "remote", reach: "reachable", computerId },
+    { sessionId: "ses_attached", workspaceId: "synthetic-workspace", commandId: "command-attached", title: "Attached", status: null, updatedAt: 8_000, origin: "local", reach: "reachable", computerId },
+    { sessionId: "ses_local", workspaceId: "synthetic-workspace", commandId: null, title: "Refactor the parser", status: "idle", updatedAt: 5_000, origin: "local", reach: "attachable", computerId },
+  ] })
+  assert.deepEqual((await call("list", { target: "desktop", workspaceId: "another-workspace" }, accessDeps({ computers: [mine] }).dependencies)).payload.sessions, [])
+
+  // Feature off: exactly the sessions the caller started remotely, and the computers are never read.
+  const off = await call("list", { target: "desktop" }, deps({
+    sessionAccess: async () => ({ enabled: false, ceiling: "created" }),
+    desktopTargets: async () => { throw new Error("Computers are read only where local sessions can be reached") },
+    commandStore: { ...DEFAULT_REMOTE_SESSION_DEPS.commandStore, listDesktopSessions: async () => delivered },
+  }))
+  assert.deepEqual(off.payload.sessions, [
+    { sessionId: "ses_remote", workspaceId: "synthetic-workspace", commandId: "command-remote", title: "Remote", status: "idle", updatedAt: 9_000, origin: "remote", reach: "reachable", computerId },
+  ])
+})
+
+test("attach is listed only where the caller's context allows it, and tells the agent whose choice it is", () => {
+  assert.equal(listRemoteSessionCapabilities({ answer: true }).some((entry) => entry.action === "attach"), false)
+  assert.equal(searchRemoteSessionCapabilities("attach to a session on my computer", 20, { answer: true }).some((entry) => entry.name === "remote-session:attach"), false)
+  const attach = listRemoteSessionCapabilities({ attach: true }).find((entry) => entry.action === "attach")
+  assert.ok(attach)
+  assert.match(attach.summary, /Only attach to a session the person asked about/)
+  assert.match(attach.summary, /computer's owner and the organization both have to allow it/)
+  assert.deepEqual(attach.argumentsSchema.required, ["computerId", "workspaceId", "sessionId"])
+  assert.ok(searchRemoteSessionCapabilities("attach to a session on my computer", 20, { attach: true }).some((entry) => entry.name === "remote-session:attach"))
+  const list = listRemoteSessionCapabilities().find((entry) => entry.action === "list")
+  assert.match(list?.summary ?? "", /origin and reach/)
+  assert.match(list?.summary ?? "", /remote-session:attach/)
+})
+
+// Detached attaches: the command stopped being the way to reach its session.
+const detachedSession: RemoteSessionDesktopSession = {
+  commandId: "synthetic-command", ownerMemberId, runnerId: "synthetic-runner", kind: "attach", detached: true, sessionId: "ses_local",
+  workspaceId: "synthetic-workspace", title: "Local session", engine: "v2", status: null, updatedAt: 1,
+}
+const sharingRunner = { connected: true, controlCapable: true, registered: true, answerCapable: true, accessCapable: true, sessionAccess: "all" } as const
+
+for (const action of ["read", "send", "stop", "answer"] as const) {
+  test(`${action} for a session whose attach was detached asks the person to connect again, or says who withdrew access`, async () => {
+    const body = { sessionId: "ses_local", workspaceId: "synthetic-workspace",
+      ...(action === "send" ? { prompt: "Follow up" } : {}),
+      ...(action === "answer" ? { kind: "permission", requestId: "per_1", decision: "once" } : {}) }
+    for (const [policy, runner, error, message] of [
+      [allowAll, sharingRunner, "session_unavailable", "This session is no longer connected. Connect to it again."],
+      [{ enabled: true, ceiling: "created" }, sharingRunner, "session_access_denied", "Your organization only allows sessions that were started remotely."],
+      [allowAll, { ...sharingRunner, sessionAccess: "created" }, "session_access_denied", "That computer only allows sessions that were started remotely. Its owner can change this in Settings > Devices on that computer."],
+    ] as const) {
+      const result = await call(action, body, deps({
+        getOpenWorkWebAccess: async () => { throw new Error("A detached desktop session must never fall back to Cloud") },
+        resolveRuntime: async () => { throw new Error("A detached desktop session must never fall back to Cloud") },
+        sessionAccess: async () => policy,
+        commandStore: { ...DEFAULT_REMOTE_SESSION_DEPS.commandStore, findDesktopSession: async () => detachedSession },
+        desktopRunner: async () => runner,
+        requestStore: { ...DEFAULT_REMOTE_SESSION_DEPS.requestStore, enqueue: async () => { throw new Error("Nothing is sent through a detached attach") } },
+      }))
+      assert.deepEqual([result.payload.error, result.payload.message, result.payload.retryable], [error, message, false])
+    }
+  })
+}
+
+test("unknown_receipt from the computer means connect again for an attached session, and stays as it is for one started remotely", async () => {
+  const failing = (kind: "create" | "attach") => deps({
+    getOpenWorkWebAccess: async () => { throw new Error("A registered desktop session must not read Web access") },
+    sessionAccess: async () => allowAll,
+    commandStore: { ...DEFAULT_REMOTE_SESSION_DEPS.commandStore, findDesktopSession: async () => ({ ...detachedSession, kind, detached: false }) },
+    desktopRunner: async () => sharingRunner,
+    requestWait: { timeoutMs: 0, pollMs: 1 },
+    requestStore: { ...DEFAULT_REMOTE_SESSION_DEPS.requestStore, enqueue: async (input) => ({
+      ...input, id: "synthetic-request", status: "failed", outcome: null, error: { code: "unknown_receipt", message: "Connect to this session again." },
+      expiresAt: Date.now() + input.ttlMs, claimedAt: 1, completedAt: 2, createdAt: 1, updatedAt: 2,
+    }) },
+  })
+  const body = { sessionId: "ses_local", workspaceId: "synthetic-workspace", prompt: "Follow up" }
+  const attached = await call("send", body, failing("attach"))
+  assert.deepEqual(
+    { error: attached.payload.error, message: attached.payload.message, retryable: attached.payload.retryable, target: attached.payload.target, sessionId: attached.payload.sessionId },
+    { error: "session_unavailable", message: "This session is no longer connected. Connect to it again.", retryable: false, target: "desktop", sessionId: "ses_local" },
+  )
+  const remote = await call("send", body, failing("create"))
+  assert.deepEqual([remote.payload.error, remote.payload.message, remote.payload.retryable], ["unknown_receipt", "Connect to this session again.", false])
+})
+
+test("a detached command's receipt says so without the session's content, and is refused while access is withdrawn", async () => {
+  const detached: RemoteSessionCommand = { ...command(), kind: "attach", status: "failed", claimedByRunnerId: "synthetic-runner",
+    sessionId: "ses_local", workspaceId: "synthetic-workspace", targetSessionId: "ses_local",
+    error: { code: "detached", message: "This session is no longer connected. Connect to it again." } }
+  const read = (policy: RemoteSessionAccessPolicy) => call("read", { commandId: detached.id }, deps({
+    sessionAccess: async () => policy,
+    commandStore: { ...DEFAULT_REMOTE_SESSION_DEPS.commandStore, get: async () => detached },
+    desktopRunner: async () => sharingRunner,
+  }))
+  const receipt = await read(allowAll)
+  assert.deepEqual([receipt.error, receipt.payload.state, receipt.payload.error, receipt.payload.session], [false, "failed", detached.error, null])
+  assert.equal((await read({ enabled: true, ceiling: "created" })).payload.error, "session_access_denied")
+  // After a detach the same session attaches as new work: the old command is never offered as the way in.
+  const { dependencies, attached } = accessDeps({ existing: [] })
+  assert.equal((await call("attach", attachBody, dependencies)).payload.state, "queued")
+  assert.equal(attached.length, 1)
 })

@@ -2,11 +2,18 @@ import type { Hono } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { remoteSessionStatusRequestSchema, remoteSessionStatusResultSchema } from "@openwork/types/automations"
+import {
+  memberSessionListResponseSchema,
+  remoteSessionAttachRequestSchema,
+  remoteSessionAttachResponseSchema,
+} from "@openwork/types/den/remote-sessions"
+import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, type OrganizationContextVariables } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrganizationContext } from "../../orgs.js"
 import {
   executeRemoteSessionCapability,
+  listMemberRemoteSessions,
   remoteSessionAnswerBodySchema,
   remoteSessionReadBodySchema,
   remoteSessionSendBodySchema,
@@ -21,6 +28,10 @@ import {
  * status call for every task it shows, and the transcript, follow-ups and
  * stop only when the person opens one. They run the same capabilities agents
  * call through MCP (`remote-session:*`), so both see the same receipts.
+ *
+ * With `remoteSessionAccess`, `GET /v1/sessions` lists the member's sessions
+ * across their own computers and `/attach` reaches one that was started on a
+ * computer, where its owner and the organization allow it.
  */
 
 /** Waiting status calls one member may hold at once; more answer immediately. */
@@ -47,7 +58,7 @@ function httpStatus(payload: Record<string, unknown>): 200 | 400 | 404 | 409 | 5
   const code = payload.error
   if (typeof code !== "string") return 200
   if (code === "invalid_capability_arguments") return 400
-  if (code.startsWith("unknown_")) return 404
+  if (code.startsWith("unknown_") || code === "feature_disabled") return 404
   return payload.retryable === true ? 503 : 409
 }
 
@@ -148,7 +159,7 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
     describeMemberRoute({
       tags: ["Automations"],
       summary: "Answer a remote session's question or permission",
-      description: "The member answers the question or permission one of their remote sessions waits on: the chosen option labels per question, or decision once or reject (never always). requestId names the pending request the member saw; one that is no longer pending answers 409 stale_request and nothing is sent. A desktop that has not answered within about 20 seconds returns state pending with a requestId to read later. Same result as the remote-session:answer capability.",
+      description: "The member answers a question or permission one of their remote sessions waits on: the chosen option labels per question, decision once or reject (never always), or kind dismiss to close a question without answering it. requestId names the open request the member saw, any of those a read lists; one that is no longer open answers 409 stale_request and nothing is sent. A computer that cannot dismiss a question answers 409 answer_unsupported. A desktop that has not answered within about 20 seconds returns state pending with a requestId to read later. Same result as the remote-session:answer capability.",
       "x-mcp": false,
       responses: { 200: jsonResponse("The answer reached the session, or is pending.", remoteSessionResultSchema), ...commonResponses },
     }),
@@ -176,6 +187,51 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
       const result = await run(c.get("organizationContext"), c.req.raw.signal, "stop", c.req.valid("json"))
       c.header("Cache-Control", "no-store")
       return c.json(result.payload, result.status)
+    },
+  )
+
+  app.post(
+    "/v1/remote-sessions/attach",
+    describeMemberRoute({
+      tags: ["Automations"],
+      summary: "Attach to a session started on one of the member's computers",
+      description: "Makes a session that was started on one of the member's own computers reachable from other devices, like one started remotely. The organization's ceiling and that computer's owner must both allow every session; otherwise 409 session_access_denied and nothing is queued. Returns state attached with the commandId that already reaches the session, or queued with a commandId to follow through status until the computer has attached. Repeating the call returns the same command. Other refusals: 404 unknown_computer (not one of the member's computers), 409 desktop_update_required, 503 desktop_offline. Same result as the remote-session:attach capability. Requires the remoteSessionAccess feature.",
+      "x-mcp": false,
+      responses: { 200: jsonResponse("The session is attached, or the attach is queued.", remoteSessionAttachResponseSchema), ...commonResponses },
+    }),
+    orgMemberRoute(),
+    requireFeature("remoteSessionAccess"),
+    jsonValidator(remoteSessionAttachRequestSchema.meta({ ref: "RemoteSessionAttachRequest" })),
+    async (c) => {
+      const result = await run(c.get("organizationContext"), c.req.raw.signal, "attach", c.req.valid("json"))
+      c.header("Cache-Control", "no-store")
+      return c.json(result.payload, result.status)
+    },
+  )
+
+  app.get(
+    "/v1/sessions",
+    describeMemberRoute({
+      tags: ["Automations"],
+      summary: "List the member's sessions across their computers",
+      description: "The signed-in member's own sessions, newest first, and the computers they are on. reach reachable: read, follow up, stop and answer it through its commandId and sessionId. connecting: a start or an attach is queued for the computer. attachable: the computer reports a session that was started on it, listed only while the organization's ceiling and that computer's owner both allow every session; attach first. Never lists another member's computers or sessions. Requires the remoteSessionAccess feature.",
+      "x-mcp": false,
+      responses: {
+        200: jsonResponse("The member's computers and sessions.", memberSessionListResponseSchema),
+        401: jsonResponse("Authentication required.", unauthorizedSchema),
+        404: jsonResponse("The organization was not found, or sessions on members' computers are off.", notFoundSchema),
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("remoteSessionAccess"),
+    async (c) => {
+      const context = c.get("organizationContext")
+      if (!context) return c.json({ error: "organization_not_found" }, 404)
+      c.header("Cache-Control", "no-store")
+      return c.json(memberSessionListResponseSchema.parse(await listMemberRemoteSessions(
+        { organizationId: context.organization.id, userId: context.currentMember.userId },
+        options.deps,
+      )))
     },
   )
 }

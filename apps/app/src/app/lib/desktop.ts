@@ -54,6 +54,7 @@ import type {
   BrowserStatePayload,
   OpenBrowserUrlResult,
 } from "@openwork/browser-tabs";
+import type { RemoteSessionAccessMode } from "@openwork/types/automations";
 import type { ComputerRequest } from "@openwork/types/desktop-ipc";
 export type { BrowserStatePayload } from "@openwork/browser-tabs";
 
@@ -74,6 +75,18 @@ export type RecoveryActionResult = {
   action?: "install" | "installer" | "eval";
   message?: string;
   reason?: string;
+};
+
+/**
+ * Which of this computer's sessions its owner's other devices can reach.
+ * `ceiling` is null until the organization's limit is known, and `supported`
+ * says whether the organization's server accepted this computer for it.
+ */
+export type RemoteSessionAccessState = {
+  mode: RemoteSessionAccessMode;
+  ceiling: RemoteSessionAccessMode | null;
+  effective: RemoteSessionAccessMode;
+  supported: boolean;
 };
 
 export type SpeechDictationEvent =
@@ -108,6 +121,10 @@ declare global {
       };
       automationRunner?: {
         onCredentialRejected?: (callback: () => void) => () => void;
+      };
+      remoteSessionAccess?: {
+        get?: () => Promise<RemoteSessionAccessState>;
+        set?: (mode: RemoteSessionAccessMode) => Promise<RemoteSessionAccessState>;
       };
       fileSystem?: {
         getPathForFile?: (file: File) => string;

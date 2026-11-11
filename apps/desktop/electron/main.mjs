@@ -3138,6 +3138,24 @@ ipcMain.handle("openwork:shell:relaunch", async () => {
 });
 ipcMain.handle("openwork:system:architecture", async () => resolveArchitectureInfo());
 
+// Which of this computer's sessions its owner's other devices can reach
+// (Settings > Devices). Only the app's own page may read or change it.
+function assertSessionAccessSender(event) {
+  assertDesktopActivation();
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+    throw new Error("Session access is managed from the main OpenWork window.");
+  }
+}
+ipcMain.handle("openwork:remote-session-access:get", async (event) => {
+  assertSessionAccessSender(event);
+  return desktopAutomationRunner.getSessionAccess();
+});
+ipcMain.handle("openwork:remote-session-access:set", async (event, mode) => {
+  assertSessionAccessSender(event);
+  if (mode !== "created" && mode !== "all") throw new Error("Choose which sessions other devices can reach.");
+  return desktopAutomationRunner.setSessionAccess(mode);
+});
+
 // ── Terminal IPC ────────────────────────────────────────────────────────
 ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {
   assertDesktopActivation();

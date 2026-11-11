@@ -1,4 +1,4 @@
-import type { AutomationDesktopRunnerRegistration, DesktopRunnerInventory } from "@openwork/types/automations"
+import type { AutomationDesktopRunnerRegistration, DesktopRunnerInventory, RunnerSessionReport } from "@openwork/types/automations"
 import { isActiveAutomationOwner } from "../../automations/authority.js"
 import { automationRepository } from "../../automations/repository.js"
 
@@ -20,6 +20,10 @@ export class SessionRunnerService {
 
   saveDesktopRunnerInventory(scope: SessionRunnerScope, inventory: DesktopRunnerInventory) {
     return automationRepository.saveDesktopRunnerInventory({ ...scope, inventory, now: Date.now() })
+  }
+
+  saveDesktopRunnerSessions(scope: SessionRunnerScope, report: RunnerSessionReport) {
+    return automationRepository.saveDesktopRunnerSessions({ ...scope, ...report, now: Date.now() })
   }
 }
 

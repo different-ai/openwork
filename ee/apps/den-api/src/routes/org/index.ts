@@ -53,6 +53,7 @@ import { registerOrgWorkbotReadinessRoutes } from "./workbot-readiness.js"
 import { registerOrgWorkbotSettingsRoutes } from "./workbot-settings.js"
 import { registerOrgWorkbotTeamSettingsRoutes } from "./workbot-team-settings.js"
 import { registerOrgAutomationSettingsRoutes } from "./automation-settings.js"
+import { registerOrgRemoteSessionSettingsRoutes } from "./remote-session-settings.js"
 import { registerOrgGatewayApiKeyRoutes } from "./gateway-api-keys.js"
 
 const LEGACY_ORG_PATH_PREFIX = "/v1/orgs/"
@@ -129,6 +130,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgWorkbotSettingsRoutes(app)
   registerOrgWorkbotTeamSettingsRoutes(app)
   registerOrgAutomationSettingsRoutes(app)
+  registerOrgRemoteSessionSettingsRoutes(app)
   registerOrgWorkbotReadinessRoutes(app)
   registerOrgDefaultModelRoutes(app)
   registerOrgAutoRouterRoutes(app)

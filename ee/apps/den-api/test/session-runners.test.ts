@@ -7,13 +7,17 @@ import { Hono } from "hono"
 import { generateSpecs } from "hono-openapi"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import {
+  AUTOMATION_DESKTOP_RUNNER_CAPABILITY_LIMIT,
+  REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY,
   REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
   REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
   REMOTE_SESSION_ONLY_RUNNER_CAPABILITY,
   REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
+  automationDesktopRunnerCapabilitySchema,
   automationDesktopRunnerRegistrationSchema,
   type AutomationDesktopRunnerCapability,
 } from "@openwork/types/automations"
+import type { RemoteSessionAccessPolicy } from "../src/remote-sessions/access.js"
 import type { RemoteSessionCommand, RemoteSessionCommandStore } from "../src/remote-sessions/commands.js"
 import type { RemoteSessionRequest, RemoteSessionRequestStore } from "../src/remote-sessions/requests.js"
 
@@ -38,7 +42,7 @@ const { registerAutomationRoutes } = await import("../src/routes/automations/ind
 const { automationRunnerAuth, AutomationRunnerAuth, automationRunnerAudienceFromRequestUrl } = await import("../src/automations/runner-auth.js")
 const { AutomationService } = await import("../src/automations/service.js")
 const { automationRepository, automationRunnerComputerIds } = await import("../src/automations/repository.js")
-const { databaseRemoteSessionCommandStore, RemoteSessionIdempotencyConflictError, remoteSessionCommandRecoverable, remoteSessionCommandCompletionMatches } = await import("../src/remote-sessions/commands.js")
+const { databaseRemoteSessionCommandStore, RemoteSessionAttachClaimRefusedError, RemoteSessionIdempotencyConflictError, remoteSessionCommandDetached, remoteSessionCommandRecoverable, remoteSessionCommandCompletionMatches } = await import("../src/remote-sessions/commands.js")
 const { databaseRemoteSessionRequestStore, remoteSessionRequestRecoverable, remoteSessionRequestCompletionMatches } = await import("../src/remote-sessions/requests.js")
 
 const scope = { organizationId: createDenTypeId("organization"), ownerMemberId: createDenTypeId("member"), runnerId: "install-unit-runner" }
@@ -47,8 +51,8 @@ const otherMember = createDenTypeId("member")
 const now = Date.now()
 const command: RemoteSessionCommand = {
   ...scope, id: createDenTypeId("remoteSessionCommand"), createdByUserId: createDenTypeId("user"),
-  status: "claimed", title: "Unit session", prompt: "Unit prompt", model: null, idempotencyKey: null,
-  targetComputerId: null, targetWorkspaceId: null, expiresAt: now + 60_000,
+  status: "claimed", kind: "create", title: "Unit session", prompt: "Unit prompt", model: null, idempotencyKey: null,
+  targetComputerId: null, targetWorkspaceId: null, targetSessionId: null, expiresAt: now + 60_000,
   claimedByRunnerId: scope.runnerId, claimedAt: now, sessionId: null, workspaceId: null,
   resultSummary: null, error: null, session: null, createdAt: now, updatedAt: now,
 }
@@ -64,28 +68,60 @@ const modernCapabilities: AutomationDesktopRunnerCapability[] = [
   REMOTE_SESSION_ONLY_RUNNER_CAPABILITY, REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
 ]
 
+const attachCommand: RemoteSessionCommand = {
+  ...command, id: createDenTypeId("remoteSessionCommand"), kind: "attach", title: "Local session", prompt: null,
+  targetComputerId: "unit-computer", targetWorkspaceId: "workspace_local", targetSessionId: "ses_local",
+}
+const accessCapabilities: AutomationDesktopRunnerCapability[] = [...modernCapabilities, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY]
+
 function fixtures(options: {
   active?: boolean
   capabilities?: AutomationDesktopRunnerCapability[]
   push?: boolean
   pending?: () => RemoteSessionCommand[]
+  /** The organization's session access policy; reading it without one fails the test. */
+  sessionAccess?: RemoteSessionAccessPolicy
+  /** The command the store holds under the claimed id. */
+  claimed?: RemoteSessionCommand
+  registered?: boolean
 } = {}) {
   const calls: string[] = []
+  const reports: unknown[] = []
+  const detached: unknown[] = []
   const service = {
     async registerDesktopRunner() {},
     async isActiveRunnerOwner() { return options.active ?? true },
     async touchDesktopRunner() { calls.push("touch") },
     async saveDesktopRunnerInventory() { return true },
+    async saveDesktopRunnerSessions(_scope: unknown, report: unknown) { reports.push(report); return options.registered ?? true },
   }
   const commandStore: RemoteSessionCommandStore = {
     async enqueue() { return command }, async get() { return command }, async getMany() { return [command] }, async latestSettled() { return null },
     async findDesktopSession() { return null }, async listDesktopSessions() { return [] }, async markTurnStarted() { calls.push("reset") },
-    async listPendingForRunner() {
-      calls.push("pending-command")
-      return options.pending ? options.pending() : [{ ...command, id: "command_pending", status: "pending" }]
+    async enqueueAttach() { return attachCommand }, async listForSession() { return [] }, async listForCreator() { return [] },
+    async detach(input) { detached.push({ organizationId: input.organizationId, runner: input.runner }) },
+    async listPendingForRunner(input) {
+      const kinds = input.kinds ?? ["create"]
+      calls.push(kinds.includes("attach") ? `pending-${kinds.join("+")}` : "pending-command")
+      if (options.pending) return options.pending()
+      return [
+        ...(kinds.includes("create") ? [{ ...command, id: "command_pending", status: "pending" as const }] : []),
+        ...(kinds.includes("attach") ? [{ ...attachCommand, id: "attach_pending", status: "pending" as const }] : []),
+      ]
     },
-    async listRecoverableForRunner(input) { assert.deepEqual(input.runnerId, scope.runnerId); calls.push("recover-command"); return [command] },
-    async claim(input) { assert.equal(input.organizationId, scope.organizationId); assert.equal(input.recoverClaimed, true); return command },
+    async listRecoverableForRunner(input) {
+      assert.deepEqual(input.runnerId, scope.runnerId)
+      if (input.kinds?.includes("attach")) { calls.push("recover-attach"); return [] }
+      calls.push("recover-command")
+      return [command]
+    },
+    async claim(input) {
+      assert.equal(input.organizationId, scope.organizationId)
+      assert.equal(input.recoverClaimed, true)
+      const claimed = options.claimed ?? command
+      if (claimed.kind === "attach" && !input.claimAttach) throw new RemoteSessionAttachClaimRefusedError()
+      return claimed
+    },
     async complete(input) { assert.equal(input.organizationId, scope.organizationId); assert.equal(input.ownerMemberId, scope.ownerMemberId); return { ...command, status: "delivered", sessionId: "ses_unit", workspaceId: "workspace_unit" } },
     async report() { return "reported" },
   }
@@ -101,6 +137,13 @@ function fixtures(options: {
     service, commandStore, requestStore,
     async readEnginePolicy() { return { upgrade: false } },
     async remoteSessionPushEnabled() { return options.push ?? false },
+    async readSessionAccess(identity) {
+      assert.equal(identity.organizationId, scope.organizationId)
+      assert.equal(identity.ownerMemberId, scope.ownerMemberId)
+      assert.ok(options.sessionAccess, "session access is read only for runners that registered remote_session_access_v1")
+      calls.push("session-access")
+      return options.sessionAccess
+    },
     automationService: {
       async discoverDesktopRunnerWork() { calls.push("automation-discovery"); return [{ runId: "automation_unit", executionTarget: "desktop" }] },
       async runnerNotifications() { return [] },
@@ -110,14 +153,19 @@ function fixtures(options: {
   registerAutomationRoutes(app, { enabled: false, sessionRunners: false })
   const credential = automationRunnerAuth.issue({ ...scope, capabilities: options.capabilities ?? modernCapabilities }, "http://unit.test")
   const headers = { Authorization: `Bearer ${credential.token}`, "Content-Type": "application/json" }
-  return { app, headers, calls }
+  return { app, headers, calls, reports, detached }
 }
 
-test("new runner capabilities are bounded to five and released registration remains valid", () => {
+test("runner capabilities are bounded by the contract limit and released registration remains valid", () => {
   const registration = { runnerId: scope.runnerId, protocolVersion: 1, supportedExecutionTargets: ["desktop"], appVersion: "unit", platform: "darwin", concurrency: 1 }
+  const every = automationDesktopRunnerCapabilitySchema.options
+  assert.equal(AUTOMATION_DESKTOP_RUNNER_CAPABILITY_LIMIT, 8)
+  assert.ok(every.length <= AUTOMATION_DESKTOP_RUNNER_CAPABILITY_LIMIT, "a runner can register every capability at once")
   assert.deepEqual(automationDesktopRunnerRegistrationSchema.parse(registration).capabilities, [])
   assert.equal(automationDesktopRunnerRegistrationSchema.safeParse({ ...registration, capabilities: modernCapabilities }).success, true)
-  assert.equal(automationDesktopRunnerRegistrationSchema.safeParse({ ...registration, capabilities: [...modernCapabilities, "model_attention_v1", "remote_session_v1"] }).success, false)
+  assert.equal(automationDesktopRunnerRegistrationSchema.safeParse({ ...registration, capabilities: every }).success, true)
+  const overLimit = Array.from({ length: AUTOMATION_DESKTOP_RUNNER_CAPABILITY_LIMIT + 1 }, (_, index) => every[index % every.length])
+  assert.equal(automationDesktopRunnerRegistrationSchema.safeParse({ ...registration, capabilities: overLimit }).success, false)
 })
 
 test("both token endpoint suffixes bind to the same direct or proxied audience", () => {
@@ -184,6 +232,7 @@ test("remote protocols are Internal while the released token route keeps its pub
   const document = await generateSpecs(app)
   const paths = [
     ["/v1/session-runners/token", "post"], ["/v1/session-runners/work", "get"], ["/v1/session-runners/inventory", "put"],
+    ["/v1/session-runners/sessions", "put"],
     ["/v1/automation-runners/token", "post"], ["/v1/automation-runner/work", "get"], ["/v1/automation-runner/inventory", "put"],
     ["/v1/remote-session-commands/{id}/claim", "post"], ["/v1/remote-session-requests/{id}/complete", "post"],
   ] as const
@@ -204,6 +253,102 @@ test("released runners discover only pending remote work, never recovery claims"
   assert.equal(calls.includes("recover-command"), false)
   assert.equal(calls.includes("recover-request"), false)
   assert.equal(calls.includes("automation-discovery"), false)
+})
+
+test("session access reaches only runners that registered it, and only while the feature is on", async () => {
+  const allowed = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, ceiling: "all" } })
+  for (const path of ["/v1/session-runners/work", "/v1/automation-runner/work"]) {
+    const body = await (await allowed.app.request(path, { headers: allowed.headers })).json()
+    assert.deepEqual(body.sessionAccess, { ceiling: "all" })
+    assert.deepEqual(body.items.filter((item: { kind?: string }) => item.kind?.startsWith("remote_session_")), [
+      { kind: "remote_session_request", requestId: request.id },
+      { kind: "remote_session_create", commandId: command.id },
+      { kind: "remote_session_create", commandId: "command_pending" },
+      { kind: "remote_session_attach", commandId: "attach_pending" },
+    ])
+  }
+  assert.ok(allowed.calls.includes("recover-attach"))
+
+  // A lowered ceiling is still sent, so the computer narrows at once.
+  const capped = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, ceiling: "created" } })
+  assert.deepEqual((await (await capped.app.request("/v1/session-runners/work", { headers: capped.headers })).json()).sessionAccess, { ceiling: "created" })
+
+  // Feature off, or a runner that never registered the capability: the released response, and no attach listing at all.
+  for (const quiet of [
+    fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: false, ceiling: "created" } }),
+    fixtures(),
+  ]) {
+    const body = await (await quiet.app.request("/v1/session-runners/work", { headers: quiet.headers })).json()
+    assert.equal("sessionAccess" in body, false)
+    assert.equal(body.items.some((item: { kind?: string }) => item.kind === "remote_session_attach"), false)
+    assert.equal(quiet.calls.some((call) => call.includes("attach")), false)
+  }
+})
+
+test("an attach command is claimed only by a runner that can refuse a session, and never as a create", async () => {
+  const path = `/v1/remote-session-commands/${attachCommand.id}/claim`
+  const released = fixtures({ claimed: attachCommand })
+  const refused = await released.app.request(path, { method: "POST", headers: released.headers })
+  assert.equal(refused.status, 403)
+  assert.deepEqual(await refused.json(), { error: "runner_capability_missing" })
+
+  const off = fixtures({ claimed: attachCommand, capabilities: accessCapabilities, sessionAccess: { enabled: false, ceiling: "created" } })
+  const disabled = await off.app.request(path, { method: "POST", headers: off.headers })
+  assert.equal(disabled.status, 404)
+  assert.deepEqual(await disabled.json(), { error: "feature_disabled" })
+
+  const capable = fixtures({ claimed: attachCommand, capabilities: accessCapabilities, sessionAccess: { enabled: true, ceiling: "all" } })
+  const claimed = await capable.app.request(path, { method: "POST", headers: capable.headers })
+  assert.equal(claimed.status, 200)
+  assert.deepEqual((await claimed.json()).assignment, {
+    commandId: attachCommand.id, kind: "remote_session_attach", title: "Local session", prompt: null, model: null,
+    expiresAt: attachCommand.expiresAt, workspaceId: "workspace_local", sessionId: "ses_local",
+  })
+
+  // A create is claimed exactly as before, without reading session access.
+  const create = fixtures({ capabilities: accessCapabilities })
+  const created = await create.app.request(`/v1/remote-session-commands/${command.id}/claim`, { method: "POST", headers: create.headers })
+  assert.equal((await created.json()).assignment.kind, "remote_session_create")
+  assert.equal(create.calls.includes("session-access"), false)
+})
+
+test("a runner's session report is kept only as far as the organization allows", async () => {
+  const report = { access: "all", sessions: [{ workspaceId: "workspace_local", sessionId: "ses_local", title: "Local session", engine: "v2", updatedAt: now, working: false }] }
+  const put = (fixture: ReturnType<typeof fixtures>, body: unknown = report) =>
+    fixture.app.request("/v1/session-runners/sessions", { method: "PUT", headers: fixture.headers, body: JSON.stringify(body) })
+
+  const released = fixtures()
+  assert.equal((await put(released)).status, 403)
+  const off = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: false, ceiling: "created" } })
+  const disabled = await put(off)
+  assert.equal(disabled.status, 404)
+  assert.deepEqual(await disabled.json(), { error: "feature_disabled" })
+  assert.deepEqual([...released.reports, ...off.reports], [])
+
+  const allowed = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, ceiling: "all" } })
+  const stored = await put(allowed)
+  assert.equal(stored.status, 200)
+  assert.deepEqual((await stored.json()).sessionAccess, { ceiling: "all" })
+  assert.deepEqual(allowed.reports, [report])
+  assert.deepEqual(allowed.detached, [], "a computer that shares its sessions keeps its attaches")
+  assert.equal((await put(allowed, { access: "created", sessions: report.sessions })).status, 400, "sessions are reported only while access is all")
+  // The owner stops sharing: the attaches that computer delivered, and only those, are let go of.
+  const thisRunner = { organizationId: scope.organizationId, runner: { ownerMemberId: scope.ownerMemberId, runnerId: scope.runnerId } }
+  assert.equal((await put(allowed, { access: "created", sessions: [] })).status, 200)
+  assert.deepEqual(allowed.detached, [thisRunner])
+
+  const capped = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, ceiling: "created" } })
+  const narrowed = await put(capped)
+  assert.equal(narrowed.status, 200)
+  assert.deepEqual((await narrowed.json()).sessionAccess, { ceiling: "created" })
+  assert.deepEqual(capped.reports, [{ access: "created", sessions: [] }], "titles the organization does not allow are never kept")
+  assert.deepEqual(capped.detached, [thisRunner], "a report stored as created detaches too")
+
+  const unregistered = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, ceiling: "all" }, registered: false })
+  const missing = await put(unregistered)
+  assert.equal(missing.status, 404)
+  assert.deepEqual(await missing.json(), { error: "runner_not_registered" })
+  assert.deepEqual([...released.detached, ...off.detached], [], "a refused report changes nothing")
 })
 
 test("every runner request rechecks active owner authority", async () => {
@@ -232,14 +377,14 @@ test("repository presence and Automation targets exclude remote-only registratio
       return { where(condition: SQL | undefined) {
         queries.push(realSelect().from(table).where(condition).toSQL())
         return { orderBy() { return { async limit() {
-          return queries.length === 3 ? [{ capabilities: modernCapabilities, lastSeenAt: new Date(now) }] : []
+          return queries.length === 3 ? [{ capabilities: modernCapabilities, lastSeenAt: new Date(now), sessionAccess: null }] : []
         } } } }
       } }
     },
   }))
   assert.equal(await automationRepository.desktopRunnerLastSeenAt(scope), null)
   assert.deepEqual(await automationRepository.listDesktopRunners({ ...scope, limit: 10 }), [])
-  assert.deepEqual(await automationRepository.desktopRunnerById(scope), { capabilities: modernCapabilities, lastSeenAt: now })
+  assert.deepEqual(await automationRepository.desktopRunnerById(scope), { capabilities: modernCapabilities, lastSeenAt: now, sessionAccess: null })
   for (const query of queries.slice(0, 2)) {
     assert.match(query.sql, /not coalesce\(json_contains/)
     assert.ok(query.params.includes(JSON.stringify(REMOTE_SESSION_ONLY_RUNNER_CAPABILITY)))
@@ -251,7 +396,7 @@ test("repository presence and Automation targets exclude remote-only registratio
 })
 
 test("remote-only runners cannot discover or claim scheduled Automations, including stale tokens", async (t) => {
-  t.mock.method(automationRepository, "desktopRunnerById", async () => ({ capabilities: modernCapabilities, lastSeenAt: now }))
+  t.mock.method(automationRepository, "desktopRunnerById", async () => ({ capabilities: modernCapabilities, lastSeenAt: now, sessionAccess: null }))
   t.mock.method(automationRepository, "discoverDesktopWork", async () => { throw new Error("must not discover") })
   t.mock.method(automationRepository, "claimDesktop", async () => { throw new Error("must not claim") })
   const service = new AutomationService()
@@ -270,9 +415,9 @@ function storeDatabase(t: TestContext, options: { commandExists?: boolean } = {}
   let commandExists = options.commandExists ?? true
   const commandRow = {
     id: command.id, org_id: scope.organizationId, owner_member_id: scope.ownerMemberId,
-    created_by_user_id: command.createdByUserId, status: "pending", title: command.title,
+    created_by_user_id: command.createdByUserId, status: "pending", kind: "create", title: command.title,
     prompt: command.prompt, model_provider_id: null, model_model_id: null, model_variant: null,
-    idempotency_key: null, target_computer_id: null, target_workspace_id: null,
+    idempotency_key: null, target_computer_id: null, target_workspace_id: null, target_session_id: null,
     expires_at: new Date(command.expiresAt), claimed_by_runner_id: null, claimed_at: null,
     session_id: null, workspace_id: null, result_summary: null, error_code: null, error_message: null,
     session_status: null, session_observed_at: null, session_waiting_for: null, session_engine: null,
@@ -382,6 +527,102 @@ test("database command claims stay sticky and scoped; completion retries are imm
   assert.equal(await databaseRemoteSessionCommandStore.complete({ ...scope, commandId: command.id, now, status: "failed", error: { code: "not_started_expired", message: "Never admitted" } }), null)
   state.commandRow.status = "pending"
   assert.equal(await databaseRemoteSessionCommandStore.complete(completion), null)
+})
+
+test("database attach commands are never listed or claimed as creates, and deliver only the session they name", async (t) => {
+  const state = storeDatabase(t)
+  Object.assign(state.commandRow, { kind: "attach", prompt: null, target_computer_id: automationRunnerComputerIds(scope)[0],
+    target_workspace_id: "workspace_local", target_session_id: "ses_local" })
+  const claim = { ...scope, commandId: command.id, computerIds: automationRunnerComputerIds(scope), now }
+  const listing = { ...scope, computerIds: claim.computerIds, now, limit: 5 }
+  await databaseRemoteSessionCommandStore.listPendingForRunner(listing)
+  assert.match(state.compiled.at(-1) ?? "", /`kind` in \(\?\)/, "the released listing names the create kind")
+  await assert.rejects(databaseRemoteSessionCommandStore.claim(claim), RemoteSessionAttachClaimRefusedError)
+  assert.equal(state.commandRow.status, "pending", "a refused claim claims nothing")
+  assert.equal(state.updates(), 0)
+  const claimed = await databaseRemoteSessionCommandStore.claim({ ...claim, claimAttach: true })
+  assert.equal(claimed?.status, "claimed")
+  assert.equal(claimed?.kind, "attach")
+  assert.equal(claimed?.targetSessionId, "ses_local")
+  await assert.rejects(databaseRemoteSessionCommandStore.claim({ ...claim, recoverClaimed: true }), RemoteSessionAttachClaimRefusedError, "recovery is refused the same way")
+  const delivery = { ...scope, commandId: command.id, now: now + 1, status: "delivered" } as const
+  assert.equal(await databaseRemoteSessionCommandStore.complete({ ...delivery, sessionId: "ses_other", workspaceId: "workspace_local" }), null)
+  assert.equal(await databaseRemoteSessionCommandStore.complete({ ...delivery, sessionId: "ses_local", workspaceId: "workspace_other" }), null)
+  assert.equal(state.commandRow.status, "claimed")
+  const delivered = await databaseRemoteSessionCommandStore.complete({ ...delivery, sessionId: "ses_local", workspaceId: "workspace_local" })
+  assert.equal(delivered?.status, "delivered")
+  assert.equal(state.commandRow.session_id, "ses_local")
+})
+
+test("a detached attach is settled for good: scoped to its runner, never a create, and its runner cannot deliver it again", async (t) => {
+  const state = storeDatabase(t)
+  const delivered = { kind: "attach", status: "delivered", prompt: null, claimed_by_runner_id: scope.runnerId, claimed_at: new Date(now),
+    idempotency_key: "attach_unit_key", target_workspace_id: "workspace_local", target_session_id: "ses_local", session_id: "ses_local", workspace_id: "workspace_local",
+    session_status: "idle", session_final_text: "What the session said last", session_observed_at: new Date(now) }
+  Object.assign(state.commandRow, delivered)
+  const runner = { ownerMemberId: scope.ownerMemberId, runnerId: scope.runnerId }
+  // Another organization, member or computer never detaches this one.
+  await databaseRemoteSessionCommandStore.detach({ organizationId: otherOrg, now })
+  await databaseRemoteSessionCommandStore.detach({ organizationId: scope.organizationId, runner: { ...runner, ownerMemberId: otherMember }, now })
+  await databaseRemoteSessionCommandStore.detach({ organizationId: scope.organizationId, runner: { ...runner, runnerId: "another-install" }, now })
+  assert.equal(state.commandRow.status, "delivered")
+  // A command that started its session is never detached, whoever asks.
+  state.commandRow.kind = "create"
+  await databaseRemoteSessionCommandStore.detach({ organizationId: scope.organizationId, now })
+  await databaseRemoteSessionCommandStore.detach({ organizationId: scope.organizationId, runner, now })
+  assert.equal(state.commandRow.status, "delivered")
+  state.commandRow.kind = "attach"
+
+  await databaseRemoteSessionCommandStore.detach({ organizationId: scope.organizationId, runner, now: now + 5 })
+  assert.deepEqual(
+    [state.commandRow.status, state.commandRow.error_code, state.commandRow.error_message, state.commandRow.idempotency_key, state.commandRow.session_status, state.commandRow.session_final_text],
+    ["failed", "detached", "This session is no longer connected. Connect to it again.", null, null, null],
+  )
+  assert.equal(state.commandRow.session_id, "ses_local", "the session it reached is still named, so its caller is told to connect again")
+  // The computer replaying its original delivery cannot bring it back, and its progress reports are refused.
+  assert.equal(await databaseRemoteSessionCommandStore.complete({ ...scope, commandId: command.id, now: now + 10, status: "delivered", sessionId: "ses_local", workspaceId: "workspace_local" }), null)
+  assert.equal(await databaseRemoteSessionCommandStore.report({ ...scope, commandId: command.id, status: "idle", finalText: "Later answer", observedAt: now + 20 }), "conflict")
+  assert.equal(state.commandRow.status, "failed")
+  const read = await databaseRemoteSessionCommandStore.get({ organizationId: scope.organizationId, createdByUserId: command.createdByUserId, commandId: command.id })
+  assert.ok(read)
+  assert.equal(remoteSessionCommandDetached(read), true)
+  assert.equal(read.session, null)
+  // Attaching the same session again is new work: the detached command's key was released with it.
+  const again = await databaseRemoteSessionCommandStore.enqueueAttach({ ...scope, createdByUserId: command.createdByUserId, title: "Local session", ttlMs: 60_000,
+    targetComputerId: automationRunnerComputerIds(scope)[0], targetWorkspaceId: "workspace_local", targetSessionId: "ses_local" })
+  assert.notEqual(again.id, command.id)
+  assert.equal(again.status, "pending")
+})
+
+test("a request the computer answers with unknown_receipt detaches the attach it came through, and never a create", async (t) => {
+  const failure = { ...scope, requestId: request.id, now: now + 1, status: "failed", error: { code: "unknown_receipt", message: "Connect to this session again." } } as const
+  for (const [kind, error, status] of [["create", "unknown_session", "delivered"], ["attach", "unknown_session", "delivered"], ["create", "unknown_receipt", "delivered"], ["attach", "unknown_receipt", "failed"]] as const) {
+    const state = storeDatabase(t)
+    Object.assign(state.commandRow, { kind, status: "delivered", claimed_by_runner_id: scope.runnerId, claimed_at: new Date(now), session_id: "ses_unit", workspace_id: "workspace_unit" })
+    await databaseRemoteSessionRequestStore.claim({ ...scope, requestId: request.id, now })
+    const completed = await databaseRemoteSessionRequestStore.complete({ ...failure, error: { ...failure.error, code: error } })
+    assert.deepEqual([completed?.status, completed?.error?.code], ["failed", error], `${kind} ${error}`)
+    assert.equal(state.commandRow.status, status, `${kind} ${error}`)
+    assert.equal(state.commandRow.error_code, status === "failed" ? "detached" : null, `${kind} ${error}`)
+    t.mock.restoreAll()
+  }
+  // Another runner's receipt for the same request never detaches it.
+  const state = storeDatabase(t)
+  Object.assign(state.commandRow, { kind: "attach", status: "delivered", claimed_by_runner_id: "another-install", claimed_at: new Date(now), session_id: "ses_unit", workspace_id: "workspace_unit" })
+  await databaseRemoteSessionRequestStore.claim({ ...scope, requestId: request.id, now })
+  await databaseRemoteSessionRequestStore.complete(failure)
+  assert.equal(state.commandRow.status, "delivered")
+})
+
+test("a refused attach keeps the computer's own error code", async (t) => {
+  const state = storeDatabase(t)
+  Object.assign(state.commandRow, { kind: "attach", prompt: null, target_workspace_id: "workspace_local", target_session_id: "ses_local" })
+  await databaseRemoteSessionCommandStore.claim({ ...scope, commandId: command.id, computerIds: automationRunnerComputerIds(scope), now, claimAttach: true })
+  const failed = await databaseRemoteSessionCommandStore.complete({ ...scope, commandId: command.id, now: now + 1, status: "failed",
+    error: { code: "session_access_denied", message: "This computer only allows sessions that were started remotely." } })
+  assert.equal(failed?.status, "failed")
+  assert.equal(failed?.error?.code, "session_access_denied")
+  assert.equal(state.commandRow.session_id, null)
 })
 
 test("database request completion retries never reset a newer turn; cross-owner receipts are rejected", async (t) => {
@@ -512,6 +753,29 @@ test("a create key reused after its command's admission window starts new work",
   assert.ok(state.compiled.some((sql) => sql.includes("`idempotency_key` = ?")), "the old command's key is released by id and key")
 })
 
+test("attaching the same session twice at once shares one command, and a settled attach lets the next one through", async (t) => {
+  const state = storeDatabase(t, { commandExists: false })
+  const attach = { ...scope, createdByUserId: command.createdByUserId, title: "Local session", ttlMs: 60_000,
+    targetComputerId: automationRunnerComputerIds(scope)[0], targetWorkspaceId: "workspace_local", targetSessionId: "ses_local" }
+  // Two attaches at once: one insert wins and both get its command.
+  const [first, concurrent] = await Promise.all([
+    databaseRemoteSessionCommandStore.enqueueAttach(attach), databaseRemoteSessionCommandStore.enqueueAttach(attach),
+  ])
+  assert.deepEqual([first.kind, first.status, first.prompt, first.targetSessionId, first.targetWorkspaceId], ["attach", "pending", null, "ses_local", "workspace_local"])
+  assert.equal(concurrent.id, first.id)
+  assert.match(String(state.commandRow.idempotency_key), /^attach_[a-f0-9]{64}$/)
+  assert.equal((await databaseRemoteSessionCommandStore.enqueueAttach(attach)).id, first.id, "a queued attach is returned, not repeated")
+  assert.equal(state.inserts(), 1)
+  // Once it failed, was delivered or expired, its key is released: attaching again is new work.
+  state.commandRow.status = "failed"
+  const later = await databaseRemoteSessionCommandStore.enqueueAttach(attach)
+  assert.notEqual(later.id, first.id)
+  assert.equal(state.inserts(), 2)
+  state.commandRow.expires_at = new Date(Date.now() - 1)
+  assert.notEqual((await databaseRemoteSessionCommandStore.enqueueAttach(attach)).id, later.id)
+  assert.equal(state.inserts(), 3)
+})
+
 test("a global admission key never reads another organization or user's command", async (t) => {
   const state = storeDatabase(t, { commandExists: false })
   const admission = { ...scope, createdByUserId: command.createdByUserId, title: "Scoped admission", ttlMs: 60_000, idempotencyKey: "remote_global_collision" }
@@ -571,6 +835,21 @@ test("with the feature on, a queued remote-session task is announced once on the
   assert.equal(response.status, 200)
   const events = await readEvents(response, (seen) => seen.includes("remote_session_work_available"), 3_000)
   assert.deepEqual(events.filter((event) => event === "remote_session_work_available"), ["remote_session_work_available"])
+})
+
+test("an attach is announced like a new task, only to a runner that can take one", async () => {
+  for (const [options, kinds] of [
+    [{ capabilities: accessCapabilities, sessionAccess: { enabled: true, ceiling: "all" } }, "pending-create+attach"],
+    [{ capabilities: accessCapabilities, sessionAccess: { enabled: false, ceiling: "created" } }, "pending-command"],
+    [{}, "pending-command"],
+  ] as const) {
+    const { app, headers, calls } = fixtures({ push: true, ...options })
+    const response = await app.request("/v1/automation-runners/events", { headers: { ...headers, ...PUSH } })
+    assert.equal(response.status, 200)
+    const events = await readEvents(response, (seen) => seen.includes("remote_session_work_available"), 3_000)
+    assert.ok(events.includes("remote_session_work_available"))
+    assert.deepEqual(calls.filter((call) => call.startsWith("pending-")), [kinds])
+  }
 })
 
 test("a task queued on this Den instance wakes the stream at once instead of at the next check", async () => {

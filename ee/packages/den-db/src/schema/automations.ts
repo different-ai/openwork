@@ -10,6 +10,8 @@ import type {
   AutomationSchedule,
   AutomationUsage,
   DesktopRunnerInventory,
+  RemoteSessionAccessMode,
+  RunnerReportedSession,
 } from "@openwork/types/automations"
 import { compatJsonColumn, denTypeIdColumn, encryptedColumn, encryptedMediumTextColumn, timestamps } from "../columns"
 
@@ -91,6 +93,11 @@ export const AutomationRunnerTable = mysqlTable(
     /** Latest computer, workspace and model report; null until the desktop sends one. */
     inventory: compatJsonColumn<DesktopRunnerInventory>("inventory"),
     inventory_updated_at: timestamp("inventory_updated_at", { fsp: 3 }),
+    /** Which sessions the owner lets other devices reach, as last reported; null until the computer reports. */
+    session_access: varchar("session_access", { length: 16 }).$type<RemoteSessionAccessMode>(),
+    /** The computer's latest session list, reported only while its access is `all`. */
+    sessions: compatJsonColumn<RunnerReportedSession[]>("sessions"),
+    sessions_updated_at: timestamp("sessions_updated_at", { fsp: 3 }),
     ...timestamps,
   },
   (table) => [

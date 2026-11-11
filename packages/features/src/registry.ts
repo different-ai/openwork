@@ -842,6 +842,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  remoteSessionAccess: {
+    label: "Sessions on my computers",
+    description: "My Sessions in Den lists a member's own sessions across their computers and lets them follow one, send a follow-up, stop it and answer or dismiss what it waits on. Organization owners and admins choose whether members may let other devices reach every session on their own computer or only sessions started remotely; each member then chooses per computer in Desktop Settings > Devices. Reaching a session that was started on the computer needs both choices and is enforced on that computer. Off, remote callers reach only sessions started remotely, as before, and computers report no sessions.",
+    category: "computerUse",
+    added: "2026-11-10",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/remote-session-access/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   remoteSessionPush: {
     label: "Desktop: start tasks from other computers right away",
     description: "A task sent to this person's desktop from another computer, Workbot or an agent starts within a second or two instead of up to a minute later. Den tells the desktop the moment the task is queued over the runner's event stream; the desktop still checks every minute as a fallback.",

@@ -15,7 +15,7 @@ import type {
   AutomationListItem,
   AutomationRepository,
 } from "@openwork/automations"
-import { REMOTE_SESSION_ONLY_RUNNER_CAPABILITY } from "@openwork/types/automations"
+import { REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY, REMOTE_SESSION_ONLY_RUNNER_CAPABILITY } from "@openwork/types/automations"
 import type {
   Automation,
   AutomationAction,
@@ -29,8 +29,10 @@ import type {
   AutomationRunTriggerContext,
   AutomationUsage,
   DesktopRunnerInventory,
+  RemoteSessionAccessMode,
+  RunnerReportedSession,
 } from "@openwork/types/automations"
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AutomationRevisionTable,
   AutomationRunnerTable,
@@ -1049,6 +1051,11 @@ export class DenAutomationRepository implements AutomationRepository {
     const organizationId = normalizeOrganizationId(input.organizationId)
     const ownerMemberId = normalizeMemberId(input.ownerMemberId)
     const id = automationRunnerRowId(input)
+    // An app that does not understand session access only ever allows sessions
+    // started remotely: whatever a newer app reported from this install is dropped.
+    const sessionReport = input.capabilities.includes(REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY)
+      ? {}
+      : { session_access: null, sessions: null, sessions_updated_at: null }
     const existing = await db.$primary.select({ organizationId: AutomationRunnerTable.organization_id, ownerMemberId: AutomationRunnerTable.owner_member_id })
       .from(AutomationRunnerTable).where(eq(AutomationRunnerTable.id, id)).limit(1)
     // The row id hashes its own scope, so this only trips on a row that took
@@ -1080,6 +1087,7 @@ export class DenAutomationRepository implements AutomationRepository {
         concurrency: input.concurrency,
         last_seen_at: now,
         updated_at: now,
+        ...sessionReport,
       } })
     } catch (error) {
       logger.error("automation runner registration upsert failed", {
@@ -1143,6 +1151,47 @@ export class DenAutomationRepository implements AutomationRepository {
       eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
     ))
     return automationAffectedRows(result) > 0
+  }
+
+  /**
+   * Stores what the runner says about its sessions: the access in force there
+   * and, while that is `all`, the sessions it has. Returns false when the
+   * runner has no row, so it must register again first.
+   */
+  async saveDesktopRunnerSessions(input: {
+    organizationId: string
+    ownerMemberId: string
+    runnerId: string
+    access: RemoteSessionAccessMode
+    sessions: RunnerReportedSession[]
+    now: number
+  }): Promise<boolean> {
+    const now = new Date(input.now)
+    const result = await db.update(AutomationRunnerTable).set({
+      session_access: input.access,
+      sessions: input.sessions,
+      sessions_updated_at: now,
+      last_seen_at: now,
+      updated_at: now,
+    }).where(and(
+      inArray(AutomationRunnerTable.id, automationRunnerComputerIds(input)),
+      eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
+      eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
+    ))
+    return automationAffectedRows(result) > 0
+  }
+
+  /**
+   * Drops every session list the organization's runners reported, for when
+   * the organization stops allowing other devices to see them. Each owner's
+   * own choice is kept: it applies again if the organization allows it again.
+   */
+  async clearReportedSessions(input: { organizationId: string; now: number }): Promise<void> {
+    const now = new Date(input.now)
+    await db.update(AutomationRunnerTable).set({ sessions: null, sessions_updated_at: now, updated_at: now }).where(and(
+      eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
+      isNotNull(AutomationRunnerTable.sessions),
+    ))
   }
 
   /**
@@ -1440,13 +1489,15 @@ export class DenAutomationRepository implements AutomationRepository {
   /**
    * The owner's desktops that can take remote sessions, most recently seen
    * first, with their latest inventory report (null for desktops that never
-   * sent one).
+   * sent one) and the session access each last reported. The reported session
+   * lists are read only when asked for: they are large and few callers need them.
    */
   async listRemoteSessionDesktops(input: {
     organizationId: string
     ownerMemberId: string
     capability: AutomationDesktopRunnerCapability
     limit: number
+    sessions?: boolean
   }) {
     const rows = await db.select({
       id: AutomationRunnerTable.id,
@@ -1455,12 +1506,15 @@ export class DenAutomationRepository implements AutomationRepository {
       lastSeenAt: AutomationRunnerTable.last_seen_at,
       capabilities: AutomationRunnerTable.capabilities,
       inventory: AutomationRunnerTable.inventory,
+      sessionAccess: AutomationRunnerTable.session_access,
+      sessionsUpdatedAt: AutomationRunnerTable.sessions_updated_at,
+      ...(input.sessions ? { sessions: AutomationRunnerTable.sessions } : {}),
     }).from(AutomationRunnerTable).where(and(
       eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
       eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
       sql`json_contains(${AutomationRunnerTable.capabilities}, ${JSON.stringify(input.capability)})`,
     )).orderBy(desc(AutomationRunnerTable.last_seen_at)).limit(input.limit)
-    return rows.map((row) => ({ ...row, capabilities: row.capabilities ?? [] }))
+    return rows.map((row) => ({ ...row, capabilities: row.capabilities ?? [], sessions: row.sessions ?? null }))
   }
 
   /** The owner's registered desktops, most recently seen first. */
@@ -1477,22 +1531,23 @@ export class DenAutomationRepository implements AutomationRepository {
     )).orderBy(desc(AutomationRunnerTable.last_seen_at)).limit(input.limit)
   }
 
-  /** One runner's capabilities and last contact, scoped to its owner. */
+  /** One runner's capabilities, last contact and reported session access, scoped to its owner. */
   async desktopRunnerById(input: {
     organizationId: string
     ownerMemberId: string
     runnerId: string
-  }): Promise<{ capabilities: AutomationDesktopRunnerCapability[]; lastSeenAt: number } | null> {
+  }): Promise<{ capabilities: AutomationDesktopRunnerCapability[]; lastSeenAt: number; sessionAccess: RemoteSessionAccessMode | null } | null> {
     const rows = await db.select({
       capabilities: AutomationRunnerTable.capabilities,
       lastSeenAt: AutomationRunnerTable.last_seen_at,
+      sessionAccess: AutomationRunnerTable.session_access,
     }).from(AutomationRunnerTable).where(and(
       inArray(AutomationRunnerTable.id, automationRunnerComputerIds(input)),
       eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
       eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
     )).orderBy(desc(sql`${AutomationRunnerTable.id} = ${automationRunnerRowId(input)}`)).limit(1)
     const row = rows[0]
-    return row ? { capabilities: row.capabilities ?? [], lastSeenAt: row.lastSeenAt.getTime() } : null
+    return row ? { capabilities: row.capabilities ?? [], lastSeenAt: row.lastSeenAt.getTime(), sessionAccess: row.sessionAccess ?? null } : null
   }
 
   private async missedDesktopReason(input: {
