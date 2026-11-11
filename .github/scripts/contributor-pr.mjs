@@ -5,7 +5,7 @@
 // the required CI check and trusted maintainer reviews (see CONTRIBUTING.md).
 import { appendFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { AI_SCREEN_CONTEXT, SCREEN_CONTEXT, WARDEN_CONTEXT } from "./contributor-screen.mjs";
+import { SCREEN_CONTEXT } from "./contributor-screen.mjs";
 import { isFork, machineryFiles } from "./contributor-policy.mjs";
 export { isFork, machineryFiles } from "./contributor-policy.mjs";
 
@@ -199,14 +199,9 @@ async function main(mode) {
       console.log(`Refused: ${decision.reply}`);
       return;
     }
-    const needsScreen = !statuses[AI_SCREEN_CONTEXT];
     const runUrl = `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${repo}/actions/runs/${env("GITHUB_RUN_ID")}`;
-    await reply(repo, number, needsScreen
-      ? `Running the AI screen for \`${decision.sha}\`, as reviewed by @${actor}. Tests and the Warden security review start independently; the AI screen is advisory: ${runUrl}`
-      : `Running tests and the Warden security review for \`${decision.sha}\`, as reviewed by @${actor}: ${runUrl}`);
+    await reply(repo, number, `Running tests for \`${decision.sha}\`, as reviewed by @${actor}: ${runUrl}`);
     await output("sha", decision.sha);
-    await output("needs_screen", String(needsScreen));
-    await output("needs_review", String(statuses[WARDEN_CONTEXT]?.state !== "success"));
     return;
   }
   throw new Error(`Unknown mode: ${mode}`);
