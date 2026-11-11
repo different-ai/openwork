@@ -907,6 +907,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  automationTeamSharing: {
+    label: "Share Automations with teams",
+    description: "An Automation's owner shares it with a team they are on. Teammates see it under Shared with my teams with its instructions, runs and results; teams given manage access can also pause, resume and run it, cancel a run, and take it over. It keeps running with its owner's accounts and models, and only the owner edits it. Turning this off hides shared Automations from teammates again; nothing is deleted and owners are unaffected.",
+    category: "automations",
+    added: "2026-11-10",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/automation-team-sharing/README.md",
+    deployments: everywhere,
+    default: false,
+  },
 })
 
 export type FeatureKey = keyof typeof FEATURES

@@ -467,6 +467,18 @@ export class DenAutomationRepository implements AutomationRepository {
     return revisions[0] ? itemFromRows(rows[0], revisions[0]) : null
   }
 
+  /** Current items for these ids in one organization, in the order given; ids that match nothing are skipped. */
+  async listByIds(input: { organizationId: string; automationIds: readonly string[] }): Promise<AutomationListItem[]> {
+    if (input.automationIds.length === 0) return []
+    const rows = await db.select().from(AutomationTable).where(and(
+      eq(AutomationTable.organization_id, normalizeOrganizationId(input.organizationId)),
+      inArray(AutomationTable.id, input.automationIds.map(normalizeAutomationId)),
+    ))
+    const items = await itemsFromRows(rows)
+    const byId = new Map(items.map((item) => [item.automation.id, item]))
+    return input.automationIds.flatMap((id) => byId.get(id) ?? [])
+  }
+
   async setState(input: Parameters<AutomationRepository["setState"]>[0]): Promise<AutomationListItem | null> {
     const current = await this.get(input)
     if (!current) return null

@@ -26,6 +26,7 @@ import { isActiveAutomationOwner, resolveAutomationModelAccess } from "./authori
 import { shouldApplyAutomationModelAccessFailure } from "./model-attention-rollout.js"
 import { automationRepository, runWorkspaceId } from "./repository.js"
 import { recordAutomationRunCompleted, recordAutomationRunStarted } from "./audit.js"
+import { AutomationSharingError, listSharedAutomationIds, resolveAutomationAccess, transferAutomationOwnership } from "./sharing.js"
 import { validateWorkflowAutomationAction } from "../workflows.js"
 import type { CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
 import { cloudAutomationRuntime, HEADLESS_AGENT_ENGINE_KIND, type CloudAutomationRuntime } from "./headless-runtime.js"
@@ -370,6 +371,49 @@ export class AutomationService {
     return item && readableBy(scope, item.revision.schedule) ? this.reconcileModelAttention(item, scope) : null
   }
 
+  /**
+   * Automations other people shared with teams this member is on. They are
+   * returned as stored: the owner's own views and the scheduler reconcile
+   * model access, and a teammate looking at one must not change it.
+   */
+  async listShared(scope: OwnerScope, input: { cursor?: string; limit?: number }) {
+    const page = await listSharedAutomationIds({
+      organizationId: scope.organizationId,
+      memberId: scope.ownerMemberId,
+      cursor: input.cursor,
+      limit: input.limit ?? 50,
+    })
+    const items = await automationRepository.listByIds({ organizationId: scope.organizationId, automationIds: page.automationIds })
+    return { items: items.filter((item) => readableBy(scope, item.revision.schedule)), nextCursor: page.nextCursor }
+  }
+
+  /**
+   * A teammate with manage access becomes the owner. The Automation then runs
+   * with their accounts and models, so it is left paused for them to resume
+   * (resuming checks their model and cloud access). Null when the caller
+   * cannot reach it at all.
+   */
+  async takeOver(scope: OwnerScope, automationId: string) {
+    const access = await resolveAutomationAccess({ organizationId: scope.organizationId, memberId: scope.ownerMemberId, automationId })
+    if (!access) return null
+    if (access.role === "owner") throw new AutomationSharingError("automation_already_owned")
+    if (access.role !== "manage") throw new AutomationSharingError("automation_manage_required")
+    const current = await automationRepository.get({ organizationId: scope.organizationId, ownerMemberId: access.ownerMemberId, automationId })
+    if (!current || !readableBy(scope, current.revision.schedule)) return null
+    // A pinned Workflow runs with its owner's access to it; the new owner must have that access too.
+    if (current.revision.action?.kind === "saved_script") {
+      await validateWorkflowAutomationAction({ organizationId: scope.organizationId, ownerMemberId: scope.ownerMemberId, action: current.revision.action })
+    }
+    await transferAutomationOwnership({
+      organizationId: scope.organizationId,
+      automationId,
+      fromOwnerMemberId: access.ownerMemberId,
+      toMemberId: scope.ownerMemberId,
+      now: Date.now(),
+    })
+    return automationRepository.get({ organizationId: scope.organizationId, ownerMemberId: scope.ownerMemberId, automationId })
+  }
+
   async create(scope: OwnerScope, definition: CreateAutomationDefinition) {
     this.requireScheduleAllowed(scope, definition.schedule, "action" in definition ? definition.executionTarget : "desktop")
     await this.requireTargetAllowed(scope.organizationId, "action" in definition ? "cloud" : "desktop")
@@ -548,11 +592,18 @@ export class AutomationService {
     return automationRepository.getRunReceipt({ ...scope, runId })
   }
 
-  async cancelRun(scope: OwnerScope, runId: string): Promise<AutomationRun | null> {
+  /** `cancelledBy`: the teammate who cancelled a shared Automation's run; absent when the owner did. */
+  async cancelRun(scope: OwnerScope, runId: string, cancelledBy?: { memberId: string; userId: string }): Promise<AutomationRun | null> {
     const now = Date.now()
     const run = await automationRepository.requestCancellation({ ...scope, runId, now })
     // A queued run is cancelled right here; running ones finish through their executor.
-    if (run?.status === "cancelled") await recordAutomationRunCompleted({ runId: run.id, terminalAt: now, actor: { kind: "owner" } })
+    if (run?.status === "cancelled") {
+      await recordAutomationRunCompleted({
+        runId: run.id,
+        terminalAt: now,
+        actor: cancelledBy ? { kind: "member", ...cancelledBy } : { kind: "owner" },
+      })
+    }
     return run
   }
 

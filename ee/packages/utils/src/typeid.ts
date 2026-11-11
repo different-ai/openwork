@@ -83,6 +83,7 @@ export const idTypesMapNameToPrefix = {
   automationRun: "atr",
   automationRunEvent: "ate",
   automationThread: "ath",
+  automationTeamShare: "ats",
   remoteSessionCommand: "rsc",
   remoteSessionRequest: "rsr",
   codemodeRun: "cmr",

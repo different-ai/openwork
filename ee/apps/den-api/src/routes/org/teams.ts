@@ -24,6 +24,7 @@ import { deleteTeamDefaultModel } from "../../default-model.js"
 import { deleteTeamWorkbotSettings } from "../../workbot/team-settings.js"
 import { deleteTeamPrompts } from "../../prompts.js"
 import { deleteTeamAutoRouterAccess } from "../../auto-router.js"
+import { deleteTeamAutomationShares } from "../../automations/sharing.js"
 import { db } from "../../db.js"
 import { invalidateTeamInferenceOAuth } from "../../llm/inference-provider-lifecycle.js"
 import { isScimManagedTeam } from "../../scim-groups.js"
@@ -476,6 +477,7 @@ export async function deleteTeam(c: ResourceActionContext, payload: ResourceOrga
     await deleteTeamWorkbotSettings(tx, team.id)
     await deleteTeamPrompts(tx, team.id)
     await deleteTeamAutoRouterAccess(tx, team.id)
+    await deleteTeamAutomationShares(tx, team.id)
     await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.teamId, team.id))
     await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.teamId, team.id))
     // Usage-limit assignments have no removed_at; unassigning deletes them. This

@@ -49,6 +49,29 @@ export const AutomationTable = mysqlTable(
   ],
 )
 
+/**
+ * An owner's grant of one Automation to one team. The Automation keeps running
+ * as its owner; a share only decides which teammates may see it (`view`) or
+ * also pause, resume, run and take it over (`manage`). Rows grant nothing
+ * while `automationTeamSharing` is off.
+ */
+export const AutomationTeamShareTable = mysqlTable(
+  "automation_team_share",
+  {
+    id: denTypeIdColumn("automationTeamShare", "id").notNull().primaryKey(),
+    organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
+    automation_id: denTypeIdColumn("automation", "automation_id").notNull(),
+    team_id: denTypeIdColumn("team", "team_id").notNull(),
+    access: mysqlEnum("access", ["view", "manage"]).notNull(),
+    shared_by_member_id: denTypeIdColumn("member", "shared_by_member_id").notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("automation_team_share_automation_team").on(table.automation_id, table.team_id),
+    index("automation_team_share_team").on(table.organization_id, table.team_id),
+  ],
+)
+
 export const AutomationRevisionTable = mysqlTable(
   "automation_revision",
   {
