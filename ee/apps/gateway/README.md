@@ -50,6 +50,14 @@ whose tasks score highest in total answers, at the thinking level Jev scores
 Gateway reads features with the same rules as Den API, so also give it the
 same `DEN_FEATURE_*` operator locks.
 
+The 3rd party tool endpoints below (Cursor, Claude Code, Codex) also list each
+router that applies to the key's member and has a model they can use, as
+`openwork/smart-<router name slug>-<last 4 of the aur_ id>` (resolved like model
+names; a thinking level or `[1m]` on it is ignored), and run a request naming
+one through the same handler, with the request read as Chat Completions and the
+answer written back in the tool's protocol (`src/smart-tools.ts`). Nothing is
+listed without a TypeSafe key or while the feature is off.
+
 ## Stable Contracts
 
 The service rename keeps deployment and Models contracts stable. The Gateway
@@ -129,7 +137,12 @@ before running the new runtime. Do not deploy it against the old table names.
   (provider type), `name`, and `openwork.{provider_id, provider_name,
   upstream_model_id}`. No grants is an empty list, not an error. Call a listed
   model through the provider-less endpoints below, or through
-  `/api/v1/providers/{openwork.provider_id}/*`.
+  `/api/v1/providers/{openwork.provider_id}/*`. For `ow_gw_` API keys the list
+  ends with the member's Smart Routers (`id` `openwork-smart-<router id>`, name
+  `Smart: <name>`, `openwork.provider_id` `openwork-auto`,
+  `openwork.smart_router: true`), callable only through
+  `POST /api/v1/chat/completions`; desktop keys keep the plain list (the desktop
+  learns routers from Den).
 - Cursor (feature `gatewayMemberApiKeys`): `GET /api/v1/cursor/models`,
   `POST /api/v1/cursor/chat/completions` and `POST /api/v1/cursor/responses`
   accept only `ow_gw_` keys. Models are named

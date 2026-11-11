@@ -61,7 +61,7 @@ export type AutoRouterDependencies = {
   onJevError?: (error: unknown) => void
 }
 
-type RoutedCandidate = AutoCandidate & {
+export type RoutedCandidate = AutoCandidate & {
   route: AutoRouterConfigModel
   row: GatewayMemberAccessRow
   family: ProtocolFamily
@@ -106,6 +106,17 @@ export function accessPriority(row: GatewayMemberAccessRow) {
 
 function autoError(status: number, code: string, message: string) {
   return Response.json({ error: { message, type: status >= 500 ? "api_error" : "invalid_request_error", code } }, { status })
+}
+
+const AUTO_ROUTER_ERRORS = {
+  notConfigured: { status: 404, code: "auto_router_not_configured", message: "Smart models aren't available yet: the AI Gateway is missing its routing key. Ask your administrator, or choose another model." },
+  unavailable: { status: 404, code: "auto_router_unavailable", message: "This Smart model isn't available to you anymore. Choose another model." },
+} as const
+
+/** Why a Smart model can't be used, as a Chat Completions error. */
+export function autoRouterError(kind: keyof typeof AUTO_ROUTER_ERRORS) {
+  const error = AUTO_ROUTER_ERRORS[kind]
+  return autoError(error.status, error.code, error.message)
 }
 
 function modelName(row: GatewayMemberAccessRow) {
@@ -274,12 +285,12 @@ export async function handleAutoRequest(input: {
 }): Promise<Response> {
   const { request, body, routerId, identity, dependencies } = input
   if (!dependencies.routingConfigured) {
-    return autoError(404, "auto_router_not_configured", "Smart models aren't available yet: the AI Gateway is missing its routing key. Ask your administrator, or choose another model.")
+    return autoRouterError("notConfigured")
   }
   const config = identity.orgMembershipId
     ? await dependencies.loadConfig({ organizationId: identity.organizationId, routerId, memberId: identity.orgMembershipId })
     : null
-  if (!config) return autoError(404, "auto_router_unavailable", "This Smart model isn't available to you anymore. Choose another model.")
+  if (!config) return autoRouterError("unavailable")
   const candidates = autoCandidates(config, await dependencies.loadMemberGatewayAccess(identity), dependencies.catalog)
   if (!candidates.length) return autoError(403, "auto_router_no_models", "None of this Smart model's models are available to you. Choose another model, or ask your administrator for access.")
 

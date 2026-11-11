@@ -44,6 +44,28 @@ openwork/claude-opus-5.5-k3f9:high
 
 Shared code: `packages/types/src/den/gateway-cursor.ts`.
 
+### Smart Routers
+
+Smart Routers (feature `autoRouter`) the member can use get a name of the same
+shape, from their picker name "Smart: <name>":
+
+```
+openwork/smart-<router name as a slug>-<last 4 characters of the router's aur_ id>
+openwork/smart-engineering-x7q2
+```
+
+Every tool's model list (Cursor, Claude Code, Codex) ends with them, and a
+request naming one runs the Smart Model Router: the request is read as Chat
+Completions (`responsesToChat`, `messagesToChat`), handed to `handleAutoRequest`
+as is, and its answer written back (`asResponses`, Messages JSON or events).
+Smart picks the model and thinking level, so a level or `[1m]` on the name is
+ignored, Codex's catalog entry has no reasoning levels, and Claude Code's
+settings get no `modelOverrides` or `[1m]` for one. A Smart-shaped name that
+matches none of the member's routers, and no model, answers with Smart's own
+error (`auto_router_unavailable`, `auto_router_not_configured`) in the tool's
+shape. Only names starting with `smart-` read routers (one cached read). Code:
+`ee/apps/gateway/src/smart-tools.ts`.
+
 ## What people see
 
 **Right after creating a key** (while it can still be shown), the dialog moves
@@ -114,7 +136,12 @@ key, with a link to create one.
 - Only `ow_gw_` keys authenticate on `/api/v1/cursor/*`; OpenWork Models keys
   are never looked up. Any other path there is `404 not_found`.
 - The page builds the same names in Den web from
-  `GET /v1/inference-providers?scope=usable`; there is no new Den API route.
+  `GET /v1/inference-providers?scope=usable`, plus the member's Smart Routers
+  from `GET /v1/org/auto-router/mine` (ids and names; empty without a routing
+  key, 404 while `autoRouter` is off, which the page treats as none). They come
+  last in each model dropdown as "Smart: <name>" and are never the default
+  choice. Claude Desktop's list keeps its own filter, so a router shows there
+  only when its name passes it.
 
 ## Claude Code endpoint
 

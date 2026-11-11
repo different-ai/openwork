@@ -21,6 +21,7 @@ import { asResponses, cursorError, cursorModels, requestedEffort, sendTranslated
 import { responsesToChat, responsesToolNames } from "./cursor-responses.js"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
 import type { ProtocolFamily } from "./protocols.js"
+import { resolveSmartRouter, smartAcceptsImages, smartContextWindow, type SmartToolRouter } from "./smart-tools.js"
 
 export const codexPathPrefix = "/api/v1/codex"
 export const codexModelsPath = `${codexPathPrefix}/models`
@@ -79,9 +80,9 @@ function effortLevels(model: CursorModel) {
  * its defaults. Each model gets Codex's own base instructions, so it behaves as it would on Codex's
  * fallback, plus its real context window, reasoning levels and name for the /model picker.
  */
-export function listCodexModels(models: CursorModel[]) {
+export function listCodexModels(models: CursorModel[], routers: SmartToolRouter[] = []) {
   return {
-    models: models.map((model, index) => {
+    models: [...models.map((model, index) => {
       const levels = effortLevels(model)
       const context = modelLimit(model, "context")
       return {
@@ -111,7 +112,41 @@ export function listCodexModels(models: CursorModel[]) {
         experimental_supported_tools: [],
         input_modalities: acceptsImages(model) ? ["text", "image"] : ["text"],
       }
-    }),
+    }), ...routers.map((router, index) => smartCatalogEntry(router, models.length + index))],
+  }
+}
+
+/**
+ * A Smart Router in Codex's catalog: like a translated model, with no reasoning levels (Smart picks
+ * the model and its level per prompt, so Codex's effort is ignored), the smallest context window of
+ * its models, and images only when every one of them reads them.
+ */
+function smartCatalogEntry(router: SmartToolRouter, index: number) {
+  const context = smartContextWindow(router)
+  return {
+    slug: router.toolName,
+    display_name: router.name,
+    description: "Smart Model Router through OpenWork: picks one of your models for each prompt",
+    default_reasoning_level: null,
+    supported_reasoning_levels: [],
+    shell_type: "shell_command",
+    visibility: "list",
+    supported_in_api: true,
+    priority: index - 10_000,
+    availability_nux: null,
+    upgrade: null,
+    base_instructions: CODEX_BASE_INSTRUCTIONS,
+    model_messages: { instructions_template: CODEX_BASE_INSTRUCTIONS },
+    supports_reasoning_summary_parameter: false,
+    default_reasoning_summary: "auto",
+    support_verbosity: false,
+    default_verbosity: null,
+    apply_patch_tool_type: null,
+    truncation_policy: { mode: "bytes", limit: 10_000 },
+    ...(context ? { context_window: context, max_context_window: context } : {}),
+    effective_context_window_percent: 95,
+    experimental_supported_tools: [],
+    input_modalities: smartAcceptsImages(router) ? ["text", "image"] : ["text"],
   }
 }
 
@@ -119,7 +154,7 @@ export function listCodexModels(models: CursorModel[]) {
  * The model a request names. Codex may also send a model id of its own (a background task on a
  * model it prefers, for example): that resolves when one of the member's models has that catalog id.
  */
-function resolveModel(requested: unknown, models: CursorModel[]): { model: CursorModel; thinking: AutoRouterThinkingLevel } | { error: Response } {
+function resolveModel(requested: unknown, models: CursorModel[], smartError?: () => Response): { model: CursorModel; thinking: AutoRouterThinkingLevel } | { error: Response } {
   const parsed = parseCursorModelName(requested)
   if (parsed) {
     const match = matchCursorModel(parsed, models)
@@ -129,6 +164,7 @@ function resolveModel(requested: unknown, models: CursorModel[]): { model: Curso
   const raw = typeof requested === "string" ? requested.trim().toLowerCase() : ""
   const byCatalogId = raw ? models.filter((model) => model.row.model?.model_id.toLowerCase() === raw) : []
   if (byCatalogId.length === 1 && byCatalogId[0]) return { model: byCatalogId[0], thinking: "default" }
+  if (smartError) return { error: smartError() }
   // Same answer for a model that does not exist and one this member cannot use.
   return { error: cursorError(404, "model_not_found", `${String(requested)} is not one of your OpenWork models. Copy the config from Set up Codex in your OpenWork Library, or pick a model with /model.`) }
 }
@@ -187,8 +223,17 @@ export async function handleCodexResponses(input: {
   dependencies: CodexDependencies
 }): Promise<Response> {
   const { request, body, identity, dependencies } = input
+  const smart = await resolveSmartRouter(body.model, identity, dependencies.smart)
+  if (smart.kind === "router" && dependencies.smart) {
+    // Like a translated model: no stored responses, Codex's effort ignored (Smart picks the level).
+    if (typeof body.previous_response_id === "string" && body.previous_response_id) {
+      return cursorError(400, "previous_response_not_supported", "Smart models can't continue a stored response. Send the whole conversation (Codex does unless it is set to store responses).")
+    }
+    const chat = await dependencies.smart.route({ request, body: responsesToChat(body), routerId: smart.routerId })
+    return asResponses(chat, typeof body.model === "string" ? body.model : "smart", responsesToolNames(body))
+  }
   const models = cursorModels(await dependencies.loadMemberGatewayAccess(identity), dependencies.catalog)
-  const resolved = resolveModel(body.model, models)
+  const resolved = resolveModel(body.model, models, smart.kind === "unavailable" ? smart.error : undefined)
   if ("error" in resolved) return resolved.error
   const { model } = resolved
   const providerModel = model.row.model

@@ -110,6 +110,19 @@ end with "(Smart chose <model> · <thinking> thinking.)". The OpenWork server's
 `openwork.auto-route` engine plugin records these in session metadata
 (`openworkAutoRoutes`), and the app shows them under each reply.
 
+## 3rd party tools
+
+Members' AI Gateway API keys (feature `gatewayMemberApiKeys`) also reach Smart
+Routers from Cursor, Claude Code and Codex: their model lists end with each
+router that applies to the member and has a model they can use, as
+`openwork/smart-<router name>-<last 4 of the router id>`, and a request by that
+name runs `handleAutoRequest` with the request translated to Chat Completions
+and the answer back to the tool's protocol. `GET /api/v1/models` lists them as
+`openwork-smart-<id>` for API keys only. Den web's tool setup offers them from
+`GET /v1/org/auto-router/mine`. Details:
+`docs/features/gateway-cursor-setup/README.md`; proof:
+`evals/proofs/gateway-smart-router-tools.proof.test.ts`.
+
 ## Operating it
 
 Gateway environment (see `ee/apps/gateway/README.md`): `TYPESAFE_API_KEY`

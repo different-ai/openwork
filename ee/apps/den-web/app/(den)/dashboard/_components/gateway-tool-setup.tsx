@@ -1,13 +1,13 @@
 "use client";
 
 import { AUTO_ROUTER_THINKING_LABELS, autoRouterThinkingLevelSchema, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router";
-import { CLAUDE_CODE_LONG_CONTEXT, claudeCodeBaseUrl, claudeCodeModelName, claudeDesktopListsModel, codexBaseUrl, cursorBaseUrl, cursorModelName } from "@openwork/types/den/gateway-cursor";
+import { CLAUDE_CODE_LONG_CONTEXT, claudeCodeBaseUrl, claudeDesktopListsModel, codexBaseUrl, cursorBaseUrl } from "@openwork/types/den/gateway-cursor";
 import { Check, ChevronLeft, ChevronRight, Copy } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenSelect } from "../../_components/ui/select";
 import { markFeatureUsed } from "../../_lib/feature-usage";
-import { claudeModelId, useGatewayToolModels, type GatewayToolModel } from "./cursor-setup-data";
+import { claudeCodeToolModelName, claudeModelId, gatewayToolModelLabel, gatewayToolModelName, useGatewayToolModels, type GatewayToolModel } from "./cursor-setup-data";
 import { GATEWAY_API_KEYS_DOCS_URL } from "./gateway-api-keys-data";
 
 /**
@@ -147,13 +147,13 @@ function CursorModelPicker({ models }: { models: readonly GatewayToolModel[] }) 
   const model = models.find((entry) => entry.modelId === selected) ?? models[0] ?? null;
   if (!model) return null;
   const level = model.thinkingLevels.includes(thinking) ? thinking : "default";
-  const name = cursorModelName({ name: model.name, modelId: model.modelId, thinking: level });
+  const name = gatewayToolModelName(model, level);
   return (
     <div className="flex flex-col gap-2" data-cursor-model={model.name}>
       <div className="flex flex-col gap-2 sm:flex-row">
         <span className="min-w-0 flex-1">
           <DenSelect value={model.modelId} aria-label="Model" onChange={(event) => setSelected(event.target.value)}>
-            {models.map((entry) => <option key={entry.modelId} value={entry.modelId}>{`${entry.name} · ${entry.providerName}`}</option>)}
+            {models.map((entry) => <option key={entry.modelId} value={entry.modelId}>{gatewayToolModelLabel(entry)}</option>)}
           </DenSelect>
         </span>
         {model.thinkingLevels.length > 1 ? (
@@ -229,7 +229,7 @@ function ModelSnippet({ models, loading, error, empty, children }: {
       <ModelsState loading={loading} error={error} empty={!loading && !error && models.length === 0 ? empty : null} />
       {models.length > 1 ? (
         <DenSelect value={model?.alias ?? ""} aria-label="Model" onChange={(event) => setSelected(event.target.value)}>
-          {models.map((entry) => <option key={entry.alias} value={entry.alias}>{`${entry.name} · ${entry.providerName}`}</option>)}
+          {models.map((entry) => <option key={entry.alias} value={entry.alias}>{gatewayToolModelLabel(entry)}</option>)}
         </DenSelect>
       ) : null}
       {children(model)}
@@ -259,7 +259,7 @@ export function codexConfig(input: { baseUrl: string; model: GatewayToolModel; t
     : [`command = "sh"`, `args = ["-c", "echo $OPENWORK_API_KEY"]`];
   return [
     `model_provider = "openwork"`,
-    `model = "${cursorModelName({ name: input.model.name, modelId: input.model.modelId })}"`,
+    `model = "${gatewayToolModelName(input.model)}"`,
     ...(input.thinking === "default" ? [] : [`model_reasoning_effort = "${input.thinking}"`]),
     ``,
     `[model_providers.openwork]`,
@@ -288,7 +288,7 @@ function CodexConfigField({ baseUrl, keySource, testId }: { baseUrl: string; key
           <div className="flex flex-col gap-2 sm:flex-row">
             <span className="min-w-0 flex-1">
               <DenSelect value={model.modelId} aria-label="Model" onChange={(event) => setSelected(event.target.value)}>
-                {list.map((entry) => <option key={entry.modelId} value={entry.modelId}>{`${entry.name} · ${entry.providerName}`}</option>)}
+                {list.map((entry) => <option key={entry.modelId} value={entry.modelId}>{gatewayToolModelLabel(entry)}</option>)}
               </DenSelect>
             </span>
             {model.thinkingLevels.length > 1 ? (
@@ -366,16 +366,19 @@ export function CodexAppSteps({ apiKey, baseUrl }: { apiKey: string | null; base
   );
 }
 
-function claudeCodeName(model: GatewayToolModel) {
-  return claudeCodeModelName({ name: model.name, modelId: model.modelId, contextWindow: model.contextWindow });
+const claudeCodeName = claudeCodeToolModelName;
+
+/**
+ * The best first choice for Claude Code's main model: a Claude Opus or Sonnet when there is one. Smart
+ * Routers are offered but never picked first.
+ */
+function preferredMain(all: readonly GatewayToolModel[]) {
+  const models = all.filter((model) => model.smartRouterName === null);
+  return models.find((model) => /opus/i.test(model.name)) ?? models.find((model) => /sonnet/i.test(model.name)) ?? models.find((model) => claudeModelId(model)) ?? models[0] ?? all[0] ?? null;
 }
 
-/** The best first choice for Claude Code's main model: a Claude Opus or Sonnet when there is one. */
-function preferredMain(models: readonly GatewayToolModel[]) {
-  return models.find((model) => /opus/i.test(model.name)) ?? models.find((model) => /sonnet/i.test(model.name)) ?? models.find((model) => claudeModelId(model)) ?? models[0] ?? null;
-}
-
-function preferredFast(models: readonly GatewayToolModel[]) {
+function preferredFast(all: readonly GatewayToolModel[]) {
+  const models = all.filter((model) => model.smartRouterName === null);
   return models.find((model) => /haiku/i.test(model.name)) ?? models.find((model) => /mini|flash|nano|small/i.test(model.name)) ?? null;
 }
 
@@ -383,7 +386,8 @@ function preferredFast(models: readonly GatewayToolModel[]) {
  * `.claude/settings.local.json` for a project: the Gateway's Claude Code endpoint and key, the main
  * model for Claude Code's Opus and Sonnet slots (and subagents), and the fast model for its Haiku
  * slot. Claude models are also mapped to Claude Code's own ids so it knows their limits and
- * features; another model gets its context window spelled out.
+ * features; another model gets its context window spelled out. A Smart Router is neither: no
+ * mapping, no `[1m]`, no window.
  */
 export function claudeCodeSettings(input: { apiKey: string | null; baseUrl: string; main: GatewayToolModel; fast: GatewayToolModel }) {
   const main = claudeCodeName(input.main);
@@ -413,7 +417,7 @@ function ModelChoice({ label, models, value, onChange }: { label: string; models
     <label className="flex min-w-0 flex-1 flex-col gap-1">
       <span className="text-[12px] text-gray-500">{label}</span>
       <DenSelect value={value.modelId} aria-label={label} onChange={(event) => onChange(event.target.value)}>
-        {models.map((entry) => <option key={entry.modelId} value={entry.modelId}>{`${entry.name} · ${entry.providerName}`}</option>)}
+        {models.map((entry) => <option key={entry.modelId} value={entry.modelId}>{gatewayToolModelLabel(entry)}</option>)}
       </DenSelect>
     </label>
   );

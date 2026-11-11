@@ -25,6 +25,7 @@ import type { ProtocolFamily } from "./protocols.js"
 import type { GatewayMemberAccessRow } from "./provider-access.js"
 import type { ProviderCatalog } from "./provider-catalog.js"
 import { isEventStreamContentType, isJsonContentType } from "./relay.js"
+import { resolveSmartRouter, type SmartToolDependencies, type SmartToolRouter } from "./smart-tools.js"
 
 export const claudeCodePathPrefix = "/api/v1/claude-code"
 export const claudeCodeModelsPath = `${claudeCodePathPrefix}/v1/models`
@@ -37,6 +38,8 @@ export type ClaudeCodeDependencies = {
   reasoningStore: ReasoningStore
   /** The normal Gateway pipeline for a rewritten request. */
   forward: (target: AutoTarget) => Promise<Response>
+  /** Smart Routers (feature `autoRouter`): listed and routed when given. */
+  smart?: SmartToolDependencies
 }
 
 /** Providers that take a Messages request as it is. */
@@ -60,14 +63,22 @@ export function claudeCodeName(model: CursorModel) {
   return claudeCodeModelName({ name: model.name, modelId: model.modelId, contextWindow: contextWindow(model) })
 }
 
-/** The Anthropic List Models shape, with each model's name for Claude Code as its id. */
-export function listClaudeCodeModels(models: CursorModel[]) {
-  const data = models.map((model) => ({
+/**
+ * The Anthropic List Models shape, with each model's name for Claude Code as its id, then the
+ * member's Smart Routers (no `[1m]`: Smart may pick any of its models).
+ */
+export function listClaudeCodeModels(models: CursorModel[], routers: SmartToolRouter[] = []) {
+  const data = [...models.map((model) => ({
     type: "model" as const,
     id: claudeCodeName(model),
     display_name: model.name,
     created_at: (model.row.model?.created_at ?? new Date(0)).toISOString(),
-  }))
+  })), ...routers.map((router) => ({
+    type: "model" as const,
+    id: router.toolName,
+    display_name: router.name,
+    created_at: new Date(0).toISOString(),
+  }))]
   return { data, has_more: false, first_id: data[0]?.id ?? null, last_id: data[data.length - 1]?.id ?? null }
 }
 
@@ -75,7 +86,7 @@ export function listClaudeCodeModels(models: CursorModel[]) {
  * The model a request names. Claude Code may also send a model id of its own (a background task on
  * its default model, for example): that resolves when one of the member's models has that catalog id.
  */
-function resolveModel(requested: unknown, models: CursorModel[]): { model: CursorModel } | { error: Response } {
+function resolveModel(requested: unknown, models: CursorModel[], smartError?: () => Response): { model: CursorModel } | { error: Response } {
   const parsed = parseClaudeCodeModelName(requested)
   if (parsed) {
     const match = matchCursorModel(parsed, models)
@@ -85,6 +96,7 @@ function resolveModel(requested: unknown, models: CursorModel[]): { model: Curso
   const raw = typeof requested === "string" ? requested.replace(/\[[^\]]*\]\s*$/, "").trim().toLowerCase() : ""
   const byCatalogId = raw ? models.filter((model) => model.row.model?.model_id.toLowerCase() === raw) : []
   if (byCatalogId.length === 1 && byCatalogId[0]) return { model: byCatalogId[0] }
+  if (smartError) return { error: smartError() }
   // Same answer for a model that does not exist and one this member cannot use.
   return { error: claudeCodeError(404, "not_found_error", `${String(requested)} is not one of your OpenWork models. Copy the settings from Set up Claude Code in your OpenWork Library, or pick a model with /model.`) }
 }
@@ -138,9 +150,14 @@ export async function handleClaudeCodeMessages(input: {
   dependencies: ClaudeCodeDependencies
 }): Promise<Response> {
   const { request, body, identity, dependencies } = input
+  const smart = await resolveSmartRouter(body.model, identity, dependencies.smart)
+  if (smart.kind === "router" && dependencies.smart) {
+    const answer = await dependencies.smart.route({ request, body: messagesToChat(body), routerId: smart.routerId })
+    return asMessages(answer, typeof body.model === "string" ? body.model : "smart")
+  }
   const models = cursorModels(await dependencies.loadMemberGatewayAccess(identity), dependencies.catalog)
-  const resolved = resolveModel(body.model, models)
-  if ("error" in resolved) return resolved.error
+  const resolved = resolveModel(body.model, models, smart.kind === "unavailable" ? smart.error : undefined)
+  if ("error" in resolved) return asMessagesError(resolved.error)
   const { model } = resolved
   const providerModel = model.row.model
   if (!providerModel) return claudeCodeError(404, "not_found_error", `${String(body.model)} is not one of your OpenWork models.`)
