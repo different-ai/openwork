@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { createDeviceLoginControl, readDeviceLoginRequestId } from "../src/app/lib/device-login-control";
-import { DEVICE_LOGIN_UNSUPPORTED, type createDesktopDeviceLogin, type DeviceLoginStatus } from "../src/app/lib/device-login-flow";
+import { DEVICE_LOGIN_UNSUPPORTED, createDesktopDeviceLogin, type DeviceLoginStatus } from "../src/app/lib/device-login-flow";
 
 function harness() {
   let enabled: boolean | undefined = false;
@@ -21,6 +21,66 @@ function harness() {
   });
   return { control, start, cancel, status, enable: (value: boolean | undefined) => { enabled = value; updatedAt++; }, state: (value: DeviceLoginStatus) => { state = value; }, admit: (time: number) => { admittedAt = time; } };
 }
+
+function preparingFlow() {
+  const destination = { baseUrl: "https://den.example.test", apiBaseUrl: "https://den.example.test" };
+  let resolvePreparation = (_value: typeof destination | null) => {};
+  const preparation = new Promise<typeof destination | null>((resolve) => { resolvePreparation = resolve; });
+  let active = true;
+  let feature: { enabled: boolean | undefined; updatedAt: number } = { enabled: undefined, updatedAt: 0 };
+  const cancel = mock(() => { active = false; });
+  const fetcher = mock(async () => Response.json({ device_code: "private-device-code", user_code: "ABCD-EFGH", expires_in: 900, interval: 60 }));
+  const flow = createDesktopDeviceLogin({
+    isSignedIn: () => false,
+    beginEnrollment: () => ({ activate: () => active, isCurrent: () => active, cancel }),
+    prepare: () => preparation,
+    enroll: async () => { throw new Error("Enrollment is outside this regression"); },
+    fetcher,
+    now: () => 10,
+  });
+  const control = createDeviceLoginControl({ flow, deploymentFeature: () => feature, isConfiguredDestination: () => true });
+  return { control, flow, cancel, fetcher, off: () => { feature = { enabled: false, updatedAt: 20 }; }, resolvePreparation, destination };
+}
+
+describe("device control with live preparation", () => {
+  test("an OFF observation during discovery lets its live OFF reply finish unsupported without a code", async () => {
+    const h = preparingFlow();
+    const started = h.control.start({ requestId: "preparing-off" });
+    try {
+      expect(h.flow.admittedAt()).toBeNull();
+      h.off();
+      const duringPreparation = h.control.status("preparing-off");
+      h.resolvePreparation(null);
+      expect(await started).toEqual({ state: "unsupported", message: DEVICE_LOGIN_UNSUPPORTED });
+      expect(duringPreparation.state).toBe("pending");
+      // Finishing unsupported cancels the enrollment attempt exactly once;
+      // the cached observation must not have cancelled it before live discovery.
+      expect(h.cancel).toHaveBeenCalledTimes(1);
+      expect(h.control.status("preparing-off").state).toBe("unsupported");
+      expect(h.fetcher).not.toHaveBeenCalled();
+    } finally {
+      h.resolvePreparation(null);
+      await started;
+      h.flow.cancel();
+    }
+  });
+
+  test("a fresh OFF after live admission cancels the pending code lease", async () => {
+    const h = preparingFlow();
+    const started = h.control.start({ requestId: "admitted-off" });
+    try {
+      h.resolvePreparation(h.destination);
+      expect(await started).toHaveProperty("userCode", "ABCD-EFGH");
+      expect(h.flow.admittedAt()).toBe(10);
+      expect(h.flow.status("admitted-off").state).toBe("pending");
+      h.off();
+      expect(h.control.status("admitted-off").state).toBe("unsupported");
+      expect(h.cancel).toHaveBeenCalledTimes(1);
+      expect(h.fetcher).toHaveBeenCalledTimes(1);
+      expect(h.flow.status("admitted-off").state).toBe("failed");
+    } finally { h.flow.cancel(); }
+  });
+});
 
 describe("device control deployment observations", () => {
   test("explicit cached OFF reports unsupported at rest but never blocks live start", async () => {
