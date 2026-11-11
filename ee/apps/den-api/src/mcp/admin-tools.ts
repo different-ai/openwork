@@ -14,6 +14,8 @@ import { closeSandbox, createSandbox, extendSandbox, listSandboxes, sandboxDefau
 import { FEATURE_KEYS, featureAvailableOn, featureDefinition, featureDocsUrl, featureKeySchema, featureRollout, resolveFeature } from "@openwork/features"
 import { runPlatformAdminPlatformAction, runPlatformAdminServiceAction, type PlatformAdminAuditActor } from "../audit/mcp-service-audit.js"
 import { readWorkbotAdoptionReport, workbotAdoptionInputSchema } from "../workbot/adoption-report.js"
+import { REMOTE_DEVICE_AVAILABILITIES, REMOTE_DEVICE_KINDS, REMOTE_DEVICE_PROVIDERS } from "@openwork/types/den/remote-devices"
+import { listAdminRemoteDevices, readAdminRemoteDevice } from "../remote-devices.js"
 import { assertReadOnlySql, isDatabaseTimeLimitError, withDatabaseTimeLimit } from "./admin-query-limit.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import { buildRetentionCohorts } from "../admin-metrics/definitions.js"
@@ -37,7 +39,7 @@ import { normalizeRows } from "../admin-metrics/sql.js"
  * write tools need the caller's mcp:write scope, like connection writes.
  */
 
-export const DEN_ADMIN_MCP_VERSION = "0.11.0"
+export const DEN_ADMIN_MCP_VERSION = "0.12.0"
 
 const QUERY_TIMEOUT_MS = 15_000
 // Slightly under Den's own timer, so the database stops the statement first.
@@ -650,6 +652,49 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
       run(async () => {
         if (!admin) throw new Error("Workbot adoption reports require an authenticated platform admin.")
         return readWorkbotAdoptionReport(input, rows)
+      }),
+  )
+
+  server.registerTool(
+    "den_devices_list",
+    {
+      description:
+        "Platform-admin read-only list of devices: the computers members can reach through OpenWork (desktops running OpenWork Desktop, Workbot's cloud computers, registered Freestyle or Daytona VMs and Mac sandboxes), most recently heard from first, 50 a page. Each has its organization, owner, availability (online, paused, needs_setup, offline, unknown), last contact, app version, warnings and errors in the last 24 hours and its latest event. Filter by organization (id, slug or name), kind, provider, availability or problems, and search by device name, provider id, organization, or owner name or email. Use den_device_detail with a device id to see why a device is in its state. Never credentials or anything from a computer's screen.",
+      inputSchema: z.object({
+        org: z.string().min(1).optional().describe("Organization id, slug or name; omit for every organization"),
+        search: z.string().min(1).max(160).optional().describe("Device name, provider id, organization, or owner name or email"),
+        kind: z.enum(REMOTE_DEVICE_KINDS).optional(),
+        provider: z.enum(REMOTE_DEVICE_PROVIDERS).optional(),
+        availability: z.enum(REMOTE_DEVICE_AVAILABILITIES).optional(),
+        problems: z.boolean().optional().describe("Only devices with a warning or error in the last 24 hours"),
+        page: z.number().int().min(1).max(200).default(1),
+      }),
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    async ({ org, page, ...filters }) =>
+      run(async () => {
+        if (!admin) throw new Error("Device lists require an authenticated platform admin.")
+        const resolved = org ? await resolveOrganization(org) : null
+        if (resolved && "error" in resolved) return resolved
+        return listAdminRemoteDevices({ ...filters, page, organizationId: resolved ? normalizeDenTypeId("organization", resolved.organization.id) : undefined })
+      }),
+  )
+
+  server.registerTool(
+    "den_device_detail",
+    {
+      description:
+        "Platform-admin read-only detail for one device (rdv_... from den_devices_list), including one its owner removed: the latest desktop report (OS, computer use readiness per computer, macOS permissions), its 100 most recent events with their fixed codes, the desktop's runner registration (what remote sessions and Automations see), the content-free index row of a Workbot computer's conversation, and whether Devices, Computer use, Remote computers, Browser use and the sandbox gateway are on for its owner. Start here when someone says a computer is missing, offline or cannot be used.",
+      inputSchema: z.object({ deviceId: z.string().describe("rdv_... from den_devices_list") }),
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    async ({ deviceId }) =>
+      run(async () => {
+        if (!admin) throw new Error("Device details require an authenticated platform admin.")
+        if (!isDenTypeId("remoteDevice", deviceId)) throw new Error("Invalid device id")
+        const detail = await readAdminRemoteDevice(normalizeDenTypeId("remoteDevice", deviceId))
+        if (!detail) throw new Error("Device not found")
+        return detail
       }),
   )
 
