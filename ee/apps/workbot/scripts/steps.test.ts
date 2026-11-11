@@ -96,6 +96,13 @@ test("browser task acknowledgment and tap-only previews do not depend on present
   assert.equal(instructions.includes("It appears in their chat only when you pass show: true"), false)
 })
 
+test("an app Workbot builds is handed over as a card to open beside the chat, never as a download", () => {
+  const instructions = workbotInstructions({ name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false })
+  for (const rule of ["shows as a card under your reply", "as one .html file, hand it over in the same reply", "Never tell them to download it", "before a result says it was added to their Files"]) {
+    assert.ok(instructions.includes(rule), rule)
+  }
+})
+
 test("Drive PDFs and Office files are pulled onto the computer only when there is one, and only with workbotDriveFiles", () => {
   const base = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false }
   const pull = "createGoogleDriveDownloadLink"
