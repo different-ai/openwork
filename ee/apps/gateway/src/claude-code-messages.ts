@@ -106,8 +106,10 @@ type MessagesUsage = { input_tokens: number; output_tokens: number; cache_read_i
 function messagesUsage(usage: unknown): MessagesUsage {
   const number = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : 0
   if (!isJsonObject(usage)) return { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
-  const cached = isJsonObject(usage.prompt_tokens_details) ? number(usage.prompt_tokens_details.cached_tokens) : 0
-  return { input_tokens: Math.max(0, number(usage.prompt_tokens) - cached), output_tokens: number(usage.completion_tokens), cache_read_input_tokens: cached, cache_creation_input_tokens: 0 }
+  const details = isJsonObject(usage.prompt_tokens_details) ? usage.prompt_tokens_details : {}
+  const cached = number(details.cached_tokens)
+  const written = number(details.cache_write_tokens) || number(usage.cache_creation_input_tokens)
+  return { input_tokens: Math.max(0, number(usage.prompt_tokens) - cached - written), output_tokens: number(usage.completion_tokens), cache_read_input_tokens: cached, cache_creation_input_tokens: written }
 }
 
 function stopReason(finish: unknown): string {

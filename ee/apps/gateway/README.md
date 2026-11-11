@@ -173,6 +173,12 @@ before running the new runtime. Do not deploy it against the old table names.
   The gateway verifies all references and rewrites body/path models to `model_id`
   before provider-specific Vertex rewrites or AWS signing. Unambiguous raw model
   IDs also work; response model fields are not rewritten.
+- Aliases hide that a model is Claude, so clients send no prompt-cache
+  breakpoints. When the resolved `model_id` names Claude and the request marks
+  none, the gateway adds them (`src/prompt-cache.ts`): `cache_control` on Chat
+  Completions (OpenRouter, LiteLLM, custom) and Anthropic Messages, `cachePoint`
+  on Bedrock Converse for the Claude models Bedrock caches. At most four: the
+  last tool (Messages and Converse), the system prompt and the last messages.
 - GET provider `/models` is a local, non-cacheable list of accessible combinations,
   not the provider-account catalog. Each entry has the alias in both `id` and
   `config.id`, raw `upstreamModelId`, and group/set IDs and names. A listed grant

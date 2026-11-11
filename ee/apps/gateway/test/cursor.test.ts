@@ -260,7 +260,8 @@ test("the Responses API reaches the same model, and answers as a Responses objec
   assert.equal(sent[0]?.url, "https://api.anthropic.com/v1/messages")
   const upstream: unknown = await sent[0]?.json()
   assert.ok(typeof upstream === "object" && upstream !== null)
-  assert.deepEqual(Reflect.get(upstream, "system"), [{ type: "text", text: "Be brief." }])
+  // Cursor sends no cache breakpoints; the Gateway marks Claude's.
+  assert.deepEqual(Reflect.get(upstream, "system"), [{ type: "text", text: "Be brief.", cache_control: { type: "ephemeral" } }])
   // reasoning.effort is used when the name has no level.
   assert.deepEqual(Reflect.get(upstream, "output_config"), { effort: "high" })
   const body: unknown = await response.json()

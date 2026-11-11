@@ -42,6 +42,7 @@ import type { AuthHeader, ProtocolFamily } from "./protocols.js"
 import { accessibleGatewayModels, listGatewayModels, loadGatewayAccessFromDb, loadMemberGatewayAccessFromDb, sameGatewaySelection, selectGatewayGrant } from "./provider-access.js"
 import type { GatewayGrantSelection, LoadGatewayAccess, LoadMemberGatewayAccess } from "./provider-access.js"
 import { hasAlternateModelSelection } from "./model-selection.js"
+import { applyClaudePromptCache } from "./prompt-cache.js"
 import { loadProviderCatalogFromFile } from "./provider-catalog.js"
 import type { CatalogProvider, ProviderCatalog } from "./provider-catalog.js"
 import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provider-credentials.js"
@@ -510,6 +511,8 @@ function rewriteSelectedModel(prepared: PreparedRequest, upstream: ResolvedUpstr
     }
     modified = true
   }
+  // The same aliases stop clients from marking Claude prompt-cache breakpoints.
+  if (applyClaudePromptCache(json, upstream.protocol, model)) modified = true
   if (upstream.protocol === "openai_chat" && upstream.family !== "mistral" && json.stream === true) {
     json.stream_options = { ...(isJsonObject(json.stream_options) ? json.stream_options : {}), include_usage: true }
     modified = true

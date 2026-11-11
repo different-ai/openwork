@@ -233,7 +233,7 @@ test("the event stream becomes chat SSE, even with frames split across chunks", 
   ])
   const finish = json.at(-2)
   assert.deepEqual(finish?.choices, [{ index: 0, delta: {}, finish_reason: "tool_calls" }])
-  assert.deepEqual(json.at(-1)?.usage, { prompt_tokens: 15, completion_tokens: 5, total_tokens: 20, prompt_tokens_details: { cached_tokens: 3 } })
+  assert.deepEqual(json.at(-1)?.usage, { prompt_tokens: 15, completion_tokens: 5, total_tokens: 20, prompt_tokens_details: { cached_tokens: 3, cache_write_tokens: 2 } })
   assert.deepEqual(remembered, [{
     ids: ["tooluse_1"],
     payload: { kind: "bedrock", blocks: [
@@ -304,7 +304,7 @@ test("a Converse JSON response becomes a chat completion", () => {
     },
     finish_reason: "tool_calls",
   }])
-  assert.deepEqual(chat.usage, { prompt_tokens: 5, completion_tokens: 6, total_tokens: 11, prompt_tokens_details: { cached_tokens: 1 } })
+  assert.deepEqual(chat.usage, { prompt_tokens: 5, completion_tokens: 6, total_tokens: 11, prompt_tokens_details: { cached_tokens: 1, cache_write_tokens: 0 } })
   assert.deepEqual(remembered, [{ ids: ["tooluse_9"], payload: { kind: "bedrock", blocks: [reasoningBlock] } }])
 
   const filtered = converseJsonToChat({ output: { message: { content: [{ text: "" }] } }, stopReason: "guardrail_intervened" }, route)
