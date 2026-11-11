@@ -55,6 +55,7 @@ return credentials or URLs. Public `/health` remains a liveness check. See
 | `GET` | `/v1/sessions/:id/files` | | `{ files: [{ path, size, updatedAt }] }` |
 | `GET` | `/v1/sessions/:id/files/content` | `?path=` | file text |
 | `DELETE` | `/v1/sessions/:id` | | `204`: its rows go (scrubbed first), then its sealed segments, large bodies and saved files' bytes, and its computer (see [Deleting a conversation](#deleting-a-conversation)). `409 session_busy` while a turn is queued or running |
+| `DELETE` | `/v1/sessions/:id/computer` | | `204`: only its computer goes; the conversation, its files and its memory stay, and its next use makes a new computer. `409 session_busy` while a turn is queued or running, `404 unknown_session` |
 | `GET` | `/v1/sessions/:id/export` | | Every row of the conversation, sealed turns and large outputs inline (lossless; never segment files or step checkpoints), to [move it to Node](#move-conversations-to-node). A conversation on its owner's memory (`memoryScope: "owner"`) also carries that memory (`owner_memory`). `409 session_busy` while a turn is queued or running |
 | `POST` | `/v1/sessions/:id/import` | an export | Node only (celld answers `405`). `201 { id, rows }`, or `409 session_exists`. `owner_memory` is merged into the owner's memory (a file is written unless the owner already has a version at least as new; nothing is deleted); `400` (nothing written) for another conversation's, a cut-off or a newer runner's export |
 | `GET` | `/v1/files/status` | | `{ enabled, kind, maxFileBytes, maxSessionBytes }` |
