@@ -147,6 +147,8 @@ jobs:
         run: pnpm --filter @openwork/calendar test
       - name: Test that a streaming reply keeps its place in the chat
         run: pnpm --filter @openwork/app exec bun --conditions=development test --isolate ./tests/reply-keeps-its-place.test.ts
+      - name: Test Devices settings and desktop reporting
+        run: pnpm --filter @openwork/app exec bun test --isolate ./tests/devices-view.test.tsx ./tests/device-report.test.ts
       - name: Test desktop and cloud computer access and interruption
         run: |
           # Electron's permission checks import the production JavaScript export.
