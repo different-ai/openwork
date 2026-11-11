@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { createServer } from "vite"
-import { ARTIFACT_BYTES, exaAt, GOOGLE_EVENTS, googleAt, scenarios, type FixtureThread, type FixtureTurn } from "./chat-screen-scenarios.js"
+import { ARTIFACT_BYTES, exaAt, GOOGLE_EVENTS, googleAt, OPENWORK_APP_ID, OPENWORK_APP_OPENED, scenarios, type FixtureThread, type FixtureTurn } from "./chat-screen-scenarios.js"
 import { fixtureRemoteJobs, fixtureStaleRemoteJobs } from "./remote-jobs.js"
 import { AUTOMATIONS, fixtureAutomationRuns, fixtureMeetings, fixtureRunRange } from "./calendar-fixture.js"
 
@@ -11,6 +11,7 @@ import { AUTOMATIONS, fixtureAutomationRuns, fixtureMeetings, fixtureRunRange } 
 const browserRequests: Array<{ path: string; body: unknown }> = []
 const browserControlHeld = new Set<string>()
 let remoteStopped = false
+let appWaves = 0
 let googleStarted: number | null = null
 let exaStarted: number | null = null
 /** Ben's Exa request: the first search, the second, both done while it reads, then the answer (ms from first read). */
@@ -149,6 +150,14 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
     files.set(id, kept)
     const { bytes: _bytes, ...file } = kept
     return json(response, 201, file)
+  }
+  // An App built in OpenWork: the real server asks the App's own MCP server; here one App answers from memory.
+  const builtApp = /^\/v1\/workbot\/apps\/([^/]+)\/(open|call)$/.exec(path)
+  if (request.method === "POST" && builtApp) {
+    if (builtApp[1] !== OPENWORK_APP_ID) return json(response, 502, { error: "app_unavailable" })
+    if (builtApp[2] === "open") return json(response, 200, OPENWORK_APP_OPENED)
+    appWaves += 1
+    return json(response, 200, { result: { content: [{ type: "text", text: String(appWaves) }], structuredContent: { waves: appWaves } } })
   }
   const file = /^\/v1\/workbot\/files\/([^/]+)$/.exec(path)
   if (request.method === "GET" && file) {

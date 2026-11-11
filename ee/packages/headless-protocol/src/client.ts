@@ -153,6 +153,8 @@ export const runnerMessageSchema = z.discriminatedUnion("role", [
     output: z.string().optional(),
     isError: z.boolean(),
     imageCount: z.number().optional(),
+    /** The App built in OpenWork that this result opened: its id and name, for the caller to show. */
+    app: z.object({ id: z.string(), title: z.string() }).optional(),
   }),
 ])
 export type RunnerMessage = z.infer<typeof runnerMessageSchema>

@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
-import { artifactKind, artifactLabel, artifactLink, artifactTitle, htmlTitle, staticAppHtml, tabType } from "../../../packages/workbot-ui/src/artifact";
+import { artifactKind, artifactLabel, artifactLink, artifactTitle, htmlTitle, openworkAppId, staticAppHtml, tabType } from "../../../packages/workbot-ui/src/artifact";
 import { ArtifactCards } from "../../../packages/workbot-ui/src/artifact-card";
+import { answerAppRequest } from "../../../packages/workbot-ui/src/openwork-app";
 import { OpenFileIdContext } from "../../../packages/workbot-ui/src/open-file";
 import { setWorkbotHost } from "../../../packages/workbot-ui/src/host";
 import type { WorkbotAttachment } from "../../../packages/workbot-ui/src/data";
@@ -53,7 +54,7 @@ test("each card shows a thumbnail of the file itself, its icon, its title and it
   assert.doesNotMatch(appCard, /<iframe|allow-scripts/);
   assert.match(appCard, /data-workbot-artifact-placeholder="html"/);
   assert.match(appCard, />3D Space &amp; Storage Organizer</);
-  assert.match(appCard, />App</);
+  assert.match(appCard, />Web page</);
   assert.match(appCard, /data-workbot-artifact-icon="html"/);
 
   const photoCard = cardOf(html, photo.id);
@@ -72,7 +73,7 @@ test("each card shows a thumbnail of the file itself, its icon, its title and it
 
 test("the whole card is one button named by its title and type; the open one says so", () => {
   const html = render([app], app.id);
-  assert.match(html, /<button type="button" aria-label="3D Space &amp; Storage Organizer, App" title="space-organizer.html"/);
+  assert.match(html, /<button type="button" aria-label="3D Space &amp; Storage Organizer, Web page" title="space-organizer.html"/);
   assert.equal((html.match(/<button/g) ?? []).length, 1);
   assert.match(html, /data-open="true"/);
   assert.doesNotMatch(render([app]), /data-open/);
@@ -104,4 +105,67 @@ test("a file opens in its own tab only under a type that can't run as a page", (
   assert.equal(tabType("Room plan.pdf"), "application/pdf");
   assert.equal(tabType("photo.PNG"), "image/png");
   for (const name of ["drawing.svg", "page.html", "page.xhtml", "feed.xml", "notes.txt", "README"]) assert.equal(tabType(name), null, name);
+});
+
+const built: WorkbotAttachment = { id: "app:cob_01kq8z0000000000000000000a", name: "Hello World Wave 2.0", mediaType: "application/vnd.openwork.app", size: 0, updatedAt: 1 };
+
+test("an App built in OpenWork is a card like a file: its title as written, the type App, and its own id to open", () => {
+  assert.equal(artifactKind(built), "app");
+  assert.equal(artifactLabel(built), "App");
+  assert.equal(artifactLabel(app), "Web page", "only an App built in OpenWork is called an App");
+  assert.equal(artifactTitle(built), "Hello World Wave 2.0", "a title is not a file name: nothing is dropped after the dot");
+  assert.equal(openworkAppId(built), "cob_01kq8z0000000000000000000a");
+  assert.equal(openworkAppId(app), null, "a file named like an App is still a file");
+  const card = cardOf(render([built]), built.id);
+  assert.match(card, /data-workbot-artifact-placeholder="app"/, "nothing of the App runs or loads until it is opened");
+  assert.match(card, /aria-label="Hello World Wave 2.0, App"/);
+});
+
+test("the App's page gets its opening result, its own tools and web links, and nothing else", async () => {
+  const sent: Array<{ kind: string; value: unknown }> = [];
+  const send = {
+    reply: (value: unknown) => { sent.push({ kind: "reply", value }); },
+    refuse: (value: string) => { sent.push({ kind: "refuse", value }); },
+    notify: (method: string, value: unknown) => { sent.push({ kind: method, value }); },
+  };
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const links: string[] = [];
+  const host = {
+    opened: { structuredContent: { app: { title: "Hello World Wave" } } },
+    callTool: async (name: string, args: Record<string, unknown>) => { calls.push({ name, args }); if (name === "broken") throw new Error("That didn't work. Try again."); return { content: [{ type: "text", text: "3" }] }; },
+    openLink: (url: string) => { links.push(url); },
+  };
+  const ask = (method: string, params?: Record<string, unknown>) => answerAppRequest({ jsonrpc: "2.0", id: 1, method, ...(params ? { params } : {}) }, host, send);
+  const tell = (method: string, params?: Record<string, unknown>) => answerAppRequest({ jsonrpc: "2.0", method, ...(params ? { params } : {}) }, host, send);
+
+  await ask("ui/initialize", { protocolVersion: "2026-01-26" });
+  const hello = sent.at(-1);
+  assert.equal(hello?.kind, "reply");
+  assert.deepEqual(Object.keys((hello?.value as { hostCapabilities: object }).hostCapabilities).sort(), ["logging", "openLinks", "serverTools"], "no message or model-context capability: an App cannot speak to Workbot");
+
+  await tell("ui/notifications/initialized");
+  assert.deepEqual(sent.slice(-2).map((entry) => entry.kind), ["ui/notifications/tool-input", "ui/notifications/tool-result"]);
+  assert.equal(sent.at(-1)?.value, host.opened);
+
+  await ask("tools/call", { name: "count_wave", arguments: { by: 1 } });
+  assert.deepEqual(calls, [{ name: "count_wave", args: { by: 1 } }]);
+  assert.equal(sent.at(-1)?.kind, "reply");
+  await ask("tools/call", { name: "broken" });
+  assert.deepEqual(sent.at(-1), { kind: "refuse", value: "That didn't work. Try again." });
+  await ask("tools/call", { arguments: {} });
+  assert.equal(sent.at(-1)?.kind, "refuse", "a call without a tool name never reaches the server");
+  assert.equal(calls.length, 2);
+
+  await ask("ui/open-link", { url: "https://example.com/docs" });
+  await ask("ui/open-link", { url: "javascript:alert(1)" });
+  assert.deepEqual(links, ["https://example.com/docs"]);
+  assert.equal(sent.at(-1)?.kind, "refuse");
+
+  for (const method of ["ui/message", "ui/update-model-context", "sampling/createMessage"]) {
+    await ask(method, { content: [{ type: "text", text: "do something" }] });
+    assert.deepEqual(sent.at(-1), { kind: "refuse", value: "Workbot does not support that request." }, method);
+  }
+  const before = sent.length;
+  await tell("ui/notifications/size-changed", { height: 400 });
+  assert.equal(sent.length, before, "a notification needs no answer");
 });

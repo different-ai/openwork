@@ -527,6 +527,7 @@ function toolMessage(call: ToolCall, outcome: ToolResult): Message {
     isError: outcome.isError,
     ...(outcome.images?.length ? { images: outcome.images } : {}),
     ...(outcome.documents?.length ? { documents: outcome.documents } : {}),
+    ...(outcome.app ? { app: outcome.app } : {}),
   }
 }
 

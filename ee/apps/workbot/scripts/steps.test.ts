@@ -103,6 +103,37 @@ test("an app Workbot builds is handed over as a card to open beside the chat, ne
   }
 })
 
+test("an App built in OpenWork shows among a reply's outputs, once, and only with workbotApps", () => {
+  const app = { id: "cob_01kq8z0000000000000000000a", title: "Hello World Wave" }
+  const call = (id: string, name: string) => ({ id, name, input: {} })
+  const snapshot = {
+    status: "idle", finalAssistantText: "", hasEarlier: false,
+    turns: [{ messageId: "wb_app", status: "completed", createdAt: 100, updatedAt: 200, error: null }],
+    messages: [
+      { messageId: "wb_app", role: "user", text: "Make a hello world app" },
+      { messageId: "wb_app", role: "assistant", text: "", createdAt: 110, toolCalls: [call("c1", "create_app"), call("c2", "update_app"), call("c3", "create_app")] },
+      { messageId: "wb_app", role: "tool", callId: "c1", name: "create_app", isError: false, createdAt: 120, app },
+      { messageId: "wb_app", role: "tool", callId: "c2", name: "update_app", isError: false, createdAt: 130, app: { ...app, title: "Hello World Wave 2.0" } },
+      { messageId: "wb_app", role: "tool", callId: "c3", name: "create_app", isError: true, createdAt: 140, app: { id: "cob_01kq8z0000000000000000000b", title: "Failed" } },
+      { messageId: "wb_app", role: "assistant", text: "Your app is ready.", createdAt: 150, toolCalls: [] },
+    ],
+  } satisfies RunnerSnapshot
+  const [off] = buildWorkbotTurns(snapshot)
+  assert.deepEqual(off?.outputs, [], "off: the reply is as before")
+  const [on] = buildWorkbotTurns(snapshot, new Map(), new Map(), { apps: true })
+  assert.deepEqual(on?.outputs, [{ id: `app:${app.id}`, name: "Hello World Wave 2.0", mediaType: "application/vnd.openwork.app", size: 0, updatedAt: 130 }])
+
+  const base = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false }
+  assert.equal(workbotInstructions(base).includes("OpenWork's App tools"), false)
+  assert.equal(workbotInstructions({ ...base, apps: false }), workbotInstructions(base))
+  const taught = workbotInstructions({ ...base, apps: true })
+  // With Apps on, a file is no longer the only way to make an app: the file rule stops saying to build one as a page.
+  assert.ok(workbotInstructions(base).includes("So build an app, a page or a game as one .html file"))
+  assert.equal(taught.includes("build an app, a page or a game"), false)
+  assert.ok(taught.includes("So make a web page as one .html file, hand it over in the same reply"))
+  for (const rule of ["chosen by what they need", "something they keep and come back to", "a one-off such as a mock-up", "Call the first an App and the second a page", "never say it opened in a sidebar or a tab"]) assert.ok(taught.includes(rule), rule)
+})
+
 test("Drive PDFs and Office files are pulled onto the computer only when there is one, and only with workbotDriveFiles", () => {
   const base = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false }
   const pull = "createGoogleDriveDownloadLink"

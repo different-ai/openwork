@@ -616,6 +616,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotApps: {
+    label: "Workbot: Apps built in OpenWork open in the chat",
+    description: "An App that Workbot builds, changes or opens with OpenWork's App tools shows as a card under its reply, like a file it made, and opens beside the chat as the App itself. Off: the App is made but nothing shows in the chat.",
+    category: "workbot",
+    added: "2026-11-10",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/workbot-apps/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   workbotQuietCalendar: {
     label: "Workbot: quiet calendar",
     description: "Calendar where meetings own the week and Workbot's automation runs are small dots at their time instead of chips that fight meetings for space. Each day says how many runs it had; a run that needs the person stands out, and what Workbot did this week opens on demand. Narrow windows and phones get an agenda list.",
