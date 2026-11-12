@@ -117,6 +117,8 @@ const sessionSchema = z.object({
   openworkApps: z.boolean().optional(),
   /** Meetings own the calendar grid, runs are quiet dots (`workbotQuietCalendar`); older Dens omit it: off. */
   quietCalendar: z.boolean().optional(),
+  /** The calm chat look (`workbotCalmChat`); older Dens omit it: off. */
+  calmChat: z.boolean().optional(),
   /** The Devices page and reports about Workbot's computers (`remoteDevices`); older Dens omit it: off. */
   devices: z.boolean().optional(),
   /** Always true for older Workbot clients; the command palette is available by default. */
@@ -517,6 +519,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         profileComputers: features.workbotProfileComputers && features.workbotProfileSheet && features.workbotWorkingStatus && features.remoteDevices,
         openworkApps: features.workbotApps,
         quietCalendar: features.workbotQuietCalendar,
+        calmChat: features.workbotCalmChat,
         devices: on && features.remoteDevices,
         commandPalette: true,
         model,

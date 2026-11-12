@@ -3,7 +3,7 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { Check, ChevronRight, CircleSlash, CircleX, Clock3, Globe, Monitor, X } from "lucide-react";
 import { useEffect, useId, useState, type ReactNode } from "react";
-import { useRetainedSurface, workbotHost } from "./host";
+import { calmChat, useRetainedSurface, workbotHost } from "./host";
 import { useBrowserPreview } from "./browser-preview-context";
 import { useStopWorkbotTask } from "./data";
 import { ConnectorIcon } from "./connector-line";
@@ -90,8 +90,24 @@ export { elapsed, StatusIcon };
 export function ProfileBadge({ name, activity }: { name: string; activity: WorkbotActivity }) {
   const [open, setOpen] = useState(false);
   const profile = workbotHost().profileSheet === true;
+  const label = activity.working ? `${name}: ${activity.label}. Show what ${name} is doing` : profile ? `${name}: open profile` : `${name}: show recent tasks`;
+  const sheet = profile ? <ProfileSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} /> : <TaskSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} />;
+  // Calm look: one inline pill on every screen: a small avatar, the name, a green dot that breathes while Workbot
+  // works, and what it is doing now.
+  if (calmChat()) return <>
+    <button type="button" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={label}
+      className="flex h-9 min-w-0 max-w-full items-center gap-2 rounded-full bg-[var(--wb-surface)] pl-1.5 pr-3.5 shadow-[0_0_0_1px_var(--wb-ring)] transition-shadow duration-150 hover:shadow-[0_0_0_1px_var(--wb-disabled)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-profile-pill>
+      <span aria-hidden className="grid size-6 shrink-0 place-items-center rounded-full bg-[var(--wb-chip)]"><OpenWorkMark width={10} height={13} /></span>
+      <span className="shrink-0 text-[13px] font-semibold leading-4 tracking-[-0.01em] text-[var(--wb-text)]">{name}</span>
+      <span className="flex min-w-0 items-center gap-1.5 text-[12px] leading-4 text-[var(--wb-muted)]" role="status" aria-live="polite" data-workbot-status-line>
+        <span aria-hidden className={`workbot-live-dot size-1.5 shrink-0 rounded-full ${activity.working ? "is-working" : ""}`} />
+        {activity.working ? <span key={activity.label} className="workbot-subtitle-enter min-w-0 max-w-[260px] truncate">{activity.label}</span> : null}
+      </span>
+    </button>
+    {sheet}
+  </>;
   return <>
-    <button type="button" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={activity.working ? `${name}: ${activity.label}. Show what ${name} is doing` : profile ? `${name}: open profile` : `${name}: show recent tasks`}
+    <button type="button" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={label}
       className="group flex flex-col items-center rounded-[18px] focus-visible:outline-none" data-workbot-profile-badge>
       <span aria-hidden className="relative grid size-9 place-items-center rounded-full bg-[var(--wb-surface)] shadow-[0_0_0_1px_var(--wb-ring),var(--wb-card-shadow)] transition-transform duration-150 ease-out group-active:scale-[0.96] motion-reduce:transition-none">
         <OpenWorkMark width={15} height={19} />

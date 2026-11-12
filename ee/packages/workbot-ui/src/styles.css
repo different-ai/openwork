@@ -342,3 +342,23 @@
   .workbot-sheet-motion { transition: none; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }
+
+/*
+ * The calm chat look (`calmChat`, feature workbotCalmChat): the same chat, quieter. Components pick their own classes;
+ * these are the parts only the stylesheet reaches. The message box is the one thing that lifts off the page: a very
+ * soft shadow under its hairline, so it reads as the place to type.
+ */
+[data-workbot-look="calm"], [data-workbot-look="calm"] .workbot {
+  --wb-composer-shadow: 0 0 0 1px #01162717, 0 2px 6px #0116270a;
+  --wb-glass-composer-shadow: inset 0 1px 0 0 #ffffffd9, inset 0 0 0 1px #ffffff59, 0 0 0 0.5px #01162724, 0 2px 6px #0116270a;
+}
+/* Floating over the conversation, the header pill is glass like the header's buttons. */
+.workbot-chrome-top [data-workbot-profile-pill] {
+  background: var(--wb-float-control-hover);
+  -webkit-backdrop-filter: var(--wb-float-blur);
+  backdrop-filter: var(--wb-float-blur);
+}
+/* Workbot is there: a small green dot, breathing while it works. */
+.workbot-live-dot { background: var(--wb-status-online); }
+.workbot-live-dot.is-working { animation: workbot-presence 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .workbot-live-dot.is-working { animation: none; } }
