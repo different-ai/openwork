@@ -1003,13 +1003,13 @@ function Intro(props: { name: string; organizationName: string; firstName: strin
         <div className="flex flex-col gap-[3px]">
           <Timestamp at={props.at} />
           <div className="flex">
-            <p className={calm ? `max-w-[520px] ${CALM_TEXT} text-[var(--wb-text)]` : "max-w-[520px] rounded-bl-md rounded-[20px] bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[var(--wb-assistant-shadow)]"}>
+            <p className={`max-w-[520px] rounded-bl-md rounded-[20px] bg-[var(--wb-surface)] px-4 py-2.5 ${calm ? CALM_TEXT : "text-[15px] leading-[22px]"} text-[var(--wb-text)] shadow-[var(--wb-assistant-shadow)]`}>
               {hello}{props.firstName ? ` ${props.firstName}` : ""}.{seeing ? ` I can already see your ${seeing}.` : ""}
             </p>
           </div>
           {props.followed ? null : (
             <div className="flex">
-              <p className={calm ? `max-w-[520px] ${CALM_TEXT} text-[var(--wb-text)]` : "max-w-[520px] rounded-tl-md rounded-[20px] bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[var(--wb-assistant-shadow)]"}>
+              <p className={`max-w-[520px] rounded-tl-md rounded-[20px] bg-[var(--wb-surface)] px-4 py-2.5 ${calm ? CALM_TEXT : "text-[15px] leading-[22px]"} text-[var(--wb-text)] shadow-[var(--wb-assistant-shadow)]`}>
                 What can I take off your plate today?
               </p>
             </div>
@@ -1276,7 +1276,7 @@ function UserBubble({ text, muted = false, reaction = null, action }: { text: st
           <p>Correction to your message{visible.correction.sentAt !== null ? ` from ${new Date(visible.correction.sentAt).toLocaleString()}` : ""}</p>
           {visible.correction.quote && <blockquote className="line-clamp-3 border-l-2 border-[var(--wb-hairline)] pl-2" title={visible.correction.quote}>{visible.correction.quote}{visible.correction.quote.length === 1000 ? "…" : ""}</blockquote>}
         </div>}
-        <p className={`whitespace-pre-wrap break-words bg-[var(--wb-user-bubble)] text-[var(--wb-text)] ${calmChat() ? `rounded-2xl px-3.5 py-2.5 ${CALM_TEXT}` : "rounded-[20px] px-4 py-2.5 text-[15px] leading-[22px]"} transition-opacity duration-150 ${muted ? "opacity-60" : ""}`}>
+        <p className={`whitespace-pre-wrap break-words bg-[var(--wb-user-bubble)] text-[var(--wb-text)] ${calmChat() ? `rounded-[20px] px-4 py-2.5 ${CALM_TEXT}` : "rounded-[20px] px-4 py-2.5 text-[15px] leading-[22px]"} transition-opacity duration-150 ${muted ? "opacity-60" : ""}`}>
           {visible.text}
         </p>
         {action ? <span className={ownAction}>{action}</span> : null}
@@ -1442,7 +1442,7 @@ function CopyAnswer({ text }: { text: string }) {
 function AssistantBubble({ children, trailing = null }: { children: ReactNode; trailing?: ReactNode }) {
   return (
     <div className="flex items-end gap-1 py-[3px]">
-      <div className={`flex w-fit min-w-0 max-w-full flex-col overflow-x-auto ${calmChat() ? "py-0.5" : "rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 py-2.5 shadow-[var(--wb-assistant-shadow)] sm:max-w-[600px]"}`} data-workbot-assistant-text>
+      <div className={`flex w-fit min-w-0 max-w-full flex-col overflow-x-auto rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 py-2.5 shadow-[var(--wb-assistant-shadow)] sm:max-w-[600px]`} data-workbot-assistant-text>
         {children}
       </div>
       {trailing}
@@ -1466,7 +1466,7 @@ function WaitingSlot({ children }: { children?: ReactNode }) {
 function TypingDots() {
   return (
     <div className="workbot-row-enter flex py-[3px]" role="status" aria-label="Workbot is processing">
-      <div className={`flex h-9 items-center gap-[5px] ${calmChat() ? "px-0.5" : "rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 shadow-[var(--wb-assistant-shadow)]"}`}>
+      <div className={`flex h-9 items-center gap-[5px] rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 shadow-[var(--wb-assistant-shadow)]`}>
         <span aria-hidden className="workbot-typing-dot" />
         <span aria-hidden className="workbot-typing-dot" />
         <span aria-hidden className="workbot-typing-dot" />

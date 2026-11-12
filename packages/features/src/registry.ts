@@ -651,7 +651,7 @@ export const FEATURES = defineFeatures({
   },
   workbotCalmChat: {
     label: "Workbot: calm chat look",
-    description: "A quieter look for Workbot's chat: a labelled sidebar with the open page as a white pill, Workbot's name and live status in one pill at the top, a narrower conversation with replies as plain text, compact browser and file cards, and a softer message box. Looks only; chats, files, browser tasks and navigation work the same.",
+    description: "A quieter look for Workbot's chat: a labelled sidebar with the open page as a white pill, Workbot's name and live status in one pill at the top, a narrower conversation with smaller text, a compact browser card, and a softer message box. Looks only; chats, files, browser tasks and navigation work the same.",
     category: "workbot",
     added: "2026-11-12",
     since: "2026-11",
