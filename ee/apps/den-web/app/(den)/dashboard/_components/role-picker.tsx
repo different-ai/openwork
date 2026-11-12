@@ -12,7 +12,7 @@ export type RolePickerOption = RoleOption;
  * One searchable role menu for people and teams. As wide as its button, and
  * never too narrow to read a role's one-line summary.
  */
-export function RolePicker({ value, onChange, options, label, trigger, disabled, footer, open: controlledOpen, onOpenChange, testId = "member-role" }: {
+export function RolePicker({ value, onChange, options, label, trigger, disabled, footer, quiet = false, size = "md", open: controlledOpen, onOpenChange, testId = "member-role" }: {
   value: string;
   onChange: (value: string) => void;
   options: readonly RolePickerOption[];
@@ -20,6 +20,10 @@ export function RolePicker({ value, onChange, options, label, trigger, disabled,
   trigger?: string;
   disabled?: boolean;
   footer?: ReactNode;
+  /** In a list row: the role reads as text, and shows it is a control on hover and focus. */
+  quiet?: boolean;
+  /** "sm" is the 32px field for settings rows. */
+  size?: "md" | "sm";
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   testId?: string;
@@ -51,11 +55,13 @@ export function RolePicker({ value, onChange, options, label, trigger, disabled,
   );
   return <Popover.Root open={open} onOpenChange={changeOpen}>
     <Popover.Trigger disabled={disabled} aria-label={label} data-testid={`${testId}-change`} title={trigger ?? current?.label}
-      className="flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-3 text-left text-[13px] text-gray-900 focus-visible:outline-2 focus-visible:outline-gray-400">
-      <span className="min-w-0 truncate">{trigger ?? current?.label ?? BUILT_IN_ROLES.member.label}</span><ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      className={quiet
+        ? "group/role -ml-2 flex h-7 w-fit max-w-full min-w-0 items-center gap-1 self-start rounded-md px-2 text-left text-[13px] text-[var(--dls-text-primary)] transition-colors hover:bg-[var(--dls-hover)] focus-visible:outline-2 focus-visible:outline-[var(--dls-text-secondary)] data-[popup-open]:bg-[var(--dls-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+        : `flex ${size === "sm" ? "h-8" : "h-10"} w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-3 text-left text-[13px] text-gray-900 focus-visible:outline-2 focus-visible:outline-gray-400`}>
+      <span className="min-w-0 truncate">{trigger ?? current?.label ?? BUILT_IN_ROLES.member.label}</span><ChevronDown className={quiet ? "h-3.5 w-3.5 shrink-0 text-[var(--dls-text-secondary)]" : "h-3.5 w-3.5 shrink-0"} aria-hidden />
     </Popover.Trigger>
     <Popover.Portal><Popover.Positioner side="bottom" align="start" sideOffset={8} className="z-50 max-w-[var(--available-width)]">
-      <Popover.Popup data-testid={`${testId}-choice`} className="flex max-h-[var(--available-height)] w-[var(--anchor-width)] min-w-[min(280px,var(--available-width))] max-w-[var(--available-width)] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-lg outline-none">
+      <Popover.Popup data-testid={`${testId}-choice`} className="flex max-h-[var(--available-height)] w-[max(var(--anchor-width),280px)] min-w-[min(280px,var(--available-width))] max-w-[var(--available-width)] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 shadow-lg outline-none">
         <Popover.Title className="sr-only">{label}</Popover.Title>
         <label className="flex h-9 shrink-0 items-center gap-2 rounded-lg border border-gray-200 px-3 focus-within:border-gray-400">
           <Search className="h-3.5 w-3.5 shrink-0 text-gray-500" aria-hidden />

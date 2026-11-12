@@ -19,13 +19,14 @@ export function ProjectFilter({ options, value, onValueChange }: {
 
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <label className="text-xs font-medium text-[#637291]" htmlFor={FILTER_INPUT_ID}>
+      <label className="text-xs font-medium text-[var(--dls-text-secondary)]" htmlFor={FILTER_INPUT_ID}>
         Project
       </label>
       <DenSelect
         id={FILTER_INPUT_ID}
         aria-label="Project analytics filter"
-        className="h-9 w-56 max-w-full"
+        size="sm"
+        className="w-56 max-w-full"
         value={value}
         onChange={(event) => onValueChange(event.target.value)}
       >
@@ -37,7 +38,7 @@ export function ProjectFilter({ options, value, onValueChange }: {
         ))}
       </DenSelect>
       {activeOption ? (
-        <span className="text-[12px] text-[#637291]">
+        <span className="text-[12px] text-[var(--dls-text-secondary)]">
           {activeOption.sessionCount} {activeOption.sessionCount === 1 ? "session" : "sessions"}
         </span>
       ) : null}

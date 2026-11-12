@@ -1,5 +1,6 @@
 "use client";
 
+import { AUTOMATION_CARD_CLASS, COMPACT_INPUT_CLASS } from "../../_components/ui/dashboard-styles";
 import { HelpTip } from "./help-tip";
 import { agentPermissionsHeading } from "./team-section-help";
 import { useTeamSectionsHelp } from "./team-sections";
@@ -252,12 +253,12 @@ function ScopeAgents({ access, data, policy, team, area }: {
     <div className="flex flex-col gap-4" data-testid={area === "browser" ? "agent-permissions-browser" : "agent-permissions-agents"} data-scope={policy.scopeId}>
       <div className="flex min-h-8 flex-wrap items-center justify-between gap-3">
         {help ? (
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 px-1" data-testid="agent-permissions-intro">
-            <h2 className="text-[13px] font-medium text-gray-500">{agentPermissionsHeading(area)}</h2>
+          <div className="flex min-w-0 flex-1 items-center gap-1.5" data-testid="agent-permissions-intro">
+            <h2 className="text-[13px] font-medium text-[var(--dls-text-primary)]">{agentPermissionsHeading(area)}</h2>
             <HelpTip label={agentPermissionsHeading(area)}>{intro}</HelpTip>
           </div>
         ) : (
-          <p className="min-w-0 flex-1 text-[13px] text-gray-500" data-testid="agent-permissions-intro">{intro}</p>
+          <p className="min-w-0 flex-1 text-[13px] text-[var(--dls-text-secondary)]" data-testid="agent-permissions-intro">{intro}</p>
         )}
         {team ? (
           <div className="flex shrink-0 items-center gap-4">
@@ -422,7 +423,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
       <ItemPanel className="!py-0">
         {visibleAgentPermissionGroups(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled, fileSendsEnabled).map((group) => (
           <div key={group.label} className="pb-1">
-            <h3 className="px-5 pb-1 pt-3 text-[12px] font-medium text-gray-500">{group.label}</h3>
+            <h3 className="pb-1 pt-3 text-[12px] font-medium text-[var(--dls-text-secondary)]">{group.label}</h3>
             {group.definitions.map((definition) => {
               return (
                 <PermissionRow
@@ -472,11 +473,11 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
   const inheritedBlock = team ? everyoneSetting?.block ?? [] : [];
 
   return (
-    <div className="px-5 py-3" data-testid={`agent-permission-${definition.key}`} data-decision={effective} data-changed={changed || undefined}>
+    <div className="py-3" data-testid={`agent-permission-${definition.key}`} data-decision={effective} data-changed={changed || undefined}>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:flex-nowrap">
         <div className="min-w-0 flex-1">
-          <p id={labelId} className="text-[14px] font-medium leading-5 text-gray-900">{definition.label}</p>
-          <p className="truncate text-[13px] leading-[18px] text-gray-500" title={definition.description}>{ROW_COPY[definition.key] ?? definition.description}</p>
+          <p id={labelId} className="text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{definition.label}</p>
+          <p className="truncate text-[12px] leading-4 text-[var(--dls-text-secondary)]" title={definition.description}>{ROW_COPY[definition.key] ?? definition.description}</p>
         </div>
         {/* The chip, with "Use Everyone's" under it when both don't fit the lane. */}
         <div className="flex w-[150px] shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5" data-testid={`agent-permission-${definition.key}-source`}>
@@ -495,6 +496,7 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
           ) : (
             <div className="w-full">
               <DenSelect
+                size="sm"
                 aria-labelledby={labelId}
                 disabled={!editable}
                 value={agentPermissionChoiceValue(definition, ownDecision, effective)}
@@ -710,12 +712,12 @@ function TryRequest({ area, harnessEnabled, computerUseEnabled, browserUploadsEn
     : "No permission applies";
 
   return (
-    <div className="mt-4 rounded-xl border border-gray-200 bg-white px-4 py-3" data-testid="agent-permission-try">
+    <div className={`mt-4 ${AUTOMATION_CARD_CLASS} px-4 py-3`} data-testid="agent-permission-try">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="mr-1 text-[13px] font-medium text-gray-900">Try a request</span>
+        <span className="mr-1 text-[13px] font-medium text-[var(--dls-text-primary)]">Try a request</span>
         {kinds.length > 1 ? (
           <div className="w-[170px]">
-            <DenSelect aria-label="Request type" value={action} onChange={(event) => setAction(kinds.find((entry) => entry.action === event.target.value)?.action ?? "shell")}>
+            <DenSelect size="sm" aria-label="Request type" value={action} onChange={(event) => setAction(kinds.find((entry) => entry.action === event.target.value)?.action ?? "shell")}>
               {kinds.map((entry) => <option key={entry.action} value={entry.action}>{entry.label}</option>)}
             </DenSelect>
           </div>
@@ -723,7 +725,7 @@ function TryRequest({ area, harnessEnabled, computerUseEnabled, browserUploadsEn
         <DenInput
           aria-label="Request to try"
           data-testid="agent-permission-try-input"
-          className="h-9 min-w-[200px] flex-1 font-mono text-[12px]"
+          className={`${COMPACT_INPUT_CLASS} min-w-[200px] flex-1 font-mono text-[12px]!`}
           placeholder={kind?.placeholder}
           value={value}
           onChange={(event) => setValue(event.target.value)}
@@ -747,7 +749,7 @@ function TryRequest({ area, harnessEnabled, computerUseEnabled, browserUploadsEn
 
 export function EditorSkeleton() {
   return (
-    <div role="status" aria-label="Loading agent permissions" className="flex flex-col gap-2 rounded-2xl border border-gray-100 bg-white p-5" data-testid="agent-permissions-loading">
+    <div role="status" aria-label="Loading agent permissions" className="flex flex-col gap-2 py-2" data-testid="agent-permissions-loading">
       {[0, 1, 2, 3, 4, 5].map((index) => (
         <div key={index} className="flex items-center gap-4 py-1.5" aria-hidden="true">
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">

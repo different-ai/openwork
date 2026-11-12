@@ -3,7 +3,7 @@
 import { Popover } from "@base-ui/react/popover";
 import { Check, Plus, Search, Users, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { DenButton } from "../../_components/ui/button";
+import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { ItemPanel } from "./item-list";
 
 /**
@@ -21,7 +21,7 @@ export function Avatar({ name, owner = false }: { name: string; owner?: boolean 
   return (
     <span
       aria-hidden
-      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${owner ? "bg-[#011627] text-white" : "bg-gray-100 text-gray-600"}`}
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${owner ? "bg-[var(--dls-accent)] text-white" : "bg-[var(--dls-hover)] text-[var(--dls-text-primary)]"}`}
     >
       {initials(name)}
     </span>
@@ -29,18 +29,18 @@ export function Avatar({ name, owner = false }: { name: string; owner?: boolean 
 }
 
 export function AccessRow({ lead, title, description, trailing, testId }: {
-  lead: ReactNode;
+  lead?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
   trailing?: ReactNode;
   testId?: string;
 }) {
   return (
-    <div className="flex items-center gap-3.5 px-5 py-3" data-testid={testId}>
+    <div className="flex min-h-12 items-center gap-3 py-1.5" data-testid={testId}>
       {lead}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[14px] font-medium leading-5 text-gray-900">{title}</p>
-        {description ? <p className="truncate text-[13px] leading-[18px] text-gray-500">{description}</p> : null}
+        <div className="truncate text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{title}</div>
+        {description ? <p className="truncate text-[12px] leading-4 text-[var(--dls-text-secondary)]">{description}</p> : null}
       </div>
       {trailing}
     </div>
@@ -49,22 +49,22 @@ export function AccessRow({ lead, title, description, trailing, testId }: {
 
 export function IconTile({ icon: Icon }: { icon: LucideIcon }) {
   return (
-    <span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-50 text-gray-500">
-      <Icon className="h-4 w-4" strokeWidth={1.8} />
+    <span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--dls-hover)] text-[var(--dls-text-secondary)]">
+      <Icon className="h-4 w-4" strokeWidth={1.5} />
     </span>
   );
 }
 
-export function RemoveButton({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
+export function RemoveButton({ label, onClick, disabled, actionLabel = "Remove" }: { label: string; onClick: () => void; disabled?: boolean; actionLabel?: string }) {
   return (
     <button
       type="button"
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className="shrink-0 rounded-lg px-2 py-1 text-[12px] font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+      className="shrink-0 rounded-lg px-2 py-1 text-[12px] font-medium text-[var(--dls-text-secondary)] transition-colors hover:bg-red-50 hover:text-red-600 focus-visible:text-red-600 disabled:opacity-50"
     >
-      Remove
+      {actionLabel}
     </button>
   );
 }
@@ -98,7 +98,7 @@ export function PeopleField({ people, chosenIds, onChange, rowTestId }: {
           testId={rowTestId}
         />
       ))}
-      <div className="flex px-5 py-3">
+      <div className="flex py-3">
         <AddPicker kind="person" options={addable} onAdd={(ids) => onChange([...chosenIds, ...ids])} />
       </div>
     </ItemPanel>
@@ -128,12 +128,16 @@ export function TeamsField({ teams, chosenIds, onChange, rowTestId }: {
           testId={rowTestId}
         />
       ))}
-      <div className="flex px-5 py-3">
+      <div className="flex py-3">
         <AddPicker kind="team" options={addable} onAdd={(ids) => onChange([...chosenIds, ...ids])} />
       </div>
     </ItemPanel>
   );
 }
+
+// Both draft sharing and role grants use the same trigger, not the same picker:
+// draft sharing is multi-select; a grant assigns one target a specific role.
+export const accessAddButtonClassName = buttonVariants({ variant: "secondary", size: "sm" });
 
 export type PickerOption = { id: string; name: string; detail: string };
 
@@ -164,7 +168,7 @@ export function AddPicker({ kind, options, disabled, onAdd }: {
       <Popover.Trigger
         disabled={disabled}
         data-testid={`access-add-${kind}`}
-        className="inline-flex h-8 items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 text-[12px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+        className={accessAddButtonClassName}
       >
         <Plus className="h-3.5 w-3.5" aria-hidden />
         {kind === "person" ? "Add person" : "Add team"}
@@ -198,6 +202,7 @@ export function AddPicker({ kind, options, disabled, onAdd }: {
                     key={option.id}
                     type="button"
                     role="option"
+                    disabled={disabled}
                     aria-selected={isSelected}
                     data-testid={`access-add-${kind}-option-${option.id}`}
                     onClick={() => setSelected((current) => isSelected ? current.filter((id) => id !== option.id) : [...current, option.id])}
@@ -218,9 +223,10 @@ export function AddPicker({ kind, options, disabled, onAdd }: {
               </span>
               <DenButton
                 size="sm"
-                disabled={chosen.length === 0}
+                disabled={disabled || chosen.length === 0}
                 data-testid={`access-add-${kind}-confirm`}
                 onClick={() => {
+                  if (disabled) return;
                   onAdd(chosen.map((option) => option.id));
                   close();
                 }}

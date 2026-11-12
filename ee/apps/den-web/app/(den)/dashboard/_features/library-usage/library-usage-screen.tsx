@@ -3,14 +3,14 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Plus } from "lucide-react";
-import { DenBrandMark } from "../../../_components/ui/brand-mark";
 import { DenButton } from "../../../_components/ui/button";
 import { DenNotice } from "../../../_components/ui/notice";
 import { DenSegmented } from "../../../_components/ui/segmented";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { getAddConnectorRoute, getNewPluginRoute } from "../../../_lib/den-org";
-import { FilterInput, ItemRow, ItemRowsSkeleton } from "../../_components/item-list";
-import { brandHintFor, LetterTile } from "../../_components/item-logo";
+import { AUTOMATION_CARD_CLASS } from "../../../_components/ui/dashboard-styles";
+import { FilterInput } from "../../_components/item-list";
+import { ListRow, RowList } from "../computers/computer-rows";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { libraryUsageIntroFacts } from "../../_components/analytics-intro-facts";
 import { useFeatureIntro } from "../feature-intros";
@@ -18,9 +18,7 @@ import { AnalyticsEmptyState, AnalyticsErrorState, AnalyticsPageHeader, analytic
 import { StatCard } from "../analytics/stat-card";
 import {
   countingSinceLabel,
-  failureLabel,
   filterLibraryUsage,
-  lastUsedLabel,
   libraryUsageCopy,
   libraryUsageKinds,
   libraryUsageWindows,
@@ -32,41 +30,25 @@ import {
   type LibraryUsageKind,
   type LibraryUsageRow,
 } from "./library-usage-data";
-import { ItemUsageDetail, PersonUsageDetail, type UsageHref } from "./library-usage-detail";
+import { ItemUsageDetail, PersonUsageDetail, UsageItemLead, UsageLanes, UsageListHeader, UsageRowsLoading, usageLead, type UsageHref } from "./library-usage-detail";
 import { useLibraryUsage, useLibraryUsageAvailable } from "./use-library-usage";
 
 /** A row opens the item's usage: who uses it and how often; that page links to where it is managed. */
 function UsageRow({ kind, row, now, tracksFailures, usageHref }: { kind: LibraryUsageKind; row: LibraryUsageRow; now: number; tracksFailures: boolean; usageHref: UsageHref }) {
-  const href = usageHref({ item: row.id, member: null });
-  const lastUsed = lastUsedLabel(row.lastUsedAt, now);
-  const failed = failureLabel(row);
-  // Usage has no provider ID or service URL: resolve only exact known names,
-  // never infer a service from a custom MCP connector's name.
-  const brand = kind === "connectors" || kind === "plugins" ? brandHintFor(row.name) : null;
-  const logo = brand && (brand.simpleIconSlug || brand.serviceUrl)
-    ? <DenBrandMark name={row.name} {...brand} className="size-8 rounded-[7px]" imageClassName="size-[18px]" />
-    : <LetterTile name={row.name} />;
-  return <li data-testid="library-usage-row" data-item={row.name} data-analytics-row>
-    <div className={tracksFailures ? "max-w-[732px]" : "max-w-[644px]"}>
-      <ItemRow logo={logo} title={row.name} description={row.detail} href={href}
-        comparison={<span className={`grid shrink-0 gap-4 text-[13px] tabular-nums ${tracksFailures ? "grid-cols-[56px_56px_72px_104px]" : "grid-cols-[56px_56px_104px]"}`}>
-          <span data-item-uses className="text-[var(--dls-text-primary)]">{row.uses.toLocaleString()}</span>
-          <span>{row.people.toLocaleString()}</span>
-          {tracksFailures ? <span data-item-failures className={(row.failures ?? 0) > 0 ? "font-medium text-[var(--ow-danger)]" : undefined}>{failed}</span> : null}
-          {lastUsed && row.lastUsedAt ? <time dateTime={row.lastUsedAt} title={new Date(row.lastUsedAt).toLocaleString()}>{lastUsed}</time> : <span data-item-unused>Not used</span>}
-        </span>} />
-    </div>
-  </li>;
+  return <div role="presentation" data-testid="library-usage-row" data-item={row.name} data-analytics-row>
+    <ListRow lead={<UsageItemLead kind={kind} name={row.name} />} name={row.name} secondLine={row.detail} href={usageHref({ item: row.id, member: null })}
+      lanes={<UsageLanes row={row} now={now} tracksFailures={tracksFailures} people={row.people} />} />
+  </div>;
 }
 
 /** Skeleton in the destination's layout: the same number of stat cards, then its list. */
 function UsageLoading({ cards = 4 }: { cards?: number }) {
   return (
     <>
-      <div className={`grid gap-3.5 sm:grid-cols-2 ${cards === 4 ? "lg:grid-cols-4" : cards === 3 ? "lg:grid-cols-3" : ""}`} aria-hidden="true">
-        {Array.from({ length: cards }, (_, card) => card).map((card) => <div key={card} className={`${analyticsSurfaceClass} p-5`}><DenSkeleton className="h-3 w-24" /><DenSkeleton className="mt-4 h-7 w-16" /><DenSkeleton className="mt-3 h-2.5 w-32" /></div>)}
+      <div className={`grid gap-3 sm:grid-cols-2 ${cards === 4 ? "lg:grid-cols-4" : cards === 3 ? "lg:grid-cols-3" : ""}`} aria-hidden="true">
+        {Array.from({ length: cards }, (_, card) => card).map((card) => <div key={card} className={`${AUTOMATION_CARD_CLASS} p-4`}><DenSkeleton className="h-3 w-24" /><DenSkeleton className="mt-3 h-7 w-16" /><DenSkeleton className="mt-2 h-2.5 w-32" /></div>)}
       </div>
-      <div className={analyticsSurfaceClass}><ItemRowsSkeleton label="Loading usage" rows={5} /></div>
+      <UsageRowsLoading label="Loading usage" rows={5} />
     </>
   );
 }
@@ -166,7 +148,7 @@ export function LibraryUsageScreen() {
                   <AnalyticsEmptyState title="No usage yet" />
                 </div>
               )) : (
-                <div className={`grid gap-3.5 sm:grid-cols-2 ${tracksFailures ? "lg:grid-cols-4" : "lg:grid-cols-3"}`} data-testid="library-usage-summary">
+                <div className={`grid gap-3 sm:grid-cols-2 ${tracksFailures ? "lg:grid-cols-4" : "lg:grid-cols-3"}`} data-testid="library-usage-summary">
                   <StatCard title="In use" value={`${summary.used} of ${summary.total}`} />
                   <StatCard title="Uses" value={summary.uses.toLocaleString()} />
                   {tracksFailures ? <div role="group" aria-label="Failed uses" data-testid="library-usage-failed" data-state={hasFailures ? "attention" : "neutral"}>
@@ -182,16 +164,12 @@ export function LibraryUsageScreen() {
                   options={[{ value: "all", label: "All" }, { value: "unused", label: "Not used" }, ...(tracksFailures ? [{ value: "failing" as const, label: "Failing" }] : [])]} />
               </div>}
 
-              <div className={`${analyticsSurfaceClass} min-w-0 overflow-x-auto`} data-testid="library-usage-table">
-                <div className={tracksFailures ? "min-w-[660px]" : "min-w-[580px]"}>
-                  <div className={`grid items-center gap-4 px-5 py-2.5 text-xs text-[var(--dls-text-secondary)] ${tracksFailures ? "max-w-[732px] grid-cols-[minmax(0,1fr)_56px_56px_72px_104px]" : "max-w-[644px] grid-cols-[minmax(0,1fr)_56px_56px_104px]"}`} data-testid="library-usage-columns">
-                    <span>{copy.label.replace(/s$/, "")}</span><span>Uses</span><span>People</span>{tracksFailures ? <span>Failed</span> : null}<span>Last used</span>
-                  </div>
-                  {rows.length === 0
-                    ? <p className="border-t border-[#e3e7ee] px-5 py-6 text-[13px] text-[#637291]">{filter === "unused" && !name.trim() ? `Every ${copy.noun} was used in this period.` : filter === "failing" && !name.trim() ? "Nothing failed in this period." : `No ${copy.plural} match. Try another name.`}</p>
-                    : <ul className="divide-y divide-[#e3e7ee] border-t border-[#e3e7ee]">{rows.map((row) => <UsageRow key={row.id} kind={kind} row={row} now={now} tracksFailures={tracksFailures} usageHref={usageHref} />)}</ul>}
-                </div>
-              </div>
+              <RowList label={`${copy.label} usage`} testId="library-usage-table"
+                header={<div role="presentation" data-testid="library-usage-columns"><UsageListHeader lead={usageLead(kind)} people tracksFailures={tracksFailures} /></div>}>
+                {rows.length === 0
+                  ? <div role="row"><p role="cell" className="border-b border-[var(--den-list-line)] py-6 text-[13px] text-[var(--dls-text-secondary)]">{filter === "unused" && !name.trim() ? `Every ${copy.noun} was used in this period.` : filter === "failing" && !name.trim() ? "Nothing failed in this period." : `No ${copy.plural} match. Try another name.`}</p></div>
+                  : rows.map((row) => <UsageRow key={row.id} kind={kind} row={row} now={now} tracksFailures={tracksFailures} usageHref={usageHref} />)}
+              </RowList>
             </>
           )}
         </>

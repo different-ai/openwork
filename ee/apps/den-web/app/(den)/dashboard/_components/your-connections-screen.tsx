@@ -10,7 +10,7 @@ import { getLibraryConnectorRoute, getMcpConnectionRoute, getOrgAccessFlags, get
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { McpConnectionAppSetup } from "./mcp-connection-app-setup";
-import { IntegrationIcon } from "./integration-icon";
+import { ConnectorLogo } from "./item-logo";
 import {
   PluginMcpSetupDialog,
   type PluginMcpSetupTarget,
@@ -100,21 +100,21 @@ export function YourConnectionsScreen() {
       description="Tools your organization has made available to you. Connect your own account where needed; workspace admins can test tools directly, and your AI coworker uses them with your permissions."
     >
       {error ? (
-        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
+        <div role="alert" className="mb-6 border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--ow-danger)]">
           {error instanceof Error ? error.message : "Failed to load your connections."}
         </div>
       ) : null}
 
       {isLoading ? (
-        <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
+        <div className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">
           Loading your connections…
         </div>
       ) : connections.length === 0 ? (
-        <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-center text-[14px] text-gray-500">
+        <div className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">
           Nothing has been shared with you yet. Ask a workspace admin to add an MCP connection.
         </div>
       ) : (
-        <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
+        <div className="divide-y divide-[var(--den-list-line)] border-y border-[var(--den-list-line)]">
           {visibleConnections.map((connection) => {
             const needsAdminSetup = marketplaceConnectionNeedsAdminSetup(connection, presets);
             const setupTarget = marketplaceConnectionSetupTarget(connection, presets, access.canManageConnections);
@@ -226,7 +226,7 @@ function YourConnectionRow({
   const note = connectorReadinessNote(connection, readinessView);
   if (state) return (
     <div data-connector-row={connection.name} ref={rowRef}>
-      <ItemRow href={getLibraryConnectorRoute(orgSlug, connection.id)} logo={<IntegrationIcon name={connection.name} serviceUrl={connection.url} />} title={connection.name}
+      <ItemRow href={getLibraryConnectorRoute(orgSlug, connection.id)} logo={<ConnectorLogo name={connection.name} url={connection.url} size="sm" />} title={connection.name}
         description={checkConnection.error ? "Could not check this connection. Try again."
           : !canManageConnections && (state === "Couldn't verify" || state === "Not checked") ? `${note ?? ""} An admin can check it.`.trim()
           : !canManageConnections && adminSignIn ? `${note ?? ""} An admin can reconnect it.`.trim()
@@ -247,12 +247,12 @@ function YourConnectionRow({
       tabIndex={highlighted ? -1 : undefined}
       className={`outline-hidden transition ${highlighted ? "bg-blue-50/70 ring-2 ring-inset ring-blue-200" : ""}`}
     >
-      <div className="flex flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-h-12 flex-col gap-3 py-1.5 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <IntegrationIcon name={connection.name} serviceUrl={connection.url} />
+          <ConnectorLogo name={connection.name} url={connection.url} size="sm" />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
+              <p className="truncate text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{connection.name}</p>
               {needsAdminSetup ? (
                 <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                   Waiting for an admin to finish setup
@@ -295,7 +295,7 @@ function YourConnectionRow({
                 </span>
               )}
             </div>
-            <p className="mt-0.5 truncate text-[12px] text-gray-500">{connection.url}</p>
+            <p className="truncate text-[12px] leading-4 text-[var(--dls-text-secondary)]">{connection.url}</p>
             {requiredByLabel ? (
               <p className="mt-1 text-[12px] font-medium text-gray-700">{requiredByLabel}</p>
             ) : null}
@@ -380,7 +380,7 @@ function YourConnectionRow({
         connection={connection}
         publicApiUrl={runtimeConfigLoaded ? runtimeConfig.denApiUrl : ""}
         enabled={orgContext?.capabilities.mcpConnections === true}
-        className="mx-6 mb-4"
+        className="mb-4"
       />
     </div>
   );

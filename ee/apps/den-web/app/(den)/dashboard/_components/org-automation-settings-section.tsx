@@ -6,7 +6,7 @@ import { z } from "zod";
 import { organizationAutomationSettingsSchema, type OrganizationAutomationSettings } from "@openwork/types/den/automation-settings";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
 import { permissionLockReason } from "../../_lib/den-org";
-import { DenCard } from "../../_components/ui/card";
+import { ItemSection } from "./item-list";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSwitch } from "../../_components/ui/switch";
 
@@ -60,31 +60,24 @@ export function OrgAutomationSettingsSection({ canManage }: { canManage: boolean
   }
 
   return (
-    <DenCard size="spacious" className="grid gap-6" data-testid="org-automation-settings">
-      <div className="grid gap-2">
-        <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-500">Automations</p>
-        <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">Where Automations can run</h2>
-        <p className="text-[14px] text-gray-500">
-          Both are on unless you turn them off. Turning one off stops new Automations of that kind and skips their scheduled runs. Existing Automations and their history are kept.
-        </p>
-      </div>
+    <ItemSection variant="rule" title="Where Automations can run" testId="org-automation-settings">
 
       {view && !view.deploymentEnabled ? (
         <DenNotice tone="info" message="Automations are turned off for this whole OpenWork installation by its operator." />
       ) : null}
       {error ? <DenNotice tone="error" message={error} /> : null}
 
-      <div className="grid gap-3">
+      <div className="grid">
         {kinds.map((kind) => {
           const needsRunner = kind.key === "cloud" && view !== null && !view.headlessRunnerConfigured;
           const checked = view ? view.settings[kind.key] && !needsRunner : false;
           return (
-            <div key={kind.key} className="flex items-start justify-between gap-4 rounded-[24px] border border-gray-200 bg-white px-5 py-4" data-testid={`org-automation-${kind.key}`}>
+            <div key={kind.key} className="flex min-h-12 items-start justify-between gap-4 border-b border-[var(--den-list-line)] py-3" data-testid={`org-automation-${kind.key}`}>
               <div className="grid min-w-0 flex-1 gap-1">
-                <p className="text-[15px] font-medium text-gray-900">{kind.title}</p>
-                <p className="text-[13px] text-gray-500">{kind.description}</p>
+                <p className="text-[13px] font-medium text-[var(--dls-text-primary)]">{kind.title}</p>
+                <p className="text-[12px] text-[var(--dls-text-secondary)]">{kind.description}</p>
                 {needsRunner ? (
-                  <p className="flex items-center gap-1.5 text-[13px] text-gray-500" data-testid="org-automation-cloud-locked">
+                  <p className="flex items-center gap-1.5 text-[12px] text-[var(--dls-text-secondary)]" data-testid="org-automation-cloud-locked">
                     <Lock size={12} aria-hidden="true" />
                     Needs OpenWork&apos;s headless runner on this installation. Ask your OpenWork operator to set it up.
                   </p>
@@ -101,6 +94,7 @@ export function OrgAutomationSettingsSection({ canManage }: { canManage: boolean
           );
         })}
       </div>
-    </DenCard>
+      <p className="pt-2 text-[12px] text-[var(--dls-text-secondary)]">Turning one off skips its scheduled runs; existing Automations and their history are kept.</p>
+    </ItemSection>
   );
 }

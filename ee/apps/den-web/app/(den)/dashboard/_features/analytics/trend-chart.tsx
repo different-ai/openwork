@@ -1,5 +1,6 @@
 "use client";
 
+import { CARD_TITLE_CLASS } from "../../../_components/ui/dashboard-styles";
 import { analyticsSurfaceClass } from "./analytics-layout";
 
 export function formatWeekLabel(weekStart: string): string {
@@ -29,16 +30,16 @@ export function TrendChart({ title, subtitle, weeks, series, intervalLabel = "We
   const hasData = series.some((s) => s.values.some((v) => v > 0));
 
   return (
-    <figure className={`${analyticsSurfaceClass} p-5`} aria-label={title}>
+    <figure className={`${analyticsSurfaceClass} p-4`} aria-label={title}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
-          <h3 className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C]">{title}</h3>
-          <p className="mt-0.5 text-[12px] text-[#637291]">{subtitle}</p>
+          <h3 title={subtitle} className={CARD_TITLE_CLASS}>{title}</h3>
+          <p className="sr-only">{subtitle}</p>
         </div>
         {series.length > 1 ? (
           <div className="flex items-center gap-3">
             {series.map((s) => (
-              <span key={s.label} className="flex items-center gap-1.5 text-[11px] text-[#637291]">
+              <span key={s.label} className="flex items-center gap-1.5 text-[11px] text-[var(--dls-text-secondary)]">
                 <span className="h-2 w-2 rounded-full" style={{ backgroundColor: colorFor(s) }} />
                 {s.label}
               </span>
@@ -47,9 +48,9 @@ export function TrendChart({ title, subtitle, weeks, series, intervalLabel = "We
         ) : null}
       </div>
 
-      <div className="relative mt-6">
+      <div className="relative mt-4">
         <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex flex-col justify-between pb-px">
-          {[0, 1, 2, 3].map((line) => <div key={line} className="border-t border-dashed border-[#edf0f5]" />)}
+          {[0, 1, 2, 3].map((line) => <div key={line} className="border-t border-dashed border-[var(--den-list-line)]" />)}
         </div>
         <div className="relative flex h-[168px] items-end gap-1.5" aria-hidden="true">
           {hasData ? weeks.map((week, i) => (
@@ -74,12 +75,12 @@ export function TrendChart({ title, subtitle, weeks, series, intervalLabel = "We
         </div>
         {!hasData ? (
           <div className="absolute inset-0 flex items-center justify-center">
-            <span role="status" className="rounded-full bg-white/90 px-3 py-1 text-[12px] text-[#637291]">{isLoading ? "Loading activity…" : emptyLabel}</span>
+            <span role="status" className="rounded-full bg-[var(--den-shell-topbar)] px-3 py-1 text-[12px] text-[var(--dls-text-secondary)]">{isLoading ? "Loading activity…" : emptyLabel}</span>
           </div>
         ) : null}
       </div>
 
-      <div className="mt-3 flex justify-between text-[11px] text-[#637291]">
+      <div className="mt-3 flex justify-between text-[11px] text-[var(--dls-text-secondary)]">
         <span>{weeks.length > 0 ? formatWeekLabel(weeks[0].weekStart) : ""}</span>
         <span>{weeks.length > 0 ? formatWeekLabel(weeks[weeks.length - 1].weekStart) : ""}</span>
       </div>

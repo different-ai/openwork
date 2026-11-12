@@ -1,5 +1,6 @@
 "use client";
 
+import { COMPACT_INPUT_CLASS } from "../../_components/ui/dashboard-styles";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { PERMISSION_KEYS, type PermissionKey } from "@openwork/types/den/permissions";
@@ -126,8 +127,8 @@ function SharedRoleNewContent({ ready, requestedStart }: { ready: ReadyAccess; r
   return (
     <PermissionsPage title="Create role" back={back} testId="role-new">
       <label className="flex max-w-sm flex-col gap-1.5">
-        <span className="text-[13px] font-medium text-gray-700">Role name</span>
-        <DenInput value={name} onChange={(event) => { create.reset(); setName(event.target.value); }} placeholder="Skill publisher" maxLength={120} data-testid="role-new-name" />
+        <span className="text-[13px] font-medium text-[var(--dls-text-primary)]">Role name</span>
+        <DenInput className={COMPACT_INPUT_CLASS} value={name} onChange={(event) => { create.reset(); setName(event.target.value); }} placeholder="Skill publisher" maxLength={120} data-testid="role-new-name" />
       </label>
 
       <RoleHolders

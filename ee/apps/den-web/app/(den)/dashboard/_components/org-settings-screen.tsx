@@ -1,7 +1,9 @@
 "use client";
 
-import { Check, Copy, Pencil, SlidersHorizontal, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Check, ChevronRight, Copy, Pencil, SlidersHorizontal, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { markFeatureUsed } from "../../_lib/feature-usage";
+import { normalizeAllowedEmailDomainsInput, refreshedDraft, sameStringSet, settingsDraftChanged } from "./page-consistency-state";
 import { getErrorMessage, requestJson, SsoSessionRequiredError } from "../../_lib/den-flow";
 import {
   getAllowedDesktopVersionsFromMetadata,
@@ -12,7 +14,7 @@ import {
 } from "../../_lib/den-org";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
-import { DenCard } from "../../_components/ui/card";
+import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { DenNotice } from "../../_components/ui/notice";
@@ -22,7 +24,11 @@ import { OrgWebOriginsSection } from "./org-web-origins-section";
 import { OrgDefaultModelSection } from "./default-model-section";
 import { OrgAutomationSettingsSection } from "./org-automation-settings-section";
 import { DenSwitch } from "../../_components/ui/switch";
-import { SsoRequirementFields, ssoRequirementDescription } from "./sso-requirement-fields";
+import { ItemSection } from "./item-list";
+import { COMPACT_INPUT_CLASS, DASHBOARD_PAGE_CLASS, SETTINGS_MEASURE_CLASS } from "../../_components/ui/dashboard-styles";
+import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
+import { DenCheckbox } from "../../_components/ui/checkbox";
+import { SsoRequirementFields } from "./sso-requirement-fields";
 import { ssoSettingsChanges, type SsoSettings } from "../../_lib/sso-settings";
 import {
   allPublishedDesktopVersionsAllowed,
@@ -30,19 +36,6 @@ import {
   getDesktopVersionMetadata,
   initialAllowedDesktopVersions,
 } from "./desktop-version-options";
-
-function normalizeAllowedEmailDomainsInput(value: string): string[] | null {
-  const domains = [
-    ...new Set(
-      value
-        .split(/[\s,]+/)
-        .map((entry) => entry.trim().toLowerCase().replace(/^@+/, ""))
-        .filter(Boolean),
-    ),
-  ];
-
-  return domains.length > 0 ? domains : null;
-}
 
 function toggleAllowedDesktopVersion(
   current: string[],
@@ -197,8 +190,11 @@ export function OrgSettingsScreen() {
   const [deleteConfirmationName, setDeleteConfirmationName] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  const pageConsistency = orgFeatureEnabled(orgContext, "denPageConsistency");
   const currentAllowedDomains =
     orgContext?.organization.allowedEmailDomains ?? null;
+  const previousSettings = useRef<{ orgId: string; name: string; domains: string; restricted: boolean; sso: SsoSettings } | null>(null);
+  const previousVersions = useRef<{ orgId: string; versions: string[] } | null>(null);
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
@@ -233,6 +229,35 @@ export function OrgSettingsScreen() {
     publishedVersions: supportedDesktopVersionOptions,
   });
   const pageSuccess = orgSettingsCompletion?.message ?? null;
+  const savedDomains = orgContext?.organization.allowedEmailDomains ?? [];
+  const savedSso = getSsoSettingsFromMetadata(orgContext?.organization.metadata ?? null);
+  const savedDesktopVersions = useMemo(() => orgContext && supportedDesktopVersionOptions.length > 0
+    ? initialAllowedDesktopVersions(getAllowedDesktopVersionsFromMetadata(orgContext.organization.metadata), supportedDesktopVersionOptions).filter((version) => supportedDesktopVersionOptions.includes(version))
+    : [], [orgContext, supportedDesktopVersionOptions]);
+  // Compare effective values, not formatting or set order. Unavailable/hidden fields are not submitted.
+  const dirty = Boolean(orgContext) && settingsDraftChanged({
+    name: orgContext?.organization.name ?? "", domains: savedDomains, domainRestrictionsEnabled: savedDomains.length > 0,
+    sso: savedSso, desktopVersions: savedDesktopVersions,
+  }, {
+    name: orgNameDraft, domains: draftAllowedDomains ?? [], domainRestrictionsEnabled,
+    sso: ssoDraft, desktopVersions: allowedDesktopVersionsDraft,
+  }, {
+    compareSso: orgFeatureEnabled(orgContext, "ssoPerOrganization") && !orgFeatureEnabled(orgContext, "ssoSettingsOnSsoPage"),
+    compareVersions: supportedDesktopVersionOptions.length > 0,
+  });
+  function discardChanges() {
+    if (!orgContext || !canManageSettings || !dirty || mutationBusy === "update-organization-settings") return;
+    if (pageConsistency) markFeatureUsed("denPageConsistency");
+    clearOrgSettingsCompletion();
+    setSsoRecoveryPath(null);
+    setOrgNameDraft(orgContext.organization.name);
+    setAllowedDomainsDraft(savedDomains.join("\n"));
+    setDomainRestrictionsEnabled(savedDomains.length > 0);
+    setSsoDraft(savedSso);
+    setAllowedDesktopVersionsDraft(savedDesktopVersions);
+    setDomainEditModeEnabled(false);
+    setPageError(null);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -256,16 +281,29 @@ export function OrgSettingsScreen() {
       return;
     }
 
-    setOrgNameDraft(orgContext.organization.name);
-    setAllowedDomainsDraft(
-      (orgContext.organization.allowedEmailDomains ?? []).join("\n"),
-    );
-    setDomainRestrictionsEnabled(
-      (orgContext.organization.allowedEmailDomains?.length ?? 0) > 0,
-    );
-    setSsoDraft(getSsoSettingsFromMetadata(orgContext.organization.metadata));
-    setDomainEditModeEnabled(false);
-  }, [orgContext]);
+    const next = {
+      orgId: orgContext.organization.id,
+      name: orgContext.organization.name,
+      domains: (orgContext.organization.allowedEmailDomains ?? []).join("\n"),
+      restricted: (orgContext.organization.allowedEmailDomains?.length ?? 0) > 0,
+      sso: getSsoSettingsFromMetadata(orgContext.organization.metadata),
+    };
+    const previous = previousSettings.current;
+    // A rollout change is not an organization switch: never erase an unsaved draft when the flag is killed.
+    const sameOrganization = previous?.orgId === next.orgId;
+    setOrgNameDraft((current) => refreshedDraft(current, previous?.name, next.name, sameOrganization));
+    setAllowedDomainsDraft((current) => refreshedDraft(current, previous?.domains, next.domains, sameOrganization,
+      (left, right) => sameStringSet(normalizeAllowedEmailDomainsInput(left) ?? [], normalizeAllowedEmailDomainsInput(right) ?? [])));
+    setDomainRestrictionsEnabled((current) => refreshedDraft(current, previous?.restricted, next.restricted, sameOrganization));
+    setSsoDraft((current) => refreshedDraft(current, previous?.sso, next.sso, sameOrganization,
+      (left, right) => left.requireSso === right.requireSso && left.restrictDomainToSso === right.restrictDomainToSso));
+    if (!sameOrganization) {
+      setDomainEditModeEnabled(false);
+      setPageError(null);
+      setSsoRecoveryPath(null);
+    }
+    previousSettings.current = next;
+  }, [orgContext, pageConsistency]);
 
   useEffect(() => {
     let cancelled = false;
@@ -333,11 +371,12 @@ export function OrgSettingsScreen() {
       return;
     }
 
-    setAllowedDesktopVersionsDraft(initialAllowedDesktopVersions(
-      getAllowedDesktopVersionsFromMetadata(orgContext.organization.metadata),
-      supportedDesktopVersionOptions,
-    ).filter((version) => supportedDesktopVersionOptions.includes(version)));
-  }, [orgContext, supportedDesktopVersionOptions]);
+    const orgId = orgContext.organization.id;
+    const previous = previousVersions.current;
+    setAllowedDesktopVersionsDraft((current) => refreshedDraft(current, previous?.versions, savedDesktopVersions,
+      previous?.orgId === orgId, sameStringSet));
+    previousVersions.current = { orgId, versions: savedDesktopVersions };
+  }, [orgContext, supportedDesktopVersionOptions, savedDesktopVersions, pageConsistency]);
 
   useEffect(() => {
     if (!copiedOrgId) {
@@ -358,18 +397,17 @@ export function OrgSettingsScreen() {
 
   if (orgBusy && !orgContext) {
     return (
-      <div className="mx-auto max-w-[860px] p-8">
-        <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
-          Loading workspace settings...
-        </div>
+      <div className={DASHBOARD_PAGE_CLASS}>
+        <DenSkeleton className="mb-6 h-6 w-32" />
+        <div className="grid gap-4"><DenSkeleton className="h-10 w-full" /><DenSkeleton className="h-10 w-full" /><DenSkeleton className="h-10 w-full" /></div>
       </div>
     );
   }
 
   if (!activeOrg || !orgContext) {
     return (
-      <div className="mx-auto max-w-[860px] p-8">
-        <div className="rounded-[28px] border border-red-200 bg-red-50 px-6 py-10 text-[15px] text-red-700">
+      <div className={DASHBOARD_PAGE_CLASS}>
+        <div role="alert" className="text-[13px] text-[var(--ow-danger)]">
           {orgError ?? "Workspace settings are not available right now."}
         </div>
       </div>
@@ -412,6 +450,12 @@ export function OrgSettingsScreen() {
       return;
     }
 
+    if (mutationBusy === "update-organization-settings" || (pageConsistency && !dirty)) return;
+    if (pageConsistency && domainRestrictionsEnabled && !hasDraftDomains) {
+      setPageError("Enter at least one email domain, or turn off domain restrictions.");
+      return;
+    }
+    if (pageConsistency) markFeatureUsed("denPageConsistency");
     try {
       await updateOrganizationSettings({
         name: orgNameDraft,
@@ -488,21 +532,11 @@ export function OrgSettingsScreen() {
     <DashboardPageTemplate
       icon={SlidersHorizontal}
       title="Org settings"
-      description={(
-        <span className="flex w-full items-baseline justify-between gap-4">
-          <span>Control your organization&apos;s settings.</span>
-          {denVersion ? (
-            <span
-              className="font-normal tabular-nums text-gray-300"
-              data-den-runtime-version={denVersion}
-              title={`Den API version ${denVersion}`}
-            >
-              Den {denVersion}
-            </span>
-          ) : null}
-        </span>
-      )}
+      description={null}
+      measure
     >
+      {/* Settings read as label and control side by side, so they keep a narrower measure than the lists. */}
+      <div className={SETTINGS_MEASURE_CLASS}>
       {orgContext && !orgContext.entitlements.orgControls ? (
         <EnterprisePlanNotice feature={ssoSettingsOnSsoPage ? "Desktop version control" : "Enforced SSO and desktop version control"} />
       ) : null}
@@ -519,76 +553,43 @@ export function OrgSettingsScreen() {
         />
       ) : null}
       {pageSuccess ? (
-        <div className="mb-6 rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-700">
+        <div role="status" className="mb-6 text-[13px] text-[var(--dls-text-secondary)]">
           {pageSuccess}
         </div>
       ) : null}
 
-      <form className="grid min-w-0 grid-cols-1 gap-6" onSubmit={handleSaveSettings}>
-        <DenCard size="spacious" className="grid gap-6">
-          <div className="grid gap-2">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-              Core
-            </p>
-            <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">
-              Organization Identity
-            </h2>
-          </div>
-
-          <div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)]">
-            <label className="grid gap-3">
-              <span className="text-[14px] font-medium text-gray-700">
-                Name
-              </span>
-              <DenInput
-                type="text"
-                value={orgNameDraft}
-                onChange={(event) => setOrgNameDraft(event.target.value)}
-                minLength={2}
-                maxLength={120}
-                disabled={!canManageSettings}
-                required
-              />
-            </label>
-
-            <div className="grid gap-3">
-              <span className="text-[14px] font-medium text-gray-700">ID</span>
-              <div className="flex gap-2">
-                <DenInput
-                  value={organizationId}
-                  readOnly
-                  aria-label="Organization ID"
-                  className="font-mono text-[13px]"
-                />
-                <DenButton
-                  variant="secondary"
-                  type="button"
-                  icon={copiedOrgId ? Check : Copy}
-                  onClick={() => void handleCopyOrgId()}
-                >
-                  {copiedOrgId ? "Copied" : "Copy"}
-                </DenButton>
-              </div>
+      <form className="grid min-w-0 grid-cols-1 gap-6 text-[13px]" onSubmit={handleSaveSettings}>
+        <ItemSection variant="rule" title="Organization identity">
+          <label className="flex min-h-12 flex-wrap items-center justify-between gap-3 border-b border-[var(--den-list-line)] py-2">
+            <span className="font-medium text-[var(--dls-text-primary)]">Name</span>
+            <DenInput
+              type="text"
+              value={orgNameDraft}
+              onChange={(event) => setOrgNameDraft(event.target.value)}
+              minLength={2}
+              maxLength={120}
+              disabled={!canManageSettings}
+              required
+              className={`${COMPACT_INPUT_CLASS} w-full sm:w-80`}
+            />
+          </label>
+          <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 border-b border-[var(--den-list-line)] py-2">
+            <span className="font-medium text-[var(--dls-text-primary)]">ID</span>
+            <div className="flex w-full items-center gap-2 sm:w-80">
+              <DenInput value={organizationId} readOnly aria-label="Organization ID" className={`${COMPACT_INPUT_CLASS} font-mono text-[12px]!`} />
+              <DenButton variant="secondary" size="sm" type="button" icon={copiedOrgId ? Check : Copy} onClick={() => void handleCopyOrgId()}>
+                {copiedOrgId ? "Copied" : "Copy"}
+              </DenButton>
             </div>
           </div>
-        </DenCard>
+        </ItemSection>
 
-        <DenCard id="allowed-email-domains" size="spacious" className="grid scroll-mt-6 gap-6">
-          <div className="flex items-start justify-between gap-4">
-            <div className="grid gap-2">
-              <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-                Access rules
-              </p>
-              <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">
-                Allowed email domains
-              </h2>
-              <p className="text-[14px] text-gray-500">
-                Only allow people with specific email domains to join this
-                Organization.
-              </p>
-            </div>
-            <div className="flex items-center gap-3 pt-1">
-              <span className="text-[13px] font-medium text-gray-500">
+        <section id="allowed-email-domains" aria-label="Allowed email domains" className="scroll-mt-6">
+          <ItemSection variant="rule" title="Allowed email domains">
+          <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 border-b border-[var(--den-list-line)] py-2">
+            <span className="font-medium text-[var(--dls-text-primary)]">Only people with these email domains can join</span>
+            <div className="flex items-center gap-3">
+              <span className="text-[13px] text-[var(--dls-text-secondary)]">
                 {domainRestrictionsEnabled ? "On" : "Off"}
               </span>
               <DenSwitch
@@ -603,13 +604,9 @@ export function OrgSettingsScreen() {
           </div>
 
           {domainRestrictionsEnabled && domainEditModeEnabled ? (
-            <label className="grid gap-3">
-              <span className="text-[14px] font-medium text-gray-700">
-                Domain allowlist
-              </span>
-              <span className="text-[10px] text-gray-500">
-                Enter domains one per line or with comma as separator
-              </span>
+            <label className="grid gap-2 border-b border-[var(--den-list-line)] py-3 sm:pl-0">
+              <span className="text-[13px] font-medium text-[var(--dls-text-primary)]">Domain allowlist</span>
+              <span className="text-[12px] text-[var(--dls-text-secondary)]">One domain per line, or separated by commas.</span>
               <DenTextarea
                 value={allowedDomainsDraft}
                 onChange={(event) => setAllowedDomainsDraft(event.target.value)}
@@ -621,21 +618,21 @@ export function OrgSettingsScreen() {
           ) : null}
 
           {domainRestrictionsEnabled && !domainEditModeEnabled ? (
-            <div className="grid gap-3 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-4">
-              <div className="flex items-start justify-between gap-3">
+            <div className="border-b border-[var(--den-list-line)] py-2">
+              <div className="flex min-h-8 items-center justify-between gap-3">
                 {currentAllowedDomains && currentAllowedDomains.length > 0 ? (
                   <div className="flex flex-wrap w-full gap-2">
                     {currentAllowedDomains.map((domain) => (
                       <span
                         key={domain}
-                        className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[13px] text-gray-700"
+                        className="text-[13px] text-[var(--dls-text-secondary)]"
                       >
                         {domain}
                       </span>
                     ))}
                   </div>
                 ) : (
-                  <p className="text-[14px] text-gray-600">
+                  <p className="text-[13px] text-[var(--dls-text-secondary)]">
                     No email domains are configured yet.
                   </p>
                 )}
@@ -657,19 +654,11 @@ export function OrgSettingsScreen() {
               </div>
             </div>
           ) : null}
-        </DenCard>
+          </ItemSection>
+        </section>
 
         {ssoSettingsOnSsoPage ? null : (
-          <DenCard size="spacious" className="grid gap-6">
-            <div className="grid gap-2">
-              <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-                Authentication
-              </p>
-              <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">
-                Single sign-on requirement
-              </h2>
-              <p className="text-[14px] text-gray-500">{ssoRequirementDescription(ssoPerOrganization)}</p>
-            </div>
+          <ItemSection variant="rule" title="Single sign-on requirement">
 
             <SsoRequirementFields
               perOrganization={ssoPerOrganization}
@@ -677,160 +666,88 @@ export function OrgSettingsScreen() {
               disabled={!canManageSettings}
               onChange={setSsoDraft}
             />
-          </DenCard>
+          </ItemSection>
         )}
 
-        <OrgAutomationSettingsSection canManage={canManageSettings} />
+                  <OrgAutomationSettingsSection canManage={canManageSettings} />
 
-        <DenCard size="spacious" className="grid gap-6">
-          <div className="grid gap-2">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-              Desktop app
-            </p>
-            <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">
-              Allowed Desktop Versions
-            </h2>
-            <p className="text-[14px] text-gray-500">
-              Choose which supported desktop versions can sign in to this
-              workspace.
-            </p>
-            {desktopVersionRange ? (
-              <p className="text-[10px] text-gray-400">
-                This server currently supports desktop v
-                {desktopVersionRange.minVersion} to v
-                {desktopVersionRange.maxVersion}.
-              </p>
-            ) : null}
-          </div>
-
-          {desktopVersionOptionsBusy ? (
-            <div className="rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-4 text-[14px] text-gray-500">
-              Loading desktop versions...
-            </div>
-          ) : null}
-
-          {desktopVersionOptionsError ? (
-            <div className="rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-4 text-[14px] text-[var(--dls-text-primary)]">
-              {desktopVersionOptionsError}
-            </div>
-          ) : null}
-
-          {!desktopVersionOptionsBusy &&
-          !desktopVersionOptionsError &&
-          desktopVersionOptions.length > 0 ? (
-            <div className="grid gap-4">
-              <div
-                data-testid="desktop-version-list"
-                className="grid max-h-[400px] gap-3 overflow-y-auto pr-2"
-              >
+        <section aria-label="Allowed desktop versions">
+          <ItemSection variant="rule" title="Desktop app">
+          {desktopVersionOptionsError ? <p role="alert" className="border-b border-[var(--den-list-line)] py-3 text-[13px] text-[var(--ow-danger)]">{desktopVersionOptionsError}</p> : null}
+          {/* The list is long and rarely changed: the row says what is allowed, and opens to change it (DESIGN.md P3, S3). */}
+          <details className="group border-b border-[var(--den-list-line)]" data-testid="desktop-version-disclosure">
+            <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--dls-text-secondary)] [&::-webkit-details-marker]:hidden">
+              <span className="font-medium text-[var(--dls-text-primary)]">Allowed versions</span>
+              <span className="flex items-center gap-2 text-[13px] text-[var(--dls-text-secondary)]">
+                {desktopVersionOptionsBusy ? <DenSkeleton className="h-3 w-24" />
+                  : supportedDesktopVersionOptions.length === 0 ? "Not available"
+                  : allDesktopVersionsAllowed ? `All ${supportedDesktopVersionOptions.length} versions`
+                  : `${allowedDesktopVersionsDraft.length} of ${supportedDesktopVersionOptions.length} versions`}
+                <ChevronRight size={16} strokeWidth={1.5} aria-hidden="true" className="transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" />
+              </span>
+            </summary>
+            {!desktopVersionOptionsBusy && !desktopVersionOptionsError && desktopVersionOptions.length > 0 ? (
+              <div data-testid="desktop-version-list" className="grid max-h-[320px] overflow-y-auto border-t border-[var(--den-list-line)] pb-1">
+                {desktopVersionRange ? <p className="py-2 text-[12px] text-[var(--dls-text-secondary)]">This server supports v{desktopVersionRange.minVersion} to v{desktopVersionRange.maxVersion}.</p> : null}
                 {desktopVersionOptions.map((version) => {
                   const checked = selectedDesktopVersions.has(version);
-                  const requiresServerUpgrade =
-                    desktopVersionRange !== null &&
-                    compareDesktopVersions(
-                      version,
-                      desktopVersionRange.maxVersion,
-                    ) > 0;
-
+                  const requiresServerUpgrade = desktopVersionRange !== null && compareDesktopVersions(version, desktopVersionRange.maxVersion) > 0;
                   return (
-                    <label
-                      key={version}
-                      data-desktop-version={version}
-                      data-supported={!requiresServerUpgrade}
-                      className={[
-                        "flex items-center justify-between gap-4 rounded-[24px] border px-5 py-4",
-                        requiresServerUpgrade
-                          ? "cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400"
-                          : "border-gray-200 bg-white",
-                      ].join(" ")}
-                    >
-                      <div className="grid gap-1">
-                        <p
-                          className={[
-                            "text-[15px] font-medium",
-                            requiresServerUpgrade
-                              ? "text-gray-400"
-                              : "text-gray-900",
-                          ].join(" ")}
-                        >
-                          v{version}
-                        </p>
-                        {requiresServerUpgrade ? (
-                          <p className="text-[12px] text-gray-400">
-                            Upgrade server to allow this version
-                          </p>
-                        ) : null}
-                      </div>
-                      <input
-                        type="checkbox"
+                    <label key={version} data-desktop-version={version} data-supported={!requiresServerUpgrade}
+                      className={`flex min-h-9 items-center gap-3 py-1 text-[13px] ${requiresServerUpgrade ? "cursor-not-allowed text-[var(--dls-text-secondary)]" : "text-[var(--dls-text-primary)]"}`}>
+                      <DenCheckbox
                         checked={checked}
                         disabled={!canManageDesktopVersions || requiresServerUpgrade}
                         aria-label={`Allow desktop version v${version}`}
-                        onChange={(event) =>
-                          setAllowedDesktopVersionsDraft((current) =>
-                            toggleAllowedDesktopVersion(
-                              current,
-                              version,
-                              event.target.checked,
-                            ),
-                          )
-                        }
+                        onCheckedChange={(next) => setAllowedDesktopVersionsDraft((current) => toggleAllowedDesktopVersion(current, version, next))}
                       />
+                      <span className="tabular-nums">v{version}</span>
+                      {requiresServerUpgrade ? <span className="text-[12px] text-[var(--dls-text-secondary)]">Upgrade the server to allow this version</span> : null}
                     </label>
                   );
                 })}
               </div>
-            </div>
-          ) : null}
-        </DenCard>
+            ) : null}
+          </details>
+          </ItemSection>
+        </section>
 
-        <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
-          <p className="text-[13px] text-gray-500">
-            {!canManageSettings ? `Read only. ${permissionLockReason("organization.update")}` : null}
-          </p>
-          <DenButton
-            type="submit"
-            loading={mutationBusy === "update-organization-settings"}
-            disabled={!canManageSettings}
-          >
-            Save settings
-          </DenButton>
-        </div>
+        {!canManageSettings ? <p className="text-[12px] text-[var(--dls-text-secondary)]">{`Read only. ${permissionLockReason("organization.update")}`}</p> : null}
+        {pageConsistency ? dirty && canManageSettings ? (
+          <DenStickyActionBar summary="Unsaved changes" testId="org-settings-save-bar">
+            <DenButton type="button" size="sm" variant="ghost" disabled={mutationBusy === "update-organization-settings"} onClick={discardChanges}>Discard</DenButton>
+            <DenButton type="submit" size="sm" loading={mutationBusy === "update-organization-settings"}>Save changes</DenButton>
+          </DenStickyActionBar>
+        ) : null : <div className="flex justify-end"><DenButton type="submit" loading={mutationBusy === "update-organization-settings"} disabled={!canManageSettings}>Save settings</DenButton></div>}
       </form>
 
       {access.canViewModelsSettings ? (
-        <OrgDefaultModelSection canManage={access.canManageModelsSettings} />
+        <div className="mt-6">
+          <ItemSection variant="rule" title="Models">
+            <OrgDefaultModelSection embedded canManage={access.canManageModelsSettings} />
+          </ItemSection>
+        </div>
       ) : null}
 
       {access.canViewWebOrigins ? (
-        <OrgWebOriginsSection orgId={organizationId} canManage={access.canManageWebOrigins} />
+        <div className="mt-6">
+          <OrgWebOriginsSection orgId={organizationId} canManage={access.canManageWebOrigins} />
+        </div>
       ) : null}
 
       {canDeleteOrganization ? (
-        <DenCard size="spacious" className="mt-6 grid gap-5 !border-red-200 bg-red-50/30">
-          <div className="grid gap-2">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-red-400">
-              Owner controls
-            </p>
-            <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-red-950">
-              Danger zone
-            </h2>
-            <p className="max-w-2xl text-[14px] leading-6 text-red-700">
-              Permanently delete this organization, including members, teams, workers, plugins, and connections. This cannot be undone.
-            </p>
-          </div>
-          <div>
-            <DenButton
-              type="button"
-              variant="destructive"
-              icon={Trash2}
-              onClick={openDeleteDialog}
-            >
-              Delete organization
-            </DenButton>
-          </div>
-        </DenCard>
+        <section aria-label="Owner controls" className="mt-6">
+          <ItemSection variant="rule" title="Owner controls">
+            <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 border-b border-[var(--den-list-line)] py-2">
+              <span className="text-[13px] font-medium text-[var(--dls-text-primary)]" title="Permanently delete this organization, including members, teams, workers, plugins, and connections. This cannot be undone.">Delete organization</span>
+              <DenButton type="button" size="sm" variant="destructive" icon={Trash2} onClick={openDeleteDialog}>Delete organization</DenButton>
+            </div>
+          </ItemSection>
+        </section>
       ) : null}
+
+      {denVersion ? <p className="mt-8 text-[12px] tabular-nums text-[var(--dls-text-secondary)]" data-den-runtime-version={denVersion} title={`Den API version ${denVersion}`}>Den {denVersion}</p> : null}
+      </div>
 
       <DeleteOrganizationDialog
         open={deleteDialogOpen}

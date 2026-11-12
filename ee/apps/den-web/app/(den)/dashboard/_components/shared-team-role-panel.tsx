@@ -80,17 +80,17 @@ export function SharedTeamRolePanel({ team }: { team: DenOrgTeam }) {
     <div className="flex flex-col gap-6" data-testid="team-role" data-role={roleKind}>
       {organizationRoles.error ? <DenNotice tone="error" message={organizationRoles.error instanceof Error ? organizationRoles.error.message : "Couldn't load this team's role."} /> : null}
       {help ? (
-        <div className="-mb-3 flex items-center gap-1.5 px-1" data-testid="team-role-heading">
-          <h2 className="text-[13px] font-medium text-gray-500">{`Role for ${team.name}`}</h2>
+        <div className="-mb-3 flex items-center gap-1.5" data-testid="team-role-heading">
+          <h2 className="text-[13px] font-medium text-[var(--dls-text-primary)]">{`Role for ${team.name}`}</h2>
           <HelpTip label="Role">{TEAM_ROLE_HELP}</HelpTip>
         </div>
       ) : null}
       <ItemPanel>
-        <div className="flex flex-wrap items-center gap-3.5 px-5 py-4">
+        <div className="flex min-h-12 flex-wrap items-center gap-3 py-1.5">
           <IconTile icon={ShieldCheck} />
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="truncate text-[14px] font-medium leading-5 text-gray-900" title={title} data-testid="team-role-name">{loading ? <DenSkeleton className="h-5 w-28" /> : title}</span>
-            {loading ? <DenSkeleton className="h-[18px] w-48" /> : <span className="text-[13px] leading-[18px] text-gray-500">{description}</span>}
+            <span className="truncate text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]" title={title} data-testid="team-role-name">{loading ? <DenSkeleton className="h-5 w-28" /> : title}</span>
+            {loading ? <DenSkeleton className="h-[18px] w-48" /> : <span className="text-[12px] leading-4 text-[var(--dls-text-secondary)]">{description}</span>}
           </span>
           <span className="flex max-w-full flex-wrap gap-2">
             {!isMember && role.setId ? (
@@ -120,7 +120,7 @@ export function SharedTeamRolePanel({ team }: { team: DenOrgTeam }) {
       ) : help && !organizationRoles.error ? (
         <ItemSection title={`${team.name} can also`} testId="team-role-also-none">
           <ItemPanel>
-            <p className="px-5 py-4 text-[13px] leading-5 text-gray-600">{teamRoleAddsNothingLine(roleKind, team.name)}</p>
+            <p className="py-3 text-[13px] leading-5 text-[var(--dls-text-secondary)]">{teamRoleAddsNothingLine(roleKind, team.name)}</p>
           </ItemPanel>
         </ItemSection>
       ) : null}
@@ -180,10 +180,11 @@ function RolePicker({ team, state, roles, lockReasons, abilities, disabled, newR
     }
   }
 
-  return <div className="w-[280px] max-w-full">
+  return <div className="w-40 max-w-full">
     <SearchableRolePicker
       value={choice}
       onChange={setChoice}
+      size="sm"
       options={options} label={`Role for ${team.name}`} trigger="Change role" disabled={disabled}
       testId="team-role" open={open} onOpenChange={(next) => next ? (setChoice(current.value), setOpen(true)) : close()}
       footer={<>

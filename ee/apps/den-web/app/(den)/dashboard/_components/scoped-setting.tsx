@@ -31,12 +31,12 @@ export function SettingRow({ label, labelId, aside, stateLine, children, flush =
     <div className={flush ? "py-3" : "px-6 py-3"}>
       <div className="flex min-h-6 flex-wrap items-center justify-between gap-3">
         <span className="flex min-w-0 items-center gap-2">
-          <span id={labelId} className="text-[13px] font-medium text-gray-900">{label}</span>
+          <span id={labelId} className="text-[13px] font-medium text-[var(--dls-text-primary)]">{label}</span>
           {aside}
         </span>
         <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">{children}</div>
       </div>
-      {stateLine ? <p className="mt-2 text-[13px] text-gray-500">{stateLine}</p> : null}
+      {stateLine ? <p className="mt-2 text-[12px] text-[var(--dls-text-secondary)]">{stateLine}</p> : null}
     </div>
   );
 }
@@ -100,7 +100,7 @@ export function ReadOnlyNotice({ permission, id }: { permission: PermissionKey; 
 }
 
 /** Under a team's rows, only while some of its members are on another team that disagrees. */
-export function ConflictLine({ count, setting, testId }: { count: number; setting: string; testId?: string }) {
+export function ConflictLine({ count, setting, testId, flush = false }: { count: number; setting: string; testId?: string; /** No side padding, as `SettingRow`'s `flush`. */ flush?: boolean }) {
   if (count <= 0) return null;
-  return <div className="px-6 py-3 text-[13px] text-gray-500" data-testid={testId}>{scopeConflictLine(count, setting)}</div>;
+  return <div className={`${flush ? "" : "px-6 "}py-3 text-[13px] text-[var(--dls-text-secondary)]`} data-testid={testId}>{scopeConflictLine(count, setting)}</div>;
 }

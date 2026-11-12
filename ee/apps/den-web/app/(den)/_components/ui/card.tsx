@@ -12,10 +12,10 @@ import { forwardRef, type HTMLAttributes } from "react";
 export type DenCardSize = "comfortable" | "spacious";
 
 const sizeClasses: Record<DenCardSize, string> = {
-  // Matches the original Members / API Keys inline card.
-  comfortable: "rounded-[30px] p-6",
-  // Matches the editor-screen section card (LLM providers, plugin marketplaces).
-  spacious: "rounded-[36px] p-8",
+  // The My Automations card: the one card surface on org/admin pages.
+  comfortable: "rounded-2xl p-4",
+  // Editor-screen sections with more inside (LLM providers, plugin marketplaces).
+  spacious: "rounded-2xl p-6",
 };
 
 export type DenCardProps = HTMLAttributes<HTMLDivElement> & {
@@ -30,7 +30,7 @@ export type DenCardProps = HTMLAttributes<HTMLDivElement> & {
  * Intentional constraints:
  * - No drop shadows. Ever.
  * - No hover transforms. Cards are surfaces, not buttons.
- * - Single, borderable background (`border-gray-200 bg-white`).
+ * - Single, borderable background (the Automations card: quiet shell hairline, top-bar surface).
  *
  * Pick a size that matches the surrounding flow:
  * - `comfortable` (default): forms, summary cards, inline editors.
@@ -48,7 +48,7 @@ export const DenCard = forwardRef<HTMLDivElement, DenCardProps>(function DenCard
       ref={ref}
       {...rest}
       className={[
-        "border border-gray-200 bg-white",
+        "border border-[var(--den-shell-line)] bg-[var(--den-shell-topbar)]",
         sizeClasses[size],
         className ?? "",
       ]

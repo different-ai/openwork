@@ -5,8 +5,12 @@ import { ArrowLeft, CalendarClock, Cloud, ExternalLink, Monitor, Square } from "
 import { formatAutomationSchedule } from "@openwork/types/automation-schedule";
 import type { AutomationList } from "@openwork/types/automations";
 import { DenButton } from "../../_components/ui/button";
+import { DenSkeleton } from "../../_components/ui/skeleton";
+import { DenPageHeader } from "../../_components/ui/page-header";
+import { AUTOMATION_CARD_CLASS, CARD_TITLE_CLASS, DASHBOARD_PAGE_CLASS, SECTION_TITLE_CLASS } from "../../_components/ui/dashboard-styles";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { FeatureIntroGate } from "../_features/feature-intros";
+import { StatusDot } from "../_features/computers/computer-parts";
 import { WorkflowArtifactResult } from "./workflow-artifact-result";
 import {
   useAutomation,
@@ -21,8 +25,13 @@ type AutomationListItem = AutomationList["items"][number];
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "claimed", "running"]);
 
-function statusTone(status: string) {
-  return status === "failed" || status === "needs_attention" ? "bg-red-50 text-red-600" : status === "succeeded" || status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-600";
+/** The Computers status language: a dot and a sentence-case word; color only for what needs attention. */
+function AutomationStatus({ status }: { status: string }) {
+  const tone = status === "failed" || status === "needs_attention" ? "danger" : status === "succeeded" || status === "active" ? "success" : "neutral";
+  const label = status.replaceAll("_", " ");
+  return <span className="inline-flex shrink-0 items-center gap-2 text-[12px] text-[var(--dls-text-secondary)]" data-status={status}>
+    <StatusDot tone={tone} />{label.charAt(0).toUpperCase() + label.slice(1)}
+  </span>;
 }
 
 function placementLabel(executionTarget: "desktop" | "cloud" | undefined) {
@@ -39,7 +48,7 @@ function ManageLink({ item, openworkWebUrl }: { item: { automation: { id: string
     const href = `${openworkWebUrl.replace(/\/$/, "")}/automations?automation=${encodeURIComponent(item.automation.id)}`;
     return <DenButton variant="secondary" size="sm" href={href} target="_blank" rel="noopener noreferrer" icon={ExternalLink}>Manage in OpenWork Web</DenButton>;
   }
-  return <span className="inline-flex items-center gap-1.5 text-[12px] text-gray-400"><Monitor className="h-3.5 w-3.5" />Manage in OpenWork Desktop</span>;
+  return <span className="inline-flex items-center gap-1.5 text-[12px] text-[var(--dls-text-secondary)]"><Monitor className="h-3.5 w-3.5" />Manage in OpenWork Desktop</span>;
 }
 
 /** Groups the monitor list by what needs eyes first: running, needs attention, scheduled, paused. */
@@ -86,8 +95,8 @@ export function AutomationsScreen() {
     router.push(`${window.location.pathname}${next.size ? `?${next}` : ""}`);
   };
 
-  if (listQuery.isLoading) return <div className="mx-auto max-w-[980px] px-6 py-8 text-[13px] text-gray-400">Loading Automations…</div>;
-  if (listQuery.error) return <div className="mx-auto max-w-[980px] px-6 py-8 text-[13px] text-red-600">{listQuery.error.message}</div>;
+  if (listQuery.isLoading) return <div className={DASHBOARD_PAGE_CLASS} aria-busy="true" aria-label="Automations"><DenSkeleton className="mb-6 h-6 w-36" /><div className="grid gap-3 md:grid-cols-2">{[0, 1, 2, 3].map((id) => <DenSkeleton key={id} className="h-36 rounded-2xl" />)}</div></div>;
+  if (listQuery.error) return <div className={`${DASHBOARD_PAGE_CLASS} text-[13px] text-[var(--ow-danger)]`}>{listQuery.error.message}</div>;
 
   if (!automationId) {
     const items = listQuery.data?.items.filter((item) => item.automation.state !== "archived") ?? [];
@@ -96,30 +105,25 @@ export function AutomationsScreen() {
     // with the flag off, the page and its empty line render as before.
     return (
       <FeatureIntroGate introKey="automations" facts={listQuery.data ? { automations: items.length } : null}>
-        <div className="mx-auto max-w-[980px] px-6 py-8 md:px-8" data-automations-monitor>
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-gray-950">My Automations</h1>
-              <p className="mt-1 text-[13px] text-gray-400">What Den is running and has scheduled for you. Create and edit Cloud Automations in OpenWork Web; Desktop Automations are managed in the desktop app.</p>
-            </div>
-          </div>
+        <div className={DASHBOARD_PAGE_CLASS} data-automations-monitor>
+          <DenPageHeader size="compact" title="My Automations" state={`${items.length} Automations`} />
           {items.length === 0 ? (
-            <div className="mt-6 rounded-2xl border border-gray-100 bg-white p-8 text-center text-[13px] text-gray-400">No Automations yet. Create one in OpenWork Web or in the desktop app; it will show up here once Den is scheduling it.</div>
+            <div className="mt-6 rounded-2xl border border-gray-100 bg-white p-8 text-center text-[13px] text-[var(--dls-text-secondary)]">No Automations yet. Create one in OpenWork Web or in the desktop app; it will show up here once Den is scheduling it.</div>
           ) : groups.map((group) => (
             <section key={group.title} className="mt-6">
-              <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-gray-400">{group.title}</h2>
+              <h2 className={SECTION_TITLE_CLASS}>{group.title}</h2>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 {group.items.map((item) => (
-                  <button key={item.automation.id} type="button" onClick={() => setQuery(item.automation.id)} className="rounded-2xl border border-gray-100 bg-white p-4 text-left transition hover:border-gray-200 hover:bg-gray-50">
+                  <button key={item.automation.id} type="button" onClick={() => setQuery(item.automation.id)} className={`${AUTOMATION_CARD_CLASS} p-4 text-left transition-colors hover:border-[var(--dls-border)] hover:bg-[var(--dls-hover)]`}>
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <h3 className="text-[14px] font-semibold text-gray-900">{item.automation.name}</h3>
-                        <p className="mt-1 line-clamp-2 text-[12px] text-gray-400">{item.revision.action?.kind === "saved_script" ? `Exact Workflow version ${item.revision.action.script.configObjectVersionId.slice(0, 8)}` : item.revision.instructions}</p>
+                        <h3 className={CARD_TITLE_CLASS}>{item.automation.name}</h3>
+                        <p className="mt-1 line-clamp-2 text-[12px] text-[var(--dls-text-secondary)]">{item.revision.action?.kind === "saved_script" ? `Exact Workflow version ${item.revision.action.script.configObjectVersionId.slice(0, 8)}` : item.revision.instructions}</p>
                       </div>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone(item.automation.state)}`}>{item.automation.state.replace("_", " ")}</span>
+                      <AutomationStatus status={item.automation.state} />
                     </div>
-                    <p className="mt-3 text-[11px] text-gray-400">{formatAutomationSchedule(item.revision.schedule)}</p>
-                    <div className="mt-2 flex items-center justify-between text-[11px] text-gray-400">
+                    <p className="mt-3 text-[11px] text-[var(--dls-text-secondary)]">{formatAutomationSchedule(item.revision.schedule)}</p>
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-[var(--dls-text-secondary)]">
                       <span>{item.latestRun ? `Last run ${item.latestRun.status}` : item.automation.nextDueAt ? `Next ${new Date(item.automation.nextDueAt).toLocaleString()}` : "Not run yet"}</span>
                       <span className="flex items-center gap-1"><PlacementIcon executionTarget={item.revision.executionTarget} />{placementLabel(item.revision.executionTarget)}</span>
                     </div>
@@ -133,21 +137,21 @@ export function AutomationsScreen() {
     );
   }
 
-  if (detailQuery.isLoading || !detailQuery.data) return <div className="mx-auto max-w-[980px] px-6 py-8 text-[13px] text-gray-400">Loading Automation…</div>;
+  if (detailQuery.isLoading || !detailQuery.data) return <div className={DASHBOARD_PAGE_CLASS} aria-busy="true" aria-label="Automation"><DenSkeleton className="mb-6 h-6 w-40" /><DenSkeleton className="h-56 w-full" /></div>;
   const detail = detailQuery.data;
   const runs = runsQuery.data ?? [];
   const activeRun = runQuery.data?.run && ACTIVE_RUN_STATUSES.has(runQuery.data.run.status) ? runQuery.data.run : null;
   return (
-    <div className="mx-auto max-w-[1080px] px-6 py-8 md:px-8" data-automations-monitor>
+    <div className={DASHBOARD_PAGE_CLASS} data-automations-monitor>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <button type="button" aria-label="Back to Automations" onClick={() => setQuery(null)} className="rounded-lg p-2 text-gray-400 hover:bg-gray-50 hover:text-gray-800"><ArrowLeft className="h-4 w-4" /></button>
+          <button type="button" aria-label="Back to Automations" onClick={() => setQuery(null)} className="rounded-lg p-2 text-[var(--dls-text-secondary)] hover:bg-gray-50 hover:text-gray-800"><ArrowLeft className="h-4 w-4" /></button>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-[20px] font-semibold text-gray-950">{detail.automation.name}</h1>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone(detail.automation.state)}`}>{detail.automation.state.replace("_", " ")}</span>
+              <h1 className="text-[20px] font-semibold text-[var(--dls-text-primary)]">{detail.automation.name}</h1>
+              <AutomationStatus status={detail.automation.state} />
             </div>
-            <p className="mt-1 text-[12px] text-gray-400">Revision {detail.revision.version} · {placementLabel(detail.revision.executionTarget)} · {formatAutomationSchedule(detail.revision.schedule)}</p>
+            <p className="mt-1 text-[12px] text-[var(--dls-text-secondary)]">Revision {detail.revision.version} · {placementLabel(detail.revision.executionTarget)} · {formatAutomationSchedule(detail.revision.schedule)}</p>
           </div>
         </div>
         <ManageLink item={detail} openworkWebUrl={runtimeConfig.openworkWebUrl} />
@@ -156,49 +160,49 @@ export function AutomationsScreen() {
       {detail.automation.needsAttentionReason ? <div className="mt-5 rounded-xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[13px] text-[var(--dls-text-primary)]">{detail.automation.needsAttentionReason.message}</div> : null}
       <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(20rem,0.9fr)]">
         <div className="space-y-5">
-          <section className="rounded-2xl border border-gray-100 bg-white p-5">
-            <h2 className="text-[14px] font-semibold text-gray-900">{action?.kind === "saved_script" ? "Workflow" : "Instructions"}</h2>
+          <section className={`${AUTOMATION_CARD_CLASS} p-5`}>
+            <h2 className={CARD_TITLE_CLASS}>{action?.kind === "saved_script" ? "Workflow" : "Instructions"}</h2>
             {action?.kind === "saved_script" ? (
               <div className="mt-3 space-y-3 text-[12px]">
-                <div><p className="text-gray-400">Exact Workflow version</p><p className="break-all font-mono text-gray-700">{action.script.configObjectVersionId}</p></div>
-                <div><p className="text-gray-400">Input</p><pre className="mt-1 overflow-auto whitespace-pre-wrap rounded-xl bg-gray-950 p-3 font-mono text-[11px] text-gray-100">{JSON.stringify(action.input ?? {}, null, 2)}</pre></div>
+                <div><p className="text-[var(--dls-text-secondary)]">Exact Workflow version</p><p className="break-all font-mono text-[var(--dls-text-primary)]">{action.script.configObjectVersionId}</p></div>
+                <div><p className="text-[var(--dls-text-secondary)]">Input</p><pre className="mt-1 overflow-auto whitespace-pre-wrap rounded-xl bg-gray-950 p-3 font-mono text-[11px] text-gray-100">{JSON.stringify(action.input ?? {}, null, 2)}</pre></div>
               </div>
-            ) : <p className="mt-3 whitespace-pre-wrap text-[13px] text-gray-700">{detail.revision.instructions}</p>}
+            ) : <p className="mt-3 whitespace-pre-wrap text-[13px] text-[var(--dls-text-primary)]">{detail.revision.instructions}</p>}
           </section>
           {latestSnapshot.data ? (
-            <section className="rounded-2xl border border-gray-100 bg-white p-5">
-              <h2 className="text-[14px] font-semibold text-gray-900">Latest validated result</h2>
-              <p className="mt-1 text-[12px] text-gray-400">The Workflow's last successful Artifact remains readable after later failures.</p>
+            <section className={`${AUTOMATION_CARD_CLASS} p-5`}>
+              <h2 className={CARD_TITLE_CLASS}>Latest validated result</h2>
+              <p className="mt-1 text-[12px] text-[var(--dls-text-secondary)]">The Workflow's last successful Artifact remains readable after later failures.</p>
               <div className="mt-4"><WorkflowArtifactResult snapshot={latestSnapshot.data} lastSuccessful /></div>
             </section>
           ) : null}
-          <section className="rounded-2xl border border-gray-100 bg-white p-5">
-            <h2 className="flex items-center gap-2 text-[14px] font-semibold text-gray-900"><CalendarClock className="h-4 w-4" />Run history</h2>
-            <div className="mt-3 space-y-2">
-              {runs.length === 0 ? <p className="text-[13px] text-gray-400">No runs yet.</p> : runs.map((run) => (
-                <button key={run.id} type="button" onClick={() => setQuery(detail.automation.id, run.id)} className="flex w-full items-center justify-between rounded-xl border border-gray-100 p-3 text-left hover:bg-gray-50">
+          <section className={`${AUTOMATION_CARD_CLASS} p-5`}>
+            <h2 className={`flex items-center gap-2 ${CARD_TITLE_CLASS}`}><CalendarClock className="h-4 w-4" />Run history</h2>
+            <div className="mt-3 border-t border-[var(--den-list-line)]">
+              {runs.length === 0 ? <p className="text-[13px] text-[var(--dls-text-secondary)]">No runs yet.</p> : runs.map((run) => (
+                <button key={run.id} type="button" onClick={() => setQuery(detail.automation.id, run.id)} className="flex min-h-12 w-full items-center justify-between border-b border-[var(--den-list-line)] py-1.5 text-left hover:bg-[var(--dls-hover)]">
                   <span>
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone(run.status)}`}>{run.status}</span>
-                    <span className="ml-2 text-[11px] text-gray-400">{run.trigger}</span>
-                    <span className="mt-1 block text-[11px] text-gray-400">{new Date(run.startedAt ?? run.createdAt).toLocaleString()}</span>
+                    <AutomationStatus status={run.status} />
+                    <span className="ml-2 text-[11px] text-[var(--dls-text-secondary)]">{run.trigger}</span>
+                    <span className="mt-1 block text-[11px] text-[var(--dls-text-secondary)]">{new Date(run.startedAt ?? run.createdAt).toLocaleString()}</span>
                   </span>
-                  <span className="flex items-center gap-1 text-[11px] text-gray-400"><PlacementIcon executionTarget={run.executionTarget} />{placementLabel(run.executionTarget)}</span>
+                  <span className="flex items-center gap-1 text-[11px] text-[var(--dls-text-secondary)]"><PlacementIcon executionTarget={run.executionTarget} />{placementLabel(run.executionTarget)}</span>
                 </button>
               ))}
             </div>
           </section>
         </div>
-        <section className="h-fit rounded-2xl border border-gray-100 bg-white p-5">
+        <section className={`${AUTOMATION_CARD_CLASS} h-fit p-5`}>
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-[14px] font-semibold text-gray-900">Run receipt</h2>
+            <h2 className={CARD_TITLE_CLASS}>Run receipt</h2>
             {activeRun ? <DenButton variant="destructive" size="sm" loading={cancelRun.isPending} onClick={() => void cancelRun.mutateAsync(activeRun.id)}><Square className="h-3 w-3" />Cancel run</DenButton> : null}
           </div>
-          {!runId ? <p className="mt-8 text-center text-[13px] text-gray-400">Select a run to inspect its durable receipt.</p> : runQuery.isLoading ? <p className="mt-4 text-[13px] text-gray-400">Loading receipt…</p> : runQuery.data ? (
+          {!runId ? <p className="mt-8 text-center text-[13px] text-[var(--dls-text-secondary)]">Select a run to inspect its durable receipt.</p> : runQuery.isLoading ? <p className="mt-4 text-[13px] text-[var(--dls-text-secondary)]">Loading receipt…</p> : runQuery.data ? (
             <div className="mt-4 space-y-4">
               {cancelRun.error ? <div className="rounded-xl bg-red-50 p-3 text-[12px] text-red-600">{cancelRun.error.message}</div> : null}
               {runQuery.data.run.executionThread?.nativeThreadId ? (
                 <div className="rounded-xl bg-gray-50 p-3 text-[11px] text-gray-500">
-                  <p className="font-medium text-gray-700">Native OpenWork Cloud thread</p>
+                  <p className="font-medium text-[var(--dls-text-primary)]">Native OpenWork Cloud thread</p>
                   <p className="mt-1 break-all font-mono">{runQuery.data.run.executionThread.nativeThreadId}</p>
                   {runQuery.data.run.executionThread.workspaceId ? <p className="mt-1 break-all font-mono">Workspace {runQuery.data.run.executionThread.workspaceId}</p> : null}
                 </div>
@@ -209,14 +213,14 @@ export function AutomationsScreen() {
                 : runQuery.data.run.validatedResult !== undefined
                   ? <pre className="overflow-auto whitespace-pre-wrap rounded-xl bg-gray-950 p-3 font-mono text-[11px] text-gray-100">{JSON.stringify(runQuery.data.run.validatedResult, null, 2)}</pre>
                   : runQuery.data.run.resultSummary
-                    ? <p className="whitespace-pre-wrap text-[13px] leading-6 text-gray-700">{runQuery.data.run.resultSummary}</p>
-                    : <p className="text-[13px] text-gray-400">This run has no result yet.</p>}
-              <p className="text-[11px] text-gray-400">Usage: {runQuery.data.run.usage.inputTokens ?? "—"} input · {runQuery.data.run.usage.outputTokens ?? "—"} output · {runQuery.data.run.usage.costMicros === null ? "cost unavailable" : `$${(runQuery.data.run.usage.costMicros / 1_000_000).toFixed(4)}`}</p>
+                    ? <p className="whitespace-pre-wrap text-[13px] leading-6 text-[var(--dls-text-primary)]">{runQuery.data.run.resultSummary}</p>
+                    : <p className="text-[13px] text-[var(--dls-text-secondary)]">This run has no result yet.</p>}
+              <p className="text-[11px] text-[var(--dls-text-secondary)]">Usage: {runQuery.data.run.usage.inputTokens ?? "—"} input · {runQuery.data.run.usage.outputTokens ?? "—"} output · {runQuery.data.run.usage.costMicros === null ? "cost unavailable" : `$${(runQuery.data.run.usage.costMicros / 1_000_000).toFixed(4)}`}</p>
               {runQuery.data.events.length ? (
                 <ol className="space-y-2 border-l border-gray-200 pl-3">
                   {runQuery.data.events.map((event) => (
                     <li key={event.id} className="text-[11px]">
-                      <div className="flex justify-between gap-2"><span className="font-medium text-gray-700">{event.type.replaceAll("_", " ")}</span><time className="text-gray-400">{new Date(event.createdAt).toLocaleTimeString()}</time></div>
+                      <div className="flex justify-between gap-2"><span className="font-medium text-[var(--dls-text-primary)]">{event.type.replaceAll("_", " ")}</span><time className="text-[var(--dls-text-secondary)]">{new Date(event.createdAt).toLocaleTimeString()}</time></div>
                       <pre className="mt-1 overflow-auto whitespace-pre-wrap text-gray-500">{JSON.stringify(event.payload, null, 2)}</pre>
                     </li>
                   ))}

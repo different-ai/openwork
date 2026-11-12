@@ -2,17 +2,20 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useDeferredValue, useState } from "react";
-import { ChevronRight, Gauge, Globe, LockKeyhole, User, Users } from "lucide-react";
+import { useDeferredValue, useState, type ReactNode } from "react";
+import { ChevronRight, Gauge, Globe, LockKeyhole, User, Users, type LucideIcon } from "lucide-react";
 import type { GatewayUsageLimitPolicy, GatewayUsageStatus } from "@openwork/types/den/gateway-usage-limits";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
+import { AUTOMATION_CARD_CLASS, CARD_TITLE_CLASS, SECTION_TITLE_CLASS } from "../../_components/ui/dashboard-styles";
 import { DenCombobox } from "../../_components/ui/combobox";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenTable } from "../../_components/ui/table";
 import { getAiGatewayLimitRoute, getAiGatewayLimitsRoute, getAiGatewayPersonRoute, getNewAiGatewayLimitRoute, type DenOrgMember, type DenOrgTeam } from "../../_lib/den-org";
 import { FeatureIntroGate } from "../_features/feature-intros";
+import { RowLane, RowLaneLabel, RowList, RowListHeader, RowTile } from "../_features/computers/computer-rows";
+import { GATEWAY_LANE, GatewayRow } from "./gateway-rows";
 import { useGatewayAccessProviders } from "./gateway-subject-access-data";
 import { describeWho } from "./gateway-limit-editor-screen";
 import { providerLimitLabel } from "./provider-limit-scope";
@@ -201,10 +204,14 @@ function targetKind(policy: GatewayUsageLimitPolicy): string {
   return [teams ? `${teams} ${teams === 1 ? "team" : "teams"}` : "", people ? `${people} ${people === 1 ? "person" : "people"}` : ""].filter(Boolean).join(", ");
 }
 
-function LimitIcon({ policy }: { policy: GatewayUsageLimitPolicy }) {
-  const Icon = policy.assignments.some((assignment) => assignment.organization) ? Globe
+function limitIcon(policy: GatewayUsageLimitPolicy): LucideIcon {
+  return policy.assignments.some((assignment) => assignment.organization) ? Globe
     : policy.assignments.every((assignment) => assignment.memberId) && policy.assignments.length > 0 ? User : Users;
-  return <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500"><Icon className="h-4 w-4" aria-hidden="true" /></span>;
+}
+
+function LimitIcon({ policy }: { policy: GatewayUsageLimitPolicy }) {
+  const Icon = limitIcon(policy);
+  return <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--dls-hover)] text-[color:var(--dls-text-secondary)]"><Icon className="h-4 w-4" aria-hidden="true" /></span>;
 }
 
 function DeletedLimitNote({ orgId, orgSlug, policy }: { orgId: string; orgSlug: OrgSlug; policy: GatewayUsageLimitPolicy }) {
@@ -212,8 +219,8 @@ function DeletedLimitNote({ orgId, orgSlug, policy }: { orgId: string; orgSlug: 
   const mutation = useGatewayLimitsMutation(orgId);
   if (!policy.archivedAt) return null;
   return (
-    <div role="status" className="flex flex-wrap items-center gap-2 text-[13px] text-gray-700" data-testid="gateway-limit-deleted">
-      <span className="h-1.5 w-1.5 rounded-full bg-gray-400" aria-hidden="true" />
+    <div role="status" className="flex flex-wrap items-center gap-2 text-[13px] text-[color:var(--dls-text-primary)]" data-testid="gateway-limit-deleted">
+      <span className="h-1.5 w-1.5 rounded-full bg-[var(--dls-text-secondary)]" aria-hidden="true" />
       <span>Removed {policy.name}. It no longer applies to anyone.</span>
       <DenButton variant="ghost" size="sm" className="h-auto px-1 py-0 text-[13px] underline underline-offset-4" loading={mutation.isPending}
         data-testid="gateway-limit-undo"
@@ -229,41 +236,79 @@ function PersonLookup({ orgId, orgSlug }: { orgId: string; orgSlug: OrgSlug }) {
   const router = useRouter();
   return (
     <section aria-label="Check someone's usage" className="flex max-w-md flex-col gap-2">
-      <h3 className="text-[13px] font-medium text-gray-900">Check someone&apos;s usage</h3>
+      <h3 className={SECTION_TITLE_CLASS}>Check someone&apos;s usage</h3>
       <MemberSearch orgId={orgId} label="Find a person" onSelect={(member) => router.push(getAiGatewayPersonRoute(orgSlug, member.id))} />
     </section>
   );
 }
 
 /** One spend limit: who it applies to, its provider, amounts, what happens at the limit, and Edit. */
-export function GatewayLimitRow({ policy, orgSlug, teams, members, providers, canEdit = true }: {
+export function GatewayLimitRow({ policy, orgSlug, teams, members, providers, canEdit = true, variant = "item" }: {
   policy: GatewayUsageLimitPolicy;
   orgSlug: OrgSlug;
   providers: { id: string; name: string }[] | undefined;
   canEdit?: boolean;
+  /** "row": a flat Computers row inside `GatewayLimitRows`. "item": an `li` for a `ul` panel. */
+  variant?: "item" | "row";
 } & Directory) {
   const who = policyWho(policy, teams, members);
   // Its provider was deleted: the limit caps nothing until it points at a provider again.
   const providerRemoved = policy.providerStatus === "removed";
+  const secondLine = !who ? "Not applied to anyone yet" : who === policy.name ? targetKind(policy) : who;
+  const provider = providerRemoved ? <>
+    <DenBadge tone="warning" size="sm">Provider removed</DenBadge>
+    <span className="text-[12px] text-[color:var(--dls-text-secondary)]">Not applied</span>
+  </> : <span className={variant === "row" ? "truncate" : "text-[12px] text-gray-700"}>{providerLimitLabel(policy.providerId, providers)}</span>;
+  const edit = canEdit ? providerRemoved
+    ? <Link href={getAiGatewayLimitRoute(orgSlug, policy.id)} aria-label={`Choose a provider for ${policy.name}`} data-testid="gateway-limit-choose-provider" className={buttonVariants({ variant: "secondary", size: "sm" })}>Choose provider</Link>
+    : <Link href={getAiGatewayLimitRoute(orgSlug, policy.id)} aria-label={`Edit ${policy.name}`} data-testid="gateway-limit-edit" className={buttonVariants({ variant: "secondary", size: "sm" })}>Edit</Link> : null;
+  if (variant === "row") {
+    return (
+      <GatewayRow
+        rowTestId="gateway-limit-row"
+        rowData={{ "data-policy-id": policy.id, "data-provider-status": policy.providerStatus ?? undefined }}
+        lead={<RowTile icon={limitIcon(policy)} />}
+        name={policy.name}
+        secondLine={secondLine}
+        lanes={<>
+          <RowLane lane={`${GATEWAY_LANE.limitProvider} items-center`}>
+            <span className="flex min-w-0 flex-col items-start gap-0.5" data-testid="gateway-limit-provider-label">{provider}</span>
+          </RowLane>
+          <RowLane lane={`${GATEWAY_LANE.limitAmount} truncate tabular-nums`}>{describeLimitAmounts(policy)} each</RowLane>
+          <RowLane lane={`${GATEWAY_LANE.limitAction} text-[color:var(--dls-text-secondary)]`}>{policy.hardLimit ? "Pauses them" : "Only warns"}</RowLane>
+          {canEdit ? <RowLane lane={GATEWAY_LANE.limitEdit}>{edit}</RowLane> : null}
+        </>}
+      />
+    );
+  }
   return (
     <li className="flex items-center gap-3 px-4 py-3" data-testid="gateway-limit-row" data-policy-id={policy.id} data-provider-status={policy.providerStatus ?? undefined}>
       <LimitIcon policy={policy} />
       <span className="flex min-w-0 flex-[1.2] flex-col">
         <span className="truncate text-[13px] font-medium text-gray-900">{policy.name}</span>
-        <span className="truncate text-[12px] text-gray-500">{!who ? "Not applied to anyone yet" : who === policy.name ? targetKind(policy) : who}</span>
+        <span className="truncate text-[12px] text-gray-500">{secondLine}</span>
       </span>
       <span className="flex w-36 shrink-0 flex-col items-start gap-0.5" data-testid="gateway-limit-provider-label">
-        {providerRemoved ? <>
-          <DenBadge tone="warning" size="sm">Provider removed</DenBadge>
-          <span className="text-[12px] text-gray-500">Not applied</span>
-        </> : <span className="text-[12px] text-gray-700">{providerLimitLabel(policy.providerId, providers)}</span>}
+        {provider}
       </span>
       <span className="min-w-0 flex-1 text-[13px] tabular-nums text-gray-700">{describeLimitAmounts(policy)} each</span>
       <span className="w-28 shrink-0 text-[12px] text-gray-600">{policy.hardLimit ? "Pauses them" : "Only warns"}</span>
-      {canEdit ? providerRemoved
-        ? <Link href={getAiGatewayLimitRoute(orgSlug, policy.id)} aria-label={`Choose a provider for ${policy.name}`} data-testid="gateway-limit-choose-provider" className={buttonVariants({ variant: "secondary", size: "sm" })}>Choose provider</Link>
-        : <Link href={getAiGatewayLimitRoute(orgSlug, policy.id)} aria-label={`Edit ${policy.name}`} data-testid="gateway-limit-edit" className={buttonVariants({ variant: "secondary", size: "sm" })}>Edit</Link> : null}
+      {edit}
     </li>
+  );
+}
+
+/** Spend limits as flat Computers rows, with column labels. */
+export function GatewayLimitRows({ label, canEdit = true, children }: { label: string; canEdit?: boolean; children: ReactNode }) {
+  return (
+    <RowList label={label} header={<RowListHeader lead="Limit">
+      <RowLaneLabel lane={GATEWAY_LANE.limitProvider}>Provider</RowLaneLabel>
+      <RowLaneLabel lane={GATEWAY_LANE.limitAmount}>Amount</RowLaneLabel>
+      <RowLaneLabel lane={GATEWAY_LANE.limitAction}>At the limit</RowLaneLabel>
+      {canEdit ? <span role="columnheader" className={`shrink-0 ${GATEWAY_LANE.limitEdit}`}><span className="sr-only">Edit</span></span> : null}
+    </RowListHeader>}>
+      {children}
+    </RowList>
   );
 }
 
@@ -286,28 +331,28 @@ export function GatewayUsageLimitsSection({ orgId, orgSlug, teams, members }: { 
       {!policies.isError && policies.data && active.length === 0 ? (
         // With feature intros on, the limits intro replaces this empty state (DESIGN.md I1).
         <FeatureIntroGate introKey="ai-gateway.limits" facts={{ policies: 0 }}>
-          <DenCard className="flex flex-col items-center gap-4 px-8 py-16 text-center" data-testid="gateway-limits-empty">
-            <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-gray-50 text-gray-600"><Gauge className="h-[18px] w-[18px]" aria-hidden="true" /></span>
+          <div className={`${AUTOMATION_CARD_CLASS} flex flex-col items-center gap-4 p-4 py-16 text-center`} data-testid="gateway-limits-empty">
+            <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[var(--dls-hover)] text-[color:var(--dls-text-secondary)]"><Gauge size={18} strokeWidth={1.5} aria-hidden="true" /></span>
             <span className="flex flex-col gap-1">
-              <h2 id="gateway-usage-limits-heading" className="text-[15px] font-medium text-gray-950">No spend limits yet</h2>
-              <span className="text-[13px] text-gray-500">Set a daily, weekly or monthly amount for everyone, a team or one person.</span>
+              <h2 id="gateway-usage-limits-heading" className={CARD_TITLE_CLASS}>No spend limits yet</h2>
+              <span className="text-[13px] text-[color:var(--dls-text-secondary)]">Set a daily, weekly or monthly amount for everyone, a team or one person.</span>
             </span>
             <Link href={getNewAiGatewayLimitRoute(orgSlug)} className={buttonVariants({ variant: "primary", size: "sm" })} data-testid="gateway-limit-new">New limit</Link>
-            <span className="text-[12px] text-gray-500">OpenWork Models has its own included usage.</span>
-          </DenCard>
+            <span className="text-[12px] text-[color:var(--dls-text-secondary)]">OpenWork Models has its own included usage.</span>
+          </div>
         </FeatureIntroGate>
       ) : null}
       {!policies.isError && active.length > 0 ? (
         <FeatureIntroGate introKey="ai-gateway.limits" facts={{ policies: active.length }}>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 id="gateway-usage-limits-heading" className="text-[16px] font-medium tracking-[-0.01em] text-gray-950">Limits</h2>
+            <h2 id="gateway-usage-limits-heading" className={SECTION_TITLE_CLASS}>Limits</h2>
             <Link href={getNewAiGatewayLimitRoute(orgSlug)} className={buttonVariants({ variant: "primary", size: "sm" })} data-testid="gateway-limit-new">New limit</Link>
           </div>
-          <ul className="divide-y divide-gray-100 overflow-hidden rounded-[12px] border border-gray-100 bg-white" aria-label="Spend limits">
+          <GatewayLimitRows label="Spend limits">
             {active.map((policy) => (
-              <GatewayLimitRow key={policy.id} policy={policy} orgSlug={orgSlug} teams={teams} members={members} providers={providers.data} />
+              <GatewayLimitRow key={policy.id} variant="row" policy={policy} orgSlug={orgSlug} teams={teams} members={members} providers={providers.data} />
             ))}
-          </ul>
+          </GatewayLimitRows>
           <PersonLookup orgId={orgId} orgSlug={orgSlug} />
         </FeatureIntroGate>
       ) : null}

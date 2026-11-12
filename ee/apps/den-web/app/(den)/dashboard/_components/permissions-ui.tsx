@@ -1,5 +1,7 @@
 "use client";
 
+import { DASHBOARD_PAGE_CLASS } from "../../_components/ui/dashboard-styles";
+import { BackLink } from "./item-header";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { ArrowLeft, LockKeyhole } from "lucide-react";
@@ -51,15 +53,15 @@ export function PermissionsPage({ title, back, action, caption, children, testId
   testId?: string;
 }) {
   return (
-    <section className="mx-auto flex w-full max-w-[860px] flex-col gap-6 px-4 py-6 text-[13px] sm:px-6 md:px-8" data-testid={testId}>
-      {back ? (
-        <Link href={back.href} className="inline-flex w-fit items-center gap-1.5 rounded text-[13px] text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400">
-          <ArrowLeft className="size-4" aria-hidden="true" strokeWidth={1.5} />
-          {back.label}
-        </Link>
-      ) : null}
-      <DenPageHeader size="compact" title={title} action={action} caption={caption ? <span className="text-gray-500">{caption}</span> : undefined} />
-      {children}
+    // The same column, way back and heading as a team's page, so moving between a team and its role does not shift the page.
+    <section className={`${DASHBOARD_PAGE_CLASS} text-[13px]`} data-testid={testId}>
+      <div className="mx-auto flex w-full max-w-[860px] flex-col gap-6">
+        <div className="flex flex-col gap-4">
+          {back ? <BackLink href={back.href} label={back.label} /> : null}
+          <DenPageHeader size="compact" title={title} action={action} caption={caption ? <span className="text-[var(--dls-text-secondary)]">{caption}</span> : undefined} />
+        </div>
+        {children}
+      </div>
     </section>
   );
 }

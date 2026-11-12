@@ -14,11 +14,13 @@ import { visibleCountFact } from "../_features/feature-intros/model";
 import { managedAccessStatus } from "./access-summary";
 import { useDenToast } from "./den-toast";
 import { ItemPage } from "./item-header";
-import { FilterInput, ItemMenu, ItemRow, removeEntry, ItemPanel, ItemRowsSkeleton, LinkButton } from "./item-list";
+import { FilterInput, ItemMenu, removeEntry, ItemPanel, ItemRowsSkeleton, LinkButton } from "./item-list";
+import { LibraryCompactRow } from "./library-compact";
 import { PluginLogo } from "./item-logo";
 import { draftFromPluginGrants } from "./item-sharing";
 import { usePluginAccess } from "./plugin-access-data";
 import { pluginsSetUpById } from "./plugins-intro-facts";
+import { isDirectoryScrollOverflow, pluginDirectoryRange, shouldAutoLoadPluginPage } from "./plugin-directory-window";
 import { type DenPluginSummary, pluginDetailQueryOptions, useArchivePlugin, usePluginDirectory } from "./plugin-data";
 
 function PluginsEmpty({ orgSlug }: { orgSlug: string | null }) {
@@ -27,7 +29,7 @@ function PluginsEmpty({ orgSlug }: { orgSlug: string | null }) {
       <div className="flex flex-col items-center gap-3 px-5 py-8 text-center" data-testid="plugins-empty">
         <h2 className="text-sm font-medium text-[var(--dls-text-primary)]">No plugins yet</h2>
         <p className="text-[13px] text-[var(--dls-text-secondary)]">Create a plugin to share skills with your team.</p>
-        <DenButton icon={Plus} href={getNewPluginRoute(orgSlug)}>Create a plugin</DenButton>
+        <DenButton size="sm" variant="secondary" icon={Plus} href={getNewPluginRoute(orgSlug)}>Create a plugin</DenButton>
         <p className="text-xs text-[var(--dls-text-secondary)]">Only you can use it until you choose who gets access.</p>
       </div>
     </ItemPanel>
@@ -59,11 +61,13 @@ function PluginRow({ plugin }: { plugin: DenPluginSummary }) {
 
   return (
     <div data-plugin-row={plugin.name} data-plugin-access={sharing} onPointerEnter={prefetch} onFocus={prefetch}>
-      <ItemRow compact href={href} logo={<PluginLogo name={plugin.name} />} title={plugin.name} description={plugin.description || "Plugin"} status={status ? status === "Only you" ? "Private" : "Shared" : "Unknown"} action={<ItemMenu label={`More for ${plugin.name}`} entries={[
-        { label: "Open", href },
-        ...(status === "Only you" ? [{ label: "Share", href }] : []),
-        removeEntry(plugin.name, remove),
-      ]} />} />
+      <LibraryCompactRow href={href} kind="plugin" testName={plugin.name} logo={<PluginLogo name={plugin.name} />} name={plugin.name} description={plugin.description || "Plugin"}
+        source={status ? status === "Only you" ? "Private" : "Shared" : "Unknown"}
+        action={<ItemMenu label={`More for ${plugin.name}`} entries={[
+          { label: "Open", href },
+          ...(status === "Only you" ? [{ label: "Share", href }] : []),
+          removeEntry(plugin.name, remove),
+        ]} />} />
     </div>
   );
 }
@@ -109,35 +113,80 @@ function DirectoryFilter({ label, title, value, options, counts, onChange }: {
   );
 }
 
-export function pluginDirectoryRange(scrollTop: number, viewportHeight: number, rowHeight: number, count: number) {
-  return {
-    start: Math.max(0, Math.floor(scrollTop / rowHeight) - 4),
-    end: Math.min(count, Math.ceil((scrollTop + viewportHeight) / rowHeight) + 4),
-  };
+/** The nearest ancestor that scrolls up and down (the dashboard's main column), or null for the window. */
+function scrollParent(element: HTMLElement): HTMLElement | null {
+  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+    const overflow = getComputedStyle(parent).overflowY;
+    if (isDirectoryScrollOverflow(overflow)) return parent;
+  }
+  return null;
 }
 
 function DirectoryResults({ plugins, filtered }: { plugins: ReturnType<typeof usePluginDirectory>; filtered: boolean }) {
   const { orgSlug } = useOrgDashboard();
-  const [scrollTop, setScrollTop] = useState(0);
   const rows = plugins.data?.pages.flatMap((page) => page.items) ?? [];
-  const rowHeight = 64;
-  const viewportHeight = 544;
-  const { start, end } = pluginDirectoryRange(scrollTop, viewportHeight, rowHeight, rows.length);
+  // A row is as tall as every other list's (48px and its hairline).
+  const rowHeight = 49;
+  // The page scrolls, as on every other list; only the rows near the window are drawn.
+  const listRef = useRef<HTMLDivElement>(null);
+  const resetScroll = useRef(true);
+  const loadingPage = useRef(false);
+  const [view, setView] = useState({ top: 0, height: 900 });
+  const listed = rows.length > 0;
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = plugins;
+  useEffect(() => {
+    const list = listRef.current;
+    if (!listed || !list) return;
+    const scroller = scrollParent(list);
+    // DirectoryResults is keyed by all filters. Reset once per filter, not when
+    // another page arrives, even when the next result has the same row count.
+    if (resetScroll.current) {
+      resetScroll.current = false;
+      const top = scroller ? scroller.getBoundingClientRect().top + scroller.clientTop : 0;
+      const offset = list.getBoundingClientRect().top - top;
+      if (offset < 0) {
+        if (scroller) scroller.scrollTop += offset;
+        else window.scrollBy(0, offset);
+      }
+    }
+    const measure = () => {
+      const box = list.getBoundingClientRect();
+      const top = scroller ? scroller.getBoundingClientRect().top + scroller.clientTop : 0;
+      const height = scroller ? scroller.clientHeight : window.innerHeight;
+      const nextTop = Math.max(0, top - box.top);
+      setView((current) => current.top === nextTop && current.height === height ? current : { top: nextTop, height });
+      // A failed page waits for the explicit retry button. The ref also guards
+      // multiple scroll/resize events before Query publishes its fetching state.
+      if (!loadingPage.current && shouldAutoLoadPluginPage({ listBottom: box.bottom, viewportTop: top, viewportHeight: height, hasNextPage, isFetchingNextPage, isFetchNextPageError })) {
+        loadingPage.current = true;
+        void fetchNextPage().catch(() => { /* Query displays the retry state. */ }).finally(() => { loadingPage.current = false; });
+      }
+    };
+    measure();
+    const target = scroller ?? window;
+    target.addEventListener("scroll", measure, { passive: true });
+    window.addEventListener("resize", measure);
+    const resize = new ResizeObserver(measure);
+    resize.observe(list);
+    if (scroller) resize.observe(scroller);
+    return () => {
+      target.removeEventListener("scroll", measure);
+      window.removeEventListener("resize", measure);
+      resize.disconnect();
+    };
+  }, [listed, rows.length, hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+  const { start, end } = pluginDirectoryRange(view.top, view.height, rowHeight, rows.length);
 
   if (plugins.isPending) return <ItemPanel><ItemRowsSkeleton label="Loading plugins" rows={6} /></ItemPanel>;
-  if (plugins.isError && rows.length === 0) return <div role="alert" className="rounded-xl border border-gray-200 bg-white p-5 text-[13px] text-gray-700">The list did not load. <button type="button" onClick={() => void plugins.refetch()} className="font-medium underline">Try again</button></div>;
-  if (rows.length === 0) return filtered ? <div className="rounded-xl border border-gray-200 bg-white p-6 text-[13px] text-gray-600">No plugins match. Try another name, team, or owner.</div> : <PluginsEmpty orgSlug={orgSlug} />;
+  if (plugins.isError && rows.length === 0) return <div role="alert" className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">The list did not load. <button type="button" onClick={() => void plugins.refetch()} className="font-medium underline">Try again</button></div>;
+  if (rows.length === 0) return filtered ? <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">No plugins match. Try another name, team, or owner.</p> : <PluginsEmpty orgSlug={orgSlug} />;
 
   return (
-    <ItemPanel className="overflow-hidden"><div className="min-w-0">
-      <div data-testid="plugin-directory-scroll" className="overflow-y-auto" style={{ height: Math.min(viewportHeight, rows.length * rowHeight + (plugins.hasNextPage ? 48 : 0)) }} onScroll={(event) => {
-        const target = event.currentTarget;
-        setScrollTop(target.scrollTop);
-        if (target.scrollHeight - target.scrollTop - target.clientHeight < 300 && plugins.hasNextPage && !plugins.isFetchingNextPage) void plugins.fetchNextPage();
-      }}>
+    <ItemPanel className="overflow-hidden [&>*]:border-b-0"><div className="min-w-0">
+      <div ref={listRef} data-testid="plugin-directory-scroll">
         <div className="relative" style={{ height: rows.length * rowHeight }}>
           {rows.slice(start, end).map((plugin, index) => (
-            <div key={plugin.id} className="absolute inset-x-0 overflow-hidden border-b border-gray-100" style={{ top: (start + index) * rowHeight, height: rowHeight }}>
+            <div key={plugin.id} className="absolute inset-x-0 overflow-hidden" style={{ top: (start + index) * rowHeight, height: rowHeight }}>
               <PluginRow plugin={plugin} />
             </div>
           ))}
@@ -145,7 +194,7 @@ function DirectoryResults({ plugins, filtered }: { plugins: ReturnType<typeof us
         {plugins.hasNextPage ? <button type="button" onClick={() => void plugins.fetchNextPage()} disabled={plugins.isFetchingNextPage} className="h-12 w-full text-[13px] text-gray-600 hover:bg-gray-50 disabled:opacity-50">{plugins.isFetchingNextPage ? "Loading more…" : "Load more plugins"}</button> : null}
       </div>
       </div>
-      {plugins.isFetchNextPageError ? <div role="alert" className="border-t border-gray-100 px-5 py-3 text-[13px] text-red-600">More plugins did not load. Use Load more to try again.</div> : null}
+      {plugins.isFetchNextPageError ? <div role="alert" className="py-3 text-[13px] text-[var(--ow-danger)]">More plugins did not load. Use Load more to try again.</div> : null}
     </ItemPanel>
   );
 }
@@ -194,7 +243,7 @@ export function AdminPluginsScreen() {
     plugins: visibleCountFact(Math.max(0, (firstPage.total ?? firstPage.items.length) - builtInCount), seesAllPlugins),
     setUpBy: setUpByMember ? setUpByMember.user.name || setUpByMember.user.email : null,
   };
-  const createAction = <LinkButton variant="primary" size="sm" href={getNewPluginRoute(orgSlug)}><Plus className="h-4 w-4" aria-hidden />Create a plugin</LinkButton>;
+  const createAction = <LinkButton variant="secondary" size="sm" href={getNewPluginRoute(orgSlug)}><Plus className="h-4 w-4" aria-hidden />Create a plugin</LinkButton>;
 
   function setFilters(next: { name: string; teamId: string | null; memberId: string | null; ownerId?: string | null }) {
     if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -214,13 +263,13 @@ export function AdminPluginsScreen() {
   }, [search, q, teamId, memberId, ownerId, router, searchParams]);
 
   const page = (
-    <ItemPage testId="admin-plugins">
-      <DenPageHeader size="compact" title="Plugins" />
+    <ItemPage testId="admin-plugins" wide>
+      {/* The create action sits in the header, as on every other page. */}
+      <DenPageHeader size="compact" title="Plugins" action={empty ? undefined : createAction} />
       {!empty ? <div className="flex flex-wrap items-center gap-2" data-testid="plugin-directory-toolbar">
-        <FilterInput value={search} onChange={setSearch} className="w-[200px] max-w-full" />
+        <FilterInput value={search} onChange={setSearch} className="w-64 max-w-full" />
         <DirectoryFilter label="Team" title="Plugins available to a team" counts={firstPage?.teamCounts} value={teamId} options={orgContext?.teams ?? []} onChange={(id) => setFilters({ name: search.trim(), teamId: id, memberId: null, ownerId })} />
         <DirectoryFilter label="Owner" title="Plugins created by" counts={firstPage?.ownerCounts} value={ownerId} options={(orgContext?.members ?? []).map((member) => ({ id: member.id, name: member.user.name || member.user.email }))} onChange={(id) => setFilters({ name: search.trim(), teamId, memberId: null, ownerId: id })} />
-        <span className="sm:ml-auto">{createAction}</span>
       </div> : null}
       {search || teamId || memberId || ownerId ? <button type="button" onClick={() => { setSearch(""); setFilters({ name: "", teamId: null, memberId: null, ownerId: null }); }} className="-mt-2 inline-flex w-fit items-center gap-1 text-[12px] text-gray-600 hover:text-gray-900"><X className="h-3.5 w-3.5" aria-hidden />Clear filters</button> : null}
       {legacyMember ? <p className="text-[13px] text-gray-600">Available to {legacyMember.user.name || legacyMember.user.email}</p> : null}

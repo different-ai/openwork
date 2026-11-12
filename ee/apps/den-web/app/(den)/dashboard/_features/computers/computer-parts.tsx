@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, RefreshCw } from "lucide-react";
 import { absoluteTime, relativeTime, type DeviceTone } from "./computers-format";
 
 export const secondaryText = "text-[color:var(--dls-text-secondary)]";
@@ -56,4 +56,19 @@ export function CopyableId({ value, label }: { value: string; label: string }) {
     <code className="min-w-0 break-all font-mono text-[12px] text-[color:var(--dls-text-primary)]">{value}</code>
     <CopyButton value={value} label={label} />
   </>;
+}
+
+/** A person in a row's 32px lead lane: their initials. The name beside it carries the meaning. */
+export function PersonLead({ name }: { name: string }) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const letters = parts.length > 1 ? `${parts[0][0]}${parts[parts.length - 1][0]}` : (parts[0] ?? "?").slice(0, 2);
+  return <span aria-hidden="true" className={`flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--dls-hover)] text-[11px] font-semibold uppercase text-[color:var(--dls-text-primary)]`}>{letters}</span>;
+}
+
+/** Reads a page's data again: the one quiet icon button every page header uses. */
+export function RefreshButton({ refreshing, onRefresh, testId, label = "Refresh" }: { refreshing: boolean; onRefresh: () => void; testId?: string; label?: string }) {
+  return <button type="button" aria-label={label} title={label} aria-busy={refreshing || undefined} onClick={onRefresh} data-testid={testId}
+    className={`flex size-8 items-center justify-center rounded-lg ${secondaryText} transition-colors hover:bg-[var(--dls-hover)] hover:text-[color:var(--dls-text-primary)] ${focusRing}`}>
+    <RefreshCw size={16} strokeWidth={1.5} aria-hidden="true" className={refreshing ? "motion-safe:animate-spin" : ""} />
+  </button>;
 }

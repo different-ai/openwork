@@ -63,8 +63,8 @@ function ShareLayout({ back, logo, title, subtitle, draft, setDraft, savedDraft,
       </section>
       {error ? <p className="text-[13px] text-red-600">{error}</p> : null}
       <StepFooter note={shareConsequence(draft, orgContext, ownerId)}>
-        <LinkButton href={back.href}>Cancel</LinkButton>
-        <DenButton loading={saving} disabled={unchanged} onClick={onSave}>
+        <LinkButton size="sm" href={back.href}>Cancel</LinkButton>
+        <DenButton size="sm" loading={saving} disabled={unchanged} onClick={onSave}>
           {count > 0 ? `Share with ${peopleLabel(count)}` : "Save"}
         </DenButton>
       </StepFooter>

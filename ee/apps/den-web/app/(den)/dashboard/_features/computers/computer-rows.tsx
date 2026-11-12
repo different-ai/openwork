@@ -1,6 +1,7 @@
 "use client";
 
 import type { MouseEvent, ReactNode } from "react";
+import Link from "next/link";
 import { ChevronRight, Cloud, Laptop, Server, Unplug, User, Users, type LucideIcon } from "lucide-react";
 import type { RemoteDeviceAccess, RemoteDeviceKind, RemoteDeviceProvider } from "@openwork/types/den/remote-devices";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
@@ -40,6 +41,18 @@ export const LANE = {
 } as const;
 
 const laneBase = "min-w-0 shrink-0 text-[13px] leading-5";
+
+/*
+ * The row's look, for the few lists that are not an ARIA table (My Library and
+ * Connectors group their rows under headings): they build their own markup
+ * and take these, so every list reads the same.
+ */
+/** A row: 48px (DESIGN.md S2), a hairline under it. */
+export const ROW_CLASS = `flex min-h-[49px] items-center gap-3 border-b ${hairline} py-1.5`;
+/** The row's name. */
+export const ROW_NAME_CLASS = "block max-w-full truncate text-left text-[13px] font-medium leading-5 text-[color:var(--dls-text-primary)]";
+/** The one muted line under the name. */
+export const ROW_SECOND_LINE_CLASS = `truncate text-[12px] leading-4 ${secondaryText}`;
 
 /** The list: a quiet row of column labels, then the rows. */
 export function RowList({ label, header, children, testId, busy }: {
@@ -103,9 +116,22 @@ export type RowToggle = {
  * One row. With `toggle` its name is the button that opens the detail under
  * it, and a click anywhere on the row that is not on a control does the same.
  */
-export function ListRow({ icon, name, secondLine, lanes, below, action, toggle, testId, rowTestId, children }: {
-  icon: LucideIcon;
-  name: string;
+export function ListRow({ icon, lead, name, href, scroll, stretch = true, linkLabel, badge, secondLine, lanes, below, action, toggle, testId, rowTestId, rowData, children }: {
+  /** What the row is, as a quiet icon in the 32px tile. */
+  icon?: LucideIcon;
+  /**
+   * Who or what the row is, in the same 32px lane: a person's initials, a
+   * service's logo. Rows that are all the same kind of thing use this, so the
+   * lane tells them apart instead of repeating one icon.
+   */
+  lead?: ReactNode;
+  name: ReactNode;
+  /** A resource page, instead of an inline disclosure. The whole row opens it unless `stretch` is false. */
+  href?: string;
+  scroll?: boolean;
+  stretch?: boolean;
+  linkLabel?: string;
+  badge?: ReactNode;
   secondLine?: ReactNode;
   lanes?: ReactNode;
   /** A line across the row, under it, for what a lane says on a wide list and has no room for on a narrow one. */
@@ -116,6 +142,8 @@ export function ListRow({ icon, name, secondLine, lanes, below, action, toggle, 
   /** On the name: the element a person, or a test, presses to open the row. */
   testId?: string;
   rowTestId?: string;
+  /** data-* attributes on the row. */
+  rowData?: Record<`data-${string}`, string | undefined>;
   /** The open detail, under the row. */
   children?: ReactNode;
 }) {
@@ -124,27 +152,35 @@ export function ListRow({ icon, name, secondLine, lanes, below, action, toggle, 
     const target = event.target;
     // Menus and dialogs are portaled: their clicks reach here through React, not through the row's own elements.
     if (!(target instanceof Element) || !event.currentTarget.contains(target)) return;
-    if (target.closest("button, a, input, textarea")) return;
+    if (target.closest("button, a, input, textarea, select, summary, [role=button], [role=checkbox], [role=switch], [contenteditable=true]")) return;
     // Someone selecting the name to copy it is not opening the row.
     if (window.getSelection()?.toString()) return;
     toggle.onToggle();
   }
-  const nameClass = "block max-w-full truncate text-left text-[13px] font-medium leading-5 text-[color:var(--dls-text-primary)]";
+  const nameClass = ROW_NAME_CLASS;
+  const title = typeof name === "string" ? name : undefined;
+  // Only controls rise above the stretched link: clicking plain lane text/whitespace still opens the row.
+  // Isolate each row so its overlay cannot intercept a neighboring row's controls.
+  const stretched = Boolean(href && stretch && !toggle);
   return <>
-    <div role="row" data-testid={rowTestId} data-open={toggle?.expanded || undefined} onClick={toggle ? rowClick : undefined}
-      className={`group flex min-h-[52px] flex-wrap items-center gap-x-3 gap-y-0.5 border-b ${hairline} py-2 ${toggle ? "cursor-pointer" : ""}`}>
+    <div role="row" data-testid={rowTestId} {...rowData} data-open={toggle?.expanded || undefined} onClick={toggle ? rowClick : undefined}
+      className={`group flex min-h-[49px] flex-wrap items-center gap-x-3 gap-y-0.5 border-b ${hairline} py-1.5 ${toggle ? "cursor-pointer" : ""} ${stretched ? "relative isolate [&_:is(button,input,select,textarea,summary,[role=button],[role=checkbox],[role=switch],[contenteditable=true],a:not([data-row-link]))]:relative [&_:is(button,input,select,textarea,summary,[role=button],[role=checkbox],[role=switch],[contenteditable=true],a:not([data-row-link]))]:z-[1]" : ""}`}>
       <div role="cell" className="flex min-w-0 flex-1 items-center gap-3">
-        <RowTile icon={icon} />
+        {lead ?? (icon ? <RowTile icon={icon} /> : null)}
         <div className="min-w-0 flex-1">
-          {toggle
-            ? <button type="button" aria-expanded={toggle.expanded} aria-controls={toggle.controls} onClick={toggle.onToggle} data-testid={testId} title={name}
-                className={`${nameClass} rounded-sm ${focusRing}`}>{name}</button>
-            : <span data-testid={testId} title={name} className={nameClass}>{name}</span>}
-          {secondLine ? <p className={`truncate text-[12px] leading-4 ${secondaryText}`}>{secondLine}</p> : null}
+          <div className="flex min-w-0 items-center gap-2">
+            {toggle
+              ? <button type="button" aria-expanded={toggle.expanded} aria-controls={toggle.controls} onClick={toggle.onToggle} data-testid={testId} title={title}
+                  className={`${nameClass} rounded-sm ${focusRing}`}>{name}</button>
+              : href ? <Link href={href} scroll={scroll} aria-label={linkLabel} data-row-link="" data-testid={testId} title={title} className={`${nameClass} rounded-sm hover:underline ${stretched ? "group-hover:underline after:absolute after:inset-0 after:z-0 after:content-['']" : ""} ${focusRing}`}>{name}</Link>
+                : <span data-testid={testId} title={title} className={nameClass}>{name}</span>}
+            {badge}
+          </div>
+          {secondLine ? <p className={ROW_SECOND_LINE_CLASS}>{secondLine}</p> : null}
         </div>
       </div>
       {lanes}
-      {action !== undefined ? <div role="cell" className="flex w-7 shrink-0 justify-end">{action}</div> : null}
+      {action !== undefined ? <div role="cell" className={`flex w-7 shrink-0 justify-end ${href ? "relative z-[1]" : ""}`}>{action}</div> : null}
       {/* On a narrow list the name alone opens the row; the chevron's lane goes to the name. */}
       {toggle ? <span aria-hidden="true" className={`hidden w-4 shrink-0 justify-end @md:flex ${secondaryText} transition-colors duration-150 group-hover:text-[color:var(--dls-text-primary)]`}>
         <ChevronRight size={16} strokeWidth={1.5} className={`transition-transform duration-150 motion-reduce:transition-none ${toggle.expanded ? "rotate-90" : ""}`} />
@@ -207,7 +243,7 @@ export function VersionLane({ lane, version }: { lane: string; version: string |
 /** Rows the size of the real ones while a list loads. */
 export function RowListSkeleton({ rows = 4 }: { rows?: number }) {
   return <div aria-hidden="true">
-    {Array.from({ length: rows }, (_, index) => <div key={index} className={`flex min-h-[52px] items-center gap-3 border-b ${hairline} py-2`}>
+    {Array.from({ length: rows }, (_, index) => <div key={index} className={`flex min-h-[49px] items-center gap-3 border-b ${hairline} py-1.5`}>
       <DenSkeleton className="size-8 shrink-0 rounded-lg" />
       <span className="flex min-w-0 flex-1 flex-col gap-1.5"><DenSkeleton className="h-3 w-40 max-w-full" /><DenSkeleton className="h-2.5 w-24" /></span>
       <DenSkeleton className="h-3 w-20 shrink-0" />

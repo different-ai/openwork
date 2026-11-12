@@ -1,6 +1,7 @@
 "use client";
 
 import type { InferenceUsageBucket } from "../../../_lib/inference-status";
+import { CARD_TITLE_CLASS, SECTION_TITLE_CLASS } from "../../../_components/ui/dashboard-styles";
 import { analyticsSurfaceClass } from "./analytics-layout";
 
 type InferenceWindowType = InferenceUsageBucket["windowType"];
@@ -38,19 +39,19 @@ export function UsageLimitsCard({ buckets }: { buckets: InferenceUsageBucket[] }
 
   return <section aria-label="Usage limits" className="grid gap-3">
     <div className="flex flex-wrap items-baseline justify-between gap-2">
-      <h2 className="text-sm font-semibold text-[#07192C]">Shared usage limits</h2>
-      <p className="text-xs text-[#637291]">Included in your plan, shared across active members</p>
+      <h2 className={SECTION_TITLE_CLASS}>Shared usage limits</h2>
+      <p className="text-xs text-[var(--dls-text-secondary)]">Included in your plan, shared across active members</p>
     </div>
-    <div className="grid gap-3.5 sm:grid-cols-3">
+    <div className="grid gap-3 sm:grid-cols-3">
       {ordered.map((bucket) => {
         const remaining = computeRemainingPercent(bucket);
-        return <div key={bucket.windowType} className={`${analyticsSurfaceClass} p-5`}>
-          <p className="text-xs font-medium text-[#637291]">{WINDOW_LABEL[bucket.windowType]}</p>
-          <p className="mt-3 text-[26px] font-semibold tracking-tight text-[#07192C] tabular-nums">{remaining.toFixed(1)}% <span className="text-sm font-normal text-[#637291]">left</span></p>
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#edf0f5]" role="progressbar" aria-label={`${WINDOW_LABEL[bucket.windowType]} remaining`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={remaining}>
+        return <div key={bucket.windowType} className={`${analyticsSurfaceClass} p-4`}>
+          <p className="text-xs font-medium text-[var(--dls-text-secondary)]">{WINDOW_LABEL[bucket.windowType]}</p>
+          <p className="mt-3 text-[26px] font-semibold tracking-tight text-[var(--dls-text-primary)] tabular-nums">{remaining.toFixed(1)}% <span className="text-sm font-normal text-[var(--dls-text-secondary)]">left</span></p>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--dls-hover)]" role="progressbar" aria-label={`${WINDOW_LABEL[bucket.windowType]} remaining`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={remaining}>
             <div className={`h-full rounded-full transition-[width] ${remaining <= 10 ? "bg-[var(--ow-warning)]" : "bg-[var(--dls-accent)]"}`} style={{ width: `${remaining}%` }} />
           </div>
-          <p className="mt-2.5 text-xs text-[#637291]">{formatResetLabel(bucket)}</p>
+          <p className="mt-2.5 text-xs text-[var(--dls-text-secondary)]">{formatResetLabel(bucket)}</p>
         </div>;
       })}
     </div>
