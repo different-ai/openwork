@@ -68,7 +68,8 @@ test("an agent reads the text of a few-hundred-KB PDF in Drive once googleDriveP
   assert.equal((await den.request(null, "GET", callback.pathname + callback.search)).status, 200)
   const read = (fileId: string) => call("GET", `/v1/capabilities/google-workspace/drive-file/${fileId}`)
 
-  // Off: the old behavior, a ~415 KB PDF is "too large" and nothing is downloaded.
+  // Off for the organization: a ~415 KB PDF is "too large" and nothing is downloaded.
+  assert.equal((await den.setFeature(orgId, "googleDrivePdfText", false)).status, 200)
   const before = await read("breakdown_pdf")
   assert.equal(before.status, 200, summary(before))
   assert.equal(field(before.body, "file", "contentUnavailableReason"), "file_too_large")

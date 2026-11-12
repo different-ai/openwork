@@ -43,7 +43,8 @@ test("every usable connector is listed, connected or not, Connected first; secre
   const broken = await connection({ name: "Broken Tracker", url: `${service.url}/broken/mcp`, authType: "none", credentialMode: "shared", access: { orgWide: true } })
   const ownerOnly = await connection({ name: "Owner Only", url: `${service.url}/owner/mcp`, authType: "none", credentialMode: "shared", access: { orgWide: false } })
 
-  // Without the profile the answer is as before: no `apps`.
+  // With the profile turned off for the organization there is no `apps`.
+  assert.equal((await den.setFeature(orgId, "workbotProfileSheet", false)).status, 200)
   assert.equal((await apps(member)).apps, undefined)
   assert.equal((await den.setFeature(orgId, "workbotProfileSheet", true)).status, 200)
 

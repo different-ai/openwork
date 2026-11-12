@@ -286,8 +286,9 @@ test("the devices snapshot lists only this computer while remote computers are o
 
 test("the devices snapshot names a configured VM and probes only this computer and the one chats use", async (t) => {
   const probes = [];
+  // A Mac: elsewhere chats start on an available VM, so it would be probed before anyone chose it.
   const f = fixture({
-    remote: true, authority: async () => true, device: { provider: "freestyle", externalId: " vm-1 " },
+    platform: "darwin", remote: true, authority: async () => true, device: { provider: "freestyle", externalId: " vm-1 " },
     readiness: async () => { probes.push("local"); return { readiness: "setup-required", detail: `  Screen Recording is off. ${"x".repeat(400)}` }; },
     remoteReadiness: async () => { probes.push("vm"); return { readiness: "unavailable", detail: "The VM is stopped. Start it and try again." }; },
   });

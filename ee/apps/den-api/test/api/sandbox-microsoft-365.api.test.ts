@@ -96,7 +96,8 @@ async function calendar(person: Session, orgId: string) {
 }
 const subjects = (call: Awaited<ReturnType<typeof calendar>>) => list(field(call.body, "events")).map((event) => String(event.subject))
 
-test("off by default: a sandbox keeps its five separate sample connectors", async () => {
+test("off: a sandbox keeps its five separate sample connectors", async () => {
+  assert.equal((await rollout({ enabled: false })).status, 200)
   const created = await create("Before the rollout")
   assert.equal(created.status, 200, summary(created))
   assert.equal(field(created.body, "sandbox", "connectorCount"), 5)

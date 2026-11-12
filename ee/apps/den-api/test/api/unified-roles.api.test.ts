@@ -56,7 +56,7 @@ async function world(label: string, options: { superAdminSet?: boolean } = {}) {
 test("Billing manager is a built-in role every organization has, and nobody holds it until it is given", async () => {
   const w = await world("built-in")
   const kinds = (await w.sets()).map((set) => set.kind)
-  assert.deepEqual(kinds, ["member_default", "admin_default", "billing_manager_default"])
+  assert.deepEqual(kinds, ["member_default", "admin_default", "billing_manager_default", "super_admin_default"])
 
   const billing = await w.setOfKind("billing_manager_default")
   assert.equal(billing.name, "Billing manager permissions")

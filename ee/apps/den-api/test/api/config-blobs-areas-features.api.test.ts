@@ -22,6 +22,7 @@ const { FeatureChangeTable } = await import("@openwork-ee/den-db/schema")
 const { and, eq } = await import("@openwork-ee/den-db/drizzle")
 const { getOrganizationFeatures } = await import("../../src/features.js")
 const { PLATFORM_ADMIN_ONLY_MESSAGE, settingsFeaturesArea } = await import("../../src/config-blobs/areas/settings-features.js")
+const { FEATURE_KEYS, featureDefinition } = await import("@openwork/features")
 
 const AREA = "settings.features"
 type Api = ReturnType<typeof den.as>
@@ -131,21 +132,42 @@ const apiA = den.as(owner, orgA.orgId)
 const apiB = den.as(platformAdmin, orgB.orgId)
 const apiC = den.as(owner, orgC.orgId)
 
-// A: two features on for the organization, one turned off, one on for everyone, one only for its owner.
-for (const key of ["googleDrivePdfText", "nativeDictation"]) assert.equal((await den.setFeature(orgA.orgId, key, true)).status, 200, key)
-assert.equal((await den.setFeature(orgA.orgId, "superAdminPermissionSet", false)).status, 200)
+// Every feature state this file relies on is set here, never left to the registry default.
+/** On for A, off for B and C: the features an import has to turn on. */
+const TURNED_ON = ["googleDrivePdfText", "nativeDictation"]
+/** Off for every organization here: one A turned off, and one only A's owner has (a member override). */
+const TURNED_OFF = ["agentQuestions", "superAdminPermissionSet"]
+for (const key of TURNED_ON) {
+  assert.equal((await den.setFeature(orgA.orgId, key, true)).status, 200, key)
+  for (const org of [orgB.orgId, orgC.orgId]) assert.equal((await den.setFeature(org, key, false)).status, 200, key)
+}
+for (const key of TURNED_OFF) {
+  for (const org of [orgA.orgId, orgB.orgId, orgC.orgId]) assert.equal((await den.setFeature(org, key, false)).status, 200, key)
+}
 await ok(den.asPlatformAdmin("PUT", "/v1/admin/features/featureIntros", { enabled: true }), "on for everyone")
 await ok(den.asPlatformAdmin("PUT", `/v1/admin/organizations/${orgA.orgId}/members/${orgA.owner.memberId}/capabilities`, { capabilities: { agentQuestions: true } }), "member override")
 await ok(apiA("POST", "/v1/org/web-origins", { origin: "https://features-source.example.com" }), "web origin")
 // Killed everywhere: never exported, and skipped when a file asks for it.
 await ok(den.asPlatformAdmin("PUT", "/v1/admin/features/claudeAgentProvider", { killed: true }), "kill switch")
 
+/** What A's export must list: on by default on this deployment or turned on above, minus what is off, killed or locked off. */
+const expectedOnForA = FEATURE_KEYS
+  .filter((key) => {
+    const definition = featureDefinition(key)
+    if (!definition.deployments.includes("self_hosted")) return false
+    if ([...TURNED_OFF, "claudeAgentProvider", "workbotDocuments"].includes(key)) return false
+    return definition.default || ["configBlobs", "featureIntros", ...TURNED_ON].includes(key)
+  })
+  .map((key): string => key)
+  .sort()
+
 let exportedA: ConfigBlob
 
 test("export: exactly the features on for the organization, as { enabled: true }", async () => {
   exportedA = clone<ConfigBlob>((await ok(apiA("GET", "/v1/config-blobs/export"), "export")).body)
   const items = areaItems(exportedA, AREA)
-  assert.deepEqual(items.map((item) => item.id), ["configBlobs", "featureIntros", "googleDrivePdfText", "nativeDictation"], JSON.stringify(items))
+  assert.deepEqual(items.map((item) => item.id), expectedOnForA, JSON.stringify(items))
+  for (const key of [...TURNED_OFF, "claudeAgentProvider", "workbotDocuments"]) assert.ok(!items.some((item) => item.id === key), `${key} is off, killed, locked or member-only: never exported`)
   assert.ok(items.every((item) => JSON.stringify(item.spec) === JSON.stringify({ enabled: true })), JSON.stringify(items))
   assert.equal(items.find((item) => item.id === "configBlobs")?.name, "Config import and export")
   assert.ok(exportedA.scope.includes(AREA))
@@ -164,7 +186,7 @@ test("import by a platform admin turns the missing features on; unknown, unavail
   const op = (ref: string) => items.find((item) => item.ref === ref)
   assert.equal(op("configBlobs")?.op, "unchanged", describe(items))
   assert.equal(op("featureIntros")?.op, "unchanged", "on for everyone already")
-  for (const ref of ["googleDrivePdfText", "nativeDictation"]) {
+  for (const ref of TURNED_ON) {
     assert.equal(op(ref)?.op, "create", describe(items))
     assert.deepEqual(op(ref)?.flags.filter((flag) => flag === "blocked"), [], describe(items))
     assert.match(op(ref)?.irreversible?.[0] ?? "", /^Turns on .+ for everyone in this organization/)
@@ -188,7 +210,7 @@ test("import by a platform admin turns the missing features on; unknown, unavail
   assert.equal(features.superAdminPermissionSet, false)
   // The same override /admin sets, with its history: who turned it on.
   const history = await db.select().from(FeatureChangeTable).where(and(eq(FeatureChangeTable.organization_id, orgB.orgId), eq(FeatureChangeTable.scope, "organization")))
-  const imported = history.filter((row) => row.feature_key !== "configBlobs").map((row) => [row.feature_key, row.action, row.changed_by_user_id]).sort()
+  const imported = history.filter((row) => row.feature_key !== "configBlobs" && row.action === "on").map((row) => [row.feature_key, row.action, row.changed_by_user_id]).sort()
   assert.deepEqual(imported, [["googleDrivePdfText", "on", platformAdmin.userId], ["nativeDictation", "on", platformAdmin.userId]])
 })
 
@@ -196,7 +218,7 @@ test("anyone else is blocked on the features; the rest of the import still appli
   const { id, plan } = await upload(apiC, exportedA, "merge", "Features by a non-admin")
   const items = featureItems(plan)
   const creates = items.filter((item) => item.op === "create")
-  assert.deepEqual(creates.map((item) => item.ref).sort(), ["googleDrivePdfText", "nativeDictation"], describe(items))
+  assert.deepEqual(creates.map((item) => item.ref).sort(), TURNED_ON, describe(items))
   for (const item of creates) {
     assert.ok(item.flags.includes("blocked"), describe(items))
     assert.ok(item.reasons?.some((reason) => reason.includes(PLATFORM_ADMIN_ONLY_MESSAGE)), describe(items))
@@ -223,7 +245,7 @@ test("a config token acts for its member: one a non-admin made is blocked too, a
   assert.equal(analyzed.status, "needs_review", JSON.stringify(analyzed.errors))
   const plan = asPlan(field((await ok(withKey("GET", `/v1/config-blobs/change-requests/${request.id}/plan`), "plan")).body, "plan"))
   const creates = featureItems(plan).filter((item) => item.op === "create")
-  assert.equal(creates.length, 2, describe(featureItems(plan)))
+  assert.deepEqual(creates.map((item) => item.ref).sort(), TURNED_ON, describe(featureItems(plan)))
   assert.ok(creates.every((item) => item.flags.includes("blocked") && item.reasons?.some((reason) => reason.includes(PLATFORM_ADMIN_ONLY_MESSAGE))), describe(creates))
 
   // The apply-time check, as the worker runs it for an approval given with that token.
@@ -254,10 +276,10 @@ test("mirror mode never turns a feature off, even when its delete is ticked", as
 
 test("re-import: B's own export into B is all unchanged", async () => {
   const exportedB = clone<ConfigBlob>((await ok(apiB("GET", "/v1/config-blobs/export"), "export B")).body)
-  assert.deepEqual(areaItems(exportedB, AREA).map((item) => item.id), ["configBlobs", "featureIntros", "googleDrivePdfText", "nativeDictation"])
+  assert.deepEqual(areaItems(exportedB, AREA).map((item) => item.id), expectedOnForA, "B now has what A has")
   const { plan } = await upload(apiB, exportedB, "merge", "Own export")
   const items = featureItems(plan)
-  assert.ok(items.length === 4 && items.every((item) => item.op === "unchanged"), describe(items))
+  assert.ok(items.length === expectedOnForA.length && items.every((item) => item.op === "unchanged"), describe(items))
   const again = await upload(apiB, featuresOnly(exportedA), "merge", "A again")
   assert.ok(featureItems(again.plan).every((item) => item.op === "unchanged"), describe(featureItems(again.plan)))
 })
