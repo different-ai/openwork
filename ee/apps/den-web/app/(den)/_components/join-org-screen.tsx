@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import {
   PENDING_ORG_INVITATION_STORAGE_KEY,
@@ -15,11 +15,8 @@ import {
 import { useDenFlow } from "../_providers/den-flow-provider";
 import { AuthPanel } from "./auth-panel";
 import { JoinOrgSuccess } from "./join-org-success";
-import { OnboardingCard } from "./onboarding-card";
-import { OnboardingShell } from "./onboarding-shell";
+import { JoinActions, JoinAlert, JoinFacts, JoinFrame, JoinHeading, JoinLoadingBar, JoinPrimaryButton, JoinQuietButton, JoinStrong, JoinText, JoinWorkspaceValue } from "./join-frame";
 import type { OrganizationBrand } from "./organization-brand-identity";
-
-const primaryActionClassName = "den-button-primary min-h-12 w-full focus:outline-hidden focus:ring-4 focus:ring-slate-950/10";
 
 type JoinedOrg = {
   id: string;
@@ -37,15 +34,6 @@ type AcceptedAutoResolveFailure = {
   reason: "membership_removed" | "unknown";
 };
 
-function DetailRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="grid gap-1 py-2.5 sm:grid-cols-[8.5rem_minmax(0,1fr)] sm:gap-4">
-      <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</dt>
-      <dd className="m-0 min-w-0 text-sm font-medium leading-6 text-slate-900 [overflow-wrap:anywhere]">{children}</dd>
-    </div>
-  );
-}
-
 function InvitationDetails({
   preview,
   account,
@@ -55,65 +43,33 @@ function InvitationDetails({
   account: AccountSummary;
   roleLabel: string;
 }) {
-  return (
-    <dl className="divide-y divide-slate-200/80 border-y border-slate-200/80" data-testid="join-org-invitation-details">
-      <DetailRow label="Organization">{preview.organization.name}</DetailRow>
-      <DetailRow label="Invited email">{preview.invitation.email}</DetailRow>
-      <DetailRow label="Role">{roleLabel}</DetailRow>
-      <DetailRow label="Account">{account ? account.email : "Not signed in"}</DetailRow>
-    </dl>
-  );
+  // The invited email is said once: the account row appears only when it
+  // differs, which is the one case where it changes what to do.
+  const rows = [
+        { label: "Workspace", value: <JoinWorkspaceValue name={preview.organization.name} /> },
+        { label: "Invited as", value: preview.invitation.email },
+        { label: "Role", value: roleLabel },
+        ...(account && account.email.trim().toLowerCase() !== preview.invitation.email.trim().toLowerCase()
+          ? [{ label: "Signed in as", value: account.email }]
+          : []),
+  ];
+  return <JoinFacts rows={rows} testId="join-org-invitation-details" />;
 }
 
 function InvitationSummary({ preview }: { preview: DenInvitationPreview }) {
   return (
     <span data-testid="join-org-invitation-summary">
-      You&apos;ve been invited as <span className="font-medium text-slate-950">{preview.invitation.email}</span>
+      You&apos;ve been invited as <JoinStrong>{preview.invitation.email}</JoinStrong>
     </span>
   );
 }
 
-function InvitationHeading({
-  title,
-  copy,
-}: {
-  title: string;
-  copy: ReactNode;
-}) {
-  return (
-    <div className="grid gap-2.5">
-      <h1 className="m-0 text-balance text-[30px] font-semibold leading-[38px] tracking-[-0.03em] text-slate-950 sm:text-[38px] sm:leading-[46px]">{title}</h1>
-      <p className="m-0 text-[15px] leading-[23px] text-slate-600">{copy}</p>
-    </div>
-  );
-}
-
-function ActionGroup({ children }: { children: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-3" data-testid="join-org-actions">
-      {children}
-    </div>
-  );
-}
+const InvitationHeading = JoinHeading;
+const ActionGroup = JoinActions;
+const InlineAlert = JoinAlert;
 
 function NotNowButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      className="inline-flex min-h-12 w-full items-center justify-center rounded-full px-3 text-sm font-medium text-slate-500 transition hover:text-slate-950 focus:outline-hidden focus:ring-4 focus:ring-slate-950/10"
-      onClick={onClick}
-    >
-      Not now
-    </button>
-  );
-}
-
-function InlineAlert({ children }: { children: ReactNode }) {
-  return (
-    <div className="rounded-2xl border border-rose-200 bg-white px-4 py-3 text-sm font-medium leading-6 text-rose-700" role="alert">
-      {children}
-    </div>
-  );
+  return <JoinQuietButton onClick={onClick}>Not now</JoinQuietButton>;
 }
 
 function getCardOrganization(preview: DenInvitationPreview | null) {
@@ -137,16 +93,12 @@ function LoadingState({
   copy?: string;
 }) {
   return (
-    <OnboardingShell state="loading" width="wide" background="surface">
-      <OnboardingCard organization={getCardOrganization(preview)}>
+    <JoinFrame state="loading" organization={getCardOrganization(preview)}>
         <div className="grid gap-5" aria-busy="true">
           <InvitationHeading title={title} copy={copy} />
-          <div className="h-1.5 overflow-hidden rounded-full bg-slate-100 shadow-[inset_0_0_0_1px_rgba(148,163,184,0.18)]">
-            <div className="h-full w-1/3 animate-pulse rounded-full bg-slate-900" />
-          </div>
+          <JoinLoadingBar />
         </div>
-      </OnboardingCard>
-    </OnboardingShell>
+      </JoinFrame>
   );
 }
 
@@ -239,6 +191,7 @@ function InviteAuthPanel({
     </div>
   );
 }
+
 
 export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
   const router = useRouter();
@@ -484,16 +437,14 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
 
   if (!preview) {
     return (
-      <OnboardingShell state="invalid" width="wide" background="surface">
-        <OnboardingCard organization={getCardOrganization(preview)}>
+      <JoinFrame state="invalid" organization={getCardOrganization(preview)}>
           <InvitationHeading title="This invite can't be opened." copy={previewError ?? "This invite could not be loaded."} />
           <ActionGroup>
-            <button type="button" className={primaryActionClassName} onClick={handleNotNow}>
-              Back to OpenWork Cloud
-            </button>
+            <JoinPrimaryButton onClick={handleNotNow}>
+Back to OpenWork Cloud
+</JoinPrimaryButton>
           </ActionGroup>
-        </OnboardingCard>
-      </OnboardingShell>
+        </JoinFrame>
     );
   }
 
@@ -516,26 +467,23 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
 
   if (preview.invitation.status === "accepted" && user && invitedEmailMatches && acceptedAutoResolveFailureForPreview?.reason === "membership_removed") {
     return (
-      <OnboardingShell state="membership-removed" width="wide" background="surface">
-        <OnboardingCard organization={getCardOrganization(preview)}>
+      <JoinFrame state="membership-removed" organization={getCardOrganization(preview)}>
           <InvitationHeading
             title="Your access was removed."
             copy={`Your access to ${preview.organization.name} was removed. Ask a workspace admin for a new invite.`}
           />
           <ActionGroup>
-            <button type="button" className={primaryActionClassName} onClick={handleNotNow}>
-              Back to OpenWork Cloud
-            </button>
+            <JoinPrimaryButton onClick={handleNotNow}>
+Back to OpenWork Cloud
+</JoinPrimaryButton>
           </ActionGroup>
-        </OnboardingCard>
-      </OnboardingShell>
+        </JoinFrame>
     );
   }
 
   if (preview.invitation.status === "accepted" && !user) {
     return (
-      <OnboardingShell state="accepted-signed-out" width="wide" background="surface">
-        <OnboardingCard organization={getCardOrganization(preview)}>
+      <JoinFrame state="accepted-signed-out" organization={getCardOrganization(preview)}>
           <div className="grid gap-4">
             <InvitationHeading
               title={`You've already joined ${preview.organization.name}.`}
@@ -549,84 +497,71 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
           <ActionGroup>
             <NotNowButton onClick={handleNotNow} />
           </ActionGroup>
-        </OnboardingCard>
-      </OnboardingShell>
+        </JoinFrame>
     );
   }
 
   if (preview.invitation.status === "accepted" && user && !invitedEmailMatches) {
     return (
-      <OnboardingShell state="accepted-wrong-account" width="wide" background="surface">
-        <OnboardingCard organization={getCardOrganization(preview)}>
+      <JoinFrame state="accepted-wrong-account" organization={getCardOrganization(preview)}>
           <InvitationHeading
             title="Use the invited account."
             copy={`This invite belongs to ${preview.invitation.email}. You are signed in as ${user.email}, so switch accounts to open this workspace.`}
           />
           <InvitationDetails preview={preview} account={account} roleLabel={roleLabel} />
           <ActionGroup>
-            <button
-              type="button"
-              className={primaryActionClassName}
-              onClick={() => void handleSwitchAccount()}
-              disabled={joinBusy}
-            >
-              Use a different account
-            </button>
+            <JoinPrimaryButton onClick={() => void handleSwitchAccount()} disabled={joinBusy}>
+Use a different account
+</JoinPrimaryButton>
             <NotNowButton onClick={handleNotNow} />
           </ActionGroup>
-        </OnboardingCard>
-      </OnboardingShell>
+        </JoinFrame>
     );
   }
 
   if (preview.invitation.status !== "pending") {
     return (
-      <OnboardingShell state="unavailable" width="wide" background="surface">
-        <OnboardingCard organization={getCardOrganization(preview)}>
+      <JoinFrame state="unavailable" organization={getCardOrganization(preview)}>
           <InvitationHeading title="This invite can't be used." copy={statusMessage(preview)} />
           <InvitationDetails preview={preview} account={account} roleLabel={roleLabel} />
           <ActionGroup>
-            <button type="button" className={primaryActionClassName} onClick={handleNotNow}>
-              Back to OpenWork Cloud
-            </button>
+            <JoinPrimaryButton onClick={handleNotNow}>
+Back to OpenWork Cloud
+</JoinPrimaryButton>
           </ActionGroup>
-        </OnboardingCard>
-      </OnboardingShell>
+        </JoinFrame>
     );
   }
 
   if (!invitedEmailAllowed) {
     return (
-      <OnboardingShell state="domain-blocked" width="wide" background="surface">
-        <OnboardingCard organization={getCardOrganization(preview)}>
+      <JoinFrame state="domain-blocked" organization={getCardOrganization(preview)}>
           <InvitationHeading
             title="This invite needs a different email domain."
             copy={`${preview.organization.name} now only accepts accounts from ${allowedDomainsLabel}. Ask a workspace owner to update the allowlist or send a new invite.`}
           />
           <InvitationDetails preview={preview} account={account} roleLabel={roleLabel} />
           <ActionGroup>
-            <button type="button" className={primaryActionClassName} onClick={handleNotNow}>
-              Back to OpenWork Cloud
-            </button>
+            <JoinPrimaryButton onClick={handleNotNow}>
+Back to OpenWork Cloud
+</JoinPrimaryButton>
           </ActionGroup>
-        </OnboardingCard>
-      </OnboardingShell>
+        </JoinFrame>
     );
   }
 
   if (!user) {
     return (
-      <OnboardingShell state="signed-out" width="wide" background="surface">
-        <OnboardingCard organization={getCardOrganization(preview)}>
+      <JoinFrame state="signed-out" organization={getCardOrganization(preview)}>
           <div className="grid gap-4">
             <InvitationHeading
               title={`Join ${preview.organization.name}`}
               copy={<InvitationSummary preview={preview} />}
             />
             {preview.organization.allowedEmailDomains?.length ? (
-              <p className="m-0 text-[15px] leading-[23px] text-slate-600">
+              <JoinText>
                 This workspace only accepts {allowedDomainsLabel} accounts.
-              </p>
+              </JoinText>
             ) : null}
           </div>
 
@@ -637,66 +572,49 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
           <ActionGroup>
             <NotNowButton onClick={handleNotNow} />
           </ActionGroup>
-        </OnboardingCard>
-      </OnboardingShell>
+        </JoinFrame>
     );
   }
 
   return (
-    <OnboardingShell state="signed-in" width="wide" background="surface">
-      <OnboardingCard organization={getCardOrganization(preview)}>
+    <JoinFrame state="signed-in" organization={getCardOrganization(preview)}>
         <InvitationHeading title={`Join ${preview.organization.name}.`} copy="Review the invitation and continue with the right account." />
         <InvitationDetails preview={preview} account={account} roleLabel={roleLabel} />
 
         {user && !signedInEmailAllowed ? (
           <div className="grid gap-4">
-            <p className="m-0 text-[15px] leading-[23px] text-slate-600">
-              {preview.organization.name} only accepts accounts from <span className="font-medium text-slate-950">{allowedDomainsLabel}</span>. You are signed in as <span className="font-medium text-slate-950">{user.email}</span>, so this account cannot join.
-            </p>
-            <p className="m-0 text-[15px] leading-[23px] text-slate-500">
+            <JoinText>
+              {preview.organization.name} only accepts accounts from <JoinStrong>{allowedDomainsLabel}</JoinStrong>. You are signed in as <JoinStrong>{user.email}</JoinStrong>, so this account cannot join.
+            </JoinText>
+            <JoinText muted>
               Log out, then create a new account or sign in with an allowed email address.
-            </p>
+            </JoinText>
             <ActionGroup>
-              <button
-                type="button"
-                className={primaryActionClassName}
-                onClick={() => void handleSwitchAccount()}
-                disabled={joinBusy}
-              >
-                Log out
-              </button>
+              <JoinPrimaryButton onClick={() => void handleSwitchAccount()} disabled={joinBusy}>
+Log out
+</JoinPrimaryButton>
               <NotNowButton onClick={handleNotNow} />
             </ActionGroup>
           </div>
         ) : !invitedEmailMatches ? (
           <div className="grid gap-4">
-            <p className="m-0 text-[15px] leading-[23px] text-slate-600">
-              This invite is for <span className="font-medium text-slate-950">{preview.invitation.email}</span>. Switch accounts to continue.
-            </p>
+            <JoinText>
+              This invite is for <JoinStrong>{preview.invitation.email}</JoinStrong>. Switch accounts to continue.
+            </JoinText>
             <ActionGroup>
-              <button
-                type="button"
-                className={primaryActionClassName}
-                onClick={() => void handleSwitchAccount()}
-                disabled={joinBusy}
-              >
-                Use a different account
-              </button>
+              <JoinPrimaryButton onClick={() => void handleSwitchAccount()} disabled={joinBusy}>
+Use a different account
+</JoinPrimaryButton>
               <NotNowButton onClick={handleNotNow} />
             </ActionGroup>
           </div>
         ) : (
           <div className="grid gap-4">
-            <p className="m-0 text-[15px] leading-[23px] text-slate-600">You're one click away from the team workspace.</p>
+            <JoinText>You're one click away from the team workspace.</JoinText>
             <ActionGroup>
-              <button
-                type="button"
-                className={primaryActionClassName}
-                onClick={() => void handleAcceptInvitation()}
-                disabled={!showAcceptAction || joinBusy}
-              >
+              <JoinPrimaryButton onClick={() => void handleAcceptInvitation()} disabled={!showAcceptAction} loading={joinBusy}>
                 {joinBusy ? "Joining..." : `Join ${preview.organization.name}`}
-              </button>
+</JoinPrimaryButton>
               <NotNowButton onClick={handleNotNow} />
             </ActionGroup>
           </div>
@@ -704,7 +622,6 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
 
         {joinError ? <InlineAlert>{joinError}</InlineAlert> : null}
         {previewError ? <InlineAlert>{previewError}</InlineAlert> : null}
-      </OnboardingCard>
-    </OnboardingShell>
+      </JoinFrame>
   );
 }
