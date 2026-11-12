@@ -61,6 +61,22 @@ async function terminal() {
 }
 
 describe("anonymous device deployment discovery", () => {
+  test.each([401, 403, 404, 422])("signed-out discovery HTTP %i reports refusal without a force conflict or response body", async (httpStatus) => {
+    writeDenSettings({ authToken: null }, { persistBootstrap: false });
+    const fetch = spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      expect(new Headers(init?.headers).has("authorization")).toBe(false);
+      return Response.json({ message: "https://secret.invalid/private?token=private-bearer" }, { status: httpStatus });
+    });
+    try {
+      const started = await denDeviceLogin.start({ baseUrl, apiBaseUrl: baseUrl, requestId: "refused-owner" });
+      expect(started).toEqual({ state: "failed", reason: "den_refused", host: "den.example.test", httpStatus });
+      expect(denDeviceLogin.status("refused-owner")).toEqual(started);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(readDenSettings().authToken).toBeNull();
+      expect(JSON.stringify(started)).not.toMatch(/https?:|private|bearer|secret|force|already_signed_in/);
+    } finally { fetch.mockRestore(); }
+  });
+
   test.each(["network", "503"])("bounded %s exhaustion exposes only the safe destination host", async (failure) => {
     const paths: string[] = [];
     const fetch = spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {

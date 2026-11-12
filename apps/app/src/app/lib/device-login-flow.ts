@@ -10,13 +10,19 @@ export class DeviceLoginDiscoveryUnavailable extends Error {
   constructor(readonly host: string) { super("Device sign-in discovery is unavailable."); }
 }
 
+/** Status and host only: never carry a server response body into control output. */
+export class DeviceLoginRequestRefused extends Error {
+  constructor(readonly host: string, readonly httpStatus: number) { super("Device sign-in request was refused."); }
+}
+
 type Destination = { baseUrl: string; apiBaseUrl: string };
 type Attempt = { activate(): boolean; isCurrent(): boolean; cancel(): void };
 export type DeviceLoginStatus = {
   state: "pending" | "approved" | "denied" | "expired" | "unsupported" | "failed" | "signed_in";
   message?: string;
-  reason?: "den_unreachable";
+  reason?: "den_unreachable" | "den_refused" | "already_signed_in";
   host?: string;
+  httpStatus?: number;
   email?: string;
   org?: { id: string; name: string };
 };
@@ -33,6 +39,18 @@ type Dependencies = {
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function publicRequestFailure(error: unknown): DeviceLoginStatus | undefined {
+  if (error instanceof DeviceLoginDiscoveryUnavailable) return { state: "failed", reason: "den_unreachable", host: error.host };
+  if (error instanceof DeviceLoginRequestRefused) return { state: "failed", reason: "den_refused", host: error.host, httpStatus: error.httpStatus };
+  return undefined;
+}
+
+function rejectUnexpectedClientResponse(response: Response, destination: Destination) {
+  if (response.status >= 400 && response.status < 500) {
+    throw new DeviceLoginRequestRefused(new URL(destination.apiBaseUrl).host, response.status);
+  }
 }
 
 function deviceUnavailable(value: unknown): boolean {
@@ -88,7 +106,7 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
 
   async function start(options: DeviceLoginStartOptions = {}) {
     if (deps.isSignedIn() && !options.force) {
-      return { ok: false, error: "Already signed in. Use --force to replace this sign-in." };
+      return { state: "failed", reason: "already_signed_in" } satisfies DeviceLoginStatus;
     }
     cancel();
     const flow = { attempt: deps.beginEnrollment(), controller: new AbortController() };
@@ -131,6 +149,7 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
         finish("unsupported", DEVICE_LOGIN_UNSUPPORTED);
         return { state: "unsupported", message: DEVICE_LOGIN_UNSUPPORTED };
       }
+      rejectUnexpectedClientResponse(started.response, destination);
       if (!started.response.ok || !record(body) || typeof body.device_code !== "string" || !body.device_code || typeof body.user_code !== "string" || !body.user_code) throw new Error("invalid response");
       // Only the public user code may appear in the approval URL. Never echo arbitrary server URLs.
       const verificationUri = `${destination.baseUrl.replace(/\/+$/, "")}/device`;
@@ -188,19 +207,23 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
               delayMs = Math.max(intervalMs, deviceRetryAfterMs(polled.response.headers.get("retry-after"), now()), deviceRetryAfterMs(polled.response.headers.get("x-retry-after"), now()));
               continue;
             }
+            rejectUnexpectedClientResponse(polled.response, destination);
             finish("failed", FAILED);
             return;
           }
           if (current === flow) finish(live() ? "expired" : "failed", live() ? undefined : "Device sign-in was superseded by a newer sign-in.");
-        } catch {
-          if (current === flow) finish(now() >= deadline ? "expired" : "failed", now() >= deadline ? undefined : FAILED);
+        } catch (error) {
+          if (current !== flow) return;
+          const failure = publicRequestFailure(error);
+          if (live() && failure) { finish("failed"); status = failure; }
+          else finish(now() >= deadline ? "expired" : "failed", now() >= deadline ? undefined : FAILED);
         }
       }
       void poll();
       return publicAuthorization;
     } catch (error) {
-      if (live() && error instanceof DeviceLoginDiscoveryUnavailable) {
-        const failure = { state: "failed", reason: "den_unreachable", host: error.host } satisfies DeviceLoginStatus;
+      const failure = publicRequestFailure(error);
+      if (live() && failure) {
         finish("failed");
         status = failure;
         return failure;
