@@ -1,7 +1,8 @@
 name: PR change proof
 
 # Author evidence, not a merge gate: PRs do not run it. Run it by hand on a PR's
-# head branch to get its changed specs' records as artifacts:
+# head branch to get its changed specs' records as artifacts and publish eligible
+# evidence through the trusted default-branch Evidence review workflow:
 #   gh workflow run pr-proof.yml --ref <branch> -f pr=<number>
 # Manual runs use the secret-free lanes only (changed specs and packaged
 # specs); the core journeys run on every dev push and nightly (core-journeys.yml),

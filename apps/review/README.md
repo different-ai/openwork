@@ -93,20 +93,27 @@ Every `evals/specs/**/*.e2e.test.ts` a PR adds or changes is treated as that
 PR's proof of work. Nothing is required and nothing is blocked: a PR that
 touches no E2E spec produces no proof evidence, and the run says so.
 
-The non-required **PR change proof** workflow selects those specs from the live
-PR file list and runs each one in its own bounded job on the exact PR head, with
-a virtual display so Electron-driving specs can run. Each job uploads one hashed
-artifact. Failed, skipped, unsupported, and cancelled proofs stay visible as
-non-passing executions; they never fall back to packaged smoke or another
-regression.
+PRs run only the quick check. Start the non-required **PR change proof** by hand:
+
+```sh
+gh workflow run pr-proof.yml --ref <branch> -f pr=<number>
+```
+
+It selects specs from the live PR file list and uploads their records as artifacts.
+Only secret-free GitHub lanes run; Daytona and real-Mac tests still cannot run
+there. Unsupported proofs are not passes and never fall back to another regression.
 
 The credentialed **Evidence review** workflow runs trusted default-branch code.
-It re-reads the current PR file list, derives the same selection, and accepts
-exactly one artifact per selected spec and run attempt. Every test record must
-name that spec and the current PR SHA. Records from all selected specs are
-combined into one report with one section per test. Downloaded PR artifacts are
-data and are never imported or executed. Unrelated evidence, unexpected proof
-artifacts, stale heads or attempts, and missing or duplicate records are refused.
+For a completed hand-started run, it uses GitHub's API to find exactly one open
+same-repository PR with the run's branch and head SHA; forks and ambiguous or
+missing matches are skipped. Dispatch inputs and artifacts never establish identity.
+Existing pull-request runs remain supported. It re-reads the current PR file list,
+derives the same selection, and accepts exactly one artifact per selected spec and
+run attempt. Every test record must name that spec and the current PR SHA. Records
+from all selected specs are combined into one report with one section per test.
+Downloaded PR artifacts are data and are never imported or executed. Unrelated
+evidence, unexpected proof artifacts, stale heads or attempts, and missing or
+duplicate records are refused.
 
 Candidate publisher and review-app checks live in the PR-only
 `Evidence review candidate checks` workflow. It has no publishing secret or

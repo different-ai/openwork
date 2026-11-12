@@ -86,6 +86,7 @@ export function Report({ report, id, connected, providerLabel, checkpointProvide
           <div className="hero-text">
             <p className="eyebrow"><Icon name="fileText" size={14} />Evidence report</p>
             <h1>{report.title}</h1>
+            {report.notice && <p>{report.notice}</p>}
             <div className="report-toolbar">
               <span className="tag commit"><Icon name="commit" size={13} /><code title={report.gitSha}>{report.gitSha.slice(0, 7)}</code></span>
               <CopyButton label="Copy commit" value={report.gitSha} />

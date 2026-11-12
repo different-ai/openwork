@@ -16,6 +16,7 @@ on:
       - evals/worlds/*review*.ts
       - .github/scripts/pr-proof*.mjs
       - .github/scripts/internal-proof-contributor*.mjs
+      - .github/scripts/evidence-association.mjs
       - .github/scripts/evidence-presentation*.mjs
       - .github/scripts/evidence-preview-card*.mjs
       - .github/actions/setup-browser/**
@@ -66,5 +67,6 @@ jobs:
       - run: |
           pnpm --filter @openwork/review-app... --filter @openwork/world... --filter @openwork/types... install --frozen-lockfile --ignore-scripts
           pnpm --dir evals install --frozen-lockfile --ignore-scripts
+      - run: node --test evals/scripts/publish-review.test.mjs
       - name: Build the review app
         run: pnpm --filter @openwork/review-app build
