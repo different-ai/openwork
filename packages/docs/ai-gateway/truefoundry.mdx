@@ -54,7 +54,7 @@ Embedding, image and audio models are skipped. TrueFoundry lists model IDs only,
 
 <Steps>
   <Step title="Create an admin key in TrueFoundry">
-    In TrueFoundry, go to **Access → Virtual Accounts → New Virtual Account**, then give it the **Tenant Admin** role. Copy its token. OpenWork needs a virtual account: TrueFoundry doesn't let personal access tokens create keys for other people.
+    In TrueFoundry, go to **Access → Virtual Accounts → New Virtual Account**, then give it the **Tenant Admin** role. Copy its token. OpenWork needs a virtual account: TrueFoundry doesn't let personal access tokens create keys for other people. See [What the admin key needs](#what-the-admin-key-needs) for why.
   </Step>
   <Step title="Add the provider">
     In OpenWork Cloud, go to **AI Gateway → AI Providers → Add a provider → TrueFoundry**. Enter the address you open TrueFoundry at, for example `https://acme.truefoundry.cloud`, and paste the admin key. OpenWork checks the key before saving and never shows it again.
@@ -66,6 +66,30 @@ Embedding, image and audio models are skipped. TrueFoundry lists model IDs only,
     Pick everyone, or specific people and teams. OpenWork creates their keys straight away.
   </Step>
 </Steps>
+
+## What the admin key needs
+
+The admin key must be a TrueFoundry **virtual account** token with the **Tenant Admin** role. TrueFoundry only lets a tenant admin create a personal access token for another user, and refuses that request from any personal access token, so there is no narrower role that works today.
+
+This is everything OpenWork does with the admin key. Tenant Admin covers every permission in the last column:
+
+| What OpenWork does | TrueFoundry API | When | Needs |
+| --- | --- | --- | --- |
+| Check the key can manage users | `POST /api/svc/v1/users/register` with `dryRun: true` (changes nothing) | Adding the provider, replacing the key | Add users |
+| List the chat models | `GET <gateway>/models` | Adding the provider, every sync | Access to every model people should get |
+| Find a person by email | `GET /api/svc/v1/users?query=<email>` | Creating a person's key | Read users |
+| Add a missing person | `POST /api/svc/v1/users/register` (member role, no invite email) | Only when **Create missing users in TrueFoundry** is on | Add users |
+| Create a person's key | `POST /api/svc/v1/personal-access-tokens/for-user` | Creating a person's key | Tenant Admin, from a virtual account |
+
+People's own keys do the rest. With their own token, OpenWork lists the models that person can use (`GET <gateway>/models`), looks up the token's ID (`GET /api/svc/v1/personal-access-tokens`) and, when the person loses access or the provider is removed, deletes the token (`DELETE /api/svc/v1/personal-access-tokens/{id}`). TrueFoundry doesn't let an admin delete another user's tokens, so the admin key is never used for that.
+
+OpenWork never uses the admin key to call models, change roles or teams, deactivate or delete users, or read or rotate other tokens.
+
+To limit the risk of a tenant admin key:
+
+- Create a virtual account just for OpenWork, for example `openwork`, so its activity is easy to find in TrueFoundry's audit logs.
+- Set an expiration date and turn on auto-rotation or a reminder in TrueFoundry. Paste the new token with **Replace key** on the provider page before the old one expires. People's keys keep working while you do.
+- OpenWork stores the key encrypted and never shows it again, in the dashboard or the API.
 
 ## Keys OpenWork creates
 
