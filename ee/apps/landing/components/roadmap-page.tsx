@@ -204,7 +204,7 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     items: {
       ready: ["The full workspace in your browser", "Your team’s skills and connections", "Self-hosted OpenWork Web"],
       building: [],
-      soon: ["Session sharing"]
+      soon: []
     },
   },
   {
@@ -235,8 +235,8 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "A background agent for each member",
         "Workbot settings for each team"
       ],
-      building: ["Read and edit documents beside the chat"],
-      soon: []
+      building: ["Your Microsoft 365 and Google Drive documents, right in Workbot"],
+      soon: ["Full virtual computers"]
     },
   },
   {
@@ -263,7 +263,7 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "Organization settings for automations"
       ],
       building: [],
-      soon: ["Run in the cloud from GitHub events", "Team plan, no OpenWork Web needed", "Fine-grained automation control", "Approvals in the middle of a run"]
+      soon: ["Share an automation with your team", "Run in the cloud from GitHub events", "Team plan, no OpenWork Web needed", "Fine-grained automation control", "Approvals in the middle of a run"]
     },
   },
   {
@@ -311,14 +311,14 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     },
   },
   {
-    id: "new-apps",
-    label: "New apps",
-    heading: ["For people who just", "want it to work."],
-    intro: "New ways to use OpenWork, set up by your team. OpenWork in Slack is ready today; the phone app is what we’re designing.",
+    id: "across-apps",
+    label: "Across apps",
+    heading: ["One OpenWork,", "wherever you work."],
+    intro: "What reaches across the desktop app, the web, and Workbot: your other computers, the chat tools your team already uses, and your colleagues.",
     items: {
-      ready: ["OpenWork in Slack", "Slack answers arrive as their own reply"],
-      building: [],
-      soon: ["Phone app, starting with MCP Apps"]
+      ready: ["Use your remote computers", "OpenWork in Slack", "Slack answers arrive as their own reply"],
+      building: ["OpenWork in Microsoft Teams"],
+      soon: ["Share sessions with colleagues", "Phone app, starting with MCP Apps"]
     }
   }
 ];
@@ -328,7 +328,7 @@ const ROADMAP_AUDIENCES: RoadmapAudience[] = [
   {
     id: "work",
     label: "For you",
-    productIds: ["desktop", "workbot", "web", "automations", "workflows", "dashboards", "new-apps"]
+    productIds: ["desktop", "workbot", "web", "automations", "workflows", "dashboards", "across-apps"]
   },
   {
     id: "team",
@@ -414,7 +414,7 @@ function Preview({ id }: { id: string }) {
   if (id === "automations") return <Frame tall><AutomationsView /></Frame>;
   if (id === "workflows") return <Frame><RoadmapWorkflowPreview /></Frame>;
   if (id === "dashboards") return <Frame><RoadmapDashboardPreview /></Frame>;
-  if (id === "new-apps") {
+  if (id === "across-apps") {
     return (
       <div className="mt-10 flex flex-col gap-6 md:mt-12 lg:flex-row">
         <ComingSoonTile title="OpenWork in Slack" status="ready" text="Ask from any channel or DM and get the result back in the thread, with the same skills and connections.">

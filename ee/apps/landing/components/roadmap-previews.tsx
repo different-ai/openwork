@@ -320,7 +320,7 @@ export function RoadmapDashboardPreview() {
 }
 
 /* ------------------------------------------------------------------ */
-/* New apps (not available yet)                                        */
+/* Across apps                                                         */
 /* ------------------------------------------------------------------ */
 
 const AT_RISK = [
