@@ -14,7 +14,7 @@ test("an admin and a computer's owner each disconnect a signed-in computer from 
     await admin.see({ text: "Manage" }, { timeoutMs: 60_000 });
     await admin.click({ testId: "dashboard-nav-computers" });
     await admin.see({ role: "heading", label: "Computers" }, { timeoutMs: 60_000 });
-    for (const text of ["Riley's MacBook Pro", "Riley's Mac mini", "Alex's MacBook Pro", "Jordan's MacBook Air", "Former member", "0.18.66 alpha", "Remote access", "Sessions other devices can reach"]) await admin.see({ text });
+    for (const text of ["Riley's MacBook Pro", "Riley's Mac mini", "Alex's MacBook Pro", "Jordan's MacBook Air", "Former member", "0.18.66 alpha", "Remote access", "What other devices can do on computers"]) await admin.see({ text });
     await admin.see({ testId: "computers-stale" });
     const body = await adminProbe.text();
     const list = await world.list();
@@ -130,8 +130,6 @@ test("an admin and a computer's owner each disconnect a signed-in computer from 
     await admin.screenshot();
     await member.reload();
     await member.see({ role: "heading", label: "My Computers" }, { timeoutMs: 60_000 });
-    await member.click({ testId: "dashboard-nav-my-sessions" });
-    await member.see({ role: "heading", label: "My Sessions" }, { timeoutMs: 60_000 });
     await probe.eventually(() => shell(memberProbe), { within: 30_000, until: (count) => count === 1, label: "the member's shell is grey too" });
     await member.screenshot();
     await world.setFeature("denGreySidebar", false);

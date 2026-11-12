@@ -14,7 +14,7 @@ medium weight.
 
 ![Computers with the grey sidebar](den-computers-grey.png)
 
-![My Sessions with the grey sidebar](den-my-sessions-grey.png)
+![My Computers with the grey sidebar](den-my-computers-grey.png)
 
 ## Try it
 

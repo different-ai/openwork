@@ -1,40 +1,34 @@
-# Sessions on my computers (`remoteSessionAccess`)
+# Other devices can open sessions started on a computer (`remoteSessionAccess`)
 
 - **Key:** `remoteSessionAccess`
 - **Deployments:** cloud and self-hosted
 - **Default:** off
 - **Author:** @benjaminshafii
-- **Builds on:** [Computers in Den](../remote-devices/README.md) and
-  [remote task answers](../remote-session-answers/README.md)
+- **Builds on:** [Computers in Den](../remote-devices/README.md),
+  [remote access a computer's owner allows](../remote-tasks-opt-in/README.md)
+  and [remote task answers](../remote-session-answers/README.md)
 
 ## What people get
 
-A member's other devices (another computer, Den, Workbot, an agent working for
+A member's other devices (another computer, Workbot, an agent working for
 them) could already follow, continue, stop and answer a task on one of their
 computers, but only a task that was started remotely. This adds:
 
-1. **A choice of which sessions can be reached**, made twice:
-   - the organization sets the most a member may allow (**Manage → Computers**,
-     "Sessions other devices can reach"): *Only sessions started remotely*
-     (default) or *All sessions, if the member turns it on*;
-   - each member chooses per computer in **Desktop → Settings → Devices**:
-     *Only sessions started remotely* (default) or *All sessions on this
-     computer*.
+1. **Reaching sessions that were started on the computer itself**, allowed
+   twice:
+   - the organization allows it on **Manage → Computers → Remote access**
+     (*Start tasks and open sessions, if the member turns it on*);
+   - each member allows it per computer in **Desktop → Settings → Devices**
+     (*Also open sessions I started here*).
 
-   The narrower of the two applies. Reaching a session that was started on the
-   computer itself therefore needs both to opt in.
-2. **My Sessions in Den** (**Work → My Sessions**, `/dashboard/my-sessions`): the
-   member's own sessions across their computers, what each is doing, and the
-   controls to open one, answer what it waits on, send a follow-up and stop it.
-3. **Every open request can be answered.** A session's open permission requests
+   The narrower of the two applies, so it needs both.
+2. **Every open request can be answered.** A session's open permission requests
    and questions are all listed, any of them can be answered by itself, and a
    question can be dismissed, as on the computer.
 
-![My Sessions in regular Den](den-my-sessions.png)
-
-![Answering a session's open requests](den-session-answers.png)
-
-![The organization's ceiling on Manage → Computers](den-organization-ceiling.png)
+There is no page for sessions in Den. An earlier My Sessions page was removed;
+this feature is the capability (through the desktop app, Workbot and agents)
+and the two settings above.
 
 ## How a session started on the computer is reached
 
@@ -59,14 +53,16 @@ history are untouched.
 
 ## Where the policy is enforced
 
-- **On the computer.** The owner's choice is stored there
-  (`<userData>/session-runner/access.json`); the ceiling arrives with every work
-  poll and is never stored, so signing out or losing Den falls back to
-  `created`. The runner core reads the access in force on every attach, every
-  request and every progress report. After an attach, turning the choice off (or
-  the ceiling dropping) refuses read, send, stop and answer for that session
-  with `session_access_denied` and stops its progress reports. Sessions that were
-  started remotely are never affected by the policy.
+- **On the computer.** The owner's choice is stored there, per organization
+  (`<userData>/session-runner/access.json`), so it is never carried into
+  another organization; the ceiling arrives with every work poll and is never
+  stored, so signing out or losing Den never widens anything. The runner core
+  reads the access in force on every attach, every request and every progress
+  report. After an attach, narrowing the choice (or the ceiling dropping)
+  refuses read, send, stop and answer for that session with
+  `session_access_denied` and stops its progress reports. Sessions that were
+  started remotely stay reachable unless the computer is turned off altogether
+  ([Nothing](../remote-tasks-opt-in/README.md)).
 - **Disconnecting.** Turning the choice off on the computer, lowering the
   ceiling, or the computer no longer knowing a connection disconnects the
   sessions that were opened this way. They show as *Started on this computer*
@@ -106,7 +102,6 @@ history are untouched.
   as needing an update for this choice and never receive an attach or a
   dismissal.
 - The standalone OpenCode client does not offer `all`.
-- Cloud sessions are not listed in My Sessions; Den keeps no record of them.
 - A form that only opens a link still cannot be answered remotely, but it can
   now be dismissed. Long computer-use requests and permission setup can still
   only be approved on the computer.
@@ -118,11 +113,11 @@ history are untouched.
 
 ## Turning it off
 
-Disable `remoteSessionAccess` for the organization or use its kill switch. My
-Sessions and the organization setting disappear, the new routes answer
-`404 feature_disabled`, computers are told nothing about a ceiling and so fall
-back to remotely started sessions only, and sessions reached through an attach
-are refused. Remote tasks started remotely work as before.
+Disable `remoteSessionAccess` for the organization or use its kill switch. The
+wider choice disappears from the organization's setting and from Settings →
+Devices, attach is refused, computers are told a limit of remotely started
+tasks at most, and sessions reached through an attach are refused. Remote tasks
+started remotely work as before.
 
 ## Verification
 
@@ -140,11 +135,6 @@ are refused. Remote tasks started remotely work as before.
 - `ee/apps/den-api/test/api/remote-session-access.api.test.ts`: the feature gate,
   the ceiling and who may change it, reports, the list, attach, enforcement
   after attach, isolation between members.
-- `evals/proofs/den-my-sessions.proof.test.ts`: the real Den web and API with a
-  synthetic computer speaking the runner protocol: default policy, the owner
-  raising the ceiling, the member opting in, attach, answering three open
-  requests out of order, a follow-up, isolation from an admin and the owner,
-  lowering the ceiling, and the feature gate.
 
 All live tests use disposable local databases. No production feature overrides
 are part of this change.
