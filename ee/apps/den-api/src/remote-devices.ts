@@ -10,7 +10,7 @@ import {
   RemoteDeviceTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
-import { REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY } from "@openwork/types/automations"
+import { REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY, type RemoteSessionAccessMode } from "@openwork/types/automations"
 import {
   ORGANIZATION_COMPUTER_PAGE_SIZE,
   ORGANIZATION_COMPUTER_STALE_MS,
@@ -22,6 +22,7 @@ import {
   type OrganizationComputerEvent,
   type OrganizationComputerListResponse,
   type RemoteDevice,
+  type RemoteDeviceAccess,
   type RemoteDeviceAvailability,
   type RemoteDeviceDesktopReport,
   type RemoteDeviceDiagnostics,
@@ -48,6 +49,12 @@ import {
   reconnectIfSignedInAgain,
   type SignInSession,
 } from "./computer-disconnect.js"
+import {
+  readRemoteSessionAccessPolicies,
+  readRemoteSessionAccessPolicy,
+  remoteDeviceAccess,
+  type RemoteSessionAccessPolicy,
+} from "./remote-sessions/access.js"
 import { withDeadlockRetry } from "./utils/deadlock-retry.js"
 import { db } from "./db.js"
 import { getOrganizationFeatures } from "./features.js"
@@ -129,7 +136,31 @@ function latest(...values: Array<Date | null | undefined>): Date | null {
   return result
 }
 
-type RunnerFacts = { lastSeenAt: Date; capabilities: readonly string[]; appVersion: string }
+type RunnerFacts = { lastSeenAt: Date; capabilities: readonly string[]; appVersion: string; sessionAccess: RemoteSessionAccessMode | null }
+
+/**
+ * What other devices may do on a signed-in desktop that takes tasks; null for
+ * every other computer and for a disconnected desktop. `policy` is the one of
+ * the computer's owner.
+ */
+function remoteAccessOf(
+  row: Pick<DeviceRow, "kind" | "provider">,
+  runner: Pick<RunnerFacts, "capabilities" | "sessionAccess"> | null,
+  disconnected: boolean,
+  policy: RemoteSessionAccessPolicy | null | undefined,
+): RemoteDeviceAccess | null {
+  if (!policy || !takesRemoteTasks(row, runner, disconnected)) return null
+  return remoteDeviceAccess(runner, policy)
+}
+
+function takesRemoteTasks(
+  row: Pick<DeviceRow, "kind" | "provider">,
+  runner: Pick<RunnerFacts, "capabilities" | "sessionAccess"> | null,
+  disconnected: boolean,
+): runner is Pick<RunnerFacts, "capabilities" | "sessionAccess"> {
+  return row.kind === "desktop" && row.provider === DESKTOP_PROVIDER && !disconnected
+    && runner?.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY) === true
+}
 
 function availabilityOf(row: Pick<DeviceRow, "kind" | "provider" | "state">, lastSeenAt: Date | null, now: number): RemoteDeviceAvailability {
   return remoteDeviceAvailability({ kind: row.kind, provider: row.provider, state: row.state, lastSeenAt: lastSeenAt?.getTime() ?? null, now })
@@ -146,6 +177,8 @@ function deviceView(row: DeviceRow, input: {
   runner: RunnerFacts | null
   title: string | null
   disconnectedAt: Date | null
+  /** The viewer's own policy: every desktop they see is theirs. Null when none of them takes tasks. */
+  policy: RemoteSessionAccessPolicy | null
   now: number
 }): RemoteDevice {
   const lastSeenAt = latest(row.lastSeenAt, input.runner?.lastSeenAt)
@@ -174,6 +207,7 @@ function deviceView(row: DeviceRow, input: {
     canRemove: manages && (!signedIn || disconnected || quietSince(lastSeenAt, input.now, REMOTE_DEVICE_DESKTOP_RETENTION_MS)),
     disconnectedAt: iso(input.disconnectedAt),
     canDisconnect: mine && signedIn && !disconnected,
+    remoteAccess: mine ? remoteAccessOf(row, input.runner, disconnected, input.policy) : null,
   }
 }
 
@@ -248,8 +282,9 @@ async function runnerFacts(ids: readonly string[]): Promise<Map<string, RunnerFa
     lastSeenAt: AutomationRunnerTable.last_seen_at,
     capabilities: AutomationRunnerTable.capabilities,
     appVersion: AutomationRunnerTable.app_version,
+    sessionAccess: AutomationRunnerTable.session_access,
   }).from(AutomationRunnerTable).where(inArray(AutomationRunnerTable.id, [...ids]))
-  return new Map(rows.map((row) => [row.id, { lastSeenAt: row.lastSeenAt, capabilities: row.capabilities ?? [], appVersion: row.appVersion }]))
+  return new Map(rows.map((row) => [row.id, { lastSeenAt: row.lastSeenAt, capabilities: row.capabilities ?? [], appVersion: row.appVersion, sessionAccess: row.sessionAccess }]))
 }
 
 async function sessionTitles(devices: readonly DeviceRow[]): Promise<Map<string, string>> {
@@ -266,13 +301,18 @@ async function sessionTitles(devices: readonly DeviceRow[]): Promise<Map<string,
   return new Map(rows.filter((row) => row.title).map((row) => [row.deviceId, row.title]))
 }
 
-async function related(rows: readonly DeviceRow[]) {
+/** What a member's view of these rows needs besides the rows; `actor` is the member whose list it is. */
+async function related(rows: readonly DeviceRow[], actor: RemoteDeviceActor) {
   const [runners, titles, disconnections] = await Promise.all([
     runnerFacts(rows.filter((row) => row.kind === "desktop").map((row) => row.externalId)),
     sessionTitles(rows),
     deviceDisconnections(rows.filter((row) => row.provider === DESKTOP_PROVIDER).map((row) => row.id)),
   ])
-  return { runners, titles, disconnections }
+  // Read only when one of their desktops takes tasks from other devices.
+  const policy = rows.some((row) => row.ownerMemberId === actor.memberId && takesRemoteTasks(row, runners.get(row.externalId) ?? null, disconnections.has(row.id)))
+    ? await readRemoteSessionAccessPolicy(actor.organizationId, { memberId: actor.memberId })
+    : null
+  return { runners, titles, disconnections, policy }
 }
 
 function visibleTo(actor: RemoteDeviceActor) {
@@ -290,13 +330,13 @@ export async function listMemberRemoteDevices(actor: RemoteDeviceActor, options:
   const now = options.now ?? new Date()
   await syncDesktopsFromRunners({ organizationId: actor.organizationId, memberId: actor.memberId }, now)
   const rows = await db.$primary.select().from(RemoteDeviceTable).where(visibleTo(actor)).limit(500)
-  const { runners, titles, disconnections } = await related(rows)
+  const { runners, titles, disconnections, policy } = await related(rows, actor)
   const stale = now.getTime() - REMOTE_DEVICE_DESKTOP_RETENTION_MS
   const recent = (at: string | null) => at !== null && Date.parse(at) >= stale
   return rows
     .map((row) => deviceView(row, {
       viewer: actor, canManageShared: options.canManageShared, runner: runners.get(row.externalId) ?? null, title: titles.get(row.id) ?? null,
-      disconnectedAt: disconnections.get(row.id) ?? null, now: now.getTime(),
+      disconnectedAt: disconnections.get(row.id) ?? null, policy, now: now.getTime(),
     }))
     // A desktop nobody has heard from in a month is gone, as its runner registration is; a disconnected one a month after that.
     .filter((device) => device.kind !== "desktop" || recent(device.lastSeenAt) || recent(device.disconnectedAt))
@@ -311,10 +351,10 @@ async function visibleRow(actor: RemoteDeviceActor, deviceId: DeviceId, database
 }
 
 async function viewOne(row: DeviceRow, actor: RemoteDeviceActor, canManageShared: boolean, now: Date) {
-  const { runners, titles, disconnections } = await related([row])
+  const { runners, titles, disconnections, policy } = await related([row], actor)
   return deviceView(row, {
     viewer: actor, canManageShared, runner: runners.get(row.externalId) ?? null, title: titles.get(row.id) ?? null,
-    disconnectedAt: disconnections.get(row.id) ?? null, now: now.getTime(),
+    disconnectedAt: disconnections.get(row.id) ?? null, policy, now: now.getTime(),
   })
 }
 
@@ -741,6 +781,7 @@ type OrganizationComputerRow = {
   device: DeviceRow
   runnerSeenAt: Date | null
   runnerCapabilities: readonly string[] | null
+  runnerSessionAccess: RemoteSessionAccessMode | null
   runnerAppVersion: string | null
   organizationName: string | null
   ownerName: string | null
@@ -756,6 +797,7 @@ const organizationComputerColumns = {
   device: RemoteDeviceTable,
   runnerSeenAt: AutomationRunnerTable.last_seen_at,
   runnerCapabilities: AutomationRunnerTable.capabilities,
+  runnerSessionAccess: AutomationRunnerTable.session_access,
   runnerAppVersion: AutomationRunnerTable.app_version,
   organizationName: OrganizationTable.name,
   ownerName: AuthUserTable.name,
@@ -784,13 +826,17 @@ async function organizationComputerViews(
 ): Promise<OrganizationComputerRecord[]> {
   const ids = rows.map((row) => row.device.id)
   const since = problemsSince(now)
-  const [problems, lastEvents] = await Promise.all([
+  const runnerOf = (row: OrganizationComputerRow) => row.runnerCapabilities ? { capabilities: row.runnerCapabilities, sessionAccess: row.runnerSessionAccess } : null
+  // The policy is each owner's own (features can be on for some members only): one batched read for the page.
+  const taskOwners = rows.flatMap((row) => row.device.ownerMemberId && takesRemoteTasks(row.device, runnerOf(row), row.disconnectedAt !== null) ? [row.device.ownerMemberId] : [])
+  const [problems, lastEvents, policies] = await Promise.all([
     ids.length === 0 ? [] : db.select({ deviceId: RemoteDeviceEventTable.deviceId, total: sql<number>`count(*)` }).from(RemoteDeviceEventTable)
       .where(and(eq(RemoteDeviceEventTable.organizationId, organizationId), inArray(RemoteDeviceEventTable.deviceId, ids), inArray(RemoteDeviceEventTable.level, ["warning", "error"]), gte(RemoteDeviceEventTable.createdAt, since)))
       .groupBy(RemoteDeviceEventTable.deviceId),
     // One short indexed read per device on the page; a page is at most ORGANIZATION_COMPUTER_PAGE_SIZE.
     Promise.all(ids.map(async (id) => (await db.select().from(RemoteDeviceEventTable).where(and(eq(RemoteDeviceEventTable.organizationId, organizationId), eq(RemoteDeviceEventTable.deviceId, id)))
       .orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(1))[0] ?? null)),
+    readRemoteSessionAccessPolicies(organizationId, taskOwners),
   ])
   const problemCount = new Map(problems.map((row) => [row.deviceId, Number(row.total)]))
   return rows.map((row, index) => {
@@ -827,6 +873,8 @@ async function organizationComputerViews(
         && (former || disconnected || device.source === "manual" || (signedIn && quietSince(lastSeenAt, now.getTime(), ORGANIZATION_COMPUTER_STALE_MS))),
       disconnectedAt: iso(row.disconnectedAt),
       canDisconnect: viewer.canDisconnect && signedIn && device.ownerMemberId !== null && !former && !disconnected,
+      // A former member's computer is refused by the membership check, whatever it last reported.
+      remoteAccess: former ? null : remoteAccessOf(device, runnerOf(row), disconnected, device.ownerMemberId ? policies.get(device.ownerMemberId) : null),
     }
   })
 }

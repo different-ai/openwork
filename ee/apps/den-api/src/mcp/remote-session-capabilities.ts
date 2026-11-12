@@ -6,7 +6,6 @@ import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-e
 import { z } from "zod"
 import { desktopRunnerConnected } from "@openwork/automations"
 import {
-  REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY,
   REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY,
   REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
   REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
@@ -29,6 +28,7 @@ import {
   type RemoteSessionAttachRequest,
 } from "@openwork/types/den/remote-sessions"
 import { COMPUTER_DISCONNECTED_ERROR } from "@openwork/types/den/remote-devices"
+import { REMOTE_ACCESS_OFF_ERROR } from "@openwork/types/den/remote-sessions"
 import { sessionTimestampIso } from "../remote-sessions/timestamps.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
@@ -53,6 +53,8 @@ import {
   attachedSessionDenial,
   computerSessionAccess,
   readRemoteSessionAccessPolicy,
+  remoteAccessOffReason,
+  runnerAccessCapabilities,
   type RemoteSessionAccessPolicy,
 } from "../remote-sessions/access.js"
 import {
@@ -227,7 +229,7 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "targets",
     summary:
-      "List your remote session targets: connected OpenWork desktops and opted-in OpenCode clients, with computerId, label, online, workspaces, and models; also reports Cloud availability. Call this before choosing a computer, workspace or model. Use target registered with a computerId to offload to a client without requiring OpenWork Web. Pass includeModels true to list models.",
+      "List your remote session targets: connected OpenWork desktops and opted-in OpenCode clients, with computerId, label, online, access, workspaces, and models; also reports Cloud availability. Call this before choosing a computer, workspace or model. access says what other devices may do on that computer right now: created (tasks can be started there), all (also sessions that were started on it can be reached) or off. A computer with access off cannot be given a task and none of its sessions can be reached: its owner allows it in OpenWork Settings > Devices on that computer (after updating OpenWork there if it is an older app), unless the organization turned tasks from other devices off for everyone. Use target registered with a computerId to offload to a client without requiring OpenWork Web. Pass includeModels true to list models.",
     searchExtraTokens:
       "remote session targets list computers desktops machines laptops devices workspaces projects folders models providers where which choose pick select available online cloud",
     argumentsSchema: {
@@ -254,7 +256,7 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "create",
     summary:
-      "Offload a task to a native session. Cloud (default) runs on your OpenWork Web instance; on cloud_runtime_provisioning wait retryAfterMs before retrying. target registered runs on an opted-in OpenWork or OpenCode client; call targets first and pass its computerId and optional workspaceId/model. target desktop preserves the existing desktop flow. Give the complete task as prompt. Registered/desktop creates return a durable commandId: poll read for delivery, progress, approval needs, and the final answer. Do not retry a create with an unknown outcome blindly.",
+      "Offload a task to a native session. Cloud (default) runs on your OpenWork Web instance; on cloud_runtime_provisioning wait retryAfterMs before retrying. target registered runs on an opted-in OpenWork or OpenCode client; call targets first and pass its computerId and optional workspaceId/model. target desktop preserves the existing desktop flow. Give the complete task as prompt. Registered/desktop creates return a durable commandId: poll read for delivery, progress, approval needs, and the final answer. A computer whose access is off in remote-session:targets takes no task: the create fails with remote_access_off and nothing is queued; tell the person what the message says instead of retrying. Do not retry a create with an unknown outcome blindly.",
     searchExtraTokens:
       "remote session sessions chat thread cloud web instance browser openwork opencode plugin harness registered client create start new open run send submit task delegate offload handoff background workspace computer machine",
     argumentsSchema: {
@@ -372,7 +374,7 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "list",
     summary:
-      "List your sessions on your computers, newest first, with title, sessionId, workspaceId, computerId, status, updatedAt, origin and reach. reach reachable: a session you started with remote-session:create (origin remote) or attached to (origin local); use its sessionId with remote-session:read, send, or stop. reach attachable (origin local, commandId null): a session that was started on the computer itself, listed only while the organization and that computer's owner allow other devices to reach every session there; call remote-session:attach with its computerId, workspaceId and sessionId first, and only for a session the person asked about.",
+      "List your sessions on your computers, newest first, with title, sessionId, workspaceId, computerId, status, updatedAt, origin and reach. Sessions on a computer whose access is off (see remote-session:targets) are left out until it is allowed again. reach reachable: a session you started with remote-session:create (origin remote) or attached to (origin local); use its sessionId with remote-session:read, send, or stop. reach attachable (origin local, commandId null): a session that was started on the computer itself, listed only while the organization and that computer's owner allow other devices to reach every session there; call remote-session:attach with its computerId, workspaceId and sessionId first, and only for a session the person asked about.",
     searchExtraTokens: "remote session sessions list desktop conversations chats started recent history local attachable my computers",
     argumentsSchema: {
       type: "object",
@@ -497,11 +499,15 @@ type DesktopRunnerState = {
   controlCapable: boolean
   registered?: boolean
   answerCapable?: boolean
-  /** The runner honours session access: attaches, dismissals and its owner's choice. */
+  /** The runner honours session access: attaches and dismissals. */
   accessCapable?: boolean
+  /** The runner's owner can turn remote access off or leave it unchosen, and its reports say which. */
+  choiceCapable?: boolean
   sessionAccess?: RemoteSessionAccessMode | null
   /** The computer was disconnected from the organization: nothing reaches it until someone signs in on it again. */
   disconnected?: boolean
+  /** The install has no registration: it is gone, not a computer whose owner has yet to choose. */
+  missing?: boolean
 }
 
 export type RemoteSessionExecuteDeps = {
@@ -794,13 +800,13 @@ async function defaultDesktopRunner(scope: {
 }): Promise<DesktopRunnerState> {
   const runner = await automationRepository.desktopRunnerById(scope)
   // A disconnected computer has no registration; say so rather than "update" or "offline".
-  if (!runner) return { connected: false, controlCapable: false, disconnected: await runnerDisconnected(scope) }
+  if (!runner) return { connected: false, controlCapable: false, missing: true, disconnected: await runnerDisconnected(scope) }
   return {
     connected: desktopRunnerConnected({ lastSeenAt: runner.lastSeenAt, now: Date.now() }),
     controlCapable: runner.capabilities.includes(REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY),
     registered: runner.capabilities.includes(REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY),
     answerCapable: runner.capabilities.includes(REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY),
-    accessCapable: runner.capabilities.includes(REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY),
+    ...runnerAccessCapabilities(runner.capabilities),
     sessionAccess: runner.sessionAccess,
   }
 }
@@ -828,7 +834,7 @@ export const DEFAULT_REMOTE_SESSION_DEPS: RemoteSessionExecuteDeps = {
 
 function targetsPayload(
   targets: RemoteSessionDesktopTargets,
-  options: { includeModels: boolean; cloudAvailable: boolean; now: number },
+  options: { includeModels: boolean; cloudAvailable: boolean; policy: RemoteSessionAccessPolicy; now: number },
 ): Record<string, unknown> {
   return {
     computers: targets.computers.map((computer) => ({
@@ -839,6 +845,8 @@ function targetsPayload(
       appVersion: computer.inventory?.computer.appVersion ?? computer.appVersion,
       online: computerOnline(computer, options.now),
       lastSeenAt: computer.lastSeenAt,
+      // What other devices may do there right now; `off` takes no task.
+      access: sessionAccessOf(computer, options.policy).effectiveAccess,
       // Null means this desktop has not reported its workspaces (an older
       // app version); it can still take untargeted remote sessions.
       workspaces: computer.inventory
@@ -1030,7 +1038,7 @@ function desktopRequestResult(request: RemoteSessionRequest, options: { attached
       retryable: !["unknown_session", "unknown_receipt", "invalid_cursor", "cursor_unavailable", "message_conflict", "session_conflict", "ambiguous_creation", "ambiguous_send",
         "stale_request", "invalid_answer", "answer_unsupported", "ambiguous_answer",
         // The computer's own refusals of a session its owner no longer shares, or that is gone.
-        "session_access_denied", "session_unavailable",
+        "session_access_denied", "session_unavailable", REMOTE_ACCESS_OFF_ERROR,
         // Disconnecting the computer failed the request.
         COMPUTER_DISCONNECTED_ERROR].includes(error.code),
     })
@@ -1294,42 +1302,55 @@ function sessionAccessDenied(message: string, identity: Record<string, unknown>)
   return errorResult({ target: "desktop", ...identity, error: "session_access_denied", message, retryable: false })
 }
 
+/** Nothing reaches the computer: its owner, or the organization, does not take tasks from other devices there. */
+function remoteAccessOff(message: string, identity: Record<string, unknown>): RemoteSessionToolResult {
+  return errorResult({ target: "desktop", ...identity, error: REMOTE_ACCESS_OFF_ERROR, message, retryable: false })
+}
+
 /**
- * A session reached through an attach was started on the computer itself: it
- * stays reachable only while the organization and the computer's owner both
- * allow every session. Sessions started remotely are never refused here.
+ * Why a session on one of the caller's computers may not be reached right now.
+ * A computer that is off refuses every session there. A session reached
+ * through an attach was started on the computer itself: it also needs the
+ * organization and the computer's owner to both allow every session. A
+ * computer with no registration is not off; it is offline or gone.
  */
-async function attachedSessionRefusal(
+async function desktopSessionRefusal(
   deps: RemoteSessionExecuteDeps,
   scope: CallerScope,
-  runner: Pick<DesktopRunnerState, "accessCapable" | "sessionAccess"> | null,
+  runner: DesktopRunnerState | null,
+  kind: RemoteSessionDesktopSession["kind"],
   identity: Record<string, unknown>,
 ): Promise<RemoteSessionToolResult | null> {
   const policy = await sessionAccessPolicy(deps, scope)
-  const denial = attachedSessionDenial(policy, runner && computerSessionAccess({
-    supportsAccess: runner.accessCapable === true,
-    reported: runner.sessionAccess ?? null,
-  }, policy))
+  const access = runner && !runner.missing
+    ? computerSessionAccess({ accessCapable: runner.accessCapable === true, choiceCapable: runner.choiceCapable === true, reported: runner.sessionAccess ?? null }, policy)
+    : null
+  const off = remoteAccessOffReason(policy, access)
+  if (off) return remoteAccessOff(off, identity)
+  if (kind !== "attach") return null
+  const denial = attachedSessionDenial(policy, access)
   return denial ? sessionAccessDenied(denial, identity) : null
 }
 
 /**
- * The same check for an attach command read by its commandId or through one of
- * its requests, delivered or detached since: what it reached is told only while
- * that session may still be reached.
+ * The same check for a command read by its commandId or through one of its
+ * requests: what a session returned is told only while that session may still
+ * be reached. A command that reached no session has only its own outcome,
+ * which is always told.
  */
-async function attachedCommandRefusal(
+async function commandRefusal(
   deps: RemoteSessionExecuteDeps,
   input: RemoteSessionExecuteInput,
   command: RemoteSessionCommand,
 ): Promise<RemoteSessionToolResult | null> {
-  if (command.kind !== "attach" || (command.status !== "delivered" && !remoteSessionCommandDetached(command))) return null
+  const attached = command.kind === "attach" && (command.status === "delivered" || remoteSessionCommandDetached(command))
+  if (!attached && command.status !== "delivered") return null
   const runner = command.claimedByRunnerId
     ? await deps.desktopRunner({ organizationId: input.organizationId, ownerMemberId: command.ownerMemberId, runnerId: command.claimedByRunnerId })
     : null
   const identity = { commandId: command.id, sessionId: command.sessionId }
-  if (runner?.disconnected) return computerDisconnectedResult(identity)
-  return attachedSessionRefusal(deps, callerScope(input), runner, identity)
+  if (attached && runner?.disconnected) return computerDisconnectedResult(identity)
+  return desktopSessionRefusal(deps, callerScope(input), runner, command.kind, identity)
 }
 
 const ATTACH_FEATURE_DISABLED_MESSAGE = "Reaching sessions that were started on a computer is not turned on for your organization."
@@ -1351,18 +1372,24 @@ async function attachDesktopSession(
   const scope = callerScope(input)
   const policy = await sessionAccessPolicy(deps, scope)
   if (!policy.enabled) return errorResult({ error: "feature_disabled", message: ATTACH_FEATURE_DISABLED_MESSAGE, retryable: false })
-  if (policy.ceiling !== "all") return sessionAccessDenied(ORGANIZATION_SESSION_ACCESS_DENIED_MESSAGE, {})
+  const organizationOff = remoteAccessOffReason(policy, null)
+  if (organizationOff) return remoteAccessOff(organizationOff, {})
   const targets = await (deps.desktopTargets ?? defaultDesktopTargets)({ ...scope, sessions: true })
-  const disconnected = await disconnectedTargetRefusal(deps, input, targets, body.computerId)
-  if (disconnected) return disconnected
   // Only the caller's own computers are ever read, so someone else's is as unknown as one that does not exist.
   const computer = targets.computers.find((candidate) => candidate.computerId === body.computerId)
-  if (!targets.ownerMemberId || !computer) {
+  const identity = { computerId: body.computerId, workspaceId: body.workspaceId, sessionId: body.sessionId }
+  // A computer that takes nothing says so before anything about which sessions may be reached.
+  const access = computer ? sessionAccessOf(computer, policy) : null
+  const off = remoteAccessOffReason(policy, access)
+  if (off) return remoteAccessOff(off, identity)
+  if (policy.ceiling !== "all") return sessionAccessDenied(ORGANIZATION_SESSION_ACCESS_DENIED_MESSAGE, {})
+  const disconnected = await disconnectedTargetRefusal(deps, input, targets, body.computerId)
+  if (disconnected) return disconnected
+  if (!targets.ownerMemberId || !computer || !access) {
     return errorResult({ error: "unknown_computer", message: `No computer "${body.computerId}" can take remote sessions for your account. ${TARGETS_HINT}`, retryable: false })
   }
-  const identity = { computerId: computer.computerId, workspaceId: body.workspaceId, sessionId: body.sessionId }
-  const access = sessionAccessOf(computer, policy)
-  if (!access.supportsAccess || !computer.registered || computer.capabilities?.includes(REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY) !== true) {
+  // Reaching a session that was started on the computer takes an app that can refuse one.
+  if (!runnerAccessCapabilities(computer.capabilities).accessCapable || !computer.registered || computer.capabilities?.includes(REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY) !== true) {
     return errorResult({ target: "desktop", ...identity, error: "desktop_update_required", message: ATTACH_UPDATE_REQUIRED_MESSAGE, retryable: false })
   }
   const now = Date.now()
@@ -1393,6 +1420,16 @@ async function attachDesktopSession(
     targetSessionId: body.sessionId,
   })
   return jsonResult({ target: "desktop", state: "queued", commandId: command.id, ...identity, expiresAt: sessionTimestampIso(command.expiresAt) })
+}
+
+/** The member's computers that take nothing from other devices right now, each with why, most recently seen first. */
+function computersOff(computers: readonly RemoteSessionDesktopRecord[], policy: RemoteSessionAccessPolicy): Map<string, string> {
+  const off = new Map<string, string>()
+  for (const computer of computers) {
+    const reason = remoteAccessOffReason(policy, sessionAccessOf(computer, policy))
+    if (reason) off.set(computer.computerId, reason)
+  }
+  return off
 }
 
 /** `GET /v1/sessions`: the caller's own sessions across their computers. */
@@ -1434,15 +1471,18 @@ async function listCallerSessions(
     }),
     sessionAccessPolicy(deps, scope),
   ])
-  // Computers matter only where sessions started on them can be reached at all.
-  const computers = policy.ceiling === "all"
-    ? (await (deps.desktopTargets ?? defaultDesktopTargets)({ ...scope, sessions: true })).computers
-    : []
+  // Nothing on anyone's computer is reached while the organization has it off.
+  if (remoteAccessOffReason(policy, null)) return jsonResult({ target: body.target, sessions: [] })
+  // What each computer reported is read only where sessions started on them can be reached at all.
+  const computers = (await (deps.desktopTargets ?? defaultDesktopTargets)({ ...scope, sessions: policy.ceiling === "all" })).computers
   const covered = new Set<string>()
   const reachable = delivered.flatMap((session) => {
     const runner = { organizationId: input.organizationId, ownerMemberId: session.ownerMemberId, runnerId: session.runnerId }
     const computer = commandComputer({ ...runner, claimedByRunnerId: session.runnerId, targetComputerId: null }, computers)
-    if (session.kind === "attach" && (!computer || sessionAccessOf(computer, policy).effectiveAccess !== "all")) return []
+    const access = computer ? sessionAccessOf(computer, policy).effectiveAccess : null
+    // A computer that is off shares nothing; its sessions are listed again once it is allowed.
+    if (access === "off") return []
+    if (session.kind === "attach" && access !== "all") return []
     if (computer) covered.add(coveredSessionKey(computer, session.workspaceId, session.sessionId))
     return [{
       sessionId: session.sessionId,
@@ -1530,7 +1570,7 @@ async function executeRemoteSession(
       if (!request) return errorResult({ error: "unknown_request", retryable: false })
       // A result from an attached session is handed over only while that session may still be reached.
       const command = await deps.commandStore.get({ commandId: request.commandId, organizationId: input.organizationId, createdByUserId: input.userId })
-      const refusal = command ? await attachedCommandRefusal(deps, input, command) : null
+      const refusal = command ? await commandRefusal(deps, input, command) : null
       return refusal ?? desktopRequestResult(request, { attached: command?.kind === "attach" })
     }
     if (body.commandId) {
@@ -1540,7 +1580,7 @@ async function executeRemoteSession(
         createdByUserId: input.userId,
       })
       if (!command) return errorResult({ error: "unknown_command" })
-      const refusal = await attachedCommandRefusal(deps, input, command)
+      const refusal = await commandRefusal(deps, input, command)
       if (refusal) return refusal
       return jsonResult({
         commandId: command.id,
@@ -1567,13 +1607,15 @@ async function executeRemoteSession(
 
   if (input.action === "targets") {
     const body = targetsBodySchema.parse(parsedBody.data)
-    const [webAccess, targets] = await Promise.all([
+    const [webAccess, targets, policy] = await Promise.all([
       deps.getOpenWorkWebAccess(input.organizationId, { userId: input.userId }),
       (deps.desktopTargets ?? defaultDesktopTargets)({ organizationId: input.organizationId, userId: input.userId }),
+      sessionAccessPolicy(deps, callerScope(input)),
     ])
     return jsonResult(targetsPayload(targets, {
       includeModels: body.includeModels === true,
       cloudAvailable: webAccess.hasAccess && (deps.cloudAvailable ?? cloudRemoteSessionsAvailable)(),
+      policy,
       now: Date.now(),
     }))
   }
@@ -1588,14 +1630,12 @@ async function executeRemoteSession(
     const session = await findDesktopSession(input, parsedBody.data, deps)
     if (session) {
       const runner = await deps.desktopRunner({ organizationId: input.organizationId, ownerMemberId: session.ownerMemberId, runnerId: session.runnerId })
-      if (runner.disconnected) return computerDisconnectedResult({ commandId: session.commandId, sessionId: session.sessionId })
-      if (session.kind === "attach") {
-        const identity = { commandId: session.commandId, sessionId: session.sessionId }
-        const refusal = await attachedSessionRefusal(deps, callerScope(input), runner, identity)
-        if (refusal) return refusal
-        // Access is fine but this attach was let go of: nothing is sent through it.
-        if (session.detached) return sessionDisconnected(identity)
-      }
+      const identity = { commandId: session.commandId, sessionId: session.sessionId }
+      if (runner.disconnected) return computerDisconnectedResult(identity)
+      const refusal = await desktopSessionRefusal(deps, callerScope(input), runner, session.kind, identity)
+      if (refusal) return refusal
+      // Access is fine but this attach was let go of: nothing is sent through it.
+      if (session.kind === "attach" && session.detached) return sessionDisconnected(identity)
       desktop = { session, runner }
       if (runner.registered) {
         return executeDesktopSessionAction(input, parsedBody.data, session, runner, deps)
@@ -1624,21 +1664,39 @@ async function executeRemoteSession(
       const computers = body.target === "registered"
         ? targets.computers.filter((computer) => computer.registered === true)
         : targets.computers
+      const policy = await sessionAccessPolicy(deps, callerScope(input))
+      const organizationOff = remoteAccessOffReason(policy, null)
+      if (organizationOff) return remoteAccessOff(organizationOff, {})
       if (!targets.ownerMemberId || computers.length === 0) {
         return errorResult({
           error: "desktop_offline",
           message: "No desktop is connected for your account. Open the OpenWork desktop app and try again.",
         })
       }
-      const online = computers.filter((computer) => computerOnline(computer, Date.now()))
+      // A computer that takes nothing is refused when it is named, and never chosen when none is.
+      const off = computersOff(computers, policy)
+      const named = body.computerId === undefined ? undefined : off.get(body.computerId)
+      if (named) return remoteAccessOff(named, { computerId: body.computerId })
+      const candidates = body.computerId === undefined ? computers.filter((computer) => !off.has(computer.computerId)) : computers
+      const [firstOff] = off.values()
+      if (candidates.length === 0 && firstOff) return remoteAccessOff(firstOff, {})
+      const online = candidates.filter((computer) => computerOnline(computer, Date.now()))
       if (body.target === "registered" && !body.computerId && !body.workspaceId && online.length !== 1) {
         return errorResult({ error: online.length === 0 ? "computer_offline" : "ambiguous_computer", message: "Choose a computerId from remote-session:targets before offloading this task.", retryable: online.length === 0 })
       }
       const selection = body.target === "registered" && !body.computerId && !body.workspaceId
         ? { ...body, computerId: online[0]?.computerId }
         : body
-      const resolved = resolveDesktopTarget(selection, computers, Date.now())
-      if (!resolved.ok) return errorResult({ error: resolved.error, message: resolved.message, retryable: false })
+      const resolved = resolveDesktopTarget(selection, candidates, Date.now())
+      if (!resolved.ok) {
+        // The workspace is only on a computer that takes nothing.
+        const holder = resolved.error === "unknown_workspace"
+          ? computers.find((computer) => off.has(computer.computerId) && computer.inventory?.workspaces.some((workspace) => workspace.workspaceId === body.workspaceId))
+          : undefined
+        const reason = holder && off.get(holder.computerId)
+        if (holder && reason) return remoteAccessOff(reason, { computerId: holder.computerId })
+        return errorResult({ error: resolved.error, message: resolved.message, retryable: false })
+      }
       const unreachable = await recentDesktopUnreachable(deps, input, targets.ownerMemberId, resolved.computerId)
       if (unreachable) return unreachable
       const command = await deps.commandStore.enqueue({
@@ -1669,16 +1727,30 @@ async function executeRemoteSession(
       })
     }
     if (body.target === "desktop") {
+      const [policy, targets] = await Promise.all([
+        sessionAccessPolicy(deps, callerScope(input)),
+        (deps.desktopTargets ?? defaultDesktopTargets)({ organizationId: input.organizationId, userId: input.userId }),
+      ])
+      const organizationOff = remoteAccessOffReason(policy, null)
+      if (organizationOff) return remoteAccessOff(organizationOff, {})
+      const off = computersOff(targets.computers, policy)
+      const [firstOff] = off.values()
+      if (firstOff && off.size === targets.computers.length) return remoteAccessOff(firstOff, {})
       const presence = env.automations.runtimeEnabled
         ? await deps.desktopPresence({ organizationId: input.organizationId, userId: input.userId })
         : { connected: false, ownerMemberId: null }
-      if (!presence.connected || !presence.ownerMemberId) {
+      // Any of the member's desktops may take an unaddressed task. While some of them take nothing,
+      // the task is addressed to one that does, so it cannot land on the others.
+      const taker = off.size > 0
+        ? targets.computers.find((computer) => !off.has(computer.computerId) && computerOnline(computer, Date.now()))
+        : undefined
+      if (!presence.connected || !presence.ownerMemberId || (off.size > 0 && !taker)) {
         return errorResult({
           error: "desktop_offline",
           message: "No desktop is connected for your account. Open the OpenWork desktop app and try again.",
         })
       }
-      const unreachable = await recentDesktopUnreachable(deps, input, presence.ownerMemberId, null)
+      const unreachable = await recentDesktopUnreachable(deps, input, presence.ownerMemberId, taker?.computerId ?? null)
       if (unreachable) return unreachable
       const command = await deps.commandStore.enqueue({
         organizationId: input.organizationId,
@@ -1691,6 +1763,7 @@ async function executeRemoteSession(
         idempotencyKey: body.idempotencyKey
           ? `remote_${createHash("sha256").update(`${input.organizationId}\0${input.userId}\0${body.idempotencyKey}`).digest("hex")}`
           : createDenTypeId("remoteSessionCommand"),
+        ...(taker ? { targetComputerId: taker.computerId } : {}),
       })
       const postsToThread = await linkToOriginatingRun(deps, input, command.id, body.prompt !== undefined)
       return jsonResult({

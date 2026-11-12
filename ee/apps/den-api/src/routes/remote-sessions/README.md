@@ -19,20 +19,22 @@ their own computers:
 
 - `GET /v1/sessions`: the member's computers and sessions, newest first. A
   session is `reachable` (through a delivered command), `connecting` (a start
-  or an attach is queued) or `attachable` (the computer reported it).
+  or an attach is queued) or `attachable` (the computer reported it). Also
+  served with `remoteTasksOptIn` alone, without attachable sessions.
 - `POST /v1/remote-sessions/attach`: queues an attach command for one reported
   session, or returns the command that already reaches it. Agents call the same
   code as `remote-session:attach`, only in a chat with the person.
 - `GET` and `PATCH /v1/org/remote-session-settings` (`src/routes/org/remote-session-settings.ts`):
-  the organization's ceiling, `created` (default) or `all`. Any member reads it; changing it
+  the organization's ceiling, `off`, `created` (default) or `all`. Any member reads it; changing it
   needs Edit organization settings (`organization.update`), like the other organization settings.
+  See "Tasks from other devices, per computer" below for `off` and for when the routes exist.
 - `PUT /v1/session-runners/sessions` (`src/routes/session-runners`): a computer
   reports the access its owner chose and, while that is `all`, its sessions.
 
 The rules, all read through `src/remote-sessions/access.ts`:
 
 - What applies on a computer is the narrower of the organization's ceiling and
-  its owner's choice. The ceiling is `created` while the feature is off.
+  its owner's choice. A stored ceiling of `all` reads as `created` while the feature is off.
 - The computer enforces it, and so does Den. Den refuses an attach, and
   refuses read, send, stop and answer for a session that was reached through
   an attach, with `session_access_denied` unless both currently allow every
@@ -58,6 +60,59 @@ The rules, all read through `src/remote-sessions/access.ts`:
   again where its computer still reports it and both still allow it; and the
   next attach is a new command. A command that started a session remotely is
   never detached.
+
+## Tasks from other devices, per computer (`off`, feature `remoteTasksOptIn`)
+
+Access has three modes, narrowest first: `off` (nothing reaches the computer:
+no task is started there and no session read, continued, stopped, answered or
+attached), `created` and `all`. The same rule in `src/remote-sessions/access.ts`
+decides it everywhere:
+
+- The owner chooses per computer in the desktop app, which reports what applies
+  through `PUT /v1/session-runners/sessions`. Only an app with
+  `remote_session_choice_v1` can say they chose (`chosen: true`), turn the
+  computer off, or leave it unchosen. Den keeps such an app's access only once
+  it is chosen; until then the default applies: `created`, or `off` with the
+  organization's opt-in (`remoteTasksOptIn`).
+- An app without that capability reports `created` or `all` by itself, which
+  is not its owner choosing. Without the opt-in it is honoured as it always
+  was. With the opt-in the computer is `off` whatever it reports, until the
+  app is updated, and Den keeps `created` at most and none of its session titles.
+- The organization's ceiling may be `off`: nobody's computer takes anything.
+  A stored `off` applies whatever the features say.
+- Runners with `remote_session_access_v1` or `remote_session_choice_v1` are
+  told `sessionAccess: { ceiling, optIn }` in the work response, and their
+  reports are taken, while `remoteSessionAccess`, `remoteTasksOptIn` or
+  `remoteDevices` is on for the member or the ceiling is `off`. Den never
+  stores more than the ceiling allows, and a report stored as anything but
+  `all` keeps no sessions and detaches the runner's attaches. Attach commands
+  still go only to runners with `remote_session_access_v1`.
+- Device records (`GET /v1/remote-devices`, `/v1/org/computers` and the routes
+  that return one device, `src/remote-devices.ts`) carry `remoteAccess` for a
+  signed-in desktop that takes tasks: `effective`, `chosen` and `reason`
+  (`organization`, `update_required`, `not_chosen` or null), worked out by the
+  same rule under the owner's own policy. The team list reads the policies of
+  a page's owners in one batch.
+- `GET` and `PATCH /v1/org/remote-session-settings` exist while `remoteDevices`,
+  `remoteSessionAccess` or `remoteTasksOptIn` is on. The response adds
+  `allowsAll` and `optIn`; `PATCH` with `all` answers `409 feature_disabled`
+  (`feature: "remoteSessionAccess"`) without that feature.
+- A computer that is `off` answers `409 remote_access_off` (not retryable,
+  nothing queued) to `create` naming it, to `read`, `send`, `stop` and `answer`
+  for any session on it, to a read by the `commandId` of such a session, and to
+  `attach`. The message says who can allow it: the organization, the owner in
+  Settings > Devices on that computer, or the owner after updating OpenWork there.
+- `create` without a `computerId` never picks a computer that is off; when all
+  of the member's are, it answers `remote_access_off`. A desktop task that any
+  of the member's computers could take is addressed to one that takes tasks
+  while another of them is off.
+- `remote-session:targets` keeps listing every computer with its effective
+  `access`. `GET /v1/sessions` (also served under the opt-in alone) says
+  `chosen`, `access` and `effectiveAccess` per computer and `optIn` for the
+  list. It and `remote-session:list` leave out the sessions on a computer that
+  is off; status keeps answering with the last known state.
+- A task that was already queued when its computer turned off is failed by the
+  computer with error code `remote_access_off`, which reads and status show as is.
 
 ## Disconnected computers
 

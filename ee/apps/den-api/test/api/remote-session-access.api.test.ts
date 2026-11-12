@@ -195,16 +195,16 @@ test("the organization allows only sessions started remotely until someone who c
   for (const [as, canEdit] of [[asMilo, false], [asAdmin, false], [asOwner, true]] as const) {
     const read = await as("GET", "/v1/org/remote-session-settings")
     assert.equal(read.status, 200, summary(read))
-    assert.deepEqual(organizationRemoteSessionSettingsResponseSchema.parse(read.body), { settings: { access: "created" }, canEdit })
+    assert.deepEqual(organizationRemoteSessionSettingsResponseSchema.parse(read.body), { settings: { access: "created" }, canEdit, allowsAll: true, optIn: false })
   }
 
   // The laptop's owner allows everything there; the organization does not, so Den keeps none of it.
   const report = await laptop.call("PUT", "/v1/session-runners/sessions", { access: "all", sessions: [localSession] })
   assert.equal(report.status, 200, summary(report))
-  assert.deepEqual(runnerSessionReportResponseSchema.parse(report.body).sessionAccess, { ceiling: "created" })
+  assert.deepEqual(runnerSessionReportResponseSchema.parse(report.body).sessionAccess, { ceiling: "created", optIn: false })
   const stored = await runnerRow(laptop.computerId)
   assert.deepEqual([stored.session_access, stored.sessions], ["created", []])
-  assert.deepEqual(workOf(await laptop.call("GET", "/v1/session-runners/work")).sessionAccess, { ceiling: "created" })
+  assert.deepEqual(workOf(await laptop.call("GET", "/v1/session-runners/work")).sessionAccess, { ceiling: "created", optIn: false })
 
   const listed = sessionsOf(await asMilo("GET", "/v1/sessions"))
   assert.equal(listed.ceiling, "created")
@@ -227,12 +227,12 @@ test("the organization allows only sessions started remotely until someone who c
   assert.equal(sessionsOf(await asMilo("GET", "/v1/sessions")).ceiling, "created")
   const raised = await asOwner("PATCH", "/v1/org/remote-session-settings", { access: "all" })
   assert.equal(raised.status, 200, summary(raised))
-  assert.deepEqual(organizationRemoteSessionSettingsResponseSchema.parse(raised.body), { settings: { access: "all" }, canEdit: true })
+  assert.deepEqual(organizationRemoteSessionSettingsResponseSchema.parse(raised.body), { settings: { access: "all" }, canEdit: true, allowsAll: true, optIn: false })
   assert.deepEqual(field((await asMilo("GET", "/v1/org/remote-session-settings")).body, "settings"), { access: "all" })
 })
 
 test("a computer must understand session access, and its owner must allow every session, before anything can be attached", async () => {
-  assert.deepEqual(workOf(await laptop.call("GET", "/v1/session-runners/work")).sessionAccess, { ceiling: "all" })
+  assert.deepEqual(workOf(await laptop.call("GET", "/v1/session-runners/work")).sessionAccess, { ceiling: "all", optIn: false })
   const released = await oldMac.call("GET", "/v1/session-runners/work")
   assert.equal(field(released.body, "sessionAccess"), undefined, "an app that never registered the capability is told nothing")
   const olderReport = await oldMac.call("PUT", "/v1/session-runners/sessions", { access: "all", sessions: [localSession] })
@@ -246,7 +246,7 @@ test("a computer must understand session access, and its owner must allow every 
 
   const report = await laptop.call("PUT", "/v1/session-runners/sessions", { access: "all", sessions: [localSession] })
   assert.equal(report.status, 200, summary(report))
-  assert.deepEqual(runnerSessionReportResponseSchema.parse(report.body).sessionAccess, { ceiling: "all" })
+  assert.deepEqual(runnerSessionReportResponseSchema.parse(report.body).sessionAccess, { ceiling: "all", optIn: false })
   const stored = await runnerRow(laptop.computerId)
   assert.deepEqual([stored.session_access, stored.sessions], ["all", [localSession]])
   assert.equal((await laptop.call("PUT", "/v1/session-runners/sessions", { access: "created", sessions: [localSession] })).status, 400, "sessions are reported only while access is all")
