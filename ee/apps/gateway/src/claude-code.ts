@@ -1,4 +1,4 @@
-// Claude Code through the AI Gateway (feature `gatewayMemberApiKeys`). Claude Code reaches another
+// Claude Code through the AI Gateway. Claude Code reaches another
 // provider through ANTHROPIC_BASE_URL and speaks only the Anthropic Messages API, so every model
 // has to answer as Messages, by a name a person can set in its settings.
 //
@@ -38,7 +38,7 @@ export type ClaudeCodeDependencies = {
   reasoningStore: ReasoningStore
   /** The normal Gateway pipeline for a rewritten request. */
   forward: (target: AutoTarget) => Promise<Response>
-  /** Smart Routers (feature `autoRouter`): listed and routed when given. */
+  /** Smart Routers: listed and routed when given. */
   smart?: SmartToolDependencies
 }
 

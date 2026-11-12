@@ -31,7 +31,7 @@ export function workbotIntroFacts(input: {
   };
 }
 
-/** Runs the readiness query only while `enabled` (the `featureIntros` flag) and Workbot is deployed. */
+/** Runs the readiness query only while `enabled` (intros are running) and Workbot is deployed. */
 export function useWorkbotIntroFacts(enabled: boolean, settings: WorkbotSettings | undefined): WorkbotFacts | null {
   const { orgId, orgContext } = useOrgDashboard();
   const deployed = orgContext?.capabilities.workbot === true;

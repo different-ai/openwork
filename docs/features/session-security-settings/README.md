@@ -1,10 +1,8 @@
 # Session length, maximum session length and admin re-authentication settings
 
-- Feature: `sessionSecuritySettings`
-- Deployments: cloud and self-hosted; default **off**.
+- Retired rollout key: `sessionSecuritySettings`
+- Deployments: cloud and self-hosted; generally available (no flag).
 - Author: `OmarMcAdam`
-- Needs `authSecuritySettings` on too: the settings live on its page, and they
-  only apply while both are on (`sessionSecuritySettingsApply`).
 
 ## What changes
 
@@ -19,16 +17,17 @@ so the admin must have signed in recently to change them).
 | **Maximum Session Length**: users have to sign in at least once every period, however active, desktop app included | `maxSessionLengthDays` | 1, 7, 14, 30, 60, 90 days | 30 days |
 | **Enforce fresh Admin sessions**: how recently an admin must have signed in before sensitive changes (the "Confirm your identity" dialog) | `adminReauthMinutes` | 15 minutes, 1 hour, 4 hours, 8 hours, 1 day, Disabled (`0`) | 15 minutes |
 
-![Auth & Security › General, flag on](./auth-security-general.png)
+![Auth & Security › General](./auth-security-general.png)
 
 ![Maximum Session Length choices](./max-session-length-choices.png)
 
-Off: sessions last 7 days without activity, are renewed for as long as they
-are used, and sensitive changes need a sign-in from the last 2 hours, exactly
-as before.
+Every organization gets these settings, with the defaults above until it
+changes them. Before general availability, organizations without the flag had
+7-day sessions renewed for as long as they were used, and a 2-hour window for
+sensitive changes. A person in no organization, and a request without an
+organization, still get those (7 days, no maximum; 2 hours).
 
-**Ask for SSO again** (`ssoPerOrganization`) was removed outright, whether or
-not this feature is on: see [sso-per-organization](../sso-per-organization/README.md).
+**Ask for SSO again** (`ssoPerOrganization`) was removed outright: see [sso-per-organization](../sso-per-organization/README.md).
 
 ### Session length and maximum session length (den-api)
 
@@ -70,28 +69,16 @@ session, so the window counts from then.
 
 ## How to try it
 
-1. `/admin` › Organizations › your organization › Features: turn on
-   **Den: Auth & Security settings** and **Den: session length and admin
-   re-authentication settings**.
-2. Settings › Auth & Security opens on General. Keep the defaults and wait
+1. Settings › Auth & Security opens on General. Keep the defaults and wait
    15 minutes after signing in, then delete a role: the "Confirm your
    identity" dialog appears. Choose Disabled and it no longer does.
-3. Set Session length to 12 hours: the desktop app and the browser sign out
+2. Set Session length to 12 hours: the desktop app and the browser sign out
    after 12 hours without use.
-4. Set Maximum Session Length to 1 day: anyone who signed in more than a day
+3. Set Maximum Session Length to 1 day: anyone who signed in more than a day
    ago is signed out, and everyone signs in again at least daily.
 
 `ee/apps/den-api/test/api/session-security-settings.api.test.ts` covers both
-settings end to end against a real database, including turning the feature
-off again.
-
-## Turning it off
-
-The kill switch or the organization override restores 7-day sessions with no
-maximum and the 2-hour window on the next request. Sessions already shortened
-keep their shorter expiry until their next extension, which gives them 7 days
-again. No
-stored data needs cleaning up.
+settings end to end against a real database.
 
 ## What to watch
 

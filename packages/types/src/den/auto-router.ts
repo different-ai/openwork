@@ -1,7 +1,7 @@
 import { z } from "zod"
 
 /**
- * Smart Model Router (feature `autoRouter`; internal names keep "auto"):
+ * Smart Model Router (internal names keep "auto"):
  * organization admins create any number of Smart Routers. Each has a name,
  * the people it applies to (everyone, teams, members), and AI Gateway models,
  * each tagged with the tasks it should handle. Tasks are shared across the

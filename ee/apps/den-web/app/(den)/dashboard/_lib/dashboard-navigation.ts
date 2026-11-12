@@ -41,8 +41,6 @@ import {
   getOrgSettingsRoute,
   getPermissionsRoute,
   getPluginsRoute,
-  getScimRoute,
-  getSsoRoute,
   getToolTesterRoute,
   getWebRoute,
   getWorkbotSettingsRoute,
@@ -110,10 +108,6 @@ export type BuildDashboardNavSectionsInput = {
   organizationId?: string | null;
   /** The member's own agent is available to them (see myAgentAvailable). */
   myBot?: boolean;
-  /** The authSecuritySettings feature: one Auth & Security entry instead of SSO and SCIM. */
-  authSecuritySettings?: boolean;
-  /** The configBlobs feature: Settings › Config (export and import the organization's configuration). */
-  configBlobs?: boolean;
 };
 
 export function buildDashboardNavSections({
@@ -130,8 +124,6 @@ export function buildDashboardNavSections({
   workbotEntry = { kind: "open" },
   organizationId = null,
   myBot = false,
-  authSecuritySettings = false,
-  configBlobs = false,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
@@ -199,11 +191,11 @@ export function buildDashboardNavSections({
           { href: getApiKeysRoute(orgSlug), label: "API Keys" },
         ].filter((item) => canOpen(item.href)),
         ...permissionsNavChildren(orgSlug, access, canOpen(getMembersRoute(orgSlug))),
-        ...authSecurityNavChildren(orgSlug, access, authSecuritySettings),
+        ...authSecurityNavChildren(orgSlug, access),
         ...(canOpen(getMarketplacesRoute(orgSlug))
           ? [{ href: getMarketplacesRoute(orgSlug), label: "Advanced" }]
           : []),
-        ...(configBlobs && canOpen(getConfigRoute(orgSlug))
+        ...(canOpen(getConfigRoute(orgSlug))
           ? [{ href: getConfigRoute(orgSlug), label: "Config" }]
           : []),
         ...(capabilities.mcpConnections && canOpen(getToolTesterRoute(orgSlug))
@@ -239,15 +231,9 @@ function permissionsNavChildren(orgSlug: string, access: DenOrgAccessFlags, memb
   return access.canViewPermissions && !membersOpen ? [{ href: getPermissionsRoute(orgSlug), label: "Roles" }] : [];
 }
 
-/** SSO and SCIM: one Auth & Security entry with the feature on, shown when either tab is visible. */
-function authSecurityNavChildren(orgSlug: string, access: DenOrgAccessFlags, combined: boolean): DashboardNavChild[] {
-  if (combined) {
-    return access.canViewSso || access.canViewScim ? [{ href: getAuthSecurityRoute(orgSlug), label: "Auth & Security" }] : [];
-  }
-  return [
-    ...(access.canViewSso ? [{ href: getSsoRoute(orgSlug), label: "SSO" }] : []),
-    ...(access.canViewScim ? [{ href: getScimRoute(orgSlug), label: "SCIM" }] : []),
-  ];
+/** SSO and SCIM: one Auth & Security entry, shown when either tab is visible. */
+function authSecurityNavChildren(orgSlug: string, access: DenOrgAccessFlags): DashboardNavChild[] {
+  return access.canViewSso || access.canViewScim ? [{ href: getAuthSecurityRoute(orgSlug), label: "Auth & Security" }] : [];
 }
 
 // Alias order is ranking priority in the command palette.
@@ -279,9 +265,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   "OpenWork Models": ["llm", "provider", "managed", "inference"],
   "OpenWork Web": ["cloud", "sessions"],
   Plugins: ["skills", "commands", "plugin directory"],
-  SCIM: ["provisioning", "directory", "users"],
   Settings: ["organization", "workspace"],
-  SSO: ["single sign on", "saml", "oidc"],
   "Tool Tester": ["tools", "test", "mcp"],
   Workbot: ["model", "default model", "assistant", "slack", "automations"],
 };

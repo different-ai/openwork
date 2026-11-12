@@ -57,7 +57,7 @@ async function bootBrowser(seed: Seed, { place }: { place: Place }, mode: "optio
     const activated = await request(den.admin, "/v1/me/active-organization", { method: "POST", body: JSON.stringify({ organizationId: orgId }) });
     if (!activated.response.ok) throw new Error(`Select the fixture's SSO organization: ${activated.text}`);
     const signedIn = den.admin;
-    const web = await seed.web({ den, ...(mode === "single" ? { signedInAs: den.admin } : {}), startPath: mode === "single" ? "/dashboard/org-settings" : "/", headless: true, viewport: { width: 1440, height: 1000 } });
+    const web = await seed.web({ den, ...(mode === "single" ? { signedInAs: den.admin } : {}), startPath: mode === "single" ? "/dashboard/auth-security?tab=sso" : "/", headless: true, viewport: { width: 1440, height: 1000 } });
     const fresh = (path = "/", signedInAs?: DenSession) => seed.web({ den, ...(signedInAs ? { signedInAs } : {}), startPath: path, headless: true, viewport: { width: 1440, height: 1000 } });
     const sessionFor = async (surface: AttachedSurface): Promise<DenSession> => {
       const raw = await surface.client.send("Network.getCookies", { urls: [den.ref.webUrl] });

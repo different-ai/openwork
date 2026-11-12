@@ -3,7 +3,7 @@ import { z } from "zod";
 /**
  * Config blobs: export / import of an organization's configuration as JSON.
  * Design: docs/features/config-blobs/. Shared by den-api (engine, adapters,
- * routes) and den-web (Settings › Config). Feature flag: `configBlobs`.
+ * routes) and den-web (Settings › Config).
  */
 
 export const CONFIG_BLOB_FORMAT = "openwork.config-blob" as const;

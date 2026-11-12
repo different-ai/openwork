@@ -1,4 +1,4 @@
-// AI Gateway API keys for 3rd party tools (feature gatewayMemberApiKeys): a member's own key
+// AI Gateway API keys for 3rd party tools: a member's own key
 // authenticates as that member, and its requests are logged against the key that made them.
 import assert from "node:assert/strict"
 import { test } from "node:test"

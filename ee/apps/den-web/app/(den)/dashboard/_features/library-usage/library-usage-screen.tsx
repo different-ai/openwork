@@ -108,7 +108,7 @@ export function LibraryUsageScreen() {
   const since = report ? countingSinceLabel(report, now) : null;
   const nothingRecorded = report ? !report.trackingSince && report.items.every((row) => row.uses === 0) : false;
   const focusedItem = report && focus && "itemId" in focus ? report.items.find((row) => row.id === focus.itemId) ?? null : null;
-  // With `featureIntros` on, the list view gets a box in place of "No {kind} yet" and a banner
+  // Feature intro: the list view gets a box in place of "No {kind} yet" and a banner
   // instead of "No usage yet". Drill-downs (one item or person) never show it.
   const intro = useFeatureIntro("analytics.library", focus ? null : libraryUsageIntroFacts(kind, report));
   const introBanner = intro.size === "banner";

@@ -1,7 +1,7 @@
 import { AUTO_ROUTER_THINKING_LEVELS, autoRouterModelName, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router";
 
 /**
- * Cursor through the AI Gateway (feature `gatewayMemberApiKeys`).
+ * Cursor through the AI Gateway.
  *
  * Cursor reaches other models only by overriding its OpenAI API key and base URL, and each model is
  * added by typing one string that is both its id and the name Cursor shows. A Gateway model id
@@ -95,7 +95,7 @@ export function matchCursorModel<T extends { name: string; modelId: string }>(pa
 }
 
 /**
- * Claude Code through the AI Gateway (feature `gatewayMemberApiKeys`) uses the same names, with no
+ * Claude Code through the AI Gateway uses the same names, with no
  * thinking level (Claude Code sends its own) and `[1m]` on models with a 1M token context window:
  * Claude Code assumes 200k otherwise and compacts early.
  */
@@ -118,7 +118,7 @@ export function parseClaudeCodeModelName(value: unknown): ParsedCursorModelName 
 }
 
 /**
- * Claude Desktop in Gateway mode (feature `gatewayMemberApiKeys`) uses the Claude Code endpoint as its
+ * Claude Desktop in Gateway mode uses the Claude Code endpoint as its
  * Gateway base URL, but its model picker keeps only ids that name a Claude model: one with claude,
  * opus, sonnet or haiku in it and no other model family (gpt, gemini, deepseek...). This mirrors that
  * check (Claude Desktop 5.x) on the name Claude Code uses, so setup can say which models it shows.
@@ -132,7 +132,7 @@ export function claudeDesktopListsModel(claudeCodeName: string): boolean {
 }
 
 /**
- * The Codex CLI through the AI Gateway (feature `gatewayMemberApiKeys`) uses the same names with no
+ * The Codex CLI through the AI Gateway uses the same names with no
  * thinking level: Codex sends its own (`model_reasoning_effort`). A level in the name still wins.
  */
 export const CODEX_BASE_URL_PATH = "/codex";
@@ -143,7 +143,7 @@ export function codexBaseUrl(gatewayApiBaseUrl: string): string {
 }
 
 /**
- * Smart Routers (feature `autoRouter`) in the same tools: one name per router the member can use,
+ * Smart Routers in the same tools: one name per router the member can use,
  * built like a model's from the router's picker name ("Smart: Engineering") and the end of its id:
  *
  *   openwork/smart-<router name as a slug>-<last 4 characters of the router's id>

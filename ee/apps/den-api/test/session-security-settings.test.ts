@@ -6,23 +6,13 @@ import {
   organizationSessionLimits,
   readSessionSecuritySettings,
   sessionRefreshDue,
-  sessionSecuritySettingsApply,
   sessionExpiresAt,
   sessionUpdateAgeSeconds,
   strictestSessionLimits,
 } from "../src/session-security-settings.js"
 
-const on = { sessionSecuritySettings: true, authSecuritySettings: true }
-const off = { sessionSecuritySettings: false, authSecuritySettings: true }
-const pageOff = { sessionSecuritySettings: true, authSecuritySettings: false }
 const HOUR = 60 * 60
 const DAY = 24 * HOUR
-
-test("the settings apply only with the feature and the Auth & Security page on", () => {
-  assert.equal(sessionSecuritySettingsApply(on), true)
-  assert.equal(sessionSecuritySettingsApply(off), false)
-  assert.equal(sessionSecuritySettingsApply(pageOff), false)
-})
 
 test("unset or unknown choices read as the defaults: 7 days, at most 30 days, and 15 minutes", () => {
   const defaults = { sessionLengthHours: 168, maxSessionLengthDays: 30, adminReauthMinutes: 15 }
@@ -31,12 +21,10 @@ test("unset or unknown choices read as the defaults: 7 days, at most 30 days, an
   assert.deepEqual(readSessionSecuritySettings({ sessionLengthHours: 12, maxSessionLengthDays: 90, adminReauthMinutes: 0 }), { sessionLengthHours: 12, maxSessionLengthDays: 90, adminReauthMinutes: 0 })
 })
 
-test("admin re-authentication: the organization's window, off at 0, 2 hours while the settings do not apply", () => {
-  assert.equal(adminReauthMaxAgeMs({ features: on, metadata: null }), 15 * 60 * 1000)
-  assert.equal(adminReauthMaxAgeMs({ features: on, metadata: { adminReauthMinutes: 480 } }), 8 * HOUR * 1000)
-  assert.equal(adminReauthMaxAgeMs({ features: on, metadata: { adminReauthMinutes: 0 } }), null)
-  assert.equal(adminReauthMaxAgeMs({ features: off, metadata: { adminReauthMinutes: 0 } }), 2 * HOUR * 1000)
-  assert.equal(adminReauthMaxAgeMs({ features: pageOff, metadata: { adminReauthMinutes: 0 } }), 2 * HOUR * 1000)
+test("admin re-authentication: the organization's window, 15 minutes by default, off at 0", () => {
+  assert.equal(adminReauthMaxAgeMs(null), 15 * 60 * 1000)
+  assert.equal(adminReauthMaxAgeMs({ adminReauthMinutes: 480 }), 8 * HOUR * 1000)
+  assert.equal(adminReauthMaxAgeMs({ adminReauthMinutes: 0 }), null)
 })
 
 test("a session signed in 20 minutes ago passes a 1 hour window, fails 15 minutes, and always passes when off", () => {
@@ -46,10 +34,9 @@ test("a session signed in 20 minutes ago passes a 1 hour window, fails 15 minute
   assert.equal(checkFreshPrivilegedSession({ apiKey: null, session }, null).ok, true)
 })
 
-test("session limits: the organization's choices; 7 days and no maximum while the settings do not apply", () => {
-  assert.deepEqual(organizationSessionLimits({ features: on, metadata: { sessionLengthHours: 12, maxSessionLengthDays: 7 } }), { idleSeconds: 12 * HOUR, maxSeconds: 7 * DAY })
-  assert.deepEqual(organizationSessionLimits({ features: on, metadata: null }), { idleSeconds: 7 * DAY, maxSeconds: 30 * DAY })
-  assert.deepEqual(organizationSessionLimits({ features: off, metadata: { sessionLengthHours: 12 } }), { idleSeconds: 7 * DAY, maxSeconds: null })
+test("session limits: the organization's choices, or 7 days and at most 30 days by default", () => {
+  assert.deepEqual(organizationSessionLimits({ sessionLengthHours: 12, maxSessionLengthDays: 7 }), { idleSeconds: 12 * HOUR, maxSeconds: 7 * DAY })
+  assert.deepEqual(organizationSessionLimits(null), { idleSeconds: 7 * DAY, maxSeconds: 30 * DAY })
 })
 
 test("a person in several organizations gets the strictest of each limit", () => {

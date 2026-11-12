@@ -1,6 +1,6 @@
 /**
- * Pure helpers for AI Gateway custom OpenAI-compatible providers
- * (feature `gatewayCustomProviders`): the model settings form, models.dev
+ * Pure helpers for AI Gateway custom OpenAI-compatible providers:
+ * the model settings form, models.dev
  * templates, merging a fresh `/models` answer into the list, test
  * fingerprints and where a failed test sends the admin. No React, no fetch.
  */

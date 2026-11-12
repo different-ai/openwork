@@ -1,4 +1,4 @@
-// Cursor through the AI Gateway (feature `gatewayMemberApiKeys`). Cursor's only way to another
+// Cursor through the AI Gateway. Cursor's only way to another
 // provider is its OpenAI key and base URL override, so every model, whatever its provider speaks,
 // has to answer as OpenAI Chat Completions under one base URL, by a name a person can type.
 //
@@ -41,7 +41,7 @@ export type CursorDependencies = {
   reasoningStore: ReasoningStore
   /** The normal Gateway pipeline for a rewritten request. */
   forward: (target: AutoTarget) => Promise<Response>
-  /** Smart Routers (feature `autoRouter`): listed and routed when given. */
+  /** Smart Routers: listed and routed when given. */
   smart?: SmartToolDependencies
 }
 

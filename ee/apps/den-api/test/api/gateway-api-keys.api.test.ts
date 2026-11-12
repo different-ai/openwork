@@ -1,5 +1,5 @@
 /**
- * AI Gateway API keys for 3rd party tools (feature gatewayMemberApiKeys): an admin allows them in Settings,
+ * AI Gateway API keys for 3rd party tools: an admin allows them in Settings,
  * members create, list and revoke their own keys, and admins see and revoke every key in the organization.
  */
 import assert from "node:assert/strict"
@@ -21,22 +21,7 @@ const asOther = den.as(other, orgId)
 const { orgId: otherOrgId, owner: otherOwner } = await den.createOrg(await den.signUp("Zed Elsewhere"), "Another org")
 const asOtherOrgOwner = den.as(otherOwner, otherOrgId)
 
-test("every route answers as if it did not exist while the feature is off", async () => {
-  for (const [method, path] of [
-    ["GET", "/v1/org/ai-gateway-settings"],
-    ["GET", "/v1/org/ai-gateway/api-keys/mine"],
-    ["GET", "/v1/org/ai-gateway/api-keys"],
-  ] as const) {
-    const call = await asOwner(method, path)
-    assert.equal(call.status, 404, `${method} ${path}: ${summary(call)}`)
-    assert.equal(field(call.body, "error"), "feature_disabled")
-  }
-  assert.equal((await asMember("POST", "/v1/org/ai-gateway/api-keys/mine", { name: "Claude Code" })).status, 404)
-})
-
 test("member keys are off until someone who can edit organization settings turns them on", async () => {
-  assert.equal((await den.setFeature(orgId, "gatewayMemberApiKeys", true)).status, 200)
-
   const read = await asMember("GET", "/v1/org/ai-gateway-settings")
   assert.equal(read.status, 200, summary(read))
   assert.deepEqual(field(read.body, "settings"), { memberApiKeys: false })

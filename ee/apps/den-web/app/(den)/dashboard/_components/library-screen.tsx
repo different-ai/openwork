@@ -17,7 +17,6 @@ import {
   getLibraryLlmProviderRoute,
   getLibraryRoute,
   getYourConnectionsRoute,
-  orgFeatureEnabled,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FilterInput, ItemMenu, ItemPanel, removeEntry } from "./item-list";
@@ -210,7 +209,6 @@ function LibraryContent() {
   const personal = useOrgLlmProviders(filter === "models" || introsEnabled ? orgContext?.organization.id ?? null : null);
   const personalProviders = personal.llmProviders.filter(provider => provider.source !== "openwork" && provider.createdByOrgMembershipId === orgContext?.currentMember.id);
   const addKeyHref = `${getLibraryRoute(orgSlug)}/model-providers/new`;
-  const gatewayApiKeysEnabled = orgFeatureEnabled(orgContext, "gatewayMemberApiKeys");
   const onlyNeedsSignIn = parseNeedsSignIn(searchParams.get("status"));
   const personalRows = personalProviders.filter(provider => !onlyNeedsSignIn && provider.name.toLowerCase().includes(query.trim().toLowerCase()));
 
@@ -251,7 +249,7 @@ function LibraryContent() {
   // With feature intros on, the viewer's own keys still loading count as loading (never "empty" on a guess).
   const personalPending = introsEnabled && !personal.loaded && !personal.error;
   const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels && personalProviders.length === 0 && !personalPending;
-  // Feature intros (flag `featureIntros`): null while anything is loading or failed, so the page shows as before.
+  // Feature intros: null while anything is loading or failed, so the page shows as before.
   const introFacts = introsEnabled && !library.error && !models.error && !personal.error && personal.loaded
     ? libraryIntroFacts({ items: library.data, models: models.data?.length, personalModels: personalProviders.length })
     : null;
@@ -346,7 +344,7 @@ function LibraryContent() {
             ) : null}
           </div>
 
-          {filter === "models" && gatewayApiKeysEnabled ? <MemberGatewayApiKeysSection /> : null}
+          {filter === "models" ? <MemberGatewayApiKeysSection /> : null}
 
           {filter === "all" || filter === "workflows"
             ? listBody

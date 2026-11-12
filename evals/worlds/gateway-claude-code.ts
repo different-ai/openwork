@@ -3,7 +3,6 @@ import type { Seed } from "@openwork/env";
 import { denFetch } from "@openwork/behaviors";
 import { gatewayEnvironment, record, seedAcmeGateway, startAcmeGateway, startAcmeUpstream } from "../../worlds/lib/acme-gateway.ts";
 import { isRecord } from "./library.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
 export const DEEPSEEK_MOCK_MODEL = "deepseek-v4-flash";
 export const DEEPSEEK_MOCK_REPLY = "DeepSeek mock is working.";
@@ -53,7 +52,7 @@ async function startDeepSeekUpstream(stack: AsyncDisposableStack) {
 }
 
 /**
- * Claude Code through the AI Gateway (part of `gatewayMemberApiKeys`): a real Den (cloud) and AI
+ * Claude Code through the AI Gateway: a real Den (cloud) and AI
  * Gateway with two providers every member may use: Anthropic (the Acme mock, Messages) and DeepSeek
  * (an OpenAI-compatible mock, Chat Completions). Member API keys are on and allowed; the owner is
  * signed in on My Library › Models.
@@ -78,7 +77,6 @@ export async function gatewayClaudeCodeWorld(seed: Seed) {
     if (created.response.status !== 201 || typeof provider?.id !== "string") throw new Error(`DeepSeek provider creation failed: HTTP ${created.response.status}`);
     const connected = await denFetch(den.admin, `/v1/inference-providers/${provider.id}/connect`, { headers: orgHeaders });
     if (!connected.response.ok) throw new Error(`DeepSeek provider not usable: HTTP ${connected.response.status}`);
-    await enableOrganizationCapabilities(seed, den.admin, { gatewayMemberApiKeys: true });
     const allowed = await seed.api(den.admin, "/v1/org/ai-gateway-settings", { method: "PUT", body: JSON.stringify({ memberApiKeys: true }) });
     if (!allowed.response.ok) throw new Error(`Allowing 3rd party tools failed: HTTP ${allowed.response.status}`);
     const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/library?show=models", headless: true, viewport: { width: 1440, height: 1100 } });

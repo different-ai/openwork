@@ -302,7 +302,6 @@ test("delete removes the scope's configuration", async () => {
 })
 
 test("prompts: importing (dry run or upload) needs prompts.view as well as prompts.manage, so a plan never shows prompt text to a manager who can't view it", async () => {
-  assert.equal((await den.setFeature(source.orgId, "configBlobs", true)).status, 200)
   const exported = await ok(apiA("GET", "/v1/config-blobs/export?areas=members.prompts"), "export prompts")
   const blob = JSON.parse(JSON.stringify(exported.body))
   assert.ok(JSON.stringify(blob).includes("Confidential house rules"), "the owner's export carries the text")

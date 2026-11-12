@@ -36,7 +36,7 @@ export function MarketplacesScreen() {
     orgContext?.currentMember.permissions,
   );
 
-  // With `featureIntros` on: full screen with no collection at all (in place of the empty states
+  // Feature intro: full screen with no collection at all (in place of the empty states
   // below), banner while only the built-in OpenWork Marketplace exists (DESIGN.md I1, I2).
   // From the data itself (not isLoading), which only lists collections this person has a role on.
   const intro = useFeatureIntro("collections", collectionsIntroFacts(error ? undefined : marketplacesData, access.canManageAllShared));

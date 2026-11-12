@@ -1,9 +1,8 @@
 # Config blobs (internal name)
 
-- **Feature key:** `configBlobs`, declared in `packages/features/src/registry.ts`. Cloud and self-hosted, off by default.
+- **Feature key:** none. Built behind `configBlobs`; generally available on cloud and self-hosted since 2026-11-12 (the key is retired in `packages/features/src/resolve.ts`).
 - **Author:** @OmarMcAdam
-- **Status:** built behind the flag: export, change requests, plan-time preflight, apply, restore, config tokens, all 26 areas ([inventory.md](./inventory.md)). What remains is in [plan.md](./plan.md#status-2026-11-09).
-- **Turning it off:** hides Settings › Config and answers 404 on `/v1/config-blobs/*`. Change requests already applied stay applied; queued ones wait and resume when it's on again.
+- **Status:** shipped: export, change requests, plan-time preflight, apply, restore, config tokens, all 26 areas ([inventory.md](./inventory.md)). What remains is in [plan.md](./plan.md#status-2026-11-09).
 
 ## What it is
 

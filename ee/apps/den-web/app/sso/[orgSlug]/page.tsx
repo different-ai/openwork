@@ -13,7 +13,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-/** The organization's identity providers (multipleSsoConnections), or null when they could not be read. */
+/** The organization's identity providers, or null when they could not be read. */
 async function loadSsoProviders(orgSlug: string): Promise<{ organizationName: string; providers: SsoProviderOption[] } | null> {
   try {
     const { response, payload } = await requestJson(`/api/auth/sso-options?organizationSlug=${encodeURIComponent(orgSlug)}`, { method: "GET" }, 12000);

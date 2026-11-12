@@ -1,6 +1,6 @@
 /**
- * Config-blob area `ai-gateway.smart-routers`: Smart Routers (feature
- * `autoRouter`, cloud only; Manage › AI Gateway › AI Providers › Smart routers).
+ * Config-blob area `ai-gateway.smart-routers`: Smart Routers (Manage › AI
+ * Gateway › AI Providers › Smart routers).
  *
  * - Spec: who the router applies to (everyone, team refs, people refs) and its
  *   models in order, each a `$ref` to its `ai-gateway.providers` provider plus
@@ -265,7 +265,6 @@ async function applyRouter(ctx: ConfigAreaContext, op: ConfigApplyOp) {
   try {
     const unavailable = gatewayManagementUnavailable()
     if (unavailable) throw new ConfigApplyError(unavailable.error, unavailable.message, 403)
-    if (!ctx.features.autoRouter) throw new ConfigApplyError("feature_disabled", "The Smart Model Router is not turned on for this organization.", 404)
     const held = await heldPermissions(ctx)
     requirePermission(held, "gateway_providers.manage")
     const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
@@ -331,8 +330,7 @@ export const aiGatewaySmartRoutersArea = defineConfigArea({
   specVersion: 1,
   specSchema: routerSpecSchema,
   dependsOn: [PROVIDERS_AREA, "members.teams", "members.people"],
-  deployments: ["cloud"],
-  feature: "autoRouter",
+  deployments: ["cloud", "self_hosted"],
   viewPermission: "gateway_providers.view",
   managePermission: "gateway_providers.manage",
   // Not auto_router_reasoning: short-lived runtime state.

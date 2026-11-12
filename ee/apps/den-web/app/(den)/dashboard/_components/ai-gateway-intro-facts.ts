@@ -24,8 +24,8 @@ export function firstProviderCreator(providers: readonly DenInferenceProvider[],
 
 /**
  * Section facts for the AI Gateway intro (DESIGN.md I2): providers and whether
- * OpenWork Models is on. Loads only while `enabled` (the `featureIntros` flag),
- * so the page makes no extra requests with the flag off. Null until both are
+ * OpenWork Models is on. Loads only while `enabled` (intros are running for a
+ * loaded organization). Null until both are
  * known, or when this person can't read one of them: the page then renders as before.
  */
 export function useAiGatewayIntroFacts(enabled: boolean): AiGatewayFacts | null {

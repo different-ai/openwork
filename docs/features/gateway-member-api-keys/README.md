@@ -1,7 +1,10 @@
 # AI Gateway: API keys for 3rd party tools
 
-- **Feature key:** `gatewayMemberApiKeys`
-- **Deployments:** cloud and self-hosted, off by default
+> **GA:** Available without a feature flag. The former rollout key is retired.
+> The organization setting below still decides whether members may use keys.
+
+- **Retired rollout key:** `gatewayMemberApiKeys`
+- **Deployments:** cloud and self-hosted, generally available (no flag)
 - **Author:** OmarMcAdam
 - **Public docs:** `packages/docs/ai-gateway/third-party-tools.mdx`
 
@@ -10,16 +13,12 @@ any tool or harness (Claude Code, Codex, Cursor, SDKs, eval scripts) through the
 provider-less endpoints: `GET /api/v1/models`, `POST /api/v1/chat/completions`,
 `/api/v1/responses` and `/api/v1/messages`.
 
-## Two switches
+## The organization setting
 
-1. **The feature** (this flag, in `/admin`) decides whether the setting, the
-   Library section and the admin tab exist at all.
-2. **The organization setting** at the top of AI Gateway › API Keys, **Allow 3rd
-   party tools & harnesses** (`organization.metadata.aiGateway.memberApiKeys`,
-   off by default, needs Edit organization settings) decides whether members may
-   create and use keys.
-
-A key works only while both are on. The Gateway checks both on every request
+The setting at the top of AI Gateway › API Keys, **Allow 3rd party tools &
+harnesses** (`organization.metadata.aiGateway.memberApiKeys`, off by default,
+needs Edit organization settings), decides whether members may create and use
+keys. A key works only while it is on. The Gateway checks it on every request
 (cached up to 15 seconds per organization).
 
 ![AI Gateway › API Keys with the setting on and no keys yet](./settings.png)
@@ -69,10 +68,9 @@ settings.
   `GET|POST /v1/org/ai-gateway/api-keys/mine`,
   `DELETE /v1/org/ai-gateway/api-keys/mine/:apiKeyId`,
   `GET /v1/org/ai-gateway/api-keys`, `DELETE /v1/org/ai-gateway/api-keys/:apiKeyId`.
-  All 404 `feature_disabled` while the flag is off.
 - Gateway: `findActiveGatewayKey` looks up `gateway_keys` first, then
   `gateway_api_keys` (skipping revoked and expired keys). An API key then needs
-  the flag on and the setting on.
+  the setting on.
   The caller is the key's member (`keySource: "api_key"`), so grants, limits,
   usage and logging are exactly that member's. Every access read re-checks that
   the key is still active and unexpired, so a revoked or expired key stops on

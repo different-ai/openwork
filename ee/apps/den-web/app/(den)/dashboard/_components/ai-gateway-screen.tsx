@@ -10,7 +10,7 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { AUTOMATION_CARD_CLASS, CARD_TITLE_CLASS } from "../../_components/ui/dashboard-styles";
 import { DenNotice } from "../../_components/ui/notice";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
-import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute, getOrgAccessFlags, orgFeatureEnabled, type DenOrgAccessFlags } from "../../_lib/den-org";
+import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute, getOrgAccessFlags, type DenOrgAccessFlags } from "../../_lib/den-org";
 import { canOpenGatewayArea, gatewayAreaLockedMessage, type GatewayDashboardArea } from "../_lib/gateway-dashboard-access";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen, type FeatureIntroKey } from "../_features/feature-intros";
@@ -129,8 +129,6 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
   );
   const router = useRouter();
   const searchParams = useSearchParams();
-  // API Keys only exists where member AI Gateway API keys are on (feature `gatewayMemberApiKeys`).
-  const tabs = orgFeatureEnabled(orgContext, "gatewayMemberApiKeys") ? AI_GATEWAY_TABS : AI_GATEWAY_TABS.filter((item) => item.value !== "api-keys");
   const introUnseen = useFeatureIntroUnseen();
   const introsEnabled = useFeatureIntroRuntime().enabled;
   // Smart Routers moved into AI Providers; old links to their tab land there.
@@ -140,10 +138,10 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
   // Sub-pages (provider, router and limit forms) never show the section intro.
   const gatewayIntroFacts = useAiGatewayIntroFacts(introsEnabled && nestedContent === undefined);
   // Without an explicit tab, land on the first one this person can open.
-  const defaultTab = tabs.find((item) => canOpenAiGatewayTab(memberAccess, item.value))?.value ?? "overview";
+  const defaultTab = AI_GATEWAY_TABS.find((item) => canOpenAiGatewayTab(memberAccess, item.value))?.value ?? "overview";
   const tab = nestedContent !== undefined && nestedTab
     ? nestedTab
-    : tabs.find((item) => item.value === requestedTab)?.value ?? defaultTab;
+    : AI_GATEWAY_TABS.find((item) => item.value === requestedTab)?.value ?? defaultTab;
   const gatewayTabArea = tab === "openwork-models" ? "any" : GATEWAY_TAB_AREAS[tab];
   const access = useGatewayDashboardAccess(gatewayTabArea);
 
@@ -162,12 +160,12 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
       description={null}
     >
       <div data-testid="ai-gateway-tabs" className="mb-6">
-        <UnderlineTabs tabs={tabs.map((item) => ({ ...item, unseen: introUnseen(AI_GATEWAY_TAB_INTROS[item.value]) }))} activeTab={tab} onChange={setTab} />
+        <UnderlineTabs tabs={AI_GATEWAY_TABS.map((item) => ({ ...item, unseen: introUnseen(AI_GATEWAY_TAB_INTROS[item.value]) }))} activeTab={tab} onChange={setTab} />
       </div>
       <div
         key={tab}
         role="tabpanel"
-        aria-label={tabs.find((item) => item.value === tab)?.label}
+        aria-label={AI_GATEWAY_TABS.find((item) => item.value === tab)?.label}
         data-testid={`ai-gateway-panel-${tab}`}
       >
         {nestedContent !== undefined ? nestedContent : (

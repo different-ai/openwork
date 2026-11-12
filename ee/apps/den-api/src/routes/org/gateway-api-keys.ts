@@ -11,7 +11,6 @@ import {
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { requireFeature } from "../../features.js"
 import {
   createMemberGatewayApiKey,
   gatewayApiBaseUrl,
@@ -39,11 +38,11 @@ const apiKeyParamsSchema = z.object({ apiKeyId: denTypeIdSchema("gatewayApiKey")
 const errorSchema = z.object({ error: z.string(), message: z.string() })
 
 const unauthorized = jsonResponse("Authentication required.", unauthorizedSchema)
-const notFound = jsonResponse("The organization was not found, or AI Gateway API keys are off for it.", notFoundSchema)
-const keyNotFound = jsonResponse("No such active key, or AI Gateway API keys are off for the organization.", notFoundSchema)
+const notFound = jsonResponse("The organization was not found.", notFoundSchema)
+const keyNotFound = jsonResponse("No such active key.", notFoundSchema)
 
 /**
- * AI Gateway API keys for 3rd party tools (feature `gatewayMemberApiKeys`): the organization setting in
+ * AI Gateway API keys for 3rd party tools: the organization setting in
  * Settings › General, each member's own keys in Library › Models, and every key in AI Gateway › API Keys.
  */
 export function registerOrgGatewayApiKeyRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
@@ -52,11 +51,10 @@ export function registerOrgGatewayApiKeyRoutes<T extends { Variables: OrgRouteVa
     describeRoute({
       tags: ["Inference Providers"],
       summary: "Get AI Gateway settings",
-      description: "Returns whether members may create their own AI Gateway API keys and use the Gateway from 3rd party tools and harnesses. Any member can read it. Needs the AI Gateway API keys feature.",
+      description: "Returns whether members may create their own AI Gateway API keys and use the Gateway from 3rd party tools and harnesses. Any member can read it.",
       responses: { 200: jsonResponse("AI Gateway settings returned.", settingsViewSchema), 401: unauthorized, 404: notFound },
     }),
     orgMemberRoute(),
-    requireFeature("gatewayMemberApiKeys"),
     async (c) => {
       c.header("Cache-Control", "no-store")
       return c.json({ settings: readOrganizationAiGatewaySettings(c.get("organizationContext").organization.metadata) })
@@ -68,7 +66,7 @@ export function registerOrgGatewayApiKeyRoutes<T extends { Variables: OrgRouteVa
     describeRoute({
       tags: ["Inference Providers"],
       summary: "Set AI Gateway settings",
-      description: "Turns member AI Gateway API keys on or off for the organization. Turning it off stops every member key at the Gateway at once; the keys are kept and work again when it is turned back on. Requires Edit organization settings and the AI Gateway API keys feature.",
+      description: "Turns member AI Gateway API keys on or off for the organization. Turning it off stops every member key at the Gateway at once; the keys are kept and work again when it is turned back on. Requires Edit organization settings.",
       responses: {
         200: jsonResponse("AI Gateway settings saved.", settingsViewSchema),
         400: jsonResponse("The request was invalid.", invalidRequestSchema),
@@ -78,7 +76,6 @@ export function registerOrgGatewayApiKeyRoutes<T extends { Variables: OrgRouteVa
       },
     }),
     orgMemberRoute(),
-    requireFeature("gatewayMemberApiKeys"),
     requireOrgPermission("organization.update"),
     jsonValidator(settingsInputSchema),
     async (c) => {
@@ -94,11 +91,10 @@ export function registerOrgGatewayApiKeyRoutes<T extends { Variables: OrgRouteVa
     describeRoute({
       tags: ["Inference Providers"],
       summary: "List my AI Gateway API keys",
-      description: "Returns the caller's AI Gateway API keys that are not revoked, expired ones included (never the secret), whether the organization allows member keys, and the Gateway URL to point tools at. Needs the AI Gateway API keys feature.",
+      description: "Returns the caller's AI Gateway API keys that are not revoked, expired ones included (never the secret), whether the organization allows member keys, and the Gateway URL to point tools at.",
       responses: { 200: jsonResponse("Keys returned.", memberGatewayApiKeysViewSchema), 401: unauthorized, 404: notFound },
     }),
     orgMemberRoute(),
-    requireFeature("gatewayMemberApiKeys"),
     async (c) => {
       c.header("Cache-Control", "no-store")
       const context = c.get("organizationContext")
@@ -115,7 +111,7 @@ export function registerOrgGatewayApiKeyRoutes<T extends { Variables: OrgRouteVa
     describeRoute({
       tags: ["Inference Providers"],
       summary: "Create an AI Gateway API key",
-      description: `Creates an AI Gateway API key for the caller, with a name and an optional expiry, and returns it once; Den keeps only a digest. An expired key is refused by the Gateway. The key reaches the models the caller's grants allow, through GET /api/v1/models and the provider-less endpoints. A member may hold ${GATEWAY_API_KEY_MEMBER_LIMIT} unexpired keys. Refused while the organization does not allow member keys. Needs the AI Gateway API keys feature.`,
+      description: `Creates an AI Gateway API key for the caller, with a name and an optional expiry, and returns it once; Den keeps only a digest. An expired key is refused by the Gateway. The key reaches the models the caller's grants allow, through GET /api/v1/models and the provider-less endpoints. A member may hold ${GATEWAY_API_KEY_MEMBER_LIMIT} unexpired keys. Refused while the organization does not allow member keys.`,
       responses: {
         201: jsonResponse("Key created.", createdGatewayApiKeySchema),
         400: jsonResponse("The request was invalid.", invalidRequestSchema),
@@ -125,7 +121,6 @@ export function registerOrgGatewayApiKeyRoutes<T extends { Variables: OrgRouteVa
       },
     }),
     orgMemberRoute(),
-    requireFeature("gatewayMemberApiKeys"),
     jsonValidator(createInputSchema),
     async (c) => {
       c.header("Cache-Control", "no-store")
@@ -155,11 +150,10 @@ export function registerOrgGatewayApiKeyRoutes<T extends { Variables: OrgRouteVa
     describeRoute({
       tags: ["Inference Providers"],
       summary: "Revoke my AI Gateway API key",
-      description: "Revokes one of the caller's AI Gateway API keys; the Gateway refuses it from the next request. Works while member keys are off. Needs the AI Gateway API keys feature.",
+      description: "Revokes one of the caller's AI Gateway API keys; the Gateway refuses it from the next request. Works while member keys are off.",
       responses: { 204: { description: "Key revoked." }, 400: jsonResponse("The key id is invalid.", invalidRequestSchema), 401: unauthorized, 404: keyNotFound },
     }),
     orgMemberRoute(),
-    requireFeature("gatewayMemberApiKeys"),
     paramValidator(apiKeyParamsSchema),
     async (c) => {
       const context = c.get("organizationContext")
@@ -179,7 +173,7 @@ export function registerOrgGatewayApiKeyRoutes<T extends { Variables: OrgRouteVa
     describeRoute({
       tags: ["Inference Providers"],
       summary: "List the organization's AI Gateway API keys",
-      description: "Returns every AI Gateway API key members of the organization created that is not revoked, expired ones included (never the secret), with the member each belongs to, and whether member keys are allowed. Requires the View Gateway providers permission and the AI Gateway API keys feature.",
+      description: "Returns every AI Gateway API key members of the organization created that is not revoked, expired ones included (never the secret), with the member each belongs to, and whether member keys are allowed. Requires the View Gateway providers permission.",
       responses: {
         200: jsonResponse("Keys returned.", organizationGatewayApiKeysViewSchema),
         401: unauthorized,
@@ -188,7 +182,6 @@ export function registerOrgGatewayApiKeyRoutes<T extends { Variables: OrgRouteVa
       },
     }),
     orgMemberRoute(),
-    requireFeature("gatewayMemberApiKeys"),
     requireOrgPermission("gateway_providers.view"),
     async (c) => {
       c.header("Cache-Control", "no-store")
@@ -205,7 +198,7 @@ export function registerOrgGatewayApiKeyRoutes<T extends { Variables: OrgRouteVa
     describeRoute({
       tags: ["Inference Providers"],
       summary: "Revoke a member's AI Gateway API key",
-      description: "Revokes any member's AI Gateway API key in the organization; the Gateway refuses it from the next request. Requires the Manage Gateway providers permission, a recent sign-in and the AI Gateway API keys feature.",
+      description: "Revokes any member's AI Gateway API key in the organization; the Gateway refuses it from the next request. Requires the Manage Gateway providers permission and a recent sign-in.",
       responses: {
         204: { description: "Key revoked." },
         400: jsonResponse("The key id is invalid.", invalidRequestSchema),
@@ -215,7 +208,6 @@ export function registerOrgGatewayApiKeyRoutes<T extends { Variables: OrgRouteVa
       },
     }),
     orgMemberRoute(),
-    requireFeature("gatewayMemberApiKeys"),
     requireOrgPermission("gateway_providers.manage"),
     paramValidator(apiKeyParamsSchema),
     async (c) => {

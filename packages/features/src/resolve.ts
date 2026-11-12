@@ -102,6 +102,13 @@ export const RETIRED_FEATURE_KEYS = [
   "lastUsedSignIn", "remoteSessionHelperView",
   // Removed, not graduated (2026-10): early restart and its download-progress window.
   "desktopUpdateDownloadWindow",
+  // Generally available (2026-11): Den feature intros, Auth & Security (with session settings and the
+  // SSO requirement on the SSO page), several SSO connections, config import and export, and AI Gateway
+  // member API keys, custom OpenAI-compatible providers and Smart Model Router (which was cloud only).
+  // Always on, on cloud and self-hosted.
+  "featureIntros", "authSecuritySettings", "sessionSecuritySettings", "ssoSettingsOnSsoPage",
+  "multipleSsoConnections", "configBlobs", "gatewayMemberApiKeys", "gatewayCustomProviders",
+  "autoRouter",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

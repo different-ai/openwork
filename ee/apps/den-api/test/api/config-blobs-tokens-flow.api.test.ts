@@ -137,9 +137,7 @@ let applier: Caller
 let exported: ConfigBlob
 let edited: ConfigBlob
 
-test("setup: feature on, a CI token, an applier token, an area-limited token and a standard key", async () => {
-  const enabled = await den.setFeature(orgId, "configBlobs", true)
-  assert.ok(enabled.status < 300, summary(enabled))
+test("setup: a CI token, an applier token, an area-limited token and a standard key", async () => {
   ciKey = await createKey({ name: "CI", type: "config", scopes: ["config:export", "config:submit"] })
   applierKey = await createKey({ name: "Applier", type: "config", scopes: ["config:submit", "config:apply"] })
   teamsKey = await createKey({ name: "Teams only", type: "config", scopes: ["config:export", "config:submit"], areas: ["members.teams"] })

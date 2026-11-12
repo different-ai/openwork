@@ -224,7 +224,7 @@ export function AuditLogsContent({ scope, members, captureIncluded, immediateFil
     if (immediateFilters) markFeatureUsed("denPageConsistency");
     setExpanded(null); setFilters(next);
   }, [immediateFilters]);
-  // With `featureIntros` on: full screen while nothing has been kept, banner when history
+  // Feature intro: full screen while nothing has been kept, banner when history
   // exists but the plan no longer records new activity.
   const intro = useFeatureIntro("audit-logs", auditLogsIntroFacts({ included: captureIncluded, filters, operations: query.data ? operations : undefined }));
   if (accessError) return <AuditPage><AuditLocked error={accessError}>

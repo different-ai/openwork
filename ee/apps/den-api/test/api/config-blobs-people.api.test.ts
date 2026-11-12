@@ -68,7 +68,6 @@ async function settle(api: Api, id: string): Promise<ConfigChangeRequestSummary>
 const owner = await den.signUp("People Owner")
 const org = await den.createOrg(owner, "People redaction")
 const other = await den.createOrg(owner, "People elsewhere")
-for (const id of [org.orgId, other.orgId]) assert.equal((await den.setFeature(id, "configBlobs", true)).status, 200)
 const ownerApi = den.as(owner, org.orgId)
 const person = await den.newMember(owner, org.orgId, "Grace Grantee")
 const reviewer = await den.newMember(owner, org.orgId, "Rita Reviewer")

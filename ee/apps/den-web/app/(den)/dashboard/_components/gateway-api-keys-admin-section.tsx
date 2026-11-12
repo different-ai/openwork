@@ -28,13 +28,13 @@ import {
 const SETTING_LABEL = "Allow 3rd party tools & harnesses";
 
 /**
- * AI Gateway › API Keys (feature `gatewayMemberApiKeys`): the organization's switch for member API keys at
+ * AI Gateway › API Keys: the organization's switch for member API keys at
  * the top, then every member's key, who owns it, when it expires and when it was last used. Admins with
  * Manage Gateway providers can revoke any key.
  */
 export function GatewayApiKeysAdminSection({ canManageKeys, canManageSettings }: { canManageKeys: boolean; canManageSettings: boolean }) {
   const { orgSlug, runReauthableAction } = useOrgDashboard();
-  const keys = useOrganizationGatewayApiKeys(true);
+  const keys = useOrganizationGatewayApiKeys();
   const revoke = useRevokeGatewayApiKey("organization");
   const save = useSaveAiGatewaySettings();
 

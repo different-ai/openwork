@@ -1,9 +1,11 @@
 # Smart Model Router
 
-- **Feature key:** `autoRouter` (internal names keep "auto": tables `auto_router*`, routes `/v1/org/auto-router*`, provider `openwork-auto`)
-- **Deployments:** cloud only (Jev is called through TypeSafe's hosted API)
+> **GA:** Available without a feature flag. The former rollout key is retired.
+> Smart still needs a TypeSafe API key on the gateway.
+
+- **Retired rollout key:** `autoRouter` (internal names keep "auto": tables `auto_router*`, routes `/v1/org/auto-router*`, provider `openwork-auto`)
+- **Deployments:** cloud and self-hosted, generally available (no flag); Jev is called through TypeSafe's hosted API, so the gateway needs a TypeSafe API key
 - **Author:** OmarMcAdam
-- **Default:** off
 
 ## What people get
 
@@ -71,7 +73,7 @@ the reply (for example "Claude Haiku 5.5 · High").
    pointing at the gateway (`GET /v1/org/auto-router/connect` returns the base
    URL, the member's own Gateway key and one model per router) and sends model
    `openwork-smart-<router id>` to `POST /api/v1/chat/completions`.
-2. The gateway loads the organization's routers (feature checked, 15s cache),
+2. The gateway loads the organization's routers (15s cache),
    checks the router is assigned to the member (team memberships cached 15s),
    and keeps only the router's models the member's access grants allow.
 3. At the start of a turn (the last message is the user's) it asks Jev one
@@ -112,7 +114,7 @@ end with "(Smart chose <model> · <thinking> thinking.)". The OpenWork server's
 
 ## 3rd party tools
 
-Members' AI Gateway API keys (feature `gatewayMemberApiKeys`) also reach Smart
+Members' AI Gateway API keys also reach Smart
 Routers from Cursor, Claude Code and Codex: their model lists end with each
 router that applies to the member and has a model they can use, as
 `openwork/smart-<router name>-<last 4 of the router id>`, and a request by that
@@ -127,11 +129,10 @@ and the answer back to the tool's protocol. `GET /api/v1/models` lists them as
 
 Gateway environment (see `ee/apps/gateway/README.md`): `TYPESAFE_API_KEY`
 (required: without it Smart is off), optional `TYPESAFE_BASE_URL`,
-`AUTO_ROUTER_JEV_MODEL` (`jev-latest`), `AUTO_ROUTER_JEV_TIMEOUT_MS` (`4000`),
-and `DEN_DEPLOYMENT=cloud`.
+`AUTO_ROUTER_JEV_MODEL` (`jev-latest`) and `AUTO_ROUTER_JEV_TIMEOUT_MS` (`4000`).
 
 Watch for `[gateway] Smart Model Router could not ask Jev` warnings and
-`auto_router_*` error codes: `auto_router_unavailable` (404: feature off,
+`auto_router_*` error codes: `auto_router_unavailable` (404:
 router deleted or not assigned to the member), `auto_router_no_models` (403:
 the member can use none of the router's models), `auto_router_not_configured`
 (404: no TypeSafe key).
@@ -145,11 +146,11 @@ Smart models. `unknown` (gateway unreachable) blocks nothing.
 
 ## Turning it off
 
-The kill switch (or turning the feature off for an organization) makes the
-gateway answer Smart requests with `auto_router_unavailable` within 15
-seconds, Den stops returning the connect payload, and desktops drop Smart
-models at their next provider sync. Saved routers stay in the database and
-come back when the feature is turned on again.
+Removing the gateway's TypeSafe API key turns Smart off everywhere: Den stops
+returning the connect payload and refuses to save routers, and desktops drop
+Smart models at their next provider sync. Saved routers stay in the database
+and come back when the key is set again. To stop one router, delete it or
+assign it to nobody.
 
 ## Proof
 

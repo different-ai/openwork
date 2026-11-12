@@ -1,6 +1,6 @@
 /**
- * Pure rules for an organization's session settings (feature
- * `sessionSecuritySettings`, Auth & Security › General). No database access,
+ * Pure rules for an organization's session settings (Auth & Security ›
+ * General). No database access,
  * so they are unit tested directly (test/session-security-settings.test.ts).
  *
  * - Session length (`sessionLengthHours`): how long a sign-in lasts without
@@ -12,13 +12,8 @@
  * - Enforce fresh admin sessions (`adminReauthMinutes`): how recently the
  *   session must have been signed in before a sensitive change (the "Confirm
  *   your identity" dialog). 0 turns the check off.
- *
- * Both only apply while `sessionSecuritySettings` and `authSecuritySettings`
- * (the page they live on) are on. Otherwise sessions last 7 days and sensitive
- * changes need a sign-in from the last 2 hours, as before.
  */
 
-import type { FeatureMap } from "@openwork/features"
 import { DEN_SESSION_EXPIRES_IN_SECONDS } from "./session-lifetime.js"
 
 const HOUR_SECONDS = 60 * 60
@@ -38,9 +33,6 @@ export const ADMIN_REAUTH_MINUTES = [15, 60, 240, 480, 1440, 0] as const
 export type AdminReauthMinutes = (typeof ADMIN_REAUTH_MINUTES)[number]
 export const DEFAULT_ADMIN_REAUTH_MINUTES: AdminReauthMinutes = 15
 
-/** The sign-in window for sensitive changes while the settings are off (privileged-session.ts). */
-export const LEGACY_ADMIN_REAUTH_MAX_AGE_MS = 2 * 60 * 60 * 1000
-
 export type SessionSecuritySettings = {
   sessionLengthHours: SessionLengthHours
   maxSessionLengthDays: MaxSessionLengthDays
@@ -53,7 +45,7 @@ export type SessionLimits = {
   maxSeconds: number | null
 }
 
-/** Today's sessions: 7 days without activity, renewed for as long as they are used. */
+/** Sessions of a person in no organization: 7 days without activity, renewed for as long as they are used. */
 export const DEFAULT_SESSION_LIMITS: SessionLimits = { idleSeconds: DEN_SESSION_EXPIRES_IN_SECONDS, maxSeconds: null }
 
 export function isSessionLengthHours(value: unknown): value is SessionLengthHours {
@@ -93,25 +85,18 @@ export function readSessionSecuritySettings(metadata: unknown): SessionSecurityS
   }
 }
 
-/** Whether the organization's settings apply: the feature and the Auth & Security page that shows them. */
-export function sessionSecuritySettingsApply(features: Pick<FeatureMap, "sessionSecuritySettings" | "authSecuritySettings">) {
-  return features.sessionSecuritySettings && features.authSecuritySettings
-}
-
 /**
  * How recent a sign-in must be for a sensitive change, in milliseconds, or
  * null when the organization turned the check off.
  */
-export function adminReauthMaxAgeMs(input: { features: Pick<FeatureMap, "sessionSecuritySettings" | "authSecuritySettings">; metadata: unknown }): number | null {
-  if (!sessionSecuritySettingsApply(input.features)) return LEGACY_ADMIN_REAUTH_MAX_AGE_MS
-  const minutes = readSessionSecuritySettings(input.metadata).adminReauthMinutes
+export function adminReauthMaxAgeMs(metadata: unknown): number | null {
+  const minutes = readSessionSecuritySettings(metadata).adminReauthMinutes
   return minutes === 0 ? null : minutes * 60 * 1000
 }
 
-/** One organization's session limits; today's (7 days, no maximum) while its settings do not apply. */
-export function organizationSessionLimits(input: { features: Pick<FeatureMap, "sessionSecuritySettings" | "authSecuritySettings">; metadata: unknown }): SessionLimits {
-  if (!sessionSecuritySettingsApply(input.features)) return DEFAULT_SESSION_LIMITS
-  const settings = readSessionSecuritySettings(input.metadata)
+/** One organization's session limits, from its saved choices or the defaults. */
+export function organizationSessionLimits(metadata: unknown): SessionLimits {
+  const settings = readSessionSecuritySettings(metadata)
   return {
     idleSeconds: Math.min(DEN_SESSION_EXPIRES_IN_SECONDS, settings.sessionLengthHours * HOUR_SECONDS),
     maxSeconds: settings.maxSessionLengthDays * 24 * HOUR_SECONDS,

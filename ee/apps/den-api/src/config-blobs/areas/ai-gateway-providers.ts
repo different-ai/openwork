@@ -575,10 +575,9 @@ function parseResolved(item: ResolvedConfigItem): ResolvedSpec {
   return parsed.data
 }
 
-function assertApplicable(ctx: ConfigAreaContext, spec: ResolvedSpec, name: string) {
+function assertApplicable(spec: ResolvedSpec, name: string) {
   if (isLiteLlmProviderId(spec.providerId)) throw failure(`"${name}" is a LiteLLM provider. Its models, groups and keys come from your LiteLLM proxy, so it can't be created or changed from a config blob: add or edit it in AI Gateway, then sync.`)
   if (isGatewayCustomProviderId(spec.providerId)) {
-    if (!ctx.features.gatewayCustomProviders) throw failure(`"${name}" is a custom OpenAI-compatible provider, and custom providers are off for this organization.`)
     if (!spec.custom) throw failure(`"${name}" is a custom provider without its model list (custom.models).`)
     if (!spec.settings.upstreamBaseUrl) throw failure(`"${name}" is a custom provider without its API address (settings.upstreamBaseUrl).`)
   }
@@ -907,7 +906,7 @@ export const aiGatewayProvidersArea = defineConfigArea({
       if (unavailable) throw new ConfigApplyError("gateway_unavailable", `${AREA}: ${unavailable.message}`, 409)
       if (op.kind === "delete") return deleteProvider(ctx, log, op.targetId, op.previous.name)
       const spec = parseResolved(op.item)
-      assertApplicable(ctx, spec, op.item.name)
+      assertApplicable(spec, op.item.name)
       return op.kind === "create" ? createProvider(ctx, log, op.item, spec, op.preferredId) : updateProvider(ctx, log, op, spec)
     })
   },

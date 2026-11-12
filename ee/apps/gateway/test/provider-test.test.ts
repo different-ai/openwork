@@ -166,7 +166,7 @@ for (const location of ["eu", "us"]) {
   }
 }
 
-// --- Custom OpenAI-compatible providers (feature gatewayCustomProviders) ---
+// --- Custom OpenAI-compatible providers ---
 
 const customModel = {
   id: "acme-large", attachment: false, reasoning: false, tool_call: true, structured_output: true, temperature: true,

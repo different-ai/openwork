@@ -2,8 +2,8 @@
 
 Per-page intros: full screen, box or banner, chosen by setup state
 (DESIGN.md I1–I10, spec `docs/onboarding-2611/feature-intros.md`).
-Everything is behind the `featureIntros` org feature: with it off, every
-surface here renders nothing and pages keep their old empty states.
+Generally available (no feature flag). Until the organization is loaded,
+every surface here renders nothing and pages show their own empty states.
 
 ## Files
 
@@ -140,7 +140,7 @@ dot. Dots are neutral: `UnseenDot` in `_components/ui/tabs.tsx`
 
 ## `?` button
 
-Shows in the top bar when the flag is on and an intro covers the page: the
+Shows in the top bar when an intro covers the page: the
 most specific of the URL match (path + tab, then path) and the gates mounted
 on the page. Opens the full intro in a dialog even when set up.
 

@@ -226,7 +226,7 @@ export function AdminPluginsScreen() {
   const legacyMember = orgContext?.members.find((member) => member.id === memberId);
   const empty = firstPage?.total === 0 && !q && !teamId && !memberId && !ownerId;
   const filtered = Boolean(q || teamId || memberId || ownerId);
-  // Feature intros (flag `featureIntros`): section facts from the unfiltered first page; a filtered list says nothing about setup.
+  // Feature intros: section facts from the unfiltered first page; a filtered list says nothing about setup.
   // Built-in OpenWork extensions every org gets don't count as the team setting up plugins.
   const teamPlugins = firstPage ? firstPage.items.filter((item) => !item.builtIn) : [];
   const builtInCount = firstPage ? firstPage.items.length - teamPlugins.length : 0;

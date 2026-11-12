@@ -13,7 +13,7 @@ import { db } from "./db.js"
 import { env } from "./env.js"
 
 /**
- * AI Gateway API keys members create for 3rd party tools (feature `gatewayMemberApiKeys`).
+ * AI Gateway API keys members create for 3rd party tools.
  *
  * Separate from gateway-keys.ts, which manages the one key OpenWork issues to each member's own apps.
  * These keys are stored as a digest only, belong to one member, and authenticate as that member at the

@@ -201,7 +201,7 @@ export const GatewayRequestLogTable = mysqlTable(
     org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
     inference_key_id: denTypeIdColumn("inferenceKey", "inference_key_id"),
     gateway_key_id: denTypeIdColumn("gatewayKey", "gateway_key_id"),
-    // Set instead of gateway_key_id when a member's own API key made the request (gatewayMemberApiKeys).
+    // Set instead of gateway_key_id when a member's own API key made the request.
     gateway_api_key_id: denTypeIdColumn("gatewayApiKey", "gateway_api_key_id"),
     gateway_provider_id: denTypeIdColumn("inferenceProvider", "gateway_provider_id"),
     gateway_provider_credential_id: denTypeIdColumn(

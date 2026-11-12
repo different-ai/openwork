@@ -143,7 +143,7 @@ clear both token env aliases so `envFrom` cannot accidentally turn them on.
 Shared deployment flags, origins, database keys, and tokens must not be overridden
 through per-app `env` when enabled; Helm rejects conflicting configuration.
 
-The Smart Model Router (feature `autoRouter`) asks Jev, through TypeSafe's
+The Smart Model Router asks Jev, through TypeSafe's
 API, how well each Smart request fits each task of the member's Smart Router
 and how much thinking it needs. Give the gateway a TypeSafe API key; without
 one, Smart is off and Den refuses to save Smart Routers:
@@ -1245,9 +1245,8 @@ MCP connections are both trusted.
 
 ### Config import secrets from environment variables
 
-When config import and export (`configBlobs`) is on, an imported config file
-can ask Den API to fill a secret from one of its own environment variables
-(`{ "$secret": "…", "env": "OPENWORK_IMPORT_ANTHROPIC_KEY" }`). Only variables
+An imported config file can ask Den API to fill a secret from one of its own
+environment variables (`{ "$secret": "…", "env": "OPENWORK_IMPORT_ANTHROPIC_KEY" }`). Only variables
 whose names start with `OPENWORK_IMPORT_` can ever be read, and none is allowed
 until you list them, by exact name or with a trailing `*` prefix that itself
 starts with `OPENWORK_IMPORT_`:

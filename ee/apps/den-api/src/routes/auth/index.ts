@@ -541,7 +541,7 @@ const loginOptionsResponseSchema = z.object({
   alternativeStep: z.union([z.literal("google"), z.literal("github"), z.literal("password"), z.literal("new_account")]).optional(),
   /**
    * The SSO step's identity providers that sign in this email, oldest first.
-   * Several (multipleSsoConnections): one button each, each starting sign-in
+   * Several: one button each, each starting sign-in
    * at signInPath with `providerId`.
    */
   ssoProviders: z.array(ssoSignInOptionSchema).optional(),

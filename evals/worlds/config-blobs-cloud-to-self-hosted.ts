@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { DenSession } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -56,8 +56,9 @@ export async function configBlobsCloudToSelfHostedWorld(seed: Seed) {
       members: { riley: { email: `riley+${stamp}@acme-robotics.test`, name: "Riley Member" } },
     },
   });
-  const cloudOrgId = await enableOrganizationCapabilities(seed, cloud.admin, { configBlobs: true });
-  const selfHostedOrgId = await enableOrganizationCapabilities(seed, selfHosted.admin, { configBlobs: true });
+  const cloudOrgId = await seededOrganizationId(seed, cloud.admin);
+  const selfHostedOrgId = await seededOrganizationId(seed, selfHosted.admin);
+  if (!cloudOrgId || !selfHostedOrgId) throw new Error("Could not resolve the seeded organizations.");
 
   const call = async (session: DenSession, path: string, body: unknown, method = "POST") => {
     const result = await seed.api(session, path, { method, body: JSON.stringify(body) });

@@ -2,11 +2,10 @@ import type { Seed } from "@openwork/env";
 import { ACME_MODEL, gatewayEnvironment, seedAcmeGateway, startAcmeGateway, startAcmeUpstream } from "../../worlds/lib/acme-gateway.ts";
 import { jevEnvironment } from "./auto-router.ts";
 import { isRecord } from "./library.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
 /**
- * Smart Routers in 3rd party tools (`autoRouter` + `gatewayMemberApiKeys`): a real Den (cloud) and AI
- * Gateway with one Anthropic-protocol provider over the deterministic Acme mock, both features on,
+ * Smart Routers in 3rd party tools: a real Den (cloud) and AI
+ * Gateway with one Anthropic-protocol provider over the deterministic Acme mock,
  * 3rd party tools allowed, and one Smart Router ("Engineering", for everyone, the Acme model)
  * created and assigned through Den's API. Jev is real when TYPESAFE_API_KEY is set; otherwise the
  * gateway's Jev calls fail at once and Smart takes its fallback model. The owner is signed in on
@@ -22,7 +21,6 @@ export async function gatewaySmartRouterToolsWorld(seed: Seed) {
     if (!den.database) throw new Error("The Smart Router tools world needs its disposable local database.");
     await startAcmeGateway(stack, den.database.url, { baseUrl: gateway.baseUrl, env });
     const provider = await seedAcmeGateway(den.admin, upstream);
-    await enableOrganizationCapabilities(seed, den.admin, { autoRouter: true, gatewayMemberApiKeys: true });
     const allowed = await seed.api(den.admin, "/v1/org/ai-gateway-settings", { method: "PUT", body: JSON.stringify({ memberApiKeys: true }) });
     if (!allowed.response.ok) throw new Error(`Allowing 3rd party tools failed: HTTP ${allowed.response.status} ${allowed.text.slice(0, 300)}`);
     const saved = await seed.api(den.admin, "/v1/org/auto-routers", {

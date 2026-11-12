@@ -25,7 +25,7 @@ function readSsoTestMessage(value: unknown) {
   return value.intentId;
 }
 
-/** Where one connection's requests go: the single-connection routes, or one connection by id (multipleSsoConnections). */
+/** Where one connection's requests go: one connection by id, or adding a new one. */
 export type SsoConnectionEndpoints = {
   /** GET → { connection }; null while adding a connection. */
   load: string | null;
@@ -33,12 +33,6 @@ export type SsoConnectionEndpoints = {
   save: (kind: FormMode) => string;
   /** Delete, test, enable, disable and domain verification hang off this; null while adding. */
   base: string | null;
-};
-
-export const LEGACY_SSO_ENDPOINTS: SsoConnectionEndpoints = {
-  load: "/v1/sso",
-  save: (kind) => `/v1/sso/${kind}`,
-  base: "/v1/sso",
 };
 
 export function ssoConnectionEndpoints(connectionId: string | null): SsoConnectionEndpoints {
@@ -51,8 +45,6 @@ export function ssoConnectionEndpoints(connectionId: string | null): SsoConnecti
 
 export type SsoConnectionPanelProps = {
   endpoints: SsoConnectionEndpoints;
-  /** multipleSsoConnections: name field, several domains, wording for one of several connections. */
-  multiple?: boolean;
   /** The saved connection after every load or change (null: none). */
   onConnectionChange?: (connection: DenOrgSsoConnection | null) => void;
   /** Adding (endpoints.load null): the new connection was saved. */
@@ -66,7 +58,6 @@ export type SsoConnectionPanelProps = {
 /** One SSO connection: its setup form, domain verification, test, enable and disable. */
 export function SsoConnectionPanel({
   endpoints,
-  multiple = false,
   onConnectionChange,
   onCreated,
   onDeleted,
@@ -330,10 +321,7 @@ export function SsoConnectionPanel({
         setSaving(true);
         try {
           const path = endpoints.save(formMode);
-          // Several domains (multipleSsoConnections) go as a list; one as before.
-          const domainFields = multiple
-            ? { domains: domain.split(/[\s,]+/).map((entry) => entry.trim()).filter(Boolean), name: name.trim() || null }
-            : { domain };
+          const domainFields = { domains: domain.split(/[\s,]+/).map((entry) => entry.trim()).filter(Boolean), name: name.trim() || null };
           const body = formMode === "saml"
             ? {
                 issuer,
@@ -392,7 +380,7 @@ export function SsoConnectionPanel({
       return;
     }
 
-    if (!orgId || !endpoints.base || !window.confirm(multiple ? `Delete ${connection?.displayName ?? "this SSO connection"}? People who sign in through it will need another connection or sign-in method.` : "Delete this SSO connection?")) {
+    if (!orgId || !endpoints.base || !window.confirm(`Delete ${connection?.displayName ?? "this SSO connection"}? People who sign in through it will need another connection or sign-in method.`)) {
       return;
     }
     const basePath = endpoints.base;
@@ -549,9 +537,7 @@ export function SsoConnectionPanel({
   }
 
   async function handleDisable() {
-    const disablePrompt = multiple
-      ? `Disable ${connection?.displayName ?? "this connection"}? People who sign in through it will use another connection or sign-in method.`
-      : "Disable SSO for this workspace? Members will use their other available sign-in methods.";
+    const disablePrompt = `Disable ${connection?.displayName ?? "this connection"}? People who sign in through it will use another connection or sign-in method.`;
     if (!access.canManageSso || !endpoints.base || !window.confirm(disablePrompt)) return;
     setDisabling(true);
     setError(null);
@@ -632,12 +618,10 @@ export function SsoConnectionPanel({
               </div>
 
               <div className="mt-6 grid gap-4 md:grid-cols-2">
-                {multiple ? (
-                  <label className="block text-[14px] text-gray-700 md:col-span-2">
-                    <span className="mb-2 block font-medium">Name on the sign-in button</span>
-                    <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={name} onChange={(event) => setName(event.target.value)} maxLength={120} placeholder={connection?.displayName ?? "Okta"} disabled={ssoFormDisabled} data-testid="sso-connection-name" />
-                  </label>
-                ) : null}
+                <label className="block text-[14px] text-gray-700 md:col-span-2">
+                  <span className="mb-2 block font-medium">Name on the sign-in button</span>
+                  <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={name} onChange={(event) => setName(event.target.value)} maxLength={120} placeholder={connection?.displayName ?? "Okta"} disabled={ssoFormDisabled} data-testid="sso-connection-name" />
+                </label>
                 {oidcSetupCheck ? (
                   <OidcIssuerField
                     value={issuer}
@@ -663,8 +647,8 @@ export function SsoConnectionPanel({
                   </label>
                 )}
                 <label className={`block text-[14px] text-gray-700 ${oidcSetupCheck ? "md:col-span-2" : ""}`}>
-                  <span className="mb-2 block font-medium">{multiple ? "Email domains" : "Domain"}</span>
-                  <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder={multiple ? "example.com, example.org" : "example.com"} disabled={ssoFormDisabled} data-testid="sso-connection-domains" />
+                  <span className="mb-2 block font-medium">Email domains</span>
+                  <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="example.com, example.org" disabled={ssoFormDisabled} data-testid="sso-connection-domains" />
                 </label>
                 {formMode === "saml" ? (
                   <>
@@ -722,34 +706,27 @@ export function SsoConnectionPanel({
               </div>
 
               <div className="mt-6 flex flex-wrap gap-3">
-                <DenButton variant="primary" icon={RefreshCw} onClick={() => void handleSave()} disabled={ssoFormDisabled}>{saving ? "Saving..." : connection || !multiple ? "Save SSO connection" : "Add SSO connection"}</DenButton>
-                {connection || !multiple ? (
+                <DenButton variant="primary" icon={RefreshCw} onClick={() => void handleSave()} disabled={ssoFormDisabled}>{saving ? "Saving..." : connection ? "Save SSO connection" : "Add SSO connection"}</DenButton>
+                {connection ? (
                   <DenButton variant="secondary" icon={Trash2} onClick={() => void handleDelete()} disabled={deleting || !connection || !access.canManageSso}>{deleting ? "Deleting..." : "Delete connection"}</DenButton>
                 ) : null}
               </div>
             </div>
           ) : null}
 
-          {multiple && !connection ? null : (
+          {!connection ? null : (
           <div id="sso-connection" className="scroll-mt-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
             <div className="flex items-start justify-between gap-4">
               <div>
-                {multiple && connection ? (
-                  <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">{connection.displayName}</p>
-                ) : (
-                  <>
-                    <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">Current connection</p>
-                    <p className="mt-1 text-[14px] leading-6 text-gray-500">Use the generated sign-in and provider setup URLs below.</p>
-                  </>
-                )}
+                <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">{connection.displayName}</p>
               </div>
               {connection && !editing ? (
                 <div className="flex flex-wrap gap-3">
                   <DenButton variant="secondary" onClick={() => setEditing(true)} disabled={!access.canManageSso}>Edit connection</DenButton>
                   {connection.status === "enabled" ? (
-                    <DenButton variant="secondary" onClick={() => void handleDisable()} disabled={disabling || !access.canManageSso}>{disabling ? "Disabling..." : multiple ? "Disable connection" : "Disable SSO"}</DenButton>
+                    <DenButton variant="secondary" onClick={() => void handleDisable()} disabled={disabling || !access.canManageSso}>{disabling ? "Disabling..." : "Disable connection"}</DenButton>
                   ) : connection.testStatus === "succeeded" ? (
-                    <DenButton variant="primary" icon={CheckCircle2} onClick={() => void handleEnable()} disabled={enabling || !access.canManageSso}>{enabling ? "Enabling..." : multiple ? "Enable connection" : "Enable SSO"}</DenButton>
+                    <DenButton variant="primary" icon={CheckCircle2} onClick={() => void handleEnable()} disabled={enabling || !access.canManageSso}>{enabling ? "Enabling..." : "Enable connection"}</DenButton>
                   ) : (
                     <DenButton variant="primary" icon={Shield} onClick={handleOpenTestDialog} disabled={!access.canManageSso || !connection.domainVerified}>Enable Config</DenButton>
                   )}
@@ -773,7 +750,7 @@ export function SsoConnectionPanel({
                             <span className="rounded-full border border-amber-300 bg-white/80 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-800">Pending verification</span>
                           </div>
                           <p className="mt-1 max-w-2xl leading-6 text-[var(--dls-text-secondary)]">
-                            {multiple ? "This connection stays off" : "SSO remains inactive and is not offered to users"} until this DNS check proves that your workspace controls <strong>{connection.domains.join(", ") || connection.domain}</strong>.{connection.domains.length > 1 ? " Add the same TXT value at each domain's record name." : ""}
+                            This connection stays off until this DNS check proves that your workspace controls <strong>{connection.domains.join(", ") || connection.domain}</strong>.{connection.domains.length > 1 ? " Add the same TXT value at each domain's record name." : ""}
                           </p>
                         </div>
                       </div>
@@ -819,7 +796,7 @@ export function SsoConnectionPanel({
                   <div className="flex items-start gap-3 rounded-[20px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-900">
                     <CheckCircle2 className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
                     <div>
-                      <p className="font-semibold">{connection.domains.length > 1 ? "Domains verified" : "Domain verified"}{connection.status === "enabled" ? (multiple ? " · Connection enabled" : " · SSO enabled") : ""}</p>
+                      <p className="font-semibold">{connection.domains.length > 1 ? "Domains verified" : "Domain verified"}{connection.status === "enabled" ? " · Connection enabled" : ""}</p>
                       <p className="mt-1 text-emerald-800">{connection.status === "enabled" ? "This tested configuration is active." : "The configuration is still disabled. Test it before enabling SSO."} The DNS TXT record was a one-time proof and may now be removed.</p>
                     </div>
                   </div>

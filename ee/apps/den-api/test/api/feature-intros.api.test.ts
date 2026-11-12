@@ -8,17 +8,10 @@ const den = await bootDen()
 after(async () => { await den.close() })
 const { db } = await import("../../src/db.js")
 
-test("feature intros are off until the feature is on, then record each member's own state per organization", async () => {
+test("feature intros record each member's own state per organization", async () => {
   const workspace = await den.createOrg(await den.signUp("Avery Owner"), "Intro workspace")
   const owner = den.as(workspace.owner, workspace.orgId)
 
-  const hidden = await owner("GET", "/v1/me/feature-intros")
-  assert.equal(hidden.status, 404, summary(hidden))
-  assert.deepEqual(hidden.body, { error: "feature_disabled", feature: "featureIntros" })
-  const hiddenEvent = await owner("POST", "/v1/me/feature-intros/events", { introKey: "ai-gateway", introVersion: 1, type: "seen" })
-  assert.equal(hiddenEvent.status, 404, summary(hiddenEvent))
-
-  assert.equal((await den.setFeature(workspace.orgId, "featureIntros", true)).status, 200)
   const empty = await owner("GET", "/v1/me/feature-intros")
   assert.equal(empty.status, 200, summary(empty))
   assert.deepEqual(empty.body, { intros: [] })
@@ -68,9 +61,4 @@ test("feature intros are off until the feature is on, then record each member's 
   assert.deepEqual((await memberCall("GET", "/v1/me/feature-intros")).body, { intros: [] })
   const ownerList = list(field((await owner("GET", "/v1/me/feature-intros")).body, "intros"))
   assert.deepEqual(ownerList.map((entry) => [entry.introKey, entry.introVersion]), [["ai-gateway.limits", 2]])
-
-  // Turning it off answers 404 again and keeps the stored rows.
-  assert.equal((await den.setFeature(workspace.orgId, "featureIntros", false)).status, 200)
-  assert.equal((await owner("GET", "/v1/me/feature-intros")).status, 404)
-  assert.equal((await db.select().from(FeatureIntroStateTable).where(eq(FeatureIntroStateTable.organizationId, workspace.orgId))).length, 1)
 })

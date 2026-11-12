@@ -71,16 +71,6 @@
               ],
               "description": "Claude Code sign-in: Connect Claude through the Claude Code login on this computer, without an Anthropic API key. Renders DEN_FEATURE_CLAUDE_AGENT_PROVIDER."
             },
-            "configBlobs": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Config import and export: Admins export all or part of the organization's configuration as JSON and import it again, here or into another OpenWork. Each import is a change request: it is matched against what exists, reviewed, then applied, and can be reverted. Off: no Config page and no config-blob API. Renders DEN_FEATURE_CONFIG_BLOBS."
-            },
             "webPerMember": {
               "enum": [
                 "",
@@ -110,36 +100,6 @@
                 false
               ],
               "description": "Google Drive PDF text: Agents read the text of PDFs in Google Drive, up to 50 MB, instead of being told the file is too large. Renders DEN_FEATURE_GOOGLE_DRIVE_PDF_TEXT."
-            },
-            "autoRouter": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "AI Gateway: Smart Model Router: Admins create Smart Routers for everyone, teams or people, listing AI Gateway models and the tasks each handles. Members pick \"Smart: <name>\": each prompt goes to the model whose tasks fit it best, at the thinking level it needs. Renders DEN_FEATURE_AUTO_ROUTER."
-            },
-            "gatewayCustomProviders": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "AI Gateway: custom OpenAI-compatible providers: Admins add any OpenAI-compatible provider to AI Gateway with a name, an API URL and one key, pick its models (fetched from the provider and matched to models.dev), test one, then save and edit it later. Renders DEN_FEATURE_GATEWAY_CUSTOM_PROVIDERS."
-            },
-            "gatewayMemberApiKeys": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "AI Gateway: API keys for 3rd party tools: Admins allow members, in AI Gateway › API Keys, to create their own AI Gateway API keys and use the Gateway's models from 3rd party tools and harnesses. After creating a key (or from a key's Set up), members pick a tool (Cursor, OpenAI Codex, Claude Code, another tool) and get its steps with their key and models filled in; Cursor reaches every model through /api/v1/cursor. Members manage their keys in Library › Models; admins see and revoke every key on the same tab. Renders DEN_FEATURE_GATEWAY_MEMBER_API_KEYS."
             },
             "localModelsPolicy": {
               "enum": [
@@ -271,16 +231,6 @@
               ],
               "description": "SSO: optional unless required, enforced per organization: An organization with SSO set up offers \"Continue with SSO\" at sign-in but still lets people on its domain use their password or Google and join other organizations, for example from an invitation. Turning on \"Require SSO\" enforces it when someone opens that organization, and \"Restrict this domain to our SSO\" brings back sign-in-wide enforcement for the whole domain. Off: any email on the organization's verified domain must sign in with its SSO. Renders DEN_FEATURE_SSO_PER_ORGANIZATION."
             },
-            "ssoSettingsOnSsoPage": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "SSO: sign-in requirement on the SSO page: The \"Require SSO\" and \"Restrict this domain to our SSO\" settings move from Org settings to the top of the SSO page, next to the SSO connection they depend on. Off: they stay in Org settings under Authentication. Renders DEN_FEATURE_SSO_SETTINGS_ON_SSO_PAGE."
-            },
             "passwordSignInGoogle": {
               "enum": [
                 "",
@@ -301,16 +251,6 @@
               ],
               "description": "Sign-in: account email follows Google or SSO: When someone's email changes at Google or at their company's identity provider, their OpenWork account moves to the new email the next time they sign in that way, so signing in with the new email opens the same account instead of creating a second one. Off: the account keeps the email it was created with. Renders DEN_FEATURE_SIGN_IN_EMAIL_SYNC."
             },
-            "multipleSsoConnections": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "SSO: several connections per organization: An organization can set up more than one SSO connection: several identity providers, and each one covering one or more email domains. Each connection is verified, tested and turned on by itself, and sign-in shows one button per identity provider. Off: the SSO page manages a single connection. Renders DEN_FEATURE_MULTIPLE_SSO_CONNECTIONS."
-            },
             "ssoOidcSetupCheck": {
               "enum": [
                 "",
@@ -320,26 +260,6 @@
                 false
               ],
               "description": "SSO: check the OIDC issuer during setup: The OIDC setup form accepts the provider's issuer or its discovery URL, checks it while the administrator types and on save, shows the issuer and endpoints it found, and reports a wrong address on the field with the exact URL that was tried. Manual endpoints move behind a disclosure and reject a discovery URL as the issuer. Off: the form saves what was typed and reports discovery failures in the page banner. Renders DEN_FEATURE_SSO_OIDC_SETUP_CHECK."
-            },
-            "featureIntros": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Den: feature intros: Den pages, sub-pages and tabs explain themselves while nothing is set up: a full-screen intro, info box or banner with one action that leads straight to setup, a quiet dot on tabs not viewed yet, and a ? button to reopen the intro. Turning it off restores the previous empty states. Renders DEN_FEATURE_FEATURE_INTROS."
-            },
-            "authSecuritySettings": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Den: Auth & Security settings: Settings shows one Auth & Security page with Single sign-on (SSO) and User provisioning (SCIM) tabs instead of separate SSO and SCIM pages; old SSO and SCIM links open the matching tab. Turning it off restores the separate pages. Renders DEN_FEATURE_AUTH_SECURITY_SETTINGS."
             },
             "denGreySidebar": {
               "enum": [
@@ -370,16 +290,6 @@
                 false
               ],
               "description": "Den: team sections in a sidebar: On Members › Teams, a team's page and Everyone's page list their sections (Role, Members, Access, Agents, Browser, Models, Workbot, Prompts, Desktop) in a grouped sidebar on the left instead of a row of tabs across the top. The Role, Agents and Browser sections get a heading with a tooltip that explains them, and a role that adds nothing says so. Turning it off restores the tabs and the earlier sections. Renders DEN_FEATURE_TEAM_SETTINGS_SIDEBAR."
-            },
-            "sessionSecuritySettings": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Den: session length, maximum session length and admin re-authentication settings: Auth & Security gets a General tab where admins choose how long sign-ins last without activity (12 hours to 7 days), how long they last at most however active (1 to 90 days, 30 by default), on the web and in the desktop app, and how recently an admin must have signed in before sensitive changes (15 minutes by default, up to 1 day, or never). Needs Auth & Security settings on. Off: sessions last 7 days without activity with no maximum, and sensitive changes ask admins to sign in again after 2 hours. Renders DEN_FEATURE_SESSION_SECURITY_SETTINGS."
             },
             "administratorRecovery": {
               "enum": [
@@ -2192,6 +2102,96 @@
               "description": "Retired: no longer a feature switch. Ignored."
             },
             "desktopUpdateDownloadWindow": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "featureIntros": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "authSecuritySettings": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "sessionSecuritySettings": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "ssoSettingsOnSsoPage": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "multipleSsoConnections": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "configBlobs": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "gatewayMemberApiKeys": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "gatewayCustomProviders": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "autoRouter": {
               "enum": [
                 "",
                 "true",

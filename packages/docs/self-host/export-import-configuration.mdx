@@ -17,14 +17,6 @@ writes after someone approves it. An applied change can be undone with **Restore
 previous config**, which puts the configuration back (see [Restore previous
 config](#restore-previous-config) for what it can't undo).
 
-<Note>
-Config import and export is behind the `configBlobs` feature, off by default. On a
-self-hosted Den, a platform administrator turns it on per organization from
-`/admin`, or for the whole installation with `config.features.configBlobs: "true"`
-in Helm (`DEN_FEATURE_CONFIG_BLOBS=true`). While it is off, every
-`/v1/config-blobs/*` route except the public JSON Schema answers `404`.
-</Note>
-
 This page complements [Provision organization configuration](/self-host/declarative-configuration).
 The keyed `PUT …/by-key/{key}` routes stay supported and are the simplest choice when a
 script owns a handful of resources. Use config blobs to copy a whole organization, to
@@ -140,7 +132,7 @@ Some areas carry only part of what their screen shows:
 
   ```json
   "settings": { "features": { "specVersion": 1, "items": [
-    { "id": "configBlobs", "name": "Config import and export", "spec": { "enabled": true } }
+    { "id": "nativeDictation", "name": "Native dictation", "spec": { "enabled": true } }
   ] } }
   ```
 
@@ -359,11 +351,9 @@ each item.
 
 ## Move from OpenWork Cloud to a self-hosted Den
 
-1. **On Cloud**, turn on config import and export for the organization and export
-   everything (Settings › Config › Export, or `GET /v1/config-blobs/export`).
-2. **On the self-hosted Den**, create the organization and sign in as its owner. Turn
-   on `configBlobs`. If you want to supply secrets from the environment, set
-   `DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST` and the variables on den-api.
+1. **On Cloud**, export everything (Settings › Config › Export, or `GET /v1/config-blobs/export`).
+2. **On the self-hosted Den**, create the organization and sign in as its owner. If
+   you want to supply secrets from the environment, set `DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST` and the variables on den-api.
 3. **Upload** the file in Settings › Config › Import (or `POST …/change-requests`),
    in `merge` mode.
 4. **Review** the plan. Everything is a `create`; source IDs are reused. People

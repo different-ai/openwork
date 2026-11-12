@@ -13,18 +13,7 @@ const contains = (part: string) => new RegExp(part.replace(/[.*+?^${}()|[\]\\]/g
 test("an admin adds an OpenAI-compatible provider by address and key, and a member chats with its models", async ({ world, user, probe, step, evidence }) => {
   /** Waits for an element in a given state (data-* attributes the UI renders), up to `within` ms. */
   const shown = (selector: string, within = 15_000) => probe.eventually(async () => (await probe.dom(selector)).elements.length, { within, label: selector, until: (count) => count > 0 });
-  await step("before: with the feature off, Another provider still opens a catalog provider's form", async () => {
-    await user.see({ testId: "gateway-provider-pick-compatible" }, { text: /Another provider/, timeoutMs: 60_000 });
-    await user.notSee({ testId: "gateway-provider-pick-custom" });
-    const discovered = await world.discover({ baseUrl: `${world.upstream.baseUrl}/v1`, apiKey: world.upstream.key });
-    expect(discovered.response.status).toBe(404);
-    evidence.recordAssertionEvidence("the custom provider routes stay closed while the feature is off", `discover-models → HTTP ${discovered.response.status} ${discovered.text.slice(0, 80)}`, discovered.response.status === 404);
-    await user.screenshot();
-  });
-
   await step("the admin opens Another provider and fills in the connection", async () => {
-    await world.enableCustomProviders();
-    await user.reload();
     await user.click({ testId: "gateway-provider-pick-custom" });
     await shown('[data-testid="custom-provider-wizard"][data-step="1"]', 60_000);
     await user.type({ testId: "custom-provider-name" }, PROVIDER_NAME);

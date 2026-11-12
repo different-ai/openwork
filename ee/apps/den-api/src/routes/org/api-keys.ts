@@ -29,7 +29,7 @@ const configTokenScopeSchema = z.enum(CONFIG_TOKEN_SCOPES).meta({ ref: "ConfigTo
 
 const createOrganizationApiKeySchema = z.object({
   name: z.string().trim().min(2).max(64),
-  /** `config`: a config token (feature `configBlobs`), limited to the config-blob routes its scopes open. */
+  /** `config`: a config token, limited to the config-blob routes its scopes open. */
   type: apiKeyTypeSchema.optional(),
   scopes: z.array(configTokenScopeSchema).min(1).max(CONFIG_TOKEN_SCOPES.length).optional(),
   /** Config tokens only: area keys or `prefix.*` (e.g. `ai-gateway.*`); left out = every area. */
@@ -45,11 +45,6 @@ const createOrganizationApiKeySchema = z.object({
   if (value.scopes) ctx.addIssue({ code: "custom", path: ["scopes"], message: "Only config tokens have scopes." })
   if (value.areas) ctx.addIssue({ code: "custom", path: ["areas"], message: "Only config tokens have an area limit." })
 }).meta({ ref: "CreateOrganizationApiKeyRequest" })
-
-const featureDisabledSchema = z.object({
-  error: z.literal("feature_disabled"),
-  feature: z.literal("configBlobs"),
-}).meta({ ref: "OrganizationApiKeyFeatureDisabledError" })
 
 const validationIssueSchema = z.object({
   message: z.string(),
@@ -202,7 +197,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
     describeRoute({
       tags: ["API Keys"],
       summary: "Create an organization API key",
-      description: "Creates a new API key for the selected organization. With the configBlobs feature on, `type: \"config\"` creates a config token with `scopes` and an optional `areas` limit; it still acts with the issuing member's permissions.",
+      description: "Creates a new API key for the selected organization. `type: \"config\"` creates a config token with `scopes` and an optional `areas` limit; it still acts with the issuing member's permissions.",
       hide: hideApiKeyGenerationRoute,
       security: [{ bearerAuth: [] }],
       responses: {
@@ -215,10 +210,10 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         400: {
-          description: "Invalid request, or a config token while the configBlobs feature is off",
+          description: "Invalid request",
           content: {
             "application/json": {
-              schema: resolver(z.union([invalidRequestSchema, featureDisabledSchema])),
+              schema: resolver(invalidRequestSchema),
             },
           },
         },
@@ -256,9 +251,6 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
       const config = input.type === "config" && input.scopes
         ? { scopes: CONFIG_TOKEN_SCOPES.filter((scope) => input.scopes?.includes(scope)), areas: input.areas ? [...new Set(input.areas)] : null }
         : null
-      if (input.type === "config" && !payload.features.configBlobs) {
-        return c.json({ error: "feature_disabled", feature: "configBlobs" }, 400)
-      }
       const created = await auth.api.createApiKey({
         body: {
           userId: payload.currentMember.userId,

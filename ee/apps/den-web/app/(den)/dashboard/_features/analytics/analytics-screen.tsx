@@ -86,7 +86,7 @@ export function AnalyticsScreen() {
   const projectScoped = projectValue.length > 0;
   // A workspace nobody has used yet gets one clear empty state, not a page of zeros.
   const noActivity = data !== undefined && !projectScoped && !isError && !analyticsHasActivity(data);
-  // With `featureIntros` on, the Analytics intro replaces the plan notice and "No activity yet"
+  // Feature intro: the Analytics intro replaces the plan notice and "No activity yet"
   // below the header; the tabs stay, since Plugins & connectors and Workflow runs have their own data.
   const intro = useFeatureIntro("analytics", analyticsUsageIntroFacts({ included: orgContext ? !locked : null, data, projectScoped }));
   const introShown = intro.size === "fullscreen";

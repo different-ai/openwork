@@ -48,44 +48,37 @@ test("managed deployments remain off unless explicitly enabled", () => {
   assert.ok(!items.some((item) => item.label === "Deployments"));
 });
 
-function settingsChildren(permissions: Parameters<typeof getOrgAccessFlags>[2], authSecuritySettings: boolean) {
+function settingsChildren(permissions: Parameters<typeof getOrgAccessFlags>[2]) {
   return buildDashboardNavSections({
     orgSlug: "workspace", access: getOrgAccessFlags("member", false, permissions),
-    capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, authSecuritySettings,
+    capabilities, orgMode: "multi_org", runtimeConfigLoaded: true,
   }).flatMap((section) => section.items).flatMap((item) => item.children ?? []);
 }
 
-test("SSO and SCIM keep their own Settings entries with authSecuritySettings off", () => {
-  const labels = settingsChildren(["sso.view", "scim.view"], false).map((item) => item.label);
-  assert.ok(labels.includes("SSO") && labels.includes("SCIM"));
-  assert.ok(!labels.includes("Auth & Security"));
-});
-
-test("authSecuritySettings shows one Auth & Security entry when either SSO or SCIM is visible", () => {
+test("one Auth & Security entry, no separate SSO or SCIM, when either is visible", () => {
   for (const permissions of [["sso.view", "scim.view"], ["sso.view"], ["scim.view"]] as const) {
-    const children = settingsChildren([...permissions], true);
+    const children = settingsChildren([...permissions]);
     assert.deepEqual(children.filter((item) => ["SSO", "SCIM", "Auth & Security"].includes(item.label)), [
       { href: "/dashboard/auth-security", label: "Auth & Security" },
     ]);
   }
-  assert.ok(!settingsChildren([], true).some((item) => item.label === "Auth & Security"));
+  assert.ok(!settingsChildren([]).some((item) => item.label === "Auth & Security"));
 });
 
-function configChildren(permissions: Parameters<typeof getOrgAccessFlags>[2], configBlobs: boolean) {
+function configChildren(permissions: Parameters<typeof getOrgAccessFlags>[2]) {
   return buildDashboardNavSections({
     orgSlug: "workspace", access: getOrgAccessFlags("member", false, permissions),
-    capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, configBlobs,
+    capabilities, orgMode: "multi_org", runtimeConfigLoaded: true,
   }).flatMap((section) => section.items).flatMap((item) => item.children ?? []);
 }
 
-test("Config appears under Settings after Advanced only with configBlobs on and organization.update held", () => {
-  const children = configChildren(["organization.update", "sharing.manage_all"], true);
+test("Config appears under Settings after Advanced only with organization.update held", () => {
+  const children = configChildren(["organization.update", "sharing.manage_all"]);
   const labels = children.map((item) => item.label);
   assert.ok(labels.includes("Config"));
   assert.equal(children.find((item) => item.label === "Config")?.href, "/dashboard/config");
   assert.equal(labels.indexOf("Config"), labels.indexOf("Advanced") + 1);
-  assert.ok(!configChildren(["organization.update"], false).some((item) => item.label === "Config"));
-  assert.ok(!configChildren(["sharing.manage_all"], true).some((item) => item.label === "Config"));
+  assert.ok(!configChildren(["sharing.manage_all"]).some((item) => item.label === "Config"));
 });
 
 test("Computers belongs to regular Den Manage and needs both remoteDevices and computers.view", () => {

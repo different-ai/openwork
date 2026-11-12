@@ -215,7 +215,7 @@ export function ManagedDeploymentsScreen() {
     }
   }
 
-  // With `featureIntros` on: full screen while the organization has no deployment (DESIGN.md I1, I2).
+  // Feature intro: full screen while the organization has no deployment (DESIGN.md I1, I2).
   const intro = useFeatureIntro(
     "deployments",
     enabled && access.canViewDeployments && !loading && !error && configuration ? { deployments: deployments.length, cloudReady: available } : null,

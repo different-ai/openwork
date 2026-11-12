@@ -584,7 +584,6 @@ test("BYOK export and gateway providers follow what the routes show a view-only 
   assert.deepEqual(ownerNames, ["Acme LLM", "Keyless LLM"])
 
   // AI Gateway providers show manager-only details (address, OAuth client, grantees): no export without Manage.
-  assert.equal((await den.setFeature(orgA.orgId, "configBlobs", true)).status, 200)
   const exported = await den.as(viewer, orgA.orgId)("GET", "/v1/config-blobs/export?areas=ai-gateway.providers")
   assert.equal(exported.status, 403, summary(exported))
   assert.deepEqual(field(exported.body, "omitted"), [{ area: "ai-gateway.providers", reason: "needs the gateway_providers.manage permission" }])

@@ -1,8 +1,7 @@
 // Loads one Smart Router (packages/types/src/den/auto-router.ts) for a member:
-// only when the `autoRouter` feature is on for the organization and the
-// router is assigned to the member (everyone, one of their teams, or them).
-// Routers and team memberships are cached briefly: every Smart request needs
-// them, and an admin's change or the kill switch takes effect within the
+// only when the router is assigned to the member (everyone, one of their
+// teams, or them). Routers and team memberships are cached briefly: every
+// Smart request needs them, and an admin's change takes effect within the
 // cache lifetime.
 import { and, asc, eq } from "@openwork-ee/den-db/drizzle"
 import {
@@ -14,10 +13,8 @@ import {
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db"
-import { readFeatures } from "@openwork-ee/den-db/organization-features"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { autoRouterAssignmentIncludes, type AutoRouterAssignment } from "@openwork/types/den/auto-router"
-import { env } from "../env.js"
 
 export type AutoRouterConfigModel = {
   id: string
@@ -32,14 +29,14 @@ export type AutoRouterConfig = { id: string; name: string; models: AutoRouterCon
 type StoredRouter = AutoRouterConfig & { assignment: AutoRouterAssignment }
 
 /**
- * The router the member asked for, or null when the feature is off, the
- * router does not exist in the organization, or it is not assigned to them.
+ * The router the member asked for, or null when the router does not exist in
+ * the organization or is not assigned to them.
  */
 export type LoadAutoRouterConfig = (input: { organizationId: string; routerId: string; memberId: string }) => Promise<AutoRouterConfig | null>
 
 /**
- * Every router that applies to the member and has models; empty when
- * the feature is off. The 3rd party tool endpoints list these.
+ * Every router that applies to the member and has models. The 3rd party tool
+ * endpoints list these.
  */
 export type LoadMemberAutoRouters = (input: { organizationId: string; memberId: string }) => Promise<AutoRouterConfig[]>
 
@@ -54,8 +51,6 @@ function prune<T>(cache: Map<string, { expires: number; value: T }>, now: number
 async function readRouters(organizationId: string): Promise<StoredRouter[]> {
   if (!isDenTypeId("organization", organizationId)) return []
   const { db } = await import("../db.js")
-  const features = await readFeatures(db, organizationId, env.features)
-  if (!features.autoRouter) return []
   const routers = await db.select().from(AutoRouterTable).where(eq(AutoRouterTable.organizationId, organizationId))
   if (routers.length === 0) return []
   const [access, models, links] = await Promise.all([

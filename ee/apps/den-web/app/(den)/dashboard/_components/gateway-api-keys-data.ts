@@ -17,7 +17,7 @@ import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 /**
- * AI Gateway API keys for 3rd party tools (feature `gatewayMemberApiKeys`): the organization setting,
+ * AI Gateway API keys for 3rd party tools: the organization setting,
  * the viewer's own keys (Library › Models) and every key in the organization (AI Gateway › API Keys).
  */
 export const gatewayApiKeyQueryKeys = {
@@ -63,11 +63,11 @@ export function useSaveAiGatewaySettings() {
 }
 
 /** The viewer's own keys, whether the organization allows them, and the URL tools call. */
-export function useMyGatewayApiKeys(enabled: boolean) {
+export function useMyGatewayApiKeys() {
   const { orgId } = useOrgDashboard();
   return useQuery({
     queryKey: gatewayApiKeyQueryKeys.mine(orgId),
-    enabled: enabled && Boolean(orgId),
+    enabled: Boolean(orgId),
     queryFn: () => request(requireOrg(orgId), "/v1/org/ai-gateway/api-keys/mine", { method: "GET" }, memberGatewayApiKeysViewSchema, "Your API keys did not load. Try again."),
   });
 }
@@ -103,11 +103,11 @@ export function useRevokeGatewayApiKey(scope: "mine" | "organization") {
   });
 }
 
-export function useOrganizationGatewayApiKeys(enabled: boolean) {
+export function useOrganizationGatewayApiKeys() {
   const { orgId } = useOrgDashboard();
   return useQuery({
     queryKey: gatewayApiKeyQueryKeys.organization(orgId),
-    enabled: enabled && Boolean(orgId),
+    enabled: Boolean(orgId),
     queryFn: () => request(requireOrg(orgId), "/v1/org/ai-gateway/api-keys", { method: "GET" }, organizationGatewayApiKeysViewSchema, "API keys did not load. Try again."),
   });
 }

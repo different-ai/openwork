@@ -36,8 +36,6 @@ async function setup(label: string): Promise<Org> {
   const created = await den.createOrg(await den.signUp(`${label} Owner`), `${label} org`)
   const member = await den.newMember(created.owner, created.orgId, `${label} Member`)
   const teamId = await den.createTeam(created.owner, created.orgId, "Platform", [member.memberId])
-  const feature = await den.setFeature(created.orgId, "autoRouter", true)
-  assert.ok(feature.status < 300, summary(feature))
   const call = den.as(created.owner, created.orgId)
   const provider = await call("POST", "/v1/inference-providers", { name: "Fixture OpenAI", providerId: "openai", modelIds: ["gpt-6-luna", "gpt-fixture-other"] })
   assert.equal(provider.status, 201, summary(provider))

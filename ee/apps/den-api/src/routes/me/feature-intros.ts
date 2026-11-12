@@ -1,8 +1,6 @@
 import { featureIntroEventRequestSchema, featureIntroEventResponseSchema, featureIntroListResponseSchema } from "@openwork/types/den/feature-intros"
 import type { Hono } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
-import { z } from "zod"
-import { requireFeature } from "../../features.js"
 import { listFeatureIntroStates, recordFeatureIntroEvent } from "../../feature-intros.js"
 import { jsonValidator, orgMemberRoute, type OrganizationContextVariables } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -14,7 +12,6 @@ const describeFeatureIntroRoute = (options: FeatureIntroRouteOptions) => describ
 
 const featureIntroListSchema = featureIntroListResponseSchema.meta({ ref: "FeatureIntroList" })
 const featureIntroEventResultSchema = featureIntroEventResponseSchema.meta({ ref: "FeatureIntroEventResult" })
-const featureIntrosDisabledSchema = z.object({ error: z.literal("feature_disabled"), feature: z.string() }).meta({ ref: "FeatureIntrosDisabled" })
 
 export function registerMeFeatureIntroRoutes<T extends { Variables: AuthContextVariables & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
   app.get(
@@ -28,11 +25,9 @@ export function registerMeFeatureIntroRoutes<T extends { Variables: AuthContextV
       responses: {
         200: jsonResponse("The member's intro state.", featureIntroListSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        404: jsonResponse("Feature intros are off for this organization, or it was not found.", featureIntrosDisabledSchema),
       },
     }),
     orgMemberRoute(),
-    requireFeature("featureIntros"),
     async (c) => {
       const { organization, currentMember } = c.get("organizationContext")
       c.header("Cache-Control", "no-store")
@@ -52,11 +47,9 @@ export function registerMeFeatureIntroRoutes<T extends { Variables: AuthContextV
         200: jsonResponse("The intro's updated state.", featureIntroEventResultSchema),
         400: jsonResponse("The event was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        404: jsonResponse("Feature intros are off for this organization, or it was not found.", featureIntrosDisabledSchema),
       },
     }),
     orgMemberRoute(),
-    requireFeature("featureIntros"),
     jsonValidator(featureIntroEventRequestSchema),
     async (c) => {
       const { organization, currentMember } = c.get("organizationContext")

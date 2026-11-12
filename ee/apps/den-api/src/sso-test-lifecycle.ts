@@ -80,7 +80,7 @@ async function getConnectionWithProvider(connection: SsoConnection) {
 /**
  * The connection a Better Auth `/sign-in/sso` request uses. A request naming a
  * provider gets that provider. One naming an organization or an email domain
- * may match several connections (multipleSsoConnections): the oldest ready one
+ * may match several connections: the oldest ready one
  * (enabled, domain verified) wins, preferring one that covers the email's
  * domain, so a sign-in never lands on a disabled or unverified provider while
  * a ready one exists. Without a ready one, the oldest match answers (and is

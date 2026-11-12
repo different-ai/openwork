@@ -355,7 +355,7 @@ async function getSessionFromToken(token: string, requestContext?: SessionReques
     return bearerSessionValue(row)
   }
 
-  // Extending reads the person's session limits (sessionSecuritySettings), so
+  // Extending reads the person's session limits (Auth & Security › General), so
   // shorter ones set by any of their organizations apply here too.
   let nextExpiresAt: Date
   try {
