@@ -55,7 +55,13 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "A feed of your sessions across workspaces",
         "Send a follow-up now or queue it",
         "Outlook attachments and drafts",
-        "Recurring Google Calendar meetings"
+        "Recurring Google Calendar meetings",
+        "Run tasks on your other computers as sub-agents",
+        "Background tasks you can follow in the chat",
+        "Floating and full-screen browser",
+        "History of each computer use session",
+        "Focused reading and edits in Google Docs",
+        "Zoom into diagrams"
       ],
       building: [
         "Sandboxed workspaces",
@@ -76,7 +82,9 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
       "Agents ask a question and keep working",
       "Send a follow-up now or queue it",
       "Outlook attachments and drafts",
-      "Recurring Google Calendar meetings"
+      "Recurring Google Calendar meetings",
+      "Run tasks on your other computers as sub-agents",
+      "Floating and full-screen browser"
     ]
   },
   {
@@ -101,6 +109,16 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "Allow, ask first, or block what agents can do",
         "OpenTelemetry-compatible server logs",
         "Deterministic configs",
+        "SCIM provisioning",
+        "Session length and admin re-sign-in rules",
+        "Usage limits for each provider",
+        "Test a provider before adding it",
+        "AWS and Microsoft sign-in for model providers",
+        "LiteLLM as a provider",
+        "A default model for the organization",
+        "Organization API keys",
+        "Install links and a setup checklist for new members",
+        "Sandbox organizations for testing",
         "Managed install in your own AWS or Google Cloud"
       ],
       building: ["Fully managed desktop", "Share a provider key from your device", "Turn local models on or off"],
@@ -108,6 +126,8 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     },
     preview: ["Managed install in your own AWS or Google Cloud"],
     fresh: [
+      "Session length and admin re-sign-in rules",
+      "Test a provider before adding it",
       "Admin roles for security and IT",
       "Custom roles for a person or a team",
       "Allow, ask first, or block what agents can do",
@@ -124,9 +144,16 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     heading: ["See what works,", "and what doesn’t."],
     intro: "Know which skills, connections, and teams are getting real work done, and which aren’t, so you can show the return on your AI spend.",
     items: {
-      ready: ["Usage and adoption by person", "Spend by team and model", "Daily usage trends", "Organization activity: who shared and changed what"],
+      ready: [
+        "Usage and adoption by person",
+        "Spend by team and model",
+        "Daily usage trends",
+        "Organization activity: who shared and changed what",
+        "What’s used, and what isn’t",
+        "Workflow runs across the organization"
+      ],
       building: ["What cloud agents spend on models"],
-      soon: ["What’s used, and what isn’t", "Failures by skill and connection", "Results and spend by team"]
+      soon: ["Failures by skill and connection", "Results and spend by team"]
     },
     fresh: ["Daily usage trends", "Organization activity: who shared and changed what"]
   },
@@ -141,7 +168,11 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "Claude Code, Codex, Cursor, and ChatGPT",
         "Skills, plugins, and connections by team",
         "Shared or per-person sign-in",
-        "OneDrive and SharePoint files"
+        "OneDrive and SharePoint files",
+        "Guided Slack setup",
+        "More ready-made MCP servers",
+        "Sign-in detected for custom MCPs",
+        "Slack messages from the OpenWork bot"
       ],
       building: [
         "Sync plugins from Git",
@@ -151,7 +182,7 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
       ],
       soon: []
     },
-    fresh: ["OneDrive and SharePoint files"]
+    fresh: ["OneDrive and SharePoint files", "Guided Slack setup", "More ready-made MCP servers", "Sign-in detected for custom MCPs"]
   },
   {
     id: "activity",
@@ -196,12 +227,16 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "Always-on cloud workspace",
         "Live browser work in the chat",
         "Watch and take over Workbot’s browser",
-        "Workbot reads PDFs and Office files from Drive"
+        "Workbot reads PDFs and Office files from Drive",
+        "Workbot starts tasks on your computers",
+        "Working status and a list of what it’s doing",
+        "Calendar of Workbot’s scheduled work",
+        "Side chats"
       ],
       building: ["A background agent for each member", "Read and edit documents beside the chat", "Workbot settings for each team"],
       soon: []
     },
-    fresh: ["Workbot on your phone", "Always-on cloud workspace", "Live browser work in the chat", "Workbot reads PDFs and Office files from Drive"]
+    fresh: ["Workbot on your phone", "Always-on cloud workspace", "Live browser work in the chat", "Workbot reads PDFs and Office files from Drive", "Workbot starts tasks on your computers", "Working status and a list of what it’s doing"]
   },
   {
     id: "automations",
@@ -214,7 +249,10 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "Daily and weekly runs",
         "Missed and interrupted runs are shown",
         "Every-few-hours schedules",
-        "Runs before or after a meeting"
+        "Runs before or after a meeting",
+        "Cloud runs while your computer is off",
+        "Cloud tasks survive restarts and updates",
+        "Organization settings for automations"
       ],
       building: [],
       soon: ["Run in the cloud from GitHub events", "Team plan, no OpenWork Web needed", "Fine-grained automation control", "Approvals in the middle of a run"]
@@ -231,7 +269,8 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "Live workflows across your connected apps",
         "A step-by-step flow for every workflow",
         "Run history with each step’s result",
-        "Save a workflow with a name, find it in My Library"
+        "Save a workflow with a name, find it in My Library",
+        "Workflows written as standard JavaScript"
       ],
       building: ["Share workflows with your team"],
       soon: ["Live edit"]
@@ -247,7 +286,9 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
       ready: [
         "Quick-glance views your people create", "Works with MCP Apps", "Build Apps from a chat on the desktop", "Open an App as a site, public or signed-in",
         "Public Apps anyone can add, no sign-in",
-        "Fix an App with your agent when a tool changes"
+        "Fix an App with your agent when a tool changes",
+        "See an App’s progress while it builds",
+        "Built-in libraries for Apps"
       ],
       building: ["Open Apps from the Workbot chat"],
       soon: []
@@ -265,7 +306,7 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     heading: ["For people who just", "want it to work."],
     intro: "New ways to use OpenWork, set up by your team. OpenWork in Slack is ready today; the rest is what we’re designing.",
     items: {
-      ready: ["OpenWork in Slack"],
+      ready: ["OpenWork in Slack", "Slack answers arrive as their own reply"],
       building: [],
       soon: ["A single, streamlined chat", "Phone app, starting with MCP Apps"]
     }
