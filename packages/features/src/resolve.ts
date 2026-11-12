@@ -109,6 +109,8 @@ export const RETIRED_FEATURE_KEYS = [
   "featureIntros", "authSecuritySettings", "sessionSecuritySettings", "ssoSettingsOnSsoPage",
   "multipleSsoConnections", "configBlobs", "gatewayMemberApiKeys", "gatewayCustomProviders",
   "autoRouter",
+  // Generally available (2026-11): TrueFoundry in AI Gateway, always on, on cloud and self-hosted.
+  "truefoundryGateway",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {
