@@ -5,7 +5,7 @@ import { jsonResponse } from "../openapi.js"
 import { signedWebhookRoute } from "../middleware/index.js"
 import { attributeAuditRequest, auditServiceAttribution } from "../audit/request-capture.js"
 import { eventAccess, EventAccessError } from "./context.js"
-import { acceptEvent, findSubscription } from "./repository.js"
+import { acceptControl, acceptEvent, findSubscription } from "./repository.js"
 import { receiveMcpEvent } from "./receiver.js"
 
 export function registerMcpEventRoutes<T extends Env>(app: Hono<T>) {
@@ -23,6 +23,11 @@ export function registerMcpEventRoutes<T extends Env>(app: Hono<T>) {
     find: (id) => /^[a-f0-9]{48}$/.test(id) ? findSubscription(id) : Promise.resolve(null),
     enabled: async (subscription) => {
       try { return (await eventAccess(subscription, subscription.scopes)).connections.some((connection) => connection.id === subscription.connectionId) } catch (error) { if (error instanceof EventAccessError) return false; throw error }
+    },
+    acceptControl: async (subscription, control, deliveryId) => {
+      const audited = await attributeAuditRequest(c, { organizationId: subscription.organizationId, ...auditServiceAttribution("mcp_event", subscription.connectionId) })
+      if (!audited.ok) throw new Error("Audit unavailable")
+      await acceptControl(subscription, control, deliveryId)
     },
     accept: async (subscription, event) => {
       const audited = await attributeAuditRequest(c, { organizationId: subscription.organizationId, ...auditServiceAttribution("mcp_event", subscription.connectionId) })

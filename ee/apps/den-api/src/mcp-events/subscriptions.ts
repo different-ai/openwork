@@ -37,7 +37,7 @@ export async function listEvents(thread: EventThread, scopes: readonly string[],
 }
 
 export function subscriptionSummary(row: EventSubscription) {
-  return { id: row.id, connectionId: row.connectionId, name: row.name, status: row.expiresAt.getTime() <= Date.now() ? "expired" : row.status, expiresAt: row.expiresAt.toISOString(), instruction: row.instruction }
+  return { id: row.id, connectionId: row.connectionId, name: row.name, incomplete: row.incomplete, status: row.expiresAt.getTime() <= Date.now() ? "expired" : row.status, expiresAt: row.expiresAt.toISOString(), instruction: row.instruction }
 }
 
 export async function listSubscriptions(thread: EventThread) {
@@ -87,7 +87,7 @@ export async function subscribe(thread: EventThread, originalScopes: readonly st
     if (grantedUntil.getTime() <= Date.now()) throw new Error("Subscription already expired")
     // Recheck after the network call. A kill switch or unsubscribe during verification wins.
     await connectionFor(thread, scopes, input.connectionId)
-    await db.update(Subscription).set({ remoteId: result.id, expiresAt: grantedUntil, status: "active" }).where(and(eq(Subscription.id, row.id), eq(Subscription.status, "pending")))
+    await db.update(Subscription).set({ remoteId: result.id, expiresAt: grantedUntil, status: "active", cursor: result.cursor, incomplete: result.truncated }).where(and(eq(Subscription.id, row.id), eq(Subscription.status, "pending")))
     const saved = await findSubscription(row.id)
     if (!saved || saved.status !== "active") throw new Error("Subscription stopped")
     markFeaturesUsed({ organizationId: thread.organizationId, memberId: thread.memberId, keys: ["mcpThreadEvents"] })

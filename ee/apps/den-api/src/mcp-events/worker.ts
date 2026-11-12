@@ -1,7 +1,7 @@
 import { markFeaturesUsed } from "../feature-usage.js"
 import { appLogger } from "../observability/logger.js"
 import { eventAccess, EventAccessError, requireEventThread } from "./context.js"
-import { eventPrompt, eventSchema } from "./protocol.js"
+import { eventPrompt, deliverySchema } from "./protocol.js"
 import { claimEvent, findSubscription, finishEvent, handOffEvent, pruneEvents, retryEvent, stopSubscription } from "./repository.js"
 
 export async function dispatchMcpEvent() {
@@ -9,21 +9,21 @@ export async function dispatchMcpEvent() {
   if (!receipt) return false
   try {
     const subscription = await findSubscription(receipt.subscriptionId)
-    if (!subscription || subscription.status !== "active" || subscription.expiresAt.getTime() <= Date.now() || !receipt.payload) {
+    if (!subscription || !["active", "terminated"].includes(subscription.status) || subscription.expiresAt.getTime() <= Date.now() || !receipt.payload) {
       await finishEvent(receipt.id, "skipped")
       return true
     }
     const { connections, scopes } = await eventAccess(subscription, subscription.scopes)
     if (!connections.some((connection) => connection.id === subscription.connectionId)) throw new EventAccessError("Connection no longer available")
     const { runner } = await requireEventThread(subscription, scopes)
-    const event = eventSchema.parse(JSON.parse(receipt.payload))
+    const event = deliverySchema.parse(JSON.parse(receipt.payload))
     const delivered = await handOffEvent(receipt.id, subscription, async () => {
       const sent = await runner.sendTurn({ organizationId: subscription.organizationId, userId: subscription.userId }, {
         sessionId: subscription.sessionId, messageId: receipt.id,
         prompt: eventPrompt(subscription.instruction, subscription, event), model: subscription.model, execution: "steps",
       })
       if (!sent.ok) throw new Error("Runner did not accept event")
-    })
+    }, "type" in event && event.type === "terminated")
     if (delivered) markFeaturesUsed({ organizationId: subscription.organizationId, memberId: subscription.memberId, keys: ["mcpThreadEvents"] })
   } catch (error) {
     if (error instanceof EventAccessError) {

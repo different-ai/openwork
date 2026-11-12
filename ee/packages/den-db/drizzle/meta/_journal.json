@@ -1387,6 +1387,13 @@
       "when": 1794525593338,
       "tag": "0198_mcp_event_resume_binding",
       "breakpoints": true
+    },
+    {
+      "idx": 199,
+      "version": "5",
+      "when": 1794527207554,
+      "tag": "0199_mcp_event_control_notices",
+      "breakpoints": true
     }
   ]
 }

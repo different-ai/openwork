@@ -14,7 +14,7 @@ function signed(body = JSON.stringify(event), options: { timestamp?: number; id?
   const mac = createHmac("sha256", Buffer.from(secret.slice(6), "base64")).update(`${id}.${timestamp}.${body}`).digest("base64")
   return new Request("https://example.com/webhook", { method: "POST", body, headers: { "webhook-id": id, "webhook-timestamp": timestamp, "webhook-signature": options.signature ?? `v1,${mac}`, "x-mcp-subscription-id": "remote-subscription" } })
 }
-const deps = (overrides: Partial<Parameters<typeof receiveMcpEvent>[2]> = {}) => ({ find: async () => subscription, enabled: async () => true, accept: async () => {}, now: () => now, ...overrides })
+const deps = (overrides: Partial<Parameters<typeof receiveMcpEvent>[2]> = {}) => ({ find: async () => subscription, enabled: async () => true, accept: async () => {}, acceptControl: async () => {}, now: () => now, ...overrides })
 
 test("Standard Webhooks verifies exact bytes, rotated signatures and separate delivery ids", async () => {
   const request = signed()
@@ -88,4 +88,21 @@ test("refuses a signed payload that cannot fit the runner prompt before durable 
   assert.equal(accepted, false)
   const fitting = { ...event, data: "x".repeat(99_000) }
   assert.equal((await receiveMcpEvent(signed(JSON.stringify(fitting)), subscription.id, deps())).status, 202)
+})
+
+
+test("signed gap and termination notices reach the durable control handler", async () => {
+  for (const notice of [{ type: "gap", cursor: "fresh-position" }, { type: "terminated", error: { code: -32024, message: "Access revoked" } }]) {
+    let accepted = false
+    const result = await receiveMcpEvent(signed(JSON.stringify(notice)), subscription.id, deps({ acceptControl: async (_subscription, received, deliveryId) => {
+      assert.deepEqual(received, notice)
+      assert.equal(deliveryId, "delivery-1")
+      accepted = true
+    } }))
+    assert.equal(result.status, 202)
+    assert.equal(accepted, true)
+  }
+  assert.equal((await receiveMcpEvent(signed(JSON.stringify({ type: "gap", cursor: "fresh" })), subscription.id, deps({ acceptControl: async () => { throw new Error("unavailable") } }))).status, 503)
+  const wrong = signed(JSON.stringify({ type: "terminated", error: { code: -32024, message: "Forbidden" } })); wrong.headers.set("x-mcp-subscription-id", "other")
+  assert.equal((await receiveMcpEvent(wrong, subscription.id, deps())).status, 400)
 })

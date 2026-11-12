@@ -96,7 +96,7 @@ async function callback(id: string, body: unknown, signatureOverride?: string) {
   assert.ok(subscription)
   const rawBody = JSON.stringify(body)
   const timestamp = String(Math.floor(Date.now() / 1000))
-  const deliveryId = `delivery-${field(body, "eventId") ?? "verification"}`
+  const deliveryId = `delivery-${field(body, "eventId") ?? field(body, "type") ?? "verification"}`
   const signature = createHmac("sha256", Buffer.from(subscription.secret.slice(6), "base64")).update(`${deliveryId}.${timestamp}.${rawBody}`).digest("base64")
   return den.request(null, "POST", new URL(subscription.url).pathname, { rawBody, headers: { "content-type": "application/json", "webhook-id": deliveryId, "webhook-timestamp": timestamp, "webhook-signature": signatureOverride ?? `v1,${signature}`, "x-mcp-subscription-id": id } })
 }
@@ -194,6 +194,34 @@ test("another member cannot unsubscribe or forge the target thread; invalid even
   assert.match(result.text, /another member/)
   assert.equal((await den.callMcpTool(token, "subscribe_mcp_event", { ...input, arguments: { folder: 3 } })).isError, true)
   assert.equal(subscribed, 1)
+})
+
+test("gap and termination controls are retained, deduplicated and delivered into the same chat", async () => {
+  const created = await den.callMcpTool(token, "subscribe_mcp_event", { ...input, arguments: { folder: "controls" } })
+  assert.equal(created.isError, false, created.raw)
+  const id = text(field(created.body, "id"), "control subscription")
+  const remote = `remote-${subscribed}`
+  const gap = { type: "gap", cursor: "fresh-position" }
+  assert.equal((await callback(remote, gap)).status, 202)
+  assert.equal((await callback(remote, gap)).status, 202)
+  const { findSubscription } = await import("../../src/mcp-events/repository.js")
+  const saved = await findSubscription(id)
+  assert.equal(saved?.cursor, "fresh-position")
+  assert.equal(saved?.incomplete, true)
+  const before = turns.size
+  assert.equal(await dispatchMcpEvent(), true)
+  assert.equal(turns.size, before + 1)
+  assert.match([...turns.values()].at(-1)!.prompt, /history may be incomplete/)
+  assert.equal((await callback(remote, event("cancelled-by-termination"))).status, 202)
+  const termination = { type: "terminated", error: { code: -32024, message: "Access revoked" } }
+  assert.equal((await callback(remote, termination)).status, 202)
+  assert.equal((await callback(remote, termination)).status, 202)
+  assert.equal((await findSubscription(id))?.status, "terminated")
+  assert.equal((await callback(remote, event("too-late"))).status, 410)
+  assert.equal(await dispatchMcpEvent(), true)
+  assert.equal(turns.size, before + 2)
+  assert.match([...turns.values()].at(-1)!.prompt, /watch ended/)
+  assert.equal(await dispatchMcpEvent(), false)
 })
 
 test("flag off rejects callbacks and stops pending work; namespaced discovery can subscribe after re-enable", async () => {

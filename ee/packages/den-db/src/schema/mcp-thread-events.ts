@@ -1,4 +1,4 @@
-import { index, int, mysqlTable, timestamp, varchar } from "drizzle-orm/mysql-core"
+import { boolean, index, int, mysqlTable, timestamp, varchar } from "drizzle-orm/mysql-core"
 import { compatJsonColumn, denTypeIdColumn, encryptedMediumTextColumn, encryptedTextColumn } from "../columns"
 
 /** A trusted hosted turn binding, never accepted from MCP tool arguments. No bearer token is retained. */
@@ -27,6 +27,8 @@ export const McpEventSubscriptionTable = mysqlTable("mcp_event_subscription", {
   secret: encryptedTextColumn("secret").notNull(),
   callbackUrl: varchar("callback_url", { length: 2048 }).notNull(),
   remoteId: varchar("remote_id", { length: 512 }),
+  cursor: encryptedTextColumn("cursor"),
+  incomplete: boolean("incomplete").notNull().default(false),
   model: varchar("model", { length: 512 }).notNull(),
   scopes: compatJsonColumn<string[]>("scopes").notNull(),
   status: varchar("status", { length: 16 }).notNull(),
