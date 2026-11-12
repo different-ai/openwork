@@ -49,10 +49,9 @@ async function bootBrowser(seed: Seed, { place }: { place: Place }, mode: "optio
     await queryDenDatabase(den.database.url, "UPDATE user SET email_verified=1 WHERE email=?", [owner.email]);
     await queryDenDatabase(den.database.url, "UPDATE sso_provider SET domain_verified=1 WHERE provider_id=?", [providerId]);
     await queryDenDatabase(den.database.url, "UPDATE sso_connection SET status='enabled', test_status='succeeded' WHERE provider_id=?", [providerId]);
-    if (mode !== "legacy") {
-      const feature = await request(den.admin, `/v1/admin/organizations/${orgId}/capabilities`, { method: "PUT", body: JSON.stringify({ capabilities: { ssoPerOrganization: true } }) });
-      if (!feature.response.ok) throw new Error(`Set fixture feature: ${feature.text}`);
-    }
+    // ssoPerOrganization is on by default: the legacy world turns it off explicitly.
+    const feature = await request(den.admin, `/v1/admin/organizations/${orgId}/capabilities`, { method: "PUT", body: JSON.stringify({ capabilities: { ssoPerOrganization: mode !== "legacy" } }) });
+    if (!feature.response.ok) throw new Error(`Set fixture feature: ${feature.text}`);
     idp.configure({ audience: den.ref.webUrl, acs: `${den.ref.webUrl}/api/auth/sso/saml2/sp/acs/${providerId}`, email: owner.email });
     const activated = await request(den.admin, "/v1/me/active-organization", { method: "POST", body: JSON.stringify({ organizationId: orgId }) });
     if (!activated.response.ok) throw new Error(`Select the fixture's SSO organization: ${activated.text}`);

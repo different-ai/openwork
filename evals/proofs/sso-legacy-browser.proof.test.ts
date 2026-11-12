@@ -37,7 +37,9 @@ legacy("with the rollout off, domain sign-in stays SSO-only and settings keep th
     // instead of offering a switch that changes nothing.
     await admin.see({ text: "Required: with SSO on, everyone on your verified domain signs in with it" });
     await admin.notSee({ role: "switch", label: "Require SSO for this organization" });
-    evidence.recordAssertionEvidence("flag-off SSO settings offer no switch that changes nothing", "required wording shown; no Require SSO switch", true);
+    const switches = await browser.dom('[role="switch"][aria-label="Require SSO for this organization"]');
+    expect(switches.elements).toHaveLength(0);
+    evidence.recordAssertionEvidence("flag-off SSO settings offer no switch that changes nothing", `required wording shown; Require SSO switches=${switches.elements.length}`, switches.elements.length === 0);
     await admin.screenshot();
   });
   await step("the legacy browser completes the real signed SAML callback", async () => {
