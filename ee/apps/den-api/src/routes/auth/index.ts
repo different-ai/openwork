@@ -20,6 +20,7 @@ import {
 } from "../../auth-protection.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
+import { deploymentFeatureEnabled } from "../../features.js"
 import { findDomainSsoRequirement, listOrganizationSsoSignInOptions, ssoSignInUrl } from "../../organization-sso-access.js"
 import { resolveLoginSsoRouting } from "../../sso-routing.js"
 import {
@@ -527,6 +528,8 @@ const loginOptionsResponseSchema = z.object({
   nextStep: loginOptionKindSchema,
   allowPublicSignup: z.boolean().optional(),
   allowInvitationSignup: z.boolean().optional(),
+  /** passwordSignInGoogle: a configured Google sign-in is also offered on the password step. */
+  offerGoogleOnPassword: z.boolean().optional(),
   organizationSlug: z.string().optional(),
   signInPath: z.string().optional(),
   signInUrl: z.string().url().optional(),
@@ -1196,7 +1199,16 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
         return c.json(ssoStep)
       }
 
-      return c.json({ email, nextStep, allowPublicSignup, allowInvitationSignup })
+      // Before authentication there is no active organization. Like other
+      // sign-in policies, resolve the deployment rollout, not an arbitrary
+      // membership. Never add an alternative to an SSO-only response.
+      const offerGoogleOnPassword = nextStep === "password"
+        && Boolean(env.google.clientId && env.google.clientSecret)
+        && await deploymentFeatureEnabled("passwordSignInGoogle")
+      return c.json({
+        email, nextStep, allowPublicSignup, allowInvitationSignup,
+        ...(offerGoogleOnPassword ? { offerGoogleOnPassword: true } : {}),
+      })
     },
   )
 
