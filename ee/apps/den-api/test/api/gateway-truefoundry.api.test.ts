@@ -124,12 +124,8 @@ async function details() {
   return field(response.body, "inferenceProvider")
 }
 
-test("TrueFoundry setup is behind the truefoundryGateway feature and refuses personal tokens", { timeout: 60_000 }, async () => {
+test("TrueFoundry setup refuses personal tokens and keys that can't manage users", { timeout: 60_000 }, async () => {
   const body = { controlPlaneUrl: tenant.url, apiKey: ADMIN, allMembers: true }
-  const off = await owner("POST", "/v1/inference-providers/truefoundry", body)
-  assert.equal(off.status, 404, summary(off))
-  assert.equal(field(off.body, "error"), "feature_disabled")
-  assert.equal((await den.setFeature(org.orgId, "truefoundryGateway", true)).status, 200)
 
   const personal = await owner("POST", "/v1/inference-providers/truefoundry", { ...body, apiKey: "tfy_pat_someone_123" })
   assert.equal(personal.status, 400, summary(personal))
