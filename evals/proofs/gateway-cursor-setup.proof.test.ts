@@ -80,6 +80,8 @@ test("a member creates a key, picks Cursor under Start using this key, and Curso
       models.status === 200 && chat.status === 200 && responses.status === 200 && typed.status === 400,
     );
     expect(modelIds(models.json)).toContain(modelName);
+    expect(chat.status).toBe(200);
+    expect(isRecord(chat.json) ? chat.json.object : null).toBe("chat.completion");
     expect(chatText(chat.json)).toBe(ACME_REPLY);
     expect(isRecord(responses.json) ? responses.json.object : null).toBe("response");
     expect(responseText(responses.json)).toBe(ACME_REPLY);
