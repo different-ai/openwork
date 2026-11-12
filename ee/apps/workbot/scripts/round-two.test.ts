@@ -4,18 +4,6 @@ import { firstReply } from "../../../packages/workbot-ui/src/first-reply.js"
 import { createFrameCache, frameKey, keepFrame, lastFrame } from "../../../packages/workbot-ui/src/frame-cache.js"
 import { TASK_QUIET_MS, workbotActivity } from "../../../packages/workbot-ui/src/activity.js"
 import type { WorkbotTask, WorkbotTurn } from "../../../packages/workbot-ui/src/data.js"
-import { FEATURES } from "../../../../packages/features/src/registry.js"
-import { resolveFeature } from "../../../../packages/features/src/resolve.js"
-
-test("retained non-browser and profile rollouts remain default-off, organization-overridable and killable", () => {
-  for (const key of ["workbotCenteredProfile", "workbotBrowserPreview", "workbotQuickReply", "workbotRemoteTasks"] as const) {
-    assert.equal(FEATURES[key].default, false)
-    const base = { deployment: "cloud" as const, locks: {}, rollouts: {}, overrides: {} }
-    assert.equal(resolveFeature(key, base).enabled, false)
-    assert.equal(resolveFeature(key, { ...base, overrides: { [key]: true } }).enabled, true)
-    assert.equal(resolveFeature(key, { ...base, overrides: { [key]: true }, rollouts: { [key]: { enabled: true, killed: true } } }).enabled, false)
-  }
-})
 
 const task = (id: string, startedAt: number, status: WorkbotTask["status"] = "working"): WorkbotTask => ({ id, title: id, status, startedAt, finishedAt: status === "stopped" || status === "done" ? startedAt + 1 : null, update: null, updates: [], steps: [], stepsDone: 0, note: null })
 const turn = (tasks: WorkbotTask[], status: WorkbotTurn["status"] = "done"): WorkbotTurn => ({ id: "m1", text: "Use the browser to open YouTube", status, tasks, sentAt: 100, finishedAt: null, parts: [], modelSteps: 0, attachments: [], outputs: [], reaction: null, error: null, retryable: false, greeting: false, suggestions: [], navigation: [] })

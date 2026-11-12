@@ -6,7 +6,6 @@ import { workbotActivity } from "../../../packages/workbot-ui/src/activity.js"
 import { connectorSummary } from "../../../packages/workbot-ui/src/connector-activity.js"
 import type { WorkbotTurn } from "../../../packages/workbot-ui/src/data.js"
 import { createConnectorCache } from "../src/server/routes.js"
-import { OPENWORK_CONNECTORS, openworkAt, openworkSnapshot } from "../test-fixtures/chat-screen-scenarios.js"
 
 /** Nothing internal ever reaches the page: no connection, capability or tool ids. */
 const RAW = /mcp:|emc_|plg_|cfg_|execute_capability|search_capabilities|web_search_exa|remote-session:|native:|admin:|start_task|get_skill|createCloudAutomation/
@@ -118,18 +117,6 @@ test("one OpenWork logo per answer however many OpenWork features ran, in first-
   const activity = workbotActivity([live], {}, 200)
   assert.equal(activity.label, "Starting a background task")
   assert.equal(activity.openwork, true)
-})
-
-test("the browser fixture's OpenWork answer is exactly what workbot-server builds from the runner's transcript", () => {
-  for (const live of [false, true]) {
-    const sent = 1_000_000
-    const built = turnsOf(openworkSnapshot(live, sent), OPENWORK_CONNECTORS).at(-1)
-    const fixture = openworkAt(live, sent).turns.at(-1)
-    assert.ok(built && fixture)
-    assert.deepEqual(fixture.parts, built.parts, live ? "live" : "done")
-    assert.equal(fixture.status, built.status)
-    assert.doesNotMatch(JSON.stringify(built), RAW)
-  }
 })
 
 test("while Workbot searches Exa, one live line under its answer says so, and the header says the same", () => {

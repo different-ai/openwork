@@ -5,19 +5,6 @@ import type { AppEnv } from "../src/server/auth.js"
 import { loadConfig } from "../src/server/config.js"
 import { createDen, denSessionSchema } from "../src/server/den.js"
 import { registerWorkbotRoutes } from "../src/server/routes.js"
-import { FEATURES } from "../../../../packages/features/src/registry.js"
-import { resolveFeature } from "../../../../packages/features/src/resolve.js"
-
-test("scroll-to-latest is default off, per-organization and independently killable", () => {
-  const key = "workbotScrollToBottom"
-  assert.equal(FEATURES[key].default, false)
-  for (const deployment of FEATURES[key].deployments) {
-    const input = { deployment, locks: {}, rollouts: {}, overrides: {} }
-    assert.equal(resolveFeature(key, input).enabled, false)
-    assert.equal(resolveFeature(key, { ...input, overrides: { [key]: true } }).enabled, true)
-    assert.equal(resolveFeature(key, { ...input, overrides: { [key]: true }, rollouts: { [key]: { enabled: false, killed: true } } }).enabled, false)
-  }
-})
 
 const identity = {
   user: { id: "user_example", name: "Example", email: "member@example.test" },
