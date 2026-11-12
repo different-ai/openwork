@@ -98,6 +98,23 @@ function verifyRuntimeDependencies(context) {
       throw new Error(`Missing staged MCP runtime package from app.asar: ${packageJsonPath}`);
     }
   }
+  verifyCompiledTypes(appAsarPath, packagedFiles);
+}
+
+// The app loads @openwork/types as plain Node, which refuses TypeScript under
+// node_modules. Fail the package unless every export is compiled JavaScript.
+function verifyCompiledTypes(appAsarPath, packagedFiles) {
+  const packageRoot = "node_modules/@openwork/types";
+  const manifest = JSON.parse(asar.extractFile(appAsarPath, `${packageRoot}/package.json`).toString("utf8"));
+  const unloadable = Object.entries(manifest.exports).filter(([, target]) =>
+    typeof target !== "string" || !target.endsWith(".js") || !packagedFiles.has(`/${packageRoot}/${target.replace(/^\.\//, "")}`));
+  if (unloadable.length > 0) {
+    throw new Error(`Packaged @openwork/types exports are not compiled JavaScript: ${unloadable.map(([subpath]) => subpath).join(", ")}`);
+  }
+  const source = [...packagedFiles].filter((entry) => entry.startsWith(`/${packageRoot}/`) && entry.endsWith(".ts"));
+  if (source.length > 0) {
+    throw new Error(`Packaged @openwork/types still ships TypeScript source: ${source.slice(0, 5).join(", ")}`);
+  }
 }
 
 function signComputerUseHelper(context) {

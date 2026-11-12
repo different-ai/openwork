@@ -176,7 +176,7 @@ jobs:
       - name: Test packaged smoke engine diagnosis and kept logs
         run: |
           bun test apps/server/test/opencode-plugin-deps.test.ts
-          node --test apps/desktop/test/engine-diagnosis.test.mjs apps/server/scripts/build-opencode-plugin-deps.test.mjs apps/desktop/scripts/electron-after-sign.test.cjs apps/server/test/inference-node-export.test.mjs
+          node --test apps/desktop/test/engine-diagnosis.test.mjs apps/server/scripts/build-opencode-plugin-deps.test.mjs apps/desktop/scripts/electron-after-sign.test.cjs apps/server/test/inference-node-export.test.mjs apps/desktop/test/packaged-types.test.mjs
           pnpm --dir evals exec vitest run --config vitest.config.ts --project pr packages/hosts/src/local-surface-log.test.ts
       - name: Test that a desktop starts announced remote tasks right away and reports them done
         run: |
