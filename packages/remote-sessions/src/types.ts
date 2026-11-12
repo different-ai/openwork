@@ -5,11 +5,12 @@ export type SendReplayMode = "idempotent" | "at_most_once"
 export type Status = "running" | "waiting" | "idle" | "error"
 export type WaitingFor = "permission" | "question"
 /**
- * Which sessions a remote caller may reach on this computer, as its owner chose:
- * "created" only those that were started remotely, "all" also those started on
- * the computer itself once the caller attaches to one.
+ * What a remote caller may reach on this computer, as its owner chose: "off"
+ * nothing at all (no task is started, no session is reached, nothing is
+ * reported), "created" only sessions that were started remotely, "all" also
+ * those started on the computer itself once the caller attaches to one.
  */
-export type SessionAccess = "created" | "all"
+export type SessionAccess = "off" | "created" | "all"
 export interface Model { providerId: string; modelId: string; variant?: string | null }
 export interface SessionError { code: string; message: string }
 /** One question of a pending question request, as the person sees it. */
