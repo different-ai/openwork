@@ -13,7 +13,6 @@ import {
   AlertCircle,
   AlertTriangle,
   Archive,
-  ArchiveRestore,
   Blocks,
   Folder,
   Clock3,
@@ -74,8 +73,9 @@ import {
 } from "@/components/ui/collapsible";
 import { ActionContextMenu } from "@/components/ui/action-context-menu";
 import { ActionMenuItems } from "@/components/ui/action-menu-items";
-import type { MenuAction } from "@/components/ui/action-menu-model";
-import { buildSessionMenuActions } from "./session-menu-actions";
+import { SessionQuickActionButton } from "./session-quick-action-button";
+import { resolveSessionActions } from "./session-action-resolver";
+import { sessionQuickActions, type SessionAction } from "./session-action-catalog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -375,15 +375,7 @@ function useCanManageSession() {
   return true;
 }
 
-type SessionRowMenuProps = {
-  className?: string;
-  sessionId: string;
-  workspaceId: string;
-  sessionTitle?: string;
-  workspaceTitle?: string;
-  isPinned: boolean;
-  isArchived: boolean;
-};
+type SessionRowMenuProps = { className?: string; sessionId: string; actions: readonly SessionAction[] };
 
 type SessionMenuActionsOptions = {
   sessionId: string;
@@ -401,52 +393,32 @@ function useSessionMenuActions({
   workspaceTitle,
   isPinned,
   isArchived,
-}: SessionMenuActionsOptions): MenuAction[] {
+}: SessionMenuActionsOptions): SessionAction[] {
   const ctx = useSidebarContext();
   const { groups, assignments } = useWorkspaceGroups(workspaceId);
-  const store = useSessionManagementStore;
-  const assignedGroupId = assignments[sessionId] ?? null;
-
-  // Sidebar rows are the vertical tabs: any session can be opened beside the
-  // primary session, including one owned by another workspace.
   const primary = useWorkbenchStore((state) => state.primary);
   const secondary = useWorkbenchStore((state) => state.secondary);
-  const sessionRef = { workspaceId, sessionId };
-  const isInSplit = Boolean(secondary)
-    && (isSameWorkbenchSession(sessionRef, primary) || isSameWorkbenchSession(sessionRef, secondary));
-  const canOpenInSplit = Boolean(primary)
-    && !isSameWorkbenchSession(sessionRef, primary)
-    && !isSameWorkbenchSession(sessionRef, secondary);
-  const openInSplitView = () => {
-    const tab = {
-      workspaceId,
-      workspaceTitle: workspaceTitle?.trim() || workspaceId,
-      sessionId,
-      title: sessionTitle,
-    };
-    const workbench = useWorkbenchStore.getState();
-    workbench.openTab(tab);
-    workbench.setSplit(tab);
-  };
-  const closeSplitView = () => useWorkbenchStore.getState().setSplit(null);
-
-  return buildSessionMenuActions({
-    isPinned, isArchived,
-    groups, assignedGroupId,
-    onTogglePin: () => store.getState().togglePin(sessionId),
-    onAssignGroup: (groupId) => store.getState().assignGroup(workspaceId, sessionId, groupId),
-    onCreateGroup: ctx.onOpenCreateGroupModal ? () => ctx.onOpenCreateGroupModal?.(workspaceId) : undefined,
-    onOpenSplit: canOpenInSplit ? openInSplitView : undefined,
-    onCloseSplit: isInSplit ? closeSplitView : undefined,
-    onRename: ctx.onOpenRenameSession ? () => ctx.onOpenRenameSession?.(sessionId, workspaceId) : undefined,
-    onArchive: ctx.onArchiveSession && !ctx.archiveDisabledReason ? () => ctx.onArchiveSession?.(sessionId, !isArchived, workspaceId) : undefined,
-    onDelete: ctx.onOpenDeleteSession ? () => ctx.onOpenDeleteSession?.(sessionId, workspaceId) : undefined,
+  return resolveSessionActions({
+    target: { workspaceId, sessionId, title: getDisplaySessionTitle(sessionTitle) },
+    surface: "sidebar",
+    isPinned,
+    isArchived,
+    groups,
+    assignedGroupId: assignments[sessionId] ?? null,
+    archiveDisabledReason: ctx.archiveDisabledReason,
+    services: {
+      management: useSessionManagementStore.getState,
+      onOpenRenameSession: ctx.onOpenRenameSession,
+      onOpenDeleteSession: ctx.onOpenDeleteSession,
+      onArchiveSession: ctx.onArchiveSession,
+      onOpenCreateGroupModal: ctx.onOpenCreateGroupModal,
+    },
+    workbench: { primary, secondary, workspaceTitle, getState: useWorkbenchStore.getState },
   });
 }
 
 /** One quiet More menu in a fixed trailing slot: visible on hover, keyboard focus, touch, or while open. */
-function SessionRowMenu({ className, sessionId, workspaceId, sessionTitle, workspaceTitle, isPinned, isArchived }: SessionRowMenuProps) {
-  const actions = useSessionMenuActions({ sessionId, workspaceId, sessionTitle, workspaceTitle, isPinned, isArchived });
+function SessionRowMenu({ className, sessionId, actions }: SessionRowMenuProps) {
   if (!useCanManageSession()) return null;
 
   return (
@@ -478,71 +450,33 @@ function SessionRowMenu({ className, sessionId, workspaceId, sessionTitle, works
 }
 
 /** Keep the shipped quick actions when the settledSessions rollout is off. */
-function SessionLegacyQuickActions({ sessionId, workspaceId, isPinned, isArchived, relativeTime }: {
+function SessionLegacyQuickActions({ sessionId, actions, relativeTime }: {
   sessionId: string;
-  workspaceId: string;
-  isPinned: boolean;
-  isArchived: boolean;
+  actions: readonly SessionAction[];
   relativeTime: string | null;
 }) {
-  const ctx = useSidebarContext();
   return (
     <div
       data-session-hover-actions
       className="absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 opacity-0 pointer-events-none transition-opacity group-hover/menu-sub-item:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-has-data-popup-open/menu-sub-item:opacity-100 group-has-data-popup-open/menu-sub-item:pointer-events-auto max-lg:opacity-100 max-lg:pointer-events-auto pointer-coarse:opacity-100 pointer-coarse:pointer-events-auto"
     >
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-5 text-muted-foreground hover:bg-transparent hover:text-foreground"
-        aria-label={isPinned ? t("session_management.unpin_session") : t("session_management.pin_session")}
-        onClick={(event) => {
-          event.stopPropagation();
-          useSessionManagementStore.getState().togglePin(sessionId);
-        }}
-      >
-        {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
-      </Button>
-      {ctx.onArchiveSession && !ctx.archiveDisabledReason ? (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-5 text-muted-foreground hover:bg-transparent hover:text-foreground"
-          aria-label={isArchived ? t("session_management.unarchive_session") : t("session_management.archive_session")}
-          data-testid={`session-archive-${sessionId}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            ctx.onArchiveSession?.(sessionId, !isArchived, workspaceId);
-          }}
-        >
-          {isArchived ? <ArchiveRestore className="size-3.5" /> : <Archive className="size-3.5" />}
-        </Button>
-      ) : null}
+      {sessionQuickActions(actions, "legacyQuick").map((action) => (
+        <SessionQuickActionButton
+          key={action.id}
+          action={action}
+          actions={actions}
+          className="size-5 text-muted-foreground hover:bg-transparent hover:text-foreground [&_svg]:size-3.5"
+          data-testid={action.id === "archive" ? `session-archive-${sessionId}` : undefined}
+        />
+      ))}
       {relativeTime ? <span className={SESSION_ROW_METADATA_CLASS}>{relativeTime}</span> : null}
     </div>
   );
 }
 
-type SessionContextMenuProps = {
-  children: React.ReactElement;
-  sessionId: string;
-  workspaceId: string;
-  sessionTitle?: string;
-  workspaceTitle?: string;
-  isPinned: boolean;
-  isArchived: boolean;
-};
+type SessionContextMenuProps = { children: React.ReactElement; actions: readonly SessionAction[] };
 
-function SessionContextMenu({
-  children,
-  sessionId,
-  workspaceId,
-  sessionTitle,
-  workspaceTitle,
-  isPinned,
-  isArchived,
-}: SessionContextMenuProps) {
-  const actions = useSessionMenuActions({ sessionId, workspaceId, sessionTitle, workspaceTitle, isPinned, isArchived });
+function SessionContextMenu({ children, actions }: SessionContextMenuProps) {
   if (!useCanManageSession()) return children;
 
   return (
@@ -2291,29 +2225,21 @@ type SessionMenuItemProps = {
 };
 
 /** Feed rows: Archive (or Unarchive) one click away, just before the More menu, on hover or focus. */
-function FeedArchiveButton({ sessionId, workspaceId, isArchived, hidden }: { sessionId: string; workspaceId: string; isArchived: boolean; hidden: boolean }) {
-  const ctx = useSidebarContext();
-  if (!ctx.onArchiveSession || ctx.archiveDisabledReason) return null;
-  const label = isArchived ? t("session_management.unarchive_session") : t("session_management.archive_session");
+function FeedArchiveButton({ sessionId, actions, hidden }: { sessionId: string; actions: readonly SessionAction[]; hidden: boolean }) {
+  const action = sessionQuickActions(actions, "feedQuick")[0];
+  if (!action) return null;
   return (
-    <Button
-      variant="ghost"
-      size="icon"
+    <SessionQuickActionButton
+      action={action}
+      actions={actions}
+      showTitle
       data-session-row-archive
       data-testid={`session-archive-${sessionId}`}
-      aria-label={label}
-      title={label}
       className={cn(
-        "absolute bottom-1 end-[34px] z-10 size-5 rounded text-muted-foreground opacity-0 hover:bg-sidebar-accent hover:text-foreground focus-visible:opacity-100 group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:opacity-100 group-has-data-popup-open/menu-sub-item:opacity-100 pointer-coarse:opacity-100",
+        "absolute bottom-1 end-[34px] z-10 size-5 rounded text-muted-foreground opacity-0 hover:bg-sidebar-accent hover:text-foreground focus-visible:opacity-100 group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:opacity-100 group-has-data-popup-open/menu-sub-item:opacity-100 pointer-coarse:opacity-100 [&_svg]:size-3.5",
         hidden && "invisible focus-visible:visible",
       )}
-      onClick={(event) => {
-        event.stopPropagation();
-        ctx.onArchiveSession?.(sessionId, !isArchived, workspaceId);
-      }}
-    >
-      {isArchived ? <ArchiveRestore className="size-3.5" /> : <Archive className="size-3.5" />}
-    </Button>
+    />
   );
 }
 
@@ -2454,20 +2380,24 @@ export function SessionMenuItem({
     />
   );
 
+  const actions = useSessionMenuActions({
+    sessionId: session.id,
+    workspaceId,
+    sessionTitle: displayTitle,
+    workspaceTitle: workspaceName,
+    isPinned,
+    isArchived,
+  });
   const menu = ctx.feedEnabled ? (
     <SessionRowMenu
       sessionId={session.id}
-      workspaceId={workspaceId}
-      sessionTitle={displayTitle}
-      workspaceTitle={workspaceName}
-      isPinned={isPinned}
-      isArchived={isArchived}
+      actions={actions}
       className={feedRow
         ? cn("absolute bottom-1 end-3 z-10", shortcutDigit !== undefined && "invisible data-popup-open:visible focus-visible:visible")
         : cn("absolute end-2.5 top-1/2 z-10 -translate-y-1/2", shortcutDigit !== undefined && "invisible data-popup-open:visible focus-visible:visible")}
     />
   ) : (
-    <SessionLegacyQuickActions sessionId={session.id} workspaceId={workspaceId} isPinned={isPinned} isArchived={isArchived} relativeTime={relativeTime} />
+    <SessionLegacyQuickActions sessionId={session.id} actions={actions} relativeTime={relativeTime} />
   );
 
   const item = (
@@ -2484,14 +2414,7 @@ export function SessionMenuItem({
       data-sidebar-session-id={session.id}
       data-sidebar-session-workspace-id={workspaceId}
     >
-      <SessionContextMenu
-        sessionId={session.id}
-        workspaceId={workspaceId}
-        sessionTitle={displayTitle}
-        workspaceTitle={workspaceName}
-        isPinned={isPinned}
-        isArchived={isArchived}
-      >
+      <SessionContextMenu actions={actions}>
         <div className="relative min-w-0 flex-1">
           <SidebarMenuSubButton
             render={<button type="button" />}
@@ -2554,7 +2477,7 @@ export function SessionMenuItem({
               </>
             )}
           </SidebarMenuSubButton>
-          {feedRow ? <FeedArchiveButton sessionId={session.id} workspaceId={workspaceId} isArchived={isArchived} hidden={shortcutDigit !== undefined} /> : null}
+          {feedRow ? <FeedArchiveButton sessionId={session.id} actions={actions} hidden={shortcutDigit !== undefined} /> : null}
           {menu}
         </div>
       </SessionContextMenu>

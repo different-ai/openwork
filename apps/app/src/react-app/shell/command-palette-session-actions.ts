@@ -1,26 +1,40 @@
-import { dispatchMenuAction, type MenuAction } from "@/components/ui/action-menu-model";
+import { dispatchMenuAction } from "@/components/ui/action-menu-model";
+import { sessionActionDefinition, type SessionAction } from "@/react-app/domains/session/sidebar/session-action-catalog";
 import type { PaletteItem } from "./command-palette-search";
 
-const SESSION_ACTION_IDS: Record<string, string> = {
-  pin: "session.pin.toggle", rename: "session.rename",
-  archive: "session.archive", delete: "session.delete",
-};
-const SESSION_ACTION_KEYWORDS: Record<string, string[]> = {
-  pin: ["pin", "unpin", "favorite", "star", "keep on top", "sidebar"],
-  rename: ["rename", "title", "name", "edit title"],
-  archive: ["archive", "restore", "unarchive", "done", "finished", "clear", "tidy", "sidebar"],
-  delete: ["delete", "remove"],
-};
-
-/** Adapt the same human actions used by sidebar/native menus, never raw mutations. */
-export function sessionMenuActionsToPalette(actions: readonly MenuAction[], title: string, onClose: () => void): PaletteItem[] {
+/** Project included catalog entries; other intents stay in their existing menu or group picker. */
+export function sessionMenuActionsToPalette(actions: readonly SessionAction[], title: string, onClose: () => void): PaletteItem[] {
   return actions.flatMap((action): PaletteItem[] => {
-    if (action.type !== "item" || !SESSION_ACTION_IDS[action.id]) return [];
+    if (action.type !== "item") return [];
+    const presentation = sessionActionDefinition(action)?.palette;
+    if (!presentation) return [];
     return [{
-      id: SESSION_ACTION_IDS[action.id], title: action.label,
-      detail: [title, action.disabledReason].filter(Boolean).join(" — "),
-      meta: "Session", group: "actions", disabled: action.disabled,
-      keywords: SESSION_ACTION_KEYWORDS[action.id],
+      id: presentation.id,
+      title: action.label,
+      detail: presentation.meta === "Workbench" ? presentation.detail : [title, action.disabledReason].filter(Boolean).join(" — "),
+      meta: presentation.meta ?? "Session",
+      group: presentation.meta === "Workbench" ? presentation.group : "actions",
+      disabled: action.disabled,
+      keywords: presentation.keywords,
+      searchText: presentation.searchText,
+      action: () => {
+        if (action.disabled) return;
+        if (!presentation.keepOpen) onClose();
+        void dispatchMenuAction(actions, action.id);
+      },
+    }];
+  });
+}
+
+export function sessionGroupActionsToPalette(actions: readonly SessionAction[], onClose: () => void): PaletteItem[] {
+  return actions.flatMap((action): PaletteItem[] => {
+    if (action.type !== "item" || !sessionActionDefinition(action)?.groupPicker) return [];
+    return [{
+      id: action.kind === "ungroup" ? "group:none" : action.kind === "new-group" ? "group:new" : action.id,
+      title: action.label,
+      disabled: action.disabled,
+      meta: action.disabled ? "Current" : undefined,
+      searchText: `group ${action.label}`,
       action: () => {
         if (action.disabled) return;
         onClose();
@@ -28,18 +42,4 @@ export function sessionMenuActionsToPalette(actions: readonly MenuAction[], titl
       },
     }];
   });
-}
-
-export function sessionGroupActionsToPalette(actions: readonly MenuAction[], onClose: () => void): PaletteItem[] {
-  return actions.flatMap((action): PaletteItem[] => action.type !== "item" ? [] : [{
-    id: action.id === "ungroup" ? "group:none" : action.id === "new-group" ? "group:new" : action.id,
-    title: action.label, disabled: action.disabled,
-    meta: action.disabled ? "Current" : undefined,
-    searchText: `group ${action.label}`,
-    action: () => {
-      if (action.disabled) return;
-      onClose();
-      void dispatchMenuAction(actions, action.id);
-    },
-  }]);
 }

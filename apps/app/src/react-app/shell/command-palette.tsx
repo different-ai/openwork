@@ -53,7 +53,8 @@ import {
 } from "./command-palette-search";
 import { buildCommandPaletteSettingsItems } from "./command-palette-settings";
 import { buildSessionGroupActions } from "@/react-app/domains/session/sidebar/session-menu-actions";
-import { sessionGroupActionsToPalette } from "./command-palette-session-actions";
+import { sessionGroupActionsToPalette, sessionMenuActionsToPalette } from "./command-palette-session-actions";
+import { resolveWorkbenchActions } from "@/react-app/domains/session/sidebar/session-action-resolver";
 
 export type { PaletteItem } from "./command-palette-search";
 
@@ -235,37 +236,11 @@ export function CommandPalette(props: CommandPaletteProps) {
         props.onCreateNewSession();
       },
     },
-    ...(props.onOpenSessionInSplit && props.currentSession
-      ? [{
-          id: "open-in-split-view",
-          title: `${t("session_management.open_in_split_view")}…`,
-          detail: "Choose any session, including one from another workspace",
-          meta: "Workbench",
-          searchText: "side chat split view side by side session workspace",
-          group: ACTIONS_GROUP,
-          action: () => {
-            setMode("split-sessions");
-          },
-        }]
-      : []),
-    ...(props.onCreateNewSplitSession && props.currentSession
-      ? [{
-          id: "new-split",
-          title: t("session_management.new_split"),
-          detail: "Start an empty session beside this one",
-          meta: "Workbench",
-          searchText: "new side chat new split empty session side by side pane",
-          action: () => {
-            props.onClose();
-            props.onCreateNewSplitSession?.();
-          },
-        }]
-      : []),
-    ...(props.onCloseSplitSession ? [{
-      id: "close-split", title: t("session_management.close_split_view"), meta: "Workbench",
-      searchText: "close side chat split view pane keep conversation",
-      action: () => { props.onClose(); props.onCloseSplitSession?.(); },
-    }] : []),
+    ...sessionMenuActionsToPalette(resolveWorkbenchActions({
+      primary: props.currentSession, secondary: props.secondarySession,
+      onChoose: props.onOpenSessionInSplit ? () => setMode("split-sessions") : undefined,
+      onNew: props.onCreateNewSplitSession, onClose: props.onCloseSplitSession,
+    }), "", props.onClose),
     ...(hasNestedModelPicker || props.onNextPinnedModel ? [{ id: "models.next-pinned", title: "Next pinned model", shortcut: formatChord(shortcutOs === "macos" ? "Ctrl+Shift+M" : "Mod+Shift+M", shortcutOs), group: ACTIONS_GROUP,
       detail: modelControls.nextPinnedOption ? [currentModelTitle, modelTitle(modelControls.nextPinnedOption)].filter(Boolean).join(" → ") : "No alternative pinned model",
       disabled: !modelControls.nextPinnedOption,
