@@ -1197,6 +1197,11 @@ export const automationProposalSchema = z.object({
   instructions: z.string().trim().min(1).max(100_000),
   schedule: automationScheduleSchema,
   model: automationModelSchema.optional(),
+  /**
+   * Where the agent suggests it runs. Only a starting choice: the review card
+   * offers the places this member can actually run it and the person picks.
+   */
+  executionTarget: automationExecutionTargetSchema.optional(),
   /** Workspace the proposing conversation ran in; the renderer pins it on create. */
   workspaceId: automationWorkspaceIdSchema.optional(),
 })
