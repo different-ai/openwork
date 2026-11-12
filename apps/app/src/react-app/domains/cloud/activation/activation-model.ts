@@ -38,9 +38,10 @@ export type ActivationCardModel =
   | { presentation: "hidden" }
   | { presentation: "next" | "full"; done: number; total: number; next: string | null; rows: ActivationRow[]; dismissed: boolean };
 
-export function activationCardModel(state: ActivationState | null | undefined): ActivationCardModel {
+/** `hidden`: the person chose Hide setup on this device, which removes the card entirely. */
+export function activationCardModel(state: ActivationState | null | undefined, options: { hidden?: boolean } = {}): ActivationCardModel {
   const presentation = activationChecklistPresentation(state);
-  if (presentation === "hidden" || !state) return { presentation: "hidden" };
+  if (presentation === "hidden" || !state || options.hidden) return { presentation: "hidden" };
   const progress = activationProgress(state);
   const next = nextActivationStep(state);
   return {
@@ -102,4 +103,9 @@ export function createActivationReporter<Scope extends { key: string }>(input: {
 /** Composer draft parts that run a skill (a local skill or one assigned through OpenWork). */
 export function draftUsesSkill(parts: readonly { type: string }[] | undefined): boolean {
   return Boolean(parts?.some((part) => part.type === "skill" || part.type === "connect-skill"));
+}
+
+/** Where Hide setup is remembered on this device: one person in one organization on one Den. */
+export function activationHiddenStorageKey(input: { origin: string; organizationId: string; principalId: string }): string {
+  return `openwork.activation.hidden:${input.origin}:${input.organizationId}:${input.principalId}`;
 }
