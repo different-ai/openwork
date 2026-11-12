@@ -69,11 +69,13 @@ test("dispatch presentation skips missing/ambiguous PRs and supersession spans b
   }
 });
 
-test("failed evidence stays red even though its report deployment is available", async () => {
-  const f = fixture(); f.input.receipt.evidence.verdict = "Failed"; f.source.conclusion = "failure";
+for (const verdict of ["Failed", "Incomplete"]) test(`${verdict} evidence stays red even though its report deployment is available`, async () => {
+  const f = fixture(); f.source.event = "workflow_dispatch"; f.input.receipt.evidence.verdict = verdict;
+  f.source.conclusion = verdict === "Failed" ? "failure" : "success";
   await presentEvidence(f.input, f.api);
   assert.equal(f.writes[0].body.conclusion, "failure");
   assert.equal(f.writes.at(-1).body.state, "success");
+  assert.match(f.writes.find(w => w.path.endsWith("/issues/7/comments")).body.body, /Ready · evidence needs attention/);
 });
 
 test("missing reports fail, no-spec selection is neutral, and cancellation never passes", async () => {

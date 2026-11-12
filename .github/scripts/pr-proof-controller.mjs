@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { appendFile, readFile } from "node:fs/promises";
 import { internalProofContributor } from "./internal-proof-contributor.mjs";
-import { CORE_SPECS, changedFiles, checkpointTagged, packagedJourney, packagedProofOs, proofKey, proofLanes, safePath, selectProof } from "./pr-proof.mjs";
+import { CORE_SPECS, changedFiles, checkpointTagged, packagedJourney, packagedProofOs, proofKey, proofLanes, safePath, selectProofForEvent } from "./pr-proof.mjs";
 
 const repo = process.env.GITHUB_REPOSITORY;
 function api(path) {
@@ -25,7 +25,7 @@ const pr = event.pull_request.number;
 const current = api(`repos/${repo}/pulls/${pr}`);
 if (current.head.sha !== event.pull_request.head.sha) throw new Error("PR head changed; rerun proof selection on the current head.");
 const files = await changedFiles(api, repo, pr, current.changed_files);
-const { specs } = selectProof(files);
+const { specs } = selectProofForEvent(files, process.env.GITHUB_EVENT_NAME);
 if (specs.length > 32) throw new Error("More than 32 changed E2E specs; bounded CI selection unavailable. Split the change.");
 const trust = { event, repo, actor: process.env.GITHUB_ACTOR, triggeringActor: process.env.GITHUB_TRIGGERING_ACTOR };
 // The checkout is the PR head; only spec sources are read, never executed here.
