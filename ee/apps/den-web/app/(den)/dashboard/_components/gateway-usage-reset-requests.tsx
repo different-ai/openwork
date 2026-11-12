@@ -1,16 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { GatewayUsageResetPage, GatewayUsageResetRequest } from "@openwork/types/den/gateway-usage-limits";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenButton } from "../../_components/ui/button";
-import { DenCard } from "../../_components/ui/card";
+import { SECTION_TITLE_CLASS } from "../../_components/ui/dashboard-styles";
 import { DenNotice } from "../../_components/ui/notice";
-import { DenTable, type DenTableColumn } from "../../_components/ui/table";
 import type { DenOrgMember } from "../../_lib/den-org";
 import { formatLimitMoney, useGatewayLimitsMutation, useGatewayPolicies, useGatewayResetHistoryAvailable, useGatewayResetRequests } from "./gateway-usage-limits-data";
 import { GatewayLimitsQueryFeedback, GatewayLimitTimestamp } from "./gateway-usage-limits-section";
 import { timeframeLabels } from "./gateway-usage-limits-data";
+import { RowLane, RowLaneLabel, RowList, RowListHeader } from "../_features/computers/computer-rows";
+import { GATEWAY_LANE, GatewayRow, InitialsTile } from "./gateway-rows";
+import { initials } from "./gateway-spend-breakdown";
 
 function extensionPreview(request: GatewayUsageResetRequest) {
   const extension = Number((BigInt(request.baseAllowanceMicroUsd) + 3n) / 4n);
@@ -19,12 +21,12 @@ function extensionPreview(request: GatewayUsageResetRequest) {
 
 function RequestTimestamp({ value }: { value: string }) {
   const date = new Date(value);
-  return <time dateTime={value} title={date.toLocaleString()} className="whitespace-nowrap text-xs text-[var(--ow-muted)]">{date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time>;
+  return <time dateTime={value} title={date.toLocaleString()} className="whitespace-nowrap text-[color:var(--dls-text-secondary)]">{date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time>;
 }
 
 function RequestBucketContext({ request }: { request: GatewayUsageResetRequest }) {
   const preview = extensionPreview(request);
-  return <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs text-[var(--ow-muted)]">
+  return <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[12px] leading-4 text-[color:var(--dls-text-secondary)]">
     <span>{request.policyName} - {timeframeLabels[request.timeframe]}</span>
     {request.providerId ? <span data-testid="gateway-reset-provider">Only {request.providerName ?? "a removed provider"}</span> : null}
     <span>{formatLimitMoney(request.usedMicroUsd)} used / {formatLimitMoney(request.allowanceMicroUsd)} allowance</span>
@@ -38,10 +40,20 @@ function RequestBucketContext({ request }: { request: GatewayUsageResetRequest }
   </div>;
 }
 
-function ResetRequestPages({ query, view, columns, onRefresh = query.restart, refreshing = query.isFetching }: {
+/** The lanes a request list adds after the person: a column label and each row's cell. */
+type RequestLane = { key: string; label: string; lane: string; render: (request: GatewayUsageResetRequest) => ReactNode };
+
+const MUTED = "text-[color:var(--dls-text-secondary)]";
+
+const BASE_LANES: RequestLane[] = [
+  { key: "reason", label: "Reason", lane: GATEWAY_LANE.reason, render: (request) => <p className="whitespace-pre-wrap break-words">{request.reason}</p> },
+  { key: "requested", label: "Requested", lane: GATEWAY_LANE.requested, render: (request) => <RequestTimestamp value={request.createdAt} /> },
+];
+
+function ResetRequestPages({ query, view, lanes, onRefresh = query.restart, refreshing = query.isFetching }: {
   query: ReturnType<typeof useGatewayResetRequests>;
   view: GatewayUsageResetPage["view"];
-  columns: DenTableColumn<GatewayUsageResetRequest>[];
+  lanes: RequestLane[];
   onRefresh?: () => Promise<unknown>;
   refreshing?: boolean;
 }) {
@@ -51,21 +63,32 @@ function ResetRequestPages({ query, view, columns, onRefresh = query.restart, re
     return <GatewayLimitsQueryFeedback query={{ ...query, refetch: onRefresh }} label={label} />;
   }
   return <div className="flex flex-col gap-3" aria-label={view === "pending" ? "Pending increase request pages" : "Increase request history pages"}>
-    {rows.length ? <DenCard className="overflow-hidden p-0"><DenTable rows={rows} getRowKey={(row) => row.id} columns={columns} headerTone="plain" rowClassName="align-top" renderRowDetail={(request) => <RequestBucketContext request={request} />} /></DenCard> : <p role="status" className="text-sm text-[var(--ow-muted)]">{view === "pending" ? "No pending requests" : "No previous requests"}</p>}
+    {rows.length ? <RowList label={view === "pending" ? "Pending increase requests" : "Increase request history"} header={<RowListHeader lead="User">
+      {lanes.map((lane) => <RowLaneLabel key={lane.key} lane={lane.lane}>{lane.label}</RowLaneLabel>)}
+    </RowListHeader>}>
+      {rows.map((request) => <GatewayRow
+        key={request.id}
+        lead={<InitialsTile>{initials(request.memberName || request.memberEmail)}</InitialsTile>}
+        name={request.memberName}
+        secondLine={request.memberEmail}
+        lanes={lanes.map((lane) => <RowLane key={lane.key} lane={lane.lane}>{lane.render(request)}</RowLane>)}
+        below={<div role="cell" className="basis-full pb-1 pl-11"><RequestBucketContext request={request} /></div>}
+      />)}
+    </RowList> : <p role="status" className={`text-[13px] ${MUTED}`}>{view === "pending" ? "No pending requests" : "No previous requests"}</p>}
     {query.isFetchNextPageError ? <DenNotice tone="error" message={`${query.error?.message ?? "Could not load the next page."} Only previously loaded entries are shown.`} /> : null}
-    {query.hasNextPage ? <DenButton variant="secondary" disabled={query.isFetching} loading={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchNextPageError ? "Retry more" : "Load more"} {view === "pending" ? "pending requests" : "history"}</DenButton> : null}
-    <div className="flex flex-wrap items-center gap-1 text-xs text-[var(--ow-muted)]">
+    {query.hasNextPage ? <DenButton variant="secondary" size="sm" className="self-start" disabled={query.isFetching} loading={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchNextPageError ? "Retry more" : "Load more"} {view === "pending" ? "pending requests" : "history"}</DenButton> : null}
+    <div className={`flex flex-wrap items-center gap-1 text-[12px] ${MUTED}`}>
       <span>Last checked: <time dateTime={new Date(query.dataUpdatedAt).toISOString()}>{new Date(query.dataUpdatedAt).toLocaleString()}</time> -</span>
-      <DenButton variant="ghost" size="sm" className="h-auto px-0 py-0 text-xs underline-offset-4 hover:underline" disabled={refreshing} onClick={() => void onRefresh()}>Refresh</DenButton>
+      <DenButton variant="ghost" size="sm" className="h-auto px-0 py-0 text-[12px] underline-offset-4 hover:underline" disabled={refreshing} onClick={() => void onRefresh()}>Refresh</DenButton>
     </div>
   </div>;
 }
 
-function ResetRequestHistory({ orgId, columns, members }: { orgId: string; columns: DenTableColumn<GatewayUsageResetRequest>[]; members: DenOrgMember[] }) {
+function ResetRequestHistory({ orgId, members }: { orgId: string; members: DenOrgMember[] }) {
   const history = useGatewayResetRequests(orgId, "history");
   return <section id="gateway-reset-history" className="flex flex-col gap-3" aria-label="Request history">
-    <ResetRequestPages query={history} view="history" columns={[...columns,
-      { key: "status", header: "Decision", render: (request) => <div className="flex flex-col gap-2"><DenBadge tone={request.status === "approved" ? "success" : "neutral"}>{request.status}</DenBadge><span className="text-xs">{request.reviewedBy ? `Reviewer: ${members.find((member) => member.id === request.reviewedBy)?.user.name ?? request.reviewedBy}` : "No reviewer"}</span>{request.reviewedAt ? <GatewayLimitTimestamp value={request.reviewedAt} /> : null}</div> },
+    <ResetRequestPages query={history} view="history" lanes={[...BASE_LANES,
+      { key: "status", label: "Decision", lane: GATEWAY_LANE.decision, render: (request) => <div className="flex flex-col items-start gap-1"><DenBadge tone={request.status === "approved" ? "success" : "neutral"}>{request.status}</DenBadge><span className={`text-[12px] ${MUTED}`}>{request.reviewedBy ? `Reviewer: ${members.find((member) => member.id === request.reviewedBy)?.user.name ?? request.reviewedBy}` : "No reviewer"}</span>{request.reviewedAt ? <span className={`text-[12px] ${MUTED}`}><GatewayLimitTimestamp value={request.reviewedAt} /></span> : null}</div> },
     ]} />
   </section>;
 }
@@ -83,26 +106,21 @@ function GatewayResetQueue({ orgId, members }: { orgId: string; members: DenOrgM
   const [history, setHistory] = useState(false);
   const refreshing = requests.isFetching || previousRequests.isFetching;
   const refreshRequests = () => Promise.all([requests.restart(), previousRequests.refetch()]);
-  const requestColumns: DenTableColumn<GatewayUsageResetRequest>[] = [
-    { key: "user", header: "User", render: (request) => <div className="flex flex-col gap-1"><span className="font-medium">{request.memberName}</span><span className="break-words text-xs text-[var(--ow-muted)]">{request.memberEmail}</span></div> },
-    { key: "reason", header: "Reason", render: (request) => <p className="min-w-32 max-w-sm whitespace-pre-wrap break-words">{request.reason}</p> },
-    { key: "requested", header: "Requested", render: (request) => <RequestTimestamp value={request.createdAt} /> },
-  ];
   const disabled = mutation.isPending || requests.isFetching || requests.isError;
-  return <section aria-labelledby="gateway-reset-requests-heading" className="mb-10 flex flex-col gap-4">
-    <div className="flex flex-wrap items-center justify-between gap-3"><h2 id="gateway-reset-requests-heading" className="text-lg font-semibold">Limit increase requests</h2><DenButton variant="secondary" disabled={refreshing} onClick={() => void refreshRequests()}>Refresh requests</DenButton></div>
+  return <section aria-labelledby="gateway-reset-requests-heading" className="mb-10 flex flex-col gap-3">
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 id="gateway-reset-requests-heading" className={SECTION_TITLE_CLASS}>Limit increase requests</h2><DenButton variant="secondary" size="sm" disabled={refreshing} onClick={() => void refreshRequests()}>Refresh requests</DenButton></div>
     {mutation.error ? <DenNotice tone="error" message={mutation.error.message} /> : null}
     {mutation.isSuccess && mutation.data && "status" in mutation.data ? <DenNotice tone={mutation.data.status === "expired" ? "warning" : "info"} message={mutation.data.status === "expired" ? "This request expired or its policy changed. No extension was granted by this decision; review the current bucket." : `Request ${mutation.data.status}. Check the queue and history for the latest state.`} /> : null}
-    <ResetRequestPages query={requests} view="pending" onRefresh={refreshRequests} refreshing={refreshing} columns={[...requestColumns,
-      { key: "actions", header: "Actions", align: "right", render: (request) => <div className="flex flex-wrap justify-end gap-2">
+    <ResetRequestPages query={requests} view="pending" onRefresh={refreshRequests} refreshing={refreshing} lanes={[...BASE_LANES,
+      { key: "actions", label: "Actions", lane: GATEWAY_LANE.requestActions, render: (request) => <div className="flex flex-wrap justify-end gap-2">
         <DenButton size="sm" disabled={disabled || request.status !== "pending" || request.baseAllowanceMicroUsd === 0 || Date.parse(request.resetAt) <= Date.now()} aria-label={`Approve 25% for ${request.memberName}, ${timeframeLabels[request.timeframe]}`} aria-describedby={request.status === "pending" ? `gateway-reset-impact-${request.id}` : undefined} onClick={() => mutation.mutate({ type: "approve", requestId: request.id })}>Approve 25%</DenButton>
         <DenButton size="sm" variant="secondary" disabled={disabled || request.status !== "pending"} aria-label={`Deny request for ${request.memberName}, ${timeframeLabels[request.timeframe]}`} onClick={() => mutation.mutate({ type: "deny", requestId: request.id })}>Deny</DenButton>
       </div> },
     ]} />
     {previousRequests.isError ? <DenNotice tone="error" message="Could not check previous requests. Refresh to try again." /> : null}
-    {previousRequests.data || history ? <details className="text-sm" open={history} onToggle={(event) => setHistory(event.currentTarget.open)}>
-      <summary className="cursor-pointer text-[var(--ow-muted)]">Previous requests</summary>
-      {history ? <div className="pt-3"><ResetRequestHistory orgId={orgId} columns={requestColumns} members={members} /></div> : null}
+    {previousRequests.data || history ? <details className="text-[13px]" open={history} onToggle={(event) => setHistory(event.currentTarget.open)}>
+      <summary className={`cursor-pointer ${MUTED}`}>Previous requests</summary>
+      {history ? <div className="pt-3"><ResetRequestHistory orgId={orgId} members={members} /></div> : null}
     </details> : null}
   </section>;
 }

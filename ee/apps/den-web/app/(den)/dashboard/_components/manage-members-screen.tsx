@@ -41,7 +41,8 @@ import { DenSelect } from "../../_components/ui/select";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenSwitch } from "../../_components/ui/switch";
 import { installPageUrl } from "../../_lib/install-download";
-import { OrgMemberIdentity } from "./org-member-identity";
+import { ListRow, RowLane, RowLaneLabel, RowList, RowListHeader, RowListSkeleton } from "../_features/computers/computer-rows";
+import { PersonLead } from "../_features/computers/computer-parts";
 import { MemberEffectivePermissions, canViewMemberPermissions } from "./member-effective-permissions";
 import { RolesTab, canCreateRole } from "./roles-tab";
 import { PeopleField } from "./access-rows";
@@ -131,7 +132,9 @@ export function ManageMembersScreen() {
   // Admins choose who gets OpenWork Web (and is billed for it) where the organization has Web.
   const webPerMember = orgFeatureEnabled(orgContext, "webPerMember") && (orgContext?.capabilities.openworkWeb ?? false);
   const webMemberCount = (orgContext?.members ?? []).filter((member) => member.openworkWeb).length;
-  const memberGridColumns = webPerMember ? "lg:grid-cols-[minmax(0,1fr)_180px_140px_112px_28px]" : "lg:grid-cols-[minmax(0,1fr)_180px_140px_28px]";
+  const memberRoleLane = "flex w-36 @2xl:w-44";
+  const memberJoinedLane = "hidden w-28 @2xl:block";
+  const memberWebLane = "flex w-8 @3xl:w-28";
   const visibleMembers = (orgContext?.members ?? []).filter((member) => `${member.user.name} ${member.user.email}`.toLocaleLowerCase().includes(memberFilter.trim().toLocaleLowerCase()));
   const visibleTeams = (orgContext?.teams ?? []).filter((team) => team.name.toLocaleLowerCase().includes(teamFilter.trim().toLocaleLowerCase()));
   const [pageError, setPageError] = useState<string | null>(null);
@@ -369,9 +372,8 @@ export function ManageMembersScreen() {
   if (orgBusy && !orgContext) {
     return (
       <div className="mx-auto max-w-[1200px] px-6 py-8 md:px-8">
-        <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
-          Loading organization details...
-        </div>
+        <DenSkeleton className="mb-6 h-6 w-28" />
+        <RowListSkeleton rows={5} />
       </div>
     );
   }
@@ -627,11 +629,24 @@ export function ManageMembersScreen() {
     />
   ) : null;
 
+  // The page's one create action sits in the header, as on Computers, and follows the open tab.
+  const headerAction = shownTab === "members"
+    ? <div className="flex items-center gap-1">
+        {access.canInviteMembers && orgContext.capabilities.installLinks ? <ItemMenu label="Member list actions" entries={[{ label: installLinkCopied ? "Copied" : "Copy install link", onSelect: handleCopyInstallLink }]} /> : null}
+        <DenButton size="sm" variant="secondary" icon={access.canInviteMembers ? Plus : Lock} disabled={!access.canInviteMembers} title={!access.canInviteMembers ? permissionLockReason("invitations.manage") : undefined} onClick={() => setShowInviteForm(true)}>Add member</DenButton>
+      </div>
+    : shownTab === "teams"
+      ? <DenButton size="sm" variant="secondary" icon={access.canManageTeams ? Plus : Lock} disabled={!access.canManageTeams} title={!access.canManageTeams ? permissionLockReason("teams.manage") : undefined} onClick={() => { resetTeamEditor(); setShowTeamForm((current) => !current); }}>Create team</DenButton>
+      : canCreateRole({ canManageTeams: access.canManageTeams, canManagePermissions: access.canManagePermissions })
+        ? <DenButton size="sm" variant="secondary" icon={Plus} href={getNewRoleRoute(orgSlug)} data-testid="roles-create">Create role</DenButton>
+        : <DenButton size="sm" variant="secondary" icon={Lock} disabled title={permissionLockReason("permissions.manage")}>Create role</DenButton>;
+
   const page = (
     <DashboardPageTemplate
       icon={Users}
       title="Members"
       description={null}
+      action={headerAction}
     >
       <OrgLimitDialog
         open={Boolean(limitDialogError)}
@@ -684,12 +699,7 @@ export function ManageMembersScreen() {
       />
 
       {shownTab === "roles" ? (
-        <RolesTab
-          showIntro
-          action={orgContext && canCreateRole({ canManageTeams: access.canManageTeams, canManagePermissions: access.canManagePermissions })
-            ? <DenButton size="sm" icon={Plus} href={getNewRoleRoute(orgSlug)} data-testid="roles-create">Create role</DenButton>
-            : undefined}
-        />
+        <RolesTab showIntro headerOwnsAction />
       ) : null}
 
       {/* Dialogs: the list stays where it is while someone is added or a team is made. */}
@@ -700,12 +710,10 @@ export function ManageMembersScreen() {
         <div>
           <MemberListToolbar
             collection="members" value={memberFilter} onChange={setMemberFilter}
-            action={<DenButton size="sm" icon={access.canInviteMembers ? Plus : Lock} disabled={!access.canInviteMembers} title={!access.canInviteMembers ? permissionLockReason("invitations.manage") : undefined} onClick={() => setShowInviteForm(true)}>Add member</DenButton>}
-            secondary={access.canInviteMembers && orgContext.capabilities.installLinks ? <ItemMenu label="Member list actions" entries={[{ label: installLinkCopied ? "Copied" : "Copy install link", onSelect: handleCopyInstallLink }]} /> : undefined}
           />
 
           {installLinkShareUrl ? (
-            <div className="mb-6 rounded-[24px] border border-gray-200 bg-white px-5 py-4">
+            <div className="mb-6 border-y border-[var(--dls-border)] py-3">
               <p className="text-[13px] text-gray-500">
                 Copy blocked by the browser — copy the link manually:
               </p>
@@ -750,16 +758,17 @@ export function ManageMembersScreen() {
             </p>
           ) : null}
 
-          <div className="overflow-visible rounded-2xl border border-gray-100 bg-white">
-            <div data-testid="members-column-header" className={`grid grid-cols-[minmax(0,1fr)_auto] gap-4 border-b border-gray-100 py-3 text-[12px] font-medium text-gray-500 px-5 ${memberGridColumns}`}>
-              <span>Member</span>
-              <span className="hidden lg:block">Role</span>
-              <span className="hidden lg:block">Joined</span>
-              {webPerMember ? <span className="hidden lg:block">OpenWork Web</span> : null}
-              <span />
+          <RowList label="Members" header={(
+            <div data-testid="members-column-header">
+              <RowListHeader lead="Member" menu>
+                <RowLaneLabel lane={memberRoleLane}>Role</RowLaneLabel>
+                <RowLaneLabel lane={memberJoinedLane}>Joined</RowLaneLabel>
+                {webPerMember ? <RowLaneLabel lane={memberWebLane}>Web</RowLaneLabel> : null}
+              </RowListHeader>
             </div>
+          )}>
 
-            {visibleMembers.length === 0 ? <p className="px-5 py-6 text-[13px] text-gray-500" role="status">{memberFilter.trim() ? "No members match your filter." : "No members yet."}</p> : null}
+            {visibleMembers.length === 0 ? <p className="border-b border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]" role="status">{memberFilter.trim() ? "No members match your filter." : "No members yet."}</p> : null}
             {visibleMembers.map((member) => {
               const roleState = memberRoleState(member);
               const ownRole = memberRoleEntry(roleState, roles);
@@ -797,60 +806,64 @@ export function ManageMembersScreen() {
               ];
               return (
                 <div key={member.id}>
-                <div
-                  data-testid="member-row"
-                  className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-b border-gray-100 transition hover:bg-gray-50/60 last:border-b-0 lg:gap-4 min-h-16 px-5 py-3 ${memberGridColumns}`}
-                >
-                  <OrgMemberIdentity member={member} compact />
-                  <span title={roleLabel} className={`col-start-1 row-start-2 min-w-0 pl-11 text-[13px] text-gray-500 lg:col-auto lg:row-auto lg:pl-0 ${canChangeRole ? "" : "truncate"}`} data-testid="member-role">
-                    {canChangeRole ? (
-                      <span className="flex min-w-0 flex-col gap-1">
-                        <RolePicker
-                          value={ownRole.value}
-                          onChange={(value) => void changeMemberRole(member, value)}
-                          options={memberRoleOptions({ ...roleLocks, current: ownRole })}
-                          label={`Role for ${member.user.name || member.user.email}`}
-                          testId={`member-role-${member.id}`}
-                          disabled={mutationBusy === "update-member-role" || setMemberRole.isPending}
-                        />
-                        {viaTeams.length > 0 ? <span className="text-[12px] leading-snug" data-testid="member-team-roles">{`Also ${viaTeams.join(", ")}`}</span> : null}
-                      </span>
-                    ) : roleLabel}
-                  </span>
-                  <span data-testid="member-joined" className="col-start-1 row-start-3 pl-11 text-[13px] text-gray-500 lg:col-auto lg:row-auto lg:pl-0">
-                    {member.joinedAt ? <span className="lg:hidden">Joined </span> : null}
-                    {member.joinedAt
-                      ? formatAddedDate(member.joinedAt)
-                      : "Pending"}
-                  </span>
-                  {webPerMember ? (
-                    <span
-                      data-testid="member-openwork-web"
-                      title={access.canStartSeatCheckout ? undefined : permissionLockReason("billing.manage")}
-                      className="col-start-1 row-start-4 flex items-center gap-2 pl-11 text-[13px] text-gray-500 lg:col-auto lg:row-auto lg:pl-0"
-                    >
-                      <span className="lg:hidden">OpenWork Web</span>
-                      <DenSwitch
-                        size="sm"
-                        checked={member.openworkWeb}
-                        disabled={!access.canStartSeatCheckout || mutationBusy === "member-openwork-web"}
-                        aria-label={`OpenWork Web for ${member.user.name || member.user.email}`}
-                        testId="member-openwork-web-switch"
-                        onChange={(enabled) => {
-                          setPageError(null);
-                          void setMemberOpenWorkWeb(member.id, enabled).catch((error) => {
-                            setPageError(error instanceof Error ? error.message : "Could not update OpenWork Web.");
-                          });
-                        }}
-                      />
-                    </span>
-                  ) : null}
-                  <div data-testid="member-actions" className="relative col-start-2 row-span-3 row-start-1 flex items-center justify-end gap-2 lg:col-auto lg:row-span-1 lg:row-auto">
+                <ListRow
+                  rowTestId="member-row"
+                  lead={<PersonLead name={member.user.name || member.user.email} />}
+                  name={isInvited ? member.user.email : member.user.name || member.user.email}
+                  secondLine={member.user.name && member.user.name !== member.user.email && !isInvited ? member.user.email : undefined}
+                  lanes={(
+                    <>
+                      <RowLane lane={memberRoleLane} title={roleLabel}>
+                        <span className={`min-w-0 text-[13px] ${canChangeRole ? "w-full" : "truncate"}`} data-testid="member-role">
+                          {canChangeRole ? (
+                            <span className="flex min-w-0 flex-col gap-1">
+                              <RolePicker
+                                value={ownRole.value}
+                                onChange={(value) => void changeMemberRole(member, value)}
+                                options={memberRoleOptions({ ...roleLocks, current: ownRole })}
+                                label={`Role for ${member.user.name || member.user.email}`}
+                                testId={`member-role-${member.id}`}
+                                quiet
+                                disabled={mutationBusy === "update-member-role" || setMemberRole.isPending}
+                              />
+                              {viaTeams.length > 0 ? <span className="text-[12px] leading-snug" data-testid="member-team-roles">{`Also ${viaTeams.join(", ")}`}</span> : null}
+                            </span>
+                          ) : roleLabel}
+                        </span>
+                      </RowLane>
+                      <RowLane lane={memberJoinedLane} className="text-[var(--dls-text-secondary)]">
+                        <span data-testid="member-joined">{member.joinedAt ? formatAddedDate(member.joinedAt) : "Pending"}</span>
+                      </RowLane>
+                      {webPerMember ? (
+                        <RowLane lane={memberWebLane}>
+                          <span data-testid="member-openwork-web" title={access.canStartSeatCheckout ? undefined : permissionLockReason("billing.manage")} className="flex items-center">
+                            <DenSwitch
+                              size="sm"
+                              checked={member.openworkWeb}
+                              disabled={!access.canStartSeatCheckout || mutationBusy === "member-openwork-web"}
+                              aria-label={`OpenWork Web for ${member.user.name || member.user.email}`}
+                              testId="member-openwork-web-switch"
+                              onChange={(enabled) => {
+                                setPageError(null);
+                                void setMemberOpenWorkWeb(member.id, enabled).catch((error) => {
+                                  setPageError(error instanceof Error ? error.message : "Could not update OpenWork Web.");
+                                });
+                              }}
+                            />
+                          </span>
+                        </RowLane>
+                      ) : null}
+                    </>
+                  )}
+                  action={(
+                  <div data-testid="member-actions" className="flex items-center justify-end">
                     {(
                       member.isOwner ? <span data-testid="member-owner-locked"><TeamsListLocked reason="The owner cannot be edited here. Only the owner can transfer ownership to an admin." /></span> : canOpenActions ? <ItemMenu label={`Open actions for ${member.user.name || member.user.email}`} entries={memberActions} /> : <TeamsListLocked reason="You cannot change this member. Ask an organization admin for access." />
                     )}
                   </div>
-                </div>
+                  )}
+                  below={isInvited ? <span role="cell" className="basis-full pl-11 text-[12px] text-[var(--dls-text-secondary)] @2xl:hidden">Pending invitation</span> : undefined}
+                />
                 {permissionsMemberId === member.id && canViewPermissions ? (
                   <div className="border-b border-gray-100 px-6 py-4" data-testid="member-permissions-panel">
                     <div className="mb-3 flex items-center justify-between gap-3">
@@ -945,7 +958,7 @@ export function ManageMembersScreen() {
                 </div>
               );
             })}
-          </div>
+          </RowList>
         </div>
       ) : null}
 
@@ -955,7 +968,7 @@ export function ManageMembersScreen() {
           {(intro) => intro.size === "box" ? (
             <div data-testid="teams-intro">
               {everyoneRow ? (
-                <div className="rounded-2xl border border-gray-100 bg-white" data-testid="teams-list">
+                <div className="@container min-w-0" role="table" aria-label="Teams" data-testid="teams-list">
                   <TeamsListHeader columns={teamListColumns} agentPermissions={agentPermissionsColumn} />
                   {everyoneRow}
                 </div>
@@ -964,15 +977,15 @@ export function ManageMembersScreen() {
             </div>
           ) : (
             <div>
-              <MemberListToolbar collection="teams" value={teamFilter} onChange={setTeamFilter} action={<DenButton size="sm" icon={access.canManageTeams ? Plus : Lock} disabled={!access.canManageTeams} title={!access.canManageTeams ? permissionLockReason("teams.manage") : undefined} onClick={() => { resetTeamEditor(); setShowTeamForm((current) => !current); }}>Create team</DenButton>} />
+              <MemberListToolbar collection="teams" value={teamFilter} onChange={setTeamFilter} />
 
-              <div className="rounded-2xl border border-gray-100 bg-white" data-testid="teams-list">
+              <div className="@container min-w-0" role="table" aria-label="Teams" data-testid="teams-list">
                 <TeamsListHeader columns={teamListColumns} agentPermissions={agentPermissionsColumn} />
 
                 {everyoneRow}
 
                 {visibleTeams.length === 0 ? (
-                  <div className="px-5 py-6 text-[13px] text-gray-500" role="status">
+                  <div className="border-b border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]" role="status">
                     {teamFilter.trim() ? "No teams match your filter." : "No teams yet."}
                   </div>
                 ) : (

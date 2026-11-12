@@ -46,13 +46,13 @@ export function SkillSteps({ skill, editHref }: { skill: PluginSkill; editHref?:
 export function SkillPreview({ skill, editHref, showKind = true }: { skill: PluginSkill; editHref?: string; showKind?: boolean }) {
   return (
     <details className="group/skill" data-skill-preview={skill.id}>
-      <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-3 text-[13px] text-[var(--dls-text-primary)] outline-none focus-visible:rounded-lg focus-visible:ring-2 focus-visible:ring-gray-300 [&::-webkit-details-marker]:hidden">
+      <summary className="flex min-h-12 cursor-pointer list-none items-center gap-3 py-1.5 text-[13px] text-[var(--dls-text-primary)] outline-none focus-visible:rounded-lg focus-visible:ring-2 focus-visible:ring-gray-300 [&::-webkit-details-marker]:hidden">
         <KindTile kind="skill" />
         <span className="min-w-0 flex-1 break-words font-medium">{skillTitle(skill.name)}</span>
         {showKind ? <span className="shrink-0 text-[12px] text-[var(--dls-text-secondary)]">Skill</span> : null}
         <ChevronRight className="size-4 shrink-0 text-[var(--dls-text-secondary)] transition-transform duration-150 ease-out group-open/skill:rotate-90 motion-reduce:transition-none" strokeWidth={1.5} aria-hidden />
       </summary>
-      <div className="px-3 pb-4 sm:pl-14">
+      <div className="pb-4 sm:pl-11">
         <SkillSteps skill={skill} editHref={editHref} />
       </div>
     </details>

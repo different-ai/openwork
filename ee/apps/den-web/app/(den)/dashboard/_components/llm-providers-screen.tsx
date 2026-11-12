@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ChevronRight, KeyRound, Plus, Search } from "lucide-react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { SECTION_TITLE_CLASS } from "../../_components/ui/dashboard-styles";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
@@ -78,27 +79,29 @@ export function LegacyProvidersSection({ orgId, orgSlug }: { orgId: string; orgS
   const legacyProviders = llmProviders.filter((provider) => provider.source !== "openwork" && provider.organizationId === orgId);
 
   return (
-    <section aria-label="Legacy Providers" data-testid="gateway-legacy-providers" className="mt-10 grid gap-4">
-      <DenSectionHeader
-        title="Legacy Providers"
-        description="Bring Your Own Key (Legacy System) providers send the API key directly to users’ desktop applications. Usage tracking and usage limit policies are not available with this feature. If you want usage tracking and usage limits, use the provider section above."
-      />
-      <div>
+    <section aria-label="Legacy Providers" data-testid="gateway-legacy-providers" className="mt-10 grid gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 max-w-3xl">
+          <h2 className={SECTION_TITLE_CLASS}>Legacy Providers</h2>
+          <p className="mt-0.5 text-[12px] leading-5 text-[color:var(--dls-text-secondary)]">
+            Bring Your Own Key (Legacy System) providers send the API key directly to users’ desktop applications. Usage tracking and usage limit policies are not available with this feature. If you want usage tracking and usage limits, use the provider section above.
+          </p>
+        </div>
         <Link
           href={getNewLlmProviderRoute(orgSlug)}
           data-testid="legacy-provider-create"
-          className={buttonVariants({ variant: "secondary" })}
+          className={buttonVariants({ variant: "secondary", size: "sm" })}
         >
           <Plus className="h-4 w-4" aria-hidden="true" />
           Add legacy provider
         </Link>
       </div>
       {busy ? (
-        <p role="status" className="text-sm text-gray-500">Loading legacy providers...</p>
+        <p role="status" className="text-[13px] text-[color:var(--dls-text-secondary)]">Loading legacy providers...</p>
       ) : error ? (
         <div className="flex flex-col items-start gap-4">
           <DenNotice tone="error" message={`Could not load legacy providers: ${error}`} />
-          <DenButton variant="secondary" onClick={() => void reloadProviders()}>Retry legacy providers</DenButton>
+          <DenButton variant="secondary" size="sm" onClick={() => void reloadProviders()}>Retry legacy providers</DenButton>
         </div>
       ) : legacyProviders.length > 0 ? (
         <LlmProviderList providers={legacyProviders} orgSlug={orgSlug} />

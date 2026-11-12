@@ -25,12 +25,12 @@ import { usePermissionSets } from "./permissions-data";
  * pickers show.
  * `showIntro` (Members › Roles) lets the custom roles intro take the empty list's place.
  */
-export function RolesTab({ action, showIntro = false }: { action?: ReactNode; showIntro?: boolean }) {
+export function RolesTab({ action, showIntro = false, headerOwnsAction = false }: { action?: ReactNode; showIntro?: boolean; /** The page header holds Create role. */ headerOwnsAction?: boolean }) {
   const { orgContext, orgId, orgSlug } = useOrgDashboard();
   if (!orgContext) return null;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
 
-  return <RolesTabContent orgId={orgId} orgSlug={orgSlug} canViewSets={access.canViewPermissions} action={action} showIntro={showIntro} />;
+  return <RolesTabContent orgId={orgId} orgSlug={orgSlug} canViewSets={access.canViewPermissions} action={action} showIntro={showIntro} headerOwnsAction={headerOwnsAction} />;
 }
 
 /** Whether the signed-in person can create a role (a team and its permission set). */
@@ -38,12 +38,13 @@ export function canCreateRole(input: { canManageTeams: boolean; canManagePermiss
   return input.canManageTeams && input.canManagePermissions;
 }
 
-function RolesTabContent({ orgId, orgSlug, canViewSets, action, showIntro }: {
+function RolesTabContent({ orgId, orgSlug, canViewSets, action, showIntro, headerOwnsAction }: {
   orgId: string | null;
   orgSlug: string | null;
   canViewSets: boolean;
   action?: ReactNode;
   showIntro: boolean;
+  headerOwnsAction: boolean;
 }) {
   const { orgContext } = useOrgDashboard();
   const setsQuery = usePermissionSets(orgId, canViewSets);
@@ -80,13 +81,13 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, action, showIntro }: {
   return (
     <div data-testid="roles-tab">
       <MemberListToolbar collection="roles" value={filter} onChange={setFilter}
-        action={action ?? <DenButton size="sm" icon={LockKeyhole} disabled title={permissionLockReason("permissions.manage")}>Create role</DenButton>}
+        action={headerOwnsAction ? undefined : action ?? <DenButton size="sm" icon={LockKeyhole} disabled title={permissionLockReason("permissions.manage")}>Create role</DenButton>}
         secondary={canViewSets ? <ItemMenu label="Role list actions" entries={[{ label: "By permission", href: getPermissionKeysRoute(orgSlug) }]} /> : undefined}
       />
       <div className="flex flex-col gap-6">
       <ItemSection title="Built-in roles" testId="roles-built-in">
         <ItemPanel>
-          {builtInRoles.length === 0 ? <p className="px-5 py-6 text-[13px] text-gray-500">No built-in roles match your filter.</p> : null}
+          {builtInRoles.length === 0 ? <p className="py-4 text-[13px] text-[var(--dls-text-secondary)]">No built-in roles match your filter.</p> : null}
           {builtInRoles.map((role) => (
             <ItemRow
               key={role.id}
@@ -112,7 +113,7 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, action, showIntro }: {
           <DenNotice tone="error" message={setsQuery.error instanceof Error ? setsQuery.error.message : "Couldn't load custom roles."} />
         ) : customRoles.length === 0 ? (
           <ItemPanel>
-            <div className="px-5 py-6 text-[13px] text-gray-500" data-testid="roles-custom-empty">{filter.trim() ? "No custom roles match your filter." : "No custom roles yet."}</div>
+            <div className="border-b border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]" data-testid="roles-custom-empty">{filter.trim() ? "No custom roles match your filter." : "No custom roles yet."}</div>
           </ItemPanel>
         ) : (
           <ItemPanel>

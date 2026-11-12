@@ -81,7 +81,7 @@ export function WhatsInside({
     <section className="flex flex-col gap-2.5" data-testid="whats-inside">
       <SectionTitle title="What's inside" />
       <ItemPanel>
-        {rows.length === 0 ? <p className="px-5 py-4 text-[13px] text-gray-500">Nothing inside yet.</p> : null}
+        {rows.length === 0 ? <p className="py-3 text-[13px] text-[var(--dls-text-secondary)]">Nothing inside yet.</p> : null}
         {rows.map((row) => {
           const skill = plugin.skills.find((entry) => row.key === `skill:${entry.id}`);
           return skill ? <SkillPreview key={row.key} skill={skill} /> : (
@@ -238,7 +238,7 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
         title={data.name}
         actions={(
           <>
-            {!canManage ? <DenButton variant="secondary" icon={LockKeyhole} disabled>Manage</DenButton> : null}
+            {!canManage ? <DenButton size="sm" variant="secondary" icon={LockKeyhole} disabled>Manage</DenButton> : null}
             <ItemMenu
               size="md"
               label={`More for ${data.name}`}
@@ -248,12 +248,12 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
               ] : []}
             />
             {mode === "member" && mine ? (
-              <LinkButton href={getLibraryPluginShareRoute(orgSlug, pluginId)}>
+              <LinkButton size="sm" href={getLibraryPluginShareRoute(orgSlug, pluginId)}>
                 <UserPlus className="h-4 w-4" aria-hidden />
                 Share
               </LinkButton>
             ) : null}
-            <DenButton icon={MessageSquare} href={pluginChatDeepLink(data)}>Chat</DenButton>
+            <DenButton size="sm" icon={MessageSquare} href={pluginChatDeepLink(data)}>Chat</DenButton>
           </>
         )}
       />

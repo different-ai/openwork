@@ -322,16 +322,16 @@ export function PluginAccessSection({
           message={error instanceof Error ? error.message : "Failed to load plugin access."}
         />
       ) : (
-        <div className="rounded-2xl border border-gray-100 bg-white">
+        <div className="border-y border-[var(--den-list-line)]">
           {isLoading ? (
-            <p className="px-6 py-4 text-[13px] text-gray-400">Loading access…</p>
+            <p className="py-3 text-[13px] text-[var(--dls-text-secondary)]">Loading access…</p>
           ) : (
             <>
               <button
                 type="button"
                 onClick={() => void handleToggleOrgWide()}
                 disabled={busy || orgWideLocked}
-                className="flex w-full items-center gap-4 rounded-t-2xl px-6 py-4 text-left transition hover:bg-gray-50/60 disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex w-full items-center gap-4 py-3 text-left transition hover:bg-gray-50/60 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] ${orgWideGrant ? "bg-emerald-50 text-emerald-600" : "bg-gray-100 text-gray-500"}`}>
                   <Globe className="h-4 w-4" aria-hidden />
@@ -365,7 +365,7 @@ export function PluginAccessSection({
                     ? "you"
                     : membersById.get(grant.createdByOrgMembershipId)?.user.name ?? "an organization member";
                   return (
-                    <div key={grant.id} className="flex flex-col gap-3 px-4 py-4 md:flex-row md:flex-wrap md:items-center md:px-6 md:py-3.5">
+                    <div key={grant.id} className="flex flex-col gap-3 py-3 md:flex-row md:flex-wrap md:items-center">
                       <div className="flex w-full min-w-0 items-start gap-3 md:w-auto md:min-w-[220px] md:flex-1 md:items-center">
                         <div className="min-w-0 flex-1">
                           {member ? (
@@ -405,7 +405,7 @@ export function PluginAccessSection({
                     ? "you"
                     : membersById.get(grant.createdByOrgMembershipId)?.user.name ?? "an organization member";
                   return (
-                    <div key={grant.id} className="flex flex-col gap-3 px-4 py-4 md:flex-row md:flex-wrap md:items-center md:px-6 md:py-3.5">
+                    <div key={grant.id} className="flex flex-col gap-3 py-3 md:flex-row md:flex-wrap md:items-center">
                       <div className="flex w-full min-w-0 items-start gap-3 md:w-auto md:min-w-[220px] md:flex-1 md:items-center">
                         <div className="min-w-0 flex-1">
                           {team ? (
@@ -434,7 +434,7 @@ export function PluginAccessSection({
                 })}
 
                 {!hasGrantsBeyondCreator ? (
-                  <div className="px-6 py-3.5">
+                  <div className="py-3">
                     <div className="rounded-xl border border-dashed border-gray-200 px-5 py-5 text-center">
                       <p className="text-[13px] font-medium text-gray-900">Only you can use this plugin</p>
                       <p className="mt-1 text-[12px] text-gray-500">
@@ -444,7 +444,7 @@ export function PluginAccessSection({
                   </div>
                 ) : null}
 
-                <div className="flex flex-wrap items-center gap-2 px-6 py-3.5">
+                <div className="flex flex-wrap items-center gap-2 py-3">
                   <AccessAddPicker
                     kind="person"
                     candidates={memberCandidates}

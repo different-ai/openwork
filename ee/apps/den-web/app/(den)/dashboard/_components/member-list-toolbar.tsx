@@ -8,12 +8,13 @@ export function MemberListToolbar({ collection, value, onChange, action, seconda
   collection: "members" | "teams" | "roles";
   value: string;
   onChange: (value: string) => void;
-  action: ReactNode;
+  /** Only where the page header does not hold the create action. */
+  action?: ReactNode;
   secondary?: ReactNode;
 }) {
   return (
     <div className="mb-4 flex items-center justify-between gap-3" data-testid={`${collection}-toolbar`}>
-      <FilterInput className="w-56 max-w-[50%]" placeholder={`Filter ${collection}`} value={value} onChange={onChange} />
+      <FilterInput className="w-64 max-w-[60%]" placeholder={`Filter ${collection}`} value={value} onChange={onChange} />
       <div className="flex shrink-0 items-center gap-2">{secondary}{action}</div>
     </div>
   );

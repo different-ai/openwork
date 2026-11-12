@@ -59,7 +59,7 @@ export function WhoCanUseIt({
     : canShareWithEveryone ? everyoneOffDescription : permissionLockReason("sharing.share_org_wide");
 
   return (
-    <div className="flex flex-col divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white" data-testid="who-can-use-it">
+    <div className="flex flex-col divide-y divide-[var(--den-list-line)] border-y border-[var(--den-list-line)]" data-testid="who-can-use-it">
       <Row
         lead={<IconTile icon={Globe} />}
         title="Everyone in the organization"
@@ -79,7 +79,7 @@ export function WhoCanUseIt({
           lead={<Avatar name={owner.name} owner />}
           title={owner.isYou ? `${owner.name} (you)` : owner.name}
           description="Can change and remove it"
-          trailing={<span className="shrink-0 text-[12px] text-gray-500">Owner</span>}
+          trailing={<span className="shrink-0 text-[13px] text-[var(--dls-text-secondary)]">Owner</span>}
           testId="access-owner"
         />
       ) : null}
@@ -105,7 +105,7 @@ export function WhoCanUseIt({
               testId="access-team"
             />
           ))}
-          <div className="flex flex-wrap items-center gap-2 px-5 py-3">
+          <div className="flex flex-wrap items-center gap-2 py-3">
             <AddPicker
               kind="person"
               options={personOptions}

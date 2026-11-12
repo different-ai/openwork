@@ -9,6 +9,7 @@ import { DenTable } from "../../_components/ui/table";
 import { DenSwitch } from "../../_components/ui/switch";
 import { permissionLockReason, type DenOrgMember } from "../../_lib/den-org";
 import { DetailRows } from "./item-list";
+import { ListRow, RowLane, RowLaneLabel, RowList, RowListHeader, StatusLane } from "../_features/computers/computer-rows";
 import { auditCaptureLockReason, isAuditAccessError, useAuditCapture, useAuditEvents, type AuditReadError, type AuditScope } from "./audit-logs-data";
 
 export const auditSummaryClass = "flex cursor-pointer list-none items-center gap-2 py-3 font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--dls-accent)] [&::-webkit-details-marker]:hidden";
@@ -72,7 +73,12 @@ export function auditActionSentence(action: string): string {
     disabled: "disabled", initialized: "initialized", served: "read", exported: "exported",
     granted: "granted", revoked: "revoked", started: "started", completed: "completed",
   };
-  return past[ending] ? `${past[ending]} ${auditSentenceNoun(parts.join("."))}` : `recorded ${auditSentenceNoun(action)}`;
+  if (past[ending]) return `${past[ending]} ${auditSentenceNoun(parts.join("."))}`;
+  // Only known reads get read wording. An unknown requested/attempted action may be a mutation.
+  if (parts.join(".") === "audit.operations" && (ending === "requested" || ending === "attempted")) {
+    return `${ending === "requested" ? "requested" : "attempted"} audit operations read`;
+  }
+  return `recorded ${auditSentenceNoun(action)}`;
 }
 
 export const auditOutcomeLabels: Record<AuditOperationSummary["outcome"] | AuditEventEnvelope["outcome"], string> = {
@@ -82,6 +88,11 @@ export const auditOutcomeLabels: Record<AuditOperationSummary["outcome"] | Audit
 export const auditOriginLabels: Record<AuditOperationSummary["origin"], string> = {
   api: "API", cloud_ui: "Cloud UI", mcp: "Agent (MCP)", scheduler: "Scheduler", webhook: "Webhook", platform_admin: "Platform admin",
 };
+
+/** An outcome in the Computers status language: a dot and a word. Color only for what needs attention. */
+export function auditOutcomeStatus(outcome: AuditOperationSummary["outcome"] | AuditEventEnvelope["outcome"]): { label: string; tone: "success" | "warning" | "danger" | "neutral" } {
+  return { label: auditOutcomeLabels[outcome], tone: outcome === "failed" ? "danger" : outcome === "partial" || outcome === "denied" ? "warning" : outcome === "succeeded" ? "success" : "neutral" };
+}
 
 export function AuditOutcome({ outcome }: { outcome: AuditOperationSummary["outcome"] | AuditEventEnvelope["outcome"] }) {
   return <span data-audit-outcome={outcome} className={outcome === "failed" ? "text-[var(--ow-danger)]" : outcome === "partial" ? "text-[var(--ow-warning)]" : "text-[var(--dls-text-secondary)]"}>
@@ -189,16 +200,23 @@ export function AuditTimeline({ scope, operationId, members, onAccessError }: De
   return <div className="flex flex-col gap-3 py-3" aria-label="Operation timeline">
     {query.isError ? <AuditReadFailure retained={Boolean(query.data)} verifiedAt={query.dataUpdatedAt} retry={() => { void (query.isFetchNextPageError ? query.fetchNextPage() : query.refetch()); }} busy={query.isFetching} /> : null}
     {query.isPending ? <AuditSkeleton rows={2} /> : !events.length && !query.isError ? <p>No retained events for this operation.</p> : null}
-    <ol className="flex flex-col gap-4">
-      {events.map((event) => <li key={event.id} className="flex flex-col gap-2 border-l border-[var(--dls-border)] pl-4" data-testid="audit-event">
-        <div className="flex flex-wrap items-center justify-between gap-3"><span className="font-medium">{auditLabel(event.action)}</span><AuditOutcome outcome={event.outcome} /></div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--dls-text-secondary)]"><span>{auditActorLabel(event.actor, members, event.operation.origin)}</span><AuditTime value={event.occurredAt} /></div>
-        {event.resources.length ? <p>{[...new Set(event.resources.filter((resource) => resource.relationship === "target").map((resource) => auditResourceLabel(resource)))].join(", ")}</p> : null}
-        {event.reasonCode ? <p>{auditLabel(event.reasonCode)}</p> : null}
-        <AuditChanges changes={event.changes} />
-        <details className="group/audit-technical"><summary className={auditTechnicalSummaryClass}><AuditChevron technical />Technical details</summary>
+    <RowList label="Recorded events" header={<RowListHeader lead="Step">
+      <RowLaneLabel lane="flex w-[120px] @md:w-40">Result</RowLaneLabel>
+      <RowLaneLabel lane="hidden w-44 @md:block">Recorded</RowLaneLabel>
+    </RowListHeader>}>
+      {events.map((event) => <ListRow key={event.id} name={auditLabel(event.action)} rowTestId="audit-event"
+        secondLine={event.reasonCode ? auditLabel(event.reasonCode) : auditActorLabel(event.actor, members, event.operation.origin)}
+        lanes={<>
+          <StatusLane lane="flex w-[120px] @md:w-40" {...auditOutcomeStatus(event.outcome)} />
+          <RowLane lane="hidden w-44 @md:block" className="truncate tabular-nums text-[var(--dls-text-secondary)]"><AuditTime value={event.occurredAt} /></RowLane>
+        </>} />)}
+    </RowList>
+    {events.some((event) => event.changes?.changedFields.length) ? <div className="space-y-3">{events.map((event) => <AuditChanges key={event.id} changes={event.changes} />)}</div> : null}
+    <details className="group/audit-technical"><summary className={auditTechnicalSummaryClass}><AuditChevron technical />Event data</summary>
+      <div className="space-y-4">{events.map((event) => <div key={event.id}>
+          <p className="mb-2 text-xs font-medium">{auditLabel(event.action)}</p>
           <AuditChanges changes={event.changes} technical />
-          <dl className="flex flex-col gap-2 break-all text-xs text-[var(--dls-text-secondary)]">
+          <dl className="grid gap-x-6 gap-y-2 break-all text-xs text-[var(--dls-text-secondary)] sm:grid-cols-2">
             <div><dt>Event</dt><dd className="font-mono">{event.id}</dd></div>
             <div><dt>Action</dt><dd className="font-mono">{event.action}</dd></div>
             <div><dt>Actor</dt><dd className="font-mono">{event.actor.id ?? "Unknown"}</dd></div>
@@ -208,9 +226,8 @@ export function AuditTimeline({ scope, operationId, members, onAccessError }: De
             <div><dt>Recorded</dt><dd><AuditTime value={event.recordedAt} /></dd></div>
             {event.resources.map((resource) => <div key={`${resource.type}-${resource.id}-${resource.relationship}`}><dt>{auditLabel(resource.relationship)}</dt><dd className="font-mono">{resource.label ? `${resource.label}: ` : null}{resource.type}: {resource.id}</dd></div>)}
           </dl>
-        </details>
-      </li>)}
-    </ol>
+      </div>)}</div>
+    </details>
     {query.hasNextPage ? <DenButton variant="secondary" size="sm" disabled={query.isFetching} onClick={() => void query.fetchNextPage()}>Load more events</DenButton> : null}
   </div>;
 }

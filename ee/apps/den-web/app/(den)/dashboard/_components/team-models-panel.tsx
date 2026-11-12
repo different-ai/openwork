@@ -109,7 +109,7 @@ function ProvidersSection({ orgId, orgSlug, subject, name, orgContext }: {
         : providers.isError ? (
           <DenNotice tone="error" message={providers.error.message} action={<DenButton variant="secondary" size="sm" onClick={() => void providers.refetch()}>Try again</DenButton>} />
         ) : granted.length === 0 && withheld.length === 0 ? (
-          <ItemPanel><div className="px-5 py-6 text-[13px] text-gray-500">No AI providers yet. Add one in AI Providers.</div></ItemPanel>
+          <ItemPanel><div className="py-3 text-[13px] text-[var(--dls-text-secondary)]">No AI providers yet. Add one in AI Providers.</div></ItemPanel>
         ) : (
           <ItemPanel>
             {granted.map(({ provider, sources }) => (
@@ -165,7 +165,7 @@ function LimitsSection({ orgId, orgSlug, team, subject, name, orgContext, canMan
           <DenNotice tone="error" message={policies.error.message} action={<DenButton variant="secondary" size="sm" onClick={() => void policies.refetch()}>Try again</DenButton>} />
         ) : own.length === 0 ? (
           <ItemPanel>
-            <div className="px-5 py-4 text-[13px] text-gray-500" data-testid="team-models-no-limit">
+            <div className="py-3 text-[13px] text-[var(--dls-text-secondary)]" data-testid="team-models-no-limit">
               {effective && effective.windows.length > 0
                 ? `No limit of its own. ${limitSourceLabel(effective, subject, orgContext.teams)}: ${limitSummary(effective, true)}.`
                 : `Nothing pauses ${name}'s models.`}

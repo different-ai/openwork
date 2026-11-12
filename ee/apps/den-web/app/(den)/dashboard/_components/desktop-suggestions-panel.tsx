@@ -100,7 +100,7 @@ export function DesktopSuggestionsPanel({ team }: { team: { id: string; name: st
         {blocked ? <DenNotice tone="neutral" message="Suggestions have shared or overlapping policy assignments. Editing is locked to preserve other teams and members. Ask an organization owner to separate these assignments before changing suggestions." /> : null}
         {!access?.canManageDesktopPolicies ? <ReadOnlyNotice permission="desktop_policies.manage" /> : !orgContext?.entitlements.desktopPolicies ? <DenNotice tone="neutral" message="Changing prompt suggestions requires an Enterprise plan. Ask an organization owner." /> : null}
         <ItemPanel>
-          {shown.length === 0 ? <div className="px-5 py-4 text-[13px] text-gray-500">Built-in desktop suggestions</div> : shown.map((entry, index) => (
+          {shown.length === 0 ? <div className="py-3 text-[13px] text-[var(--dls-text-secondary)]">Built-in desktop suggestions</div> : shown.map((entry, index) => (
             <ItemRow key={index} title={entry.prompt} description={entry.description} testId={`desktop-suggestion-${index}`} action={canManage && !inherited ? <ItemMenu label={`Actions for suggestion ${index + 1}`} entries={[
               { label: "Edit", disabled: saving, onSelect: () => setDraft(shown) },
               { label: shown.length <= 2 ? "Remove (minimum 2 suggestions)" : "Remove", destructive: true, disabled: saving || shown.length <= 2, confirm: { title: "Remove suggestion?", description: "This prompt will no longer appear for this audience. The remaining two suggestions stay.", action: "Remove" }, onSelect: () => save(shown.filter((_, position) => position !== index)) },
@@ -117,16 +117,16 @@ export function DesktopSuggestionsPanel({ team }: { team: { id: string; name: st
             </div>
           ))}
           <div className="flex gap-2">
-            {draft.length < 3 ? <DenButton variant="secondary" disabled={saving} onClick={() => setDraft([...draft, { prompt: "", description: "" }])}>Add suggestion</DenButton> : null}
-            <DenButton type="submit" loading={saving}>Save suggestions</DenButton>
-            <DenButton variant="secondary" disabled={saving} onClick={() => setDraft(null)}>Cancel</DenButton>
+            {draft.length < 3 ? <DenButton size="sm" variant="secondary" disabled={saving} onClick={() => setDraft([...draft, { prompt: "", description: "" }])}>Add suggestion</DenButton> : null}
+            <DenButton size="sm" type="submit" loading={saving}>Save suggestions</DenButton>
+            <DenButton size="sm" variant="secondary" disabled={saving} onClick={() => setDraft(null)}>Cancel</DenButton>
           </div>
         </form>
       ) : canManage ? (
         <div className="flex items-center gap-3">
-          <DenButton variant="secondary" disabled={saving} onClick={() => setDraft(shown.length > 0 ? shown : emptySuggestions())}>{inherited ? "Change for team" : shown.length === 0 ? "Set suggestions" : "Edit suggestions"}</DenButton>
-          {!inherited && shown.length === 2 ? <DenButton variant="secondary" disabled={saving} onClick={() => setDraft([...shown, { prompt: "", description: "" }])}>Add suggestion</DenButton> : null}
-          {team && own ? <DenButton variant="secondary" loading={saving} onClick={() => void save(null)}>Use Everyone's</DenButton> : !team && shown.length > 0 ? <DenButton variant="secondary" loading={saving} onClick={() => void save(null)}>Use built-in suggestions</DenButton> : null}
+          <DenButton size="sm" variant="secondary" disabled={saving} onClick={() => setDraft(shown.length > 0 ? shown : emptySuggestions())}>{inherited ? "Change for team" : shown.length === 0 ? "Set suggestions" : "Edit suggestions"}</DenButton>
+          {!inherited && shown.length === 2 ? <DenButton size="sm" variant="secondary" disabled={saving} onClick={() => setDraft([...shown, { prompt: "", description: "" }])}>Add suggestion</DenButton> : null}
+          {team && own ? <DenButton size="sm" variant="secondary" loading={saving} onClick={() => void save(null)}>Use Everyone's</DenButton> : !team && shown.length > 0 ? <DenButton size="sm" variant="secondary" loading={saving} onClick={() => void save(null)}>Use built-in suggestions</DenButton> : null}
         </div>
       ) : null}
       {retained.length > 0 ? (

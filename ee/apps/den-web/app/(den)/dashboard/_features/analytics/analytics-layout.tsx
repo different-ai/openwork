@@ -6,8 +6,9 @@ import { ArrowUpRight, BarChart3, Blocks, Bot, ScrollText } from "lucide-react";
 import { DenButton } from "../../../_components/ui/button";
 import { UnseenDot, underlineTabClassName } from "../../../_components/ui/tabs";
 import { DenPageHeader } from "../../../_components/ui/page-header";
+import { AUTOMATION_CARD_CLASS, CARD_TITLE_CLASS, DASHBOARD_PAGE_CLASS } from "../../../_components/ui/dashboard-styles";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
-import { ItemPanel, ItemRowsSkeleton } from "../../_components/item-list";
+import { RowListSkeleton } from "../computers/computer-rows";
 import { getAnalyticsRoute, getLibraryUsageRoute, getWorkbotUsageRoute, getWorkflowRunsRoute, orgFeatureEnabled } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useLibraryUsageAvailable } from "../library-usage/use-library-usage";
@@ -24,9 +25,9 @@ const ANALYTICS_VIEW_INTROS: Record<AnalyticsView, FeatureIntroKey | null> = {
   workflows: "analytics.workflow-runs",
 };
 
-export const analyticsSurfaceClass = "analytics-surface rounded-2xl border border-[#e3e7ee] bg-white";
-/** Same content inset as DashboardPageTemplate; header ownership stays separate. */
-export const analyticsPageClass = "mx-auto grid w-full max-w-[860px] gap-6 p-4 sm:p-6 md:p-8 [&_.analytics-surface]:border-[var(--dls-border)] [&_.analytics-surface]:bg-[var(--dls-surface)]";
+export const analyticsSurfaceClass = `analytics-surface ${AUTOMATION_CARD_CLASS}`;
+/** Same content inset as Computers; header ownership stays separate. */
+export const analyticsPageClass = `${DASHBOARD_PAGE_CLASS} grid gap-6`;
 
 /**
  * The header every Analytics view shares: the title (the tab already says what
@@ -51,20 +52,17 @@ export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }:
     adoption,
     ...(libraryUsage ? [library] : []),
     ...(libraryUsage && orgContext?.capabilities.workbot && orgFeatureEnabled(orgContext, "workbotUsageAnalytics") ? [workbot] : []),
-    ...(orgContext?.capabilities.workflows && orgContext.entitlements.analytics ? [workflows] : []),
+    // Prototype: Workflow runs is no longer offered as a tab. It lists only the viewer's own runs, and each
+    // workflow's page already has its runs. The address still works, and shows its tab only while you are on it.
+    ...(active === "workflows" && orgContext?.capabilities.workflows && orgContext.entitlements.analytics ? [workflows] : []),
   ];
-  return <header className="grid gap-5">
-    <p className="text-xs font-medium text-[#637291]">Analytics</p>
-    <div className="flex flex-wrap items-start justify-between gap-4">
-      <div className="max-w-2xl">
-        <div data-dashboard-flat-header>
-          <DenPageHeader title={title} size="compact" className="break-words" />
-        </div>
-        <div className="mt-2 min-h-4 text-xs leading-4 text-[#637291]">{caption}</div>
-      </div>
-      {action}
+  return <header className="grid gap-6">
+    <div data-dashboard-flat-header>
+      {/* One page, one name: the heading is the section, and the tabs name its views. */}
+      <DenPageHeader title="Analytics" size="compact" state={caption} action={action} className="break-words" />
+      <span className="sr-only" data-analytics-view-title>{title}</span>
     </div>
-    <nav aria-label="Analytics views" className="flex flex-wrap gap-x-6 border-b border-[#e3e7ee]">
+    <nav aria-label="Analytics views" className="flex flex-wrap gap-x-6 border-b border-[var(--den-list-line)]">
       {pages.map(({ id, label, href, icon: Icon }) => <Link key={id} href={href} aria-current={active === id ? "page" : undefined}
         className={`-mb-px focus-visible:outline-offset-4 ${underlineTabClassName(active === id)}`}>
         <Icon className="h-4 w-4" aria-hidden="true" />{label}
@@ -78,8 +76,8 @@ export function AnalyticsEmptyState({ title, children, action, testId }: {
   title: string; children?: ReactNode; action?: ReactNode; testId?: string;
 }) {
   return <div className="flex min-h-56 flex-col items-center justify-center px-6 py-10 text-center" data-testid={testId}>
-    <h3 className="text-sm font-semibold text-[#07192C]">{title}</h3>
-    {children ? <div className="mt-2 max-w-md text-sm leading-6 text-[#637291]">{children}</div> : null}
+    <h3 className={CARD_TITLE_CLASS}>{title}</h3>
+    {children ? <div className="mt-2 max-w-md text-sm leading-6 text-[var(--dls-text-secondary)]">{children}</div> : null}
     {action ? <div className="mt-4">{action}</div> : null}
   </div>;
 }
@@ -87,11 +85,11 @@ export function AnalyticsEmptyState({ title, children, action, testId }: {
 export function AnalyticsLoading({ label }: { label: string }) {
   return <div role="status" aria-label={label} className="grid gap-6">
     <div aria-hidden className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
-      {[0, 1, 2, 3].map((index) => <div key={index} className="rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-surface)] p-5">
+      {[0, 1, 2, 3].map((index) => <div key={index} className={`${AUTOMATION_CARD_CLASS} p-4`}>
         <DenSkeleton className="h-4 w-24" /><DenSkeleton className="mt-3 h-8 w-16" /><DenSkeleton className="mt-2 h-4 w-32" />
       </div>)}
     </div>
-    <ItemPanel><ItemRowsSkeleton label={label} rows={4} /></ItemPanel>
+    <RowListSkeleton rows={4} />
   </div>;
 }
 
