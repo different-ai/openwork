@@ -13,14 +13,20 @@ import { createDenClient, readDenSettings } from "@/app/lib/den"
 import { Button } from "@/components/ui/button"
 import { Tool } from "@/components/ui/tool"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
-import type { AutomationExecutionTarget } from "@openwork/types/automations"
+import { AUTOMATION_CLOUD_DEFAULT_MODEL, type AutomationExecutionTarget } from "@openwork/types/automations"
 import { isDesktopRuntime } from "@/app/lib/runtime-env"
 import {
   automationCreationPlacement,
   useAutomationDeploymentEnabled,
   useDesktopAutomationsEnabled,
 } from "@/react-app/domains/automations/automation-availability"
-import { automationPlacementChoices, resolveAutomationPlacement } from "@/react-app/domains/automations/automation-placement"
+import {
+  automationCanUseChoices,
+  automationPlacementOf,
+  initialCanUse,
+  type AutomationCanUse,
+} from "@/react-app/domains/automations/automation-editor"
+import { automationCloudOptions, automationPlacementChoices, resolveAutomationPlacement } from "@/react-app/domains/automations/automation-placement"
 import { formatAutomationSchedule } from "@/react-app/domains/automations/automation-format"
 import {
   automationModelOptions,
@@ -72,7 +78,7 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
   const workspaceContext = useWorkspaceMaybe()
   const [created, setCreated] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [picked, setPicked] = useState<AutomationExecutionTarget | null>(null)
+  const [picked, setPicked] = useState<AutomationCanUse | null>(null)
 
   const proposal = part.state === "output-available" ? parseAutomationProposal(part.output) : null
   const settings = readDenSettings()
@@ -93,10 +99,17 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
   const suggested: AutomationExecutionTarget = proposal?.schedule.kind === "calendar"
     ? "cloud"
     : proposal?.executionTarget ?? automationCreationPlacement()
-  // Without an answer from Den, keep the runtime's own placement rather than guess.
-  const placement = placementChoices.length > 0
-    ? resolveAutomationPlacement(picked ?? suggested, placementChoices)
-    : automationCreationPlacement()
+  // The same three choices as the Automations editor: this computer, the
+  // person's cloud computer, or the headless cloud that reaches only connected
+  // accounts. Without an answer from Den, keep the runtime's own placement.
+  const canUseChoices = automationCanUseChoices(placementChoices, automationCloudOptions(targetsQuery.data))
+  const suggestedCanUse = initialCanUse(resolveAutomationPlacement(suggested, placementChoices), proposal?.model, canUseChoices)
+  const canUse = canUseChoices.length === 0
+    ? null
+    : picked && canUseChoices.includes(picked) ? picked : canUseChoices.includes(suggestedCanUse) ? suggestedCanUse : canUseChoices[0]
+  const placement = canUse ? automationPlacementOf(canUse) : automationCreationPlacement()
+  // The headless cloud runs on the organization's one cloud model: nothing to resolve.
+  const usesCloudDefault = canUse === "accounts"
   const providersQuery = useQuery({
     queryKey: ["den", "automations", organizationId, "models"],
     queryFn: () => createDenClient({ baseUrl: settings.baseUrl, token }).listOrgLlmProviders(organizationId),
@@ -119,12 +132,18 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
   const modelLookupFailed = providersQuery.isError || (placement === "desktop" && runtimeProviders.isError)
   const modelLookupPending = providersQuery.data === undefined
     || (placement === "desktop" && runtimeProviders.data === undefined)
-  const resolved = modelLookupFailed || modelLookupPending || !proposal
+  const resolved = !proposal
     ? null
-    : resolveProposalModel(proposal.model, providers, availability)
-  const modelLabel = resolved
-    ? describeAutomationModel(resolved.model, automationModelOptions(providers, availability))
-    : null
+    : usesCloudDefault
+      ? { model: { ...AUTOMATION_CLOUD_DEFAULT_MODEL, variant: null }, resolution: "default" as const }
+      : modelLookupFailed || modelLookupPending
+        ? null
+        : resolveProposalModel(proposal.model, providers, availability)
+  const modelLabel = usesCloudDefault
+    ? AUTOMATION_CLOUD_DEFAULT_MODEL.modelName
+    : resolved
+      ? describeAutomationModel(resolved.model, automationModelOptions(providers, availability))
+      : null
 
   if (!proposal) {
     return <Tool toolPart={part} title="Proposed an Automation" />
@@ -139,7 +158,7 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
     ? "Automations are disabled for this deployment."
     : !signedIn
       ? "Sign in to OpenWork Cloud to create this Automation."
-      : modelLookupFailed
+      : modelLookupFailed && !usesCloudDefault
         ? "Model availability could not be checked. Try again before creating this Automation."
         : proposal.schedule.kind === "calendar" && placement !== "cloud"
           ? "Automations that run around meetings run in OpenWork Cloud, which isn't available for your account yet."
@@ -212,22 +231,22 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
           {pinnedWorkspaceId && placement === "desktop" ? <p className="text-xs text-dls-secondary" data-automation-pinned-workspace={pinnedWorkspaceId}>Runs in this workspace</p> : null}
         </div>
         <p className="whitespace-pre-wrap text-sm text-dls-secondary">{proposal.instructions}</p>
-        {!created && placementChoices.length > 1 ? (
-          <div className="flex items-center gap-2" role="radiogroup" aria-label="Where it runs" data-automation-placement-choice={placement}>
+        {!created && canUseChoices.length > 1 ? (
+          <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Where it runs" data-automation-placement-choice={placement} data-automation-can-use={canUse ?? undefined}>
             <span className="text-xs text-dls-secondary">Runs on</span>
-            {placementChoices.map((choice) => (
+            {canUseChoices.map((choice) => (
               <Button
                 key={choice}
                 type="button"
                 size="sm"
-                variant={placement === choice ? "secondary" : "ghost"}
+                variant={canUse === choice ? "secondary" : "ghost"}
                 role="radio"
-                aria-checked={placement === choice}
-                disabled={busy || (choice === "desktop" && proposal.schedule.kind === "calendar")}
+                aria-checked={canUse === choice}
+                disabled={busy || (choice === "computer" && proposal.schedule.kind === "calendar")}
                 data-automation-placement={choice}
                 onClick={() => setPicked(choice)}
               >
-                {choice === "cloud" ? "OpenWork Cloud" : "This computer"}
+                {choice === "computer" ? "This computer" : choice === "cloud-computer" ? "Cloud computer" : "Cloud, connected accounts only"}
               </Button>
             ))}
           </div>
