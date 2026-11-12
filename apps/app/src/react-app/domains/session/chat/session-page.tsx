@@ -159,6 +159,7 @@ type StatusBarOverrides = {
   reloadBusy: boolean;
   reloadError: string | null;
   openWorkConnectState: SessionCloudMcpMaintenanceState;
+  onOpenDiagnostics: () => void;
 };
 
 export type SessionPageHistoryControls = {
@@ -1562,6 +1563,7 @@ export function SessionPage(props: SessionPageProps) {
             reloadBusy: props.statusBar?.reloadBusy,
             reloadError: props.statusBar?.reloadError,
             openWorkConnectState: props.statusBar?.openWorkConnectState,
+            onOpenDiagnostics: props.statusBar?.onOpenDiagnostics,
             onSendFeedback: props.onSendFeedback,
           }}
         />

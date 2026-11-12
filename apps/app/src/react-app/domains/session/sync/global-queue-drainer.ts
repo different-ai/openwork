@@ -35,6 +35,7 @@ import {
 } from "../surface/queued-drain-machine";
 import { hasComposerAutoSend } from "../surface/composer-auto-send";
 import { getSessionModelSelection, useSessionModelStore } from "../surface/session-model-store";
+import { restoreSessionModel } from "../surface/use-restore-session-model";
 import { draftToParts } from "./draft-parts";
 import { buildOpenworkSessionSystemContext } from "./env-context";
 import {
@@ -114,7 +115,10 @@ async function performQueuedDraftSend(
   if (!text && draft.attachments.length === 0 && !draft.command) return "cancelled";
   const session = await getNativeSession({ opencodeBaseUrl: context.opencodeBaseUrl, token: context.openworkToken, ...transport }, sessionId);
   assertQueuedSendCurrent(sessionId, generation);
-  if (session.time.archived || sessionWorkHeld(context.opencodeBaseUrl, sessionId)) return "cancelled";
+  if (session.time.archived || sessionWorkHeld(context.opencodeBaseUrl, sessionId) || context.isCurrent?.() === false) return "cancelled";
+  // A background follow-up may drain before this conversation has ever opened
+  // locally. Its owned native session already knows the remote launch model.
+  restoreSessionModel(sessionId, session);
 
   const sessionModelSelection = getSessionModelSelection(sessionId);
   const sendModel = sessionModelSelection?.model ?? context.model ?? readStoredDefaultModelSafely();
