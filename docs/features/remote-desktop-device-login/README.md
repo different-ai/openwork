@@ -130,8 +130,12 @@ Den and explicitly supplied matching URLs. A pending or failed background featur
 query is unknown, not an OFF answer. Network/5xx discovery failures get at most
 three bounded reads with short pauses; device-code creation is not replayed.
 If Den remains unreachable, the command reports `Couldn't reach <Den host>. Check
-the network and try again.` and exits 1. An explicit deployment OFF response
-reports that device sign-in is unavailable and exits 4.
+the network and try again.` and exits 1. Other Den HTTP 4xx responses report only
+`<Den host> refused the request (HTTP <status>). Check the server address or try
+again later.` and exit 1, without echoing a response body. The command suggests
+`--force` only when the app reports an existing sign-in conflict. Explicit
+deployment OFF and unsupported device-client responses retain exit 4; user denial
+and expiry retain exits 2 and 3.
 
 The shell uses the desktop's existing authenticated `127.0.0.1` control bridge.
 The desktop must be running; a server-only process without a desktop renderer

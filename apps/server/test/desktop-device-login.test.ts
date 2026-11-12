@@ -19,6 +19,7 @@ async function fixture(options: {
   discoveryDelay?: number; actionsDelay?: number; missingAction?: "start" | "status";
   hangActions?: boolean; unauthorized?: boolean; symlinkDiscovery?: boolean;
   networkFailureAt?: "start" | "status"; networkHost?: string; explicitOff?: boolean; localUnsupported?: boolean;
+  refusedAt?: "start" | "status"; httpStatus?: number; alreadySignedIn?: boolean; genericStartFailure?: boolean;
   interruptAfter?: number; signal?: "SIGINT" | "SIGTERM";
 } = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "desktop-device-login-")));
@@ -61,9 +62,15 @@ async function fixture(options: {
       || (input.id === "auth.device-login.status" && options.networkFailureAt === "status")) {
       result = { state: "failed", reason: "den_unreachable", host: options.networkHost ?? "den.example.test", error: secret };
     }
+    if ((input.id === "auth.device-login.start" && options.refusedAt === "start")
+      || (input.id === "auth.device-login.status" && options.refusedAt === "status")) {
+      result = { state: "failed", reason: "den_refused", host: options.networkHost ?? "den.example.test", httpStatus: options.httpStatus ?? 401, error: secret };
+    }
+    if (input.id === "auth.device-login.start" && options.alreadySignedIn) result = { state: "failed", reason: "already_signed_in", error: secret };
     if (input.id === "auth.device-login.start" && options.explicitOff) result = { state: "unsupported" };
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify(input.id === "auth.device-login.start" && options.localUnsupported ? { ok: false, code: "unsupported", error: secret } : { ok: true, result }));
+    const refusedLocally = input.id === "auth.device-login.start" && (options.localUnsupported || options.genericStartFailure);
+    response.end(JSON.stringify(refusedLocally ? { ok: false, code: options.localUnsupported ? "unsupported" : "failed", error: secret } : { ok: true, result }));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -307,6 +314,36 @@ test("only explicit Den unsupported returns exit 4 without browser instructions"
   assert.match(result.stderr, /not available on this server/);
   assert.equal(world.calls.filter((id) => id === "auth.device-login.start").length, 1);
 });
+
+test("only the actual signed-in conflict suggests force", async () => {
+  await using world = await fixture({ alreadySignedIn: true });
+  const result = await world.run();
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "OpenWork is already signed in. Use --force to replace that sign-in.\n");
+  assert.deepEqual(world.calls, ["auth.device-login.start"]);
+});
+
+test("a generic start failure never guesses that the app is signed in", async () => {
+  await using world = await fixture({ genericStartFailure: true });
+  const result = await world.run();
+  assert.equal(result.code, 1);
+  assert.equal(result.stderr, "Device sign-in could not start. Check the OpenWork app and try again.\n");
+  assert.doesNotMatch(result.stderr, /force|already signed/i);
+});
+
+for (const refusedAt of ["start", "status"] satisfies Array<"start" | "status">) {
+  for (const httpStatus of [401, 403, 404, 422]) {
+    test(`Den HTTP ${httpStatus} refusal during ${refusedAt} is not a force hint or flag OFF`, async () => {
+      await using world = await fixture({ refusedAt, httpStatus });
+      const result = await world.run();
+      assert.equal(result.code, 1);
+      assert.equal(result.stderr, `den.example.test refused the request (HTTP ${httpStatus}). Check the server address or try again later.\n`);
+      assert.doesNotMatch(result.stderr, /force|not available|already signed|Bearer|https?:/i);
+      if (refusedAt === "start") assert.equal(result.stdout, "");
+    });
+  }
+}
 
 test("local unsupported receipt is not Den OFF and does not replay start", async () => {
   await using world = await fixture({ localUnsupported: true });

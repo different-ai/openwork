@@ -24,10 +24,14 @@ const statusSchema = z.object({
 });
 
 const actionsSchema = z.object({ ok: z.literal(true), actions: z.array(z.object({ id: z.string() })) });
-const networkFailureSchema = z.object({ state: z.literal("failed"), reason: z.literal("den_unreachable"), host: z.string() });
+const requestFailureSchema = z.discriminatedUnion("reason", [
+  z.object({ state: z.literal("failed"), reason: z.literal("den_unreachable"), host: z.string() }),
+  z.object({ state: z.literal("failed"), reason: z.literal("den_refused"), host: z.string(), httpStatus: z.number().int().min(400).max(499) }),
+]);
+const signedInConflictSchema = z.object({ state: z.literal("failed"), reason: z.literal("already_signed_in") });
 
-function networkFailureMessage(value: unknown): string | undefined {
-  const failure = networkFailureSchema.safeParse(value);
+function requestFailureMessage(value: unknown): string | undefined {
+  const failure = requestFailureSchema.safeParse(value);
   if (!failure.success) return undefined;
   const host = failure.data.host;
   // Only a host (optionally with a port), never a URL, userinfo or terminal text.
@@ -35,7 +39,9 @@ function networkFailureMessage(value: unknown): string | undefined {
     || !URL.canParse(`http://${host}`)) return undefined;
   const url = new URL(`http://${host}`);
   if (!url.hostname || url.username || url.password || url.pathname !== "/" || url.search || url.hash) return undefined;
-  return `Couldn't reach ${host}. Check the network and try again.`;
+  return failure.data.reason === "den_refused"
+    ? `${host} refused the request (HTTP ${failure.data.httpStatus}). Check the server address or try again later.`
+    : `Couldn't reach ${host}. Check the network and try again.`;
 }
 
 class DesktopSetupError extends Error {
@@ -194,16 +200,21 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
       // A local missing/unsupported action is not an explicit Den OFF result.
       console.error(start.code === "unsupported" || start.code === "not_found"
         ? "OpenWork is not ready for device sign-in. Start or update OpenWork, then run this command again."
-        : "Device sign-in could not start. If already signed in, use --force to replace that sign-in.");
+        : "Device sign-in could not start. Check the OpenWork app and try again.");
       return 1;
     }
     if (statusSchema.safeParse(start.result).data?.state === "unsupported") {
       console.error("Device sign-in is not available on this server. Use the sign-in link instead.");
       return 4;
     }
-    const startNetworkFailure = networkFailureMessage(start.result);
-    if (startNetworkFailure) {
-      console.error(startNetworkFailure);
+    if (signedInConflictSchema.safeParse(start.result).success) {
+      cancel = undefined;
+      console.error("OpenWork is already signed in. Use --force to replace that sign-in.");
+      return 1;
+    }
+    const startRequestFailure = requestFailureMessage(start.result);
+    if (startRequestFailure) {
+      console.error(startRequestFailure);
       return 1;
     }
     const started = startedSchema.parse(start.result);
@@ -225,7 +236,7 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
         console.log(`Signed in as ${printable(status.email)} in ${printable(status.org.name)}.`);
         return 0;
       }
-      console.error(networkFailureMessage(receipt.result) ?? (status.state === "unsupported"
+      console.error(requestFailureMessage(receipt.result) ?? (status.state === "unsupported"
         ? "Device sign-in is not available on this server. Use the sign-in link instead."
         : `Device sign-in ${status.state}.`));
       return status.state === "denied" ? 2 : status.state === "expired" ? 3 : status.state === "unsupported" ? 4 : 1;
