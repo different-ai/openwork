@@ -36,6 +36,7 @@ beforeAll(async () => {
   await touch(workspace, "node_modules/pkg/only-in-deps.mjs");
   await touch(workspace, "dist/only-in-build.mjs");
   await touch(workspace, "docs/deep/a/b/c/notes.md");
+  await touch(workspace, "conference-shorts/designs/2026-11-02-v2/boards/overview.jpg");
   await touch(workspace, "notes.md");
   await touch(home, "Downloads/openwork-launch-edit.mp4");
 });
@@ -59,6 +60,11 @@ describe("findWorkspaceFileBySuffix", () => {
   test("uses the folders a partial path names", async () => {
     expect(await findWorkspaceFileBySuffix(workspace, "server/src/main.mjs")).toBe("apps/server/src/main.mjs");
     expect(await findWorkspaceFileBySuffix(workspace, "nowhere/main.mjs")).toBeNull();
+  });
+
+  test("finds a multi-segment path below a project subfolder", async () => {
+    expect(await findWorkspaceFileBySuffix(workspace, "designs/2026-11-02-v2/boards/overview.jpg"))
+      .toBe("conference-shorts/designs/2026-11-02-v2/boards/overview.jpg");
   });
 
   test("skips dependency and build folders and stops at its budget", async () => {
@@ -86,6 +92,19 @@ describe("resolveWorkspaceArtifactTargets", () => {
   test("keeps a path that exists as written", async () => {
     const [item] = await resolveWorkspaceArtifactTargets(workspace, [fileTarget("README.md")], { search: true });
     expect(item).toMatchObject({ value: "README.md", exists: true });
+  });
+
+  test("resolves a chat link written relative to a project subfolder", async () => {
+    const [item] = await resolveWorkspaceArtifactTargets(
+      workspace,
+      [fileTarget("designs/2026-11-02-v2/boards/overview.jpg")],
+      { search: true },
+    );
+    expect(item).toMatchObject({
+      value: "conference-shorts/designs/2026-11-02-v2/boards/overview.jpg",
+      resolvedPath: join(workspace, "conference-shorts/designs/2026-11-02-v2/boards/overview.jpg"),
+      exists: true,
+    });
   });
 
   test("expands ~/ and accepts it only inside the workspace", async () => {
