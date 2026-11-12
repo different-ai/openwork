@@ -7,6 +7,8 @@ files:
   - server/**/*
   - "!server/dist/opencode-plugins/**"
   - package.json
+  # The staged copy below is compiled JavaScript; leave the checkout's source out.
+  - "!node_modules/@openwork/types/{src,tsconfig*.json,tsup.config.ts}"
   - from: .electron-runtime/node_modules
     to: node_modules
 extraResources:

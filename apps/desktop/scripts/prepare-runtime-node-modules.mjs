@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -14,6 +14,9 @@ const requiredRoots = [{
   // Imported by Electron's feature-gated session adapter; ensure plain-node
   // ESM is included even when pnpm's workspace collector skips a symlink.
   name: "@openwork/remote-sessions",
+}, {
+  // The server and the Electron main process import this as plain Node.
+  name: "@openwork/types",
 }];
 
 function packageRoot(name, fromPackageJson, resolveTarget = name) {
@@ -47,6 +50,21 @@ function packageRoot(name, fromPackageJson, resolveTarget = name) {
   throw new Error(`Could not resolve runtime package root for ${name}.`);
 }
 
+/**
+ * Where the packaged copy of @openwork/types serves one export from. In the
+ * checkout most exports resolve to TypeScript source, which Node refuses to
+ * run from node_modules, so there every export points at its compiled file.
+ */
+export function compiledTypesExports(exports) {
+  return Object.fromEntries(Object.entries(exports).map(([subpath, target]) => {
+    const source = target.development;
+    if (typeof source !== "string" || !/^\.\/src\/.+\.ts$/.test(source)) {
+      throw new Error(`@openwork/types export ${subpath} has no TypeScript source under "development".`);
+    }
+    return [subpath, source.replace(/^\.\/src\//, "./dist/").replace(/\.ts$/, ".js")];
+  }));
+}
+
 export function stageRuntimeNodeModules(outdir) {
   const output = resolve(outdir);
   const desktopPackageJson = resolve(desktopRoot, "package.json");
@@ -69,6 +87,10 @@ export function stageRuntimeNodeModules(outdir) {
     if (placements.has(placementKey)) return;
     placements.add(placementKey);
     mkdirSync(dirname(destination), { recursive: true });
+    if (name === "@openwork/types") {
+      stageCompiledTypes(resolvedPackage, destination);
+      return;
+    }
     cpSync(resolvedPackage.root, destination, {
       recursive: true,
       dereference: true,
@@ -93,6 +115,26 @@ export function stageRuntimeNodeModules(outdir) {
         destination,
       );
     }
+  }
+
+  // Ship compiled JavaScript for every @openwork/types export, so no import
+  // of it can reach a TypeScript file whichever export it names.
+  function stageCompiledTypes({ root, packageJson }, destination) {
+    const exports = compiledTypesExports(packageJson.exports);
+    const missing = Object.values(exports).filter((target) => !existsSync(resolve(root, target)));
+    if (missing.length > 0) {
+      throw new Error(`@openwork/types is not built (run pnpm --filter @openwork/types build). Missing: ${missing.join(", ")}`);
+    }
+    cpSync(resolve(root, "dist"), resolve(destination, "dist"), {
+      recursive: true,
+      // Declarations are for the compiler, not the running app.
+      filter: (source) => relative(resolve(root, "dist"), source).split(sep)[0] !== "types",
+    });
+    // The build compiles workspace packages in; only zod stays an import.
+    const manifest = { name: packageJson.name, version: packageJson.version, private: true, type: "module", exports, dependencies: { zod: packageJson.dependencies.zod } };
+    writeFileSync(resolve(destination, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+    staged.push(destination.slice(output.length + 1));
+    stagePackage({ name: "zod", fromPackageJson: resolve(root, "package.json") }, destination);
   }
 
   for (const item of requiredRoots) {
