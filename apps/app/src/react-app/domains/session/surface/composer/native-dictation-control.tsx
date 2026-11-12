@@ -2,6 +2,8 @@ import { CircleAlert, LoaderCircle, Mic, MicOff, Square, X } from "lucide-react"
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { DictationWaveform, type useNativeDictation } from "@openwork/ui/react";
 import { Button } from "@/components/ui/button";
+import { Progress as ProgressPrimitive } from "@base-ui/react/progress";
+import { ProgressIndicator, ProgressTrack, ProgressValue } from "@/components/ui/progress";
 
 export function NativeDictationControl({ dictation, disabled, text }: {
   dictation: ReturnType<typeof useNativeDictation>;
@@ -40,12 +42,16 @@ function LocalDictationControl({ dictation, disabled }: {
     }
   }, [recording]);
   // Retain the outgoing phase during collapse instead of flashing "Listening".
-  const phase = useRef({ listening: false, status: "Starting dictation" });
+  const phase = useRef<{ listening: boolean; installing: boolean; progress: number | null; status: string }>({
+    listening: false, installing: false, progress: null, status: "Starting dictation",
+  });
   if (recording) phase.current = {
     listening: dictation.state === "listening",
+    installing: dictation.installingModel,
+    progress: dictation.modelDownloadProgress,
     status: dictation.installingModel ? "Downloading speech model" : dictation.state === "starting" ? "Starting dictation" : dictation.state === "stopping" ? "Finishing dictation" : "Listening",
   };
-  const { listening, status } = phase.current;
+  const { listening, installing, progress, status } = phase.current;
   const icon = dictation.state === "starting" ? "busy" : dictation.error ? "error" : recording ? "stop" : "mic";
   const iconMotion = "col-start-1 row-start-1 transition-[opacity,scale,translate] duration-150 ease-out motion-reduce:transition-none motion-reduce:scale-100 motion-reduce:translate-y-0";
   const feedback = "rounded-md text-dls-secondary hover:bg-muted/50 hover:text-foreground transition-[background-color,color,opacity,scale] duration-150 ease-out enabled:active:scale-95 motion-reduce:enabled:active:scale-100 motion-reduce:transition-none motion-reduce:scale-100 motion-reduce:translate-y-0";
@@ -61,12 +67,24 @@ function LocalDictationControl({ dictation, disabled }: {
           }}>
           <X size={16} strokeWidth={1.5} />
         </Button>
-        <div className="grid h-9 w-24 shrink-0 place-items-center" aria-hidden="true">
-          <DictationWaveform text="" levels={levels}
-            className={`col-start-1 row-start-1 h-5 w-24 text-dls-secondary transition-[opacity,scale,translate] duration-150 ease-out [&_rect]:transition-transform [&_rect]:duration-120 [&_rect]:ease-out motion-reduce:hidden ${listening ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"}`} />
-          <span className={`col-start-1 row-start-1 w-24 text-center text-xs leading-4 text-dls-secondary transition-[opacity,scale,translate] duration-150 ease-out motion-reduce:transition-none motion-reduce:scale-100 motion-reduce:translate-y-0 ${listening ? "-translate-y-1 opacity-0 motion-reduce:opacity-100" : "translate-y-0 opacity-100"}`}>
-            {status}
-          </span>
+        <div className="grid h-9 w-24 shrink-0 place-items-center">
+          <div className="contents" aria-hidden="true">
+            <DictationWaveform text="" levels={levels}
+              className={`col-start-1 row-start-1 h-5 w-24 text-dls-secondary transition-[opacity,scale,translate] duration-150 ease-out [&_rect]:transition-transform [&_rect]:duration-120 [&_rect]:ease-out motion-reduce:hidden ${listening ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"}`} />
+            <span className={`col-start-1 row-start-1 w-24 text-center text-xs leading-4 text-dls-secondary transition-[opacity,scale,translate] duration-150 ease-out motion-reduce:transition-none motion-reduce:scale-100 motion-reduce:translate-y-0 ${installing ? "opacity-0" : listening ? "-translate-y-1 opacity-0 motion-reduce:opacity-100" : "translate-y-0 opacity-100"}`}>
+              {status}
+            </span>
+          </div>
+          <ProgressPrimitive.Root value={progress === null ? null : Math.round(progress * 100)}
+            aria-label="Downloading speech model" aria-hidden={!installing || !recording} title="Downloading speech model"
+            className={`col-start-1 row-start-1 grid w-24 gap-1 transition-opacity duration-150 ease-out motion-reduce:transition-none ${installing ? "opacity-100" : "opacity-0"}`}>
+            <div className="flex items-center justify-between text-xs leading-4 text-dls-secondary" aria-hidden="true">
+              <span>Download</span><ProgressValue className="text-xs leading-4 text-dls-secondary" />
+            </div>
+            <ProgressTrack className="h-1.5">
+              <ProgressIndicator className={`rounded-full transition-[width] duration-150 ease-out data-[indeterminate]:w-1/3 motion-reduce:transition-none motion-reduce:animate-none ${recording && installing && progress === null ? "animate-pulse" : ""}`} />
+            </ProgressTrack>
+          </ProgressPrimitive.Root>
         </div>
       </div>
     </div>

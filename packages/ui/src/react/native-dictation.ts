@@ -45,6 +45,7 @@ export function useNativeDictation(options: {
   const [error, setError] = useState<string | null>(null)
   const [meter] = useState(createMeter)
   const [installingModel, setInstallingModel] = useState(false)
+  const [modelDownloadProgress, setModelDownloadProgress] = useState<number | null>(null)
   const session = useRef<ReturnType<typeof createBrowserDictation> | null>(null)
   const request = useRef<AbortController | null>(null)
   const generation = useRef(0)
@@ -56,7 +57,7 @@ export function useNativeDictation(options: {
   const available = native || Boolean(Constructor)
   useEffect(() => { setPlatform(dictationPlatform(navigator.userAgent, navigator.maxTouchPoints)) }, [])
   useEffect(() => {
-    setState("idle"); setNativeMode(false); setError(null); meter.reset(); setInstallingModel(false)
+    setState("idle"); setNativeMode(false); setError(null); meter.reset(); setInstallingModel(false); setModelDownloadProgress(null)
     return () => {
       generation.current++
       request.current?.abort(); request.current = null
@@ -75,7 +76,7 @@ export function useNativeDictation(options: {
     generation.current++
     request.current?.abort(); request.current = null
     session.current?.cancel(); session.current = null
-    setState("idle"); setNativeMode(false); meter.reset(); setInstallingModel(false)
+    setState("idle"); setNativeMode(false); meter.reset(); setInstallingModel(false); setModelDownloadProgress(null)
   }
   async function finish() {
     const id = generation.current
@@ -101,6 +102,7 @@ export function useNativeDictation(options: {
     setError(null)
     meter.reset()
     setInstallingModel(false)
+    setModelDownloadProgress(null)
     if (native) return launchNative()
     const Speech = options.recognition ?? browserSpeechConstructor()
     if (!Speech) return
@@ -116,7 +118,11 @@ export function useNativeDictation(options: {
       language: options.recognition ? navigator.language || "en-US" : document.documentElement.lang || navigator.language || "en-US",
       finalizationTimeoutMs: options.local ? 6000 : undefined,
       onLevel: level => { if (id === generation.current) meter.push(level) },
-      onStatus: () => { if (id === generation.current) setInstallingModel(true) },
+      onStatus: (_status, progress) => {
+        if (id !== generation.current || listened) return
+        setInstallingModel(true)
+        setModelDownloadProgress(progress ?? null)
+      },
       onText: text => { if (id === generation.current) currentOptions.current.onText(text) },
       onState: next => {
         if (id !== generation.current) return
@@ -124,6 +130,7 @@ export function useNativeDictation(options: {
         setState(next)
         if (next !== "starting") setInstallingModel(false)
         if (next !== "idle") return
+        setModelDownloadProgress(null)
         session.current = null
         if (failed !== null) void launchNative(failed)
       },
@@ -154,7 +161,7 @@ export function useNativeDictation(options: {
     finally { if (id === generation.current) { request.current = null; setState("idle") } }
   }
   return {
-    available, error, nativeMode, state, meter, installingModel,
+    available, error, nativeMode, state, meter, installingModel, modelDownloadProgress,
     local: Boolean(options.local),
     localRecording: Boolean(options.local && !nativeMode && state !== "idle"),
     active: options.enabled && (state !== "idle" || nativeMode),

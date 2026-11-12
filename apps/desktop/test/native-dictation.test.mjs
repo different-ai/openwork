@@ -170,3 +170,14 @@ test("model installation reports only the known state and actionable errors", ()
   assert.deepEqual(helperEvent('{"type":"error","code":"model-unavailable"}'), { type: "error", code: "model-unavailable" });
   assert.deepEqual(helperEvent('{"type":"error","code":"no-speech"}'), { type: "error", code: "no-speech" });
 });
+
+test("model download progress crosses the bridge only as a finite fraction", () => {
+  for (const progress of [0, 0.42, 1]) {
+    assert.deepEqual(helperEvent(JSON.stringify({ type: "status", status: "installing", progress, path: "discard" })),
+      { type: "status", status: "installing", progress });
+  }
+  for (const progress of [-0.1, 1.1, null, "0.42"]) {
+    assert.equal(helperEvent(JSON.stringify({ type: "status", status: "installing", progress })), null);
+  }
+  assert.equal(helperEvent('{"type":"status","status":"installing","progress":1e400}'), null);
+});

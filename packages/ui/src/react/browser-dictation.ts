@@ -8,7 +8,7 @@ export interface BrowserSpeechRecognition {
   onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
   /** Optional host-provided microphone meter; browsers need no second stream. */
   onlevel?: ((level: number) => void) | null
-  onstatus?: ((status: "installing") => void) | null
+  onstatus?: ((status: "installing", progress?: number) => void) | null
   start(): void
   stop(): void
   abort(): void
@@ -42,7 +42,7 @@ export function createBrowserDictation(options: {
   language: string
   finalizationTimeoutMs?: number
   onLevel?(level: number): void
-  onStatus?(status: "installing"): void
+  onStatus?(status: "installing", progress?: number): void
   onText(text: string): void
   onState(state: "starting" | "listening" | "stopping" | "idle"): void
   onError(message: string, code?: string): void
@@ -77,7 +77,10 @@ export function createBrowserDictation(options: {
   recognition.onstart = () => { if (live) options.onState("listening") }
   recognition.onend = () => { if (live) endSession() }
   recognition.onlevel = level => { if (live && !stopping && Number.isFinite(level)) options.onLevel?.(Math.max(0, Math.min(1, level))) }
-  recognition.onstatus = status => { if (live && !stopping) options.onStatus?.(status) }
+  recognition.onstatus = (status, progress) => {
+    if (live && !stopping) options.onStatus?.(status,
+      typeof progress === "number" && Number.isFinite(progress) && progress >= 0 && progress <= 1 ? progress : undefined)
+  }
   recognition.onerror = event => {
     if (!live) return
     if (event.error !== "aborted") options.onError(speechError(event.error), event.error)

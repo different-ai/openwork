@@ -62,7 +62,12 @@ export function helperEvent(line) {
   let value;
   try { value = JSON.parse(line) } catch { return null }
   if (!value || !helperEvents.has(value.type)) return null;
-  if (value.type === "status") return value.status === "installing" ? { type: "status", status: "installing" } : null;
+  if (value.type === "status") {
+    if (value.status !== "installing") return null;
+    if (value.progress === undefined) return { type: "status", status: "installing" };
+    if (typeof value.progress !== "number" || !Number.isFinite(value.progress) || value.progress < 0 || value.progress > 1) return null;
+    return { type: "status", status: "installing", progress: value.progress };
+  }
   if (value.type === "level") {
     if (typeof value.level !== "number" || !Number.isFinite(value.level) || value.level < 0 || value.level > 1) return null;
     return { type: "level", level: value.level };

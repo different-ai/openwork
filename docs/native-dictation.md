@@ -46,7 +46,9 @@ accessible alert. There are no automatic capture retries.
 
 The app calls no application-owned transcription endpoint. On macOS 26 the
 helper requests system-managed language assets from Apple when needed; the
-first download needs a connection. The bundled macOS helper transcribes on
+first download needs a connection and shows a cancellable progress bar with
+Apple-reported completion. Until a measurable total is available, the bar
+is indeterminate. The bundled macOS helper transcribes on
 device and does not
 fall back to a network-backed service when it cannot start. Windows speech
 recognition is online. Browser recognition is

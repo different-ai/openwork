@@ -32,7 +32,7 @@ moving meter with a static Listening label.
 
 ![Stopped text ready to edit](finished.png)
 
-![Cancellable first-use model setup at 390 px](model-setup.png)
+![Model download progress at 390 px (42% fixture)](model-setup.png)
 
 [Watch the recording and Send transitions](transitions.mp4).
 
@@ -58,7 +58,10 @@ scaling and spinner animation and uses a static Listening label.
 Browser frame sampling verified intermediate opening/closing widths, a fixed
 Send position and equal widths for setup/listening/finishing. A 390 px check
 covered rapid start/cancel and focus restoration without overflow. Reduced
-motion had zero active animations across all phases. These are focused
+motion had zero active animations across all phases. The download bar uses
+the shared progress primitive and eases between measured values; unknown
+progress pulses only while setup is active. A 42% fixture filled 40.3 px of
+the 96 px track, and completion remained at 100% while fading into recording. These are focused
 interaction checks, not a device-wide rendering benchmark.
 
 ## Local recognition improvements
@@ -69,8 +72,10 @@ interaction checks, not a device-wide rendering benchmark.
   it becomes final without being reissued. `SpeechAnalyzer` finalizes through
   the end of the input stream before a requested Send proceeds.
 - Ask `AssetInventory` for the language asset and install it when needed.
-  “Downloading speech model” is visible and cancellable; the microphone starts
-  only after the model and analyzer are ready. The system shares and manages
+  A compact progress bar and percentage show the request's actual
+  `Progress.fractionCompleted`. Until Apple reports a measurable total, the
+  bar is indeterminate with no invented percentage. It remains cancellable;
+  the microphone starts only after the model and analyzer are ready. The system shares and manages
   these assets. The first download needs a connection; transcription is local.
 - Convert the microphone format into the analyzer’s chosen format, copy tap
   memory before queueing it, drain resampling at Stop, and reject an overloaded
@@ -137,6 +142,11 @@ alongside `native/dictation/audio-input.swift`, `transcript.swift` and
 `-D OPENWORK_SPEECH_ANALYZER`. Pass a synthesized audio file. This is an opt-in
 hardware check because Apple may download a system language asset; regular
 native unit tests perform no downloads and never open the microphone.
+
+The progress follow-up smoke reused the installed English model and reported
+completion before ready. Intermediate progress, unknown totals, failure/retry
+reset and late-event rejection are covered by deterministic UI/bridge tests;
+a fresh asset download was not forced for this check.
 
 ## Acoustic comparison
 

@@ -18,6 +18,8 @@ final class AnalyzerDictation: DictationSession {
   private var results: Task<Void, Error>?
   private var completion: Task<Void, Never>?
   private var installation: AssetInstallationRequest?
+  private var installationObservation: NSKeyValueObservation?
+  private var installationPercent: Int?
   private var transcript = DictationTranscript()
   private var tapping = false
   private var stopping = false
@@ -44,7 +46,23 @@ final class AnalyzerDictation: DictationSession {
           guard !finished else { return }
           installation = request
           emit(["type": "status", "status": "installing"])
+          installationObservation = request.progress.observe(\.fractionCompleted, options: [.initial, .new]) { [weak self, weak request] progress, _ in
+            let fraction = progress.fractionCompleted
+            let percent = !progress.isIndeterminate && progress.totalUnitCount > 0 && fraction.isFinite
+              ? Int((min(1, max(0, fraction)) * 100).rounded(.down)) : nil
+            DispatchQueue.main.async {
+              guard let self, let request, !self.finished, self.installation === request,
+                    self.installationPercent != percent else { return }
+              self.installationPercent = percent
+              var event: [String: Any] = ["type": "status", "status": "installing"]
+              if let percent { event["progress"] = Double(percent) / 100 }
+              emit(event)
+            }
+          }
           try await request.downloadAndInstall()
+          installationObservation?.invalidate(); installationObservation = nil
+          guard !finished else { return }
+          emit(["type": "status", "status": "installing", "progress": 1.0])
           installation = nil
         }
         assetsReady = true
@@ -162,7 +180,9 @@ final class AnalyzerDictation: DictationSession {
     guard !finished else { return }
     finished = true
     stopMicrophone()
+    installationObservation?.invalidate(); installationObservation = nil
     installation?.progress.cancel()
+    installation = nil
     startup?.cancel(); completion?.cancel(); results?.cancel()
     input.continuation.finish()
     Task { await analyzer.cancelAndFinishNow(); exit(0) }

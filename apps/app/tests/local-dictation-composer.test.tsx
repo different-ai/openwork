@@ -12,7 +12,7 @@ class Recognition {
   onerror: ((event: { error: string }) => void) | null = null;
   onresult: ((event: { results: Array<Array<{ transcript: string }>> }) => void) | null = null;
   onlevel: ((level: number) => void) | null = null;
-  onstatus: ((status: "installing") => void) | null = null;
+  onstatus: ((status: "installing", progress?: number) => void) | null = null;
   constructor() { latest = this; }
   start() { if (prepareModel) this.onstatus?.("installing"); else this.onstart?.(); }
   stop() {}
@@ -179,5 +179,46 @@ test("Stop finishes the live draft for editing without submitting", async () => 
     await act(async () => { cancel?.focus(); cancel?.click() });
     expect(document.activeElement === microphone).toBe(true);
     expect(container.querySelector('[data-dictation-expansion]')?.hasAttribute("inert")).toBe(true);
+  } finally { prepareModel = false; await act(async () => { root.unmount() }); client.clear(); container.remove(); }
+});
+
+test("model download shows measured progress, resets on retry and ignores late updates", async () => {
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  function Harness() {
+    const [text, setText] = useState("");
+    return <QueryClientProvider client={client}><ReactSessionComposer {...composerProps(text, setText, noop)} /></QueryClientProvider>;
+  }
+  const progress = () => container.querySelector('[role="progressbar"][aria-hidden="false"]');
+  async function start() {
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Dictate message"]')?.click() });
+  }
+  try {
+    prepareModel = true;
+    await act(async () => { root.render(<Harness />) });
+    await start();
+    expect(progress()?.getAttribute("aria-label")).toBe("Downloading speech model");
+    expect(progress()?.hasAttribute("aria-valuenow")).toBe(false);
+    for (const value of [0, 0.29, 0.42, 1]) {
+      await act(async () => { latest?.onstatus?.("installing", value) });
+      expect(progress()?.getAttribute("aria-valuenow")).toBe(String(Math.round(value * 100)));
+      expect(progress()?.textContent).toContain(`${Math.round(value * 100)}%`);
+    }
+    const cancelled = latest;
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Cancel dictation"]')?.click() });
+    await act(async () => { cancelled?.onstatus?.("installing", 0.8) });
+    expect(progress()).toBeNull();
+    await start();
+    expect(progress()?.hasAttribute("aria-valuenow")).toBe(false);
+    await act(async () => { latest?.onstatus?.("installing", 0.5); latest?.onerror?.({ error: "model-unavailable" }) });
+    expect(progress()).toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("local speech model couldn’t download");
+    await start();
+    expect(progress()?.hasAttribute("aria-valuenow")).toBe(false);
+    await act(async () => { latest?.onstatus?.("installing", 1); latest?.onstart?.(); latest?.onstatus?.("installing", 0.75) });
+    expect(progress()).toBeNull();
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("Listening");
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("100");
   } finally { prepareModel = false; await act(async () => { root.unmount() }); client.clear(); container.remove(); }
 });
