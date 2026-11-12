@@ -27,7 +27,7 @@ const CLIP = Uint8Array.from({ length: DOCUMENT_MEDIA_CHUNK_BYTES + 1000 }, (_, 
 const stored: Record<string, { type: string; size: number }> = { clip: { type: "video/mp4", size: CLIP.byteLength }, drawing: { type: "image/svg+xml", size: 64 }, page: { type: "text/html", size: 64 } }
 const file = (id: string, driveId: string) => ({ id, name: `${id}.pdf`, size: stored[id]?.size ?? 1, eTag: "\"1\"", lastModifiedDateTime: "2026-10-20T10:00:00Z", file: { mimeType: stored[id]?.type ?? "application/pdf" }, parentReference: { driveId } })
 
-function harness(input: { features: string[]; scopes: string[]; media?: boolean }) {
+function harness(input: { features: string[]; scopes: string[] }) {
   const paths: string[] = []
   const ranges: (string | null)[] = []
   const fetch = (async (target: string | URL | Request, init?: RequestInit) => {
@@ -44,7 +44,7 @@ function harness(input: { features: string[]; scopes: string[]; media?: boolean 
     return json(200, file(url.pathname.split("/").at(-1) ?? "", url.pathname.includes("b!foreign") ? "b!foreign" : "b!own"))
   }) as typeof globalThis.fetch
   const member = async (c: { set: (key: string, value: unknown) => void }, next: () => Promise<void>) => {
-    c.set("organizationContext", { organization: { id: "org_unit" }, currentMember: { id: "member_unit", userId: "user_unit" }, features: { workbotDocuments: true, workbotDocumentEditing: true, workbotWorkspaceAssistant: true, workbotDocumentMedia: input.media === true } })
+    c.set("organizationContext", { organization: { id: "org_unit" }, currentMember: { id: "member_unit", userId: "user_unit" }, features: { workbotDocuments: true, workbotDocumentEditing: true, workbotWorkspaceAssistant: true } })
     await next()
   }
   const app = new Hono()
@@ -96,18 +96,10 @@ test("a media player's range is shortened to one chunk and to the file, and only
   for (const type of ["image/svg+xml", "text/html", "application/xhtml+xml", "video/x-matroska", "application/octet-stream", "image/png"]) assert.equal(documentMediaKind(type), null, type)
 })
 
-test("a OneDrive video plays in byte ranges once Documents media is on, and types that can run script never do", async () => {
+test("a OneDrive video plays in byte ranges with Documents, and types that can run script never do", async () => {
   const clip = encodeMicrosoftDocumentId("b!own", "clip")
   const content = `/v1/documents/microsoft-365/files/${clip}/content?connectionId=microsoft-365`
-  const scopes = { features: ["filesRead"], scopes: ["Files.Read"] }
-
-  const off = harness(scopes)
-  assert.equal((await (await off.request(`/v1/documents/microsoft-365/files/${clip}/editor`)).json()).media, undefined, "off: the preview is not marked playable")
-  const refused = await off.request(content, { range: "bytes=0-" })
-  assert.equal(refused.status, 400)
-  assert.equal(off.ranges.length, 0, "off: no bytes are read from OneDrive")
-
-  const on = harness({ ...scopes, media: true })
+  const on = harness({ features: ["filesRead"], scopes: ["Files.Read"] })
   const opened = await (await on.request(`/v1/documents/microsoft-365/files/${clip}/editor`)).json()
   assert.deepEqual([opened.kind, opened.media, opened.mimeType], ["preview", "video", "video/mp4"])
   const first = await on.request(content, { range: "bytes=0-" })

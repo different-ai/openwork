@@ -171,6 +171,16 @@
               ],
               "description": "Desktop: OpenWork Free listed like any other model: The free model shows in the model picker under its own name (GPT-6 Luna) with the same row as every other model, stays selectable when its usage limit is used up, and the limit message appears in the chat after sending. Renders DEN_FEATURE_PLAIN_FREE_MODEL."
             },
+            "singleOpenWorkModelsRow": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: one OpenWork Models row you can turn off: Settings › AI Providers and Connect a provider list OpenWork Models once. When the organization pays for it, the organization's row replaces the free on-device row, and it has Turn off / Turn on on this device: for every member, or only for admins when the organization manages models (Only models you provide). Renders DEN_FEATURE_SINGLE_OPEN_WORK_MODELS_ROW."
+            },
             "settledSessions": {
               "enum": [
                 "",
@@ -230,6 +240,16 @@
                 false
               ],
               "description": "Desktop: agents ask and keep working: Agents ask in chat instead of ending a turn to wait for your reply. A question that the rest of the work does not depend on stays open while the agent keeps going, and your answer reaches it even after its turn has ended. Renders DEN_FEATURE_AGENT_QUESTIONS."
+            },
+            "followUpSuggestions": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: suggested follow-ups: After a reply finishes, the empty message box can show a suggested next message in gray. Tab fills it in; typing anything else ignores it. A small model writes the suggestion, and nothing shows when it has no clear next step to offer. Renders DEN_FEATURE_FOLLOW_UP_SUGGESTIONS."
             },
             "steadyLiveTurn": {
               "enum": [
@@ -419,7 +439,7 @@
                 true,
                 false
               ],
-              "description": "Workbot Documents: Members browse recent Google Drive files and folders in Workbot, open documents in tabs, and save supported text and spreadsheet edits to Drive. Renders DEN_FEATURE_WORKBOT_DOCUMENTS."
+              "description": "Workbot Documents: Members browse recent Google Drive files and folders in Workbot, open documents in tabs, play video and audio files in the tab, and save supported text and spreadsheet edits to Drive. Renders DEN_FEATURE_WORKBOT_DOCUMENTS."
             },
             "workbotDocumentEditing": {
               "enum": [
@@ -430,16 +450,6 @@
                 false
               ],
               "description": "Workbot Documents: editing: Members choose Edit from a document preview. Full Office editing starts their Cloud workspace only when requested. Requires Workbot Documents. Renders DEN_FEATURE_WORKBOT_DOCUMENT_EDITING."
-            },
-            "workbotDocumentMedia": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Workbot Documents: video and audio: Members play video and audio files from Drive and OneDrive in the document's tab, with seeking, instead of only a link to the original. Requires Workbot Documents. Renders DEN_FEATURE_WORKBOT_DOCUMENT_MEDIA."
             },
             "workbotWorkspaceAssistant": {
               "enum": [
@@ -779,7 +789,17 @@
                 true,
                 false
               ],
-              "description": "Sessions on my computers: My Sessions in Den lists a member's own sessions across their computers and lets them follow one, send a follow-up, stop it and answer or dismiss what it waits on. Organization owners and admins choose whether members may let other devices reach every session on their own computer or only sessions started remotely; each member then chooses per computer in Desktop Settings > Devices. Reaching a session that was started on the computer needs both choices and is enforced on that computer. Off, remote callers reach only sessions started remotely, as before, and computers report no sessions. Renders DEN_FEATURE_REMOTE_SESSION_ACCESS."
+              "description": "Desktop: other devices can open sessions started on a computer: A member can let their other devices, Workbot and agents working for them open sessions they started on one of their own computers, continue them, stop them and answer what they wait on, not only tasks that were started remotely. Organization owners choose whether members may allow it (Manage > Computers > Remote access); each member then allows it per computer in Desktop Settings > Devices. It needs both choices and is enforced on that computer. Off, other devices reach only sessions started remotely, as before, and computers report no sessions. Renders DEN_FEATURE_REMOTE_SESSION_ACCESS."
+            },
+            "remoteTasksOptIn": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: other devices reach a computer only after its owner allows it: A signed-in computer takes nothing from its owner's other devices, Workbot or agents until the owner allows it in Desktop Settings > Devices: no task can be started there and no session reached. Off, a computer whose owner has not chosen keeps taking tasks started remotely, as before. In both cases the owner can turn a computer off, and organization owners can turn remote access off for everyone on Manage > Computers. Renders DEN_FEATURE_REMOTE_TASKS_OPT_IN."
             },
             "remoteSessionPush": {
               "enum": [

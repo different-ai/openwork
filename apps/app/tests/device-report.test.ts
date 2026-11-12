@@ -319,11 +319,11 @@ test("an older Den, which knows nothing of disconnecting, still lists devices an
   })
   try {
     const client = createDenClient({ baseUrl: "https://den.example.test", token: "fixture-token" })
-    expect(await client.listRemoteDevices("org_fixture")).toEqual([{ ...device, disconnectedAt: null, canDisconnect: false }])
+    expect(await client.listRemoteDevices("org_fixture")).toEqual([{ ...device, disconnectedAt: null, canDisconnect: false, remoteAccess: null }])
     const report = buildDeviceReport(identity, snapshot())
     const answer = await client.reportThisComputer("org_fixture", report!)
     expect(answer.reportAfterSeconds).toBe(300)
-    expect(answer.device).toEqual({ ...device, disconnectedAt: null, canDisconnect: false })
+    expect(answer.device).toEqual({ ...device, disconnectedAt: null, canDisconnect: false, remoteAccess: null })
     expect(requests).toEqual(["GET /v1/remote-devices", "PUT /v1/remote-devices/this-computer"])
   } finally { fetch.mockRestore() }
 })

@@ -9,6 +9,7 @@ import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   AUTOMATION_DESKTOP_RUNNER_CAPABILITY_LIMIT,
   REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY,
+  REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY,
   REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
   REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
   REMOTE_SESSION_ONLY_RUNNER_CAPABILITY,
@@ -74,6 +75,7 @@ const attachCommand: RemoteSessionCommand = {
   targetComputerId: "unit-computer", targetWorkspaceId: "workspace_local", targetSessionId: "ses_local",
 }
 const accessCapabilities: AutomationDesktopRunnerCapability[] = [...modernCapabilities, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY]
+const choiceCapabilities: AutomationDesktopRunnerCapability[] = [...accessCapabilities, REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY]
 
 function fixtures(options: {
   active?: boolean
@@ -259,10 +261,10 @@ test("released runners discover only pending remote work, never recovery claims"
 })
 
 test("session access reaches only runners that registered it, and only while the feature is on", async () => {
-  const allowed = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, ceiling: "all" } })
+  const allowed = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, optIn: false, devices: false, ceiling: "all" } })
   for (const path of ["/v1/session-runners/work", "/v1/automation-runner/work"]) {
     const body = await (await allowed.app.request(path, { headers: allowed.headers })).json()
-    assert.deepEqual(body.sessionAccess, { ceiling: "all" })
+    assert.deepEqual(body.sessionAccess, { ceiling: "all", optIn: false })
     assert.deepEqual(body.items.filter((item: { kind?: string }) => item.kind?.startsWith("remote_session_")), [
       { kind: "remote_session_request", requestId: request.id },
       { kind: "remote_session_create", commandId: command.id },
@@ -273,12 +275,12 @@ test("session access reaches only runners that registered it, and only while the
   assert.ok(allowed.calls.includes("recover-attach"))
 
   // A lowered ceiling is still sent, so the computer narrows at once.
-  const capped = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, ceiling: "created" } })
-  assert.deepEqual((await (await capped.app.request("/v1/session-runners/work", { headers: capped.headers })).json()).sessionAccess, { ceiling: "created" })
+  const capped = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, optIn: false, devices: false, ceiling: "created" } })
+  assert.deepEqual((await (await capped.app.request("/v1/session-runners/work", { headers: capped.headers })).json()).sessionAccess, { ceiling: "created", optIn: false })
 
   // Feature off, or a runner that never registered the capability: the released response, and no attach listing at all.
   for (const quiet of [
-    fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: false, ceiling: "created" } }),
+    fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: false, optIn: false, devices: false, ceiling: "created" } }),
     fixtures(),
   ]) {
     const body = await (await quiet.app.request("/v1/session-runners/work", { headers: quiet.headers })).json()
@@ -295,12 +297,12 @@ test("an attach command is claimed only by a runner that can refuse a session, a
   assert.equal(refused.status, 403)
   assert.deepEqual(await refused.json(), { error: "runner_capability_missing" })
 
-  const off = fixtures({ claimed: attachCommand, capabilities: accessCapabilities, sessionAccess: { enabled: false, ceiling: "created" } })
+  const off = fixtures({ claimed: attachCommand, capabilities: accessCapabilities, sessionAccess: { enabled: false, optIn: false, devices: false, ceiling: "created" } })
   const disabled = await off.app.request(path, { method: "POST", headers: off.headers })
   assert.equal(disabled.status, 404)
   assert.deepEqual(await disabled.json(), { error: "feature_disabled" })
 
-  const capable = fixtures({ claimed: attachCommand, capabilities: accessCapabilities, sessionAccess: { enabled: true, ceiling: "all" } })
+  const capable = fixtures({ claimed: attachCommand, capabilities: accessCapabilities, sessionAccess: { enabled: true, optIn: false, devices: false, ceiling: "all" } })
   const claimed = await capable.app.request(path, { method: "POST", headers: capable.headers })
   assert.equal(claimed.status, 200)
   assert.deepEqual((await claimed.json()).assignment, {
@@ -322,16 +324,16 @@ test("a runner's session report is kept only as far as the organization allows",
 
   const released = fixtures()
   assert.equal((await put(released)).status, 403)
-  const off = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: false, ceiling: "created" } })
+  const off = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: false, optIn: false, devices: false, ceiling: "created" } })
   const disabled = await put(off)
   assert.equal(disabled.status, 404)
   assert.deepEqual(await disabled.json(), { error: "feature_disabled" })
   assert.deepEqual([...released.reports, ...off.reports], [])
 
-  const allowed = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, ceiling: "all" } })
+  const allowed = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, optIn: false, devices: false, ceiling: "all" } })
   const stored = await put(allowed)
   assert.equal(stored.status, 200)
-  assert.deepEqual((await stored.json()).sessionAccess, { ceiling: "all" })
+  assert.deepEqual((await stored.json()).sessionAccess, { ceiling: "all", optIn: false })
   assert.deepEqual(allowed.reports, [report])
   assert.deepEqual(allowed.detached, [], "a computer that shares its sessions keeps its attaches")
   assert.equal((await put(allowed, { access: "created", sessions: report.sessions })).status, 400, "sessions are reported only while access is all")
@@ -340,14 +342,14 @@ test("a runner's session report is kept only as far as the organization allows",
   assert.equal((await put(allowed, { access: "created", sessions: [] })).status, 200)
   assert.deepEqual(allowed.detached, [thisRunner])
 
-  const capped = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, ceiling: "created" } })
+  const capped = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, optIn: false, devices: false, ceiling: "created" } })
   const narrowed = await put(capped)
   assert.equal(narrowed.status, 200)
-  assert.deepEqual((await narrowed.json()).sessionAccess, { ceiling: "created" })
+  assert.deepEqual((await narrowed.json()).sessionAccess, { ceiling: "created", optIn: false })
   assert.deepEqual(capped.reports, [{ access: "created", sessions: [] }], "titles the organization does not allow are never kept")
   assert.deepEqual(capped.detached, [thisRunner], "a report stored as created detaches too")
 
-  const unregistered = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, ceiling: "all" }, registered: false })
+  const unregistered = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, optIn: false, devices: false, ceiling: "all" }, registered: false })
   const missing = await put(unregistered)
   assert.equal(missing.status, 404)
   assert.deepEqual(await missing.json(), { error: "runner_not_registered" })
@@ -442,6 +444,81 @@ test("only a sign-in made after the disconnect connects a computer again", () =>
   assert.equal(signInSessionOf(request({ id: "mcp_internal", createdAt })), null)
   assert.equal(signInSessionOf(request({ id, createdAt }, { id: "key_unit" })), null)
   assert.equal(signInSessionOf(request(null)), null)
+})
+
+test("a runner is told the policy, and reports under it, while the opt-in is on or the organization turned access off", async () => {
+  const optIn = { enabled: false, optIn: true, devices: false, ceiling: "created" } as const
+  const organizationOff = { enabled: false, optIn: false, devices: false, ceiling: "off" } as const
+  const put = (fixture: ReturnType<typeof fixtures>, body: unknown) =>
+    fixture.app.request("/v1/session-runners/sessions", { method: "PUT", headers: fixture.headers, body: JSON.stringify(body) })
+  const thisRunner = { organizationId: scope.organizationId, runner: { ownerMemberId: scope.ownerMemberId, runnerId: scope.runnerId } }
+
+  for (const [policy, told] of [[optIn, { ceiling: "created", optIn: true }], [organizationOff, { ceiling: "off", optIn: false }]] as const) {
+    const fixture = fixtures({ capabilities: accessCapabilities, sessionAccess: policy })
+    for (const path of ["/v1/session-runners/work", "/v1/automation-runner/work"]) {
+      const body = await (await fixture.app.request(path, { headers: fixture.headers })).json()
+      assert.deepEqual(body.sessionAccess, told)
+      // Attaches reach sessions started on the computer: without that feature none is listed.
+      assert.equal(body.items.some((item: { kind?: string }) => item.kind === "remote_session_attach"), false)
+    }
+    assert.equal(fixture.calls.some((call) => call.includes("attach")), false)
+    const claim = fixtures({ claimed: attachCommand, capabilities: accessCapabilities, sessionAccess: policy })
+    const refused = await claim.app.request(`/v1/remote-session-commands/${attachCommand.id}/claim`, { method: "POST", headers: claim.headers })
+    assert.deepEqual([refused.status, await refused.json()], [404, { error: "feature_disabled" }])
+  }
+
+  // An app whose owner can choose says whether they did: until then Den keeps nothing and works out the default.
+  const localSessions = [{ workspaceId: "workspace_local", sessionId: "ses_local", title: "Local", engine: "v2", updatedAt: now }]
+  const all = { access: "all", sessions: localSessions }
+  const choosing = fixtures({ capabilities: choiceCapabilities, sessionAccess: optIn })
+  const unchosen = await put(choosing, { access: "off", chosen: false, sessions: [] })
+  assert.equal(unchosen.status, 200)
+  assert.deepEqual((await unchosen.json()).sessionAccess, { ceiling: "created", optIn: true })
+  for (const body of [{ access: "created", sessions: [] }, { access: "off", chosen: true, sessions: [] }, { access: "created", chosen: true, sessions: [] }, { ...all, chosen: true }]) {
+    assert.equal((await put(choosing, body)).status, 200)
+  }
+  assert.equal((await put(choosing, { access: "off", chosen: true, sessions: localSessions })).status, 400)
+  assert.deepEqual(choosing.reports, [
+    { access: null, sessions: [] }, { access: null, sessions: [] }, { access: "off", sessions: [] }, { access: "created", sessions: [] },
+    // What is kept never exceeds the ceiling.
+    { access: "created", sessions: [] },
+  ])
+  assert.deepEqual(choosing.detached, [thisRunner, thisRunner, thisRunner, thisRunner, thisRunner], "nothing kept as all leaves an attach standing")
+  const sharing = fixtures({ capabilities: choiceCapabilities, sessionAccess: { enabled: true, optIn: true, devices: false, ceiling: "all" } })
+  assert.equal((await put(sharing, { ...all, chosen: true })).status, 200)
+  assert.deepEqual([sharing.reports, sharing.detached], [[all], []])
+
+  // An app released before the choice reports created or all by itself. Under the opt-in that computer is off,
+  // so Den keeps created at most and none of its session titles; without the opt-in it is kept as always.
+  const released = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, optIn: true, devices: false, ceiling: "all" } })
+  assert.equal((await put(released, all)).status, 200)
+  assert.equal((await put(released, { access: "created", sessions: [] })).status, 200)
+  assert.deepEqual(released.reports, [{ access: "created", sessions: [] }, { access: "created", sessions: [] }])
+  const asBefore = fixtures({ capabilities: accessCapabilities, sessionAccess: { enabled: true, optIn: false, devices: false, ceiling: "all" } })
+  assert.equal((await put(asBefore, { ...all, chosen: true })).status, 200)
+  assert.deepEqual(asBefore.reports, [all], "chosen means nothing from an app that cannot ask its owner")
+
+  const everyone = fixtures({ capabilities: choiceCapabilities, sessionAccess: organizationOff })
+  for (const body of [{ ...all, chosen: true }, { access: "created", chosen: true, sessions: [] }, { access: "off", chosen: true, sessions: [] }]) {
+    const stored = await put(everyone, body)
+    assert.equal(stored.status, 200)
+    assert.deepEqual((await stored.json()).sessionAccess, { ceiling: "off", optIn: false })
+  }
+  assert.deepEqual(everyone.reports, [{ access: "off", sessions: [] }, { access: "off", sessions: [] }, { access: "off", sessions: [] }])
+
+  // An app with the choice but unable to refuse a session is told the policy and reports, and is handed no attach.
+  const choiceOnly = fixtures({ capabilities: [...modernCapabilities, REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY], sessionAccess: { enabled: true, optIn: true, devices: false, ceiling: "all" } })
+  const work = await (await choiceOnly.app.request("/v1/session-runners/work", { headers: choiceOnly.headers })).json()
+  assert.deepEqual(work.sessionAccess, { ceiling: "all", optIn: true })
+  assert.equal(work.items.some((item: { kind?: string }) => item.kind === "remote_session_attach"), false)
+  assert.equal(choiceOnly.calls.some((call) => call.includes("attach")), false)
+  assert.equal((await put(choiceOnly, { access: "created", chosen: true, sessions: [] })).status, 200)
+  assert.deepEqual(choiceOnly.reports, [{ access: "created", sessions: [] }])
+
+  // An older app is told nothing, whatever the organization uses.
+  const older = fixtures({ sessionAccess: optIn })
+  assert.equal("sessionAccess" in await (await older.app.request("/v1/session-runners/work", { headers: older.headers })).json(), false)
+  assert.equal((await put(older, { access: "off", sessions: [] })).status, 403)
 })
 
 test("scoped runner ids differ across tenants and retain the raw install alias", () => {
@@ -921,8 +998,8 @@ test("with the feature on, a queued remote-session task is announced once on the
 
 test("an attach is announced like a new task, only to a runner that can take one", async () => {
   for (const [options, kinds] of [
-    [{ capabilities: accessCapabilities, sessionAccess: { enabled: true, ceiling: "all" } }, "pending-create+attach"],
-    [{ capabilities: accessCapabilities, sessionAccess: { enabled: false, ceiling: "created" } }, "pending-command"],
+    [{ capabilities: accessCapabilities, sessionAccess: { enabled: true, optIn: false, devices: false, ceiling: "all" } }, "pending-create+attach"],
+    [{ capabilities: accessCapabilities, sessionAccess: { enabled: false, optIn: false, devices: false, ceiling: "created" } }, "pending-command"],
     [{}, "pending-command"],
   ] as const) {
     const { app, headers, calls } = fixtures({ push: true, ...options })

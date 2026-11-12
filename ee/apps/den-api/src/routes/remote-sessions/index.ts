@@ -7,7 +7,7 @@ import {
   remoteSessionAttachRequestSchema,
   remoteSessionAttachResponseSchema,
 } from "@openwork/types/den/remote-sessions"
-import { requireFeature } from "../../features.js"
+import { requireAnyFeature, requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, type OrganizationContextVariables } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrganizationContext } from "../../orgs.js"
@@ -50,7 +50,7 @@ const commonResponses = {
   400: jsonResponse("The request or its arguments were invalid.", z.union([invalidRequestSchema, remoteSessionErrorSchema])),
   401: jsonResponse("Authentication required.", unauthorizedSchema),
   404: jsonResponse("The task is unknown or the organization was not found.", notFoundSchema),
-  409: jsonResponse("The task cannot do that now.", remoteSessionErrorSchema),
+  409: jsonResponse("The task cannot do that now. remote_access_off: the computer takes nothing from other devices (its owner's choice, no choice yet under the organization's opt-in, or the organization's ceiling); the message says who can allow it.", remoteSessionErrorSchema),
   503: jsonResponse("The computer or cloud workspace that runs the task can't be reached right now; retry.", remoteSessionErrorSchema),
 }
 
@@ -195,7 +195,7 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
     describeMemberRoute({
       tags: ["Automations"],
       summary: "Attach to a session started on one of the member's computers",
-      description: "Makes a session that was started on one of the member's own computers reachable from other devices, like one started remotely. The organization's ceiling and that computer's owner must both allow every session; otherwise 409 session_access_denied and nothing is queued. Returns state attached with the commandId that already reaches the session, or queued with a commandId to follow through status until the computer has attached. Repeating the call returns the same command. Other refusals: 404 unknown_computer (not one of the member's computers), 409 desktop_update_required, 503 desktop_offline. Same result as the remote-session:attach capability. Requires the remoteSessionAccess feature.",
+      description: "Makes a session that was started on one of the member's own computers reachable from other devices, like one started remotely. The organization's ceiling and that computer's owner must both allow every session; otherwise 409 session_access_denied and nothing is queued. Returns state attached with the commandId that already reaches the session, or queued with a commandId to follow through status until the computer has attached. Repeating the call returns the same command. Other refusals: 404 unknown_computer (not one of the member's computers), 409 remote_access_off (the computer, or the organization, takes nothing from other devices), 409 desktop_update_required, 503 desktop_offline. Same result as the remote-session:attach capability. Requires the remoteSessionAccess feature.",
       "x-mcp": false,
       responses: { 200: jsonResponse("The session is attached, or the attach is queued.", remoteSessionAttachResponseSchema), ...commonResponses },
     }),
@@ -214,16 +214,16 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
     describeMemberRoute({
       tags: ["Automations"],
       summary: "List the member's sessions across their computers",
-      description: "The signed-in member's own sessions, newest first, and the computers they are on. reach reachable: read, follow up, stop and answer it through its commandId and sessionId. connecting: a start or an attach is queued for the computer. attachable: the computer reports a session that was started on it, listed only while the organization's ceiling and that computer's owner both allow every session; attach first. Never lists another member's computers or sessions. Requires the remoteSessionAccess feature.",
+      description: "The signed-in member's own sessions, newest first, and the computers they are on. reach reachable: read, follow up, stop and answer it through its commandId and sessionId. connecting: a start or an attach is queued for the computer. attachable: the computer reports a session that was started on it, listed only while the organization's ceiling and that computer's owner both allow every session; attach first. Each computer says what applies there: chosen (its owner has chosen on it), access (their choice, or until they choose off under the organization's opt-in and created without it) and effectiveAccess (that capped by the ceiling). optIn says whether the opt-in applies. Sessions on a computer whose effectiveAccess is off are left out until it is allowed again. Never lists another member's computers or sessions. Requires the remoteSessionAccess or the remoteTasksOptIn feature; with the opt-in alone the ceiling is created at most, so no attachable session is listed.",
       "x-mcp": false,
       responses: {
         200: jsonResponse("The member's computers and sessions.", memberSessionListResponseSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
-        404: jsonResponse("The organization was not found, or sessions on members' computers are off.", notFoundSchema),
+        404: jsonResponse("The organization was not found, or it uses neither sessions on members' computers nor the opt-in for tasks from other devices.", notFoundSchema),
       },
     }),
     orgMemberRoute(),
-    requireFeature("remoteSessionAccess"),
+    requireAnyFeature(["remoteSessionAccess", "remoteTasksOptIn"]),
     async (c) => {
       const context = c.get("organizationContext")
       if (!context) return c.json({ error: "organization_not_found" }, 404)

@@ -11,6 +11,8 @@ import {
   effectiveSessionAccess,
   isSessionAccessMode,
   SESSION_ACCESS_CAPABILITY,
+  SESSION_CHOICE_CAPABILITY,
+  sessionAccessKey,
 } from "./session-access.mjs"
 
 const EMPTY_USAGE = { inputTokens: null, outputTokens: null, costMicros: null }
@@ -1144,10 +1146,21 @@ export async function collectRunnerSessions(options) {
     .slice(0, SESSION_REPORT_LIMIT)
 }
 
-/** The organization's ceiling in a Den response; null when Den did not say (feature off, or an older Den). */
-function sessionCeilingFrom(payload) {
-  if (!isRecord(payload?.sessionAccess)) return null
-  return payload.sessionAccess.ceiling === "all" ? "all" : "created"
+/**
+ * What Den says the organization allows; null when it sent no policy (an
+ * older Den, or an organization that uses none of this). `optIn`: a computer
+ * whose owner has not chosen takes nothing. `knowsOff`: this Den accepts `off`
+ * in a session report; one from before `off` existed sends no `optIn` at all.
+ */
+function sessionAccessPolicyFrom(payload) {
+  const policy = payload?.sessionAccess
+  if (!isRecord(policy)) return null
+  return {
+    // A ceiling this app does not know is treated as the narrowest.
+    ceiling: isSessionAccessMode(policy.ceiling) ? policy.ceiling : "off",
+    optIn: policy.optIn === true,
+    knowsOff: Object.hasOwn(policy, "optIn"),
+  }
 }
 
 /**
@@ -1196,6 +1209,12 @@ const ATTACH_UNSUPPORTED = Object.freeze({
 const ATTACH_UNRECORDED = Object.freeze({
   code: "attach_unsupported",
   message: "This computer couldn't save that it opened this session. Try again.",
+})
+
+/** What every remote command and request is told while nothing may reach this computer. */
+const REMOTE_ACCESS_OFF = Object.freeze({
+  code: "remote_access_off",
+  message: "This computer doesn't take tasks from other devices.",
 })
 
 /**
@@ -1381,9 +1400,9 @@ export function createDesktopAutomationRunner(options) {
   const sessionReportMinIntervalMs = options.sessionReportMinIntervalMs ?? SESSION_REPORT_MIN_INTERVAL_MS
   const now = options.now ?? Date.now
 
-  // The owner's choice is kept beside the journals and read once; the
-  // organization's ceiling lives only on the connected runner, so signing
-  // out, reconfiguring or stopping always falls back to the narrow default.
+  // The owner's choices are kept beside the journals, one per organization;
+  // the organization's policy lives only on the connected runner, so signing
+  // out, reconfiguring or stopping always forgets it.
   const sessionAccessStore = typeof options.getJournalRoot === "function"
     ? createSessionAccessStore(() => options.getJournalRoot())
     : null
@@ -1393,16 +1412,31 @@ export function createDesktopAutomationRunner(options) {
   const attachedCommands = typeof options.getJournalRoot === "function"
     ? createAttachedCommandStore(() => options.getJournalRoot())
     : null
-  let sessionAccessMode = null
-  const sessionAccessChoice = () => {
-    sessionAccessMode ??= sessionAccessStore ? sessionAccessStore.read() : "created"
-    return sessionAccessMode
-  }
-  /** Never cached: every attach, request and report reads the access in force at that moment. */
+  /** What the owner chose for this organization; null when they have not chosen or it is unknown. */
+  const sessionAccessChoice = (accessKey) => (sessionAccessStore && accessKey ? sessionAccessStore.read(accessKey) : null)
+  const connectedRunner = () => (current && isCurrent(current) ? current : null)
+  /**
+   * The access in force for an organization's choice under the policy of the
+   * runner connected for it, if one is. Without that runner nothing wider
+   * than tasks started remotely applies, and a choice of `off` still does.
+   */
+  const sessionAccessFor = (accessKey, state) => effectiveSessionAccess({
+    choice: sessionAccessChoice(accessKey),
+    policy: state?.sessionPolicy ?? null,
+    capable: state?.accessCapable === true,
+  })
+  /** Never cached: every command, request and report reads the access in force at that moment. */
   const sessionAccess = () => {
-    const state = current
-    if (!state || !isCurrent(state)) return "created"
-    return effectiveSessionAccess({ mode: sessionAccessChoice(), ceiling: state.sessionCeiling, capable: state.accessCapable })
+    const state = connectedRunner()
+    return sessionAccessFor(state?.accessKey ?? null, state)
+  }
+  /**
+   * The journalled runner stops following sessions by itself while access is
+   * off. The watchers of sessions delivered without the journal stop here.
+   */
+  const stopWatchesWhileOff = (state) => {
+    if (sessionAccess() !== "off") return
+    for (const controller of state.watchControllers.values()) controller.abort(new Error("Remote access is off"))
   }
 
   /**
@@ -1447,25 +1481,34 @@ export function createDesktopAutomationRunner(options) {
     })()
   }
 
+  /** What a report says besides the sessions: the access in force and whether the owner chose. */
+  const sessionReportStance = (state) => `${sessionAccess()}:${sessionAccessChoice(state.accessKey) !== null}`
+
   /**
-   * Tells Den which sessions this computer has, so its owner's other devices
-   * can open them. Only while Den has the feature on for a runner it accepted
-   * for it. With all sessions allowed the list is sent when it changed, read
-   * at most about once a minute; otherwise one empty report makes Den forget
-   * what it had. A change in the access in force is reported at once. While
-   * Den answers 404 the feature is off and it is asked again ten minutes
-   * later. A failure never affects polling for work.
+   * Tells Den the access in force, whether the owner chose it and, with all
+   * sessions allowed, which sessions this computer has, so its owner's other
+   * devices can open them. Only while Den sends a policy to a runner it
+   * accepted for the owner's choice or for session access. With all sessions
+   * allowed the list is sent when it changed, read at most about once a
+   * minute; otherwise one empty report makes Den forget what it had. A change
+   * in the access in force, or in whether the owner chose, is reported at
+   * once. A Den from before `off` existed would reject it, so it is told
+   * `created`; this computer refuses everything all the same. While Den
+   * answers 404 the feature is off and it is asked again ten minutes later.
+   * A failure never affects polling for work.
    */
   const reportSessions = (state) => {
-    if (!state.accessCapable || state.sessionCeiling === null || !isCurrent(state)) return
+    if (!(state.accessCapable || state.choiceCapable) || state.sessionPolicy === null || !isCurrent(state)) return
     if (state.sessionReportInFlight) {
       state.sessionReportQueued = true
       return
     }
     if (now() < state.sessionReportBlockedUntil) return
     const access = sessionAccess()
-    if (access === state.sessionReportAccess && now() - state.sessionReportCheckedAt < sessionReportMinIntervalMs) return
-    state.sessionReportAccess = access
+    const chosen = sessionAccessChoice(state.accessKey) !== null
+    const stance = sessionReportStance(state)
+    if (stance === state.sessionReportStance && now() - state.sessionReportCheckedAt < sessionReportMinIntervalMs) return
+    state.sessionReportStance = stance
     state.sessionReportCheckedAt = now()
     state.sessionReportInFlight = (async () => {
       try {
@@ -1475,12 +1518,12 @@ export function createDesktopAutomationRunner(options) {
         if (!isCurrent(state)) return
         if (!sessions) {
           // The local runtime is still starting: try again on the next poll.
-          state.sessionReportAccess = null
+          state.sessionReportStance = null
           return
         }
         // Access may have narrowed while the sessions were read: never send them then.
-        if (sessionAccess() !== access) return
-        const report = { access, sessions }
+        if (sessionReportStance(state) !== stance || state.sessionPolicy === null) return
+        const report = { access: access === "off" && !state.sessionPolicy.knowsOff ? "created" : access, chosen, sessions }
         const key = JSON.stringify(report)
         if (key === state.sessionReportKey) return
         let response
@@ -1497,12 +1540,16 @@ export function createDesktopAutomationRunner(options) {
           return
         }
         state.sessionReportKey = key
-        state.sessionCeiling = sessionCeilingFrom(response) ?? state.sessionCeiling
+        // The answer repeats the ceiling so it narrows at once. Only an answer
+        // that names the opt-in changes it: one without it is not "no opt-in".
+        const answered = sessionAccessPolicyFrom(response)
+        if (answered) state.sessionPolicy = answered.knowsOff ? answered : { ...state.sessionPolicy, ceiling: answered.ceiling }
+        stopWatchesWhileOff(state)
       } catch (error) {
         if (isCurrent(state)) options.log?.(`runner session report failed: ${serializedError(error)}`)
       } finally {
         state.sessionReportInFlight = null
-        const changed = state.sessionReportAccess !== null && sessionAccess() !== state.sessionReportAccess
+        const changed = state.sessionReportStance !== null && sessionReportStance(state) !== state.sessionReportStance
         if (state.sessionReportQueued || changed) {
           state.sessionReportQueued = false
           reportSessions(state)
@@ -1607,6 +1654,7 @@ export function createDesktopAutomationRunner(options) {
     if (entry) return entry.runner
     entry = { runner: null, reconcilePromise: null, watching: true }
     const recoveryKey = state.recoveryKey
+    const accessKey = state.accessKey
     const baseUrl = state.configuration.baseUrl
     const account = state.account
     // Loaded only after Den negotiated the feature-gated recovery capability;
@@ -1634,8 +1682,12 @@ export function createDesktopAutomationRunner(options) {
       }
       return createSessionRunner({
         // Read on every use. A runner outlives its credential, so it allows
-        // nothing more than sessions started remotely unless its own account is connected.
-        sessionAccess: () => (current?.recoveryKey === recoveryKey ? sessionAccess() : "created"),
+        // nothing more than sessions started remotely unless its own account
+        // is connected, and nothing at all once its organization's choice is off.
+        sessionAccess: () => {
+          const state = connectedRunner()
+          return sessionAccessFor(accessKey, state?.recoveryKey === recoveryKey ? state : null)
+        },
         adapter: createDesktopSessionAdapter({
           getLocalRuntime: options.getLocalRuntime, fetchImpl, now,
           computerRequests: options.computerRequests,
@@ -1666,7 +1718,9 @@ export function createDesktopAutomationRunner(options) {
   }
 
   const reconcileSessions = async (state) => {
-    if (!state.recoveryKey || !state.credentialValidated || !isCurrent(state)) return
+    // Nothing remote runs before Den's first work response under this
+    // credential: until then its policy, and with it the opt-in, is unknown.
+    if (!state.recoveryKey || !state.credentialValidated || !state.sessionPolicyRead || !isCurrent(state)) return
     const runner = await getSessionRunner(state)
     const entry = sessionRunners.get(state.recoveryKey)
     if (!entry || !isCurrent(state)) return
@@ -1675,10 +1729,11 @@ export function createDesktopAutomationRunner(options) {
       await runner.reconcile(state.controller.signal)
       const journal = await runner.inspect()
       if (journal.commands.length > 192 || journal.requests.length > 192) await runner.prune()
-      // The core observes an attached session only while its owner allows all
-      // sessions, so until then it has no report for the fast poll to wait for.
+      // The core observes nothing while access is off, and an attached session
+      // only while its owner allows all sessions, so until then it has no
+      // report for the fast poll to wait for.
       const access = sessionAccess()
-      entry.watching = journal.commands.some((command) => command.phase === "delivered"
+      entry.watching = access !== "off" && journal.commands.some((command) => command.phase === "delivered"
         && (command.command.kind !== "remote_session_attach" || access === "all")
         && (!command.reportedProgress || !["idle", "error"].includes(command.reportedProgress.status)))
     })().finally(() => {
@@ -1830,7 +1885,10 @@ export function createDesktopAutomationRunner(options) {
     }
   }
 
-  const runRemoteSessionCommand = async (state, assignment, refusal = null) => {
+  const runRemoteSessionCommand = async (state, assignment, initialRefusal = null) => {
+    // The journalled runner refuses by itself while access is off. Nothing
+    // else here may start or open a session then, whatever else was wrong.
+    const refusal = sessionAccess() === "off" && (initialRefusal || !state.recoveryKey) ? REMOTE_ACCESS_OFF : initialRefusal
     const controller = new AbortController()
     const active = { assignment, controller }
     state.active = active
@@ -1930,6 +1988,8 @@ export function createDesktopAutomationRunner(options) {
       timing: options.remoteSessionWatch,
       log: options.log,
       report: async (body) => {
+        // Nothing about a session leaves this computer while access is off.
+        if (sessionAccess() === "off") return false
         try {
           await runnerRequest(state, commandPath, {
             method: "POST",
@@ -1990,7 +2050,10 @@ export function createDesktopAutomationRunner(options) {
     const remainingMs = Number(assignment.expiresAt) - Date.now()
     let body
     let followUp = null
-    if (attachedCommands?.has(assignment.commandId)) {
+    if (sessionAccess() === "off") {
+      // The executor below would act on any session Den names: it is not reached.
+      body = { status: "failed", error: REMOTE_ACCESS_OFF }
+    } else if (attachedCommands?.has(assignment.commandId)) {
       // The journal no longer has this attach, so the core cannot check the
       // owner's choice for it. Never fall back to the executor below.
       body = { status: "failed", error: ATTACH_FORGOTTEN }
@@ -2037,7 +2100,7 @@ export function createDesktopAutomationRunner(options) {
   }
 
   const drainRemoteSessionRequests = (state) => {
-    if (!state.controlCapable || !isCurrent(state)) return Promise.resolve()
+    if (!state.controlCapable || !state.sessionPolicyRead || !isCurrent(state)) return Promise.resolve()
     if (state.requestDrain) return state.requestDrain
     const promise = (async () => {
       const attempted = new Set()
@@ -2115,8 +2178,10 @@ export function createDesktopAutomationRunner(options) {
           signal: AbortSignal.timeout(workPollTimeoutMs),
         })
         if (!isCurrent(state)) break
-        // Den repeats the organization's ceiling on every poll; without it only remotely started sessions are reachable.
-        state.sessionCeiling = sessionCeilingFrom(response)
+        // Den repeats the organization's policy on every poll; without it only remotely started sessions are reachable.
+        state.sessionPolicy = sessionAccessPolicyFrom(response)
+        state.sessionPolicyRead = true
+        stopWatchesWhileOff(state)
         reportSessions(state)
         // The first authenticated work response unlocks cold-boot recovery.
         reconcileSessions(state).catch((error) => {
@@ -2310,10 +2375,16 @@ export function createDesktopAutomationRunner(options) {
       watchControllers: new Map(),
       controlCapable: (runnerTokenBinding(configuration.token)?.capabilities ?? []).includes(REMOTE_SESSION_CONTROL_CAPABILITY),
       accessCapable: (binding?.capabilities ?? []).includes(SESSION_ACCESS_CAPABILITY),
-      // null until Den says: signed out, offline, feature off or an older Den.
-      sessionCeiling: null,
+      // Den accepted this runner as one whose owner can choose; with either capability it reports what applies.
+      choiceCapable: (binding?.capabilities ?? []).includes(SESSION_CHOICE_CAPABILITY),
+      // Which stored choice applies: the one made for this Den and organization.
+      accessKey: sessionAccessKey(configuration.baseUrl, binding?.account?.organizationId),
+      // null until Den says: signed out, offline, an older Den or an organization that uses none of it.
+      sessionPolicy: null,
+      // Whether Den answered a work poll under this credential, with a policy or without one.
+      sessionPolicyRead: false,
       sessionReportKey: null,
-      sessionReportAccess: null,
+      sessionReportStance: null,
       sessionReportCheckedAt: 0,
       sessionReportInFlight: null,
       sessionReportQueued: false,
@@ -2329,23 +2400,35 @@ export function createDesktopAutomationRunner(options) {
       inventoryUnsupported: false,
     }
     current = state
+    if (sessionAccessStore && state.accessKey) {
+      // A choice saved before choices were kept per organization goes to this one, and to no other.
+      sessionAccessStore.adoptLegacy(state.accessKey).then((adopted) => {
+        if (adopted && isCurrent(state)) reportSessions(state)
+      }, (error) => options.log?.(`session access choice not carried over: ${serializedError(error)}`))
+    }
     void connectLoop(state)
     if (state.controlCapable) void remoteSessionRequestLoop(state)
     if (remoteSessionPush && state.controlCapable) void remoteSessionPushLoop(state)
   }
 
   /**
-   * What the owner chose for this computer and what applies right now.
-   * `ceiling` is null until Den says what the organization allows, and
-   * `supported` is whether Den accepted this runner for session access.
+   * What the owner chose for the organization this computer is connected to
+   * and what applies right now. `mode` is null while they have not chosen,
+   * `ceiling` is null until Den says what the organization allows, `optIn` is
+   * whether a computer whose owner has not chosen takes nothing, `supported`
+   * is whether Den accepted this runner for session access, and `connected`
+   * is whether a runner is configured for an organization, so a choice can be
+   * made.
    */
   const describeSessionAccess = () => {
-    const state = current && isCurrent(current) ? current : null
+    const state = connectedRunner()
     return {
-      mode: sessionAccessChoice(),
-      ceiling: state?.sessionCeiling ?? null,
+      mode: sessionAccessChoice(state?.accessKey ?? null),
+      ceiling: state?.sessionPolicy?.ceiling ?? null,
       effective: sessionAccess(),
       supported: state?.accessCapable === true,
+      optIn: state?.sessionPolicy?.optIn === true,
+      connected: Boolean(sessionAccessStore && state?.accessKey),
     }
   }
 
@@ -2414,14 +2497,25 @@ export function createDesktopAutomationRunner(options) {
       return { polled: true }
     },
     getSessionAccess: describeSessionAccess,
-    /** Saves the owner's choice and tells Den at once. Narrowing applies before it is saved. */
+    /**
+     * Saves the owner's choice for the organization this computer is connected
+     * to and tells Den at once. Narrowing applies before it is saved.
+     */
     async setSessionAccess(mode) {
-      if (!isSessionAccessMode(mode)) throw new Error("Choose which sessions other devices can reach.")
-      if (!sessionAccessStore) throw new Error("This computer can't save which sessions other devices can reach.")
-      if (mode === "created") sessionAccessMode = mode
-      await sessionAccessStore.write(mode)
-      sessionAccessMode = mode
-      if (current) reportSessions(current)
+      if (!isSessionAccessMode(mode)) throw new Error("Choose what other devices can do on this computer.")
+      const state = connectedRunner()
+      if (!sessionAccessStore || !state?.accessKey) {
+        throw new Error("Connect this computer to your organization to choose what other devices can do on it.")
+      }
+      const applyNow = () => {
+        if (!isCurrent(state)) return
+        stopWatchesWhileOff(state)
+        reportSessions(state)
+      }
+      const saved = sessionAccessStore.write(state.accessKey, mode)
+      applyNow()
+      await saved
+      applyNow()
       return describeSessionAccess()
     },
     stop() {

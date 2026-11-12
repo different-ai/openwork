@@ -35,5 +35,7 @@ test("My Computers has its own intro for every member, with no permission lock a
   assert.ok(intro.example);
   const Example = intro.example.Component;
   const text = renderToStaticMarkup(<Example />).replace(/<[^>]+>/g, " ");
-  assert.match(text.replace(/\s+/g, " "), /Work laptop Mac Online Research computer Shared with your organization Not checked yet/);
+  // The page's own rows: what it is, its status, and what other devices can do on a desktop (as the lane and as the narrow line).
+  assert.match(text.replace(/\s+/g, " "), /Computer Status Other devices can Work laptop Mac Online Start tasks Other devices can: Start tasks Research computer Shared with your organization Not checked yet/);
+  assert.match(intro.body ?? "", /what your other devices can do on it/);
 });

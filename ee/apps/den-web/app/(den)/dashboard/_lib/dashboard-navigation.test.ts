@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { getOrgAccessFlags, type DenOrgCapabilities } from "../../_lib/den-org";
+import { getOrgAccessFlags, type DenOrgCapabilities, type DenOrgContext } from "../../_lib/den-org";
 import { buildDashboardNavSections, flattenNavigationForSearch } from "./dashboard-navigation";
 import { adminRouteLockedMessage, canOpenAdminRoute } from "./admin-route-access";
 
@@ -131,34 +131,21 @@ test("My Computers is under Work for every member whenever remoteDevices is on, 
   }
 });
 
-test("My Sessions sits next to My Computers under Work for every member, only with remoteSessionAccess on", () => {
-  for (const remoteSessionAccess of [false, true]) {
-    for (const permissions of [[], ["computers.view"]] as const) {
-      const sections = buildDashboardNavSections({
-        orgSlug: "workspace", access: getOrgAccessFlags("member", false, [...permissions]),
-        capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, remoteDevices: true, remoteSessionAccess,
-      });
-      const work = sections.find((section) => section.label === "Work")?.items ?? [];
-      const mine = work.find((item) => item.label === "My Sessions");
-      assert.equal(Boolean(mine), remoteSessionAccess);
-      // A member page, never an admin one.
-      assert.ok(!sections.filter((section) => section.label !== "Work").some((section) => section.items.some((item) => item.label === "My Sessions")));
-      assert.ok(!flattenNavigationForSearch(sections).some((item) => item.label === "My Sessions") || remoteSessionAccess);
-      if (mine) {
-        assert.equal(mine.href, "/dashboard/my-sessions");
-        assert.equal(mine.testId, "dashboard-nav-my-sessions");
-        assert.equal(work.indexOf(mine), work.findIndex((item) => item.label === "My Computers") + 1);
-        assert.ok(flattenNavigationForSearch(sections).find((item) => item.label === "My Sessions")?.keywords.includes("needs you"));
-      }
-    }
+test("Den web has no My Sessions: no entry, no search result, whatever features the organization has", async () => {
+  const { mapFeatures } = await import("@openwork/features");
+  const everything = mapFeatures(() => true);
+  for (const permissions of [[], ["computers.view"]] as const) {
+    const sections = buildDashboardNavSections({
+      orgSlug: "workspace", access: getOrgAccessFlags("member", false, [...permissions]),
+      capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, remoteDevices: everything.remoteDevices,
+    });
+    const items = sections.flatMap((section) => section.items);
+    assert.ok(!items.some((item) => /sessions/i.test(item.label) || /my-sessions/.test(item.href) || item.testId === "dashboard-nav-my-sessions"));
+    assert.ok(!flattenNavigationForSearch(sections).some((item) => item.label === "My Sessions" || /my-sessions/.test(item.href)));
+    // What other devices can do on a computer is found on the computers themselves.
+    assert.ok(items.some((item) => item.testId === "dashboard-nav-my-computers"));
+    assert.ok(flattenNavigationForSearch(sections).find((item) => item.label === "My Computers")?.keywords.includes("remote access"));
   }
-  // Its own feature: it does not ride on remoteDevices, and is off unless asked for.
-  const alone = buildDashboardNavSections({
-    orgSlug: "workspace", access: getOrgAccessFlags("member", false, []), capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, remoteSessionAccess: true,
-  }).flatMap((section) => section.items);
-  assert.ok(alone.some((item) => item.label === "My Sessions"));
-  assert.ok(!alone.some((item) => item.label === "My Computers"));
-  assert.ok(!navigation([]).some((item) => item.label === "My Sessions"));
 });
 
 test("the shell marks itself grey only while the organization has denGreySidebar on", async () => {

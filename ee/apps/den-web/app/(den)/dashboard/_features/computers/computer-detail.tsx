@@ -14,6 +14,7 @@ import { useComputer } from "./computers-data";
 import type { OrganizationComputerEvent } from "./computers-format";
 import { Unplug, X } from "lucide-react";
 import { CopyableId, StatusDot, TimeAgo, focusRing, hairline, secondaryText } from "./computer-parts";
+import { REMOTE_ACCESS_LABEL, remoteAccessNote, remoteAccessValue } from "./remote-access";
 import {
   ACTOR_LABELS,
   EVENT_LEVEL_LABELS,
@@ -149,6 +150,13 @@ export function ComputerDetailView({ detail, now, standalone = false }: { detail
         </Row>
       </> : null}
       <Row label="Owner"><span title={ownerEmail(device)}>{ownerLabel(device)}</span></Row>
+      {/* Said about a member's computer, to whoever may see the team's: what applies there and why, never a way to change it. */}
+      {device.remoteAccess ? <Row label={REMOTE_ACCESS_LABEL}>
+        <span className="flex min-w-0 flex-col items-end" data-testid={`computer-remote-access-${device.id}`} data-remote-access={device.remoteAccess.effective}>
+          <span>{remoteAccessValue(device.remoteAccess)}</span>
+          {remoteAccessNote(device.remoteAccess, "team") ? <span className={`text-[12px] leading-4 ${secondaryText}`}>{remoteAccessNote(device.remoteAccess, "team")}</span> : null}
+        </span>
+      </Row> : null}
       <Row label="Last contact"><TimeAgo iso={device.lastSeenAt} now={now} /></Row>
       {device.appVersion ? <Row label="App version"><span className="break-all">{device.appVersion}</span></Row> : null}
       {device.disconnectedAt ? <Row label="Disconnected"><time dateTime={device.disconnectedAt}>{absoluteTime(device.disconnectedAt)}</time></Row> : null}

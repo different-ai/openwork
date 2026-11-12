@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { organizationComputerDetailResponseSchema } from "@openwork/types/den/remote-devices";
+import { organizationComputerDetailResponseSchema, type RemoteDeviceAccess } from "@openwork/types/den/remote-devices";
 import { ComputerDetailView } from "./computer-detail";
 
 const now = Date.parse("2026-11-10T12:00:00Z");
@@ -27,7 +27,7 @@ const desktop = organizationComputerDetailResponseSchema.parse({
   session: null,
   features: { remoteDevices: true, computerUse: true, remoteComputers: false, browserUse: true, sandboxGateway: false },
 });
-const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
 
 test("computer detail renders supported inventory without platform navigation or raw JSON", () => {
   const html = renderToStaticMarkup(<ComputerDetailView detail={desktop} now={now} standalone />);
@@ -62,4 +62,29 @@ test("a disconnected computer says so in neutral ink, with when, and a former me
   assert.match(text(html), /Status Disconnected Sign in on it again to reconnect Owner Former member/);
   assert.match(text(html), /Disconnected (Nov 9, 2026|9 Nov 2026)/);
   assert.doesNotMatch(html, /deleted\.invalid|ow-danger|Offline/);
+});
+
+test("the open detail says what other devices can do on a member's computer, and why, in the third person", () => {
+  const withAccess = (remoteAccess: RemoteDeviceAccess | null) => ({ ...desktop, device: { ...desktop.device, remoteAccess } });
+  const detail = (remoteAccess: RemoteDeviceAccess | null) => renderToStaticMarkup(<ComputerDetailView detail={withAccess(remoteAccess)} now={now} />);
+  const cases: Array<[RemoteDeviceAccess, string]> = [
+    [{ effective: "created", chosen: true, reason: null }, "Other devices can Start tasks Last contact"],
+    [{ effective: "all", chosen: true, reason: null }, "Other devices can Start tasks and open sessions Last contact"],
+    [{ effective: "off", chosen: true, reason: null }, "Other devices can Nothing Turned off by its owner. Last contact"],
+    [{ effective: "off", chosen: false, reason: "not_chosen" }, "Other devices can Nothing Not allowed by its owner yet. Last contact"],
+    [{ effective: "off", chosen: false, reason: "update_required" }, "Other devices can Nothing Needs an OpenWork update before its owner can allow it. Last contact"],
+    [{ effective: "off", chosen: true, reason: "organization" }, "Other devices can Nothing Turned off for the organization. Last contact"],
+    [{ effective: "created", chosen: true, reason: "organization" }, "Other devices can Start tasks The organization doesn't allow more. Last contact"],
+  ];
+  for (const [remoteAccess, expected] of cases) {
+    const html = detail(remoteAccess);
+    assert.ok(text(html).includes(`Owner Alex ${expected}`), `${JSON.stringify(remoteAccess)}: ${text(html).slice(0, 200)}`);
+    assert.match(html, new RegExp(`data-testid="computer-remote-access-rdv_desktop1" data-remote-access="${remoteAccess.effective}"`));
+    // Never the owner's wording, and nothing to press: an admin sees it, the owner changes it.
+    assert.doesNotMatch(text(html), /Your organization|on that computer|Allow it in Settings|Change it/);
+  }
+  // A computer that takes no tasks this way, and an older API's detail, have no such row.
+  assert.doesNotMatch(detail(null), /Other devices can|computer-remote-access/);
+  assert.equal(desktop.device.remoteAccess, null, "the fixture is a detail without the field");
+  assert.doesNotMatch(renderToStaticMarkup(<ComputerDetailView detail={desktop} now={now} standalone />), /Other devices can/);
 });

@@ -87,7 +87,7 @@ export const auditServiceActionDeclarations = [
     action: "remote_session.create", kind: "remote_session.execution", class: "tenant_job", resource: { type: "remote_session", idFrom: null }, origin: "mcp",
     tools: ["execute_capability remote-session:create"], callSites: ["src/mcp/capability-registry.ts:remoteSessionSource.execute → executeRemoteSessionCapability"],
     jobOutcome: "Desktop: runner callbacks POST /v1/remote-session-commands/:id/{claim,complete,session} (declared routes). Cloud: not_recorded: the session runs on the member's OpenWork Web worker.",
-    notes: MCP_PRINCIPAL,
+    notes: `A desktop or registered target that takes nothing from other devices (its owner's choice, no choice yet under remoteTasksOptIn, or the organization's ceiling) is refused with remote_access_off: nothing is queued and the refusal is recorded as a failed outcome. ${MCP_PRINCIPAL}`,
   },
   {
     action: "remote_session.send", kind: "remote_session.execution", class: "tenant_job", resource: { type: "remote_session", idFrom: "sessionId argument" }, origin: "mcp",

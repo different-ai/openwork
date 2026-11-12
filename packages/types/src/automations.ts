@@ -361,6 +361,15 @@ export const REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY = "remote_session_answer_v1
  * attach commands and dismissals only to these runners.
  */
 export const REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY = "remote_session_access_v1"
+/**
+ * The runner's owner can turn remote access off or leave it unchosen, the
+ * runner enforces `off` itself, and its session report says whether the owner
+ * chose (`chosen`). Runners released before this choice existed report
+ * `created` on their own and cannot be allowed or turned off by their owner,
+ * so under an organization's opt-in only runners with this capability can be
+ * allowed.
+ */
+export const REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY = "remote_session_choice_v1"
 export const AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER = "x-openwork-automation-model-attention" as const
 export const automationDesktopRunnerCapabilitySchema = z.enum([
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
@@ -370,6 +379,7 @@ export const automationDesktopRunnerCapabilitySchema = z.enum([
   REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
   REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY,
   REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY,
+  REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY,
 ])
 /**
  * Released Dens accept at most five capabilities and answer 400 to more, so a
@@ -466,22 +476,40 @@ export const automationRunnerWorkItemSchema = z.union([
 export const AUTOMATION_RUNNER_WORK_RUN_LIMIT = 20
 export const runnerEnginePolicySchema = z.object({ upgrade: z.boolean() })
 /**
- * Which of a computer's sessions a remote caller may reach. `created`: only
- * sessions that were started remotely (the default, and all that released
- * runners support). `all`: also sessions started on the computer itself, once
- * the caller attaches to one. The owner chooses per computer and the
- * organization sets the most that may be chosen; the narrower of the two
- * applies, and the computer enforces it.
+ * What other devices may do on a computer, through its owner's account.
+ * `off`: nothing: no task can be started there and no session reached.
+ * `created`: tasks can be started there, and only sessions started that way
+ * can be reached (what released runners do). `all`: also sessions started on
+ * the computer itself, once the caller attaches to one. The owner chooses per
+ * computer and organization, the organization sets the most that may be
+ * chosen; the narrower of the two applies, and the computer enforces it.
  */
-export const remoteSessionAccessModeSchema = z.enum(["created", "all"])
+export const remoteSessionAccessModeSchema = z.enum(["off", "created", "all"])
 export type RemoteSessionAccessMode = z.infer<typeof remoteSessionAccessModeSchema>
 export const DEFAULT_REMOTE_SESSION_ACCESS_MODE: RemoteSessionAccessMode = "created"
+const REMOTE_SESSION_ACCESS_ORDER: Record<RemoteSessionAccessMode, number> = { off: 0, created: 1, all: 2 }
 /** The narrower of the organization's ceiling and the owner's choice. */
 export function effectiveRemoteSessionAccess(ceiling: RemoteSessionAccessMode, choice: RemoteSessionAccessMode): RemoteSessionAccessMode {
-  return ceiling === "all" && choice === "all" ? "all" : "created"
+  return REMOTE_SESSION_ACCESS_ORDER[choice] <= REMOTE_SESSION_ACCESS_ORDER[ceiling] ? choice : ceiling
 }
-/** What Den tells a runner about session access; absent when the feature is off, which means `created`. */
-export const runnerSessionAccessPolicySchema = z.object({ ceiling: remoteSessionAccessModeSchema })
+/**
+ * What applies on a computer whose owner has not chosen. With the
+ * organization's opt-in (feature `remoteTasksOptIn`) that is `off`: nothing
+ * reaches a computer until its owner allows it. Without it, `created`, as
+ * before the choice existed.
+ */
+export function unchosenRemoteSessionAccess(optIn: boolean | undefined): RemoteSessionAccessMode {
+  return optIn === true ? "off" : DEFAULT_REMOTE_SESSION_ACCESS_MODE
+}
+/**
+ * What Den tells a runner about session access. Absent when the organization
+ * uses none of it, which means a ceiling of `created` and no opt-in.
+ */
+export const runnerSessionAccessPolicySchema = z.object({
+  ceiling: remoteSessionAccessModeSchema,
+  /** A computer whose owner has not chosen is `off`. Absent from servers without the opt-in, which reads as false. */
+  optIn: z.boolean().optional(),
+})
 export const automationRunnerWorkResponseSchema = z.object({
   // Up to the run limit plus five remote-session commands, five requests and five attach commands.
   items: z.array(automationRunnerWorkItemSchema).max(AUTOMATION_RUNNER_WORK_RUN_LIMIT + 15),
@@ -544,7 +572,8 @@ export const desktopRunnerInventoryResponseSchema = z.object({
 /**
  * Sessions a runner reports to `PUT /v1/session-runners/sessions`. A runner
  * reports its sessions only while its effective access is `all`; with
- * `created` it reports an empty list once, which clears what Den kept. Den
+ * `created` or `off` it reports an empty list once, which tells Den what
+ * applies there and clears what Den kept. Den
  * keeps only the latest report per runner and shows it to the owner alone.
  */
 export const RUNNER_SESSION_REPORT_LIMIT = 100
@@ -564,6 +593,12 @@ export type RunnerReportedSession = z.infer<typeof runnerReportedSessionSchema>
 export const runnerSessionReportSchema = z.object({
   /** The access in force on the computer: the owner's choice capped by the ceiling Den last sent. */
   access: remoteSessionAccessModeSchema,
+  /**
+   * The owner has made a choice on this computer for this organization. False:
+   * `access` is only what applies by default. Sent by runners with
+   * remote_session_choice_v1; absent from earlier ones.
+   */
+  chosen: z.boolean().optional(),
   /** Most recently changed first; must be empty unless access is `all`. */
   sessions: z.array(runnerReportedSessionSchema).max(RUNNER_SESSION_REPORT_LIMIT),
 }).refine((report) => report.access === "all" || report.sessions.length === 0, {
@@ -1162,6 +1197,11 @@ export const automationProposalSchema = z.object({
   instructions: z.string().trim().min(1).max(100_000),
   schedule: automationScheduleSchema,
   model: automationModelSchema.optional(),
+  /**
+   * Where the agent suggests it runs. Only a starting choice: the review card
+   * offers the places this member can actually run it and the person picks.
+   */
+  executionTarget: automationExecutionTargetSchema.optional(),
   /** Workspace the proposing conversation ran in; the renderer pins it on create. */
   workspaceId: automationWorkspaceIdSchema.optional(),
 })

@@ -56,8 +56,8 @@ export function DevicesContent({ context, enabled, sessionAccess = false, organi
   const [outcome, setOutcome] = useState<string | null>(null);
   const begin = (next: DeviceAction) => { setOutcome(null); setAction(next); };
   if (!enabled) return <p role="status" className="text-sm text-muted-foreground">Not turned on for this organization.</p>;
-  // This computer's own choice stays within reach while signed out, so it can always be narrowed.
-  const sessionAccessSection = sessionAccess ? <SessionAccessSection /> : null;
+  // Everyone with this page can turn their computer off; `sessionAccess` only adds opening sessions started here.
+  const sessionAccessSection = <SessionAccessSection allSessions={sessionAccess} />;
   if (!context.ready) return <LayoutStack><p role="status" className="text-sm text-muted-foreground">Sign in and select an organization in Cloud account to see your devices.</p>{sessionAccessSection}</LayoutStack>;
   const devices = query.data ?? [];
   return <LayoutStack>

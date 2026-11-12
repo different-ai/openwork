@@ -4,6 +4,7 @@ import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
   REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY,
   REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY,
+  REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY,
   REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
   REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
   REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
@@ -95,9 +96,11 @@ function ActivatedAutomationRunnerBridge() {
               REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
             ]
             // Den sends answer requests only to runners that say they take them,
-            // and lets other devices open sessions started here only on runners
-            // that honour the owner's session access choice. Released Dens take
-            // at most five capabilities, so the sets they accept today follow.
+            // lets other devices open sessions started here only on runners
+            // that honour the owner's session access choice, and under an
+            // organization's opt-in allows only runners whose owner can choose.
+            // Released Dens take fewer capabilities, so every set they accept
+            // today follows, in the order they were introduced.
             const answerCapabilities: AutomationDesktopRunnerCapability[] = [
               ...recoveryCapabilities,
               REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY,
@@ -109,6 +112,7 @@ function ActivatedAutomationRunnerBridge() {
               REMOTE_SESSION_ONLY_RUNNER_CAPABILITY,
             ]
             const capabilitySets: AutomationDesktopRunnerCapability[][] = deploymentEnabled ? [
+              [...answerCapabilities, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY, REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY],
               [...answerCapabilities, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY],
               answerCapabilities,
               recoveryCapabilities,
@@ -120,6 +124,7 @@ function ActivatedAutomationRunnerBridge() {
               [AUTOMATION_MODEL_ATTENTION_CAPABILITY, REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY],
               [AUTOMATION_MODEL_ATTENTION_CAPABILITY],
             ] : [
+              [...sessionOnlyCapabilities, REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY, REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY],
               [...sessionOnlyCapabilities, REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY],
               [...sessionOnlyCapabilities, REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY],
               sessionOnlyCapabilities,

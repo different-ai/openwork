@@ -1679,7 +1679,7 @@ function proposeAutomation(rawArgs: unknown, context: OpenCodeContext): object {
     kind: "automation-proposal",
     proposal,
     created: false,
-    limitation: "This Desktop proposal creates Desktop placement and runs only while a signed-in desktop runner is connected. Use Web or Cloud Chat to create headless Cloud placement.",
+    limitation: "Nothing is created until the person reviews the card. The card offers the places this member can run it: Desktop runs only while a signed-in desktop is connected; Cloud runs headlessly in OpenWork Cloud when the organization and member have Cloud available.",
   };
 }
 

@@ -352,6 +352,7 @@ function automationContribution(): OpenworkFeatureContribution {
           argument("instructions", "string", true, "Self-contained instructions the Automation runs on its schedule."),
           argument("schedule", "object", true, "Schedule with an IANA timezone: once {at}, daily {hour, minute}, weekly {daysOfWeek, hour, minute}, or interval {everyHours 1-24, optional daysOfWeek (0=Sunday), startHour, endHour} for every few hours on the hour, e.g. every 3 hours from 9 to 18, or calendar {edge start|end, offsetMinutes -120..120, rule {withExternalAttendees, titleIncludes}} to run around each meeting on the person's Google Calendar (Cloud only). Interval and calendar need their organization features."),
           argument("model", "object", false, "Optional providerId and modelId. Omit to use the person's default."),
+          argument("executionTarget", "string", false, "Optional suggested place to run: \"cloud\" (headless in OpenWork Cloud, runs while this computer is off) or \"desktop\" (this computer, only while OpenWork is open). The person can change it on the card. Omit to default to this desktop."),
         ],
         effects: noEffects,
       }),

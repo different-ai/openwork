@@ -53,7 +53,7 @@ Representative engine and received-snapshot recovery require their own proofs.
 | Native Google Slides | PDF preview and Open in Google Slides | Edit in Google Slides; no Office copy |
 | UTF-8 text | Plain text editing, up to 1 MB | Explicit save to the original file |
 | PDF and common raster images | Read-only inline preview | No edits |
-| Video and audio (MP4, WebM, MOV, MP3, M4A, WAV…) | With `workbotDocumentMedia`: the browser's own player, read in byte ranges so it seeks. Otherwise a link to the original | No edits |
+| Video and audio (MP4, WebM, MOV, MP3, M4A, WAV…) | The browser's own player, read in byte ranges so it seeks (part of `workbotDocuments`) | No edits |
 | Other formats | Link to original editor | No edits |
 
 The Office editor is a real server engine, loaded only after choosing **Edit**
