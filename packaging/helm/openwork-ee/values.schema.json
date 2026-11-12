@@ -241,6 +241,16 @@
               ],
               "description": "Desktop: agents ask and keep working: Agents ask in chat instead of ending a turn to wait for your reply. A question that the rest of the work does not depend on stays open while the agent keeps going, and your answer reaches it even after its turn has ended. Renders DEN_FEATURE_AGENT_QUESTIONS."
             },
+            "followUpSuggestions": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: suggested follow-ups: After a reply finishes, the empty message box can show a suggested next message in gray. Tab fills it in; typing anything else ignores it. A small model writes the suggestion, and nothing shows when it has no clear next step to offer. Renders DEN_FEATURE_FOLLOW_UP_SUGGESTIONS."
+            },
             "steadyLiveTurn": {
               "enum": [
                 "",

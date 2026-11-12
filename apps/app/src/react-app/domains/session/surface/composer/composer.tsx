@@ -57,6 +57,7 @@ import { useNativeDictation } from "@openwork/ui/react";
 import { useNativeDictationFeature } from "./use-native-dictation-feature";
 import { startNativeDictation } from "./start-native-dictation";
 import { useDesktopSpeechDictation } from "./desktop-speech-dictation";
+import { markFeatureUsed } from "@/app/lib/den";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import { NativeDictationControl } from "./native-dictation-control";
 import { useSessionReferencesMaybe, type SessionReferenceCandidate } from "@/components/chat/session-reference-context";
@@ -140,6 +141,8 @@ type ComposerProps = {
   onInsertMention: (kind: ComposerMentionKind, value: string, draft?: string) => void;
   /** Sent-prompt history (oldest first) recalled with ArrowUp/ArrowDown (#2012). */
   inputHistory?: string[];
+  /** A suggested next message, shown in gray while the message box is empty; Tab fills it in (feature `followUpSuggestions`). */
+  followUpSuggestion?: string | null;
   onPasteText: (text: string, draftOffset?: number) => void;
   onUnsupportedFileLinks: (links: string[]) => void;
   pastedText: PastedTextChip[];
@@ -1111,6 +1114,11 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     };
   }, [props.onDraftChange]);
 
+  // Shown only where the usual placeholder would be: an empty, usable message box.
+  const followUpSuggestion = props.followUpSuggestion && !props.draft && props.attachments.length === 0 && !props.disabled
+    ? props.followUpSuggestion
+    : null;
+
   const handleKeyDownCapture: React.KeyboardEventHandler<HTMLDivElement> = (event) => {
     // IME composition guard — block Enter while IME is mid-character.
     const imeActive =
@@ -1118,6 +1126,19 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       (event.nativeEvent as KeyboardEvent).isComposing === true ||
       event.keyCode === 229;
     if (event.key === "Enter" && imeActive) {
+      return;
+    }
+    // Tab in the empty message box takes the suggested follow-up as the draft,
+    // to edit or send. Elsewhere in the composer Tab still moves focus.
+    if (
+      event.key === "Tab" && followUpSuggestion && !imeActive
+      && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey
+      && !agentMenuOpen && !toolMenuOpen && !props.modelPickerOpen && !activeMenu
+      && event.target instanceof HTMLElement && event.target.closest("[data-composer-editor]")
+    ) {
+      event.preventDefault();
+      markFeatureUsed("followUpSuggestions");
+      props.onDraftChange(followUpSuggestion);
       return;
     }
     // Escape-to-stop while the agent is busy. Only when no menu is open so
@@ -1456,7 +1477,8 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               pastedText={pastedTextTokens}
               attachments={attachmentTokens}
               submitDisabled={props.disabled}
-              placeholder={t("composer.placeholder")}
+              placeholder={followUpSuggestion ?? t("composer.placeholder")}
+              placeholderShortcut={followUpSuggestion ? "Tab" : undefined}
               onChange={nativeDictationEnabled ? dictation.edit : props.onDraftChange}
               onMentionQueryChange={setActiveMentionQuery}
               onSessionReferenceQueryChange={sessionReferencesEnabled ? handleSessionTriggerChange : undefined}
