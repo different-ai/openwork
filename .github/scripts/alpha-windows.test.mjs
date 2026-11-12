@@ -12,7 +12,7 @@ const windows = workflow.split("\n  publish-alpha-windows-x64:\n")[1];
 
 function stepScript(name) {
   const step = windows.split(`      - name: ${name}\n`)[1]?.split("\n      - name:")[0];
-  const script = step?.split("        run: |\n")[1];
+  const script = step?.split("        run: |\n")[1] ?? step?.match(/^        run: (.+)$/m)?.[1];
   assert.ok(script, `Missing shell script for ${name}`);
   return script.split("\n").map(line => line.startsWith("          ") ? line.slice(10) : line).join("\n");
 }
@@ -27,7 +27,9 @@ function fixture(body) {
   const installer = `openwork-win-x64-${artifactVersion}.exe`;
   mkdirSync(dist, { recursive: true });
   mkdirSync(join(directory, "scripts/release"), { recursive: true });
-  writeFileSync(join(directory, "scripts/release/check-alpha-version.mjs"), readFileSync(new URL("../../scripts/release/check-alpha-version.mjs", import.meta.url)));
+  for (const script of ["check-alpha-version.mjs", "publish-alpha-assets.mjs", "github-release.mjs", "network-retry.mjs"]) {
+    writeFileSync(join(directory, "scripts/release", script), readFileSync(new URL(`../../scripts/release/${script}`, import.meta.url)));
+  }
   for (const name of [installer, `${installer}.blockmap`, "latest.yml"]) {
     writeFileSync(join(dist, name), "fixture");
   }
@@ -35,8 +37,17 @@ function fixture(body) {
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.RECEIPT, JSON.stringify(args) + '\\n');
-if (args[1] === 'view') { console.log(process.env.ASSET_NAMES || ''); process.exit(Number(process.env.VIEW_EXIT || 0)); }
-if (args[1] === 'upload' && !args.some(arg => arg.endsWith('/latest.yml'))) process.exit(Number(process.env.UPLOAD_EXIT || 0));
+if (args[0] === 'api') {
+  const endpoint = args.at(-1);
+  if (endpoint.includes('/releases/tags/')) {
+    if (process.env.VIEW_EXIT && !fs.existsSync(process.env.RECEIPT + '.created')) { console.error('HTTP 404'); process.exit(1); }
+    console.log(JSON.stringify({ id: 42 }));
+  } else {
+    console.log(JSON.stringify([(process.env.ASSET_NAMES || '').split('\\n').filter(Boolean).map(name => ({ name }))]));
+  }
+}
+if (args[1] === 'create') fs.writeFileSync(process.env.RECEIPT + '.created', 'yes');
+if (args[1] === 'upload' && !args.some(arg => arg.endsWith('/latest.yml'))) { if (process.env.UPLOAD_EXIT) console.error('deterministic upload failure'); process.exit(Number(process.env.UPLOAD_EXIT || 0)); }
 `, { mode: 0o755 });
   const env = {
     ...process.env,
@@ -90,16 +101,18 @@ test("publishes labeled installer and blockmap before the rolling manifest", () 
     assert.equal(result.status, 0, result.stderr);
     const commands = calls();
     assert.deepEqual(commands.map(args => args.slice(0, 2)), [
-      ["release", "view"], ["release", "create"], ["release", "upload"], ["release", "upload"],
+      ["api", "repos/example/repo/releases/tags/alpha-windows-latest"],
+      ["release", "create"], ["api", "repos/example/repo/releases/tags/alpha-windows-latest"],
+      ["release", "upload"], ["release", "upload"], ["release", "upload"],
     ]);
     assert.ok(commands[1].includes("--prerelease"));
     assert.ok(commands[1].includes("--latest=false"));
-    assert.ok(commands[2].some(arg => arg.includes(`${installer}#`) && arg.includes("commit abcdef0; build started")));
-    assert.ok(commands[2].some(arg => arg.includes(`${installer}.blockmap#`)));
-    assert.ok(!commands[2].includes("--clobber"));
-    assert.ok(commands[3].includes("--clobber"));
-    assert.ok(commands[3].includes("apps/desktop/dist-electron/latest.yml"));
-    assert.ok(commands.every(args => args.includes("alpha-windows-latest")));
+    assert.ok(commands[3].some(arg => arg.includes(`${installer}#`) && arg.includes("commit abcdef0; build started")));
+    assert.ok(commands[4].some(arg => arg.includes(`${installer}.blockmap#`)));
+    assert.ok(!commands[3].includes("--clobber") && !commands[4].includes("--clobber"));
+    assert.ok(commands[5].includes("--clobber"));
+    assert.ok(commands[5].some(arg => arg.endsWith("apps/desktop/dist-electron/latest.yml")));
+    assert.ok(commands.every(args => args.some(arg => arg.includes("alpha-windows-latest"))));
   });
 });
 
@@ -114,16 +127,18 @@ test("older or identical publications do not upload or authorize pruning", () =>
   fixture(({ run, calls, directory, installer }) => {
     const result = run(publish, { ASSET_NAMES: `${installer}\nopenwork-win-x64-0.20.1-alpha.124.1+abcdef0.exe` });
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(calls().map(args => args.slice(0, 2)), [["release", "view"]]);
+    assert.deepEqual(calls().map(args => args.slice(0, 2)), [
+      ["api", "repos/example/repo/releases/tags/alpha-windows-latest"], ["api", "--paginate"],
+    ]);
     assert.throws(() => readFileSync(join(directory, "github-output")), { code: "ENOENT" });
   });
 });
 
 test("failed asset upload never advances the manifest", () => {
   fixture(({ run, calls }) => {
-    assert.equal(run(publish, { UPLOAD_EXIT: "7" }).status, 7);
+    assert.notEqual(run(publish, { UPLOAD_EXIT: "7" }).status, 0);
     assert.equal(calls().filter(args => args[1] === "upload").length, 1);
-    assert.ok(calls().every(args => !args.includes("apps/desktop/dist-electron/latest.yml")));
+    assert.ok(calls().every(args => !args.some(arg => arg.endsWith("apps/desktop/dist-electron/latest.yml"))));
   });
 });
 
@@ -134,7 +149,7 @@ test("missing installer, blockmap or manifest fails before GitHub writes", () =>
       rmSync(join(dist, name));
       const result = run(publish);
       assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /Missing Windows alpha asset/);
+      assert.match(result.stderr, /Missing or empty alpha asset/);
       assert.deepEqual(calls(), []);
     });
   }

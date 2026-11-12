@@ -155,8 +155,22 @@ jobs:
           restore-keys: |
             macos-pnpm-
 
+      # Cache downloads only, never signed apps, generated sidecars or staged runtime.
+      - name: Cache Electron packaging downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        continue-on-error: true
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: alpha-packaging-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            alpha-packaging-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install dependencies
-        run: pnpm --filter @openwork/desktop... --filter @openwork/app... --filter openwork-server... install --frozen-lockfile --prefer-offline
+        run: node .github/scripts/retry-pnpm-install.mjs --filter @openwork/desktop... --filter @openwork/app... --filter openwork-server... install --frozen-lockfile --prefer-offline
 
       - name: Resolve alpha version
         id: alpha-version
@@ -296,69 +310,15 @@ jobs:
           ALPHA_COMMIT: ${{ needs.build-alpha-macos-aarch64.outputs.commit }}
           ALPHA_BUILD_STARTED_AT: ${{ needs.build-alpha-macos-aarch64.outputs.started_at }}
           ALPHA_VERSION: ${{ needs.build-alpha-macos-aarch64.outputs.artifact_version }}
-        run: |
-          set -euo pipefail
-          # Alpha assets may only ever land on alpha channel releases. This
-          # guard makes it impossible to clobber a stable release (and its
-          # latest-mac.yml) via a mistyped channel_tag dispatch input.
-          case "$CHANNEL_TAG" in
-            alpha-macos-*) ;;
-            *)
-              echo "Refusing to publish alpha assets to non-alpha tag: $CHANNEL_TAG" >&2
-              exit 1
-              ;;
-          esac
-
-          shopt -s nullglob
-          assets=(
-            apps/desktop/dist-electron/*.dmg
-            apps/desktop/dist-electron/*.zip
-            apps/desktop/dist-electron/*.blockmap
-          )
-          if [ ${#assets[@]} -eq 0 ] || [ ! -s apps/desktop/dist-electron/latest-mac.yml ]; then
-            echo "No Electron alpha assets found in apps/desktop/dist-electron" >&2
-            exit 1
-          fi
-
-          published_assets="$(mktemp)"
-          trap 'rm -f "$published_assets"' EXIT
-          if gh release view "$CHANNEL_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' > "$published_assets"; then
-            # Builds finish out of order; never move the feed behind a newer build.
-            if [ "$(node scripts/release/check-alpha-version.mjs mac "$ALPHA_VERSION" "$published_assets")" != publish ]; then
-              echo "Skipping alpha $ALPHA_VERSION: a newer build is already uploaded."
-              exit 0
-            fi
-          else
-            gh release create "$CHANNEL_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "$ALPHA_RELEASE_NAME" \
-              --notes "Rolling alpha channel for OpenWork macOS arm64 builds. Each publish adds versioned updater assets and advances the channel manifest." \
-              --target "$GITHUB_SHA" \
-              --prerelease
-          fi
-
-          # Human-readable asset labels also supply per-build metadata to the
-          # docs in the existing release API response (no per-build requests).
-          labeled_assets=()
-          for asset in "${assets[@]}"; do
-            labeled_assets+=("$asset#${asset##*/} (commit $ALPHA_COMMIT; build started $ALPHA_BUILD_STARTED_AT)")
-          done
-          gh release upload "$CHANNEL_TAG" "${labeled_assets[@]}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
-
-          # Publish the manifest last so an interrupted upload never points at missing assets.
-          gh release upload "$CHANNEL_TAG" apps/desktop/dist-electron/latest-mac.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
-          echo "published=true" >> "$GITHUB_OUTPUT"
+        # Keep validation, provenance and manifest-last ordering in the tested publisher.
+        run: node scripts/release/publish-alpha-assets.mjs --platform mac --dist apps/desktop/dist-electron
 
       - name: Prune alpha assets beyond retention window
         if: steps.publish-macos.outputs.published == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/release/prune-alpha-assets.mjs --repo "$GITHUB_REPOSITORY" --tag "$CHANNEL_TAG" --keep 100 --protect-run "$GITHUB_RUN_NUMBER"
+        run: node scripts/release/prune-alpha-assets.mjs --repo "$GITHUB_REPOSITORY" --tag "$CHANNEL_TAG" --keep 100 --protect-run "$GITHUB_RUN_NUMBER" --allow-transient-failure
 
   publish-alpha-windows-x64:
     needs: [changes, packaged-smoke]
@@ -435,8 +395,22 @@ jobs:
           restore-keys: |
             Windows-electron-pnpm-
 
+      # Cache downloads only, never signed apps, generated sidecars or staged runtime.
+      - name: Cache Electron packaging downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        continue-on-error: true
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: alpha-packaging-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            alpha-packaging-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install dependencies
-        run: pnpm --filter @openwork/desktop... --filter @openwork/app... --filter openwork-server... install --frozen-lockfile --prefer-offline
+        run: node .github/scripts/retry-pnpm-install.mjs --filter @openwork/desktop... --filter @openwork/app... --filter openwork-server... install --frozen-lockfile --prefer-offline
 
       - name: Resolve alpha version
         id: alpha-version
@@ -536,44 +510,11 @@ jobs:
           ALPHA_COMMIT: ${{ steps.alpha-build.outputs.commit }}
           ALPHA_BUILD_STARTED_AT: ${{ steps.alpha-build.outputs.started_at }}
           ALPHA_VERSION: ${{ steps.alpha-version.outputs.artifact_version }}
-        run: |
-          set -euo pipefail
-          installer="apps/desktop/dist-electron/openwork-win-x64-${ALPHA_VERSION}.exe"
-          # Require all assets before creating the release or uploading anything.
-          for asset in "$installer" "$installer.blockmap" apps/desktop/dist-electron/latest.yml; do
-            test -s "$asset" || { echo "Missing Windows alpha asset: $asset" >&2; exit 1; }
-          done
-          published_assets="$(mktemp)"
-          trap 'rm -f "$published_assets"' EXIT
-          if gh release view "$CHANNEL_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' > "$published_assets"; then
-            # Under the channel lock, do not move the feed behind any uploaded build.
-            if [ "$(node scripts/release/check-alpha-version.mjs windows "$ALPHA_VERSION" "$published_assets")" != publish ]; then
-              echo "Skipping alpha $ALPHA_VERSION: an equal or newer build is already uploaded."
-              exit 0
-            fi
-          else
-            gh release create "$CHANNEL_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "$ALPHA_RELEASE_NAME" \
-              --notes "Rolling alpha channel for OpenWork Windows x64 builds. Each publish adds signed, versioned updater assets and advances the channel manifest." \
-              --target "$GITHUB_SHA" \
-              --prerelease \
-              --latest=false
-          fi
-          labeled_assets=()
-          for asset in "$installer" "$installer.blockmap"; do
-            labeled_assets+=("$asset#${asset##*/} (commit $ALPHA_COMMIT; build started $ALPHA_BUILD_STARTED_AT)")
-          done
-          # Versioned installers are immutable; only the rolling manifest is replaced.
-          gh release upload "$CHANNEL_TAG" "${labeled_assets[@]}" \
-            --repo "$GITHUB_REPOSITORY"
-          # Publish last: never advertise bytes that have not been uploaded.
-          gh release upload "$CHANNEL_TAG" apps/desktop/dist-electron/latest.yml \
-            --repo "$GITHUB_REPOSITORY" --clobber
-          echo "published=true" >> "$GITHUB_OUTPUT"
+        # Reconcile ambiguous uploads without replacing immutable signed installers.
+        run: node scripts/release/publish-alpha-assets.mjs --platform windows --dist apps/desktop/dist-electron
 
       - name: Prune Windows alpha assets beyond retention window
         if: (github.event_name == 'push' || inputs.publish == true) && steps.publish-windows.outputs.published == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/release/prune-alpha-assets.mjs --repo "$GITHUB_REPOSITORY" --tag "$CHANNEL_TAG" --keep 100 --protect-run "$GITHUB_RUN_NUMBER"
+        run: node scripts/release/prune-alpha-assets.mjs --repo "$GITHUB_REPOSITORY" --tag "$CHANNEL_TAG" --keep 100 --protect-run "$GITHUB_RUN_NUMBER" --allow-transient-failure

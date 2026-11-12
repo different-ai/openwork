@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { execFileSync, spawnSync } from "node:child_process";
+import { createGithubReleaseClient } from "./github-release.mjs";
+import { isTransientNetworkFailure } from "./network-retry.mjs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const MAX_BUFFER = 128 * 1024 * 1024;
+const github = createGithubReleaseClient();
 
 function buildRunNumber(name) {
   const match = name.match(/-alpha\.(\d+)(?=[^0-9]|$)/);
@@ -24,14 +25,6 @@ export function selectAlphaAssetsToPrune(assets, keepBuilds, protectedRunNumber 
   });
 }
 
-function parsePaginatedArrays(output) {
-  const parsed = JSON.parse(output);
-  if (!Array.isArray(parsed)) throw new Error("Expected a JSON array from gh api.");
-  if (parsed.every(Array.isArray)) return parsed.flat();
-  if (parsed.every((item) => !Array.isArray(item))) return parsed;
-  throw new Error("Expected gh api pagination output to contain arrays of assets.");
-}
-
 function parseArgs(args) {
   const options = { dryRun: false };
   for (let index = 0; index < args.length; index += 1) {
@@ -40,6 +33,7 @@ function parseArgs(args) {
       options.dryRun = true;
       continue;
     }
+    if (arg === "--allow-transient-failure") continue;
     if (["--repo", "--tag", "--keep", "--protect-run"].includes(arg)) {
       const value = args[index + 1];
       if (!value || value.startsWith("--")) throw new Error(`${arg} requires a value.`);
@@ -61,34 +55,15 @@ function parseArgs(args) {
   return { repo: options.repo, tag: options.tag, keep, dryRun: options.dryRun, protectedRunNumber };
 }
 
-function getRelease(repo, tag) {
-  const result = spawnSync("gh", ["api", `repos/${repo}/releases/tags/${tag}`], {
-    encoding: "utf8",
-    maxBuffer: MAX_BUFFER,
-  });
-  if (result.status === 0) return JSON.parse(result.stdout);
-  if (/HTTP 404/i.test(result.stderr)) return null;
-  throw new Error(result.stderr.trim() || `gh api failed with exit code ${result.status ?? "unknown"}.`);
-}
-
-function listAssets(repo, releaseId) {
-  const output = execFileSync(
-    "gh",
-    ["api", "--paginate", "--slurp", `repos/${repo}/releases/${releaseId}/assets?per_page=100`],
-    { encoding: "utf8", maxBuffer: MAX_BUFFER },
-  );
-  return parsePaginatedArrays(output);
-}
-
-function main() {
+async function main() {
   const { repo, tag, keep, dryRun, protectedRunNumber } = parseArgs(process.argv.slice(2));
-  const release = getRelease(repo, tag);
+  const release = await github.getRelease(repo, tag);
   if (!release) {
     console.log(`Release ${tag} does not exist in ${repo}; nothing to prune.`);
     return;
   }
 
-  const assets = listAssets(repo, release.id);
+  const assets = await github.listAssets(repo, release.id);
   const deletions = selectAlphaAssetsToPrune(assets, keep, protectedRunNumber);
   if (deletions.length === 0) {
     console.log(`Nothing to prune from ${tag}; keeping the newest ${keep} alpha builds.`);
@@ -101,9 +76,7 @@ function main() {
       continue;
     }
     console.log(`Deleting ${asset.name}`);
-    execFileSync("gh", ["api", "-X", "DELETE", `repos/${repo}/releases/assets/${asset.id}`], {
-      stdio: "inherit",
-    });
+    await github.deleteAsset(repo, asset.id);
   }
 
   console.log(dryRun
@@ -111,11 +84,25 @@ function main() {
     : `Deleted ${deletions.length} asset(s) from ${tag}.`);
 }
 
+// Cleanup runs only after publication succeeded. It may defer on an exhausted
+// transport outage, but permission, validation and other deterministic failures
+// remain fatal. Callers must explicitly opt in; standalone pruning stays strict.
+export function canDeferPruning(error, args) {
+  return args.includes("--allow-transient-failure")
+    && isTransientNetworkFailure(error instanceof Error ? error.message : String(error));
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    main();
+    await main();
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
+    const message = error instanceof Error ? error.message : String(error);
+    if (canDeferPruning(error, process.argv.slice(2))) {
+      console.warn(`::warning::Alpha retention cleanup deferred after network retries; the published build is unaffected.`);
+      console.warn(message);
+    } else {
+      console.error(message);
+      process.exitCode = 1;
+    }
   }
 }

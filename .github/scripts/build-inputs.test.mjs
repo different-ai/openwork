@@ -111,6 +111,10 @@ test("each job watches its own script, workflow and shared declaration inputs", 
   for (const target of targets) assert.equal(isBuildAffected(target, [".github/scripts/build-inputs.mjs"]), true, target);
   assert.equal(isBuildAffected("den-contract", [".github/workflows/ci-tests.yml"]), true);
   assert.equal(isBuildAffected("desktop-smoke", ["docs/enterprise/outbound-access.json"]), false);
+  for (const target of ["desktop", "desktop-smoke"]) {
+    assert.equal(isBuildAffected(target, [".github/scripts/retry-pnpm-install.mjs"]), true);
+  }
+  assert.equal(isBuildAffected("den-api", [".github/scripts/retry-pnpm-install.mjs"]), false);
 });
 
 test("an unrelated dev run cannot replace pending core verification", () => {

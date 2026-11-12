@@ -64,7 +64,7 @@ test("the workflow CLI commands force manual builds but skip a known empty push 
 
 test("both alpha platforms depend on the desktop scope while retaining manual platform selection", () => {
   const workflow = workflows.get("desktop");
-  const install = /pnpm --filter @openwork\/desktop\.\.\. --filter @openwork\/app\.\.\. --filter openwork-server\.\.\. install --frozen-lockfile --prefer-offline/;
+  const install = /node \.github\/scripts\/retry-pnpm-install\.mjs --filter @openwork\/desktop\.\.\. --filter @openwork\/app\.\.\. --filter openwork-server\.\.\. install --frozen-lockfile --prefer-offline/;
   // macOS builds alongside the packaged smoke and other builds; only its
   // unprivileged publication waits for the smoke and takes the channel lock.
   const macBuild = job(workflow, "build-alpha-macos-aarch64");

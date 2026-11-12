@@ -125,7 +125,7 @@ export function buildInputPatterns(target, options = {}) {
   const desktop = () => [
     ...closure("@openwork/desktop", "@openwork/app", "openwork-server"),
     "packages/opencode-plugin/**", "constants.json", WORKSPACE_BUILD, ...EMBEDDED_DOCS,
-    "scripts/release/**", ".github/actions/windows-signing/**",
+    "scripts/release/**", ".github/actions/windows-signing/**", ".github/scripts/retry-pnpm-install.mjs",
     ".github/workflows/alpha-macos-aarch64.yml", ".github/workflows/build-electron-desktop.yml",
   ];
   const runner = () => [
