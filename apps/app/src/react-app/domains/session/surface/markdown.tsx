@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 
+import { applyBlockDirection, textDirectionOf } from "@/lib/text-direction";
 import { applyTextHighlights } from "@/components/markdown/text-highlights";
 import {
   hasFencedCodeBlock,
@@ -51,8 +52,9 @@ function MarkdownBlockInner(props: {
     queueMicrotask(() => {
       if (!rootRef.current || rootRef.current !== root) return;
       applyTextHighlights(root, props.highlightQuery ?? "");
+      applyBlockDirection(root, props.text);
     });
-  }, [html, props.highlightQuery]);
+  }, [html, props.highlightQuery, props.text]);
 
   if (!html) return null;
 
@@ -61,6 +63,7 @@ function MarkdownBlockInner(props: {
       <div
         ref={rootRef}
         className="markdown-content max-w-none select-text text-foreground"
+        dir={textDirectionOf(props.text) ?? "ltr"}
         dangerouslySetInnerHTML={stableInnerHtml}
       />
       <MermaidZoomPortals diagrams={mermaidDiagrams} />

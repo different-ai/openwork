@@ -59,6 +59,7 @@ import { isComputerTarget } from "./computer-mentions";
 import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
 import { insertPastedText } from "./pasted-text-insertion";
 import { lineBoundaryMoveForKey } from "./line-boundary-keys";
+import { textDirectionOf } from "@/lib/text-direction";
 
 type PastedTextToken = { label: string; lines: number; text: string };
 
@@ -1810,6 +1811,8 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
     [],
   );
 
+  const direction = textDirectionOf(props.value) ?? "ltr";
+
   return (
     <LexicalComposer initialConfig={initialConfig}>
       {/*
@@ -1818,7 +1821,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         - max-h caps the composer — long pastes / multi-paragraph drafts scroll
           inside the editor instead of pushing the transcript out of view.
       */}
-      <div className="relative">
+      <div className="relative" dir={direction}>
         <PlainTextPlugin
           contentEditable={
             <ContentEditable
@@ -1833,7 +1836,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
             />
           }
           placeholder={
-            <div className="pointer-events-none absolute left-0 top-0 text-base leading-6 text-dls-secondary/70 lg:text-[13px] lg:leading-[1.55]">
+            <div className="pointer-events-none absolute start-0 top-0 text-base leading-6 text-dls-secondary/70 lg:text-[13px] lg:leading-[1.55]">
               {props.placeholder}
               {props.placeholderShortcut ? (
                 <kbd className="ml-2 rounded border border-dls-border px-1 py-0.5 font-sans text-[11px] leading-none">{props.placeholderShortcut}</kbd>

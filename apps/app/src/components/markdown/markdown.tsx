@@ -16,6 +16,7 @@ import { contextualizeFileTarget, precedingDirectory } from "@/react-app/domains
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { openTargetForHref, openTargetFromLocalPath, planFileOpen, resolveCollectibleOpenTarget } from "@/react-app/domains/session/artifacts/resolve-open-target";
 
+import { applyBlockDirection, textDirectionOf } from "@/lib/text-direction";
 import { applyTextHighlights } from "./text-highlights";
 import {
   createStreamingMarkdownRenderer,
@@ -214,9 +215,10 @@ function MarkdownBlockInner({
       }
 
       applyTextHighlights(root, highlightQuery ?? "");
+      applyBlockDirection(root, text);
       syncCodeWrapStates();
     });
-  }, [highlightQuery, rendered]);
+  }, [highlightQuery, rendered, text]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -499,13 +501,14 @@ function MarkdownBlockInner({
   }
 
   const rootClassName = cn("markdown-content max-w-none select-text text-foreground", className);
+  const rootDirection = textDirectionOf(text) ?? "ltr";
 
   return (
     <>
       {rendered.kind === "blocks" ? (
         // Keyed by kind so the switch to the settled document remounts the root
         // instead of mixing children with dangerouslySetInnerHTML.
-        <div key="blocks" ref={rootRef} className={rootClassName} {...props}>
+        <div key="blocks" ref={rootRef} className={rootClassName} dir={rootDirection} {...props}>
           {rendered.blocks.map((block, index) => (
             block.__html ? <div key={index} dangerouslySetInnerHTML={block} /> : null
           ))}
@@ -515,6 +518,7 @@ function MarkdownBlockInner({
           key="document"
           ref={rootRef}
           className={rootClassName}
+          dir={rootDirection}
           dangerouslySetInnerHTML={stableInnerHtml}
           {...props}
         />
