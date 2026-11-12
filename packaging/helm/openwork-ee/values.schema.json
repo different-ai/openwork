@@ -341,6 +341,16 @@
               ],
               "description": "Den: grey sidebar, white pages: The Den dashboard shows its sidebar on a light grey band and every page on white, like the admin dashboard pictured on the website, instead of a white sidebar beside lightly tinted pages. Only colours change: navigation, page layouts and every control stay where they are. Turning it off restores the earlier colours at once. Renders DEN_FEATURE_DEN_GREY_SIDEBAR."
             },
+            "denPageConsistency": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Den: predictable page interactions: Audit filters apply as they change, organization settings show Save and Discard only for unsaved changes, and team pages offer Edit team. Analytics no longer offers the separate Workflow Runs tab; existing run links still work. Turning it off restores explicit audit filtering, the persistent settings save action, and the earlier navigation. Layout polish is independent of this switch. Renders DEN_FEATURE_DEN_PAGE_CONSISTENCY."
+            },
             "teamSettingsSidebar": {
               "enum": [
                 "",

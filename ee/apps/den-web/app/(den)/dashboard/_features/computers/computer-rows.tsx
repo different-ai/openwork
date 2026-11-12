@@ -116,7 +116,7 @@ export type RowToggle = {
  * One row. With `toggle` its name is the button that opens the detail under
  * it, and a click anywhere on the row that is not on a control does the same.
  */
-export function ListRow({ icon, lead, name, href, badge, secondLine, lanes, below, action, toggle, testId, rowTestId, children }: {
+export function ListRow({ icon, lead, name, href, scroll, stretch = true, linkLabel, badge, secondLine, lanes, below, action, toggle, testId, rowTestId, rowData, children }: {
   /** What the row is, as a quiet icon in the 32px tile. */
   icon?: LucideIcon;
   /**
@@ -125,9 +125,12 @@ export function ListRow({ icon, lead, name, href, badge, secondLine, lanes, belo
    * lane tells them apart instead of repeating one icon.
    */
   lead?: ReactNode;
-  name: string;
-  /** A resource page, instead of an inline disclosure. The whole row opens it; the row's own control stays its own. */
+  name: ReactNode;
+  /** A resource page, instead of an inline disclosure. The whole row opens it unless `stretch` is false. */
   href?: string;
+  scroll?: boolean;
+  stretch?: boolean;
+  linkLabel?: string;
   badge?: ReactNode;
   secondLine?: ReactNode;
   lanes?: ReactNode;
@@ -139,6 +142,8 @@ export function ListRow({ icon, lead, name, href, badge, secondLine, lanes, belo
   /** On the name: the element a person, or a test, presses to open the row. */
   testId?: string;
   rowTestId?: string;
+  /** data-* attributes on the row. */
+  rowData?: Record<`data-${string}`, string | undefined>;
   /** The open detail, under the row. */
   children?: ReactNode;
 }) {
@@ -147,24 +152,28 @@ export function ListRow({ icon, lead, name, href, badge, secondLine, lanes, belo
     const target = event.target;
     // Menus and dialogs are portaled: their clicks reach here through React, not through the row's own elements.
     if (!(target instanceof Element) || !event.currentTarget.contains(target)) return;
-    if (target.closest("button, a, input, textarea")) return;
+    if (target.closest("button, a, input, textarea, select, summary, [role=button], [role=checkbox], [role=switch], [contenteditable=true]")) return;
     // Someone selecting the name to copy it is not opening the row.
     if (window.getSelection()?.toString()) return;
     toggle.onToggle();
   }
   const nameClass = ROW_NAME_CLASS;
+  const title = typeof name === "string" ? name : undefined;
+  // Only controls rise above the stretched link: clicking plain lane text/whitespace still opens the row.
+  // Isolate each row so its overlay cannot intercept a neighboring row's controls.
+  const stretched = Boolean(href && stretch && !toggle);
   return <>
-    <div role="row" data-testid={rowTestId} data-open={toggle?.expanded || undefined} onClick={toggle ? rowClick : undefined}
-      className={`group flex min-h-[49px] flex-wrap items-center gap-x-3 gap-y-0.5 border-b ${hairline} py-1.5 ${toggle ? "cursor-pointer" : ""} ${href ? "relative" : ""}`}>
+    <div role="row" data-testid={rowTestId} {...rowData} data-open={toggle?.expanded || undefined} onClick={toggle ? rowClick : undefined}
+      className={`group flex min-h-[49px] flex-wrap items-center gap-x-3 gap-y-0.5 border-b ${hairline} py-1.5 ${toggle ? "cursor-pointer" : ""} ${stretched ? "relative isolate [&_:is(button,input,select,textarea,summary,[role=button],[role=checkbox],[role=switch],[contenteditable=true],a:not([data-row-link]))]:relative [&_:is(button,input,select,textarea,summary,[role=button],[role=checkbox],[role=switch],[contenteditable=true],a:not([data-row-link]))]:z-[1]" : ""}`}>
       <div role="cell" className="flex min-w-0 flex-1 items-center gap-3">
         {lead ?? (icon ? <RowTile icon={icon} /> : null)}
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             {toggle
-              ? <button type="button" aria-expanded={toggle.expanded} aria-controls={toggle.controls} onClick={toggle.onToggle} data-testid={testId} title={name}
+              ? <button type="button" aria-expanded={toggle.expanded} aria-controls={toggle.controls} onClick={toggle.onToggle} data-testid={testId} title={title}
                   className={`${nameClass} rounded-sm ${focusRing}`}>{name}</button>
-              : href ? <Link href={href} data-testid={testId} title={name} className={`${nameClass} rounded-sm group-hover:underline after:absolute after:inset-0 after:content-[''] ${focusRing}`}>{name}</Link>
-                : <span data-testid={testId} title={name} className={nameClass}>{name}</span>}
+              : href ? <Link href={href} scroll={scroll} aria-label={linkLabel} data-row-link="" data-testid={testId} title={title} className={`${nameClass} rounded-sm hover:underline ${stretched ? "group-hover:underline after:absolute after:inset-0 after:z-0 after:content-['']" : ""} ${focusRing}`}>{name}</Link>
+                : <span data-testid={testId} title={title} className={nameClass}>{name}</span>}
             {badge}
           </div>
           {secondLine ? <p className={ROW_SECOND_LINE_CLASS}>{secondLine}</p> : null}

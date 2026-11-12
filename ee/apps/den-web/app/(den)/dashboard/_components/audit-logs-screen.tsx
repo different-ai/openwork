@@ -13,14 +13,16 @@ import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { DenSelect } from "../../_components/ui/select";
-import { getOrgAccessFlags, type DenOrgContext, type DenOrgMember } from "../../_lib/den-org";
+import { getOrgAccessFlags, orgFeatureEnabled, type DenOrgContext, type DenOrgMember } from "../../_lib/den-org";
+import { markFeatureUsed } from "../../_lib/feature-usage";
+import { auditFiltersFromDraft, auditLocalDate, pendingAuditSearch } from "./page-consistency-state";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 import { auditLogsIntroFacts } from "./audit-logs-intro-facts";
 import { useFeatureIntro } from "../_features/feature-intros";
 import { auditQueryKey, isAuditAccessError, useAuditEventTypes, useAuditOperations, type AuditFilters, type AuditReadError, type AuditScope } from "./audit-logs-data";
 import {
-  AuditChevron, AuditLocked, AuditReadFailure, AuditSkeleton, AuditTime, AuditTimeline, AuditUsage,
+  AuditChevron, AuditLocked, AuditReadFailure, AuditSkeleton, AuditTimeline, AuditUsage,
   auditActionSentence, auditActorLabel, auditLabel, auditOriginLabels, auditOutcomeLabels, auditOutcomeStatus, auditResourceLabel, auditSummaryClass, auditTechnicalSummaryClass,
 } from "./audit-logs-details";
 
@@ -55,7 +57,7 @@ export function AuditLogsScreen() {
   if (access === "unavailable") return <AuditPage><AuditLocked unavailable /></AuditPage>;
   if (access === "locked" || !dashboard.orgContext || !dashboard.orgId) return <AuditPage><AuditLocked /></AuditPage>;
   const member = dashboard.orgContext.currentMember;
-  return <AuditLogsContent key={JSON.stringify([dashboard.orgId, member.id, member.userId, member.role, member.isOwner, member.permissions])} scope={{ orgId: dashboard.orgId, memberId: member.id }} members={dashboard.orgContext.members} captureIncluded={dashboard.orgContext.entitlements.auditLogs} />;
+  return <AuditLogsContent key={JSON.stringify([dashboard.orgId, member.id, member.userId, member.role, member.isOwner, member.permissions])} scope={{ orgId: dashboard.orgId, memberId: member.id }} members={dashboard.orgContext.members} captureIncluded={dashboard.orgContext.entitlements.auditLogs} immediateFilters={orgFeatureEnabled(dashboard.orgContext, "denPageConsistency")} />;
 }
 
 const PERIODS = [
@@ -66,64 +68,68 @@ const PERIODS = [
   { value: "720", label: "Last 30 days", hours: 720 },
 ] as const;
 
-function localDate(value?: string) {
-  if (!value) return "";
-  const date = new Date(value);
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-}
-
-/**
- * The Computers toolbar for audit history: one line, an ID filter on the left
- * and the facets on the right, each applied as soon as it changes. An exact
- * date range, the actor and the origin sit behind the Filters button.
- */
-function AuditToolbar({ filters, members, operations, eventTypes, eventTypesPending, onApply }: {
+/** With the rollout off, edits remain drafts until Apply filters is pressed. */
+function AuditToolbar({ filters, members, operations, eventTypes, eventTypesPending, onApply, immediate }: {
   filters: AuditFilters; members: readonly DenOrgMember[]; operations: AuditOperationSummary[];
-  eventTypes: readonly string[]; eventTypesPending: boolean; onApply: (filters: AuditFilters) => void;
+  eventTypes: readonly string[]; eventTypesPending: boolean; onApply: (filters: AuditFilters) => void; immediate: boolean;
 }) {
-  const [searchId, setSearchId] = useState(filters.searchId ?? "");
+  const [draft, setDraft] = useState<AuditFilters>(() => ({ ...filters, from: auditLocalDate(filters.from), to: auditLocalDate(filters.to) }));
   const [period, setPeriod] = useState("");
-  const [more, setMore] = useState(Boolean(filters.to || filters.actorId || filters.origin));
+  const [more, setMore] = useState(!immediate || Boolean(filters.to || filters.actorId || filters.origin));
   const [error, setError] = useState<string | null>(null);
-  const actions = [...new Set([...eventTypes, ...(filters.action ? [filters.action] : [])])].sort();
+  useEffect(() => {
+    setDraft({ ...filters, from: auditLocalDate(filters.from), to: auditLocalDate(filters.to) });
+    setError(null);
+    // A reset outside this toolbar (Show all operations) resets its local period too.
+    if (!filters.from && !filters.to) setPeriod("");
+  }, [filters]);
+  const actions = [...new Set([...eventTypes, ...(draft.action ? [draft.action] : [])])].sort();
   const actors = new Map(members.flatMap((member) => member.userId ? [[member.userId, member.user.name] satisfies [string, string]] : []));
   for (const { initiatingActor: actor, origin } of operations) {
     if (!actor.id || actors.has(actor.id)) continue;
     const label = auditActorLabel(actor, members, origin);
     actors.set(actor.id, label === "Platform administrator" ? `${label} (${actor.id})` : label);
   }
-  if (filters.actorId && !actors.has(filters.actorId)) actors.set(filters.actorId, "Previously selected actor");
-  const change = (changes: AuditFilters) => { setError(null); onApply({ ...filters, ...changes }); };
-  // Typing an ID applies once the person pauses, as the Computers filter does.
-  useEffect(() => {
-    const next = searchId.trim() || undefined;
-    if (next === filters.searchId) return;
-    const timeout = window.setTimeout(() => onApply({ ...filters, searchId: next }), 300);
-    return () => window.clearTimeout(timeout);
-  }, [searchId, filters, onApply]);
-  function range(key: "from" | "to", value: string) {
-    const next = { ...filters, [key]: value ? new Date(value).toISOString() : undefined };
-    if (next.from && next.to && Date.parse(next.from) > Date.parse(next.to)) { setError("Choose a start before the end."); return; }
-    setPeriod("");
-    change({ [key]: next[key] });
+  if (draft.actorId && !actors.has(draft.actorId)) actors.set(draft.actorId, "Previously selected actor");
+  function apply(nextDraft: AuditFilters) {
+    const next = auditFiltersFromDraft(nextDraft);
+    setError(next ? null : "Choose a valid date range with the start before the end.");
+    if (next) onApply(next);
   }
-  const filtered = Object.values(filters).some(Boolean);
-  function clear() { setSearchId(""); setPeriod(""); setError(null); onApply({}); }
-  return <div className="flex flex-col gap-3" role="group" aria-label="Filter audit operations">
+  function change(changes: AuditFilters) {
+    const next = { ...draft, ...changes };
+    setDraft(next);
+    if (immediate) apply(next);
+    else setError(null);
+  }
+  // No timer or automatic query changes at all when the rollout is off.
+  useEffect(() => {
+    const next = pendingAuditSearch(immediate, draft, filters.searchId);
+    if (!next) return;
+    const timeout = window.setTimeout(() => onApply(next), 300);
+    return () => window.clearTimeout(timeout);
+  }, [immediate, draft, filters.searchId, onApply]);
+  function range(key: "from" | "to", value: string) {
+    setPeriod("");
+    change({ [key]: value });
+  }
+  const filtered = Object.values(filters).some(Boolean) || Object.values(draft).some(Boolean);
+  function clear() { setDraft({}); setPeriod(""); setError(null); onApply({}); }
+  return <form className="flex flex-col gap-3" aria-label="Filter audit operations" onSubmit={(event) => { event.preventDefault(); apply(draft); }}>
     <div className="flex flex-wrap items-center justify-between gap-2" data-testid="audit-primary-filters">
-      <FilterInput className="w-64 max-w-full" placeholder="Filter by exact ID" value={searchId} onChange={(value) => setSearchId(value.slice(0, 255))} />
+      <FilterInput className="w-64 max-w-full" placeholder="Filter by exact ID" value={draft.searchId ?? ""} onChange={(value) => { setDraft({ ...draft, searchId: value.slice(0, 255) }); }} />
       <div className="flex flex-wrap items-center gap-2">
         {filtered ? <DenButton size="sm" variant="ghost" onClick={clear}>Clear filters</DenButton> : null}
-        <div className="w-44" aria-busy={eventTypesPending}><DenSelect size="sm" aria-label="Event type" searchLabel="Search event types" searchEmptyLabel="No event types match. Try another word." disabled={eventTypesPending} value={filters.action ?? ""} onChange={(event) => change({ action: event.target.value || undefined })}>
+        <div className="w-44" aria-busy={eventTypesPending}><DenSelect size="sm" aria-label="Event type" searchLabel="Search event types" searchEmptyLabel="No event types match. Try another word." disabled={eventTypesPending} value={draft.action ?? ""} onChange={(event) => change({ action: event.target.value || undefined })}>
           <option value="">Any event</option>{actions.map((action) => <option key={action} value={action}>{auditLabel(action)}</option>)}
         </DenSelect></div>
-        <div className="w-36"><DenSelect size="sm" aria-label="Result" value={filters.outcome ?? ""} onChange={(event) => change({ outcome: auditOperationOutcomeSchema.safeParse(event.target.value).data })}>
+        <div className="w-36"><DenSelect size="sm" aria-label="Result" value={draft.outcome ?? ""} onChange={(event) => change({ outcome: auditOperationOutcomeSchema.safeParse(event.target.value).data })}>
           <option value="">Any result</option>{auditOperationOutcomeSchema.options.map((outcome) => <option key={outcome} value={outcome}>{auditOutcomeLabels[outcome]}</option>)}
         </DenSelect></div>
         <div className="w-36"><DenSelect size="sm" aria-label="Period" value={period} onChange={(event) => {
           const chosen = PERIODS.find((entry) => entry.value === event.target.value) ?? PERIODS[0];
           setPeriod(chosen.value);
-          change({ from: chosen.hours ? new Date(Date.now() - chosen.hours * 3_600_000).toISOString() : undefined, to: undefined });
+          change({ from: chosen.hours ? auditLocalDate(new Date(Date.now() - chosen.hours * 3_600_000).toISOString()) : undefined, to: undefined });
         }}>
           {PERIODS.map((entry) => <option key={entry.value} value={entry.value}>{entry.label}</option>)}
         </DenSelect></div>
@@ -131,17 +137,18 @@ function AuditToolbar({ filters, members, operations, eventTypes, eventTypesPend
       </div>
     </div>
     {more ? <div id="audit-more-filters" className={`flex flex-wrap items-end gap-3 border-y ${hairline} py-3 text-[12px] ${secondaryText}`}>
-      <label className="flex w-56 flex-col gap-1">From<DenInput className={COMPACT_INPUT_CLASS} type="datetime-local" aria-label="From (local time)" value={localDate(filters.from)} onChange={(event) => range("from", event.target.value)} aria-invalid={Boolean(error)} /></label>
-      <label className="flex w-56 flex-col gap-1">To<DenInput className={COMPACT_INPUT_CLASS} type="datetime-local" aria-label="To (local time)" value={localDate(filters.to)} onChange={(event) => range("to", event.target.value)} aria-invalid={Boolean(error)} /></label>
-      <label className="flex w-44 flex-col gap-1">Actor<DenSelect size="sm" aria-label="Actor" value={filters.actorId ?? ""} onChange={(event) => change({ actorId: event.target.value || undefined })}>
+      <label className="flex w-56 flex-col gap-1">From<DenInput className={COMPACT_INPUT_CLASS} type="datetime-local" aria-label="From (local time)" value={draft.from ?? ""} onChange={(event) => range("from", event.target.value)} aria-invalid={Boolean(error)} /></label>
+      <label className="flex w-56 flex-col gap-1">To<DenInput className={COMPACT_INPUT_CLASS} type="datetime-local" aria-label="To (local time)" value={draft.to ?? ""} onChange={(event) => range("to", event.target.value)} aria-invalid={Boolean(error)} /></label>
+      <label className="flex w-44 flex-col gap-1">Actor<DenSelect size="sm" aria-label="Actor" value={draft.actorId ?? ""} onChange={(event) => change({ actorId: event.target.value || undefined })}>
         <option value="">Anyone</option>{[...actors].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
       </DenSelect></label>
-      <label className="flex w-44 flex-col gap-1">Origin<DenSelect size="sm" aria-label="Origin" value={filters.origin ?? ""} onChange={(event) => change({ origin: auditOriginSchema.safeParse(event.target.value).data })}>
+      <label className="flex w-44 flex-col gap-1">Origin<DenSelect size="sm" aria-label="Origin" value={draft.origin ?? ""} onChange={(event) => change({ origin: auditOriginSchema.safeParse(event.target.value).data })}>
         <option value="">Any origin</option>{auditOriginSchema.options.map((origin) => <option key={origin} value={origin}>{auditOriginLabels[origin]}</option>)}
       </DenSelect></label>
     </div> : null}
+    {!immediate ? <DenButton type="submit" size="sm" variant="secondary" className="self-start">Apply filters</DenButton> : null}
     {error ? <DenNotice tone="error" message={error} /> : null}
-  </div>;
+  </form>;
 }
 
 /** Who did it, in the row's lead lane: a person's initials, or a quiet mark for the system and services. */
@@ -197,10 +204,11 @@ function AuditCompactOperations({ operations, scope, members, expanded, onExpand
   </RowList>;
 }
 
-export function AuditLogsContent({ scope, members, captureIncluded }: {
+export function AuditLogsContent({ scope, members, captureIncluded, immediateFilters = false }: {
   scope: AuditScope; members: readonly DenOrgMember[];
   /** `entitlements.auditLogs`: new activity is recorded. Only used for the feature intro. */
   captureIncluded: boolean;
+  immediateFilters?: boolean;
 }) {
   const client = useQueryClient();
   const [filters, setFilters] = useState<AuditFilters>({});
@@ -212,7 +220,10 @@ export function AuditLogsContent({ scope, members, captureIncluded }: {
   const operations = query.data?.pages.flatMap((page) => page.operations) ?? [];
   const accessError = isAuditAccessError(query.error) ? query.error : isAuditAccessError(eventTypes.error) ? eventTypes.error : detailAccessError;
   const refreshing = query.isFetching || eventTypes.isFetching;
-  const applyFilters = useCallback((next: AuditFilters) => { setExpanded(null); setFilters(next); }, []);
+  const applyFilters = useCallback((next: AuditFilters) => {
+    if (immediateFilters) markFeatureUsed("denPageConsistency");
+    setExpanded(null); setFilters(next);
+  }, [immediateFilters]);
   // With `featureIntros` on: full screen while nothing has been kept, banner when history
   // exists but the plan no longer records new activity.
   const intro = useFeatureIntro("audit-logs", auditLogsIntroFacts({ included: captureIncluded, filters, operations: query.data ? operations : undefined }));
@@ -225,7 +236,7 @@ export function AuditLogsContent({ scope, members, captureIncluded }: {
   if (intro.size === "fullscreen") return intro.element;
   return <AuditPage state={query.data ? auditStateLine(operations.length, Boolean(query.hasNextPage), Object.values(filters).some(Boolean)) : undefined} action={<RefreshButton refreshing={refreshing} onRefresh={() => void client.invalidateQueries({ queryKey: auditQueryKey(scope) })} />}>
     {intro.size === "banner" ? intro.element : null}
-    <AuditToolbar filters={filters} members={members} operations={operations} eventTypes={eventTypes.data?.eventTypes ?? []} eventTypesPending={eventTypes.isPending} onApply={applyFilters} />
+    <AuditToolbar key={JSON.stringify([scope.orgId, scope.memberId])} immediate={immediateFilters} filters={filters} members={members} operations={operations} eventTypes={eventTypes.data?.eventTypes ?? []} eventTypesPending={eventTypes.isPending} onApply={applyFilters} />
     {eventTypes.isError ? <div className="flex flex-wrap items-center gap-3">
       <DenNotice tone="error" message={eventTypes.data ? "Could not refresh event types. Showing the last verified catalog." : "Could not load event types. Try again."} />
       <DenButton variant="secondary" size="sm" disabled={eventTypes.isFetching} onClick={() => void eventTypes.refetch()}>Retry event types</DenButton>

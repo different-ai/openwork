@@ -1,34 +1,44 @@
-# Den page consistency — review prototype
+# Den page consistency
 
-This is a **non-shipping design prototype**. The pull request stays draft until the behavioral changes below have rollout gates and broader interaction coverage. No API, database, permission policy or production rollout changes are included.
+A shared layout and list system for organization pages. It reuses the Computers row and Automations card rather than introducing another visual language.
 
-## The layout system
+## Layout
 
-- Wide lists and analytics: centred 1200px outer column.
+- Lists and analytics: centred 1200px outer column.
 - Item pages, settings and forms: centred 760px measure, centred in the workspace **beside** the sidebar.
-- Team and role pages: centred 860px measure; existing grouped-sidebar variant keeps its wider frame.
-- Lists: 48px content plus a hairline; 32px identity tile; 13px name and 12px secondary line. Expanded or wrapped content may grow.
-- Library, Connectors and Plugins: a bounded name/description lane followed by the sharing lane; the menu stays at the far edge. Grouping by kind stays specific to Library.
-- Header and toolbar controls: 32px. Summaries and charts reuse the Automations card treatment.
-- Connector settings and external-app setup use a shared disclosure. Lists and settings use flat sections rather than nested cards.
+- Team and role pages: centred 860px measure; the existing grouped-sidebar variant keeps its wider frame.
+- Lists: 48px content plus a hairline; 32px identity tile; 13px name and 12px secondary line. Expanded/wrapped content can grow.
+- Library, Connectors and Plugins: bounded name/description lane followed by sharing state; the menu stays at the far edge. Grouping by kind stays specific to Library.
+- Headers and toolbar controls: 32px. Summaries/charts reuse the Automations card treatment.
+- Settings, sharing and detail sections are flat, not nested cards. Advanced connector settings use a shared disclosure.
 
-Shared implementation: `dashboard-styles.ts`, Computers row primitives, `ItemPage`, `ItemPanel`, `LibraryCompactRow`, `DisclosureSection`, and `TeamPageFrame`.
+Shared implementation: `dashboard-styles.ts`, Computers `ListRow`, the small `GatewayRow` adapter, `ItemPage`, `LibraryCompactRow`, `DisclosureSection` and `TeamPageFrame`.
 
-Design references: DESIGN.md P3 (progressive disclosure), P5 (reuse), P6 (density), S1 (flat surfaces), S2 (compact rows), S3 (disclosures).
+Design references: P3 (progressive disclosure), P5 (reuse), P6 (density), S1 (flat surfaces), S2 (compact rows), S3 (disclosures). A bounded secondary line is retained for ambiguous item names (such as “data”) and identity details (email); full descriptions remain on the item's page.
 
-## Review before merge
+## Behavior and rollback
 
-- [ ] Add off-by-default rollout gates for behavioral changes: hiding the Workflow Runs navigation tab, immediate audit filters, dirty-only Org settings saving/Discard, and the team-page Edit team entry point. These organization pages are not the platform `/admin` exemption.
-- [ ] Exercise read-only/member permissions, settings persistence, failed pagination and long plugin directories; the prototype has browser checks, not complete release coverage.
-- [ ] Resolve two different plugin-sharing editors (the main page versus Edit contents).
-- [ ] Decide whether team pages should open on Role or Members; this prototype preserves the existing default and the existing `teamSettingsSidebar` flag.
-- [ ] Keep or retire the old Workflow Runs address. It remains accessible and retains its tab when opened directly.
-- [ ] Consider folding `gateway-rows.tsx` into the Computers row's `lead` interface.
+The visual polish changes spacing, typography, icons and alignment without adding capabilities. Interaction changes are separately gated by [`denPageConsistency`](../features/den-page-consistency/README.md), **off by default on cloud and self-hosted**:
 
-The stored audit outcome "Unknown" is **not fixed** here. Investigation points to requested/served event aggregation; the backend remains untouched. Audit action display must not reinterpret unknown mutation attempts as reads.
+- Immediate audit filtering instead of Apply filters.
+- Dirty-only settings Save/Discard instead of persistent Save settings.
+- Edit team on the team page, opening the existing Members editor.
+- Hiding the personal Workflow Runs tab from normal organization Analytics navigation.
 
-## Evidence
+Turning it off restores the earlier interactions. No data is migrated or deleted, no submitted save is cancelled, and settings drafts survive a same-organization refresh or flag change. Server authorization is unchanged.
 
-`evals/proofs/den-page-consistency.proof.test.ts` uses an isolated synthetic organization to check compact rows, name filtering, a connector centred at 1920px, and a 390px boundary. It reuses the existing compact Library world and never calls a live connector.
+## Deliberate boundaries
 
-The PR's screenshot attachment includes baseline and prototype views at the same viewport, plus wide-screen connector captures. All names/data in the screenshots are fictional seed fixtures.
+- Team pages still open on Role. The existing `teamSettingsSidebar` flag remains independent; changing the default section is not part of this work.
+- Old Workflow Runs addresses and redirects keep working, with an active tab when opened directly. Individual workflow run history is untouched.
+- The two plugin-sharing editors share rows, icons, add/remove controls and Base UI popovers, but not their selection/authorization models. The audience editor adds viewer access as a draft; the grant editor assigns viewer/editor roles to one target and retains invitation, creator and grant metadata. Flattening these into one authorization model would lose information.
+- Stored audit outcomes are not rewritten. “Unknown” remains the server's value; unknown mutation attempts are not relabelled as reads.
+
+## Verification
+
+- `evals/proofs/den-page-consistency.proof.test.ts`: compact rows, working filter, centred 1920px connector, 390px boundary.
+- `evals/proofs/den-page-interactions.proof.test.ts`: enabled owner, opted-out administrator and read-only teammate; discard, saved settings after reload, team-editor entry point, navigation and explicit/immediate audit filtering.
+- `evals/proofs/den-plugin-directory.proof.test.ts`: 140 plugins, bounded rendering, failed cursor requests, explicit recovery, deep scrolling and filter reset.
+- Colocated tests cover dirty normalization, refresh-safe drafts, invalid audit ranges, sharing controls, pagination boundaries and neutral audit action wording.
+
+All fixtures use isolated synthetic organizations; connector calls use mocks. Feature screenshots live next to the rollout documentation. PR evidence contains the matched baseline/prototype captures and the final recorded proofs.

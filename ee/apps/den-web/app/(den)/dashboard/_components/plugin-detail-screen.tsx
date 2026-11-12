@@ -107,6 +107,7 @@ export function PluginDetailScreen({
         <PluginAccessSection
           pluginId={plugin.id}
           pluginCreatedByOrgMembershipId={plugin.createdByOrgMembershipId}
+          canManage={canManagePlugin}
           grants={pluginAccessQuery.data ?? []}
           isLoading={pluginAccessQuery.isLoading}
           error={pluginAccessQuery.error}

@@ -130,13 +130,9 @@ function useArchivePlugin() {
 
 /** B2 (a member's plugin) and D3 (Manage, with Who can use it inline). */
 export function PluginPageScreen({ pluginId, mode }: { pluginId: string; mode: "member" | "admin" }) {
-  return mode === "member" ? <MemberPluginPage pluginId={pluginId} /> : <PluginPage pluginId={pluginId} mode="admin" libraryItems={undefined} />;
-}
-
-/** My Library loads alongside the plugin; Manage pages never need it. */
-function MemberPluginPage({ pluginId }: { pluginId: string }) {
+  // Item managers may not hold Manage all shared items. Resolve their item role on both routes.
   const library = useLibrary();
-  return <PluginPage pluginId={pluginId} mode="member" libraryItems={library.data} />;
+  return <PluginPage pluginId={pluginId} mode={mode} libraryItems={library.data} />;
 }
 
 function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: "member" | "admin"; libraryItems: LibraryItem[] | undefined }) {
@@ -162,6 +158,7 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
     plugins: 1,
     sharedBeyondOwner: pluginSharedBeyondOwnerWithCollections(draftFromPluginGrants(access.data), plugin.data.createdByOrgMembershipId, collectionGrants),
     canEditAccess: plugin.data.createdByOrgMembershipId === orgContext.currentMember.id
+      || libraryItems?.some(item => item.type === "plugin" && item.id === pluginId && item.role === "manager") === true
       || getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canManageAllShared,
   } : null);
 
@@ -197,7 +194,7 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
     : item ? receivedStatus(item.edges) : "";
 
   async function changeAccess(next: AccessDraft) {
-    if (!access.data || !orgContext || !draft) return;
+    if (!canManage || savingAccess || !access.data || !orgContext || !draft) return;
     const previous = draft;
     setSavingAccess(true);
     setAccessError(null);
@@ -273,7 +270,7 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
             everyoneOffDescription={draft.memberIds.filter((id) => id !== data.createdByOrgMembershipId).length === 0 && draft.teamIds.length === 0
               ? "Off. Only you have it so far."
               : "Off. Only the people and teams below have it."}
-            disabled={savingAccess}
+            disabled={savingAccess || !canManage}
           />
           {accessError ? <p className="text-[13px] text-red-600">{accessError}</p> : null}
         </section>

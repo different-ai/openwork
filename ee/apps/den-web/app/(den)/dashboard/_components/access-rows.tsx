@@ -29,7 +29,7 @@ export function Avatar({ name, owner = false }: { name: string; owner?: boolean 
 }
 
 export function AccessRow({ lead, title, description, trailing, testId }: {
-  lead: ReactNode;
+  lead?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
   trailing?: ReactNode;
@@ -39,7 +39,7 @@ export function AccessRow({ lead, title, description, trailing, testId }: {
     <div className="flex min-h-12 items-center gap-3 py-1.5" data-testid={testId}>
       {lead}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{title}</p>
+        <div className="truncate text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{title}</div>
         {description ? <p className="truncate text-[12px] leading-4 text-[var(--dls-text-secondary)]">{description}</p> : null}
       </div>
       {trailing}
@@ -55,7 +55,7 @@ export function IconTile({ icon: Icon }: { icon: LucideIcon }) {
   );
 }
 
-export function RemoveButton({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
+export function RemoveButton({ label, onClick, disabled, actionLabel = "Remove" }: { label: string; onClick: () => void; disabled?: boolean; actionLabel?: string }) {
   return (
     <button
       type="button"
@@ -64,7 +64,7 @@ export function RemoveButton({ label, onClick, disabled }: { label: string; onCl
       onClick={onClick}
       className="shrink-0 rounded-lg px-2 py-1 text-[12px] font-medium text-[var(--dls-text-secondary)] transition-colors hover:bg-red-50 hover:text-red-600 focus-visible:text-red-600 disabled:opacity-50"
     >
-      Remove
+      {actionLabel}
     </button>
   );
 }
@@ -135,6 +135,10 @@ export function TeamsField({ teams, chosenIds, onChange, rowTestId }: {
   );
 }
 
+// Both draft sharing and role grants use the same trigger, not the same picker:
+// draft sharing is multi-select; a grant assigns one target a specific role.
+export const accessAddButtonClassName = buttonVariants({ variant: "secondary", size: "sm" });
+
 export type PickerOption = { id: string; name: string; detail: string };
 
 export function AddPicker({ kind, options, disabled, onAdd }: {
@@ -164,7 +168,7 @@ export function AddPicker({ kind, options, disabled, onAdd }: {
       <Popover.Trigger
         disabled={disabled}
         data-testid={`access-add-${kind}`}
-        className={buttonVariants({ variant: "secondary", size: "sm" })}
+        className={accessAddButtonClassName}
       >
         <Plus className="h-3.5 w-3.5" aria-hidden />
         {kind === "person" ? "Add person" : "Add team"}
@@ -198,6 +202,7 @@ export function AddPicker({ kind, options, disabled, onAdd }: {
                     key={option.id}
                     type="button"
                     role="option"
+                    disabled={disabled}
                     aria-selected={isSelected}
                     data-testid={`access-add-${kind}-option-${option.id}`}
                     onClick={() => setSelected((current) => isSelected ? current.filter((id) => id !== option.id) : [...current, option.id])}
@@ -218,9 +223,10 @@ export function AddPicker({ kind, options, disabled, onAdd }: {
               </span>
               <DenButton
                 size="sm"
-                disabled={chosen.length === 0}
+                disabled={disabled || chosen.length === 0}
                 data-testid={`access-add-${kind}-confirm`}
                 onClick={() => {
+                  if (disabled) return;
                   onAdd(chosen.map((option) => option.id));
                   close();
                 }}

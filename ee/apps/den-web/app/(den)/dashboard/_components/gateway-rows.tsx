@@ -1,15 +1,12 @@
 "use client";
 
-import Link from "next/link";
-import type { ReactNode } from "react";
-import { focusRing, hairline, secondaryText } from "../_features/computers/computer-parts";
+import type { ComponentProps, ReactNode } from "react";
+import { hairline, secondaryText } from "../_features/computers/computer-parts";
+import { ListRow } from "../_features/computers/computer-rows";
 
 /*
- * AI Gateway rows: the Computers row (`ListRow`) for lists whose leading tile is
- * a brand mark or a person's initials, which `ListRow`'s icon tile cannot carry.
- * Same anatomy: flat on the page, a hairline under each row, a 32px lead, a
- * 13px name over one 12px muted line, fixed 13px lanes, then one control.
- * Use them inside `RowList` with `RowListHeader`/`RowLaneLabel` lanes.
+ * Gateway-specific lane widths and leading marks. Row anatomy, links, ARIA and
+ * control layering belong to the shared ListRow (DESIGN.md P5, S2).
  */
 
 /** Lane widths for the Gateway lists. Literal classes, so Tailwind generates each one. */
@@ -63,46 +60,8 @@ export function InitialsTile({ children }: { children: ReactNode }) {
  * One row. `href` makes the name a link; `stretch` lets the whole row open it,
  * as a Gateway directory row did before it was flat.
  */
-export function GatewayRow({ lead, name, href, scroll, stretch = false, badge, secondLine, lanes, below, testId, rowTestId, rowData, linkLabel }: {
-  lead: ReactNode;
-  name: ReactNode;
-  href?: string;
-  /** Passed to the link, as `Link`'s own `scroll`. */
-  scroll?: boolean;
-  stretch?: boolean;
-  badge?: ReactNode;
-  secondLine?: ReactNode;
-  lanes?: ReactNode;
-  /** A line across the row, under it. */
-  below?: ReactNode;
-  testId?: string;
-  rowTestId?: string;
-  /** data-* attributes on the row. */
-  rowData?: Record<`data-${string}`, string | undefined>;
-  linkLabel?: string;
-}) {
-  const nameClass = "block max-w-full truncate text-left text-[13px] font-medium leading-5 text-[color:var(--dls-text-primary)]";
-  const title = typeof name === "string" ? name : undefined;
-  return (
-    <div role="row" data-testid={rowTestId} {...rowData}
-      className={`group flex min-h-[49px] flex-wrap items-center gap-x-3 gap-y-0.5 border-b ${hairline} py-1.5 ${stretch && href ? "relative" : ""}`}>
-      <div role="cell" className="flex min-w-0 flex-1 items-center gap-3">
-        <span className="flex size-8 shrink-0 items-center justify-center">{lead}</span>
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-2">
-            {href
-              ? <Link href={href} scroll={scroll} aria-label={linkLabel} data-testid={testId} title={title}
-                  className={`${nameClass} rounded-sm hover:underline ${focusRing} ${stretch ? "after:absolute after:inset-0 after:content-['']" : ""}`}>{name}</Link>
-              : <span data-testid={testId} title={title} className={nameClass}>{name}</span>}
-            {badge}
-          </div>
-          {secondLine ? <p className={`truncate text-[12px] leading-4 ${secondaryText}`}>{secondLine}</p> : null}
-        </div>
-      </div>
-      {lanes}
-      {below}
-    </div>
-  );
+export function GatewayRow({ lead, stretch = false, ...props }: Omit<ComponentProps<typeof ListRow>, "icon" | "lead"> & { lead: ReactNode }) {
+  return <ListRow {...props} lead={<span className="flex size-8 shrink-0 items-center justify-center">{lead}</span>} stretch={stretch} />;
 }
 
 /** The quiet line under a list: an empty filter, nothing yet. */

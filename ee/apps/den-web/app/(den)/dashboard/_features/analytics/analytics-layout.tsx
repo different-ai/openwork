@@ -13,6 +13,7 @@ import { getAnalyticsRoute, getLibraryUsageRoute, getWorkbotUsageRoute, getWorkf
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useLibraryUsageAvailable } from "../library-usage/use-library-usage";
 import { useFeatureIntroUnseen, type FeatureIntroKey } from "../feature-intros";
+import { markFeatureUsed } from "../../../_lib/feature-usage";
 
 type AnalyticsView = "adoption" | "library" | "workbot" | "workflows";
 type AnalyticsViewLink = { id: AnalyticsView; label: string; href: string; icon: typeof BarChart3 };
@@ -43,6 +44,7 @@ export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }:
   const { orgContext } = useOrgDashboard();
   const libraryUsage = useLibraryUsageAvailable();
   const introUnseen = useFeatureIntroUnseen();
+  const consistentInteractions = orgFeatureEnabled(orgContext, "denPageConsistency");
   const adoption: AnalyticsViewLink = { id: "adoption", label: "Usage & adoption", href: getAnalyticsRoute(orgSlug), icon: BarChart3 };
   const library: AnalyticsViewLink = { id: "library", label: "Plugins & connectors", href: getLibraryUsageRoute(orgSlug), icon: Blocks };
   // What Workbot spends on models, for the people who can see usage, where Workbot is available.
@@ -52,9 +54,8 @@ export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }:
     adoption,
     ...(libraryUsage ? [library] : []),
     ...(libraryUsage && orgContext?.capabilities.workbot && orgFeatureEnabled(orgContext, "workbotUsageAnalytics") ? [workbot] : []),
-    // Prototype: Workflow runs is no longer offered as a tab. It lists only the viewer's own runs, and each
-    // workflow's page already has its runs. The address still works, and shows its tab only while you are on it.
-    ...(active === "workflows" && orgContext?.capabilities.workflows && orgContext.entitlements.analytics ? [workflows] : []),
+    // Personal run history remains reachable by existing links; disabling the rollout restores its normal tab.
+    ...((!consistentInteractions || active === "workflows") && orgContext?.capabilities.workflows && orgContext.entitlements.analytics ? [workflows] : []),
   ];
   return <header className="grid gap-6">
     <div data-dashboard-flat-header>
@@ -64,6 +65,7 @@ export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }:
     </div>
     <nav aria-label="Analytics views" className="flex flex-wrap gap-x-6 border-b border-[var(--den-list-line)]">
       {pages.map(({ id, label, href, icon: Icon }) => <Link key={id} href={href} aria-current={active === id ? "page" : undefined}
+        onClick={() => { if (consistentInteractions) markFeatureUsed("denPageConsistency"); }}
         className={`-mb-px focus-visible:outline-offset-4 ${underlineTabClassName(active === id)}`}>
         <Icon className="h-4 w-4" aria-hidden="true" />{label}
         {active !== id && introUnseen(ANALYTICS_VIEW_INTROS[id]) ? <UnseenDot /> : null}

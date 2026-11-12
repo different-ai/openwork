@@ -1,7 +1,9 @@
 "use client";
 
 import { Check, ChevronRight, Copy, Pencil, SlidersHorizontal, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { markFeatureUsed } from "../../_lib/feature-usage";
+import { normalizeAllowedEmailDomainsInput, refreshedDraft, sameStringSet, settingsDraftChanged } from "./page-consistency-state";
 import { getErrorMessage, requestJson, SsoSessionRequiredError } from "../../_lib/den-flow";
 import {
   getAllowedDesktopVersionsFromMetadata,
@@ -34,19 +36,6 @@ import {
   getDesktopVersionMetadata,
   initialAllowedDesktopVersions,
 } from "./desktop-version-options";
-
-function normalizeAllowedEmailDomainsInput(value: string): string[] | null {
-  const domains = [
-    ...new Set(
-      value
-        .split(/[\s,]+/)
-        .map((entry) => entry.trim().toLowerCase().replace(/^@+/, ""))
-        .filter(Boolean),
-    ),
-  ];
-
-  return domains.length > 0 ? domains : null;
-}
 
 function toggleAllowedDesktopVersion(
   current: string[],
@@ -201,8 +190,11 @@ export function OrgSettingsScreen() {
   const [deleteConfirmationName, setDeleteConfirmationName] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  const pageConsistency = orgFeatureEnabled(orgContext, "denPageConsistency");
   const currentAllowedDomains =
     orgContext?.organization.allowedEmailDomains ?? null;
+  const previousSettings = useRef<{ orgId: string; name: string; domains: string; restricted: boolean; sso: SsoSettings } | null>(null);
+  const previousVersions = useRef<{ orgId: string; versions: string[] } | null>(null);
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
@@ -242,15 +234,22 @@ export function OrgSettingsScreen() {
   const savedDesktopVersions = useMemo(() => orgContext && supportedDesktopVersionOptions.length > 0
     ? initialAllowedDesktopVersions(getAllowedDesktopVersionsFromMetadata(orgContext.organization.metadata), supportedDesktopVersionOptions).filter((version) => supportedDesktopVersionOptions.includes(version))
     : [], [orgContext, supportedDesktopVersionOptions]);
-  // The save bar only appears while something on the page differs from what is saved.
-  const dirty = Boolean(orgContext) && (
-    orgNameDraft !== orgContext?.organization.name
-    || (domainRestrictionsEnabled ? (draftAllowedDomains ?? []).join("\n") : "") !== savedDomains.join("\n")
-    || ssoDraft.requireSso !== savedSso.requireSso || ssoDraft.restrictDomainToSso !== savedSso.restrictDomainToSso
-    || [...allowedDesktopVersionsDraft].sort().join(",") !== [...savedDesktopVersions].sort().join(",")
-  );
+  // Compare effective values, not formatting or set order. Unavailable/hidden fields are not submitted.
+  const dirty = Boolean(orgContext) && settingsDraftChanged({
+    name: orgContext?.organization.name ?? "", domains: savedDomains, domainRestrictionsEnabled: savedDomains.length > 0,
+    sso: savedSso, desktopVersions: savedDesktopVersions,
+  }, {
+    name: orgNameDraft, domains: draftAllowedDomains ?? [], domainRestrictionsEnabled,
+    sso: ssoDraft, desktopVersions: allowedDesktopVersionsDraft,
+  }, {
+    compareSso: orgFeatureEnabled(orgContext, "ssoPerOrganization") && !orgFeatureEnabled(orgContext, "ssoSettingsOnSsoPage"),
+    compareVersions: supportedDesktopVersionOptions.length > 0,
+  });
   function discardChanges() {
-    if (!orgContext) return;
+    if (!orgContext || !canManageSettings || !dirty || mutationBusy === "update-organization-settings") return;
+    if (pageConsistency) markFeatureUsed("denPageConsistency");
+    clearOrgSettingsCompletion();
+    setSsoRecoveryPath(null);
     setOrgNameDraft(orgContext.organization.name);
     setAllowedDomainsDraft(savedDomains.join("\n"));
     setDomainRestrictionsEnabled(savedDomains.length > 0);
@@ -282,16 +281,29 @@ export function OrgSettingsScreen() {
       return;
     }
 
-    setOrgNameDraft(orgContext.organization.name);
-    setAllowedDomainsDraft(
-      (orgContext.organization.allowedEmailDomains ?? []).join("\n"),
-    );
-    setDomainRestrictionsEnabled(
-      (orgContext.organization.allowedEmailDomains?.length ?? 0) > 0,
-    );
-    setSsoDraft(getSsoSettingsFromMetadata(orgContext.organization.metadata));
-    setDomainEditModeEnabled(false);
-  }, [orgContext]);
+    const next = {
+      orgId: orgContext.organization.id,
+      name: orgContext.organization.name,
+      domains: (orgContext.organization.allowedEmailDomains ?? []).join("\n"),
+      restricted: (orgContext.organization.allowedEmailDomains?.length ?? 0) > 0,
+      sso: getSsoSettingsFromMetadata(orgContext.organization.metadata),
+    };
+    const previous = previousSettings.current;
+    // A rollout change is not an organization switch: never erase an unsaved draft when the flag is killed.
+    const sameOrganization = previous?.orgId === next.orgId;
+    setOrgNameDraft((current) => refreshedDraft(current, previous?.name, next.name, sameOrganization));
+    setAllowedDomainsDraft((current) => refreshedDraft(current, previous?.domains, next.domains, sameOrganization,
+      (left, right) => sameStringSet(normalizeAllowedEmailDomainsInput(left) ?? [], normalizeAllowedEmailDomainsInput(right) ?? [])));
+    setDomainRestrictionsEnabled((current) => refreshedDraft(current, previous?.restricted, next.restricted, sameOrganization));
+    setSsoDraft((current) => refreshedDraft(current, previous?.sso, next.sso, sameOrganization,
+      (left, right) => left.requireSso === right.requireSso && left.restrictDomainToSso === right.restrictDomainToSso));
+    if (!sameOrganization) {
+      setDomainEditModeEnabled(false);
+      setPageError(null);
+      setSsoRecoveryPath(null);
+    }
+    previousSettings.current = next;
+  }, [orgContext, pageConsistency]);
 
   useEffect(() => {
     let cancelled = false;
@@ -359,11 +371,12 @@ export function OrgSettingsScreen() {
       return;
     }
 
-    setAllowedDesktopVersionsDraft(initialAllowedDesktopVersions(
-      getAllowedDesktopVersionsFromMetadata(orgContext.organization.metadata),
-      supportedDesktopVersionOptions,
-    ).filter((version) => supportedDesktopVersionOptions.includes(version)));
-  }, [orgContext, supportedDesktopVersionOptions]);
+    const orgId = orgContext.organization.id;
+    const previous = previousVersions.current;
+    setAllowedDesktopVersionsDraft((current) => refreshedDraft(current, previous?.versions, savedDesktopVersions,
+      previous?.orgId === orgId, sameStringSet));
+    previousVersions.current = { orgId, versions: savedDesktopVersions };
+  }, [orgContext, supportedDesktopVersionOptions, savedDesktopVersions, pageConsistency]);
 
   useEffect(() => {
     if (!copiedOrgId) {
@@ -437,6 +450,12 @@ export function OrgSettingsScreen() {
       return;
     }
 
+    if (mutationBusy === "update-organization-settings" || (pageConsistency && !dirty)) return;
+    if (pageConsistency && domainRestrictionsEnabled && !hasDraftDomains) {
+      setPageError("Enter at least one email domain, or turn off domain restrictions.");
+      return;
+    }
+    if (pageConsistency) markFeatureUsed("denPageConsistency");
     try {
       await updateOrganizationSettings({
         name: orgNameDraft,
@@ -694,12 +713,12 @@ export function OrgSettingsScreen() {
         </section>
 
         {!canManageSettings ? <p className="text-[12px] text-[var(--dls-text-secondary)]">{`Read only. ${permissionLockReason("organization.update")}`}</p> : null}
-        {dirty && canManageSettings ? (
+        {pageConsistency ? dirty && canManageSettings ? (
           <DenStickyActionBar summary="Unsaved changes" testId="org-settings-save-bar">
-            <DenButton type="button" size="sm" variant="ghost" onClick={discardChanges}>Discard</DenButton>
+            <DenButton type="button" size="sm" variant="ghost" disabled={mutationBusy === "update-organization-settings"} onClick={discardChanges}>Discard</DenButton>
             <DenButton type="submit" size="sm" loading={mutationBusy === "update-organization-settings"}>Save changes</DenButton>
           </DenStickyActionBar>
-        ) : null}
+        ) : null : <div className="flex justify-end"><DenButton type="submit" loading={mutationBusy === "update-organization-settings"} disabled={!canManageSettings}>Save settings</DenButton></div>}
       </form>
 
       {access.canViewModelsSettings ? (

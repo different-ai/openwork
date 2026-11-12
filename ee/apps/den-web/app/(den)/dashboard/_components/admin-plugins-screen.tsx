@@ -20,6 +20,7 @@ import { PluginLogo } from "./item-logo";
 import { draftFromPluginGrants } from "./item-sharing";
 import { usePluginAccess } from "./plugin-access-data";
 import { pluginsSetUpById } from "./plugins-intro-facts";
+import { isDirectoryScrollOverflow, pluginDirectoryRange, shouldAutoLoadPluginPage } from "./plugin-directory-window";
 import { type DenPluginSummary, pluginDetailQueryOptions, useArchivePlugin, usePluginDirectory } from "./plugin-data";
 
 function PluginsEmpty({ orgSlug }: { orgSlug: string | null }) {
@@ -116,16 +117,9 @@ function DirectoryFilter({ label, title, value, options, counts, onChange }: {
 function scrollParent(element: HTMLElement): HTMLElement | null {
   for (let parent = element.parentElement; parent; parent = parent.parentElement) {
     const overflow = getComputedStyle(parent).overflowY;
-    if (overflow === "auto" || overflow === "scroll") return parent;
+    if (isDirectoryScrollOverflow(overflow)) return parent;
   }
   return null;
-}
-
-export function pluginDirectoryRange(scrollTop: number, viewportHeight: number, rowHeight: number, count: number) {
-  return {
-    start: Math.max(0, Math.floor(scrollTop / rowHeight) - 4),
-    end: Math.min(count, Math.ceil((scrollTop + viewportHeight) / rowHeight) + 4),
-  };
 }
 
 function DirectoryResults({ plugins, filtered }: { plugins: ReturnType<typeof usePluginDirectory>; filtered: boolean }) {
@@ -135,6 +129,8 @@ function DirectoryResults({ plugins, filtered }: { plugins: ReturnType<typeof us
   const rowHeight = 49;
   // The page scrolls, as on every other list; only the rows near the window are drawn.
   const listRef = useRef<HTMLDivElement>(null);
+  const resetScroll = useRef(true);
+  const loadingPage = useRef(false);
   const [view, setView] = useState({ top: 0, height: 900 });
   const listed = rows.length > 0;
   const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = plugins;
@@ -142,21 +138,41 @@ function DirectoryResults({ plugins, filtered }: { plugins: ReturnType<typeof us
     const list = listRef.current;
     if (!listed || !list) return;
     const scroller = scrollParent(list);
+    // DirectoryResults is keyed by all filters. Reset once per filter, not when
+    // another page arrives, even when the next result has the same row count.
+    if (resetScroll.current) {
+      resetScroll.current = false;
+      const top = scroller ? scroller.getBoundingClientRect().top + scroller.clientTop : 0;
+      const offset = list.getBoundingClientRect().top - top;
+      if (offset < 0) {
+        if (scroller) scroller.scrollTop += offset;
+        else window.scrollBy(0, offset);
+      }
+    }
     const measure = () => {
       const box = list.getBoundingClientRect();
-      const top = scroller ? scroller.getBoundingClientRect().top : 0;
+      const top = scroller ? scroller.getBoundingClientRect().top + scroller.clientTop : 0;
       const height = scroller ? scroller.clientHeight : window.innerHeight;
-      setView({ top: Math.max(0, top - box.top), height });
-      // A failed page waits for the explicit retry button instead of retriggering on every fetching-state change.
-      if (box.bottom - (top + height) < 300 && hasNextPage && !isFetchingNextPage && !isFetchNextPageError) void fetchNextPage();
+      const nextTop = Math.max(0, top - box.top);
+      setView((current) => current.top === nextTop && current.height === height ? current : { top: nextTop, height });
+      // A failed page waits for the explicit retry button. The ref also guards
+      // multiple scroll/resize events before Query publishes its fetching state.
+      if (!loadingPage.current && shouldAutoLoadPluginPage({ listBottom: box.bottom, viewportTop: top, viewportHeight: height, hasNextPage, isFetchingNextPage, isFetchNextPageError })) {
+        loadingPage.current = true;
+        void fetchNextPage().catch(() => { /* Query displays the retry state. */ }).finally(() => { loadingPage.current = false; });
+      }
     };
     measure();
     const target = scroller ?? window;
     target.addEventListener("scroll", measure, { passive: true });
     window.addEventListener("resize", measure);
+    const resize = new ResizeObserver(measure);
+    resize.observe(list);
+    if (scroller) resize.observe(scroller);
     return () => {
       target.removeEventListener("scroll", measure);
       window.removeEventListener("resize", measure);
+      resize.disconnect();
     };
   }, [listed, rows.length, hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
   const { start, end } = pluginDirectoryRange(view.top, view.height, rowHeight, rows.length);

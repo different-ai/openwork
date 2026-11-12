@@ -54,6 +54,11 @@ export function WhoCanUseIt({
     .filter((team) => !value.teamIds.includes(team.id))
     .map((team) => ({ id: team.id, name: team.name, detail: peopleLabel(team.memberIds.length) }));
 
+  function change(next: AccessDraft) {
+    if (disabled || (next.orgWide && !value.orgWide && !canShareWithEveryone)) return;
+    onChange(next);
+  }
+
   const everyoneDescription = value.orgWide
     ? "On. Everyone in the organization can use it."
     : canShareWithEveryone ? everyoneOffDescription : permissionLockReason("sharing.share_org_wide");
@@ -68,7 +73,7 @@ export function WhoCanUseIt({
           <DenSwitch
             checked={value.orgWide}
             disabled={disabled || (!canShareWithEveryone && !value.orgWide)}
-            onChange={(orgWide) => onChange({ ...value, orgWide })}
+            onChange={(orgWide) => change({ ...value, orgWide })}
             aria-label="Everyone in the organization"
             testId="access-everyone"
           />
@@ -91,7 +96,7 @@ export function WhoCanUseIt({
               lead={<Avatar name={member.user.name || member.user.email} />}
               title={member.user.name || member.user.email}
               description={member.user.email}
-              trailing={<RemoveButton label={`Remove ${member.user.name || member.user.email}`} disabled={disabled} onClick={() => onChange({ ...value, memberIds: value.memberIds.filter((id) => id !== member.id) })} />}
+              trailing={<RemoveButton label={`Remove ${member.user.name || member.user.email}`} disabled={disabled} onClick={() => change({ ...value, memberIds: value.memberIds.filter((id) => id !== member.id) })} />}
               testId="access-person"
             />
           ))}
@@ -101,7 +106,7 @@ export function WhoCanUseIt({
               lead={<IconTile icon={Users} />}
               title={team.name}
               description={`${peopleLabel(team.memberIds.length)}, and anyone who joins later`}
-              trailing={<RemoveButton label={`Remove ${team.name}`} disabled={disabled} onClick={() => onChange({ ...value, teamIds: value.teamIds.filter((id) => id !== team.id) })} />}
+              trailing={<RemoveButton label={`Remove ${team.name}`} disabled={disabled} onClick={() => change({ ...value, teamIds: value.teamIds.filter((id) => id !== team.id) })} />}
               testId="access-team"
             />
           ))}
@@ -110,13 +115,13 @@ export function WhoCanUseIt({
               kind="person"
               options={personOptions}
               disabled={disabled}
-              onAdd={(ids) => onChange({ ...value, memberIds: [...value.memberIds, ...ids] })}
+              onAdd={(ids) => change({ ...value, memberIds: [...value.memberIds, ...ids] })}
             />
             <AddPicker
               kind="team"
               options={teamOptions}
               disabled={disabled}
-              onAdd={(ids) => onChange({ ...value, teamIds: [...value.teamIds, ...ids] })}
+              onAdd={(ids) => change({ ...value, teamIds: [...value.teamIds, ...ids] })}
             />
           </div>
         </>
