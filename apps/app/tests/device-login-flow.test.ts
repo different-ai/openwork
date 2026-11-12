@@ -58,10 +58,30 @@ describe("desktop-owned device sign-in", () => {
     expect(h.requests[0]?.body).toEqual({ client_id: DESKTOP_DEVICE_CLIENT_ID });
   });
 
+  test.each([401, 403, 422])("unexpected code HTTP %i exposes only host and status", async (httpStatus) => {
+    const h = harness({ start: Response.json({ message: "private-device-code" }, { status: httpStatus }) });
+    const result = await h.flow.start();
+    expect(result).toEqual({ state: "failed", reason: "den_refused", host: "api.example.test", httpStatus });
+    expect(h.flow.status()).toEqual(result);
+    expect(h.requests).toHaveLength(1);
+    expect(JSON.stringify(result)).not.toContain("private-device-code");
+  });
+
+  test("unexpected token HTTP 401 stops without exposing its body or suggesting replacement", async () => {
+    const h = harness({ responses: [Response.json({ message: "private-bearer" }, { status: 401 })] });
+    await h.flow.start();
+    await h.tick();
+    expect(h.flow.status()).toEqual({ state: "failed", reason: "den_refused", host: "api.example.test", httpStatus: 401 });
+    expect(h.enroll).not.toHaveBeenCalled();
+    expect(h.waits).toHaveLength(0);
+    expect(JSON.stringify(h.flow.status())).not.toMatch(/private|bearer|force/);
+  });
+
   test("requires force to replace an existing sign-in", async () => {
     const h = harness({ signedIn: true });
-    expect(await h.flow.start()).toHaveProperty("ok", false);
+    expect(await h.flow.start()).toEqual({ state: "failed", reason: "already_signed_in" });
     expect(h.prepare).not.toHaveBeenCalled();
+    expect(h.requests).toHaveLength(0);
     expect(await h.flow.start({ force: true })).toHaveProperty("userCode", authorization.user_code);
     h.flow.cancel();
   });
@@ -185,7 +205,7 @@ describe("desktop-owned device sign-in", () => {
     await h.flow.start({ requestId: "request-a" });
     await h.tick();
     input.signedIn = true;
-    expect(await h.flow.start({ requestId: "request-b" })).toHaveProperty("ok", false);
+    expect(await h.flow.start({ requestId: "request-b" })).toEqual({ state: "failed", reason: "already_signed_in" });
     expect(h.flow.status("request-a").state).toBe("signed_in");
     expect(h.flow.status("request-b")).not.toHaveProperty("email");
     expect(h.prepare).toHaveBeenCalledTimes(1);

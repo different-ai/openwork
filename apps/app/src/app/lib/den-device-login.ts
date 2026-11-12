@@ -6,7 +6,7 @@ import {
   resolveDenBaseUrlsForDestination,
 } from "./den";
 import { beginDenEnrollment, commitDenEnrollment } from "./den-handoff";
-import { createDesktopDeviceLogin, DeviceLoginDiscoveryUnavailable, type DeviceLoginStartOptions } from "./device-login-flow";
+import { createDesktopDeviceLogin, DeviceLoginDiscoveryUnavailable, DeviceLoginRequestRefused, type DeviceLoginStartOptions } from "./device-login-flow";
 import { desktopFetchViaMain } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
 
@@ -42,6 +42,7 @@ async function getJson(apiBaseUrl: string, path: string, signal: AbortSignal, to
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     credentials: "omit", redirect: "error", cache: "no-store", signal,
   });
+  if (response.status >= 400 && response.status < 500) throw new DeviceLoginRequestRefused(new URL(apiBaseUrl).host, response.status);
   if (!response.ok) throw new Error("Device sign-in request failed.");
   return response.json();
 }
@@ -73,6 +74,7 @@ export async function readDeviceLoginDeployment(apiBaseUrl: string, signal: Abor
     }
     signal.throwIfAborted();
     if (response && response.status < 500) {
+      if (response.status >= 400) throw new DeviceLoginRequestRefused(host, response.status);
       if (!response.ok) throw new Error("Device discovery failed.");
       let payload: unknown;
       let readFailed = false;
