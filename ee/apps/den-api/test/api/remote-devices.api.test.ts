@@ -467,7 +467,7 @@ test("owners and regular org admins inspect all members and shared computers, ne
     assert.equal(JSON.stringify(detail).includes("Private customer project"), false)
     assert.equal(JSON.stringify(detail).includes("private-workspace-id"), false)
     assert.equal(detail.features.remoteDevices, true)
-    assert.equal(detail.features.computerUse, false)
+    assert.equal(detail.features.computerUse, true, "computerUse is on by default")
     assert.ok(detail.events.some((event) => event.type === "app_updated" && event.data?.to === "1.5.0"))
     const removed = (await db.select({ id: RemoteDeviceTable.id }).from(RemoteDeviceTable).where(eq(RemoteDeviceTable.externalId, workbotSessionId(orgId, member.memberId))))[0]!
     const removedDetail = organizationComputerDetailResponseSchema.parse((await as("GET", `/v1/org/computers/${removed.id}`)).body)
