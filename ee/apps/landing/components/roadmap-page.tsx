@@ -11,7 +11,6 @@ import {
   RoadmapInsightsPreview,
   RoadmapPhonePreview,
   RoadmapSlackPreview,
-  RoadmapStreamlinedChatPreview,
   RoadmapWorkbotPreview,
   RoadmapWorkflowPreview
 } from "./roadmap-previews";
@@ -303,7 +302,11 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "See an App’s progress while it builds",
         "Built-in libraries for Apps"
       ],
-      building: ["Open Apps from the Workbot chat"],
+      building: [
+        "A home screen with your live artifacts at a glance",
+        "Your last activity, easy to see",
+        "Open Apps from the Workbot chat"
+      ],
       soon: []
     },
   },
@@ -311,11 +314,11 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     id: "new-apps",
     label: "New apps",
     heading: ["For people who just", "want it to work."],
-    intro: "New ways to use OpenWork, set up by your team. OpenWork in Slack is ready today; the rest is what we’re designing.",
+    intro: "New ways to use OpenWork, set up by your team. OpenWork in Slack is ready today; the phone app is what we’re designing.",
     items: {
       ready: ["OpenWork in Slack", "Slack answers arrive as their own reply"],
       building: [],
-      soon: ["A single, streamlined chat", "Phone app, starting with MCP Apps"]
+      soon: ["Phone app, starting with MCP Apps"]
     }
   }
 ];
@@ -413,31 +416,19 @@ function Preview({ id }: { id: string }) {
   if (id === "dashboards") return <Frame><RoadmapDashboardPreview /></Frame>;
   if (id === "new-apps") {
     return (
-      <>
       <div className="mt-10 flex flex-col gap-6 md:mt-12 lg:flex-row">
-        <ComingSoonTile
-          title="A single, streamlined chat"
-          text="One conversation that already knows your apps, your calendar, and what’s waiting on you. Nothing to configure."
-        >
-          <RoadmapStreamlinedChatPreview />
-        </ComingSoonTile>
         <ComingSoonTile title="OpenWork in Slack" status="ready" text="Ask from any channel or DM and get the result back in the thread, with the same skills and connections.">
           <RoadmapSlackPreview />
         </ComingSoonTile>
-      </div>
-      <div className="mt-6 flex flex-col items-center gap-8 rounded-[24px] bg-[var(--lp-tonal)] p-5 md:flex-row md:gap-12 md:p-8">
-        <RoadmapPhonePreview />
-        <div className="flex max-w-[460px] flex-col gap-2">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-[17px] font-semibold tracking-[-0.01em] text-[var(--lp-ink)]">Phone app</h3>
-            <RoadmapStatusPill status="soon" />
+        <ComingSoonTile
+          title="Phone app"
+          text="Starts with your MCP Apps: the quick views your team already built, like today’s meetings, open issues, and pipeline, in your pocket. Chat and approvals come next."
+        >
+          <div className="flex flex-1 items-center justify-center">
+            <RoadmapPhonePreview />
           </div>
-          <p className="text-[15px] leading-[23px] text-[var(--lp-body)]">
-            Starts with your MCP Apps: the quick views your team already built, like today’s meetings, open issues, and pipeline, in your pocket. Chat and approvals come next.
-          </p>
-        </div>
+        </ComingSoonTile>
       </div>
-      </>
     );
   }
   return null;

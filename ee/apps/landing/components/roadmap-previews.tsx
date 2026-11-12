@@ -323,67 +323,6 @@ export function RoadmapDashboardPreview() {
 /* New apps (not available yet)                                        */
 /* ------------------------------------------------------------------ */
 
-export function RoadmapStreamlinedChatPreview() {
-  return (
-    <div className="flex h-full w-full overflow-hidden rounded-2xl bg-[#FCFDFE] shadow-[0_0_0_1px_#EDF1F6]">
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-11 items-center gap-3 border-b border-[#EDF1F6] bg-white px-3.5">
-          <span className="flex h-[22px] w-[22px] items-center justify-center rounded-md bg-[var(--lp-ink)] text-[11px] font-semibold text-white">S</span>
-          <span className="text-[13px] font-semibold text-[#07192C]">Scout</span>
-          <span className="rounded-md bg-[#F1F5F9] px-2 py-1 text-[11.5px] font-medium text-[#07192C]">Home</span>
-          <span className="text-[11.5px] text-[#637291]">Apps</span>
-          <span className="text-[11.5px] text-[#637291]">Calendar</span>
-        </div>
-        <div className="flex flex-1 flex-col justify-end gap-1.5 px-4 pb-3.5 pt-5">
-          <span className="mb-3 flex flex-col items-center gap-1">
-            <span className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[var(--lp-ink)] text-[15px] font-semibold text-white">S</span>
-            <span className="text-[12.5px] font-semibold text-[#07192C]">Scout</span>
-            <span className="text-[10.5px] text-[#637291]">Set up by Ben for the Launch team</span>
-          </span>
-          <span className="max-w-[300px] self-start rounded-2xl bg-[#EEF1F5] px-3 py-2 text-[12.5px] leading-[18px] text-[#07192C]">
-            Morning Maya. Your apps are connected, so I already had a look.
-          </span>
-          <span className="max-w-[300px] self-start rounded-2xl bg-[#EEF1F5] px-3 py-2 text-[12.5px] leading-[18px] text-[#07192C]">
-            Two things need you before 3 PM. Want me to start the pricing copy for Priya?
-          </span>
-          <span className="mb-1.5 flex items-center gap-1.5 text-[11px] text-[#637291]">
-            <GoogleMark className="h-3 w-3" />
-            <SlackMark className="h-3 w-3" />
-            Looked at Gmail, Slack and Calendar
-          </span>
-          <span className="self-end rounded-2xl bg-[var(--lp-ink)] px-3 py-2 text-[12.5px] text-white">yes please, keep it short</span>
-          <span className="mt-3 flex h-[38px] items-center rounded-full bg-white pl-3.5 text-xs text-[#9AA5BA] shadow-[0_0_0_1px_#E3E7EE]">
-            Message Scout
-          </span>
-        </div>
-      </div>
-      <div className="hidden w-[210px] shrink-0 flex-col gap-2 border-l border-[#EDF1F6] bg-[#F8FAFC] p-3 sm:flex">
-        <span className="px-0.5 text-[10.5px] font-medium text-[#637291]">Launch team views</span>
-        <div className="flex flex-col gap-1 rounded-[10px] bg-white p-2.5 shadow-[0_0_0_1px_#EDF1F6]">
-          <span className="flex justify-between text-[11.5px]"><span className="font-semibold text-[#07192C]">Waiting on you</span><span className="text-[10.5px] text-[#9AA5BA]">2 today</span></span>
-          {[["P", "Pricing copy", "3:00"], ["D", "Hero copy OK", "Today"], ["A", "Press kit notes", "Yest."]].map(([initial, task, when]) => (
-            <span key={task} className="flex h-6 items-center gap-2 text-[11.5px]">
-              <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[#EEF1F5] text-[9px] font-semibold text-[#30405F]">{initial}</span>
-              <span className="flex-1 text-[#07192C]">{task}</span>
-              <span className="text-[11px] text-[#07192C]">{when}</span>
-            </span>
-          ))}
-        </div>
-        <div className="flex flex-col gap-1 rounded-[10px] bg-white p-2.5 shadow-[0_0_0_1px_#EDF1F6]">
-          <span className="flex justify-between text-[11.5px]"><span className="font-semibold text-[#07192C]">Today</span><span className="text-[10.5px] text-[#9AA5BA]">Mon, Sep 28</span></span>
-          {[["10:00", "Standup"], ["1:00", "Design review"], ["3:00", "Update"]].map(([time, event]) => (
-            <span key={time} className="flex h-[22px] items-center gap-2 text-[11.5px]">
-              <span className="w-[34px] text-[11px] text-[#9AA5BA]">{time}</span>
-              <span className="h-4 w-0.5 rounded bg-[#D8E0EC]" />
-              <span className="text-[#07192C]">{event}</span>
-            </span>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 const AT_RISK = [
   { account: "Northwind", why: "Renewal Oct 12", meeting: "No meeting" },
   { account: "Globex", why: "Usage down 40%", meeting: "No meeting" },
