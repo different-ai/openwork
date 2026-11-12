@@ -74,7 +74,7 @@ export function useAgentPermissions(orgId: string, enabled = true) {
     queryFn: async ({ signal }): Promise<AgentPermissionPolicies> => {
       const { response, payload } = await requestJson(
         AGENT_PERMISSIONS_PATH,
-        { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId, "X-OpenWork-Browser-Upload-Permissions": "1" }, cache: "no-store", signal },
+        { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId, "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1" }, cache: "no-store", signal },
         15000,
       );
       if (!response.ok) {
@@ -111,7 +111,7 @@ export function useSaveAgentPermissions(orgId: string) {
             scopePath(change.scopeId),
             {
               method: "PUT",
-              headers: { [ORG_SCOPE_HEADER]: orgId, "content-type": "application/json", "X-OpenWork-Browser-Upload-Permissions": "1" },
+              headers: { [ORG_SCOPE_HEADER]: orgId, "content-type": "application/json", "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1" },
               body: JSON.stringify({ settings: change.settings }),
             },
             15000,
@@ -122,6 +122,9 @@ export function useSaveAgentPermissions(orgId: string) {
           }
           if (orgFeatureEnabled(orgContext, "browserUploadPermissions") && change.settings.browserUploads !== undefined) {
             markFeatureUsed("browserUploadPermissions");
+          }
+          if (orgFeatureEnabled(orgContext, "fileSendPermissions") && change.settings.fileSends !== undefined) {
+            markFeatureUsed("fileSendPermissions");
           }
         }
       });
@@ -141,7 +144,7 @@ export function useRemoveTeamAgentPermissions(orgId: string, teamId: string) {
       await runReauthableAction("remove-team-agent-permissions", async () => {
         const { response, payload } = await requestJson(
           scopePath(teamId),
-          { method: "DELETE", headers: { [ORG_SCOPE_HEADER]: orgId, "X-OpenWork-Browser-Upload-Permissions": "1" } },
+          { method: "DELETE", headers: { [ORG_SCOPE_HEADER]: orgId, "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1" } },
           15000,
         );
         if (!response.ok) throw getRequestError(payload, response, `Couldn't remove these agent permissions (${response.status}).`);

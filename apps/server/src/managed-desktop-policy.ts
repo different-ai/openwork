@@ -152,7 +152,7 @@ class ManagedDesktopPolicy {
       try {
         const response = await externalFetch(`${session.baseUrl}${path}`, {
           headers: { Accept: "application/json", Authorization: `Bearer ${session.token}`, "x-openwork-org-id": session.orgId, "x-openwork-legacy-org-id": session.orgId,
-            ...(path === "/v1/me/desktop-config" ? { "X-OpenWork-Browser-Upload-Permissions": "1" } : {}),
+            ...(path === "/v1/me/desktop-config" ? { "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1" } : {}),
           },
           redirect: "error",
           signal: AbortSignal.timeout(Math.min(DEN_READ_ATTEMPT_TIMEOUT_MS, remainingMs)),
@@ -436,6 +436,49 @@ class ManagedDesktopPolicy {
       enabled: true,
       scope: { baseUrl: session.baseUrl, organizationId: uploads.organizationId, memberId: uploads.memberId },
       rules: agentPermissionRulesForActions(agentPermissionRulesOf(policy), ["browser_upload"]),
+    };
+  }
+  /**
+   * The member's verified decision for files sent to connected accounts
+   * (Drive uploads and saves, Gmail and Outlook drafts with attachments).
+   * Disabled means the rollout is off or nobody is signed in: each tool then
+   * keeps its earlier prompt. A remembered approval is never used on a policy
+   * Den did not just verify for this sign-in.
+   */
+  /** The organization Den last answered with the file-send rollout on; a rotated token does not forget it. */
+  private fileSendsSeenOn: string | null = null;
+  async fileSendPolicy(): Promise<{
+    enabled: boolean;
+    scope: { baseUrl: string; organizationId: string; memberId: string } | null;
+    rules: AgentPermissionRule[];
+  }> {
+    const session = this.session;
+    const generation = this.generation;
+    const off = { enabled: false, scope: null, rules: [] };
+    if (!session) return off;
+    let policy: DesktopConfig;
+    try {
+      policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "policy_identity_changed") throw error;
+      // These sends go through OpenWork Cloud. When it cannot answer and this
+      // sign-in was last seen with the rollout on, refuse rather than guess.
+      if (this.fileSendsSeenOn === `${session.baseUrl}\n${session.orgId}`) {
+        throw new ApiError(503, "policy_unavailable", "Your organization's permissions could not be verified, so nothing was sent. Check your connection and try again.");
+      }
+      return off;
+    }
+    this.identityChanged(generation);
+    const sends = policy.fileSendPermissions;
+    this.fileSendsSeenOn = sends?.enabled ? `${session.baseUrl}\n${session.orgId}` : null;
+    if (!sends?.enabled) return off;
+    if (sends.organizationId !== session.orgId || !sends.memberId) {
+      throw new ApiError(403, "policy_identity_changed", "The signed-in account could not be verified, so nothing was sent.");
+    }
+    return {
+      enabled: true,
+      scope: { baseUrl: session.baseUrl, organizationId: sends.organizationId, memberId: sends.memberId },
+      rules: agentPermissionRulesForActions(agentPermissionRulesOf(policy), ["file_send"]),
     };
   }
   websiteRules(): Promise<AgentPermissionRule[]> {

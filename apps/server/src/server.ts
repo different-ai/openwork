@@ -2,6 +2,8 @@ import { cloudComputerCall, cloudComputerFor, cloudComputerJson, startCloudCompu
 import { createV2SessionHomes, nativeSession, nativeSessionDirectory } from "./opencode-v2-session-home.js";
 import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./cloud-mcp-v2.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
+import { createFileSendApprovals, markFileSendApproved, type FileSendApprovals } from "./file-send-approval.js";
+import { runtimeStorageDir } from "./runtime-db.js";
 import { readHostResponse } from "./host-response.js";
 import { createTaskRecovery, setTaskRecovery } from "./task-recovery.js";
 import { managedPolicyActionSchema } from "./managed-policy-rules.js";
@@ -838,13 +840,18 @@ export async function startServer(
     logger,
   });
   setEngineInstanceReaperForConfig(config, engineInstanceReaper);
-  const hostReadRequest = async (path: string, init?: RequestInit, approvedDriveFile?: PreparedDriveUploadFile) => {
+  const fileSendApprovals = createFileSendApprovals({
+    policy: () => managedDesktopPolicy(config).fileSendPolicy(),
+    storageDir: join(runtimeStorageDir(config), "file-send-grants"),
+  });
+  const hostReadRequest = async (path: string, init?: RequestInit, approvedDriveFile?: PreparedDriveUploadFile, approvedInChat?: boolean) => {
     // Internal dispatch retains credentials and exact-file capabilities in this
     // process. Neither is serialized to the native plugin or accepted over HTTP.
     const request = new Request(`http://127.0.0.1${path}`, {
       ...init, headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" },
     });
     if (approvedDriveFile) attachApprovedDriveUpload(request, approvedDriveFile);
+    if (approvedInChat) markFileSendApproved(request);
     const response = await serverOptions.fetch(request);
     return readHostResponse(response);
   };
@@ -854,6 +861,7 @@ export async function startServer(
     providerSession: () => cloudProviderSync.providerBridgeSession(),
     hostReadRequest,
     prepareDriveUpload: createDriveUploadPreflight(config, hostReadRequest),
+    fileSends: { approvals: fileSendApprovals, approvedRequest: (path, init) => hostReadRequest(path, init, undefined, true) },
   });
   const cloudProviderSync = new CloudProviderSync({
     config,
@@ -903,6 +911,7 @@ export async function startServer(
     engineV2Preview,
     () => managedEngineReady,
     anonymousInference,
+    fileSendApprovals,
   );
 
   const serverOptions: {
@@ -2828,6 +2837,7 @@ function createRoutes(
   engineV2Preview: EngineV2Preview,
   isReady: () => boolean,
   anonymousInference: AnonymousInferenceService,
+  fileSendApprovals: FileSendApprovals,
 ): Route[] {
   const routes: Route[] = [];
   // The login runs with what the engine's own `claude` gets: OS paths, never this server's credentials.
@@ -3576,6 +3586,22 @@ function createRoutes(
     jsonResponse({ rules: await managedDesktopPolicy(config).websiteRules() }));
   addRoute(routes, "GET", "/managed-policy/browser-upload-permissions", "client", async () =>
     jsonResponse(await managedDesktopPolicy(config).browserUploadPolicy()));
+  // "Always allow" on a file-send approval: the app names the open question
+  // just before answering it. Only a question this host is showing counts.
+  addRoute(routes, "POST", "/experimental/file-send/remember", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.requestId !== "string" || !fileSendApprovals.chooseAlways(body.requestId)) {
+      throw new ApiError(409, "file_send_not_open", "That approval is no longer open, so nothing was remembered.");
+    }
+    return jsonResponse({ ok: true });
+  });
+  addRoute(routes, "GET", "/experimental/file-send/grants", "client", async () =>
+    jsonResponse(await fileSendApprovals.grants()));
+  addRoute(routes, "DELETE", "/experimental/file-send/grants/:id", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    return jsonResponse(await fileSendApprovals.revoke(ctx.params.id ?? ""));
+  });
   addRoute(routes, "GET", "/managed-policy/computer-rules", "client", async () =>
     jsonResponse({ rules: await managedDesktopPolicy(config).computerRules() }));
   addRoute(routes, "POST", "/managed-policy/evaluate", "policy", async (ctx) => {

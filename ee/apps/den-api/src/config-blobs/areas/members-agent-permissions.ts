@@ -12,7 +12,8 @@
  *   (routes/org/agent-permissions.ts → saveAgentPermissionPolicy). A
  *   permission whose feature is off on the target (computer use, app
  *   scripting and outside folders need `agentHarnessPermissions`; browser
- *   uploads need `browserUploadPermissions`) is left as stored there, with a
+ *   uploads need `browserUploadPermissions`; files sent to connected
+ *   accounts need `fileSendPermissions`) is left as stored there, with a
  *   warning, exactly as the routes preserve what the editor can't show.
  */
 import { and, asc, eq, inArray } from "@openwork-ee/den-db/drizzle"
@@ -79,10 +80,11 @@ function definitionOf(key: string) {
 }
 
 /** Permissions the target can't edit because their feature is off there. */
-export function gatedAgentPermissionKeys(features: Pick<FeatureMap, "agentHarnessPermissions" | "browserUploadPermissions">): Map<AgentPermissionKey, string> {
+export function gatedAgentPermissionKeys(features: Pick<FeatureMap, "agentHarnessPermissions" | "browserUploadPermissions" | "fileSendPermissions">): Map<AgentPermissionKey, string> {
   const gated = new Map<AgentPermissionKey, string>()
   if (!features.agentHarnessPermissions) for (const key of AGENT_HARNESS_PERMISSION_KEYS) gated.set(key, "agentHarnessPermissions")
   if (!features.browserUploadPermissions) gated.set("browserUploads", "browserUploadPermissions")
+  if (!features.fileSendPermissions) gated.set("fileSends", "fileSendPermissions")
   return gated
 }
 

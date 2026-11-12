@@ -804,6 +804,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: true,
   },
+  fileSendPermissions: {
+    label: "Connected accounts: one permission for files the agent sends",
+    description: "Drive uploads, saves back to Drive, OneDrive and SharePoint, and Gmail and Outlook drafts with attachments ask the same way: Allow once, Allow for this chat or Always allow. Admins set Allow, Ask first or Block on the Agents tab, and members revoke remembered approvals in Settings.",
+    category: "connect",
+    added: "2026-11-12",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/file-send-permissions/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   agentHarnessPermissions: {
     label: "Agent permissions: computer use, app scripting and outside folders",
     description: "Admins choose Allow, Ask first or Block for computer use, Mac app scripting and folders outside the workspace on the Agents tab, and members' desktop apps apply them.",

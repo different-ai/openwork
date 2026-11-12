@@ -5,6 +5,7 @@ import {
   agentPermissionSettingsSchema,
   withoutAgentHarnessPermissions,
   withoutBrowserUploadPermissions,
+  withoutFileSendPermissions,
   type AgentPermissionKey,
   type AgentPermissionSettings,
 } from "@openwork/types/den/agent-permissions"
@@ -70,19 +71,31 @@ function auditPolicyChange(capture: AuditChangeCapture | null, organizationId: s
   return (tx, { before, after }) => appendDomainChanges(tx, capture, [agentPermissionPolicyChangedEvent(organizationId, scope, before, after)])
 }
 
+/** Which member-decided permissions the calling editor says it can show. */
+type EditorSupport = { browserUploads: boolean; fileSends: boolean }
+function editorSupport(c: { req: { header(name: string): string | undefined } }): EditorSupport {
+  return {
+    browserUploads: c.req.header("X-OpenWork-Browser-Upload-Permissions") === "1",
+    fileSends: c.req.header("X-OpenWork-File-Send-Permissions") === "1",
+  }
+}
+
 /** Old editors cannot replace permissions they do not understand. */
-async function policyVisibility(payload: ResourceOrganizationContext, supportsBrowserUploads: boolean) {
+async function policyVisibility(payload: ResourceOrganizationContext, supports: EditorSupport) {
   const features = await getOrganizationFeatures(payload.organization.id, { userId: payload.currentMember.userId })
-  const uploadsEnabled = features.browserUploadPermissions && supportsBrowserUploads
+  const uploadsEnabled = features.browserUploadPermissions && supports.browserUploads
+  const fileSendsEnabled = features.fileSendPermissions && supports.fileSends
   const preserveKeys: AgentPermissionKey[] = [
     ...(features.agentHarnessPermissions ? [] : AGENT_HARNESS_PERMISSION_KEYS),
     ...(uploadsEnabled ? [] : ["browserUploads"] satisfies AgentPermissionKey[]),
+    ...(fileSendsEnabled ? [] : ["fileSends"] satisfies AgentPermissionKey[]),
   ]
   return {
     preserveKeys,
     settings(settings: AgentPermissionSettings) {
       const visible = features.agentHarnessPermissions ? settings : withoutAgentHarnessPermissions(settings)
-      return uploadsEnabled ? visible : withoutBrowserUploadPermissions(visible)
+      const uploads = uploadsEnabled ? visible : withoutBrowserUploadPermissions(visible)
+      return fileSendsEnabled ? uploads : withoutFileSendPermissions(uploads)
     },
   }
 }
@@ -90,7 +103,7 @@ async function policyVisibility(payload: ResourceOrganizationContext, supportsBr
 async function savePolicy(
   c: ResourceActionContext,
   payload: ResourceOrganizationContext,
-  input: { teamId: DenTypeId<"team"> | null; settings: AgentPermissionSettings; capture: AuditChangeCapture | null; supportsBrowserUploads: boolean },
+  input: { teamId: DenTypeId<"team"> | null; settings: AgentPermissionSettings; capture: AuditChangeCapture | null; supports: EditorSupport },
 ) {
   const permission = await requirePermission(c, "agent_permissions.manage")
   if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
@@ -98,7 +111,7 @@ async function savePolicy(
   const team = input.teamId ? await findOrganizationTeam(payload.organization.id, input.teamId) : null
   if (input.teamId && !team) return c.json({ error: "team_not_found" }, 404)
 
-  const visibility = await policyVisibility(payload, input.supportsBrowserUploads)
+  const visibility = await policyVisibility(payload, input.supports)
   const save = () => saveAgentPermissionPolicy({
     organizationId: payload.organization.id,
     teamId: input.teamId,
@@ -146,7 +159,7 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
     async (c) => {
       const payload = c.get("organizationContext")
       if (!payload) return c.json({ error: "organization_not_found" }, 404)
-      const visibility = await policyVisibility(payload, c.req.header("X-OpenWork-Browser-Upload-Permissions") === "1")
+      const visibility = await policyVisibility(payload, editorSupport(c))
       const policies = await listAgentPermissionPolicies(payload.organization.id)
       return c.json({
         everyone: {
@@ -173,7 +186,7 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
     describeRoute({
       tags: ["Agent Permissions"],
       summary: "Set everyone's agent permissions",
-      description: "Replaces the agent permissions that apply to every member. A permission left out uses its default: Allow for existing permissions, Ask first without administrator authority for browser uploads. Members' apps pick up the change the next time they refresh their organization's settings. Requires the agent_permissions.manage permission with a recent sign-in. When agentHarnessPermissions is off for the caller, incoming computer use, Mac app scripting and outside-folder settings are ignored, stored settings for those permissions are preserved, and they are omitted from responses. Independently, browser upload settings are ignored and preserved unless browserUploadPermissions is on for the caller and the client sends X-OpenWork-Browser-Upload-Permissions: 1.",
+      description: "Replaces the agent permissions that apply to every member. A permission left out uses its default: Allow for existing permissions, Ask first without administrator authority for browser uploads and files sent to connected accounts. Members' apps pick up the change the next time they refresh their organization's settings. Requires the agent_permissions.manage permission with a recent sign-in. When agentHarnessPermissions is off for the caller, incoming computer use, Mac app scripting and outside-folder settings are ignored, stored settings for those permissions are preserved, and they are omitted from responses. Independently, browser upload settings are ignored and preserved unless browserUploadPermissions is on for the caller and the client sends X-OpenWork-Browser-Upload-Permissions: 1. Settings for files sent to connected accounts follow the same rule with fileSendPermissions and X-OpenWork-File-Send-Permissions: 1.",
       responses: {
         200: jsonResponse("Everyone's agent permissions saved.", agentPermissionPolicyResponseSchema),
         400: jsonResponse("A permission or pattern was not valid.", invalidRequestSchema),
@@ -188,7 +201,7 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
     async (c) => {
       const payload = c.get("organizationContext")
       if (!payload) return c.json({ error: "organization_not_found" }, 404)
-      return savePolicy(c, payload, { teamId: null, settings: c.req.valid("json").settings, capture: auditChangeCapture(c), supportsBrowserUploads: c.req.header("X-OpenWork-Browser-Upload-Permissions") === "1" })
+      return savePolicy(c, payload, { teamId: null, settings: c.req.valid("json").settings, capture: auditChangeCapture(c), supports: editorSupport(c) })
     },
   )
 
@@ -214,7 +227,7 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
       const payload = c.get("organizationContext")
       if (!payload) return c.json({ error: "organization_not_found" }, 404)
       const teamId = normalizeDenTypeId("team", c.req.valid("param").teamId)
-      return savePolicy(c, payload, { teamId, settings: c.req.valid("json").settings, capture: auditChangeCapture(c), supportsBrowserUploads: c.req.header("X-OpenWork-Browser-Upload-Permissions") === "1" })
+      return savePolicy(c, payload, { teamId, settings: c.req.valid("json").settings, capture: auditChangeCapture(c), supports: editorSupport(c) })
     },
   )
 
@@ -241,7 +254,7 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
       if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
       const team = await findOrganizationTeam(payload.organization.id, normalizeDenTypeId("team", c.req.valid("param").teamId))
       if (!team) return c.json({ error: "team_not_found" }, 404)
-      const visibility = await policyVisibility(payload, c.req.header("X-OpenWork-Browser-Upload-Permissions") === "1")
+      const visibility = await policyVisibility(payload, editorSupport(c))
       await saveAgentPermissionPolicy({
         organizationId: payload.organization.id,
         teamId: team.id,
