@@ -73,5 +73,7 @@ func dictationAudioLevel(_ buffer: AVAudioPCMBuffer) -> Float {
   var energy: Float = 0
   for index in 0..<Int(buffer.frameLength) { energy += samples[index] * samples[index] }
   let decibels = 20 * log10(max(sqrt(energy / Float(buffer.frameLength)), 0.000001))
-  return min(1, max(0, (decibels + 60) / 48))
+  // Gate quiet background noise in the visualization only. Recognition still
+  // receives every original sample, including softly spoken words.
+  return min(1, max(0, (decibels + 45) / 33))
 }

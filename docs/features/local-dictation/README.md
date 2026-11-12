@@ -46,8 +46,9 @@ Recording controls expand beside the stationary Send button in 180 ms and
 collapse in 120 ms, with ease-out easing. Setup, waveform and finishing share
 a fixed footprint, so phase changes do not move Send or change the toolbar's
 height. The outgoing phase stays visible during collapse instead of flashing
-a different label. Icons crossfade over 150 ms; audio bars use 120 ms transform
-transitions between actual microphone measurements. Press feedback is subtle,
+a different label. Icons crossfade over 150 ms; audio bars follow each actual
+microphone measurement immediately, without repeatedly restarting a slower
+transform transition. Press feedback is subtle,
 with no bounce, fabricated activity or delay before an action takes effect.
 
 The main Mic/Stop button remains mounted. Keyboard cancellation returns focus
@@ -61,17 +62,22 @@ covered rapid start/cancel and focus restoration without overflow. Reduced
 motion had zero active animations across all phases. The download bar uses
 the shared progress primitive and eases between measured values; unknown
 progress pulses only while setup is active. A 42% fixture filled 40.3 px of
-the 96 px track, and completion remained at 100% while fading into recording. These are focused
+the 96 px track. Download completion now clears the progress bar before analyzer
+preparation, instead of leaving a completed download visible until recording. These are focused
 interaction checks, not a device-wide rendering benchmark.
 
 ## Local recognition improvements
 
-- Prefer the newer `SpeechTranscriber` model with `volatileResults` enabled
-  for live text, without `fastResults`. Revisions replace overlapping audio
+- Prefer the newer `SpeechTranscriber` model with `volatileResults` and
+  `fastResults` for earlier live text. Apple's smaller context window trades
+  some accuracy for responsiveness; finalization does not undo that tradeoff.
+  Revisions replace overlapping audio
   ranges rather than duplicating words. Retain each latest result even when
   it becomes final without being reissued. `SpeechAnalyzer` finalizes through
   the end of the input stream before a requested Send proceeds.
-- Ask `AssetInventory` for the language asset and install it when needed.
+- Reserve the locale before checking `AssetInventory` status. A new helper
+  can otherwise see an already-downloaded language as merely supported and
+  request installation again. Skip installation and its UI when installed.
   A compact progress bar and percentage show the request's actual
   `Progress.fractionCompleted`. Until Apple reports a measurable total, the
   bar is indeterminate with no invented percentage. It remains cancellable;
@@ -91,7 +97,9 @@ interaction checks, not a device-wide rendering benchmark.
   the likelihood of recognizing domain vocabulary; no accuracy percentage
   is claimed here.
 - Use the host's preferred language instead of the page's interface language.
-- Derive a bounded 20 Hz level stream from the same audio tap. Only the
+- Derive a bounded 30 Hz level stream from the same audio tap, with a shorter
+  24-sample history. Signals at or below -45 dBFS stay flat in the meter;
+  this visualization gate never removes audio from recognition. Only the
   waveform subscribes to level updates; the full composer does not rerender
   for every audio buffer.
 
@@ -143,10 +151,22 @@ alongside `native/dictation/audio-input.swift`, `transcript.swift` and
 hardware check because Apple may download a system language asset; regular
 native unit tests perform no downloads and never open the microphone.
 
-The progress follow-up smoke reused the installed English model and reported
-completion before ready. Intermediate progress, unknown totals, failure/retry
-reset and late-event rejection are covered by deterministic UI/bridge tests;
-a fresh asset download was not forced for this check.
+The responsiveness follow-up used the same synthesized prompt paced at its
+sample rate: “Plan the week. Review the changes and create a pull request.
+Keep the microphone next to the send button.” First text arrived 4.00 seconds
+after ready before the change, versus 0.96 and 0.96 seconds in two runs after
+it. The final transcript matched across all runs, including the existing
+“poll request” mistake. This is one synthetic sample, not a general latency or
+accuracy guarantee. Both repeat runs passed the smoke's `--expect-cached`
+assertion with no installation events; the baseline emitted them on this same
+device. The smoke now reports elapsed time and paces file input for live timing.
+
+The browser control fixture settled to a flat meter within 0.9 seconds of
+quiet events without moving Send. Audio bars have no transform tween; the
+existing control transitions and reduced-motion behavior remain. Intermediate
+download progress, unknown totals, completion before ready, failure/retry reset
+and late-event rejection are covered by deterministic UI/bridge tests. A fresh
+asset download and live microphone/packaged permissions were not exercised.
 
 ## Acoustic comparison
 
@@ -159,6 +179,7 @@ coverage costs. Keep the recording and submission interface independent of that 
 References: [SpeechAnalyzer](https://developer.apple.com/documentation/speech/speechanalyzer),
 [SpeechTranscriber](https://developer.apple.com/documentation/speech/speechtranscriber),
 [Volatile results](https://developer.apple.com/documentation/speech/speechtranscriber/reportingoption/volatileresults),
+[Fast results](https://developer.apple.com/documentation/speech/speechtranscriber/reportingoption/fastresults),
 [Result finalization](https://developer.apple.com/documentation/speech/speechmoduleresult/isfinal),
 [AssetInventory](https://developer.apple.com/documentation/speech/assetinventory),
 [Apple contextual vocabulary](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/contextualstrings),

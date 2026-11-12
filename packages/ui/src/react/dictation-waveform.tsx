@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 
 // Two offset crests make a quiet, recognizable signal at composer size.
 const heights = [3, 5, 9, 17, 22, 14, 7, 4, 8, 15, 20, 11, 5, 3]
+export const dictationMeterSamples = 24
 
 /** Host levels render a microphone meter. Without them, text changes drive a
  * dictation-mode indicator; the browser/OS owns the microphone state. */
@@ -20,10 +21,10 @@ export function DictationWaveform({ text, levels, className }: { text: string; l
 
   if (levels) return <span role="img" aria-label="Microphone level" data-dictation-waveform className={className}>
     <svg viewBox="0 0 240 32" preserveAspectRatio="none" width="100%" height="100%" aria-hidden="true">
-      {Array.from({ length: 48 }, (_, index) => {
-        const level = levels[index - (48 - levels.length)] ?? 0
+      {Array.from({ length: dictationMeterSamples }, (_, index) => {
+        const level = levels[index - (dictationMeterSamples - levels.length)] ?? 0
         const height = 2 + Math.max(0, Math.min(1, level)) * 28
-        return <rect key={index} x={1 + index * 5} y="2" width="2" height="28" rx="1" fill="currentColor"
+        return <rect key={index} x={3 + index * 10} y="2" width="3" height="28" rx="1.5" fill="currentColor"
           style={{ transformBox: "fill-box", transformOrigin: "center", transform: `scaleY(${height / 28})` }} />
       })}
     </svg>

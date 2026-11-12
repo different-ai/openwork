@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { browserSpeechConstructor, createBrowserDictation, type BrowserSpeechConstructor } from "./browser-dictation"
+import { dictationMeterSamples } from "./dictation-waveform"
 
 export type NativeDictationResult = { ok: true } | { ok: false; reason: "unavailable" | "not_focused" | "failed" }
 export type DictationPlatform = "macos" | "windows" | "mobile" | "unsupported"
@@ -13,7 +14,7 @@ function createMeter() {
     getSnapshot: () => levels,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener) } },
     reset() { levels = []; listeners.forEach(listener => listener()) },
-    push(level: number) { levels = [...levels.slice(-47), level]; listeners.forEach(listener => listener()) },
+    push(level: number) { levels = [...levels.slice(1 - dictationMeterSamples), level]; listeners.forEach(listener => listener()) },
   }
 }
 export function dictationPlatform(userAgent: string, touchPoints = 0): DictationPlatform {
@@ -120,7 +121,7 @@ export function useNativeDictation(options: {
       onLevel: level => { if (id === generation.current) meter.push(level) },
       onStatus: (_status, progress) => {
         if (id !== generation.current || listened) return
-        setInstallingModel(true)
+        setInstallingModel(progress !== 1)
         setModelDownloadProgress(progress ?? null)
       },
       onText: text => { if (id === generation.current) currentOptions.current.onText(text) },
