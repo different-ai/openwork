@@ -18,10 +18,8 @@ import { isWorkbotModelListed, workbotModelName, workbotModelOptions } from "./w
 /** The picker value for the built-in default while its model isn't known (Workbot's models can't be reached). */
 const BUILT_IN_DEFAULT_VALUE = "::default";
 
-/** What differs for a member on two teams that disagree, for the conflict line: any of the rows and the settings for members' agents too. */
+/** What differs for a member on two teams that disagree, for the conflict line: any of the rows, and the settings for members' agents too. */
 export const WORKBOT_CONFLICT_SETTING = "Workbot setting";
-
-type WorkbotTeamSettingKey = "enabled" | "model" | "name" | "agent";
 
 /** The heading of the section for members' agents, and what its "Use Everyone's" names. */
 export const WORKBOT_AGENTS_LABEL = "Members' agents";
@@ -144,9 +142,9 @@ export function workbotEveryoneSavedMessage(change: WorkbotEveryoneChange, setti
   return savedModelMessage(change.model, settings, (name) => `Saved. New messages use ${name}.`, "Saved.");
 }
 
-/** The names of the teams with their own value for one setting, for the chip on Everyone's page. */
-export function workbotTeamsChanged(view: Pick<WorkbotTeamSettingsView, "teams">, setting: WorkbotTeamSettingKey): string[] {
-  return view.teams.filter((team) => team[setting]?.inherit === false).map((team) => team.teamName);
+/** Whether a team's Calendar choice is its own: it has its own settings for members' agents, and they differ from Everyone's here. */
+export function workbotTeamCalendarChanged(view: Pick<WorkbotTeamSettingsView, "organization">, row: Pick<WorkbotTeamSettingsTeam, "agent">): boolean {
+  return row.agent?.inherit === false && row.agent.calendar !== undefined && row.agent.calendar !== view.organization.agentCalendar;
 }
 
 /** How many teams turned Workbot on for themselves. */

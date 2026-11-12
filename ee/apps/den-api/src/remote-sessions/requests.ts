@@ -13,6 +13,10 @@ import {
   type RemoteSessionRequestResult,
 } from "@openwork/types/automations"
 import { db } from "../db.js"
+import { detachableCommands, detachedCommandValues } from "./commands.js"
+
+/** The computer no longer holds the receipt of the command a request came through. */
+export const UNKNOWN_RECEIPT_ERROR_CODE = "unknown_receipt"
 
 /** Requests are interactive: an unanswered one is useless after a couple of minutes. */
 export const REMOTE_SESSION_REQUEST_TTL_MS = 2 * 60_000
@@ -62,7 +66,11 @@ export interface RemoteSessionRequestStore {
     now: number
     recoverClaimed?: boolean
   }): Promise<RemoteSessionRequest | null>
-  /** Scoped, immutable receipts outlive admission TTL; identical retries are acknowledged. */
+  /**
+   * Scoped, immutable receipts outlive admission TTL; identical retries are acknowledged.
+   * A request that fails with `unknown_receipt` detaches the attach command it
+   * came through, in the same transaction, so the session can be attached again.
+   */
   complete(input: RemoteSessionRequestCompleteRequest & {
     requestId: string
     organizationId: string
@@ -264,6 +272,17 @@ export const databaseRemoteSessionRequestStore: RemoteSessionRequestStore = {
           eq(RemoteSessionCommandTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
           eq(RemoteSessionCommandTable.claimed_by_runner_id, input.runnerId),
           eq(RemoteSessionCommandTable.status, "delivered"),
+        ))
+      }
+      if (input.status === "failed" && input.error.code === UNKNOWN_RECEIPT_ERROR_CODE) {
+        // The computer lost this attach's receipt: every later request would fail
+        // the same way. A command that started the session is left as it is.
+        await tx.update(RemoteSessionCommandTable).set(detachedCommandValues(now)).where(and(
+          eq(RemoteSessionCommandTable.id, normalizeDenTypeId("remoteSessionCommand", existing.commandId)),
+          eq(RemoteSessionCommandTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
+          eq(RemoteSessionCommandTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
+          eq(RemoteSessionCommandTable.claimed_by_runner_id, input.runnerId),
+          detachableCommands(),
         ))
       }
       return { ...existing, status: input.status, outcome: input.status === "done" ? input.outcome : null,

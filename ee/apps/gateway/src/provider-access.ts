@@ -7,6 +7,7 @@ import {
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { createGatewayModelAlias, parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import type { GatewaySelectionConflict, GatewayUsableModel } from "@openwork/types/den/gateway"
+import { AUTO_ROUTER_PROVIDER_ID, autoRouterModelId, autoRouterModelName } from "@openwork/types/den/auto-router"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
 
 export type GatewayAccessScope = GatewayContext & { gatewayProviderId: typeof GatewayProviderTable.$inferSelect.id }
@@ -170,15 +171,23 @@ export type GatewayListedModel = {
   owned_by: string
   name: string
   openwork: {
-    /** The ipr_ id that goes in /api/v1/providers/{provider_id}/... to call this model. */
+    /**
+     * The ipr_ id that goes in /api/v1/providers/{provider_id}/... to call this model. For a Smart
+     * Router, `openwork-auto`: it is called only through POST /api/v1/chat/completions.
+     */
     provider_id: string
     provider_name: string
     upstream_model_id: string
+    /** Set on Smart Routers (feature `autoRouter`), whose id is `openwork-smart-<router id>`. */
+    smart_router?: true
   }
 }
 
-/** Every model the member's grants allow, across providers, in the OpenAI list shape. */
-export function listGatewayModels(rows: GatewayMemberAccessRow[]): { object: "list"; data: GatewayListedModel[] } {
+/**
+ * Every model the member's grants allow, across providers, in the OpenAI list shape, then the Smart
+ * Routers the member can use.
+ */
+export function listGatewayModels(rows: GatewayMemberAccessRow[], smartRouters: readonly { id: string; routerName: string }[] = []): { object: "list"; data: GatewayListedModel[] } {
   const models = new Map<string, GatewayListedModel>()
   for (const row of rows) {
     if (!row.model || row.model.gateway_provider_id !== row.provider.id) continue
@@ -194,5 +203,16 @@ export function listGatewayModels(rows: GatewayMemberAccessRow[]): { object: "li
   }
   const data = [...models.values()].sort((a, b) =>
     a.openwork.provider_name.localeCompare(b.openwork.provider_name) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+  for (const router of smartRouters) {
+    const id = autoRouterModelId(router.id)
+    data.push({
+      id,
+      object: "model",
+      created: 0,
+      owned_by: "openwork",
+      name: autoRouterModelName(router.routerName),
+      openwork: { provider_id: AUTO_ROUTER_PROVIDER_ID, provider_name: "OpenWork", upstream_model_id: id, smart_router: true },
+    })
+  }
   return { object: "list", data }
 }

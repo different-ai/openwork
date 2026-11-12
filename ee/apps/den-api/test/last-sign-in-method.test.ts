@@ -8,9 +8,10 @@ import {
   lastSignInCookieWrites,
 } from "../src/last-sign-in-method.js"
 
-test("the authentication hook remembers sign-ins without consulting deployment features", () => {
+test("the authentication hook remembers sign-ins without the retired lastUsedSignIn feature", () => {
   const source = readFileSync(new URL("../src/auth.ts", import.meta.url), "utf8")
-  assert.doesNotMatch(source, /lastUsedSignIn|deploymentFeatureEnabled/)
+  // auth.ts reads other deployment features (signInEmailSync), never this one.
+  assert.doesNotMatch(source, /lastUsedSignIn/)
   assert.match(source, /const change = lastSignInCookieChange\(/)
   assert.match(source, /const writes = lastSignInCookieWrites\(change,/)
   assert.match(source, /ctx\.setCookie\(write\.name, write\.value, write\.options\)/)

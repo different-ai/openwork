@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { z } from "zod"
-import { toolCallSchema, type RepeatLimits, type ToolCall, type ToolResult } from "./types.js"
+import { toolAppSchema, toolCallSchema, type RepeatLimits, type ToolCall, type ToolResult } from "./types.js"
 
 /**
  * Step mode (`execution: "steps"`): a turn runs one step at a time from what is stored, instead of in one go.
@@ -44,6 +44,7 @@ const toolResultSchema = z.object({
   isError: z.boolean(),
   images: z.array(z.object({ mediaType: z.string(), data: z.string() })).optional(),
   documents: z.array(z.object({ mediaType: z.literal("application/pdf"), data: z.string(), name: z.string() })).optional(),
+  app: toolAppSchema.optional(),
 })
 const usageSchema = z.object({ inputTokens: z.number(), cachedInputTokens: z.number(), outputTokens: z.number() })
 

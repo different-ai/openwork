@@ -64,17 +64,6 @@ type SpecConnection = z.infer<typeof connectionSchema>
 const leadMinutesSchema = z.number().int().refine((value) => WORKBOT_PROACTIVE_LEAD_MINUTES.some((allowed) => allowed === value), {
   message: "Choose 5, 10, 15, 30 or 60 minutes.",
 })
-const coreConnectionsSchema = z.object({
-  calendar: z.array(connectionSchema).max(2000).nullable().default(null),
-  email: z.array(connectionSchema).max(2000).nullable().default(null),
-  chat: z.array(connectionSchema).max(2000).nullable().default(null),
-}).strict()
-const coreDefaultsSchema = z.object({
-  calendar: connectionSchema.nullable().default(null),
-  email: connectionSchema.nullable().default(null),
-  chat: connectionSchema.nullable().default(null),
-}).strict()
-
 /** `optionalConnection`: at apply, a reference the admin chose to drop is removed, leaving the entry without one. */
 function specSchema(optionalConnection: boolean) {
   const entryConnection = optionalConnection ? connectionSchema.optional() : connectionSchema
@@ -89,12 +78,14 @@ function specSchema(optionalConnection: boolean) {
     destination: z.enum(["workbot_dm"]).nullable().default("workbot_dm"),
     sources: z.object({
       calendar: agentSourcePolicySchema.default("everyone"),
-      email: agentSourcePolicySchema.default("everyone"),
-      chat: agentSourcePolicySchema.default("everyone"),
-      /** Null: every connection that serves the source. */
-      coreConnections: coreConnectionsSchema.default({ calendar: null, email: null, chat: null }),
-      /** Null: automatic. */
-      coreDefaults: coreDefaultsSchema.default({ calendar: null, email: null, chat: null }),
+      /**
+       * In files exported before mail and chat became part of their connections and the calendar app stopped being
+       * picked. Read so those files still import; never applied and no longer exported.
+       */
+      email: z.unknown().optional(),
+      chat: z.unknown().optional(),
+      coreConnections: z.unknown().optional(),
+      coreDefaults: z.unknown().optional(),
       /** Null: every connection whose read tools are reviewed. */
       otherConnections: z.array(connectionSchema).max(2000).nullable().default(null),
       /** Other connections that aren't "members choose". */
@@ -105,9 +96,7 @@ function specSchema(optionalConnection: boolean) {
         tools: z.record(z.string().trim().min(1).max(255), agentToolOverrideSchema),
       }).strict()).max(2000).default([]),
     }).strict().default({
-      calendar: "everyone", email: "everyone", chat: "everyone",
-      coreConnections: { calendar: null, email: null, chat: null },
-      coreDefaults: { calendar: null, email: null, chat: null },
+      calendar: "everyone",
       otherConnections: null, connections: [], toolOverrides: [],
     }),
     /** `workbotAgentBrief`: only the fields an admin saved; the rest is carried over on the target. */
@@ -201,10 +190,6 @@ async function exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]> {
   ])
   const connections = new Map(connectionList.map((connection) => [connection.id, connection]))
   const { sources } = settings
-  const coreDefault = (kind: (typeof AGENT_CORE_SOURCES)[number]) => {
-    const id = sources.coreDefaults?.[kind]
-    return id ? toSpecConnection(id, connections) : null
-  }
   const policyEntries = Object.entries(sources.connections)
     .flatMap(([id, policy]) => {
       const connection = policy === "members" ? null : toSpecConnection(id, connections)
@@ -230,14 +215,6 @@ async function exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]> {
     destination: settings.destination,
     sources: {
       calendar: sources.calendar,
-      email: sources.email,
-      chat: sources.chat,
-      coreConnections: {
-        calendar: exportList(sources.coreConnections?.calendar, connections),
-        email: exportList(sources.coreConnections?.email, connections),
-        chat: exportList(sources.coreConnections?.chat, connections),
-      },
-      coreDefaults: { calendar: coreDefault("calendar"), email: coreDefault("email"), chat: coreDefault("chat") },
       otherConnections: exportList(sources.otherConnections, connections),
       connections: policyEntries,
       toolOverrides,
@@ -270,21 +247,6 @@ function sourcesChange(op: ConfigApplyOp, spec: ApplySpec["sources"], current: A
   for (const kind of AGENT_CORE_SOURCES) {
     if (touches(op, `sources.${kind}`) && spec[kind] !== current[kind]) change[kind] = spec[kind]
   }
-  const coreConnections: NonNullable<AgentSourcesPolicyInput["coreConnections"]> = {}
-  const coreDefaults: NonNullable<AgentSourcesPolicyInput["coreDefaults"]> = {}
-  for (const kind of AGENT_CORE_SOURCES) {
-    if (touches(op, `sources.coreConnections.${kind}`)) {
-      const wanted = localList(spec.coreConnections[kind], connections, warnings)
-      if (!sameSet(wanted, current.coreConnections?.[kind])) coreConnections[kind] = wanted
-    }
-    if (touches(op, `sources.coreDefaults.${kind}`)) {
-      const entry = spec.coreDefaults[kind]
-      const wanted = entry ? localConnection(entry, connections, warnings) : null
-      if (wanted !== (current.coreDefaults?.[kind] ?? null)) coreDefaults[kind] = wanted
-    }
-  }
-  if (Object.keys(coreConnections).length) change.coreConnections = coreConnections
-  if (Object.keys(coreDefaults).length) change.coreDefaults = coreDefaults
   if (touches(op, "sources.otherConnections")) {
     const wanted = localList(spec.otherConnections, connections, warnings)
     if (!sameSet(wanted, current.otherConnections)) change.otherConnections = wanted

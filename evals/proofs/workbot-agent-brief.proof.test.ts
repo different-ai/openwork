@@ -14,7 +14,7 @@ test("an admin sets one rhythm and a brief; a member adds lines from chat and se
   const saved = () => ownerProbe.eventually(() => ownerProbe.dom('[data-testid="workbot-proactive-panel"] button[role="switch"]:not([disabled])'), { within: 30_000, until: (value) => value.elements.length > 0, label: "the last change is saved" });
 
   await step("before: with the brief off, Manage › Workbot shows today's four message types and instructions", async () => {
-    await owner.see({ role: "switch", label: "Agents for everyone" }, { timeoutMs: 90_000 });
+    await owner.see({ role: "switch", label: "Proactive Mode" }, { timeoutMs: 90_000 });
     await owner.see({ role: "switch", label: "Waiting on you" });
     await owner.see({ role: "switch", label: "Meeting prep" });
     await owner.see({ text: "Instructions for every agent" });

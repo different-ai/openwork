@@ -421,7 +421,7 @@ async function readOpenworkAgentContext(
   };
 }
 
-async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
+async function queryOpenworkAffordance(rawArgs: unknown, context: OpenCodeContext): Promise<unknown> {
   const request = openworkAffordanceRequestSchema.parse(rawArgs);
   if (request.id === "session.search") {
     return affordanceResult(
@@ -440,7 +440,7 @@ async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
   if (request.id === "session.group.list") {
     return affordanceResult(
       request.id,
-      await runSessionGroupAffordance(request.id, request.args ?? {}, {}),
+      await runSessionGroupAffordance(request.id, request.args ?? {}, context),
       affordanceReadEffects,
     );
   }
@@ -1796,8 +1796,10 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown, _options
     openwork_query: {
       description: "Run a side-effect-free OpenWork affordance whose executor is OpenWork. Use the exact id and arguments from openwork_context. This reads backend or app state without navigation or window focus.",
       args: openworkAffordanceRequestSchema.shape,
-      async execute(rawArgs: unknown) {
-        return JSON.stringify(await queryOpenworkAffordance(rawArgs), null, 2);
+      async execute(rawArgs: unknown, context?: OpenCodeContext) {
+        // A read about the calling chat (its groups) defaults to that chat's workspace, as a command does.
+        const mergedContext = { ...factoryContext, ...normalizeOpenCodeContext(context) };
+        return JSON.stringify(await queryOpenworkAffordance(rawArgs, mergedContext), null, 2);
       },
     },
     openwork_execute: {

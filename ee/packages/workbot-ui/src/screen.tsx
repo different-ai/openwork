@@ -38,7 +38,7 @@ import {
 import { AppMark, AttachButton, FilesButton, FilesPanel, SentAttachments, UploadTray, useFileDrop, type Upload } from "./files";
 import { createComposerState, type ComposerState, type Pending } from "./composer-state";
 import { browserTask, computerWork, finishedSummary, keepsCard, type ComputerSurface } from "./computer-work";
-import { BrowserExperience, useBrowserPreview } from "./browser-preview";
+import { BrowserExperience, useBrowserPreview, type BrowserPreviewTask } from "./browser-preview";
 import { AccountAvatar } from "./account-menu";
 import { documentLinks, WorkbotMarkdown } from "./markdown";
 import { OpenFileContext } from "./open-file";
@@ -49,6 +49,7 @@ import { ModelRecovery, AccessRecovery } from "./model-recovery";
 import { hasAnsweredTurn, WorkbotSetupChip } from "./activation";
 import { WorkbotCalendar } from "./lazy-surfaces";
 import { WorkbotDocuments } from "./documents";
+import { WorkbotDevices } from "./devices";
 import { LastGlimpse, LiveGlimpse, WorkbotComputer } from "./computer";
 import { readBrowserSkillRunPrompt, type BrowserTeachingContext } from "@openwork/types/browser-demonstration";
 import { readWorkbotCorrectionPrompt, workbotCorrectionPrompt, workbotContextLabel, workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
@@ -350,6 +351,19 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refetchChatList(); }, 30_000);
     return () => window.clearInterval(timer);
   }, [wideScreen, chatListEnabled, refetchChatList]);
+  // Devices: a row for one of Workbot's own computers opens that chat's Computer view. The chat on screen only
+  // changes pages; another chat is opened first (its page starts on the Computer view), and only a chat the person
+  // still has, never while document drafts hold them in this one.
+  const computerFor = (workbotChat: string) => {
+    if (computerViews(host).length === 0) return null;
+    const target = workbotChat === "main" ? null : workbotChat;
+    if (target === (navigation?.chat ?? null)) return () => setTab("computer");
+    if (!navigation || documentsDirty || (target !== null && !paletteChats.data?.side.some(entry => entry.id === target))) return null;
+    return () => {
+      navigation.openChat(target);
+      window.history.replaceState(null, "", `${pagePath("computer")}${window.location.search}`);
+    };
+  };
   const paletteTasks = useMemo(() => (data?.turns ?? []).flatMap((turn) => turn.tasks), [data?.turns]);
   const palette = (
     <WorkbotCommandPalette
@@ -492,7 +506,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       }}
       onSuggestion={text => submit(text)} onSwitch={text => submit(text, undefined, false, true)} starting={starting} intro={null}
     /> : null;
-    const pageTitle = tab === "documents" ? "Documents" : tab === "calendar" ? "Calendar" : tab === "computer" ? computerTabLabel(host) : undefined;
+    const pageTitle = tab === "documents" ? "Documents" : tab === "calendar" ? "Calendar" : tab === "devices" ? "Devices" : tab === "computer" ? computerTabLabel(host) : undefined;
     // An open document offers one small way to ask about it: switch to the chat with that document attached.
     const askable = tab === "documents" && documentContext?.kind === "document" && shares(documentContext) ? documentContext : null;
     const askAbout = askable ? () => {
@@ -535,6 +549,9 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           <div className="flex min-h-0 min-w-0 flex-1 border-t border-[var(--wb-hairline)]" style={{ display: tab === "calendar" ? undefined : "none" }} hidden={tab !== "calendar"}>
             {host.calendar && (calendarVisited || tab === "calendar") && <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={name} onContextChange={setCalendarContext} />}
           </div>
+          <div className="flex min-h-0 min-w-0 flex-1 border-t border-[var(--wb-hairline)]" style={{ display: tab === "devices" ? undefined : "none" }} hidden={tab !== "devices"}>
+            {host.devices === true && tab === "devices" && <WorkbotDevices computerFor={computerFor} />}
+          </div>
           <div className="flex min-h-0 min-w-0 flex-1" style={{ display: tab === "computer" ? undefined : "none" }} hidden={tab !== "computer"}>
             {computerVisited && tab === "computer" && !browserPreview?.visible && computerViews(host).length > 0 && <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} onViewChange={setComputerView} onContextChange={setBrowserContext} />}
             {docked && <DockedChat name={name} context={currentContext} includeContext={includeContext} onIncludeContext={setIncludeContext} composer={composer} conversation={conversation} unavailable={!data && !loading} />}
@@ -550,7 +567,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       </OpenDocumentContext.Provider>
     </>;
   }
-  if ((tab === "calendar" && host.calendar) || tab === "documents" || (tab === "computer" && computerViews(host).length > 0)) {
+  if ((tab === "calendar" && host.calendar) || tab === "documents" || (tab === "devices" && host.devices === true) || (tab === "computer" && computerViews(host).length > 0)) {
     return layout(
       <div className="flex min-h-0 flex-1 flex-col">
         <WorkbotHeader
@@ -559,13 +576,13 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           userName={user?.name ?? null}
           files={null}
           chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
-          page={tab === "documents" ? "Documents" : tab === "calendar" ? "Calendar" : computerTabLabel(host)}
+          page={tab === "documents" ? "Documents" : tab === "calendar" ? "Calendar" : tab === "devices" ? "Devices" : computerTabLabel(host)}
           answered={hasAnsweredTurn(data?.turns)}
           activity={activity}
         />
         {leavingDocuments && <div className="border-t border-[var(--wb-hairline)] px-4 py-2 text-[13px]" role="status">You have unsaved document edits. <button type="button" className="ml-3 underline" onClick={() => setLeavingDocuments(null)}>Keep editing</button><button type="button" className="ml-3 underline" onClick={() => { const next = leavingDocuments; setLeavingDocuments(null); setDocumentsDirty(false); setTab(next, true); }}>Discard edits and leave Documents</button></div>}
         <div className="flex min-h-0 flex-1 border-t border-[#01162712]">
-          {tab === "computer" ? <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} /> : tab === "documents" ? <WorkbotDocuments onDirtyChange={setDocumentsDirty} /> : <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={data?.name ?? "Workbot"} />}
+          {tab === "computer" ? <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} /> : tab === "documents" ? <WorkbotDocuments onDirtyChange={setDocumentsDirty} /> : tab === "devices" ? <WorkbotDevices computerFor={computerFor} /> : <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={data?.name ?? "Workbot"} />}
         </div>
       </div>
     );
@@ -796,7 +813,7 @@ type WorkbotTab = WorkbotPaletteTab;
 
 /** The pages this person has, in the header's order. */
 function paletteTabs(host: WorkbotHost): WorkbotTab[] {
-  return ["home", ...(host.calendar ? ["calendar" as const] : []), ...(host.documents ? ["documents" as const] : [])];
+  return ["home", ...(host.calendar ? ["calendar" as const] : []), ...(host.documents ? ["documents" as const] : []), ...(host.devices === true ? ["devices" as const] : [])];
 }
 
 /** Puts the caret in the message box on screen (the Home composer, or the workspace chat's). */
@@ -817,7 +834,12 @@ function showTask(taskId: string) {
 
 function tabFromLocation(): WorkbotTab {
   const path = typeof window !== "undefined" ? window.location.pathname.replace(/\/+$/, "") : "";
-  return path === "/computer" || path === "/browser" || path.startsWith("/browser/") ? "computer" : path === "/documents" ? "documents" : path === "/calendar" ? "calendar" : "home";
+  return path === "/computer" || path === "/browser" || path.startsWith("/browser/") ? "computer" : path === "/documents" ? "documents" : path === "/calendar" ? "calendar" : path === "/devices" ? "devices" : "home";
+}
+
+/** A page's address. The Computer tab opens on its first view (Browser, where the person has it), each with its own path (see WorkbotComputer). */
+function pagePath(page: WorkbotTab) {
+  return page === "home" ? "/" : page === "computer" ? `/${computerViews(workbotHost())[0] ?? "browser"}` : `/${page}`;
 }
 
 /** Home (the conversation) and Calendar, as paths so a reload or a shared link opens the same tab. */
@@ -826,9 +848,11 @@ function useWorkbotTab(beforeLeave?: (next: WorkbotTab) => boolean, preserveSear
   beforeLeaveRef.current = beforeLeave;
   const [tab, setTabState] = useState<WorkbotTab>(tabFromLocation);
   const computerEnabled = computerViews(workbotHost()).length > 0;
+  const devicesEnabled = workbotHost().devices === true;
   useEffect(() => {
-    if (!computerEnabled && tab === "computer") { window.history.replaceState(null, "", `/${preserveSearch ? window.location.search : ""}`); setTabState("home"); }
-  }, [computerEnabled, tab, preserveSearch]);
+    // A page this person doesn't have (from a link, or turned off since) opens Home instead.
+    if ((!computerEnabled && tab === "computer") || (!devicesEnabled && tab === "devices")) { window.history.replaceState(null, "", `/${preserveSearch ? window.location.search : ""}`); setTabState("home"); }
+  }, [computerEnabled, devicesEnabled, tab, preserveSearch]);
   useEffect(() => {
     const sync = () => {
       const next = tabFromLocation();
@@ -841,8 +865,7 @@ function useWorkbotTab(beforeLeave?: (next: WorkbotTab) => boolean, preserveSear
   const setTab = (next: WorkbotTab, discard = false) => {
     if (next === tab) return;
     if (!discard && beforeLeaveRef.current?.(next) === false) return;
-    // The Computer tab opens on its first view (Browser, where the person has it), each with its own path (see WorkbotComputer).
-    window.history.pushState(null, "", `${next === "home" ? "/" : next === "computer" ? `/${computerViews(workbotHost())[0] ?? "browser"}` : `/${next}`}${preserveSearch ? window.location.search : ""}`);
+    window.history.pushState(null, "", `${pagePath(next)}${preserveSearch ? window.location.search : ""}`);
     setTabState(next);
   };
   return [tab, setTab] as const;
@@ -1199,7 +1222,7 @@ function ScrollToBottom({ visible, onClick }: { visible: boolean; onClick(): voi
   return <button type="button" aria-label="Scroll to latest message" title="Scroll to latest message"
     aria-hidden={!visible} tabIndex={visible ? 0 : -1} disabled={!visible} onClick={onClick}
     className={`workbot-scroll-latest absolute left-1/2 z-30 grid size-11 -translate-x-1/2 place-items-center rounded-full focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${visible ? "is-visible" : ""}`}>
-    <span className="grid size-[34px] place-items-center rounded-full border border-[var(--wb-ring)] bg-[var(--wb-surface)] text-[var(--wb-text)] shadow-[0_4px_12px_-4px_#01162733,0_1px_2px_#0116270f]"><ChevronDown size={18} strokeWidth={1.5} aria-hidden /></span>
+    <span className="grid size-[34px] place-items-center rounded-full border border-[var(--wb-ring)] bg-[var(--wb-surface)] text-[var(--wb-text)]"><ChevronDown size={18} strokeWidth={1.5} aria-hidden /></span>
   </button>;
 }
 
@@ -1396,8 +1419,8 @@ function CopyAnswer({ text }: { text: string }) {
 }
 
 /**
- * Workbot's words in a chat bubble on the left, like a person texting back: white on the page with a soft shadow
- * (no outline), so its answers and the person's grey bubbles on the right read as two sides of one conversation. It
+ * Workbot's words in a chat bubble on the left, like a person texting back: white on the page with a hairline edge
+ * (no drop shadow), so its answers and the person's grey bubbles on the right read as two sides of one conversation. It
  * hugs short replies (Copy sits right after it) and stops at a readable width; wide tables and code scroll inside it.
  */
 function AssistantBubble({ children, trailing = null }: { children: ReactNode; trailing?: ReactNode }) {
@@ -1695,6 +1718,15 @@ function openSurface(surface: Exclude<ComputerSurface, "background">) {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
+/**
+ * The computer's screen from its card, where the browser's opens: beside the chat (a full-screen sheet on a phone), so
+ * the conversation stays in view. Without that panel (an older host), its own page.
+ */
+function openScreen(preview: ReturnType<typeof useBrowserPreview>, task: BrowserPreviewTask, surface: Exclude<ComputerSurface, "background">) {
+  if (preview) preview.open(task, surface);
+  else openSurface(surface);
+}
+
 /** The same browser task object from its first step through its stored, finished reply (P11). */
 function BrowserTaskCard({ turn, steps, working }: { turn: WorkbotTurn; steps: WorkbotStep[]; working: boolean }) {
   const preview = useBrowserPreview();
@@ -1727,12 +1759,15 @@ function BrowserTaskCard({ turn, steps, working }: { turn: WorkbotTurn; steps: W
  * view isn't already open beside the chat. Other work, on the screen or in the background, is its progress notes
  * alone. The browser card links the pages it opened. `starting` is what a step not yet stored says it is doing.
  */
-function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, starting: startingUpdate = null }: { surface: Exclude<ComputerSurface, "browser">; steps: WorkbotStep[]; live: boolean; showing: boolean; others: UsedApp[]; switchTo?: SwitchTo | null; starting?: string | null }) {
+function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, starting: startingUpdate = null, task }: { task: BrowserPreviewTask; surface: Exclude<ComputerSurface, "browser">; steps: WorkbotStep[]; live: boolean; showing: boolean; others: UsedApp[]; switchTo?: SwitchTo | null; starting?: string | null }) {
   // The switch just tapped, until Workbot takes it up and the card offers the other one.
   const [asked, setAsked] = useState<string | null>(null);
   const updates = steps.flatMap((step) => step.updates);
   const latest = (live ? startingUpdate : null) ?? updates.at(-1) ?? null;
   const onScreen = useContext(ComputerOnScreenContext) === surface;
+  const preview = useBrowserPreview();
+  const updatePreview = preview?.update;
+  useEffect(() => { if (surface !== "background") updatePreview?.(task); }, [updatePreview, surface, task.id, task.title, task.status, task.reason]);
   const update = useHeld(latest, latest ?? "", UPDATE_HOLD_MS);
   const views = computerViews(workbotHost());
   // Each view is its own rollout: a card shows a screen only for a view this person has. Work in the background has
@@ -1742,7 +1777,7 @@ function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, s
   const starting = surface === "background" ? "Running in the background" : "Starting up";
   // Finished work on a screen, with the inline preview or the working status: a compact record that stays in the
   // conversation, never a live view. One tap opens the full view.
-  if (!live && surface !== "background" && (workbotHost().browserPreview || workbotHost().workingStatus)) return <FinishedSurfaceCard surface={surface} steps={steps} watchable={watchable} />;
+  if (!live && surface !== "background" && (workbotHost().browserPreview || workbotHost().workingStatus)) return <FinishedSurfaceCard surface={surface} steps={steps} watchable={watchable} task={task} />;
   // A thumbnail is a glance, never a takeover: one button opens the full view only on the person's tap.
   if (workbotHost().browserPreview && live && watchable && surface !== "background") return <section className="workbot-row-enter w-full max-w-[480px] rounded-[20px] bg-[var(--wb-chip)] p-3" aria-label="Computer activity" data-workbot-computer-card>
     <div className="flex min-w-0 items-center gap-2.5 px-1 pb-1">
@@ -1753,7 +1788,7 @@ function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, s
       </div>
     </div>
     {!onScreen ? <LiveGlimpse view={surface} previewOnly /> : null}
-    <button type="button" onClick={() => openSurface(surface)} className="mt-3 flex h-10 w-full items-center justify-center rounded-full bg-[var(--wb-surface)] text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">Open computer</button>
+    <button type="button" onClick={() => openScreen(preview, task, surface)} className="mt-3 flex h-10 w-full items-center justify-center rounded-full bg-[var(--wb-surface)] text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">Open computer</button>
   </section>;
   return (
     <WorkCard
@@ -1792,7 +1827,8 @@ function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, s
  * card opens the full view on tap when the person has that view; otherwise it is a static record. It never opens
  * anything by itself.
  */
-function FinishedSurfaceCard({ surface, steps, watchable }: { surface: "computer"; steps: WorkbotStep[]; watchable: boolean }) {
+function FinishedSurfaceCard({ surface, steps, watchable, task }: { surface: "computer"; steps: WorkbotStep[]; watchable: boolean; task: BrowserPreviewTask }) {
+  const preview = useBrowserPreview();
   const name = "Computer";
   const summary = finishedSummary(surface, steps);
   const body = <>
@@ -1805,7 +1841,7 @@ function FinishedSurfaceCard({ surface, steps, watchable }: { surface: "computer
   </>;
   const className = "flex w-full max-w-[480px] min-w-0 items-center gap-2.5 rounded-[20px] bg-[var(--wb-chip)] p-3 text-left";
   return watchable
-    ? <button type="button" onClick={() => openSurface(surface)} aria-label={`${name}: ${summary}. Open the computer`} className={`${className} hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]`} data-workbot-computer-card="done">{body}</button>
+    ? <button type="button" onClick={() => openScreen(preview, task, surface)} aria-label={`${name}: ${summary}. Open the computer`} className={`${className} hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]`} data-workbot-computer-card="done">{body}</button>
     : <section aria-label={`${name}: ${summary}`} className={className} data-workbot-computer-card="done">{body}</section>;
 }
 
@@ -2011,7 +2047,7 @@ const TurnView = memo(function TurnView(props: {
             </AssistantBubble>
           ) : (
             <div key={item.key} className="py-1 pl-1">
-              {item.surface === "browser" ? <BrowserTaskCard turn={turn} steps={item.steps} working={working} /> : <SurfaceCard surface={item.surface} steps={item.steps} live={item.live} showing={item.showing} others={item.others} switchTo={item.switchTo} starting={item.update} />}
+              {item.surface === "browser" ? <BrowserTaskCard turn={turn} steps={item.steps} working={working} /> : <SurfaceCard surface={item.surface} steps={item.steps} live={item.live} showing={item.showing} others={item.others} switchTo={item.switchTo} starting={item.update} task={{ id: `computer:${turn.id}`, ...browserTask(item.steps, { working: working && item.live, title: turn.text.trim() || "Computer task", status: turn.status, what: "computer task" }) }} />}
             </div>
           ),
         )}

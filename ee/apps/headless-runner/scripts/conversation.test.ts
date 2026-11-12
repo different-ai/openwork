@@ -12,7 +12,7 @@ import type { ModelClient, ModelRequest } from "../src/model.js"
 import { nodeSqlite } from "../src/node-sqlite.js"
 import { buildContext, MCP_CONNECT_RETRY_MS, Runner, TRIMMED_TOOL_ATTACHMENTS, TURN_IMAGES, type RunnerOptions } from "../src/runner.js"
 import { Store, type StoredMessage } from "../src/store.js"
-import type { Message, ToolMessage } from "../src/types.js"
+import type { Message, SessionComputer, ToolMessage } from "../src/types.js"
 
 const usage = { inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 }
 const limits = { maxConcurrentTurns: 4, maxSteps: 10, turnTimeoutMs: Number.POSITIVE_INFINITY, credentialRefreshMs: Number.POSITIVE_INFINITY, contextCharBudget: 100_000 }
@@ -509,16 +509,14 @@ test("opening a document is a request the runner records only for a navigation-e
   }
 })
 
-test("a session's own step limit replaces the runner's: a number ends the turn there, 0 lifts the limit, and null goes back to the runner's", async () => {
+test("a session has no step limit of its own: a request that sends one is refused and the runner's limit applies", async () => {
   for (const execution of [undefined, "steps" as const]) {
     const mode = execution ?? "one go"
     let calls = 0
-    let finishAt = Number.POSITIVE_INFINITY
-    // Never repeats itself, so the stuck check doesn't stop it; finishes on its own only from call `finishAt`.
+    // Never repeats itself, so the stuck check doesn't stop it, and never finishes on its own.
     const model: ModelClient = {
       async complete() {
         calls += 1
-        if (calls >= finishAt) return { text: "Done", toolCalls: [], usage }
         return { text: "", toolCalls: [{ id: `call_${calls}`, name: "write_file", input: { path: "notes.md", content: `draft ${calls}` } }], usage }
       },
     }
@@ -526,34 +524,34 @@ test("a session's own step limit replaces the runner's: a number ends the turn t
     const app = createApp({ store: world.store, runner: world.runner, apiToken })
     const put = (body: Record<string, unknown>) =>
       app.request(`/v1/sessions/${world.session}`, { method: "PUT", headers: { authorization: `Bearer ${apiToken}` }, body: JSON.stringify(body) })
-    const run = async (messageId: string) => {
-      const before = calls
-      world.runner.send({ sessionId: world.session, messageId, prompt: "Keep improving the notes", credentials: {}, execution })
-      await world.runner.idle()
-      const turn = world.store.getTurn(world.session, messageId)
-      return { status: turn?.status, error: turn?.error ?? null, calls: calls - before }
-    }
-    assert.equal(world.store.getSession(world.session)?.maxSteps, null, mode)
-
-    // Lower than the runner's three.
-    assert.equal((await put({ maxSteps: 2 })).status, 200, mode)
-    assert.equal(world.store.getSession(world.session)?.maxSteps, 2, mode)
-    assert.deepEqual(await run("m1"), { status: "failed", error: "max_steps_exceeded", calls: 2 }, mode)
-
-    // No limit: the turn goes past the runner's three and ends with its answer. A put that leaves it out keeps it.
-    assert.equal((await put({ maxSteps: 0 })).status, 200, mode)
+    // What an older caller still sends: no limit, a higher one, or clearing one.
+    for (const maxSteps of [0, 50, null]) assert.equal((await put({ maxSteps })).status, 400, `${mode} ${String(maxSteps)}`)
     assert.equal((await put({ title: "Notes" })).status, 200, mode)
-    assert.equal(world.store.getSession(world.session)?.maxSteps, 0, mode)
-    finishAt = calls + 6
-    assert.deepEqual(await run("m2"), { status: "completed", error: null, calls: 6 }, mode)
-
-    // Null clears the session's limit: the runner's three apply again.
-    finishAt = Number.POSITIVE_INFINITY
-    assert.equal((await put({ maxSteps: null })).status, 200, mode)
-    assert.equal(world.store.getSession(world.session)?.maxSteps, null, mode)
-    assert.deepEqual(await run("m3"), { status: "failed", error: "max_steps_exceeded", calls: 3 }, mode)
-
-    for (const maxSteps of [-1, 2.5, 100_001, "10"]) assert.equal((await put({ maxSteps })).status, 400, `${mode} ${String(maxSteps)}`)
-    assert.equal(world.store.getSession(world.session)?.maxSteps, null, mode)
+    world.runner.send({ sessionId: world.session, messageId: "m1", prompt: "Keep improving the notes", credentials: {}, execution })
+    await world.runner.idle()
+    const turn = world.store.getTurn(world.session, "m1")
+    assert.deepEqual({ status: turn?.status, error: turn?.error ?? null, calls }, { status: "failed", error: "max_steps_exceeded", calls: 3 }, mode)
   }
+})
+
+test("deleting a conversation's computer keeps the conversation, and waits while it answers", async () => {
+  using world = setup({ async complete() { return { text: "", toolCalls: [], usage } } })
+  const deleted: string[] = []
+  const computer: SessionComputer = {
+    prompt: "", tools: [], toolNames: new Set(), image: "test",
+    run: async () => ({ output: "" }), known: () => false, prewarm: () => undefined, release: () => undefined,
+    delete: async (sessionId) => void deleted.push(sessionId), previewSavedFile: async () => undefined,
+  }
+  const app = createApp({ store: world.store, runner: world.runner, apiToken, computer })
+  const remove = (sessionId: string) => app.request(`/v1/sessions/${sessionId}/computer`, { method: "DELETE", headers: { authorization: `Bearer ${apiToken}` } })
+  seedTurn(world.store, world.session, "m1")
+
+  assert.equal((await remove(world.session)).status, 204)
+  assert.deepEqual(deleted, [world.session])
+  assert.deepEqual((await readSession(app, world.session)).turns.map((turn) => turn.messageId), ["m1"], "the conversation and its messages stay")
+
+  assert.equal((await remove("hs_nobodys_chat")).status, 404)
+  world.store.admitTurn({ sessionId: world.session, messageId: "m2", prompt: "still answering", model: null })
+  assert.equal((await remove(world.session)).status, 409, "never under a running answer")
+  assert.deepEqual(deleted, [world.session])
 })

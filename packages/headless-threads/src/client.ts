@@ -32,7 +32,16 @@ import type {
   HeadlessThreadPending,
   HeadlessTurnAcceptance,
 } from "./types.js";
-import { answerRefusal, permissionPending, PLAIN_FORM, v1QuestionPending, v2FormAnswer, v2FormPending, type PendingForm } from "./pending.js";
+import {
+  answerRefusal,
+  HEADLESS_THREAD_PENDING_ITEMS_MAX,
+  permissionPending,
+  PLAIN_FORM,
+  v1QuestionPending,
+  v2FormAnswer,
+  v2FormPending,
+  type PendingForm,
+} from "./pending.js";
 import {
   abortResultSchema,
   isRunning,
@@ -376,6 +385,8 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     /** The first pending question, mapped, with what a v2 form needs for its reply. */
     question(rows: unknown[]): PendingForm & { pending: HeadlessThreadPending } | null;
     replyQuestion(threadId: string, requestId: string, answer: Extract<HeadlessThreadAnswer, { kind: "question" }>, form: PendingForm, signal?: AbortSignal): Promise<void>;
+    /** Closes a question without answering it, as dismissing it in the app does. */
+    rejectQuestion(threadId: string, requestId: string, signal?: AbortSignal): Promise<void>;
     replyPermission(threadId: string, requestId: string, decision: "once" | "reject", signal?: AbortSignal): Promise<void>;
   }
 
@@ -497,6 +508,11 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     async replyQuestion(_threadId, requestId, answer, _form, signal) {
       const path = `${opencodePath}/question/${encodeURIComponent(requestId)}/reply`;
       const result = await send("POST", path, { body: { answers: answer.answers }, signal });
+      if (!result.response.ok) throw failure("POST", path, result);
+    },
+    async rejectQuestion(_threadId, requestId, signal) {
+      const path = `${opencodePath}/question/${encodeURIComponent(requestId)}/reject`;
+      const result = await send("POST", path, { signal });
       if (!result.response.ok) throw failure("POST", path, result);
     },
     async replyPermission(_threadId, requestId, decision, signal) {
@@ -671,6 +687,11 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       if (typeof values === "string") refused("invalid_answer", values);
       const result = await send("POST", path, { body: { answer: values }, signal });
       if (!result.response.ok) throw failure("POST", path, result);
+    },
+    async rejectQuestion(threadId, requestId, signal) {
+      const path = `${v2SessionPath(threadId)}/form/${encodeURIComponent(requestId)}`;
+      const result = await send("DELETE", path, { signal });
+      if (!result.response.ok) throw failure("DELETE", path, result);
     },
     async replyPermission(threadId, requestId, decision, signal) {
       const path = `${v2SessionPath(threadId)}/permission/${encodeURIComponent(requestId)}/reply`;
@@ -863,23 +884,33 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     return pending.permissions.length > 0 ? "permission" : pending.questions.length > 0 ? "question" : null;
   }
 
-  async function readPending(threadId: string, signal?: AbortSignal) {
+  /**
+   * Every open request of a thread: permissions first, since one blocks the
+   * run outright, then questions, each list in the engine's order.
+   */
+  async function readOpenRequests(threadId: string, signal?: AbortSignal) {
     const engine = await transport(signal);
     const rows = await engine.requests(threadId, signal);
+    const items: Array<{ pending: HeadlessThreadPending; form: PendingForm; sessionId: string }> = [];
     // The session that asked, the thread or one of its helpers, takes the reply.
     for (const row of rows.permissions) {
       const pending = permissionPending(row);
-      if (pending) return { engine, pending, form: PLAIN_FORM, sessionId: row.sessionID ?? threadId };
+      if (pending) items.push({ pending, form: PLAIN_FORM, sessionId: row.sessionID ?? threadId });
     }
     for (const row of rows.questions) {
       const question = engine.question([row]);
-      if (question) return { engine, pending: question.pending, form: question, sessionId: row.sessionID ?? threadId };
+      if (question) items.push({ pending: question.pending, form: question, sessionId: row.sessionID ?? threadId });
     }
-    return { engine, pending: null, form: PLAIN_FORM, sessionId: threadId };
+    return { engine, items };
+  }
+
+  async function getThreadPendingItems(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadPending[]> {
+    const { items } = await readOpenRequests(threadId, input?.signal);
+    return items.slice(0, HEADLESS_THREAD_PENDING_ITEMS_MAX).map((item) => item.pending);
   }
 
   async function getThreadPending(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadPending | null> {
-    return (await readPending(threadId, input?.signal)).pending;
+    return (await readOpenRequests(threadId, input?.signal)).items[0]?.pending ?? null;
   }
 
   function refused(code: "stale_request" | "invalid_answer", message: string): never {
@@ -887,20 +918,29 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
   }
 
   async function answerThread(threadId: string, answer: HeadlessThreadAnswer, input?: { signal?: AbortSignal }): Promise<void> {
-    const read = await readPending(threadId, input?.signal);
-    // Reply only to the request the person saw: anything else is stale.
-    if (read.pending?.requestId !== answer.requestId || read.pending.kind !== answer.kind) {
-      refused("stale_request", "That question or permission is no longer pending. Read the task again.");
+    const { engine, items } = await readOpenRequests(threadId, input?.signal);
+    // Reply only to a request the person saw that is still open, whichever of them it is: anything else is stale.
+    const named = items.filter((item) => item.pending.requestId === answer.requestId);
+    const kind = answer.kind === "permission" ? "permission" : "question";
+    const open = named.find((item) => item.pending.kind === kind);
+    if (!open) {
+      if (answer.kind === "dismiss" && named.length > 0) refused("invalid_answer", "A permission can't be dismissed. Allow it once or reject it.");
+      return refused("stale_request", "That question or permission is no longer pending. Read the task again.");
     }
     if (answer.kind === "permission") {
-      await read.engine.replyPermission(read.sessionId, answer.requestId, answer.decision, input?.signal);
+      await engine.replyPermission(open.sessionId, answer.requestId, answer.decision, input?.signal);
       return;
     }
-    if (read.pending.kind !== "question") return refused("stale_request", "That question is no longer pending.");
-    if (!read.form.answerable) refused("invalid_answer", "This step can't be answered from here.");
-    const refusal = answerRefusal(read.pending, answer.answers);
+    if (answer.kind === "dismiss") {
+      // Also the only way from here to clear a step that takes no answer, such as one that opens a link.
+      await engine.rejectQuestion(open.sessionId, answer.requestId, input?.signal);
+      return;
+    }
+    if (open.pending.kind !== "question") return refused("stale_request", "That question is no longer pending.");
+    if (!open.form.answerable) refused("invalid_answer", "This step can't be answered from here.");
+    const refusal = answerRefusal(open.pending, answer.answers);
     if (refusal) refused("invalid_answer", refusal);
-    await read.engine.replyQuestion(read.sessionId, answer.requestId, answer, read.form, input?.signal);
+    await engine.replyQuestion(open.sessionId, answer.requestId, answer, open.form, input?.signal);
   }
 
   async function abortThread(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessAbortResult> {
@@ -912,5 +952,8 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     return toTranscript(await getThreadSnapshot(threadId, input));
   }
 
-  return { createThread, sendTurn, waitForThread, waitUntilIdle, getThreadSnapshot, getThreadWaitingFor, getThreadPending, answerThread, abortThread, exportTranscript };
+  return {
+    createThread, sendTurn, waitForThread, waitUntilIdle, getThreadSnapshot, getThreadWaitingFor, getThreadPending, getThreadPendingItems,
+    answerThread, abortThread, exportTranscript,
+  };
 }

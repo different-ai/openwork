@@ -35,6 +35,7 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   config_blob_export: { reason: "config_blobs_internal" },
 
   // Members: later phases.
+  permission_set_member: { reason: "not_yet", note: "direct member role assignments are not included in members.roles exports" },
   scim_group: { reason: "runtime", note: "owned by the IdP through SCIM" },
   scim_group_member: { reason: "runtime", note: "owned by the IdP through SCIM" },
   scim_group_role: { reason: "runtime", note: "pushed by the identity provider over SCIM; exported read-only by settings.auth-security" },
@@ -52,6 +53,9 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   gateway_request_logs: { reason: "runtime" },
   gateway_usage_rollups: { reason: "runtime" },
   workbot_usage_day: { reason: "runtime" },
+  remote_device: { reason: "runtime", note: "computers that registered themselves or were registered by a member; state, not configuration" },
+  remote_device_event: { reason: "runtime" },
+  computer_disconnection: { reason: "runtime", note: "signed-in desktops that were disconnected; ends when someone signs in on the computer again" },
   gateway_usage_audit: { reason: "runtime" },
   gateway_usage_bucket: { reason: "runtime" },
   gateway_usage_bucket_charge: { reason: "runtime" },

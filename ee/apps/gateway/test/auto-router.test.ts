@@ -316,7 +316,7 @@ test("a Messages stream becomes a chat stream, and its thinking is replayed on t
   const args = chunks.flatMap((chunk) => chunk.choices[0]?.delta?.tool_calls?.[0]?.function?.arguments ?? []).join("")
   assert.equal(args, "{\"path\":\"a.ts\"}")
   assert.equal(chunks.at(-2).choices[0].finish_reason, "tool_calls")
-  assert.deepEqual(chunks.at(-1).usage, { prompt_tokens: 15, completion_tokens: 7, total_tokens: 22, prompt_tokens_details: { cached_tokens: 5 } })
+  assert.deepEqual(chunks.at(-1).usage, { prompt_tokens: 15, completion_tokens: 7, total_tokens: 22, prompt_tokens_details: { cached_tokens: 5, cache_write_tokens: 0 } })
 
   const next = toAnthropicBody({ messages: [
     { role: "user", content: "read a.ts" },

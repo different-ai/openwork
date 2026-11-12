@@ -8,6 +8,7 @@ const issuer = process.env.ISSUER;
 const controlToken = process.env.CONTROL_TOKEN;
 const rules = [];
 const requests = [];
+const arrivals = [];
 const hopByHopHeaders = new Set([
   "connection",
   "keep-alive",
@@ -123,7 +124,7 @@ async function control(incoming, response, path) {
     return;
   }
   if (path === "/__openwork_faults/requests" && incoming.method === "GET") {
-    json(response, 200, { requests });
+    json(response, 200, { requests, arrivals });
     return;
   }
   if (path === "/__openwork_faults/clear" && incoming.method === "POST") {
@@ -137,7 +138,7 @@ async function control(incoming, response, path) {
       const body = await readJson(incoming);
       const remaining = faultTimes(body.times);
       if (body.kind === "status") {
-        rules.push({ kind: "status", pathPrefix: body.pathPrefix, statusCode: body.statusCode, body: body.body, remaining, method: body.method?.toUpperCase() });
+        rules.push({ kind: "status", pathPrefix: body.pathPrefix, statusCode: body.statusCode, body: body.body, remaining, method: body.method?.toUpperCase(), headers: body.headers });
       } else if (body.kind === "latency") {
         rules.push({ kind: "latency", pathPrefix: body.pathPrefix, delayMs: body.delayMs, remaining, method: body.method?.toUpperCase() });
       } else {
@@ -161,6 +162,7 @@ const server = createServer((incoming, response) => {
       return;
     }
     const rule = takeRule(path, incoming.method ?? "GET");
+    arrivals.push({ method: incoming.method ?? "GET", path, faulted: rule !== null, at: Date.now() });
     if (rule?.kind === "status") {
       const body = JSON.stringify(rule.body ?? { error: "Injected HTTP " + rule.statusCode });
       requests.push({ method: incoming.method ?? "GET", path, status: rule.statusCode, faulted: true, at: Date.now() });
@@ -171,6 +173,7 @@ const server = createServer((incoming, response) => {
         ...(origin ? { "access-control-allow-origin": origin, "access-control-allow-credentials": "true", vary: "Origin" } : { "access-control-allow-origin": "*" }),
         "content-length": Buffer.byteLength(body),
         "content-type": "application/json",
+        ...rule.headers,
       });
       response.end(body);
       return;

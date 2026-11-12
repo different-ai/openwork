@@ -422,6 +422,44 @@ export type ComputerCrewMember = {
 /** Settings: the computer every chat uses and whether it is set up. */
 export type ComputerStatus = Pick<ComputerSnapshot, "enabled" | "entry" | "targetId" | "targets" | "placement" | "readiness" | "permissions" | "detail">;
 
+/**
+ * The computers this desktop offers and how they are doing, for the organization's
+ * devices list (`remoteDevices`). Names and readiness only.
+ */
+export type ComputerDevicesSnapshot = {
+  /** Computer use is on, as the broker knows it. Off, nothing is probed. */
+  enabled: boolean;
+  /** Remote computers are verified on, so configured VMs are listed. */
+  remoteEnabled: boolean;
+  /** The computer every chat uses. */
+  selectedId: string | null;
+  /** This computer's macOS permissions, when its helper reports them. */
+  permissions: { accessibility: boolean; screenRecording: boolean } | null;
+  computers: Array<{
+    id: string;
+    label: string;
+    placement: "local" | "remote";
+    /** Null: not probed. Only this computer and the one chats use are. */
+    readiness: "ready" | "setup-required" | "unsupported" | "unavailable" | null;
+    /** What it still needs, in one sentence; null when ready or not probed. */
+    detail: string | null;
+    /** For a configured VM: who runs it and the provider's id for it. */
+    provider: "freestyle" | "daytona" | null;
+    externalId: string | null;
+  }>;
+};
+
+/** How this desktop names itself to the organization's devices list. */
+export type DesktopDeviceIdentity = {
+  /** The id this install's runner is registered with; null until the runner is configured. */
+  installId: string | null;
+  label: string;
+  platform: string;
+  appVersion: string;
+  osVersion: string | null;
+  arch: string | null;
+};
+
 /** The live watch view: recent redacted frames and dispatched input, never actionable. */
 export type ComputerPresentation = {
   id: string;
@@ -501,6 +539,9 @@ export type DesktopCommandMap = {
   /** The chat's subagents on its computer; `thumbnails` streams each app's newest frame. */
   computerCrew: { args: [sessionId: string, thumbnails: boolean]; result: ComputerCrewMember[] };
   computerStatus: { args: []; result: ComputerStatus };
+  /** What this desktop reports to the organization's devices list. Read-only. */
+  computerDevices: { args: []; result: ComputerDevicesSnapshot };
+  desktopDeviceIdentity: { args: []; result: DesktopDeviceIdentity };
   computerPresentation: { args: [sessionId: string, visible: boolean]; result: ComputerPresentation | null };
   /** This chat is on screen in a visible OpenWork window: its computer work follows along in view. */
   computerFollow: { args: [sessionId: string, watching: boolean]; result: void };

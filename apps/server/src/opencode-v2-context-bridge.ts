@@ -386,9 +386,10 @@ export async function createV2ContextBridge(
         } : {}),
       };
       const result = await openworkReadTransport.run(transport, async () => {
-        if (call.name === "openwork_query") return plugin.tool.openwork_query.execute(call.input);
+        if (call.name === "openwork_query") return plugin.tool.openwork_query.execute(call.input, call.sessionId ? { sessionID: call.sessionId } : {});
         if (call.name === "openwork_execute") {
           const id = isRecord(call.input) ? String(call.input.id) : "";
+          if (id === "session.group.list") throw new Error("session.group.list only reads. Call it with openwork_query.");
           if (!commandIds.includes(id)) throw new Error(`${id || "This command"} is not available here. Use openwork_context to find supported commands.`);
           const { sessionId, caller } = call;
           // Commands that ask first (answering another session's question)

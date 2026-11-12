@@ -34,7 +34,7 @@ import {
   workspaceOpenworkRead,
   workspaceOpenworkWrite,
 } from "../../../../app/lib/desktop";
-import { buildOpenworkWorkspaceBaseUrl, OpenworkServerError } from "../../../../app/lib/openwork-server";
+import { buildOpenworkWorkspaceBaseUrl, isLoopbackOpenworkServerUrl, OpenworkServerError } from "../../../../app/lib/openwork-server";
 import type {
   Client,
   ProviderListItem,
@@ -2856,6 +2856,35 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return result;
   }
 
+  /**
+   * Den feature shareDeviceProvider: the person confirmed sharing the key saved
+   * on this device for `providerId` with everyone in their organization. This
+   * computer's own server reads and sends the key; the app never holds it.
+   * `verifiedToken` is the newer sign-in from "Confirm it's you", when Den asked.
+   */
+  async function shareDeviceProvider(providerId: string, verifiedToken?: string): Promise<{ inferenceProviderId: string; name: string }> {
+    const orgId = readDenSettings().activeOrgId;
+    const client = options.openworkServer.getSnapshot().openworkServerClient;
+    if (!orgId || !client) throw new Error("Sign in to OpenWork before sharing this provider.");
+    const workspaceClient = options.nativeOpenworkClient?.();
+    if (getOpenworkGatewayOrigin() || !isLoopbackOpenworkServerUrl(client.baseUrl)
+      || (workspaceClient && workspaceClient.baseUrl !== client.baseUrl)) {
+      throw new Error("Share keys from this device's local workspace, or add a provider in AI Gateway.");
+    }
+    const contextKey = getCloudProviderSyncContextKey();
+    const isCurrent = () => !disposed && contextKey === getCloudProviderSyncContextKey();
+    if (!isCurrent() || !await pushDenSession() || !isCurrent()) {
+      throw new Error("The active account or organization changed, or its session could not be delivered. Nothing was shared.");
+    }
+    const result = await client.shareDeviceProvider(providerId, orgId, verifiedToken);
+    markFeatureUsed("shareDeviceProvider");
+    // The share stands whatever happens next; bring the new provider into this app too.
+    if (isCurrent()) {
+      await Promise.allSettled([refreshCloudOrgProviders({ force: true }), runCloudProviderSync("manual")]);
+    }
+    return result;
+  }
+
   async function runCloudProviderSync(reason: CloudProviderSyncReason): Promise<void | { outcome: "handled_server_side" | "handled_live" }> {
     if (disposed) return;
     const delivery = syncDenSessionDelivery();
@@ -3115,6 +3144,34 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return `${t("providers.enabled_prefix")} ${resolved}`;
     } catch (error) {
       const message = describeProviderError(error, t("providers.enable_failed"));
+      setStateField("providerAuthError", message);
+      throw error instanceof Error ? error : new Error(message);
+    }
+  }
+
+  /**
+   * Hide a provider on this device through `disabled_providers` without
+   * removing anything it came with. Used for OpenWork Models from the
+   * organization: Disconnect would drop the import, and the next sync would
+   * bring it straight back.
+   */
+  async function disableProvider(providerId: string) {
+    setStateField("providerAuthError", null);
+    const resolved = providerId.trim();
+    if (!resolved) {
+      throw new Error(t("providers.provider_id_required"));
+    }
+    const workspaceKey = currentWorkspaceKey();
+    const baseUrl = options.providerBaseUrl();
+    const isCurrentWorkspace = () => !disposed
+      && workspaceKey === currentWorkspaceKey()
+      && baseUrl === options.providerBaseUrl();
+    try {
+      const configChanged = await ensureProjectProviderDisabledState(resolved, true);
+      await refreshProviders({ dispose: true, configChanged }, isCurrentWorkspace);
+      return `${t("providers.disconnected_prefix")} ${resolved}`;
+    } catch (error) {
+      const message = describeProviderError(error, t("providers.disconnect_failed"));
       setStateField("providerAuthError", message);
       throw error instanceof Error ? error : new Error(message);
     }
@@ -3498,6 +3555,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     refreshImportedCloudProviders: (input?: { strict?: boolean }) => refreshImportedCloudProviders({ strict: input?.strict }),
     runCloudProviderSync,
     startGatewayProviderOAuth,
+    shareDeviceProvider,
     isGatewayModelAvailable,
     startProviderAuth,
     connectClaudeAgent: () => runClaudeAction("connect"),
@@ -3511,6 +3569,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     removeCloudProvider,
     disconnectProvider,
     enableProvider,
+    disableProvider,
     ensureProjectProviderDisabledState,
     isProviderAddRestricted,
     openProviderAuthModal,

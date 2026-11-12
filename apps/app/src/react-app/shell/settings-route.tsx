@@ -88,9 +88,10 @@ import ProviderAuthModal, { PROVIDER_LABELS } from "@/react-app/domains/connecti
 import { keylessProviderIds } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
+import { ORG_OPENWORK_MODELS_PROVIDER_ID, planOpenWorkModelsRow } from "@/react-app/domains/settings/pages/openwork-models-row";
 import { deviceProviders, useLocalProviderEngineStates } from "@/react-app/domains/connections/provider-auth/local-provider-engine-state";
 // Side-effect imports: register extension config components into the registry.
-import { OllamaConfig } from "@/react-app/domains/settings/ollama-config";
+import { LocalModelsBlocked, OllamaConfig } from "@/react-app/domains/settings/ollama-config";
 import "@/react-app/domains/settings/browser-extension-config";
 import { useSettingsExtensionController } from "@/react-app/domains/settings/settings-extension-controller";
 import { buildExtensionItems } from "@/react-app/domains/settings/extension-items";
@@ -105,6 +106,7 @@ import { ClaudeImportView } from "@/react-app/domains/settings/pages/claude-impo
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
 import { KeyboardShortcutsView } from "@/react-app/domains/settings/pages/keyboard-shortcuts-view";
 import { ComputerUseView } from "@/react-app/domains/settings/pages/computer-use-view";
+import { DevicesView } from "@/react-app/domains/settings/pages/devices-view";
 import { CloudAccountView } from "@/react-app/domains/settings/pages/cloud-account-view";
 import {
   connectPluginsForComposer,
@@ -129,6 +131,7 @@ import { useDebugViewModel } from "@/react-app/domains/settings/state/debug-view
 import { useDesktopUpdater } from "@/react-app/domains/settings/state/desktop-updater-provider";
 import { CloudSessionProvider, useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import { useDenSession } from "@/react-app/domains/settings/cloud/use-den-session";
+import { useDeviceProviderShareFlow } from "@/react-app/domains/settings/provider-share/use-device-provider-share-flow";
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { useBootState } from "./boot-state";
 import { SettingsShell } from "@/react-app/domains/settings/shell/settings-shell";
@@ -191,7 +194,7 @@ import { applyDefaultModelPreference } from "./command-palette-models";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
 import { buildFeedbackUrl } from "@/app/lib/feedback";
-import { getDenInferenceUrl, readDenSettings, type DenSettings } from "@/app/lib/den";
+import { getDenInferenceUrl, isDenOrgAdminRole, readDenSettings, type DenSettings } from "@/app/lib/den";
 import { denDashboardUrl } from "@/app/lib/den-dashboard-links";
 import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
 import { useUiStateStore } from "./ui-state-store";
@@ -308,6 +311,7 @@ export function parseSettingsPath(pathname: string): {
     case "appearance":
     case "shortcuts":
     case "computer":
+    case "devices":
     case "environment":
     case "updates":
     case "debug":
@@ -467,6 +471,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const platform = usePlatform();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const claudeAgentEnabled = useDesktopFeature("claudeAgentProvider");
+  const singleOpenWorkModelsRow = useDesktopFeature("singleOpenWorkModelsRow");
   const claudeAgentEnabledRef = useRef(claudeAgentEnabled);
   claudeAgentEnabledRef.current = claudeAgentEnabled;
   const restrictionNotice = useRestrictionNotice();
@@ -1074,6 +1079,46 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       if (generation === autoGeneration.current) setAutoBusy(false);
     }
   }, [autoClient, autoBusy, providerAuthStore]);
+  // OpenWork Models is listed once: under the organization when it pays for
+  // it (with Turn off / Turn on there), else as the free row on this device.
+  const openWorkModelsRow = planOpenWorkModelsRow({
+    enabled: singleOpenWorkModelsRow,
+    fromOrganization: openWorkModelsEntitled,
+    managedByOrganization: checkDesktopRestriction({ restriction: "allowCustomProviders" }),
+    isOrganizationAdmin: isDenOrgAdminRole(cloudSession.activeOrganization?.role),
+    disabledProviders,
+  });
+  const [openWorkModelsBusy, setOpenWorkModelsBusy] = useState(false);
+  const setOrgOpenWorkModelsEnabled = useCallback(async (enabled: boolean) => {
+    if (openWorkModelsBusy) return;
+    setOpenWorkModelsBusy(true);
+    try {
+      // The free row is hidden while the organization's row is shown, so
+      // switch it with the organization's: Turn off leaves no OpenWork Models.
+      if (enabled) await providerAuthStore.enableProvider(ORG_OPENWORK_MODELS_PROVIDER_ID);
+      else await providerAuthStore.disableProvider(ORG_OPENWORK_MODELS_PROVIDER_ID);
+      if (autoPreferences && autoPreferences.enabled !== enabled && (!enabled || autoPreferences.canEnable)) await setAutoEnabled(enabled);
+      setConfigActionStatus(enabled ? "OpenWork Models turned on" : "OpenWork Models turned off");
+    } catch {
+      // The store publishes the error as providerAuthError.
+    } finally {
+      setOpenWorkModelsBusy(false);
+    }
+  }, [openWorkModelsBusy, providerAuthStore, autoPreferences, setAutoEnabled]);
+  // Once the organization manages models, only admins decide: a turn-off a
+  // member saved earlier no longer applies, so turn it back on once.
+  const clearingStaleOpenWorkModelsTurnOff = useRef(false);
+  useEffect(() => {
+    if (!openWorkModelsRow.clearStaleTurnOff || clearingStaleOpenWorkModelsTurnOff.current) return;
+    clearingStaleOpenWorkModelsTurnOff.current = true;
+    void providerAuthStore.enableProvider(ORG_OPENWORK_MODELS_PROVIDER_ID)
+      .catch(() => {
+        // The store publishes the error as providerAuthError.
+      })
+      .finally(() => {
+        clearingStaleOpenWorkModelsTurnOff.current = false;
+      });
+  }, [openWorkModelsRow.clearStaleTurnOff, providerAuthStore]);
   const organizationProviderIds = useMemo(() => new Set([
     ...Object.values(settingsImportedCloudProviders).map((provider) => provider.sourceProviderId),
     ...providerAuthSnapshot.cloudOrgProviders.map((provider) => provider.providerId),
@@ -1860,10 +1905,29 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   // Disconnect hides built-in/config providers through disabled_providers, and
   // the engine then omits them everywhere. List them so they can come back.
   const hiddenProviders = [...new Set(disabledProviders.map((id) => id.trim()).filter(Boolean))].flatMap((id) =>
-    isDesktopProviderBlocked({ providerId: id, checkRestriction: checkDesktopRestriction })
+    isDesktopProviderBlocked({ providerId: id, checkRestriction: checkDesktopRestriction }) || openWorkModelsRow.hideFromDisabledList.has(id)
       ? []
       : [{ id, name: providers.find((provider) => provider.id === id)?.name ?? PROVIDER_LABELS[id.toLowerCase()] ?? id }],
   );
+  // Den feature shareDeviceProvider: a key saved here can go to the organization in one confirmation.
+  const deviceShare = useDeviceProviderShareFlow({
+    providers: selectedWorkspace && selectedWorkspace.workspaceType !== "local" ? [] : connectedProviders,
+    runtimeWorkspaceId,
+    organizationName: cloudSession.activeOrgName,
+    share: providerAuthStore.shareDeviceProvider,
+  });
+  // Someone who cannot manage AI Gateway already has "My model connections";
+  // a second link to an admin-only page would only bounce them (DESIGN P4).
+  const openProviderCloudPage = deviceShare.resolved && !deviceShare.canShare ? undefined : openProvidersInDen;
+  // "Share" in Get set up lands here with ?share=1: open the confirmation for a
+  // key on this device, or AI Gateway's own form when nothing here is one key.
+  const shareRequested = route.tab === "ai" && new URLSearchParams(location.search).get("share") === "1";
+  useEffect(() => {
+    if (!shareRequested || loading || !activeClient || providerAuthSnapshot.providerLoadState.status !== "ready" || !deviceShare.resolved) return;
+    navigate({ pathname: location.pathname }, { replace: true, state: location.state });
+    if (deviceShare.firstShareable) deviceShare.open(deviceShare.firstShareable);
+    else if (deviceShare.canShare) openProvidersInDen();
+  }, [shareRequested, loading, activeClient, providerAuthSnapshot.providerLoadState.status, deviceShare.resolved, deviceShare.firstShareable, deviceShare.canShare, deviceShare.open, location.pathname, location.state, navigate, openProvidersInDen]);
   const openworkCloudMcpUrl = connectionsSnapshot.mcpServers.find(
     (server) => server.name === "openwork-cloud",
   )?.config.url ?? null;
@@ -2224,7 +2288,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         );
       case "ai":
         return (
+          <>
+          {deviceShare.dialog}
           <AiSettingsView
+            shareRows={deviceShare.rows}
+            onShareProvider={deviceShare.open}
             claudeAgent={providerAuthSnapshot.claudeAgent}
             onOpenClaudeAgent={() => handleOpenProviderAuth("claude-agent")}
             runtimeWorkspaceId={runtimeWorkspaceId}
@@ -2287,14 +2355,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             autoBusy={autoBusy}
             autoError={autoError}
             onSetAutoEnabled={autoClient ? setAutoEnabled : undefined}
+            showOpenWorkModelsDeviceRow={openWorkModelsRow.showDeviceRow}
             organizationProviderIds={organizationProviderIds}
-            onOpenDen={openProvidersInDen}
+            onOpenDen={openProviderCloudPage}
             cloudProvidersView={
               <CloudProvidersView
                 runtimeWorkspaceId={runtimeWorkspaceId}
                 key={`${cloudSession.baseUrl}:${cloudSession.activeOrganization?.id ?? "signed-out"}`}
                 embedded
-                onOpenDen={openProvidersInDen}
+                onOpenDen={openProviderCloudPage}
                 onOpenModelConnections={() => { void platform.openLink(denDashboardUrl(readDenSettings().baseUrl, "modelConnections")); }}
                 gatewayConnectProviders={gatewayConnectProviders}
                 connectingGatewayProviderId={connectingGatewayProviderId}
@@ -2313,11 +2382,21 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 refreshCloudOrgProviders={providerAuthStore.refreshCloudOrgProviders}
                 runCloudProviderSync={providerAuthStore.runCloudProviderSync}
                 serverSync={providerAuthSnapshot.cloudProviderServerSync}
+                shareEmptyState={deviceShare.emptyState}
+                openWorkModelsToggle={openWorkModelsRow.orgRowManaged ? { managed: true } : openWorkModelsRow.orgRowToggle && activeClient ? {
+                  turnedOff: openWorkModelsRow.orgTurnedOff,
+                  busy: openWorkModelsBusy || autoBusy,
+                  onToggle: setOrgOpenWorkModelsEnabled,
+                } : undefined}
               />
             }
           />
+          </>
         );
       case "ollama":
+        if (checkDesktopRestriction({ restriction: "allowLocalModels" })) {
+          return <LocalModelsBlocked organizationName={cloudSession.activeOrgName} />;
+        }
         return (
           <OllamaConfig
             busy={localProviderBusy}
@@ -2576,6 +2655,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         );
       case "computer":
         return <ComputerUseView />;
+      case "devices":
+        return <DevicesView />;
       case "updates":
         return (
           <UpdatesView
@@ -2755,6 +2836,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onSubmitApiKey={providerAuthStore.submitProviderApiKey}
         onSubmitOAuth={providerAuthStore.completeProviderAuthOAuth}
         onRefreshProviders={providerAuthStore.refreshProviders}
+        hideOpenWorkModelsDeviceRow={!openWorkModelsRow.showDeviceRow}
         openWorkModelsState={visibleAutoPreferences ? !visibleAutoPreferences.enabled ? "off" : visibleAutoPreferences.available ? "included" : "unavailable" : undefined}
         organizationName={cloudSession.activeOrgName}
         organizationProviderIds={organizationProviderIds}

@@ -8,6 +8,7 @@ import {
   LibraryBig,
   LockKeyhole,
   MessageCircle,
+  MonitorSmartphone,
   ScrollText,
   Server,
   Plug,
@@ -27,6 +28,7 @@ import {
   getAutomationsRoute,
   getBillingRoute,
   getConfigRoute,
+  getComputersRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
   getDeploymentsRoute,
@@ -35,6 +37,7 @@ import {
   getMarketplacesRoute,
   getMcpConnectionsRoute,
   getMembersRoute,
+  getMyComputersRoute,
   getOrgSettingsRoute,
   getPermissionsRoute,
   getPluginsRoute,
@@ -46,7 +49,7 @@ import {
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
 import { canOpenAdminRoute } from "./admin-route-access";
-import { myBotNavMarker, type WorkbotEntry, workbotEntryHref, workbotNavMarker } from "./workbot-entry";
+import { type WorkbotEntry, workbotEntryHref, workbotNavMarker } from "./workbot-entry";
 
 export type DashboardNavChild = {
   href: string;
@@ -95,9 +98,13 @@ export type BuildDashboardNavSectionsInput = {
   /** The managedDeployments feature is on for this organization. */
   managedDeployments?: boolean;
   desktopPolicyScreenRemoved?: boolean;
+  /** My Computers for every member and the team inventory for admins; remoteDevices is off by default. */
+  remoteDevices?: boolean;
+  /** Workbot's settings are on Members › Teams › Everyone for this viewer, so Manage has no Workbot entry. */
+  workbotSettingsInTeams?: boolean;
   /** Explicit server capability, independent of organization role permissions. */
   canManageDeploymentServices?: boolean;
-  /** What clicking Workbot does; a blocked entry stays visible with a marker. */
+  /** What clicking Workbot does; an entry without a provider stays visible with a marker, one turned off is hidden. */
   workbotEntry?: WorkbotEntry;
   /** The workspace on screen, so the Workbot entry opens Workbot for it. */
   organizationId?: string | null;
@@ -117,6 +124,8 @@ export function buildDashboardNavSections({
   libraryNeedsSignIn = 0,
   managedDeployments = false,
   desktopPolicyScreenRemoved = false,
+  remoteDevices = false,
+  workbotSettingsInTeams = false,
   canManageDeploymentServices = false,
   workbotEntry = { kind: "open" },
   organizationId = null,
@@ -126,12 +135,14 @@ export function buildDashboardNavSections({
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
+  // Workbot turned off for the viewer: no Workbot and no My bot in the menu.
+  const workbotOff = workbotEntry.kind === "off";
   const workItems: DashboardNavItem[] = [
-    ...(capabilities.workbot
+    ...(capabilities.workbot && !workbotOff
       ? [{ href: workbotEntryHref(organizationId), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot", ...workbotNavMarker(workbotEntry) }]
       : []),
-    ...(myBot && orgSlug
-      ? [{ href: getLibraryMyAgentRoute(orgSlug), label: "My bot", icon: Radar, testId: "dashboard-nav-my-bot", ...myBotNavMarker(workbotEntry) }]
+    ...(myBot && orgSlug && !workbotOff
+      ? [{ href: getLibraryMyAgentRoute(orgSlug), label: "My bot", icon: Radar, testId: "dashboard-nav-my-bot" }]
       : []),
     {
       href: orgSlug ? getLibraryRoute(orgSlug) : "#",
@@ -143,6 +154,10 @@ export function buildDashboardNavSections({
     },
     ...(workflowsEnabled && orgSlug
       ? [{ href: getAutomationsRoute(orgSlug), label: "My Automations", icon: CalendarClock }]
+      : []),
+    // Every member sees their own and shared computers; the team-wide list is Manage › Computers.
+    ...(remoteDevices && orgSlug
+      ? [{ href: getMyComputersRoute(orgSlug), label: "My Computers", icon: MonitorSmartphone, testId: "dashboard-nav-my-computers" }]
       : []),
     ...(showWeb
       ? [{ href: orgSlug ? getWebRoute(orgSlug) : "#", label: "OpenWork Web", icon: Globe }]
@@ -157,7 +172,8 @@ export function buildDashboardNavSections({
         { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug, badge: "MCPs" },
         { href: getAiGatewayRoute(orgSlug), label: "AI Gateway", icon: Sparkles },
         ...(!desktopPolicyScreenRemoved ? [{ href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop }] : []),
-        { href: getWorkbotSettingsRoute(orgSlug), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot-settings" },
+        ...(remoteDevices ? [{ href: getComputersRoute(orgSlug), label: "Computers", icon: Laptop, testId: "dashboard-nav-computers" }] : []),
+        ...(!workbotSettingsInTeams ? [{ href: getWorkbotSettingsRoute(orgSlug), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot-settings" }] : []),
         ...(managedDeployments ? [{ href: getDeploymentsRoute(orgSlug), label: "Deployments", icon: Server }] : []),
       ].filter((item) => canOpen(item.href))
     : [];
@@ -245,6 +261,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Billing: ["plan", "invoice", "payment"],
   Config: ["export", "import", "backup", "json", "copy settings", "change requests", "revert"],
   "Bring Your Own Keys (Legacy)": ["llm", "provider", "byok", "api key"],
+  Computers: ["devices", "team computers", "desktop", "virtual computers", "inventory", "owners", "remote access", "other devices"],
   Connectors: ["mcp", "integrations", "servers", "connect"],
   "Desktop policies": ["policy", "mdm", "lock", "desktop"],
   Deployments: ["aws", "self-hosted", "byoc", "install", "health", "status"],
@@ -256,6 +273,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Models: ["llm", "provider", "byok", "api key"],
   Permissions: ["access", "roles", "teams", "admin", "rbac"],
   "My Automations": ["schedule", "recurring", "tasks"],
+  "My Computers": ["devices", "my devices", "laptop", "desktop", "virtual computers", "workbot computer", "remote access", "other devices", "tasks"],
   "My bot": ["agent", "my agent", "morning brief", "meeting prep", "proactive", "notifications"],
   "My Library": ["skills", "plugins", "connections"],
   "OpenWork Models": ["llm", "provider", "managed", "inference"],

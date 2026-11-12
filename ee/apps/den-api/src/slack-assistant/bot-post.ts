@@ -5,8 +5,9 @@ import {
   type WorkbotDirectMessageDeps,
   type WorkbotDirectMessageFailure,
   type WorkbotSlackMember,
+  workbotSlackCall,
 } from "./direct-message.js"
-import { SlackApiError, slackClient, type SlackCall } from "./protocol.js"
+import { isSandboxSlackToken, SlackApiError, slackClient, type SlackCall } from "./protocol.js"
 
 /**
  * Workbot posts in a Slack channel from the Slack app's own bot, on a member's behalf. Every post starts with a line
@@ -46,8 +47,16 @@ async function memberCanReadChannel(
   if (!installation) return null
   const actor = await resolveSlackActor(installation, input.slackUserId)
   if (!actor) return null
+  // A sandbox's sample app asks its sample Slack; the member's connector token came from there.
+  let call = isSandboxSlackToken(installation.botToken) ? null : slack(actor.userToken)
+  if (!call) {
+    const { sandboxSlackApiBase } = await import("./sandbox-api.js")
+    const baseUrl = await sandboxSlackApiBase(input.connectionId)
+    if (!baseUrl) return null
+    call = slackClient(actor.userToken, fetch, baseUrl)
+  }
   try {
-    await slack(actor.userToken)("conversations.history", { channel: input.channelId, limit: 1 })
+    await call("conversations.history", { channel: input.channelId, limit: 1 })
     return true
   } catch (error) {
     if (error instanceof SlackApiError && BOT_NOT_IN_CHANNEL_CODES.has(error.code)) return false
@@ -77,14 +86,15 @@ export function withoutSlackBroadcasts(text: string) {
 export async function postWorkbotChannelMessage(
   member: WorkbotSlackMember,
   message: { channelId: string; text: string; threadTs?: string },
-  deps: Pick<WorkbotChannelPostDeps, "botToken" | "slack" | "memberCanReadChannel"> = defaultWorkbotChannelPostDeps,
+  deps: Pick<WorkbotChannelPostDeps, "botToken" | "slack" | "sandboxApiBase" | "memberCanReadChannel"> = defaultWorkbotChannelPostDeps,
 ): Promise<WorkbotChannelPostResult> {
   const token = await deps.botToken(member.connectionId)
   if (!token) return { ok: false, reason: "slack_app_not_installed" }
   const access = await deps.memberCanReadChannel({ connectionId: member.connectionId, slackUserId: member.slackUserId, channelId: message.channelId })
   if (access === false) return { ok: false, reason: "channel_access_denied" }
   if (access === null) return { ok: false, reason: "slack_error", code: "channel_access_unverified" }
-  const slack = deps.slack(token)
+  const slack = await workbotSlackCall(member.connectionId, token, deps)
+  if (!slack) return { ok: false, reason: "slack_error", code: "sandbox_slack_unavailable" }
   try {
     const posted = z.object({ channel: z.string().optional(), ts: z.string() }).safeParse(
       await slack("chat.postMessage", {

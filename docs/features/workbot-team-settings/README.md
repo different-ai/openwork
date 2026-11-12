@@ -13,8 +13,10 @@ Teams › a team › **Workbot**):
 - **Workbot name**: what Workbot is called for the team's members (1 to 40 characters). Without one they see the
   organization's app name, or "Workbot".
 
-Teams once could also set a step limit; that is gone. A team's row saved then may still hold `maxSteps`: Den
-ignores it and drops it on the team's next save.
+Workbot has no step limit setting any more, for the organization or for a team. A limit saved earlier
+(`maxSteps` in the organization's metadata or in a team's row) is ignored, a change that carries `maxSteps` is
+refused (400), and a team's saved value is dropped on the team's next change. The only limit on a request's
+steps is the deployment's own (`HEADLESS_MAX_STEPS` on the headless runner, no limit by default).
 
 A team stores only what it overrides. A team without its own value for a setting uses the organization's, and
 follows it when the organization's changes.
@@ -43,10 +45,12 @@ Den web calls the organization's values **Everyone**'s. Both pages show the same
   many of the team's members are also on a team with a different Workbot setting, so they get Everyone's.
 - **Members › Teams › Everyone › Workbot**: Everyone's values. The switch and the default model are changed
   here (the model is the same one as on Manage › Workbot, saved the same way); the name is the organization's
-  brand name, with a link to Brand appearance. A row whose value teams changed shows "Changed for {team}" or
-  "Changed for N teams".
+  brand name, with a link to Brand appearance. Everyone's values are the default, so no row here says which
+  teams changed it: a team's own page marks what it changed.
 - **Manage › Workbot**: one line under the default model, "N teams have their own Workbot settings", linking to
-  Members › Teams.
+  Members › Teams. With the feature on, Manage › Workbot is no longer in the side menu or the command palette
+  for people who can open Members › Teams, since Everyone's page holds the same settings; the page still opens
+  by its address.
 
 The tab shows for people with View OpenWork Models settings or Manage OpenWork Models; without Manage the
 controls are disabled under one "Read only" notice. With the feature off the tab and the line are gone and Den
@@ -142,11 +146,11 @@ For a member whose Workbot is off:
   and `GET /v1/me/agent/checks` answer `404 feature_disabled` (`feature: "workbot"`), as on a deployment
   without Workbot, and the agent's `request_check` tool answers "Extra checks aren't on for this member."
 - **Den web's entry points.** `GET /v1/org/workbot-readiness` adds `enabled: false` for that caller; the field
-  is absent when Workbot is on. Den web then keeps its entries visible but locked, with the reason, instead of
-  sending the member to an app that would say it is off: the Workbot item in the sidebar and the command palette
-  open a dialog ("Workbot is off for your team. An admin can turn it on in Members › Teams.", with a link there
-  for people who can change Workbot's settings), Manage › Workbot's "Open Workbot" action is locked with the
-  same reason, and My bot shows that it is off instead of failing to load. Old links to Den's `/workbot` still
+  is absent when Workbot is on. Den web then hides its entries instead of sending the member to an app that
+  would say it is off: the Workbot and My bot items are not in the sidebar or the command palette (no lock).
+  Another link to Workbot inside Den opens a dialog ("Workbot is off for your team. An admin can turn it on in
+  Members › Teams.", with a link there for people who can change Workbot's settings), and the My bot page, opened
+  by its address, shows that it is off instead of failing to load. Old links to Den's `/workbot` still
   redirect to the app, which says it is off.
 
 ### What it does not gate
@@ -180,8 +184,8 @@ The same feature adds a fifth group, `agent`: the policy for members' agents ("Y
 ### What a team's own policy covers
 
 Everything Manage › Workbot sets for members' agents, as one unit: on or off, working days and hours, the daily
-limit, whether members start opted in, the destination, what agents may read (`sources`, with the allowed and
-default connections and, with `workbotAgentBrief`, the per-tool choices), the brief and its rhythm (with
+limit, whether members start opted in, the destination, what agents may read (`sources`: the calendar and each
+connector's setting and, with `workbotAgentBrief`, the per-tool choices), the brief and its rhythm (with
 `workbotAgentBrief`), and the "Your agent" template (responsibilities and instructions). A team cannot override
 one field and follow Everyone for the rest: its first save copies Everyone's policy and template as they are at
 that moment, and from then on the team no longer follows Everyone's changes. Members' own choices (on or off,
@@ -237,8 +241,8 @@ per organization.
 ### In Den web
 
 Under the rows of the Workbot tab, a **Members' agents** section, shown only while the list carries `agent`
-(`workbotProactive` on, on a deployment with Workbot). It is the section Manage › Workbot shows (the switch,
-where messages go, hours and limits, the brief or the message types, "What agents read" and, with
+(`workbotProactive` on, on a deployment with Workbot). It is the section Manage › Workbot shows (the Proactive
+Mode switch, where messages go, hours and limits, the brief or the message types, "Connectors" and, with
 `workbotAgentBrief`, "Tools agents may use"), bound to a scope: the same components and hooks read and save
 Everyone's policy or one team's (`workbot-agent-scope.ts` maps a scope to its routes and query keys; a team's keys
 sit under Everyone's, so a change to Everyone's policy refreshes the teams that follow it).
@@ -249,10 +253,14 @@ sit under Everyone's, so a change to Everyone's policy refreshes the teams that 
   while the team has its own, removes the copy without a confirmation and shows "Saved. This team uses Everyone's
   settings for members' agents." with Undo. Undo saves the team's settings back: what it had, written as a change
   to Everyone's current policy (`agentPolicyRestoreChange`), so every choice returns; only the template's version
-  count starts again. The switch reads "Agents for this team".
+  count starts again. The switch reads "Proactive Mode", as it does for Everyone.
 - **Everyone's page**: the same section for Everyone's policy, the same value and save as Manage › Workbot, with
-  "Changed for {team}" or "Changed for N teams" when teams have their own, and a link to the last 7 days on
-  Manage › Workbot. That table counts every member whatever their team, so it stays there.
+  the "Last 7 days" table under it.
+  That table counts every member whatever their team, so it is on Everyone's page and not on a team's.
+- **Calendar** is a row with the Workbot rows (General), on Everyone's page and on a team's: On for everyone,
+  Members choose or Not allowed, with the calendar apps in use named under it. It is the `sources.calendar`
+  setting of the same policy, so changing it on a team's page gives the team its own copy, like any other
+  control of the section.
 - The line about members on teams with different settings now counts members' agents too. "N teams have their own
   Workbot settings" on Manage › Workbot counts a team that has only its own members' agents.
 

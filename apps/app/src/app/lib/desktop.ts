@@ -54,6 +54,7 @@ import type {
   BrowserStatePayload,
   OpenBrowserUrlResult,
 } from "@openwork/browser-tabs";
+import type { RemoteSessionAccessMode } from "@openwork/types/automations";
 import type { ComputerRequest } from "@openwork/types/desktop-ipc";
 export type { BrowserStatePayload } from "@openwork/browser-tabs";
 
@@ -74,6 +75,26 @@ export type RecoveryActionResult = {
   action?: "install" | "installer" | "eval";
   message?: string;
   reason?: string;
+};
+
+/**
+ * What its owner's other devices can do on this computer: nothing (`off`),
+ * start tasks (`created`), or also open sessions started here (`all`). The
+ * choice is kept per organization.
+ */
+export type RemoteSessionAccessState = {
+  /** The owner's choice for the organization this computer is connected to; null while they have not chosen. */
+  mode: RemoteSessionAccessMode | null;
+  /** The most the organization allows; null until its server says. */
+  ceiling: RemoteSessionAccessMode | null;
+  /** What applies right now. */
+  effective: RemoteSessionAccessMode;
+  /** The organization's server accepted this computer for sessions started here. */
+  supported: boolean;
+  /** A computer whose owner has not chosen takes nothing. */
+  optIn: boolean;
+  /** This computer is connected to an organization, so a choice can be made. */
+  connected: boolean;
 };
 
 export type SpeechDictationEvent =
@@ -107,7 +128,14 @@ declare global {
         onEvent?: (callback: (payload: SpeechDictationEvent) => void) => () => void;
       };
       automationRunner?: {
-        onCredentialRejected?: (callback: () => void) => () => void;
+        /** `computer_disconnected`: Den refuses this computer until someone signs in on it again. */
+        onCredentialRejected?: (
+          callback: (rejection?: { reason: "computer_disconnected" | "credential_rejected" }) => void,
+        ) => () => void;
+      };
+      remoteSessionAccess?: {
+        get?: () => Promise<RemoteSessionAccessState>;
+        set?: (mode: RemoteSessionAccessMode) => Promise<RemoteSessionAccessState>;
       };
       fileSystem?: {
         getPathForFile?: (file: File) => string;

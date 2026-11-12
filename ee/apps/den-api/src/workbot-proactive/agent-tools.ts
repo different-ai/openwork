@@ -37,13 +37,13 @@ export type ConnectionToolPlan = {
 export type AgentToolPlan = {
   /** Per MCP connection, the tools the check may call. */
   tools: { connectionId: string; names: string[] }[]
-  /** Den's own providers read outside calendar, mail and chat, with the operations an admin turned off. */
+  /** Den's own providers read outside the calendar, with the operations an admin turned off. */
   nativeReads: { connectionId: string; denied: string[] }[]
   /** Per connection, for the log and for which sources the check can't read this time. */
   connections: ConnectionToolPlan[]
 }
 
-/** The operations of Den's own provider an agent may read in Other context: GETs outside calendar, mail and chat. */
+/** The operations of Den's own provider an agent may read as a connection: GETs outside the calendar (mail, chats, files). */
 export function nativeOtherOperations(operations: readonly NativeOperation[]): NativeOperation[] {
   return operations.filter((operation) => nativeSourceKind(operation.path) === null)
 }
@@ -128,7 +128,7 @@ export function mcpConnectionToolsView(input: { connectionId: string; url: strin
   return { connectionId: input.connectionId, status: "ready", readTools: tools.filter((tool) => tool.allowed).length, tools, coreSourcesElsewhere: false }
 }
 
-/** "Tools agents may use" for Den's own provider in Other context: its operations outside calendar, mail and chat. */
+/** "Tools agents may use" for Den's own provider as a connection: its operations outside the calendar. */
 export function nativeConnectionToolsView(input: { connectionId: string; operations: readonly NativeOperation[]; overrides: Readonly<Record<string, AgentToolOverride>> }): AgentConnectionToolsView {
   const tools = nativeOtherOperations(input.operations).map((operation) => {
     const override = input.overrides[operation.name] ?? null

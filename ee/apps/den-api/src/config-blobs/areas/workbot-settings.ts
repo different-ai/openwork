@@ -11,9 +11,8 @@
  * - `provider`: for an AI Gateway alias, a reference to the AI Gateway
  *   provider serving it. It orders the import after that provider and tells
  *   readers where the model comes from; apply does not write it.
- * - `maxSteps`: no longer carried. Workbot had a step limit for a short while;
- *   exports from then may still hold the key, and it is dropped on import
- *   rather than refused.
+ * - `maxSteps`: in files exported while Workbot had a step limit. Read so
+ *   those files still import; never applied and no longer exported.
  * - `enabled`: whether Workbot is on for everyone whose teams don't say
  *   otherwise (`organization.metadata.workbot.enabled`, absent = on). Always
  *   exported as stored; only applied where `workbotTeamSettings` is on (its
@@ -46,27 +45,23 @@ const AREA = "workbot.settings"
 const ITEM_NAME = "Workbot settings"
 const PROVIDERS_AREA = "ai-gateway.providers"
 
-/** Drops `maxSteps`, the retired step limit, from an older export's spec; everything else is validated as usual. */
-export function withoutRetiredMaxSteps(spec: unknown): unknown {
-  if (typeof spec !== "object" || spec === null || Array.isArray(spec) || !("maxSteps" in spec)) return spec
-  const { maxSteps: _retired, ...rest } = spec
-  return rest
-}
-
-const workbotSettingsSpecSchema = z.preprocess(withoutRetiredMaxSteps, z.object({
+const workbotSettingsSpecSchema = z.object({
   /** Null: Workbot's default (managed Luna, else the AI Gateway default). */
   model: z.string().trim().min(1).max(255).nullable().default(null),
   /** The AI Gateway provider serving `model`; informational, orders the import after it. */
   provider: configRefSchema.nullable().default(null),
+  /** From files exported while Workbot had a step limit: read, never applied. */
+  maxSteps: z.unknown().optional(),
   /** Whether Workbot is on for everyone whose teams don't set their own (workbotTeamSettings). */
   enabled: z.boolean().default(true),
-}).strict())
+}).strict()
 
-const applySpecSchema = z.preprocess(withoutRetiredMaxSteps, z.object({
+const applySpecSchema = z.object({
   model: z.string().trim().min(1).max(255).nullable().default(null),
   provider: z.unknown().optional(),
+  maxSteps: z.unknown().optional(),
   enabled: z.boolean().default(true),
-}).strict())
+}).strict()
 
 async function providerRef(ctx: ConfigAreaContext, model: string | null): Promise<ConfigRef | null> {
   const alias = model ? parseGatewayModelAlias(model) : null

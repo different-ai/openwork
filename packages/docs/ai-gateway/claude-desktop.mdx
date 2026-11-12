@@ -1,0 +1,78 @@
+---
+title: "Use Claude Desktop with AI Gateway"
+description: "Run the Claude app in Gateway mode on your organization's AI Gateway, with an AI Gateway API key and no Anthropic account."
+keywords: ["Claude Desktop", "Claude app", "Gateway mode", "Configure Third-Party Inference", "Cowork", "AI Gateway API key", "3rd party tools"]
+---
+
+With an [AI Gateway API key](/ai-gateway/third-party-tools) you can run Claude
+Desktop on the Claude models your organization gives you. Claude Desktop's
+**Gateway** mode sends every chat, Cowork task and Claude Code session through
+AI Gateway: the key only reaches models you're allowed, and usage counts toward
+your limit. You don't need an Anthropic account.
+
+<Note>
+  Claude Desktop lists only Claude models in Gateway mode. Your organization's
+  other models (OpenAI, Gemini, DeepSeek and the rest) don't appear in its model
+  picker. Use them from [Claude Code](/ai-gateway/claude-code),
+  [Cursor](/ai-gateway/cursor) or [Codex](/ai-gateway/codex).
+</Note>
+
+## Set it up
+
+Create a key in **My Library › Models** and pick **Claude Desktop** under
+**Start using this key**. Already have a key? Open its menu and select **Set
+up**. The page shows the two values to paste.
+
+1. **Turn on Developer Mode.** Open Claude Desktop (you don't need to sign in)
+   and select **Help › Troubleshooting › Enable Developer Mode**. A
+   **Developer** menu appears.
+2. **Open the inference settings.** Select **Developer › Configure Third-Party
+   Inference…** and set **Connection** to **Gateway**.
+3. **Enter the gateway settings:**
+
+   | Field | Value |
+   | --- | --- |
+   | **Credential kind** | `Static API key` |
+   | **Gateway base URL** | `https://<your AI Gateway>/api/v1/claude-code` |
+   | **Gateway API key** | Your AI Gateway API key |
+   | **Gateway auth scheme** | `bearer` |
+
+   Leave the sign-in fields (**Client ID**, **Issuer URL**, **Authorization
+   URL**) and **Sign-in session lifetime** empty. **Test connection** checks the
+   key and lists your models.
+4. **Apply.** Select **Apply Changes** (**Apply locally** in older versions),
+   then **Relaunch now**, or quit Claude Desktop completely and open it again. If
+   the start screen asks, choose **Continue with Gateway** (shown as **Local
+   configuration**).
+5. **Pick a model.** The model picker under the message box lists your Claude
+   models. The account menu at the bottom left shows **Gateway**.
+
+To change the settings later, open the account menu and select **Inference
+configuration**.
+
+## Models
+
+Claude Desktop asks AI Gateway for your models when it starts and keeps those
+whose name is a Claude model. They have the same names as in
+[Claude Code](/ai-gateway/claude-code#model-names), for example
+`openwork/claude-sonnet-4.5-k3f9`, and show in the picker by their display name.
+Models your organization adds later appear after you relaunch Claude Desktop.
+[Smart Routers](/ai-gateway/auto-model-routing) aren't Claude model names, so
+Claude Desktop doesn't list them; use them from Claude Code, Cursor or Codex.
+
+## When it doesn't work
+
+| Claude Desktop shows | What to do |
+| --- | --- |
+| A connection error, or **Test connection** fails | Check the base URL ends in `/api/v1/claude-code`, the key is pasted in full, and the auth scheme is `bearer`. A revoked or expired key, or 3rd party tools turned off for your organization, gives `authentication_error`. Check the key in **My Library › Models**. |
+| An empty model picker | Your organization hasn't given you a Claude model yet. The setup page says which models Claude Desktop will list. |
+| **Continue with Gateway** doesn't show | Select **Apply Changes**, then quit Claude Desktop completely (not just its window) and open it again. |
+| No **Developer** menu after switching to Gateway | Developer Mode is set separately for Gateway mode. Use the account menu's **Inference configuration**, or turn on Developer Mode again. |
+| "Access to this website is blocked by your network egress settings" when Claude fetches a web page | Claude Desktop limits where its tools can connect. Open the inference settings, select **Egress** (**Workspace restrictions** in some versions) and add the hosts to **Allowed egress hosts**. |
+| TLS errors from Claude Code inside Claude Desktop | Claude Code's sandbox can break TLS connections to the gateway. Add `{"sandbox": {"enableWeakerNetworkIsolation": true}}` to `~/.claude/settings.json` (every project) or `.claude/settings.local.json` (one project), then relaunch. This relaxes network isolation for all of Claude Code's traffic, so use the narrowest file and remove it when you no longer need it. |
+
+## Go back to your Claude account
+
+Remove the Gateway connection in the inference settings and relaunch. Gateway
+mode doesn't touch your Claude account's chats: Claude Desktop keeps Gateway
+mode's data separately.

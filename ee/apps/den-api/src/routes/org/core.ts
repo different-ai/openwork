@@ -22,6 +22,7 @@ import { canManageDeploymentServices } from "../../middleware/admin.js"
 import { findEnterpriseAuthRequirementForEmailDomain, resolveNonSsoSignInMethodForEmail } from "../../enterprise-auth-requirement.js"
 import { organizationFeatureEnabled } from "../../features.js"
 import { findDomainSsoRequirement, sessionCanRequireOrganizationSso, ssoSignInUrl } from "../../organization-sso-access.js"
+import { organizationRequiresSsoSession } from "../../sso-routing.js"
 import { ADMIN_REAUTH_MINUTES, MAX_SESSION_LENGTH_DAYS, organizationSessionLimits, SESSION_LENGTH_HOURS, sessionSecuritySettingsApply } from "../../session-security-settings.js"
 import { shortenMemberSessions } from "../../session-security-lifetime.js"
 import { jsonValidator, memberPermissionsForOrganizationContext, orgMemberRoute, orgPermissionRoute, publicRoute, queryValidator, resolveMemberPermissionsMiddleware, resolveMemberTeamsMiddleware, userSessionRoute } from "../../middleware/index.js"
@@ -86,9 +87,17 @@ const resolveSsoByEmailResponseSchema = z.object({
   organizationSlug: z.string(),
   signInPath: z.string(),
   signInUrl: z.string().url(),
+  ssoRequired: z.boolean().optional(),
 }).or(z.object({
   requireSso: z.literal(false),
   method: z.union([z.literal("google"), z.literal("password"), z.literal("signup")]),
+  // ssoPerOrganization: the domain's organization offers SSO as one sign-in
+  // option; `method` stays the usual way in. `ssoRequired` is the
+  // organization's own Require SSO (it opens only from an SSO session).
+  ssoRequired: z.boolean().optional(),
+  organizationSlug: z.string().optional(),
+  signInPath: z.string().optional(),
+  signInUrl: z.string().url().optional(),
 })).meta({ ref: "ResolveOrganizationSsoByEmailResponse" })
 
 const botVerificationFailedSchema = z.object({
@@ -650,7 +659,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       security: [],
       hide: true,
       summary: "Resolve sign-in method by email",
-      description: "Returns a uniform sign-in routing envelope. SSO routing is resolved by verified domain; non-SSO routing is protected by bot verification and rate limiting.",
+      description: "Returns a uniform sign-in routing envelope. SSO routing is resolved by verified domain; non-SSO routing is protected by bot verification and rate limiting. When the domain's organization has SSO, its sign-in URL is always returned: with requireSso true (method sso) SSO is the only way in; otherwise SSO is one option next to method, and ssoRequired says whether the organization itself only opens from an SSO session.",
       responses: {
         200: jsonResponse("Sign-in resolution returned successfully.", resolveSsoByEmailResponseSchema),
         400: jsonResponse("The SSO resolution query parameters were invalid.", invalidRequestSchema),
@@ -696,14 +705,18 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       const domainPolicy = requirement ? await findDomainSsoRequirement(query.email) : null
       const permitsNonSsoSignIn = Boolean(domainPolicy?.perOrganization && !domainPolicy.policy.restrictDomainToSso)
 
-      if (requirement && !permitsNonSsoSignIn) {
-        return c.json({
-          requireSso: true,
-          method: "sso",
-          organizationSlug: requirement.organizationSlug,
-          signInPath: requirement.signInPath,
-          signInUrl: new URL(requirement.signInPath, env.betterAuthTrustedOrigins[0] ?? env.betterAuthUrl).toString(),
-        })
+      const ssoOption = requirement
+        ? {
+            ssoRequired: domainPolicy ? organizationRequiresSsoSession(domainPolicy.policy) : true,
+            organizationSlug: requirement.organizationSlug,
+            signInPath: requirement.signInPath,
+            signInUrl: new URL(requirement.signInPath, env.betterAuthTrustedOrigins[0] ?? env.betterAuthUrl).toString(),
+          }
+        : null
+
+      if (ssoOption && !permitsNonSsoSignIn) {
+        // SSO is forced for the whole domain: the only way in.
+        return c.json({ requireSso: true, method: "sso", ...ssoOption, ssoRequired: true })
       }
 
       const method = await resolveNonSsoSignInMethodForEmail(query.email)
@@ -718,9 +731,12 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         }
       }
 
+      // SSO set up but not forced for the domain: one of the sign-in options,
+      // next to the usual `method` (the sign-in page redirects only on method "sso").
       return c.json({
         requireSso: false,
         method,
+        ...(ssoOption ?? {}),
       })
     },
   )

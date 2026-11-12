@@ -18,6 +18,7 @@ import { claudeTakesEffort, type RememberReasoning } from "./anthropic.js"
 import { contentText, isJsonObject, type AutoRouteInfo, type JsonObject } from "./chat.js"
 import type { ReasoningPayload } from "./reasoning-store.js"
 import type { AutoTranslator } from "./protocol.js"
+import { objectToolSchema } from "./tool-schema.js"
 
 function parseDataUrl(url: string) {
   const match = /^data:([^;,]+);base64,(.*)$/s.exec(url)
@@ -130,7 +131,7 @@ function toolSpecs(body: JsonObject): JsonObject[] {
       toolSpec: {
         name: fn.name,
         ...(typeof fn.description === "string" && fn.description ? { description: fn.description } : {}),
-        inputSchema: { json: isJsonObject(fn.parameters) ? fn.parameters : { type: "object", properties: {} } },
+        inputSchema: { json: objectToolSchema(fn.parameters) },
       },
     }]
   })
@@ -290,7 +291,7 @@ function chatUsage(usage: ConverseUsage) {
     prompt_tokens: prompt,
     completion_tokens: usage.output,
     total_tokens: prompt + usage.output,
-    prompt_tokens_details: { cached_tokens: usage.cacheRead },
+    prompt_tokens_details: { cached_tokens: usage.cacheRead, cache_write_tokens: usage.cacheWrite },
   }
 }
 

@@ -1577,6 +1577,20 @@ const legacyRunnerBaseUrls = [
     : null,
   `${DEFAULT_DEN_BASE_URL}/api/den`,
 ].map((value) => normalizeRunnerBaseUrl(value)).filter(Boolean);
+// One name for this computer: its runner inventory and its entry in the organization's devices list agree.
+const describeThisComputer = createComputerDescriber({
+  platform: process.platform,
+  appVersion: resolveAppVersion(app),
+  hostname: () => os.hostname(),
+  readComputerName: () => new Promise((resolve, reject) => {
+    execFile("/usr/sbin/scutil", ["--get", "ComputerName"], { timeout: 2_000 }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(String(stdout));
+    });
+  }),
+});
+/** The id the renderer last registered this install's runner with; Den names this desktop's device by it. */
+let registeredRunnerId = null;
 const automationRunnerDisabledBy = automationRunnerDisabledReason(process.env);
 if (automationRunnerDisabledBy) {
   console.info(`[automation-runner] disabled by ${automationRunnerDisabledBy}; renderer runner configuration will be ignored`);
@@ -1600,21 +1614,12 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
     getServerInfo: () => runtimeManager.openworkServerInfo(),
   }),
   // Remote-session callers choose a computer by this label, then a workspace and model.
-  describeComputer: createComputerDescriber({
-    platform: process.platform,
-    appVersion: resolveAppVersion(app),
-    hostname: () => os.hostname(),
-    readComputerName: () => new Promise((resolve, reject) => {
-      execFile("/usr/sbin/scutil", ["--get", "ComputerName"], { timeout: 2_000 }, (error, stdout) => {
-        if (error) reject(error);
-        else resolve(String(stdout));
-      });
-    }),
-  }),
+  describeComputer: describeThisComputer,
   log: (state) => console.info(`[automation-runner] ${state}`),
-  onCredentialRejected: () => {
+  // `reason` tells a disconnected computer (wait for a new sign-in) from a credential to replace now.
+  onCredentialRejected: (rejection) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.webContents.send(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT);
+    mainWindow.webContents.send(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT, rejection);
   },
 });
 
@@ -2185,6 +2190,16 @@ const desktopCommandHandlers = {
       assertComputerSender(event);
       return computerControl.status();
   },
+  "computerDevices": async (event) => {
+      assertComputerSender(event);
+      return computerControl.devices();
+  },
+  "desktopDeviceIdentity": async (event) => {
+      assertComputerSender(event);
+      let osVersion = null;
+      try { osVersion = String(process.getSystemVersion?.() || os.release()).trim() || null; } catch { /* unnamed system */ }
+      return { installId: registeredRunnerId, ...await describeThisComputer(), osVersion, arch: process.arch };
+  },
   "computerPresentation": async (event, sessionId, visible) => {
       assertComputerSender(event);
       return computerControl.presentation({ sessionId: String(sessionId ?? ""), visible: visible === true });
@@ -2401,6 +2416,8 @@ const desktopCommandHandlers = {
       return runtimeManager.openworkServerInfo();
   },
   "automationRunnerConfigure": async (event, ...args) => {
+      const runnerId = typeof args[0]?.runnerId === "string" ? args[0].runnerId.trim() : "";
+      registeredRunnerId = runnerId || null;
       return desktopAutomationRunner.configure(args[0] ?? null);
   },
   "openworkServerRestart": async (event, ...args) => {
@@ -3121,6 +3138,25 @@ ipcMain.handle("openwork:shell:relaunch", async () => {
   app.quit();
 });
 ipcMain.handle("openwork:system:architecture", async () => resolveArchitectureInfo());
+
+// What its owner's other devices can do on this computer: nothing, start
+// tasks, or also open sessions started here (Settings > Devices). The choice
+// is kept per organization. Only the app's own page may read or change it.
+function assertSessionAccessSender(event) {
+  assertDesktopActivation();
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+    throw new Error("Session access is managed from the main OpenWork window.");
+  }
+}
+ipcMain.handle("openwork:remote-session-access:get", async (event) => {
+  assertSessionAccessSender(event);
+  return desktopAutomationRunner.getSessionAccess();
+});
+ipcMain.handle("openwork:remote-session-access:set", async (event, mode) => {
+  assertSessionAccessSender(event);
+  if (mode !== "off" && mode !== "created" && mode !== "all") throw new Error("Choose what other devices can do on this computer.");
+  return desktopAutomationRunner.setSessionAccess(mode);
+});
 
 // ── Terminal IPC ────────────────────────────────────────────────────────
 ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {

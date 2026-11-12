@@ -27,11 +27,11 @@ jobs:
   packaged-smoke:
     name: Build and boot the desktop app
     runs-on: blacksmith-16vcpu-ubuntu-2204
-    timeout-minutes: 15
+    timeout-minutes: 18
     steps:
       # Bootstrap before checkout or any action can execute repository code.
       - name: Prepare virtual display
-        timeout-minutes: 6
+        timeout-minutes: 9
         shell: bash
         run: |
           set -euo pipefail
@@ -122,7 +122,33 @@ jobs:
             fi
           done
           [[ "$updated" == true ]] || exit 1
-          sudo /usr/bin/timeout --signal=TERM --kill-after=5s 120s /usr/bin/apt-get "${apt_options[@]}" install -y xvfb x11-utils
+          # Package downloads hit the same flaky runner DNS as the index update, so
+          # retry them too, but only for transport failures (never for bad signatures
+          # or hashes).
+          install_transport='Temporary failure resolving|Could not resolve|Connection timed out|Connection failed|Could not connect to|Unable to connect to|Connection refused|Connection reset by peer|Network is unreachable|TLSWaitFd|Could not wait for server fd'
+          installed=false
+          for attempt in 1 2 3; do
+            if [[ "$attempt" != 1 ]]; then sleep $(( attempt * 5 )); fi
+            echo "APT install attempt $attempt/3"
+            if sudo /usr/bin/timeout --signal=TERM --kill-after=5s 90s /usr/bin/apt-get "${apt_options[@]}" install -y xvfb x11-utils > "$apt_dir/install.log" 2>&1; then
+              status=0
+            else
+              status=$?
+            fi
+            cat "$apt_dir/install.log"
+            echo "APT install attempt $attempt/3 status=$status"
+            if [[ "$status" == 0 ]]; then
+              installed=true
+              break
+            fi
+            if [[ "$status" != 100 && "$status" != 124 && "$status" != 137 ]] \
+              || grep -Eq '[Hh]ash [Ss]um mismatch|NO_PUBKEY|BADSIG|[Nn]ot signed|[Cc]ertificate' "$apt_dir/install.log" \
+              || { [[ "$status" == 100 ]] && ! grep -Eq "$install_transport" "$apt_dir/install.log"; }; then
+              echo 'APT install failed with a non-transport error.' >&2
+              exit "$status"
+            fi
+          done
+          [[ "$installed" == true ]] || { echo 'APT install failed after 3 attempts.' >&2; exit 1; }
           command -v xvfb-run >/dev/null && command -v xdpyinfo >/dev/null || {
             echo 'Virtual display installation did not provide both required commands.' >&2
             exit 1

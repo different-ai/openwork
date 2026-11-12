@@ -5,12 +5,14 @@ Feature key: `workbotSettingsTabs` · Deployments: cloud and self-hosted · Defa
 ## What changes
 
 With members' agents on (`workbotProactive`), Workbot's settings are one long
-page: Workbot's own settings (on or off, default model, name),
-then how members' agents work (messages, schedule, limits, what to tell
-people, a preview), then what agents read (calendar, email, team chat and
-other connections). The same page appears in two places:
+page: Workbot's own settings (on or off, default model, name, and whether
+agents read the calendar), then how members' agents work (messages,
+schedule, limits, what to tell people, a preview), then the connectors
+agents read. The same page appears in two places:
 
-- Den › Manage › Workbot.
+- Den › Manage › Workbot. With `workbotTeamSettings` on, this page is no
+  longer in the side menu for people who can open Members › Teams (it still
+  opens by its address); Everyone's page below holds the same settings.
 - Den › Members › Teams › a team (or Everyone) › Workbot
   (`workbotTeamSettings`).
 
@@ -18,9 +20,9 @@ With the feature on, both split it into three tabs:
 
 | Tab | What it holds |
 |---|---|
-| General | Workbot on or off (teams and Everyone), default model, completion check (Manage › Workbot), name, and the saved and undo lines for these |
-| Members' agents | The agents switch, where messages go, the schedule and limits, what to tell people and the preview; on Manage › Workbot also the last 7 days |
-| What agents read | Calendar, email, team chat and other context, with each connection's tools |
+| General | Workbot on or off (teams and Everyone), default model, completion check (Manage › Workbot), name, Calendar, and the saved and undo lines for these |
+| Proactive Mode | The Proactive Mode switch, where messages go, the schedule and limits, what to tell people and the preview; on Manage › Workbot and on Everyone's page also the last 7 days |
+| Connectors | The connectors agents may read, each with its setting and its tools |
 
 - The tabs show only where members' agents show. Without them the page is
   short and stays as it is.
@@ -29,8 +31,8 @@ With the feature on, both split it into three tabs:
 - On a team's page, "From Everyone" / "Changed for {team}" and "Use
   Everyone's" stay on the heading of both agent tabs, because a team changes
   members' agents and what they read as one unit.
-- "See the last 7 days" on Everyone's page opens Manage › Workbot on the
-  Members' agents tab.
+- Everyone's Proactive Mode tab shows the "Last 7 days" table itself (it used
+  to link to Manage › Workbot).
 
 ## Clearer rows on Members' agents
 
@@ -49,8 +51,9 @@ The rules the rows follow:
 
 - A yes or no choice is a switch; a choice among several values is a list.
 - One setting per row, with a label that names it.
-- Each row has an "i" beside its label with one or two sentences on what it
-  does and what members can change (hover or keyboard focus).
+- Only a row whose label can't say what it does has an "i" beside it (hover
+  or keyboard focus): On for members by default, Extra checks, the check
+  gate and send check rows with their thresholds, and Example message.
 - Rows are grouped by what the admin is deciding: who gets an agent, what
   messages they get, when agents check, what to tell people.
 
@@ -58,19 +61,15 @@ Without the brief, the older rows (message types, lead time) are unchanged.
 
 ## Help on the other tabs
 
-- **General**: Workbot, Default model, Completion check and Name
-  each have an "i" saying what the setting does and what turning it off
-  affects.
-- **What agents read**: Calendar, Email, Team chat and Other context each
-  have an "i" explaining "On for everyone", "Members choose" and "Not
-  allowed", and how the default app is used. Each app's switch says
-  "Allowed" or "Not allowed" beside it, and "6 connected" reads "6 members
-  connected".
+- **General**: only Workbot (on or off) has an "i", saying what turning it
+  off affects. Default model, Completion check, Name and Calendar have none.
+- **Connectors**: no "i"; the sentence under the tabs says what the tab is
+  for.
 - **Tools per connection**: the "Tools agents may use: 2 read tools · Review"
   line under each connection is gone. The connection's row shows the count
-  ("2 read tools") and a **Manage tools** button, which opens a dialog with
-  each tool's name, description, why it is or isn't allowed and its switch,
-  plus "Use automatic choices". The choices save as before.
+  ("2 read tools") as a link, which opens a dialog with each tool's name,
+  description, why it is or isn't allowed and its switch, plus "Use
+  automatic choices". The choices save as before.
 
 What each control saves and who can edit it are the same.
 
@@ -92,20 +91,20 @@ Both places show the single page again on the next load. Nothing is stored.
   `team-workbot-panel.tsx` (teams and Everyone) choose the part;
   `workbot-proactive-section.tsx` renders only that part (`show`).
 
-## Tab names and Data sources layout
+## Tab names
 
-- The tabs are **General**, **Agents** and **Data sources** (were General,
-  Members' agents, What agents read). Under the tabs, one sentence says what
-  the open tab is for. The heading that repeated the tab's name is gone; on
-  a team's page it stays beside the "Changed for {team}" chip.
-- **Calendar, Email, Team chat**: apps line up under column names (App,
-  Connected, Default, Allowed). The default is picked with a radio button in
-  the Default column instead of a "Default" badge on one row and "Make
-  default" on the others. "Add source" reads "Add app".
+- The tabs are **General**, **Proactive Mode** and **Connectors** (first
+  General, Members' agents, What agents read; then General, Agents, Data
+  sources). Under the tabs, one sentence says what the open tab is for. The
+  heading that repeated the tab's name is gone; on a team's page it stays
+  beside the "Changed for {team}" chip.
+- The switch that turns members' agents on reads **Proactive Mode** for
+  Everyone and for a team (was "Agents for everyone" / "Agents for this
+  team").
 - **Tools**: the count is the link ("10 read tools") beside the
   connection's name and opens the same dialog; the separate "Manage tools"
   button is gone.
-- **Other context**: with more than 8 connections, a "Find a connection"
+- **Connectors**: with more than 8 connectors added, a "Find a connector"
   box filters the list by name.
 
 ## Agent instructions, example and Add connector
@@ -119,32 +118,25 @@ Both places show the single page again on the next load. Nothing is stored.
 - **Example message** (was "Preview"): the same single sample of the DM a
   member gets in Slack from their agent, with an "i" saying it is a sample
   and does not change with the instructions.
-- **Other context**: lists only the connections an admin added, each with
-  its setting, its tools and Remove. **Add connector** opens a searchable
-  list of the rest; a line under it says how many other connections are up
-  to each member. Adding one saves it as "Members choose" (what it already
+- **Connectors**: lists only the connections an admin added, each with its
+  setting, its tools and Remove. **Add connector** opens a searchable list
+  of the rest; a line under it says how many other connections are up to
+  each member. Adding one saves it as "Members choose" (what it already
   was); Remove puts it back to that default.
 
-## Calendar, Email and Team chat take only the apps that serve them
+## Calendar on General; Email and Team chat removed
 
-"Add app" under Calendar, Email and Team chat offers only apps that serve
-that source (Google Workspace and Microsoft 365 for calendar and email;
-Microsoft 365 and Slack for team chat). Before, it offered every
-connection, so Notion could be made the calendar. When every supported app
-is already listed, the menu says which apps work and to connect one in
-Connectors. Any other connection is added under Other context. An app that
-was added before stays listed so it can be turned off; the server still
-accepts the older setting.
-
-## App lists under Calendar, Email and Team chat
-
-- The list holds only apps that serve the source and were added. A
-  connection that can't serve it is not shown, and is dropped from the saved
-  list the next time an app is added or removed.
-- **Default**: the default app shows a "Default" badge; the others show
-  "Set as default" in the same column. An "i" on the column says what the
-  default is. (The radio buttons are gone.)
-- **Remove** takes an app off the list (was the Allowed switch). The
-  default can't be removed until another app is the default.
-- **Add app** lists the supported apps: ones not on the list can be picked,
-  ones already there show "Added".
+- **Calendar** is one row on General: a list with On for everyone, Members
+  choose and Not allowed, and a line under it naming the calendar apps in
+  use ("Uses Google Workspace or Microsoft 365"). There is no app list, no
+  default and no "Add app": each member's agent reads the calendar app they
+  picked in My bot, else the one most members connected. On a team's page,
+  changing it gives the team its own copy of the members' agents settings,
+  as any control on its Proactive Mode tab does.
+- **Email** and **Team chat** are gone as rows. Mail and chat are read
+  through the Google Workspace, Microsoft 365 or Slack connector, under that
+  connector's own setting on the Connectors tab (members choose unless an
+  admin decides). An organization that had email or team chat on for
+  everyone follows each connector's setting from now on.
+- There is no **Step limit** row: Workbot no longer has a step limit
+  setting.

@@ -199,7 +199,9 @@
               "ai-gateway/third-party-tools",
               "ai-gateway/cursor",
               "ai-gateway/claude-code",
+              "ai-gateway/claude-desktop",
               "ai-gateway/codex",
+              "ai-gateway/codex-desktop",
               "ai-gateway/provider-support",
               "ai-gateway/compare-litellm-bifrost",
               "ai-gateway/litellm",
@@ -305,6 +307,7 @@
             "group": "SSO and SCIM",
             "pages": [
               "cloud/auth-and-security",
+              "cloud/sso-oidc",
               "cloud/sso-google-workspace",
               "cloud/scim-google-workspace",
               "cloud/sso-okta",

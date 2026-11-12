@@ -112,6 +112,48 @@ export async function findDomainSsoRequirement(email: string): Promise<DomainSso
   }
 }
 
+/** An organization the person belongs to whose SSO can confirm who they are. */
+export type MemberSsoSignIn = {
+  organizationId: string
+  organizationSlug: string
+  organizationName: string
+  signInPath: string
+  /** Only this SSO may sign in to the organization: a password or Google session would be refused there. */
+  ssoOnly: boolean
+}
+
+/**
+ * The person's organizations with ready SSO (enabled connection, verified
+ * domain), for the re-authentication check. Unlike `/v1/orgs/sso/resolve`
+ * (the sign-in page's email preflight, which only links SSO when it is the
+ * sole way in) this includes SSO that is offered but not required.
+ */
+export async function listMemberSsoSignIns(userId: string): Promise<MemberSsoSignIn[]> {
+  const organizationIds = (await db
+    .select({ organizationId: MemberTable.organizationId })
+    .from(MemberTable)
+    .where(and(eq(MemberTable.userId, normalizeDenTypeId("user", userId)), isNull(MemberTable.removedAt))))
+    .map((row) => row.organizationId)
+  if (organizationIds.length === 0) return []
+
+  const rows = await readSsoOrganizations(inArray(OrganizationTable.id, organizationIds))
+  const perOrganization = await readSsoPerOrganization(rows.map((row) => row.organizationId))
+  const result = new Map<string, MemberSsoSignIn>()
+  for (const row of rows) {
+    if (result.has(row.organizationId)) continue
+    const policy = readOrganizationSsoPolicy(row.metadata)
+    result.set(row.organizationId, {
+      organizationId: row.organizationId,
+      organizationSlug: row.organizationSlug,
+      organizationName: row.organizationName,
+      signInPath: defaultSignInPath(row.organizationSlug),
+      // Flag off: members must use SSO (blocksNonSsoSignIn). Flag on: only when required.
+      ssoOnly: perOrganization.get(row.organizationId) !== true || organizationRequiresSsoSession(policy),
+    })
+  }
+  return [...result.values()]
+}
+
 /** One identity provider a person can sign in with: a ready connection (enabled, domain verified). */
 export type SsoSignInOption = {
   providerId: string

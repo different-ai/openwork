@@ -7,8 +7,9 @@ reference.
 
 - **Words:** call the organization level "Everyone", never "organization".
 - **Row (`SettingRow`):** label on the left; on the right a chip, then one control; an optional line of state under it.
-- **Chip (`ScopeChip`):** neutral "From Everyone" while the team follows Everyone; info "Changed for {team}" once it
-  has its own value. On Everyone's page, a value teams changed shows "Changed for {team}" or "Changed for N teams".
+- **Chip (`ScopeChip`):** on a team's page only: neutral "From Everyone" while the team follows Everyone; info
+  "Changed for {team}" once its value differs from Everyone's. Everyone's values are the default, so Everyone's page
+  has no chip.
 - **Override:** the admin just changes the control. No "enable override" step and no "inherit" option inside the
   control. While a team follows Everyone, the control shows Everyone's actual value.
 - **Go back (`UseEveryonesButton`):** one text button, "Use Everyone's", beside the chip, only while the team has its

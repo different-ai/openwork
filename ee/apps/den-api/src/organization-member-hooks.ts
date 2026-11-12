@@ -3,6 +3,7 @@ import { countBillingUsers } from "./billing-users.js"
 import { cache } from "./cache.js"
 import { syncInferenceAfterMemberChange } from "./inference.js"
 import { syncOrganizationBillingQuantities } from "./stripe-billing.js"
+import { removeMemberWorkbotComputersInBackground } from "./workbot/member-computers.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -19,10 +20,16 @@ type OrganizationMemberChangeHookInput = {
 
 type OrganizationMemberChangeHook = (input: OrganizationMemberChangeHookInput) => Promise<void>
 
+/** Someone who was removed keeps no cloud computer. */
+const removeWorkbotComputersAfterRemoval: OrganizationMemberChangeHook = async (input) => {
+  if (input.change === "removed") removeMemberWorkbotComputersInBackground(input)
+}
+
 const organizationMemberChangeHooks: OrganizationMemberChangeHook[] = [
   syncInferenceAfterMemberChange,
   // Team seats, OpenWork Models and OpenWork Web follow the same user count.
   syncOrganizationBillingQuantities,
+  removeWorkbotComputersAfterRemoval,
 ]
 
 export async function runPostOrganizationMemberChangeHooks(input: {

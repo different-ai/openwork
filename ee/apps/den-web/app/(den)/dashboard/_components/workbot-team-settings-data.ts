@@ -93,7 +93,7 @@ export function useSaveWorkbotTeamSettings(orgId: string) {
   });
 }
 
-/** Turns Workbot on or off for Everyone. Everyone's model is saved with Manage › Workbot's own hooks. */
+/** Turns Workbot on or off for Everyone. Everyone's model is saved with Manage › Workbot's own hook. */
 export function useSaveWorkbotEveryoneSettings(orgId: string) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();

@@ -112,11 +112,13 @@ export type BrowserTask = {
 /** The browser's one task for this turn; live, stored and reloaded cards use the same lifecycle. */
 export function browserTask(
   steps: ReadonlyArray<{ status: string; reason?: string }>,
-  { working, title, status, error }: {
+  { working, title, status, error, what = "browser task" }: {
     working: boolean;
     title: string;
     status?: "queued" | "working" | "done" | "failed" | "stopped";
     error?: string | null;
+    /** What the work is called in a failure line: "browser task", or "computer task" for the rest of the computer. */
+    what?: string;
   },
 ): BrowserTask {
   if (working) return { title, status: "working" };
@@ -127,10 +129,22 @@ export function browserTask(
     return {
       title,
       status: "failed",
-      reason: error || failure?.reason || (status === "stopped" ? "Stopped before the browser task finished." : "The browser task couldn't finish."),
+      reason: error || failure?.reason || (status === "stopped" ? `Stopped before the ${what} finished.` : `The ${what} couldn't finish.`),
     };
   }
   return { title, status: "completed" };
+}
+
+/**
+ * What a task's view says above the screen, or null while the live computer's state speaks instead. `rebuilt`: the
+ * person rebuilt the computer from this view, which stopped the task. "Failed" above the new computer would read as
+ * if rebuilding hadn't helped.
+ */
+export function taskHeader(task: Pick<BrowserTask, "status" | "reason"> | undefined, rebuilt: boolean): { status: "Completed" | "Failed" | "Stopped"; failed: boolean; reason?: string } | null {
+  if (!task) return null;
+  if (task.status === "completed") return { status: "Completed", failed: false };
+  if (rebuilt) return { status: "Stopped", failed: false, reason: "Your computer was rebuilt, which stopped this task. Ask again to run it on the new computer." };
+  return task.status === "failed" ? { status: "Failed", failed: true, ...(task.reason ? { reason: task.reason } : {}) } : null;
 }
 
 /**

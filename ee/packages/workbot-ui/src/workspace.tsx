@@ -9,7 +9,7 @@ import { computerTabLabel, workbotHost, useRetainedSurface } from "./host";
 import { DOCUMENTS_LIST_GC_MS, ItemIcon } from "@openwork/documents/react";
 import { usePrefetchWorkbotDocuments, useWorkbotDocumentsSource } from "./documents";
 
-export type WorkspacePage = "home" | "calendar" | "documents" | "computer";
+export type WorkspacePage = "home" | "calendar" | "documents" | "computer" | "devices";
 export const WorkspaceNavigationContext = createContext<((fileId: string) => void) | null>(null);
 /** The document on screen right now, so a reply never offers to open what is already open. */
 export const OpenDocumentContext = createContext<string | null>(null);

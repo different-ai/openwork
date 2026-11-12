@@ -43,6 +43,11 @@ The same section shows the **OpenAI base URL** and **Anthropic base URL** to
 point a tool at. Send the key as `Authorization: Bearer <key>` or
 `x-api-key: <key>`.
 
+[Smart Routers](/ai-gateway/auto-model-routing) that apply to you work through
+your key too. In Cursor, Claude Code and Codex they're listed as
+`openwork/smart-<router name>-<4 characters>`; other OpenAI compatible tools
+call them as `openwork-smart-<router id>` on `/chat/completions`.
+
 ## Manage your keys
 
 **My Library › Models** lists your keys with their name, the first characters of

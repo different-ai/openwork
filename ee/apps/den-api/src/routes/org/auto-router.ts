@@ -3,6 +3,7 @@ import {
   AUTO_ROUTER_MAX_ROUTERS,
   autoRouterConnectSchema,
   autoRouterListSchema,
+  autoRouterMemberListSchema,
   autoRouterModelId,
   autoRouterModelName,
   autoRouterAssignmentWriteSchema,
@@ -11,6 +12,7 @@ import {
   autoRouterWriteSchema,
   type AutoRouterAssignmentWrite,
   type AutoRouterConnect,
+  type AutoRouterMemberList,
   type AutoRouterWrite,
 } from "@openwork/types/den/auto-router"
 import type { Hono } from "hono"
@@ -251,6 +253,29 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
       const organizationId = c.get("organizationContext").organization.id
       if (!await deleteAutoRouter(organizationId, c.req.valid("param").routerId)) return c.json({ error: "auto_router_not_found" }, 404)
       return c.json(await listView(c, organizationId, { primary: true }))
+    },
+  )
+
+  app.get(
+    "/v1/org/auto-router/mine",
+    describeRoute({
+      tags: ["Inference Providers"],
+      summary: "List my Smart Routers",
+      description: "Lists the Smart Routers the caller can use: each one that applies to the caller and has at least one model they can use, by id and name. Empty while the AI Gateway has no TypeSafe key. 3rd party tools reach them through the AI Gateway as openwork/smart-<name>-<end of id>. Requires organization membership and the Smart Model Router feature.",
+      responses: {
+        200: jsonResponse("Smart Routers returned.", autoRouterMemberListSchema),
+        401: unauthorized,
+        404: notFound,
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("autoRouter"),
+    async (c) => {
+      c.header("Cache-Control", "no-store")
+      const payload = c.get("organizationContext")
+      if (await readAutoRouterRouting() === "missing_key") return c.json({ routers: [] } satisfies AutoRouterMemberList)
+      const routers = await memberAutoRouters(payload.organization.id, payload.currentMember.id)
+      return c.json({ routers: routers.map((router) => ({ id: router.id, name: router.name })) } satisfies AutoRouterMemberList)
     },
   )
 

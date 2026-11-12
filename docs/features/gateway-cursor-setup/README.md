@@ -44,11 +44,33 @@ openwork/claude-opus-5.5-k3f9:high
 
 Shared code: `packages/types/src/den/gateway-cursor.ts`.
 
+### Smart Routers
+
+Smart Routers (feature `autoRouter`) the member can use get a name of the same
+shape, from their picker name "Smart: <name>":
+
+```
+openwork/smart-<router name as a slug>-<last 4 characters of the router's aur_ id>
+openwork/smart-engineering-x7q2
+```
+
+Every tool's model list (Cursor, Claude Code, Codex) ends with them, and a
+request naming one runs the Smart Model Router: the request is read as Chat
+Completions (`responsesToChat`, `messagesToChat`), handed to `handleAutoRequest`
+as is, and its answer written back (`asResponses`, Messages JSON or events).
+Smart picks the model and thinking level, so a level or `[1m]` on the name is
+ignored, Codex's catalog entry has no reasoning levels, and Claude Code's
+settings get no `modelOverrides` or `[1m]` for one. A Smart-shaped name that
+matches none of the member's routers, and no model, answers with Smart's own
+error (`auto_router_unavailable`, `auto_router_not_configured`) in the tool's
+shape. Only names starting with `smart-` read routers (one cached read). Code:
+`ee/apps/gateway/src/smart-tools.ts`.
+
 ## What people see
 
 **Right after creating a key** (while it can still be shown), the dialog moves
 to **Start using this key**: the key once, then a large button per tool:
-Cursor, OpenAI Codex, Claude Code and Another tool. Picking one shows that
+Cursor, OpenAI Codex, Claude Code, Claude Desktop and Another tool. Picking one shows that
 tool's steps with the key, URLs and model ids already filled in, each with a
 copy button; **Choose another tool** goes back.
 
@@ -64,12 +86,17 @@ copy button; **Choose another tool** goes back.
 - **Claude Code:** a project settings file (`.claude/settings.local.json`) for
   a main and a fast model chosen from dropdowns, pointing at the Gateway's
   Claude Code endpoint (below). Every model is offered.
+- **Claude Desktop:** the menu path to its Gateway settings, the Gateway base
+  URL (the Claude Code endpoint) and the key to paste, auth scheme `bearer` and
+  credential kind `Static API key`, the relaunch, and the member's models Claude
+  Desktop will list (Claude models only, see below).
 - **Another tool:** the key, both base URLs, and a model to choose with its id
   to copy.
 
 ![Cursor's steps](./cursor-steps.png)
 
-Cursor, Claude Code and Codex each have their own endpoint.
+Cursor, Claude Code and Codex each have their own endpoint; Claude Desktop uses
+Claude Code's.
 
 ![Claude Code's steps](./claude-code-steps.png)
 
@@ -109,7 +136,12 @@ key, with a link to create one.
 - Only `ow_gw_` keys authenticate on `/api/v1/cursor/*`; OpenWork Models keys
   are never looked up. Any other path there is `404 not_found`.
 - The page builds the same names in Den web from
-  `GET /v1/inference-providers?scope=usable`; there is no new Den API route.
+  `GET /v1/inference-providers?scope=usable`, plus the member's Smart Routers
+  from `GET /v1/org/auto-router/mine` (ids and names; empty without a routing
+  key, 404 while `autoRouter` is off, which the page treats as none). They come
+  last in each model dropdown as "Smart: <name>" and are never the default
+  choice. Claude Desktop's list keeps its own filter, so a router shows there
+  only when its name passes it.
 
 ## Claude Code endpoint
 
@@ -149,6 +181,62 @@ file only after its first-run sign-in screen; a key in the shell or in
 `ANTHROPIC_AUTH_TOKEN="<key>" claude`. Not checked: an existing Claude account
 login next to the settings file (the steps follow OpenRouter: `/status`, then
 `/logout` if needed).
+
+## Claude Desktop
+
+Claude Desktop's Gateway mode (**Developer › Configure Third-Party Inference…**,
+Connection **Gateway**) points at the Claude Code endpoint: **Gateway base
+URL** `<gateway>/api/v1/claude-code`, the key as **Gateway API key**, auth
+scheme `bearer`, credential kind `Static API key`. No Gateway code of its own:
+what it sends is what Claude Code sends. Public docs:
+`packages/docs/ai-gateway/claude-desktop.mdx`.
+
+What Claude Desktop 5.1231 sends (captured with a logging proxy, and read in
+its app bundle):
+
+- Settings live in `~/Library/Application Support/Claude-3p/configLibrary/<id>.json`
+  as flat keys (`inferenceProvider: "gateway"`, `inferenceGatewayBaseUrl`,
+  `inferenceGatewayApiKey` sealed with the OS keychain, `inferenceGatewayAuthScheme`,
+  `inferenceCredentialKind: "static"`). Gateway mode runs on its own profile
+  (`Claude-3p`), apart from a signed-in Claude account's. `http://127.0.0.1`
+  base URLs are accepted; other `http` URLs are not.
+- `GET {base}/v1/models?limit=1000` with `Authorization: Bearer` and
+  `anthropic-version`, paging with `after_id` while `has_more`. It reads `id`,
+  `display_name`, `description`, `supports_1m` / `max_input_tokens`,
+  `anthropic_family_tier` and `is_family_default`.
+- **Only Claude models reach the picker.** Discovery keeps an id that contains
+  claude, opus, sonnet, haiku or anthropic and no other family (gpt, openai,
+  gemini, deepseek…), or one with an `anthropic_family_tier`; the picker then
+  applies the id check again, without the tier exception. Tried live: GPT-5
+  mini with `anthropic_family_tier: "sonnet"` was "4 found; picker = 3". So
+  the setup lists the member's Claude models (`claudeDesktopListsModel` in
+  `packages/types/src/den/gateway-cursor.ts` mirrors the check) and points to
+  Claude Code, Cursor or Codex for the rest. The Gateway does not rename models
+  to get past the check.
+- **Test connection** and each launch: the model list, then `POST
+  {base}/v1/messages` with `max_tokens: 1` on one of the listed models.
+- Chats and Cowork tasks run Claude Code inside the app: `POST
+  {base}/v1/messages?beta=true`, streamed, `anthropic-beta:
+  interleaved-thinking-2025-05-14,claude-code-20250219`, `x-app: cli`,
+  `thinking: {type: "enabled", budget_tokens: 31999}`, `max_tokens: 32000`, about
+  40 tools (Bash in its VM, files, web, MCP), cache control; a title request
+  without `?beta=true`; and `HEAD {base}/api/hello` without a key (answered
+  `401`; Claude Desktop carries on).
+
+Checked on 2026-11-10 with Claude Desktop 5.1231.0 (macOS) on a local Den and
+Gateway with real Anthropic and OpenAI keys, set up through its own
+Configure Third-Party Inference window: **Test connection**, model discovery
+(Claude Haiku 4.5, Claude Sonnet 4.5 and a mock Claude listed; GPT-5 mini
+hidden), a Cowork chat on Claude Haiku 4.5 that ran a shell tool and answered
+(passed through), switching to Claude Sonnet 4.5 mid-conversation, and the
+same request shape sent straight to GPT-5 mini through the endpoint (translated,
+tool use) to show the endpoint would serve it. Nothing broke, so the Gateway is
+unchanged. Found there: Claude Desktop hides non-Claude models; after Apply it
+relaunched straight into Gateway mode (no start screen); Gateway mode has its
+own Developer Mode, so the Developer menu disappears there (the account menu's
+**Inference configuration** opens the settings); the auth middleware's `401` is
+not an Anthropic error body (Claude Desktop shows its status). Not checked:
+Windows, the OIDC sign-in kinds, and Claude Desktop's Code tab.
 
 ## Codex endpoint
 
@@ -218,6 +306,61 @@ from a shell with the variable fixed it (`codex exec` is not affected: it reads
 the shell's environment). The steps now have a restart step. Not checked: Azure OpenAI, Windows, images, and Codex's own OpenAI
 models chosen in `/model` when the member has the same model.
 
+## Codex app (ChatGPT desktop)
+
+Same endpoint and config as the CLI; Den web offers it as **Codex app**
+(`CodexAppSteps`, test ids `gateway-tool-codex-app*`). The steps save the key
+in the macOS Keychain (`security add-generic-password -U -a "$USER" -s
+openwork-ai-gateway -w "<key>"`) and the `auth` block runs `/usr/bin/security
+find-generic-password -s openwork-ai-gateway -w`, then quit the app with ⌘Q.
+Public docs: `packages/docs/ai-gateway/codex-desktop.mdx`.
+
+Checked 2026-11-10 with ChatGPT 26.1027 (bundled `codex-cli 0.166.0-alpha`)
+against a local Den and Gateway with real OpenAI and Anthropic keys, through a
+logging proxy:
+
+- The app runs its own `codex app-server` as a child process (not the CLI's
+  `~/.codex` daemon, so `codex app-server daemon restart` does nothing for the
+  app). ⌘Q ends it; reopening starts a fresh one that reads the config and
+  runs the auth command again. No leftover processes were seen.
+- The app process itself has no shell variables, but it starts its app-server
+  with the login shell's environment: `OPENWORK_API_KEY` from `~/.zshrc` was in
+  the app-server's environment after a Dock launch. So the CLI steps work for
+  the app too; the Keychain is the documented path because it doesn't depend
+  on the shell profile, keeps the key out of dotfiles, and works the same for
+  the app, the CLI and the daemon. `launchctl setenv` (OpenRouter's guide) was
+  not needed.
+- `supports_websockets` defaults to false for custom providers (codex-rs
+  `model-provider-info`), and the app made no WebSocket attempt, so the config
+  doesn't set it.
+- What the app sends that the CLI doesn't: ~58 tools (CLI ~10) in namespaces
+  `mcp__codex_app` (threads, automations, worktrees, artifacts),
+  `mcp__cua_repl`, `mcp__node_repl`, `mcp__artifact_session`, plus goals and
+  `request_user_input`; extra developer messages (client time context); a
+  `client_version` of 0.167.0; and a conversation-title request with a fixed
+  OpenAI model (`gpt-6-luna`, `text.format` JSON schema, `additional_tools`
+  input item), which the Gateway answers `model_not_found` (harmless).
+- The error people hit with Claude, `tools.18.custom.input_schema:
+  input_schema does not support oneOf, allOf, or anyOf at the top level`, was
+  `mcp__codex_app__automation_update`: `{type: object, properties: {}, oneOf:
+  [4 $refs], $defs}`, a discriminated union nesting another union.
+  `mcp__cua_repl__js` also has a root `oneOf`. Fixed in the translators for
+  every client in #7255 (`auto-router/tool-schema.ts`, used by the Anthropic, Bedrock
+  and Gemini translators): the root union becomes one object with every
+  branch's properties, required only when all branches require them, and the
+  argument sets listed in the schema's description; `allOf` merged; root
+  `$ref` inlined; `$defs` kept; draft-04/07 forms Anthropic rejects as invalid
+  2020-12 (tuple `items`, boolean `exclusiveMinimum`, boolean `required`,
+  unknown types) rewritten. Probed against the Messages API: root `type` must
+  be `"object"` (not `["object","null"]`), root combinators are refused,
+  nested ones, `$ref`/`definitions`, root `not`/`if` are accepted.
+- After the fix: Claude Haiku 4.5 (translated) answered, ran parallel
+  `exec_command` calls to write and list a file, and answered a follow-up;
+  switching to GPT-5 mini in the same thread (passed through, `apply_patch`
+  added) appended to the file.
+
+Not checked: Windows, the IDE extension, images, Gemini and Bedrock live.
+
 ## Turning it off
 
 Turning off `gatewayMemberApiKeys` (or the organization setting) stops member
@@ -254,4 +397,6 @@ on a real Den and AI Gateway. `ee/apps/gateway/test/claude-code.test.ts` and
 (a Claude model passed through, a DeepSeek model translated), and
 `ee/apps/gateway/test/codex.test.ts` and `evals/proofs/gateway-codex.proof.test.ts`
 for Codex (an OpenAI model passed through, a Claude model translated, with the
-config read from the page).
+config read from the page). `evals/proofs/gateway-claude-desktop.proof.test.ts`
+reads Claude Desktop's base URL and key from its steps and sends Claude
+Desktop's requests with them (model list, test connection, a streamed chat).

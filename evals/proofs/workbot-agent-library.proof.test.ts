@@ -54,8 +54,8 @@ test("a member sees what their agent did and why it stayed quiet, and changes it
     await user.see({ text: "1 of 3 sent today" });
     await user.see({ role: "link", label: "Open in Slack" });
     await user.see({ text: "Sent you a message about morning brief." });
-    await user.see({ text: "Turned off by your admin in Manage › Workbot." });
-    await user.see({ text: "Set by your admin in Manage › Workbot." });
+    await user.see({ text: "Turned off by your admin." });
+    await user.see({ text: "Set by your admin." });
     const rows = await probe.dom('[data-testid="my-agent-today"] [data-testid="my-agent-check"]');
     const sent = await probe.dom('[data-testid="my-agent-today"] [data-outcome="sent"]');
     const quiet = await probe.dom('[data-testid="my-agent-today"] [data-outcome="quiet"]');

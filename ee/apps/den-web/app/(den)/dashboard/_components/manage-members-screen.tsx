@@ -56,6 +56,7 @@ import { SUPER_ADMIN_ROLE_LOCK_REASON, memberRoleEntry, memberRoleOptions, membe
 import { RolePicker } from "./role-picker";
 import { useGiveRole } from "./use-give-role";
 import { useDenToast } from "./den-toast";
+import { InviteModelAccessPreview } from "./invite-model-access-preview";
 
 type MembersTab = "members" | "teams" | "roles";
 
@@ -465,6 +466,15 @@ export function ManageMembersScreen() {
               {`Inviting someone with another role is locked. ${permissionLockReason("members.update")}`}
             </p>
           )}
+          {showInviteForm && orgFeatureEnabled(orgContext, "shareDeviceProvider") ? (
+            <InviteModelAccessPreview
+              key={orgContext.organization.id}
+              orgId={orgContext.organization.id}
+              team={inviteTeamPicker ? orgContext.teams.find((team) => team.id === inviteTeamId) ?? null : null}
+              canViewProviders={access.canViewGatewayProviders}
+              gatewayAvailable={orgContext.deploymentCapabilities.version === 1 && orgContext.deploymentCapabilities.aiGateway === true}
+            />
+          ) : null}
           {formError ? <DenNotice tone="error" message={formError} /> : null}
           <div className="flex justify-end gap-2 pt-1">
             <ActionButton size="md" onClick={resetInviteForm}>Cancel</ActionButton>

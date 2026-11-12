@@ -35,8 +35,7 @@ import { readAgentTemplate, type AgentTemplateVersion } from "../workbot-proacti
  * (packages/types/src/den/workbot-team-settings.ts). Admins set them in Den › Members › Teams › a team › Workbot;
  * every reader that acts for one member asks `resolveMemberWorkbotSettings`, so a team's value follows its members
  * to Workbot, the Slack assistant, their cloud Automations and Your agent. With the feature off the rows are kept
- * and ignored. Rows saved while teams could set a step limit may still hold `maxSteps`: it is ignored, and dropped
- * on the team's next save.
+ * and ignored.
  *
  * A team can also have its own policy for its members' agents (`agent`, with `workbotProactive`): the whole of the
  * organization's policy and its "Your agent" template, kept together in the team's row. Every reader that acts
@@ -64,7 +63,7 @@ function parseMetadata(metadata: unknown): Record<string, unknown> {
 
 /**
  * The organization's values a team can override: its default model (null is the deployment's default), the
- * name it gave the app in Settings › Brand (null when it set none), which Workbot goes by, whether Workbot
+ * name it gave the app in Settings › Brand (null when it set none), which Workbot goes by, and whether Workbot
  * is on for its members (on unless an admin turned it off).
  */
 export function organizationWorkbotSettings(metadata: unknown): { model: string | null; name: string | null; enabled: boolean } {
@@ -83,8 +82,8 @@ function withoutAgent<T extends { agent?: WorkbotTeamAgent }>(settings: T): Omit
 
 /**
  * The organization's values and every team's overrides, teams by name, with each team's size and conflicts.
- * `agents` is whether members' agents are on (`workbotProactive` on a deployment with Workbot): off, the team's
- * own agent policy is left out and its conflicts don't count.
+ * `agents` is whether members' agents are available (`workbotProactive` on a deployment with Workbot): off, a
+ * team's policy for them is left out and its conflicts don't count.
  */
 export async function listWorkbotTeamSettings(organizationId: OrganizationId, options: { agents: boolean }): Promise<Omit<WorkbotTeamSettingsView, "canEdit">> {
   // Primary: every save answers with this view of the row it just wrote. Admin-only and rare.
@@ -108,9 +107,11 @@ export async function listWorkbotTeamSettings(organizationId: OrganizationId, op
   const teamSettings = teams.map((team) => ({ teamId: team.id, settings: byTeam.get(team.id) ?? {} }))
   const conflicts = countWorkbotTeamConflicts({ teams: teamSettings, memberships })
   const organization = organizationWorkbotSettings(organizations[0]?.metadata)
-  const agentEnabled = options.agents ? readWorkbotProactiveSettings(organizations[0]?.metadata).enabled : false
+  const everyones = readWorkbotProactiveSettings(organizations[0]?.metadata)
+  const agentEnabled = options.agents ? everyones.enabled : false
+  const agentCalendar = everyones.sources.calendar
   return {
-    organization: { ...organization, ...(options.agents ? { agentEnabled } : {}) },
+    organization: { ...organization, ...(options.agents ? { agentEnabled, agentCalendar } : {}) },
     teams: teams.map((team) => {
       const settings = byTeam.get(team.id) ?? {}
       return {
@@ -120,7 +121,11 @@ export async function listWorkbotTeamSettings(organizationId: OrganizationId, op
         model: settings.model !== undefined ? { inherit: false as const, value: settings.model } : { inherit: true as const },
         name: settings.name !== undefined ? { inherit: false as const, value: settings.name } : { inherit: true as const },
         enabled: settings.enabled !== undefined ? { inherit: false as const, value: settings.enabled } : { inherit: true as const },
-        ...(options.agents ? { agent: { inherit: !settings.agent, enabled: settings.agent ? settings.agent.settings.enabled : agentEnabled } } : {}),
+        ...(options.agents ? { agent: {
+          inherit: !settings.agent,
+          enabled: settings.agent ? settings.agent.settings.enabled : agentEnabled,
+          calendar: settings.agent ? settings.agent.settings.sources.calendar : agentCalendar,
+        } } : {}),
         conflictingMemberCount: conflicts.get(team.id) ?? 0,
       }
     }),

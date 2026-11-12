@@ -137,8 +137,11 @@ test("stored settings keep what can be read and treat the rest as no override", 
   assert.deepEqual(readWorkbotTeamSettings({ enabled: false }), { enabled: false })
   assert.deepEqual(readWorkbotTeamSettings({ enabled: true, name: "Scout" }), { name: "Scout", enabled: true })
   assert.deepEqual(readWorkbotTeamSettings({ enabled: "false", name: "Scout" }), { name: "Scout" })
-  // A step limit saved while teams could have one is no override any more.
-  for (const maxSteps of [100, 0, null]) assert.deepEqual(readWorkbotTeamSettings({ maxSteps, name: "Scout" }), { name: "Scout" }, String(maxSteps))
+  // A step limit saved while teams had one is no override any more, whatever its value.
+  for (const maxSteps of [100, 0, null, "100"]) {
+    assert.deepEqual(readWorkbotTeamSettings({ maxSteps }), {}, String(maxSteps))
+    assert.deepEqual(readWorkbotTeamSettings({ maxSteps, name: "Scout" }), { name: "Scout" }, String(maxSteps))
+  }
   // Keys added by a later version are tolerated; a value that cannot be read is no override.
   assert.deepEqual(readWorkbotTeamSettings({ name: "Scout", proactive: { enabled: false } }), { name: "Scout" })
   assert.deepEqual(readWorkbotTeamSettings({ model: 12, name: "x".repeat(41) }), {})
@@ -166,9 +169,12 @@ test("a change sets or clears each setting and leaves the others, including unkn
     { enabled: { inherit: false } },
     { enabled: { inherit: false, value: "off" } },
     { enabled: { inherit: true, value: false } },
-    // The retired step limit.
+    // A step limit is no longer a team setting.
+    { maxSteps: 250 },
     { maxSteps: { inherit: true } },
     { maxSteps: { inherit: false, value: 250 } },
+    { maxSteps: { inherit: false, value: 0 } },
+    { maxSteps: { inherit: false, value: null } },
     { other: { inherit: true } },
   ]) assert.equal(parse(refused).success, false, JSON.stringify(refused))
 
@@ -184,9 +190,10 @@ test("a change sets or clears each setting and leaves the others, including unkn
   assert.deepEqual(applyWorkbotTeamSettingsWrite(paused, { name: { inherit: false, value: "Scout" } }), { ...paused, name: "Scout" })
   assert.deepEqual(applyWorkbotTeamSettingsWrite(paused, { enabled: { inherit: true } }), stored)
   assert.deepEqual(applyWorkbotTeamSettingsWrite({ enabled: false }, { enabled: { inherit: true } }), {})
-  // A step limit saved while teams could have one is dropped by the next save; a row with only that is left empty.
+  // A step limit saved while teams had one is dropped on the team's next change, and with it a row that held nothing else.
   assert.deepEqual(applyWorkbotTeamSettingsWrite({ ...stored, maxSteps: 250 }, { name: { inherit: false, value: "Scout" } }), { ...stored, name: "Scout" })
-  assert.deepEqual(applyWorkbotTeamSettingsWrite({ maxSteps: null }, {}), {})
+  assert.deepEqual(applyWorkbotTeamSettingsWrite({ ...stored, maxSteps: 0 }, {}), stored)
+  assert.deepEqual(applyWorkbotTeamSettingsWrite({ maxSteps: 250, name: "Scout" }, { name: { inherit: true } }), {})
   // Nothing left: the caller deletes the row. A value that could not be read is dropped with it.
   assert.deepEqual(applyWorkbotTeamSettingsWrite({ model: "gateway/a", name: 5 }, { model: { inherit: true } }), {})
 })
@@ -196,7 +203,7 @@ test("the organization's values come from its metadata", () => {
   assert.deepEqual(organizationWorkbotSettings(JSON.stringify({ brandAppName: "Acme" })), { model: null, name: "Acme", enabled: true })
   for (const empty of [null, undefined, "not json", { brandAppName: "  " }]) assert.deepEqual(organizationWorkbotSettings(empty), { model: null, name: null, enabled: true })
   assert.deepEqual(organizationWorkbotSettings({ brandAppName: "Acme", workbot: { model: "gateway/org", enabled: false } }), { ...organization, enabled: false })
-  // A step limit saved while Workbot had one is ignored.
+  // A step limit saved while the organization had one stays in its metadata and is read by nothing.
   assert.deepEqual(organizationWorkbotSettings({ brandAppName: "Acme", workbot: { model: "gateway/org", maxSteps: 500 } }), organization)
 })
 
@@ -261,6 +268,17 @@ test("with the feature on Workbot is off for a member when the organization or t
   // A member of no team, or one who cannot be found, has the organization's switch.
   assert.equal((await resolveMemberWorkbotSettings({ organizationId: orgId, memberId, featureOn: true }, { ...deps([], false), teams: async () => [] })).enabled, false)
   assert.equal((await resolveMemberWorkbotSettings({ organizationId: orgId, featureOn: true }, { ...deps([], false), teams: never, rows: never })).enabled, false)
+})
+
+test("a step limit saved for the organization or a team reaches no member", async () => {
+  const limited = { ...metadata, workbot: { ...metadata.workbot, maxSteps: 500 } }
+  const teams = [{ id: "tem_1", name: "Research" }, { id: "tem_2", name: "Sales" }]
+  const rows = [{ teamId: "tem_1", settings: { maxSteps: 100 } }, { teamId: "tem_2", settings: { maxSteps: 0 } }]
+  for (const featureOn of [true, false]) {
+    const deps: Deps = { metadata: async () => limited, featureOn: never, memberId: never, teams: featureOn ? async () => teams : never, rows: featureOn ? async () => rows : never }
+    // Teams that only differ in a retired step limit are no conflict either.
+    assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, memberId, featureOn }, deps), organizationValues, String(featureOn))
+  }
 })
 
 test("with the feature on a member gets their teams' values, found from the member or the user", async () => {
@@ -340,20 +358,20 @@ test("a team's agent policy is read like the organization's; one that cannot be 
 })
 
 test("two teams' agent policies are the same when their policy and template are, however they were saved", () => {
-  const base = teamAgent({ sources: { calendar: "everyone", email: "members", chat: "off", connections: { emc_b: "off", emc_a: "everyone" }, coreConnections: { calendar: ["gws_1", "gws_2"] } } })
+  const base = teamAgent({ sources: { calendar: "members", connections: { emc_b: "off", emc_a: "everyone" }, otherConnections: ["emc_a", "emc_b"] } })
   const key = workbotTeamAgentKey(base)
   // Key order, a later template version, and empty groups saved or left out change nothing.
-  const reordered = teamAgent({ sources: { coreConnections: { calendar: ["gws_1", "gws_2"] }, connections: { emc_a: "everyone", emc_b: "off" }, chat: "off", email: "members", calendar: "everyone" } }, { version: 4, versionId: versionB })
+  const reordered = teamAgent({ sources: { otherConnections: ["emc_a", "emc_b"], connections: { emc_a: "everyone", emc_b: "off" }, calendar: "members" } }, { version: 4, versionId: versionB })
   assert.equal(workbotTeamAgentKey(reordered), key)
-  assert.equal(workbotTeamAgentKey({ ...base, settings: { ...base.settings, sources: { ...base.settings.sources, coreDefaults: {}, toolOverrides: { emc_a: {} } } } }), key)
+  assert.equal(workbotTeamAgentKey({ ...base, settings: { ...base.settings, sources: { ...base.settings.sources, toolOverrides: { emc_a: {} } } } }), key)
   assert.equal(workbotTeamAgentKey({ settings: { ...base.settings }, template: { instructions: "", responsibilities: { waiting_on_you: true, calendar_changes: true, meeting_prep: true, morning_brief: true }, version: 1, versionId: null } }), key)
   // Any difference in the policy, the sources, the brief or the template is a difference.
   for (const different of [
     teamAgent({ ...base.settings, dailyCap: 5 }),
     teamAgent({ ...base.settings, enabled: false }),
-    teamAgent({ ...base.settings, sources: { ...base.settings.sources, chat: "members" } }),
-    teamAgent({ ...base.settings, sources: { ...base.settings.sources, coreConnections: { calendar: ["gws_2", "gws_1"] } } }),
-    teamAgent({ ...base.settings, sources: { ...base.settings.sources, coreConnections: { calendar: [] } } }),
+    teamAgent({ ...base.settings, sources: { ...base.settings.sources, calendar: "off" } }),
+    teamAgent({ ...base.settings, sources: { ...base.settings.sources, otherConnections: ["emc_b", "emc_a"] } }),
+    teamAgent({ ...base.settings, sources: { ...base.settings.sources, otherConnections: [] } }),
     teamAgent({ ...base.settings, sources: { ...base.settings.sources, toolOverrides: { emc_a: { list_issues: "deny" } } } }),
     teamAgent({ ...base.settings, brief: { text: "Only deadlines." } }),
     teamAgent(base.settings, { instructions: "Ignore newsletters." }),
@@ -439,12 +457,15 @@ test("with the feature off, or no team with its own, a member's agent follows Ev
 })
 
 test("a member of a team with its own agent policy gets the team's, whole; teams that differ or fail give Everyone's", async () => {
-  const research = teamAgent({ enabled: false, dailyCap: 5, sources: { calendar: "off", email: "everyone", chat: "everyone", connections: {} } }, { instructions: "Research only.", version: 2 })
+  const research = teamAgent({ enabled: false, dailyCap: 5, sources: { calendar: "off", connections: {} } }, { instructions: "Research only.", version: 2 })
   const teams = [{ id: "tem_1", name: "Research" }, { id: "tem_2", name: "Design" }]
   const deps = (rows: { teamId: string; settings: unknown }[]): Deps => ({ metadata: async () => agentMetadata, featureOn: never, memberId: never, teams: async () => teams, rows: async () => rows, template: async () => everyoneTemplate })
   const own = { settings: research.settings, template: { ...DEFAULT_AGENT_TEMPLATE, instructions: "Research only.", version: 2, versionId: versionA }, from: fromTeams("Research") }
   // The team's policy, sources and template together; Everyone's are not read at all.
   assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId, featureOn: true }, { ...deps([{ teamId: "tem_1", settings: { agent: research } }]), metadata: never, template: never }), own)
+  // A team's policy saved with email, team chat and picked apps reads without them, like the organization's.
+  const before = { ...research, settings: { ...research.settings, sources: { calendar: "off", email: "everyone", chat: "members", coreConnections: { calendar: ["gws_1"] }, coreDefaults: { calendar: "gws_1" }, connections: {} } } }
+  assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId, featureOn: true }, { ...deps([{ teamId: "tem_1", settings: { agent: before } }]), metadata: never, template: never }), own)
   // Two teams with the same policy agree; two that differ give Everyone's, marked as a conflict.
   const agreed = await resolveMemberAgentPolicy({ organizationId: orgId, memberId, featureOn: true }, deps([{ teamId: "tem_1", settings: { agent: research } }, { teamId: "tem_2", settings: { agent: { ...research, template: { ...research.template, version: 9 } } } }]))
   assert.deepEqual([agreed.settings, agreed.from], [research.settings, fromTeams("Design", "Research")])

@@ -4,11 +4,12 @@ import type { XlsxWorkbook } from "@openwork/workbook";
 import { Menu } from "@base-ui/react/menu";
 import { Check, Download, Ellipsis, ExternalLink, Link, Maximize2, Minimize2, Share, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { artifactKind, artifactLink, extensionOf, tabType, type ArtifactKind } from "./artifact";
+import { artifactKind, artifactLink, extensionOf, openworkAppId, tabType, type ArtifactKind } from "./artifact";
 import { ArtifactIcon, useArtifactTitle } from "./artifact-card";
 import { downloadWorkbotFile, fetchWorkbotFileUrl, useWorkbotChat, useWorkbotFileBytes, useWorkbotFileUrl, useWorkbotImageUrl, useWorkbotPreview, useWorkbotPreviewPage, type WorkbotAttachment, type WorkbotPreview } from "./data";
 import { FileBadge } from "./files";
 import { WorkbotMarkdown } from "./markdown";
+import { OpenWorkApp } from "./openwork-app";
 
 /** The Office reader (and its XML parser) loads only when an Office file is previewed, not with every page. */
 const officeReader = () => import("@openwork/workbook");
@@ -56,7 +57,7 @@ export function ArtifactView({ file, onClose, expanded = false, onExpand }: { fi
           <X size={16} strokeWidth={1.75} aria-hidden />
         </button>
       </header>
-      <div className={`min-h-0 flex-1 bg-[var(--wb-tray)] ${kind === "html" ? "flex flex-col overflow-hidden" : "overflow-y-auto"}`}>
+      <div className={`min-h-0 flex-1 bg-[var(--wb-tray)] ${kind === "html" || kind === "app" ? "flex flex-col overflow-hidden" : "overflow-y-auto"}`}>
         <FilePreview key={file.id} file={file} />
       </div>
     </div>
@@ -149,15 +150,18 @@ function ArtifactMenu({ file, title, expanded, onExpand }: { file: WorkbotAttach
                 Open in new tab
               </Menu.Item>
             ) : null}
-            <Menu.Item className={itemClass} onClick={() => void downloadWorkbotFile(file, chat)}>
-              <Download size={16} strokeWidth={1.5} aria-hidden className="text-[var(--wb-muted)]" />
-              Download
-            </Menu.Item>
+            {/* An OpenWork App is not a file: there is nothing to download or hand to another app. */}
+            {kind === "app" ? null : (
+              <Menu.Item className={itemClass} onClick={() => void downloadWorkbotFile(file, chat)}>
+                <Download size={16} strokeWidth={1.5} aria-hidden className="text-[var(--wb-muted)]" />
+                Download
+              </Menu.Item>
+            )}
             <Menu.Item className={itemClass} closeOnClick={false} onClick={copy}>
               {copied ? <Check size={16} strokeWidth={1.5} aria-hidden className="text-[var(--wb-muted)]" /> : <Link size={16} strokeWidth={1.5} aria-hidden className="text-[var(--wb-muted)]" />}
               {copied ? "Link copied" : "Copy link"}
             </Menu.Item>
-            {canShare ? (
+            {canShare && kind !== "app" ? (
               <Menu.Item className={itemClass} onClick={() => void share()}>
                 <Share size={16} strokeWidth={1.5} aria-hidden className="text-[var(--wb-muted)]" />
                 Share
@@ -172,6 +176,7 @@ function ArtifactMenu({ file, title, expanded, onExpand }: { file: WorkbotAttach
 
 function FilePreview({ file }: { file: WorkbotAttachment }) {
   const kind = artifactKind(file);
+  if (kind === "app") return <OpenWorkApp appId={openworkAppId(file) ?? ""} title={file.name} />;
   if (kind === "image") return <ImagePreview file={file} />;
   if (kind === "pdf") return <PdfPreview file={file} />;
   if (kind === "video" || kind === "audio") return <MediaPreview file={file} kind={kind} />;
@@ -343,7 +348,7 @@ function DocumentText({ text }: { text: string }) {
 }
 
 /** Files read straight from their bytes: text, markdown, CSV, Excel and HTML. */
-function BytesPreview({ file, kind }: { file: WorkbotAttachment; kind: Exclude<ArtifactKind, "image" | "pdf" | "video" | "audio" | "slides" | "document" | "other"> }) {
+function BytesPreview({ file, kind }: { file: WorkbotAttachment; kind: Exclude<ArtifactKind, "image" | "pdf" | "video" | "audio" | "slides" | "document" | "app" | "other"> }) {
   const bytes = useWorkbotFileBytes(file.id, file.updatedAt);
   if (bytes.isError) return <NoPreview file={file} reason="This file couldn't load." />;
   if (!bytes.data) return <Loading />;

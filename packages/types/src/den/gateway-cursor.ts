@@ -1,4 +1,4 @@
-import { AUTO_ROUTER_THINKING_LEVELS, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router";
+import { AUTO_ROUTER_THINKING_LEVELS, autoRouterModelName, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router";
 
 /**
  * Cursor through the AI Gateway (feature `gatewayMemberApiKeys`).
@@ -118,6 +118,20 @@ export function parseClaudeCodeModelName(value: unknown): ParsedCursorModelName 
 }
 
 /**
+ * Claude Desktop in Gateway mode (feature `gatewayMemberApiKeys`) uses the Claude Code endpoint as its
+ * Gateway base URL, but its model picker keeps only ids that name a Claude model: one with claude,
+ * opus, sonnet or haiku in it and no other model family (gpt, gemini, deepseek...). This mirrors that
+ * check (Claude Desktop 5.x) on the name Claude Code uses, so setup can say which models it shows.
+ */
+const CLAUDE_DESKTOP_CLAUDE_WORDS = /claude|opus|sonnet|haiku|anthropic/;
+const CLAUDE_DESKTOP_OTHER_FAMILIES = /deepseek|gemini|gemma|glm|gpt|grok|kimi|llama|minimax|mistral|mixtral|moonshot|nemotron|openai|qwen|codex|ernie|hunyuan|doubao|nova-|phi-|yi-/;
+
+export function claudeDesktopListsModel(claudeCodeName: string): boolean {
+  const name = claudeCodeName.toLowerCase();
+  return CLAUDE_DESKTOP_CLAUDE_WORDS.test(name) && !CLAUDE_DESKTOP_OTHER_FAMILIES.test(name);
+}
+
+/**
  * The Codex CLI through the AI Gateway (feature `gatewayMemberApiKeys`) uses the same names with no
  * thinking level: Codex sends its own (`model_reasoning_effort`). A level in the name still wins.
  */
@@ -126,4 +140,32 @@ export const CODEX_BASE_URL_PATH = "/codex";
 /** `https://gateway.example/api/v1` becomes `https://gateway.example/api/v1/codex` (a Codex provider's base_url). */
 export function codexBaseUrl(gatewayApiBaseUrl: string): string {
   return `${gatewayApiBaseUrl.replace(/\/+$/, "")}${CODEX_BASE_URL_PATH}`;
+}
+
+/**
+ * Smart Routers (feature `autoRouter`) in the same tools: one name per router the member can use,
+ * built like a model's from the router's picker name ("Smart: Engineering") and the end of its id:
+ *
+ *   openwork/smart-<router name as a slug>-<last 4 characters of the router's id>
+ *   openwork/smart-engineering-x7q2
+ *
+ * Resolved the same way (id ending first, then slug). Smart picks the thinking level itself, so a
+ * level or `[1m]` marker on the name is ignored. The generic Chat Completions endpoint keeps taking
+ * `openwork-smart-<router id>`.
+ */
+export const SMART_ROUTER_TOOL_SLUG_PREFIX = "smart-";
+
+export function smartRouterToolName(input: { routerName: string; routerId: string }): string {
+  return cursorModelName({ name: autoRouterModelName(input.routerName), modelId: input.routerId });
+}
+
+/** Whether a parsed name has the shape of a Smart Router's (it may still name a model called "Smart …"). */
+export function isSmartRouterToolName(parsed: ParsedCursorModelName): boolean {
+  return parsed.slug.startsWith(SMART_ROUTER_TOOL_SLUG_PREFIX);
+}
+
+/** Finds the one router a Smart name means, like matchCursorModel. */
+export function matchSmartRouter<T extends { id: string; name: string }>(parsed: ParsedCursorModelName, routers: readonly T[]): CursorModelMatch<T> {
+  const match = matchCursorModel(parsed, routers.map((router) => ({ router, name: autoRouterModelName(router.name), modelId: router.id })));
+  return match.kind === "found" ? { kind: "found", model: match.model.router } : match;
 }

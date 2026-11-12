@@ -11,6 +11,7 @@ import { isOrganizationSsoReady } from "./sso-readiness.js"
 import { env } from "./env.js"
 import { isMicrosoftEntraManagedDomain } from "./sso-entra-domain.js"
 import { parseSsoDomains } from "./sso-domains.js"
+import { oidcIssuerFromInput } from "./sso-oidc-discovery.js"
 import { SSO_IDENTITY_EXTRA_FIELDS } from "./sso-jit.js"
 import { ORGANIZATION_SAML_WANT_ASSERTIONS_SIGNED } from "./sso-saml-policy.js"
 import { createSsoConfigRevision } from "./sso-test-lifecycle.js"
@@ -96,17 +97,29 @@ function isDevLoopbackIssuer(issuer: string) {
 }
 
 function getOidcDiscoveryUrl(issuer: string) {
-  return `${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`
+  return `${oidcIssuerFromInput(issuer).replace(/\/$/, "")}/.well-known/openid-configuration`
 }
 
 function normalizeIssuer(value: string) {
   return value.replace(/\/$/, "")
 }
 
+/**
+ * The OIDC settings an administrator entered cannot be used: discovery
+ * failed, or manual endpoints are incomplete. Routes answer 400 with the
+ * message, pointing at the issuer field.
+ */
+export class OidcConfigurationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "OidcConfigurationError"
+  }
+}
+
 async function resolveOidcEndpoints(input: OidcRegistrationInput) {
   if (input.skipDiscovery) {
     if (!input.authorizationEndpoint || !input.tokenEndpoint || !input.jwksEndpoint) {
-      throw new Error("Manual OIDC configuration requires authorization, token, and JWKS endpoints.")
+      throw new OidcConfigurationError("Manual OIDC configuration requires authorization, token, and JWKS endpoints.")
     }
 
     return {
@@ -122,17 +135,19 @@ async function resolveOidcEndpoints(input: OidcRegistrationInput) {
   const response = await fetch(getOidcDiscoveryUrl(input.issuer), {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(10_000),
+  }).catch(() => {
+    throw new OidcConfigurationError("OIDC discovery could not reach the issuer. Enter manual OIDC endpoints or enable skip discovery.")
   })
   if (!response.ok) {
-    throw new Error(`OIDC discovery failed with ${response.status}. Enter manual OIDC endpoints or enable skip discovery.`)
+    throw new OidcConfigurationError(`OIDC discovery failed with ${response.status}. Enter manual OIDC endpoints or enable skip discovery.`)
   }
 
-  const parsed = oidcDiscoverySchema.safeParse(await response.json())
+  const parsed = oidcDiscoverySchema.safeParse(await response.json().catch(() => null))
   if (!parsed.success) {
-    throw new Error("OIDC discovery document is missing required endpoints.")
+    throw new OidcConfigurationError("OIDC discovery document is missing required endpoints.")
   }
-  if (normalizeIssuer(parsed.data.issuer) !== normalizeIssuer(input.issuer)) {
-    throw new Error("OIDC discovery issuer does not match the configured issuer.")
+  if (normalizeIssuer(parsed.data.issuer) !== normalizeIssuer(oidcIssuerFromInput(input.issuer))) {
+    throw new OidcConfigurationError("OIDC discovery issuer does not match the configured issuer.")
   }
 
   return {
@@ -409,6 +424,10 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
   /** multipleSsoConnections: domains another connection verified need no new DNS record. */
   reuseVerifiedDomains?: boolean
 }) {
+  // An OIDC issuer pasted as its discovery URL is saved as the issuer itself:
+  // discovery would otherwise request the well-known path twice, and tokens
+  // name the issuer, not the discovery URL.
+  if (input.kind === "oidc") input = { ...input, issuer: oidcIssuerFromInput(input.issuer) }
   const domains = parseSsoDomains(input.domain)
   // primary throughout: each step reads back what Better Auth or the step before just wrote.
   const existing = input.target === undefined

@@ -26,8 +26,6 @@ const createSessionBody = z
     title: z.string().max(200).optional(),
     instructions: z.string().max(20_000).optional(),
     repeats: repeatLimitsSchema.optional(),
-    /** Model calls per turn for this conversation, instead of HEADLESS_MAX_STEPS: 0 for no limit, null to go back to the runner's. */
-    maxSteps: z.number().int().min(0).max(100_000).nullable().optional(),
     /** Keep files in this conversation (needs HEADLESS_FILES). Off unless asked for. */
     files: z.boolean().optional(),
     /** Give this conversation a Linux computer (needs HEADLESS_COMPUTER). Off unless asked for. */
@@ -488,6 +486,16 @@ export function createApp(input: {
     const savedKeys = store.savedFileKeys(id)
     if (!(await storage.deleteSession(id))) return c.json({ error: "unknown_session" }, 404)
     await input.files?.deleteSession(id, savedKeys)
+    return c.body(null, 204)
+  })
+
+  // Only the computer goes (its owner left the organization): the conversation, its files and its memory stay, and
+  // its next use makes a new computer.
+  app.delete("/v1/sessions/:id/computer", async (c) => {
+    const id = c.req.param("id")
+    if (!store.getSession(id)) return c.json({ error: "unknown_session" }, 404)
+    if (store.activeTurn(id)) return c.json({ error: "session_busy" }, 409)
+    await input.computer?.delete(id)
     return c.body(null, 204)
   })
 

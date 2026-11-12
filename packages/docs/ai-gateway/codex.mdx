@@ -13,6 +13,8 @@ Codex works best with OpenAI models, which get Codex's requests as they are.
 Other models (Claude, Gemini, DeepSeek and the rest) work too: AI Gateway
 answers Codex in the format it expects for every model.
 
+Using Codex in the ChatGPT desktop app? See [Use the Codex app](/ai-gateway/codex-desktop).
+
 ## Set it up
 
 Create a key in **My Library › Models** and pick **OpenAI Codex** under **Start
@@ -98,6 +100,10 @@ page rather than typing them, or pick one with `/model`.
   Codex works without it.
 - `/model` also lists Codex's own OpenAI models, after yours. They only work
   when your organization offers that model.
+- **[Smart Routers](/ai-gateway/auto-model-routing)** you can use are listed
+  after your models as `openwork/smart-<router name>-<4 characters>`. Smart
+  picks the model and thinking level for each prompt, so
+  `model_reasoning_effort` doesn't apply to them.
 
 ## When it doesn't work
 

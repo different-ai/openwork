@@ -58,21 +58,22 @@ describe("every connection is offered (workbotAgentBrief)", () => {
 
   test("What agents read lists every connection, MCP and Den's own, custom ones included, with no cap", () => {
     const view = groupSourceConnections(connections, { mode: "any" })
-    assert.deepEqual(view.other.map((entry) => entry.id), [GOOGLE.id, LINEAR.id, DESK.id, LEDGER.id, ...MANY.map((entry) => entry.id)], "Slack is team chat; everything else is in Other context")
-    assert.equal(view.other.length, 44)
+    assert.deepEqual(view.other.map((entry) => entry.id), [GOOGLE.id, SLACK.id, LINEAR.id, DESK.id, LEDGER.id, ...MANY.map((entry) => entry.id)], "every connection, Slack and Google Workspace included: chat and mail are read through them")
+    assert.equal(view.other.length, 45)
     assert.ok(view.other.every((entry) => entry.policy === "members"), "members choose until an admin decides")
     assert.equal(view.other.find((entry) => entry.id === GOOGLE.id)?.native, true)
-    assert.deepEqual(view.all.find((entry) => entry.id === GOOGLE.id)?.slots, ["calendar", "email", "other"], "Den's own: what it serves, and Other context")
-    assert.deepEqual(view.all.find((entry) => entry.id === DESK.id)?.slots, ["calendar", "email", "chat", "other"], "any MCP can go anywhere")
+    assert.deepEqual(view.all.find((entry) => entry.id === GOOGLE.id)?.slots, ["calendar", "other"], "Den's own: the calendar, and a connection of its own")
+    assert.deepEqual(view.all.find((entry) => entry.id === DESK.id)?.slots, ["other"], "an MCP is a connection of its own; the calendar is never picked")
+    assert.deepEqual(view.calendar.map((entry) => entry.id), [GOOGLE.id])
     assert.equal(view.all.length, connections.length)
   })
 
   test("off (`reviewed`): only services with reviewed read tools, exactly as before", () => {
     const view = groupSourceConnections(connections)
-    assert.deepEqual(view.other.map((entry) => entry.id), [LINEAR.id])
-    assert.deepEqual(view.other[0], { id: LINEAR.id, name: "Linear", url: LINEAR.url }, "no new fields")
+    assert.deepEqual(view.other.map((entry) => entry.id), [SLACK.id, LINEAR.id])
+    assert.deepEqual(view.other[1], { id: LINEAR.id, name: "Linear", url: LINEAR.url }, "no new fields")
     assert.equal(view.all.some((entry) => entry.id === DESK.id), false)
-    assert.deepEqual(view.all.find((entry) => entry.id === GOOGLE.id)?.slots, ["calendar", "email"])
+    assert.deepEqual(view.all.find((entry) => entry.id === GOOGLE.id)?.slots, ["calendar"], "Den's own provider is only the calendar: its mail isn't read")
   })
 
   test("a member sees every connection they can use; the admin's policy holds per connection", () => {
@@ -86,9 +87,8 @@ describe("every connection is offered (workbotAgentBrief)", () => {
     })
     assert.deepEqual(sources.map((source) => [source.id, source.kind, source.policy, source.on]), [
       ["calendar", "calendar", "everyone", true],
-      ["email", "email", "everyone", true],
-      ["chat", "chat", "everyone", true],
       [GOOGLE.id, "other", "members", false],
+      [SLACK.id, "other", "members", false],
       [DESK.id, "other", "everyone", true],
       [LEDGER.id, "other", "off", false],
       [MANY[0]!.id, "other", "members", true],
@@ -111,7 +111,7 @@ describe("every connection is offered (workbotAgentBrief)", () => {
     assert.equal(anyChange({ connections: { [DESK.id]: "everyone", [GOOGLE.id]: "members" } }), null)
     assert.equal(anyChange({ toolOverrides: { [DESK.id]: { close_ticket: "deny", ticket_report: "allow" } } }), null)
     assert.equal(anyChange({ toolOverrides: { emc_nope: { list: "allow" } } }), "No connection emc_nope in this organization.")
-    assert.equal(anyChange({ coreConnections: { calendar: [DESK.id] } }), null, "any MCP can serve calendar")
+    assert.equal(anyChange({ calendar: "members", connections: { [SLACK.id]: "everyone" } }), null, "the calendar's policy, and Slack like any connection")
     assert.equal(checkSourcesChange({ change: { connections: { [DESK.id]: "everyone" } }, connections }), "Agents can't read Lumen Support Desk yet.")
     assert.equal(checkSourcesChange({ change: { toolOverrides: { [DESK.id]: { close_ticket: "deny" } } }, connections }), "Choosing tools for agents isn't on for this organization.")
   })
@@ -123,7 +123,7 @@ describe("every connection is offered (workbotAgentBrief)", () => {
     assert.deepEqual(second.toolOverrides, { [DESK.id]: { close_ticket: "deny" }, [LEDGER.id]: { list_entries: "deny" } })
     const cleared = mergeAgentSourcesPolicy(second, { toolOverrides: { [DESK.id]: null, [LEDGER.id]: { list_entries: null } } })
     assert.equal(cleared.toolOverrides, undefined)
-    assert.equal(mergeAgentSourcesPolicy(second, { email: "off" }).toolOverrides?.[DESK.id]?.close_ticket, "deny", "other changes keep them")
+    assert.equal(mergeAgentSourcesPolicy(second, { calendar: "off" }).toolOverrides?.[DESK.id]?.close_ticket, "deny", "other changes keep them")
   })
 })
 
@@ -142,30 +142,35 @@ describe("the check's token carries exactly its read tools", () => {
   })
 
   test("a reviewed service's tools come from the token too, not from the list (an admin may have turned one off)", () => {
-    const allowlist = agentReadAllowlist(scopes({ kinds: ["chat"], connectionIds: [SLACK.id], tools: [{ connectionId: SLACK.id, names: ["slack_search_public"] }] }))
+    const allowlist = agentReadAllowlist(scopes({ kinds: [], connectionIds: [SLACK.id], tools: [{ connectionId: SLACK.id, names: ["slack_search_public"] }] }))
     assert.ok(allowlist)
     assert.equal(agentMayUseExternalTool(allowlist, SLACK, { name: "slack_search_public" }), true)
     assert.equal(agentMayUseExternalTool(allowlist, SLACK, { name: "slack_read_thread" }), false)
   })
 
-  test("Den's own provider in Other context: any GET outside calendar, mail and chat, except what an admin turned off", () => {
-    const allowlist = agentReadAllowlist(scopes({ kinds: ["email"], connectionIds: [GOOGLE.id], pairs: [{ kind: "email", connectionId: GOOGLE.id }], nativeReads: [{ connectionId: GOOGLE.id, denied: ["listDriveSharedLinks"] }] }))
+  test("Den's own provider as a connection: any GET outside the calendar (mail, files), except what an admin turned off", () => {
+    const allowlist = agentReadAllowlist(scopes({ kinds: [], connectionIds: [GOOGLE.id], nativeReads: [{ connectionId: GOOGLE.id, denied: ["listDriveSharedLinks"] }] }))
     assert.ok(allowlist)
     const op = (name: string, path: string, method = "GET") => ({ name, method, path })
     assert.equal(agentMayUseNative(allowlist, GOOGLE.id, op("listDriveFiles", "/v1/capabilities/google-workspace/drive-files")), true)
     assert.equal(agentMayUseNative(allowlist, GOOGLE.id, op("listDriveSharedLinks", "/v1/capabilities/google-workspace/drive-shared-links")), false, "turned off by an admin")
     assert.equal(agentMayUseNative(allowlist, GOOGLE.id, op("createDriveFile", "/v1/capabilities/google-workspace/drive-files", "POST")), false, "never a write")
-    assert.equal(agentMayUseNative(allowlist, GOOGLE.id, op("listGmailMessages", "/v1/capabilities/google-workspace/gmail-messages")), true, "email still reads under Email")
-    assert.equal(agentMayUseNative(allowlist, GOOGLE.id, op("listCalendarEvents", "/v1/capabilities/google-workspace/calendar-events")), false, "calendar is off, whatever Other context says")
+    assert.equal(agentMayUseNative(allowlist, GOOGLE.id, op("listGmailMessages", "/v1/capabilities/google-workspace/gmail-messages")), true, "mail is read through the connection")
+    assert.equal(agentMayUseNative(allowlist, GOOGLE.id, op("listCalendarEvents", "/v1/capabilities/google-workspace/calendar-events")), false, "the calendar is off, whatever the connection's policy says")
+    const withCalendar = agentReadAllowlist(scopes({ kinds: ["calendar"], connectionIds: [GOOGLE.id], pairs: [{ kind: "calendar", connectionId: GOOGLE.id }], nativeReads: [{ connectionId: GOOGLE.id, denied: ["listGmailMessages"] }] }))
+    assert.ok(withCalendar)
+    assert.equal(agentMayUseNative(withCalendar, GOOGLE.id, op("listCalendarEvents", "/v1/capabilities/google-workspace/calendar-events")), true)
+    assert.equal(agentMayUseNative(withCalendar, GOOGLE.id, op("listGmailMessages", "/v1/capabilities/google-workspace/gmail-messages")), false, "an admin turned mail off for agents on this connection")
   })
 
   test("off: a token without the marker keeps the reviewed lists, and a custom MCP reads nothing", () => {
-    const legacy = agentReadAllowlist(scopes({ kinds: ["chat"], connectionIds: [SLACK.id, DESK.id] }))
+    const legacy = agentReadAllowlist(scopes({ kinds: [], connectionIds: [SLACK.id, DESK.id] }))
     assert.ok(legacy)
     assert.equal(legacy.tools, null)
     assert.equal(agentMayUseExternalTool(legacy, SLACK, { name: "slack_read_thread" }), true)
     assert.equal(agentMayUseExternalTool(legacy, DESK, { name: "list_tickets", annotations: { readOnlyHint: true } }), false)
     assert.equal(agentMayUseNative(legacy, GOOGLE.id, { name: "listDriveFiles", method: "GET", path: "/v1/capabilities/google-workspace/drive-files" }), false)
+    assert.equal(agentMayUseNative(legacy, GOOGLE.id, { name: "listGmailMessages", method: "GET", path: "/v1/capabilities/google-workspace/gmail-messages" }), false, "no mail without the provider as a connection")
     assert.ok(!agentReadScopes({ kinds: [], connectionIds: [] }).includes(AGENT_TOOLS_SCOPE))
   })
 })
@@ -234,12 +239,13 @@ describe("what the pages show", () => {
     ])
   })
 
-  test("Den's own provider: its operations outside calendar, mail and chat; a write is locked", () => {
-    const view = nativeConnectionToolsView({ connectionId: GOOGLE.id, operations: OPERATIONS, overrides: {} })
-    assert.equal(view.coreSourcesElsewhere, true)
+  test("Den's own provider: its operations outside the calendar, mail included; a write is locked; an admin can turn mail off", () => {
+    const view = nativeConnectionToolsView({ connectionId: GOOGLE.id, operations: OPERATIONS, overrides: { listGmailMessages: "deny" } })
+    assert.equal(view.coreSourcesElsewhere, true, "the calendar is read under its own setting")
     assert.deepEqual(view.tools.map((tool) => [tool.name, tool.allowed, tool.reason, tool.locked]), [
       ["listDriveFiles", true, "native_read", false],
       ["createDriveFile", false, "native_write", true],
+      ["listGmailMessages", false, "admin_denied", false],
     ])
   })
 
@@ -251,6 +257,6 @@ describe("what the pages show", () => {
       listTools: async (connection) => (connection.id === DESK.id ? [{ name: "list_tickets" }, { name: "get_ticket" }] : connection.id === LEDGER.id ? [{ name: "post_entry" }] : null),
       nativeOperations: async () => OPERATIONS,
     })
-    assert.deepEqual(Object.fromEntries(counts), { [GOOGLE.id]: 1, [DESK.id]: 2, [LEDGER.id]: 0, [MANY[1]!.id]: null })
+    assert.deepEqual(Object.fromEntries(counts), { [GOOGLE.id]: 2, [DESK.id]: 2, [LEDGER.id]: 0, [MANY[1]!.id]: null }, "Google Workspace: its files and its mail")
   })
 })

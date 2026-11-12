@@ -3,6 +3,7 @@ import { recordFreeAutoSignIn } from "@openwork-ee/den-db";
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy";
 import { invalidateTeamInferenceOAuth, revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js";
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js";
+import { removeMemberWorkbotComputersInBackground } from "./workbot/member-computers.js";
 import {
   finishScimProvisionedMember,
   organizationAllowsProvisioning,
@@ -17,6 +18,7 @@ import { getInitialActiveOrganizationIdForUser } from "./active-organization.js"
 import { db } from "./db.js";
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js";
 import { env } from "./env.js";
+import { deploymentFeatureEnabled } from "./features.js";
 import { appLogger } from "./observability/logger.js";
 import {
   deleteMcpOAuthGrantFamilyForSession,
@@ -45,7 +47,7 @@ import {
   DEN_SESSION_UPDATE_AGE_IN_SECONDS,
 } from "./session-lifetime.js";
 import { userSessionExpiresAt } from "./session-security-lifetime.js";
-import { DEN_ACCOUNT_CONFIG, DEN_USER_CONFIG } from "./account-linking-policy.js";
+import { DEN_ACCOUNT_CONFIG, denUserConfig } from "./account-linking-policy.js";
 import { cache } from "./cache.js";
 import { lastSignInCookieChange, lastSignInCookieWrites } from "./last-sign-in-method.js";
 import { hashSessionTokens } from "./session-token.js";
@@ -893,7 +895,9 @@ export const auth = betterAuth({
     secret: env.betterAuthSecret,
   }),
   account: DEN_ACCOUNT_CONFIG,
-  user: DEN_USER_CONFIG,
+  user: denUserConfig({
+    emailFollowsProvider: () => deploymentFeatureEnabled("signInEmailSync"),
+  }),
   session: {
     expiresIn: DEN_SESSION_EXPIRES_IN_SECONDS,
     updateAge: DEN_SESSION_UPDATE_AGE_IN_SECONDS,
@@ -1032,6 +1036,8 @@ export const auth = betterAuth({
           // One fewer user: billing follows the lower count.
           await cache.org.deleteMembers(organizationId);
           await syncOrganizationBillingQuantities({ organizationId });
+          // Leaving, and any other deletion made through Better Auth: they keep no cloud computer.
+          removeMemberWorkbotComputersInBackground({ organizationId, memberId: normalizeDenTypeId("member", member.id) });
         },
       },
     },

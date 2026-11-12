@@ -9,11 +9,6 @@
 //              model, no secrets. Runs on every push.
 //   report     sets `contributor-pr/screen` from the scan and updates one
 //              PR comment.
-//   ai-screen  reads Warden's contributor-screen run (after a maintainer's
-//              /test), sets `contributor-pr/ai-screen`, updates one comment.
-//   review     reads a standard Warden run (diff-security-review and
-//              confidentiality-review), sets `contributor-pr/warden` and
-//              updates one PR comment.
 //
 // Runs only from the default branch. Never install, build, or run PR code.
 import { execFileSync } from "node:child_process";
@@ -22,11 +17,7 @@ import { pathToFileURL } from "node:url";
 import { machineryFiles } from "./contributor-policy.mjs";
 
 export const SCREEN_CONTEXT = "contributor-pr/screen";
-export const AI_SCREEN_CONTEXT = "contributor-pr/ai-screen";
-export const WARDEN_CONTEXT = "contributor-pr/warden";
 const SCREEN_MARKER = "<!-- contributor-pr:screen -->";
-const AI_SCREEN_MARKER = "<!-- contributor-pr:ai-screen -->";
-const WARDEN_MARKER = "<!-- contributor-pr:warden -->";
 
 // --- Hidden and malformed characters ----------------------------------------
 
@@ -155,7 +146,7 @@ export function isDatabasePath(path) {
   return DATABASE.test(path);
 }
 
-// Heuristics only; the contributor-screen Warden skill judges intent.
+// Heuristics only; a maintainer judges intent.
 export function encodedPayload(line) {
   if (/[A-Za-z0-9+/]{300,}={0,2}/.test(line)) return "a long base64-like string";
   if (/(?:[0-9a-fA-F]{2}){150,}/.test(line)) return "a long hex string";
@@ -168,11 +159,9 @@ export function encodedPayload(line) {
 
 // --- Text aimed at the AI reviewer -------------------------------------------------
 
-// Warden's model reads the diff and the head commit message. No prompt makes
-// a model immune to instructions hidden there, so this check does not use
-// one: text that tries to talk to an AI reviewer holds the PR for a person.
-// On the codebase as of this change, these match nothing outside CI and
-// Warden configuration, which forks cannot change through this path.
+// Coding agents and AI reviewers read diffs and commit messages. No prompt
+// makes a model immune to instructions hidden there, so this check does not
+// use one: text that tries to talk to an AI reviewer holds the PR for a person.
 const INJECTION = [
   [/\b(ignore|disregard|forget|override)\b[^.\n]{0,30}\b(all|any|the|your|previous|prior|above|earlier|preceding|system)\b[^.\n]{0,20}\b(instructions?|prompts?|rules|guidelines|directives|context)\b/i, "tells the reader to ignore its instructions"],
   [/<\/?\s*(skill_instructions|scope_reminder|evidence|role|task|system|assistant|developer|instructions)\s*>/i, "imitates a prompt section tag"],
@@ -307,7 +296,7 @@ export function scanRepository({ gitDir, base, head }) {
     }
     for (const hit of instructionHits(addedLines)) result.injection.push({ path: file.path, ...hit });
   }
-  // Commit messages reach the model too. Each raw commit object is read on
+  // Commit messages reach AI readers too. Each raw commit object is read on
   // its own, so no byte in a message can act as a delimiter and hide the
   // rest. The message starts after the first blank line of the headers.
   const commits = git("rev-list", "--max-count=500", `${base}..${head}`).toString().split("\n").filter(Boolean);
@@ -323,45 +312,6 @@ export function scanRepository({ gitDir, base, head }) {
     for (const hit of instructionHits(messageLines)) result.injection.push({ path: where, ...hit });
   }
   return result;
-}
-
-// --- Warden output --------------------------------------------------------------
-
-// Reads Warden CLI JSONL (`-o`). Fails closed: anything unexpected is
-// incomplete. When the analysis ran but stopped early (failed chunks, files
-// over the size limits), the findings it did produce are still returned with
-// complete: false, so the comment can show them; it is never clear.
-export function parseWardenJsonl(text, expectedSkills) {
-  const records = [];
-  for (const line of (text ?? "").split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      records.push(JSON.parse(line));
-    } catch {
-      return { complete: false, reason: "unreadable-output", findings: [] };
-    }
-  }
-  const summary = records.find((record) => record?.type === "summary");
-  if (!summary) return { complete: false, reason: "missing-summary", findings: [] };
-  const chunks = records.filter((record) => record !== summary && typeof record?.skill === "string");
-  const unexpected = chunks.find((chunk) => !expectedSkills.includes(chunk.skill));
-  if (unexpected) return { complete: false, reason: `unexpected-skill:${unexpected.skill}`, findings: [] };
-  const findings = chunks.flatMap((chunk) => (Array.isArray(chunk.findings) ? chunk.findings : []).map((finding) => ({ ...finding, skill: chunk.skill })));
-  const valid = findings.every((finding) => ["high", "medium", "low"].includes(finding.severity) && typeof finding.title === "string");
-  if (!valid || findings.length !== summary.totalFindings) return { complete: false, reason: "inconsistent-findings", findings: [] };
-  const skippedByFile = new Map();
-  for (const chunk of chunks) {
-    for (const file of Array.isArray(chunk.skippedFiles) ? chunk.skippedFiles : []) {
-      if (typeof file?.filename === "string" && String(file.reason).startsWith("limit:")) skippedByFile.set(file.filename, file.reason);
-    }
-  }
-  const skipped = skippedByFile.size;
-  if (summary.error || summary.failedSkills?.length || summary.totalFailedHunks || summary.totalFailedExtractions ||
-      chunks.some((chunk) => chunk.status === "error" || chunk.error)) {
-    return { complete: false, reason: "analysis-failed", findings, skipped };
-  }
-  if (skipped) return { complete: false, reason: "files-over-size-limits", findings, skipped };
-  return { complete: true, findings, skipped: 0 };
 }
 
 // --- Decisions ------------------------------------------------------------------
@@ -380,26 +330,6 @@ export function screenDecision(scan) {
   if (blocked.length) return { verdict: "blocked", state: "failure", description: `Blocked: ${blocked.join(", ")}`, blocked, held };
   if (held.length) return { verdict: "held", state: "pending", description: `Needs maintainer review: ${held.join(", ")}`, blocked, held };
   return { verdict: "clean", state: "success", description: "No hidden characters, dependency, database or obfuscation concerns", blocked, held };
-}
-
-// Warden's contributor-screen skill, run only after a maintainer's /test.
-export function aiScreenDecision(warden) {
-  if (!warden.complete) return { verdict: "flagged", state: "failure", description: `AI screen incomplete (${warden.reason})` };
-  const serious = warden.findings.filter((finding) => finding.severity !== "low").length;
-  if (serious) return { verdict: "flagged", state: "failure", description: `${serious} high or medium AI screen finding(s)` };
-  return { verdict: "clean", state: "success", description: "No hidden behavior, obfuscation or supply-chain concerns found" };
-}
-
-export function reviewDecision(warden) {
-  if (!warden.complete && warden.reason === "files-over-size-limits") {
-    return { verdict: "too-big", state: "failure", description: "PR too big for Warden to review in full; split it" };
-  }
-  if (!warden.complete) return { verdict: "incomplete", state: "failure", description: `Warden review incomplete (${warden.reason})` };
-  const confidentiality = warden.findings.filter((finding) => finding.skill === "confidentiality-review").length;
-  const serious = warden.findings.filter((finding) => finding.skill === "diff-security-review" && finding.severity !== "low").length;
-  if (confidentiality) return { verdict: "flagged", state: "failure", description: `${confidentiality} confidentiality finding(s)` };
-  if (serious) return { verdict: "flagged", state: "failure", description: `${serious} high or medium security finding(s)` };
-  return { verdict: "clear", state: "success", description: "No high or medium security findings, no confidentiality findings" };
 }
 
 // --- Rendering ------------------------------------------------------------------
@@ -453,41 +383,13 @@ export function renderScreenComment({ sha, decision, scan, runUrl }) {
     lines.push(...list(scan.encoded, (item) => `${where(item)}: ${item.reason}`), "");
   }
   if (scan.injection?.length) {
-    lines.push("**Text that looks like instructions to an AI reviewer.** Warden's results on this commit can't be trusted until a person reads these lines:", "");
+    lines.push("**Text that looks like instructions to an AI reviewer.** A person must read these lines before any AI review of this commit is trusted:", "");
     lines.push(...list(scan.injection, (item) => `${where(item)}: ${item.reason}`), "");
   }
   if (decision.verdict !== "blocked") {
     lines.push("", "Nothing else runs yet. A maintainer reviews the changes" + (decision.verdict === "held" ? ", including the items above," : "") +
-      " then comments `/test` to start the AI screen, the tests and the Warden security review.");
+      " then comments `/test` to start the tests.");
   }
-  return lines.join("\n");
-}
-
-export function renderAiScreenComment({ sha, decision, warden, runUrl }) {
-  const lines = [AI_SCREEN_MARKER, `### AI screen: ${decision.verdict === "clean" ? "clear" : "needs review"}`, "", `Commit \`${sha.slice(0, 10)}\` · [run](${runUrl})`, "", decision.description + "."];
-  if (!warden.complete) lines.push("", "The AI screen didn't finish, so it found nothing either way.");
-  if (warden.findings.length) {
-    lines.push("", ...list(warden.findings, (finding) =>
-      `**${finding.severity}**: ${safe(finding.title, 200)}${finding.location?.path ? ` (${where({ path: finding.location.path, line: finding.location.startLine })})` : ""}<br>${safe(finding.description, 800)}`));
-  }
-  lines.push("", decision.verdict === "clean"
-    ? "The tests and the Warden security review are starting."
-    : "Tests have not started. Review these findings; to run the tests and security review anyway, comment `/test` again.");
-  return lines.join("\n");
-}
-
-export function renderReviewComment({ sha, decision, warden, runUrl }) {
-  const lines = [WARDEN_MARKER, `### Warden review: ${decision.verdict === "clear" ? "clear" : "not clear"}`, "", `Commit \`${sha.slice(0, 10)}\` · [run](${runUrl})`, "", decision.description + "."];
-  if (warden.skipped) lines.push("", `Warden skipped ${warden.skipped} file(s) over its size limits, so this PR can't be fully reviewed. Split it into smaller PRs (under 400 files and 60,000 changed lines each).`);
-  if (!warden.complete && warden.findings.length) lines.push("", "Findings from the part that was reviewed (the review is incomplete, so there may be more):");
-  const security = warden.findings.filter((finding) => finding.skill === "diff-security-review");
-  const confidentiality = warden.findings.length - security.length;
-  if (security.length) {
-    lines.push("", ...list(security, (finding) =>
-      `**${finding.severity}**: ${safe(finding.title, 200)}${finding.location?.path ? ` (${where({ path: finding.location.path, line: finding.location.startLine })})` : ""}<br>${safe(finding.description, 800)}`));
-  }
-  // Confidentiality findings could name the identity the rule protects.
-  if (confidentiality) lines.push("", `${confidentiality} confidentiality finding(s); details are in the run log for maintainers.`);
   return lines.join("\n");
 }
 
@@ -546,14 +448,6 @@ async function output(name, value) {
   if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
 }
 
-async function readOptional(path) {
-  try {
-    return await readFile(path, "utf8");
-  } catch {
-    return "";
-  }
-}
-
 async function main(mode) {
   if (mode === "scan") {
     const scan = scanRepository({ gitDir: env("PR_GIT_DIR"), base: env("MERGE_BASE"), head: env("HEAD_SHA") });
@@ -574,26 +468,6 @@ async function main(mode) {
     await upsertComment(repo, number, SCREEN_MARKER, renderScreenComment({ sha, decision, scan, runUrl }));
     await output("verdict", decision.verdict);
     console.log(`${SCREEN_CONTEXT} on ${sha}: ${decision.verdict} (${decision.description})`);
-    return;
-  }
-
-  if (mode === "ai-screen") {
-    const warden = parseWardenJsonl(await readOptional(env("WARDEN_JSONL")), ["contributor-screen"]);
-    const decision = aiScreenDecision(warden);
-    await setStatus(repo, sha, AI_SCREEN_CONTEXT, decision, runUrl);
-    await upsertComment(repo, number, AI_SCREEN_MARKER, renderAiScreenComment({ sha, decision, warden, runUrl }));
-    await output("verdict", decision.verdict);
-    console.log(`${AI_SCREEN_CONTEXT} on ${sha}: ${decision.verdict} (${decision.description})`);
-    return;
-  }
-
-  if (mode === "review") {
-    const warden = parseWardenJsonl(await readOptional(env("WARDEN_JSONL")), ["diff-security-review", "confidentiality-review"]);
-    const decision = reviewDecision(warden);
-    await setStatus(repo, sha, WARDEN_CONTEXT, decision, runUrl);
-    await upsertComment(repo, number, WARDEN_MARKER, renderReviewComment({ sha, decision, warden, runUrl }));
-    await output("verdict", decision.verdict);
-    console.log(`${WARDEN_CONTEXT} on ${sha}: ${decision.verdict} (${decision.description})`);
     return;
   }
 

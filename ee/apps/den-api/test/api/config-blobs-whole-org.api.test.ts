@@ -262,7 +262,7 @@ const usage = await ok(apiA("GET", "/v1/audit/usage"), "audit usage")
 await ok(apiA("PATCH", "/v1/audit/settings", { captureOn: false, expectedRevision: Number(field(usage.body, "policy", "revision")) }), "audit off")
 await ok(apiA("PUT", "/v1/org/workbot-settings/proactive", {
   enabled: true, leadMinutes: 30, startHour: 9, dailyCap: 5, membersStart: "opted_out",
-  sources: { email: "members" }, responsibilities: { meeting_prep: false }, instructions: "Keep it short.",
+  sources: { calendar: "members" }, responsibilities: { meeting_prep: false }, instructions: "Keep it short.",
 }), "members' agents")
 await ok(apiA("PUT", `/v1/org/workbot-settings/teams/${platform}`, { name: { inherit: false, value: "Scout" }, enabled: { inherit: false, value: false } }), "team Workbot settings")
 // The "Your agent" template that save created, shared with everyone: still workbot.proactive's, never plugins.skills'.

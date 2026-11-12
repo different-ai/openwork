@@ -9,6 +9,7 @@ export { HeadlessThreadError, isHeadlessModelAccessError } from "./errors.js";
 export { hasAssistantReplySince, toTranscript, toTranscriptMessage } from "./transcript.js";
 export { isRunning } from "./wire.js";
 export { latestStep, LATEST_STEP_MAX_LENGTH, stepSentence } from "./latest-step.js";
+export { HEADLESS_THREAD_PENDING_ITEMS_MAX } from "./pending.js";
 export type {
   AgentSessionClient,
   CreateThreadInput,

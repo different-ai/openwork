@@ -180,9 +180,17 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
   },
   automationRunner: {
     onCredentialRejected(callback) {
-      const handler = () => callback();
+      const handler = (_event, rejection) => callback(rejection);
       ipcRenderer.on(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT, handler);
       return () => ipcRenderer.removeListener(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT, handler);
+    },
+  },
+  remoteSessionAccess: {
+    get() {
+      return ipcRenderer.invoke("openwork:remote-session-access:get");
+    },
+    set(mode) {
+      return ipcRenderer.invoke("openwork:remote-session-access:set", mode);
     },
   },
   fileSystem: {

@@ -12,6 +12,7 @@ import { addressFor, ScreencastViewer, type ScreencastPage } from "./screencast"
 import { allowViewFrames, captureFrame, forgetViewFrames, frameKey, lastFrame, subscribeFrame, viewFramesDenied } from "./frame-cache";
 import { computerViews, errorMessage, workbotHost } from "./host";
 import { inChat, useWorkbotChat } from "./data";
+import { taskHeader } from "./computer-work";
 
 const viewerSchema = z.union([z.object({ state: z.literal("paused") }), z.object({ state: z.literal("connected"), url: z.string().url(), expiresAt: z.number(), paused: z.boolean() })]);
 const button = "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-chip)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
@@ -37,7 +38,7 @@ export function openBrowserPage(id: string) {
  * Both views belong to the main conversation's computer. noVNC carries the desktop's pixels and native input;
  * watching the browser streams the page itself instead.
  */
-export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onViewChange, onContextChange, task, onClose, onStop, expanded = false, onExpand }: {
+export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onViewChange, onContextChange, task, surface = "browser", onClose, onStop, expanded = false, onExpand }: {
   onTeachingChange?(context: BrowserTeachingContext | undefined): void;
   onRun?(text: string): void | Promise<void>;
   canTeach?: boolean;
@@ -45,6 +46,8 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   /** The tab in front of the Browser view, for the chat beside it; null when none is on screen. */
   onContextChange?(context: WorkbotViewContext | null): void;
   task?: { id: string; title: string; status: "working" | "completed" | "failed"; reason?: string };
+  /** Which view a task's card opened beside the chat: its browser, or the rest of its computer. Only with `task`. */
+  surface?: ComputerView;
   onClose?(): void;
   onStop?(): void | Promise<void>;
   expanded?: boolean;
@@ -62,18 +65,18 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   const [stopping, setStopping] = useState(false);
   const [stopped, setStopped] = useState(false);
   const views = computerViews(host);
-  const [view, setViewState] = useState<ComputerView>(() => task ? "browser" : viewFromLocation(views));
-  useEffect(() => { if (task) setViewState("browser"); }, [task?.id]);
+  const [view, setViewState] = useState<ComputerView>(() => task ? surface : viewFromLocation(views));
+  useEffect(() => { if (task) setViewState(surface); }, [task?.id, surface]);
   const setView = (next: ComputerView) => {
     if (next === view) return;
     window.history.pushState(null, "", `/${next}${window.location.search}`);
     setViewState(next);
   };
   useEffect(() => {
-    const sync = () => { if (/^\/(browser(\/[a-z0-9]{1,16})?|computer)\/?$/.test(window.location.pathname)) setViewState(task ? "browser" : viewFromLocation(computerViews(workbotHost()))); };
+    const sync = () => { if (/^\/(browser(\/[a-z0-9]{1,16})?|computer)\/?$/.test(window.location.pathname)) setViewState(task ? surface : viewFromLocation(computerViews(workbotHost()))); };
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
-  }, [task]);
+  }, [task, surface]);
   useEffect(() => { onViewChange?.(view); }, [view, onViewChange]);
   const [control, setControl] = useState(false);
   const [teachOpen, setTeachOpen] = useState(false);
@@ -87,18 +90,25 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [changing, setChanging] = useState(false);
+  // The person rebuilt the computer from this task's view, which stopped the task.
+  const [rebuilt, setRebuilt] = useState(false);
+  useEffect(() => { setRebuilt(false); }, [task?.id, chat]);
+  // Still waiting for the computer after a while: Rebuild is offered beside the wait, not only once it has failed.
+  const [slow, setSlow] = useState(false);
   const [livePage, setLivePage] = useState<ScreencastPage | null>(null);
   const previewEnabled = Boolean(host.identity && (view === "browser" || host.browserPreview));
+  // A browser task keeps its own pictures; the computer's are kept for the view, where its cards read them.
+  const frameTask = view === "browser" ? task?.id : undefined;
   const [denied, setDenied] = useState(() => viewFramesDenied(glimpseKey(chat, view)));
   const deniedRef = useRef(denied);
-  const [snapshot, setSnapshot] = useState(() => previewEnabled ? lastFrame(glimpseKey(chat, view, task?.id)) : null);
+  const [snapshot, setSnapshot] = useState(() => previewEnabled ? lastFrame(glimpseKey(chat, view, frameTask)) : null);
   // A past task keeps its own final picture even when today's browser is opened from that card.
   const captureKey = useRef(glimpseKey(chat, view));
-  captureKey.current = glimpseKey(chat, view, task?.status === "working" ? task.id : undefined);
+  captureKey.current = glimpseKey(chat, view, task?.status === "working" ? frameTask : undefined);
   const [stream, setStream] = useState<ScreencastViewer | null>(null);
   const identity = host.identity ? `${host.identity.organizationId}:${host.identity.principalId}` : "";
   useLayoutEffect(() => {
-    const key = glimpseKey(chat, view, task?.id);
+    const key = glimpseKey(chat, view, frameTask);
     const read = () => {
       const blocked = viewFramesDenied(key);
       deniedRef.current = blocked; setDenied(blocked);
@@ -107,7 +117,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
     };
     read();
     return subscribeFrame(key, read);
-  }, [identity, chat, view, task?.id, previewEnabled]);
+  }, [identity, chat, view, frameTask, previewEnabled]);
   useEffect(() => { setLivePage(null); }, [chat, view, identity]);
   useEffect(() => { setStopped(false); }, [task?.id, task?.title, task?.status, chat]);
   useEffect(() => {
@@ -131,14 +141,14 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
     const target = screen.current;
     // Nobody watching a hidden tab, so stop streaming until it is shown again.
     if (!target || paused || away) return;
-    setSnapshot(previewEnabled ? lastFrame(glimpseKey(chat, view, task?.id)) : null);
+    setSnapshot(previewEnabled ? lastFrame(glimpseKey(chat, view, frameTask)) : null);
     setError(null); setConnected(false); setReconnecting(false); setUpdating(false); setStarting(false); setStream(null);
     const disconnect = connectDesktopViewer(target, host, { view, control, chat, wake: true }, {
       paused: () => setPaused(true),
       agentPaused: setAgentPaused,
       connected: () => { deniedRef.current = false; setDenied(false); setConnected(true); setReconnecting(false); setUpdating(false); setStarting(false); setError(null); },
       starting: () => setStarting(true),
-      reconnecting: () => { if (previewEnabled && !deniedRef.current) { captureFrame(target, captureKey.current); setSnapshot(lastFrame(glimpseKey(chat, view, task?.id))); } setConnected(false); setReconnecting(true); },
+      reconnecting: () => { if (previewEnabled && !deniedRef.current) { captureFrame(target, captureKey.current); setSnapshot(lastFrame(glimpseKey(chat, view, frameTask))); } setConnected(false); setReconnecting(true); },
       updating: () => { setConnected(false); setUpdating(true); },
       failed: (message, blocked = false) => {
         if (blocked) { deniedRef.current = true; setDenied(true); setSnapshot(null); setLivePage(null); setStream(null); }
@@ -152,6 +162,12 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
       disconnect();
     };
   }, [host, identity, chat, view, control, paused, away, revision, task?.id, previewEnabled]);
+  useEffect(() => {
+    setSlow(false);
+    if (connected || paused || away || error || denied || updating || changing) return;
+    const timer = setTimeout(() => setSlow(true), REBUILD_OFFER_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, [connected, paused, away, error, denied, updating, changing, revision, chat, view, control]);
   useEffect(() => {
     if (!connected || !previewEnabled || denied) return;
     const capture = () => { if (screen.current && !deniedRef.current) captureFrame(screen.current, captureKey.current); };
@@ -167,6 +183,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
       const { response, payload } = await host.requestJson(inChat("/v1/workbot/computer/action", chat), { method: "POST", body: JSON.stringify({ action: next }) }, 195_000);
       if (!response.ok) throw new Error(errorMessage(payload, "Your computer didn't respond. Try again."));
       if (next === "continue" || next === "rebuild") { setControl(false); setAgentPaused(false); }
+      if (next === "rebuild" && task) setRebuilt(true);
       setPaused(next === "pause");
       setRevision(current => current + 1);
       return true;
@@ -175,7 +192,8 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   };
 
   const title = task?.title || (view === "browser" ? "Workbot's browser" : "Workbot's computer");
-  const status = task?.status === "failed" ? "Failed" : task?.status === "completed" ? "Completed" : stopped ? "Stopped" : control && connected ? "You have control" : error ? "Disconnected" : paused ? "Paused" : updating ? "Updating" : starting ? "Starting" : reconnecting ? "Reconnecting" : agentPaused ? "Waiting for you" : "Working";
+  const header = taskHeader(task, rebuilt);
+  const status = header ? header.status : stopped ? "Stopped" : control && connected ? "You have control" : error ? "Disconnected" : paused ? "Paused" : updating ? "Updating" : starting ? "Starting" : reconnecting ? "Reconnecting" : agentPaused ? "Waiting for you" : "Working";
   const hostname = (() => { try { return new URL(frontUrl).hostname; } catch { return ""; } })();
   const stop = async () => {
     if (stopping) return;
@@ -213,7 +231,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
       <div className="min-w-0 text-center">
         <h2 className="truncate text-[14px] font-medium text-[var(--wb-text)]" title={title}>{title}</h2>
         <div role="status" className="flex min-w-0 items-center justify-center gap-1.5 text-[12px] text-[var(--wb-muted)]">
-          <span aria-hidden className={`size-1.5 shrink-0 rounded-full ${task?.status === "failed" || error ? "bg-[var(--wb-danger)]" : task?.status === "working" && !stopped ? "workbot-presence-dot" : "bg-current"}`} />
+          <span aria-hidden className={`size-1.5 shrink-0 rounded-full ${header?.failed || error ? "bg-[var(--wb-danger)]" : task?.status === "working" && !stopped && !header ? "workbot-presence-dot" : "bg-current"}`} />
           <span className="shrink-0">{status}</span>{hostname ? <><span aria-hidden>·</span><span className="truncate">{hostname}</span></> : null}
         </div>
       </div>
@@ -223,7 +241,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
       </div>
     </header>
     {shareError || shared ? <p role="status" className="px-4 py-1 text-[12px] text-[var(--wb-muted)]">{shareError ?? "Link copied"}</p> : null}
-    {task?.reason ? <p role="status" className="px-4 py-2 text-[13px] text-[var(--wb-muted)]">{task.reason}</p> : null}
+    {header?.reason ? <p role="status" className="px-4 py-2 text-[13px] text-[var(--wb-muted)]">{header.reason}</p> : null}
     {!task && views.length > 1 ? <div className="flex shrink-0 items-center gap-1 border-b border-[var(--wb-hairline)] px-3 py-1" role="group" aria-label="Computer view">
       {views.map(value => <button key={value} type="button" aria-pressed={view === value} disabled={recording} onClick={() => setView(value)} className={`${button} ${view === value ? "bg-[var(--wb-chip)]" : ""}`}>{value === "browser" ? "Browser" : "Computer"}</button>)}
     </div> : null}
@@ -232,11 +250,11 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
       {!denied && !connected && snapshot ? <img src={snapshot} alt="Last browser frame" className="pointer-events-none absolute inset-0 h-full w-full object-contain object-top" /> : null}
       {!connected && !snapshot ? <BrowserLoading toolbar={view === "browser" && !livePage} /> : null}
       <div ref={screen} className={`relative h-full w-full ${paused || error || denied ? "invisible" : ""}`} aria-label={`${view === "browser" ? "Browser" : "Computer"} live view`} aria-busy={!connected && !error} />
-      {paused || error ? <div className="absolute inset-x-3 bottom-3 flex flex-col items-center justify-center gap-3 rounded-xl bg-[var(--wb-surface)] p-4 text-center shadow-[var(--wb-card-shadow)]">
+      {paused || error || slow ? <div className="absolute inset-x-3 bottom-3 flex flex-col items-center justify-center gap-3 rounded-xl bg-[var(--wb-surface)] p-4 text-center shadow-[var(--wb-card-shadow)]">
         {view === "browser" ? <Globe size={24} strokeWidth={1.5} className="text-[var(--wb-muted)]" aria-hidden /> : <Monitor size={24} strokeWidth={1.5} className="text-[var(--wb-muted)]" aria-hidden />}
-        <p role="alert" className="text-[14px] text-[var(--wb-text)]">{error ?? "The browser is paused. Resume to keep browsing."}</p>
+        <p role={paused || error ? "alert" : "status"} className="text-[14px] text-[var(--wb-text)]">{error ?? (paused ? "The browser is paused. Resume to keep browsing." : "Your computer is taking longer than usual to start. Keep waiting, or rebuild it.")}</p>
         <div className="flex flex-wrap items-center justify-center gap-1">
-          <button type="button" className={button} disabled={changing} onClick={() => paused ? void action("resume") : setRevision(current => current + 1)}>{paused ? <Play size={14} aria-hidden /> : <RotateCw size={14} aria-hidden />}{paused ? "Resume" : "Reconnect"}</button>
+          {!paused && !error ? null : <button type="button" className={button} disabled={changing} onClick={() => paused ? void action("resume") : setRevision(current => current + 1)}>{paused ? <Play size={14} aria-hidden /> : <RotateCw size={14} aria-hidden />}{paused ? "Resume" : "Reconnect"}</button>}
           {paused || denied ? null : <RebuildComputer disabled={changing} onRebuild={() => void action("rebuild")} />}
         </div>
       </div> : null}
@@ -432,6 +450,8 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
 
 /** How long a computer may take to answer before the view says it is starting up. */
 const STARTING_AFTER_MS = 8_000;
+/** A computer that is ready connects in a second or two; past this, the person may rather rebuild it than keep waiting. */
+const REBUILD_OFFER_AFTER_MS = 15_000;
 /** How long an open connection has to draw its first picture before the view gives up on it. */
 const FIRST_PICTURE_MS = 15_000;
 

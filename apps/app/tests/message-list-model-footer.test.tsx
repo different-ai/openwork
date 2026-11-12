@@ -205,6 +205,14 @@ test("live model: the Working line names the model writing this turn, revealed o
   expect(line?.textContent).toMatch(/^Working \S+ · Writing with Claude Sonnet$/)
   expect(caption?.closest(".ow-text-shimmer")).toBeNull()
   expect(caption?.previousElementSibling?.className).toContain("ow-text-shimmer")
+  // The name is plain text on the line's own baseline, level with "Working".
+  // Only the logo is its own box, so the line keeps one height with or without it.
+  expect(caption?.lastChild?.nodeType).toBe(Node.TEXT_NODE)
+  expect(caption?.lastChild?.textContent).toBe("Claude Sonnet")
+  const logo = caption?.querySelector("[data-working-model-logo]")
+  expect(logo?.textContent).toBe("")
+  expect(logo?.className).toContain("size-3")
+  expect(caption?.querySelector(".inline-flex:not([data-working-model-logo])")).toBeNull()
   // Revealed by hovering the Working line; always shown on touch.
   expect(line?.className).toContain("group/working")
   expect(caption?.className).toContain("opacity-0")

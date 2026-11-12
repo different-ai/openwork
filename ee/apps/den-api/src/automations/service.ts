@@ -23,8 +23,9 @@ import type {
 } from "@openwork/types/automations"
 import { env } from "../env.js"
 import { isActiveAutomationOwner, resolveAutomationModelAccess } from "./authority.js"
+import { runnerStanding } from "../computer-disconnect.js"
 import { shouldApplyAutomationModelAccessFailure } from "./model-attention-rollout.js"
-import { automationRepository, runWorkspaceId } from "./repository.js"
+import { automationDesktopLeaseOwner, automationRepository, runWorkspaceId, type StoredRunnerSessionReport } from "./repository.js"
 import { recordAutomationRunCompleted, recordAutomationRunStarted } from "./audit.js"
 import { validateWorkflowAutomationAction } from "../workflows.js"
 import type { CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
@@ -85,7 +86,7 @@ export type DesktopRunnerScope = OwnerScope & {
   capabilities?: readonly AutomationDesktopRunnerCapability[]
 }
 
-const desktopLeaseOwner = (scope: DesktopRunnerScope) => `desktop:${scope.ownerMemberId}:${scope.runnerId}`
+const desktopLeaseOwner = automationDesktopLeaseOwner
 
 type ModelSelection = { providerId: string; modelId: string; variant?: string | null }
 
@@ -662,7 +663,7 @@ export class AutomationService {
     // full runtime; an interrupted run is recovered after its lease expires.
   }
 
-  registerDesktopRunner(scope: OwnerScope, registration: AutomationDesktopRunnerRegistration) {
+  registerDesktopRunner(scope: OwnerScope, registration: AutomationDesktopRunnerRegistration, authSessionId: string | null = null) {
     return automationRepository.registerDesktopRunner({
       organizationId: scope.organizationId,
       ownerMemberId: scope.ownerMemberId,
@@ -673,13 +674,14 @@ export class AutomationService {
       appVersion: registration.appVersion,
       platform: registration.platform,
       concurrency: registration.concurrency,
+      authSessionId,
       now: Date.now(),
     })
   }
 
-  /** Runner tokens are revoked in effect the moment the owner leaves the org. */
-  isActiveRunnerOwner(scope: OwnerScope) {
-    return isActiveAutomationOwner(scope)
+  /** Runner tokens are revoked in effect the moment the owner leaves the org or the computer is disconnected. */
+  runnerStanding(scope: DesktopRunnerScope) {
+    return runnerStanding(scope)
   }
 
   /** False when the runner has no registration to attach the report to. */
@@ -689,6 +691,18 @@ export class AutomationService {
       ownerMemberId: scope.ownerMemberId,
       runnerId: scope.runnerId,
       inventory,
+      now: Date.now(),
+    })
+  }
+
+  /** False when the runner has no registration to attach the report to. */
+  saveDesktopRunnerSessions(scope: DesktopRunnerScope, report: StoredRunnerSessionReport) {
+    return automationRepository.saveDesktopRunnerSessions({
+      organizationId: scope.organizationId,
+      ownerMemberId: scope.ownerMemberId,
+      runnerId: scope.runnerId,
+      access: report.access,
+      sessions: report.sessions,
       now: Date.now(),
     })
   }

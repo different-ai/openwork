@@ -1,5 +1,4 @@
 import {
-  AGENT_CORE_SOURCES,
   type AgentBriefPolicyInput,
   type AgentSourcesPolicy,
   type AgentSourcesPolicyInput,
@@ -50,10 +49,8 @@ export function agentToolsQueryKey(orgId: string, connectionId: string, scope: A
 /** The "Last 7 days" table on Manage › Workbot, which counts every member's agent whatever their team. */
 export const AGENT_HEALTH_ANCHOR = "agent-health";
 
-/** The label of the switch that turns members' agents on. */
-export function agentsSwitchLabel(scope: AgentPolicyScope): string {
-  return scope.kind === "team" ? "Agents for this team" : "Agents for everyone";
-}
+/** The label of the switch that turns members' agents on, for Everyone or for a team. */
+export const AGENTS_SWITCH_LABEL = "Proactive Mode";
 
 function sameIds(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
   if (!left || !right) return left === right;
@@ -66,18 +63,7 @@ function union(left: object | undefined, right: object | undefined): string[] {
 
 /** What to send so that Everyone's sources become the team's again: only what differs, null where the team had nothing. */
 function restoreSources(team: AgentSourcesPolicy, everyone: AgentSourcesPolicy): AgentSourcesPolicyInput {
-  const change: AgentSourcesPolicyInput = { calendar: team.calendar, email: team.email, chat: team.chat };
-
-  const coreConnections: NonNullable<AgentSourcesPolicyInput["coreConnections"]> = {};
-  const coreDefaults: NonNullable<AgentSourcesPolicyInput["coreDefaults"]> = {};
-  for (const kind of AGENT_CORE_SOURCES) {
-    const allowed = team.coreConnections?.[kind];
-    if (!sameIds(allowed, everyone.coreConnections?.[kind])) coreConnections[kind] = allowed ?? null;
-    const chosen = team.coreDefaults?.[kind];
-    if (chosen !== everyone.coreDefaults?.[kind]) coreDefaults[kind] = chosen ?? null;
-  }
-  if (Object.keys(coreConnections).length) change.coreConnections = coreConnections;
-  if (Object.keys(coreDefaults).length) change.coreDefaults = coreDefaults;
+  const change: AgentSourcesPolicyInput = { calendar: team.calendar };
   if (!sameIds(team.otherConnections, everyone.otherConnections)) change.otherConnections = team.otherConnections ?? null;
 
   const connections: NonNullable<AgentSourcesPolicyInput["connections"]> = {};

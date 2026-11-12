@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useId, useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent, type ReactNode } from "react";
 import type { WorkbotSettings } from "@openwork/types/den/workbot-settings";
 import { WORKBOT_TEAM_NAME_MAX_LENGTH, type WorkbotTeamSettingsTeam, type WorkbotTeamSettingsWrite } from "@openwork/types/den/workbot-team-settings";
 import { DenButton } from "../../_components/ui/button";
@@ -15,7 +15,6 @@ import {
   getBrandAppearanceRoute,
   getMcpConnectionsRoute,
   getOrgAccessFlags,
-  getWorkbotSettingsRoute,
   orgFeatureEnabled,
   type DenOrgContext,
 } from "../../_lib/den-org";
@@ -23,10 +22,12 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { HelpTip } from "./help-tip";
 import { ConflictLine, ReadOnlyNotice, SavedUndoLine, ScopeChip, SettingRow, UseEveryonesButton } from "./scoped-setting";
 import type { TeamScope } from "./team-scope";
-import { AGENT_HEALTH_ANCHOR, agentPolicyRestoreChange } from "./workbot-agent-scope";
+import { agentPolicyRestoreChange, type AgentPolicyScope } from "./workbot-agent-scope";
 import { workbotDisplayName } from "./workbot-model-options";
 import { useSaveWorkbotProactive, useWorkbotProactive, type AgentPolicyView } from "./workbot-proactive-data";
+import { WorkbotProactiveHealthSection } from "./workbot-proactive-health";
 import { WorkbotProactiveSection } from "./workbot-proactive-section";
+import { AgentCalendarPolicy, calendarStateLine } from "./workbot-proactive-sources";
 import { useSaveWorkbotModel, useWorkbotSettings } from "./workbot-settings-data";
 import { WorkbotSettingsTabs, workbotSettingsTabsEnabled } from "./workbot-settings-tabs";
 import { WORKBOT_SETTING_HELP, workbotSettingsParts, type WorkbotAgentsPart, type WorkbotSettingsParts, type WorkbotSettingsTab } from "./workbot-settings-tabs-model";
@@ -43,12 +44,12 @@ import {
   workbotOnOffLabel,
   workbotTeamAgentsChanged,
   workbotTeamAgentsSavedMessage,
+  workbotTeamCalendarChanged,
   workbotTeamEnabled,
   workbotTeamModel,
   workbotTeamNameToSave,
   workbotTeamRow,
   workbotTeamSavedMessage,
-  workbotTeamsChanged,
   workbotTeamsOnCount,
   type WorkbotEveryoneChange,
 } from "./workbot-team-settings-presentation";
@@ -71,7 +72,9 @@ function errorMessage(error: unknown, fallback: string): string {
 
 /**
  * Members › Teams › Everyone (or a team) › Workbot: whether Workbot is on, the
- * model it starts on, the name it goes by and, while members' agents are available, how they work.
+ * model it starts on, the name it goes by and, while members' agents are
+ * available, whether they read the calendar, how they work and which
+ * connectors they read.
  * Everyone's page holds the values every team follows until it changes one
  * for its own members.
  */
@@ -172,6 +175,32 @@ function WorkbotModelPicker({ saved, settings, disabled, onPick }: {
   );
 }
 
+/**
+ * Whether members' agents read the calendar, as a row on General: the calendar setting of Everyone's policy for
+ * members' agents, or of a team's own. Changing it on a team's page gives the team its own copy of that policy, as any
+ * control on its Proactive Mode tab does.
+ */
+function CalendarRow({ orgId, scope, canEdit, chip }: { orgId: string; scope: AgentPolicyScope; canEdit: boolean; chip?: ReactNode }) {
+  const labelId = useId();
+  const policy = useWorkbotProactive(orgId, Boolean(orgId), scope);
+  const save = useSaveWorkbotProactive(orgId, scope);
+  return (
+    <SettingRow
+      label="Calendar"
+      labelId={labelId}
+      stateLine={policy.data ? <span data-testid="team-workbot-calendar-state">{calendarStateLine(policy.data)}</span> : null}
+    >
+      {policy.isError ? <Unavailable /> : !policy.data ? <FieldSkeleton className="w-44" /> : (
+        <>
+          {chip}
+          <AgentCalendarPolicy view={policy.data} disabled={!canEdit || save.isPending} onChange={(change) => save.mutate(change)} />
+        </>
+      )}
+      {save.isError ? <span role="alert" className="basis-full text-right text-[13px] text-red-700">{errorMessage(save.error, "Couldn't save. Try again.")}</span> : null}
+    </SettingRow>
+  );
+}
+
 /** Everyone: Workbot on or off and its default model, saved on change. The name is the organization's brand name. */
 function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, parts, help }: RowsProps & { scope: TeamScope }) {
   const ids = { enabled: useId(), model: useId(), name: useId() };
@@ -207,7 +236,6 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit,
         >
           {view.isError ? <Unavailable /> : !data ? <SwitchSkeleton /> : (
             <>
-              <ScopeChip scope={scope} changed={false} changedTeams={workbotTeamsChanged(data, "enabled")} />
               <WorkbotSwitch
                 checked={data.organization.enabled}
                 disabled={!canEdit || pending}
@@ -216,10 +244,9 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit,
             </>
           )}
         </SettingRow>
-        <SettingRow label="Default model" labelId={ids.model} aside={help ? <HelpTip label="Default model">{WORKBOT_SETTING_HELP.model}</HelpTip> : null}>
+        <SettingRow label="Default model" labelId={ids.model}>
           {view.isError || models.isError ? <Unavailable /> : !data || !settings ? <FieldSkeleton className="w-80" /> : (
             <>
-              <ScopeChip scope={scope} changed={false} changedTeams={workbotTeamsChanged(data, "model")} />
               {/* The same value and save as Manage › Workbot, so the two pages never disagree. */}
               <WorkbotModelPicker
                 saved={settings.model}
@@ -230,10 +257,9 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit,
             </>
           )}
         </SettingRow>
-        <SettingRow label="Name" labelId={ids.name} aside={help ? <HelpTip label="Name">{WORKBOT_SETTING_HELP.name}</HelpTip> : null}>
+        <SettingRow label="Name" labelId={ids.name}>
           {view.isError ? <Unavailable /> : !data ? <FieldSkeleton className="w-40" /> : (
             <>
-              <ScopeChip scope={scope} changed={false} changedTeams={workbotTeamsChanged(data, "name")} />
               <span className="text-[13px] text-gray-900" data-testid="team-workbot-everyone-name">{workbotDisplayName(data.organization.name)}</span>
               <Link
                 href={getBrandAppearanceRoute(orgSlug)}
@@ -244,6 +270,9 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit,
             </>
           )}
         </SettingRow>
+        {data && workbotAgentsShown(data) ? (
+          <CalendarRow orgId={orgId} scope={scope} canEdit={canEdit} />
+        ) : null}
       </DenCard>
 
       {saveError ? <p role="alert" className="px-1 text-[13px] text-red-700">{saveError}</p> : null}
@@ -252,21 +281,21 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit,
       ) : null}
       </>) : null}
       {parts.agents && data && workbotAgentsShown(data) ? (
-        <EveryoneMembersAgents scope={scope} orgId={orgId} orgSlug={orgSlug} changedTeams={workbotTeamsChanged(data, "agent")} canEdit={canEdit} show={parts.agents} />
+        <EveryoneMembersAgents scope={scope} orgId={orgId} orgSlug={orgSlug} canEdit={canEdit} show={parts.agents} />
       ) : null}
     </>
   );
 }
 
-const quietLinkClass = "shrink-0 rounded text-[12px] text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900";
-
-/** Everyone's members' agents: the same controls, value and save as Manage › Workbot, so the two pages never disagree. */
-function EveryoneMembersAgents({ scope, orgId, orgSlug, changedTeams, canEdit, show }: {
+/**
+ * Everyone's members' agents: the same controls, value and save as Manage › Workbot, so the two pages never disagree,
+ * then the last 7 days of every member's agent (not under Connectors).
+ */
+function EveryoneMembersAgents({ scope, orgId, orgSlug, canEdit, show }: {
   show: WorkbotAgentsPart;
   scope: TeamScope;
   orgId: string;
   orgSlug: string | null;
-  changedTeams: readonly string[];
   canEdit: boolean;
 }) {
   return (
@@ -277,14 +306,8 @@ function EveryoneMembersAgents({ scope, orgId, orgSlug, changedTeams, canEdit, s
         show={show}
         canManage={canEdit}
         connectorsHref={getMcpConnectionsRoute(orgSlug)}
-        headerAside={(
-          <>
-            <ScopeChip scope={scope} changed={false} changedTeams={changedTeams} />
-            {/* The counts cover every member whatever their team, so they stay on Manage › Workbot. */}
-            <Link href={`${getWorkbotSettingsRoute(orgSlug)}#${AGENT_HEALTH_ANCHOR}`} className={quietLinkClass}>See the last 7 days</Link>
-          </>
-        )}
       />
+      {show === "sources" ? null : <div className="mt-6"><WorkbotProactiveHealthSection orgId={orgId} /></div>}
     </div>
   );
 }
@@ -434,7 +457,7 @@ function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, par
             </>
           )}
         </SettingRow>
-        <SettingRow label="Default model" labelId={ids.model} aside={help ? <HelpTip label="Default model">{WORKBOT_SETTING_HELP.model}</HelpTip> : null}>
+        <SettingRow label="Default model" labelId={ids.model}>
           {view.isError ? <Unavailable /> : !data || !row ? <FieldSkeleton className="w-80" /> : (
             <>
               <ScopeChip scope={scope} changed={!row.model.inherit} />
@@ -452,7 +475,7 @@ function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, par
             </>
           )}
         </SettingRow>
-        <SettingRow label="Name" labelId={ids.name} aside={help ? <HelpTip label="Name">{WORKBOT_SETTING_HELP.name}</HelpTip> : null}>
+        <SettingRow label="Name" labelId={ids.name}>
           {view.isError ? <Unavailable /> : !data || !row ? <FieldSkeleton className="w-64" /> : (
             <>
               <ScopeChip scope={scope} changed={!row.name.inherit} />
@@ -490,6 +513,9 @@ function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, par
             </>
           )}
         </SettingRow>
+        {data && row && workbotAgentsShown(data) ? (
+          <CalendarRow orgId={orgId} scope={scope} canEdit={canEdit} chip={<ScopeChip scope={scope} changed={workbotTeamCalendarChanged(data, row)} />} />
+        ) : null}
         <ConflictLine count={row?.conflictingMemberCount ?? 0} setting={WORKBOT_CONFLICT_SETTING} testId="team-workbot-conflicts" />
       </DenCard>
 

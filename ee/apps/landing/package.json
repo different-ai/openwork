@@ -10,6 +10,7 @@
     "check:agent-links": "node scripts/check-agent-links.mjs",
     "check:shadow-ai": "node scripts/check-shadow-ai.mjs",
     "check:governance-browser": "node scripts/check-governance-browser.mjs",
+    "check:product-pages": "node scripts/check-product-pages.mjs",
     "eval:agents": "node scripts/agent-discovery-eval.mjs",
     "prices:update": "node scripts/update-model-prices.mjs",
     "plain:setup-fields": "node scripts/setup-plain-feedback-fields.mjs",

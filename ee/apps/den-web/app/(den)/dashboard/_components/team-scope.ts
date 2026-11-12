@@ -20,17 +20,13 @@ export function teamScopeName(scope: TeamScope): string {
 export type ScopeChipState = { label: string; tone: "neutral" | "info" };
 
 /**
- * The chip beside a setting.
- * - On a team's page: "From Everyone" while the team follows Everyone, "Changed for {team}" once it has its own value.
- * - On Everyone's page: which teams changed the value, or nothing when none did.
+ * The chip beside a setting, on a team's page only: "From Everyone" while the team follows Everyone, "Changed for
+ * {team}" once it has its own value. Everyone's values are the default every team starts from, so Everyone's page
+ * has no chip: which teams differ is shown on each team's own page.
  */
-export function scopeChipState(scope: TeamScope, input: { changed: boolean; changedTeams?: readonly string[] }): ScopeChipState | null {
-  if (scope.kind === "team") {
-    return input.changed ? { label: `Changed for ${scope.teamName}`, tone: "info" } : { label: "From Everyone", tone: "neutral" };
-  }
-  const teams = input.changedTeams ?? [];
-  if (teams.length === 0) return null;
-  return { label: teams.length === 1 ? `Changed for ${teams[0]}` : `Changed for ${teams.length} teams`, tone: "info" };
+export function scopeChipState(scope: TeamScope, input: { changed: boolean }): ScopeChipState | null {
+  if (scope.kind !== "team") return null;
+  return input.changed ? { label: `Changed for ${scope.teamName}`, tone: "info" } : { label: "From Everyone", tone: "neutral" };
 }
 
 /** Members on two teams that disagree get Everyone's value. `setting` names what differs ("model", "Workbot setting"). */

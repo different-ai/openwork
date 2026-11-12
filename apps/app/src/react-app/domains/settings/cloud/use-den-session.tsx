@@ -34,6 +34,7 @@ import {
 import { t } from "@/i18n";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { tryOpenBrowserAuthUrl } from "../../cloud/open-browser-auth";
+import { explainSignOutAfterDisconnect } from "../../devices/disconnected-sign-out";
 import {
   cloudSessionOrganizationFromSettings,
   useCloudSession,
@@ -354,6 +355,7 @@ export function useDenSession({
       .catch(async (error) => {
         if (cancelled) return;
         if (isDenSessionRevokedError(error)) {
+          explainSignOutAfterDisconnect();
           await clearSignedInState();
         }
         // A timeout, offline state, or server failure does not invalidate the

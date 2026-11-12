@@ -50,6 +50,14 @@ whose tasks score highest in total answers, at the thinking level Jev scores
 Gateway reads features with the same rules as Den API, so also give it the
 same `DEN_FEATURE_*` operator locks.
 
+The 3rd party tool endpoints below (Cursor, Claude Code, Codex) also list each
+router that applies to the key's member and has a model they can use, as
+`openwork/smart-<router name slug>-<last 4 of the aur_ id>` (resolved like model
+names; a thinking level or `[1m]` on it is ignored), and run a request naming
+one through the same handler, with the request read as Chat Completions and the
+answer written back in the tool's protocol (`src/smart-tools.ts`). Nothing is
+listed without a TypeSafe key or while the feature is off.
+
 ## Stable Contracts
 
 The service rename keeps deployment and Models contracts stable. The Gateway
@@ -129,7 +137,12 @@ before running the new runtime. Do not deploy it against the old table names.
   (provider type), `name`, and `openwork.{provider_id, provider_name,
   upstream_model_id}`. No grants is an empty list, not an error. Call a listed
   model through the provider-less endpoints below, or through
-  `/api/v1/providers/{openwork.provider_id}/*`.
+  `/api/v1/providers/{openwork.provider_id}/*`. For `ow_gw_` API keys the list
+  ends with the member's Smart Routers (`id` `openwork-smart-<router id>`, name
+  `Smart: <name>`, `openwork.provider_id` `openwork-auto`,
+  `openwork.smart_router: true`), callable only through
+  `POST /api/v1/chat/completions`; desktop keys keep the plain list (the desktop
+  learns routers from Den).
 - Cursor (feature `gatewayMemberApiKeys`): `GET /api/v1/cursor/models`,
   `POST /api/v1/cursor/chat/completions` and `POST /api/v1/cursor/responses`
   accept only `ow_gw_` keys. Models are named
@@ -141,7 +154,9 @@ before running the new runtime. Do not deploy it against the old table names.
   `POST /api/v1/claude-code/v1/messages` and `/v1/messages/count_tokens` accept
   only `ow_gw_` keys and answer in Anthropic's shapes. Same names as Cursor, with
   `[1m]` on 1M models; Messages providers get the request as it is, others are
-  translated through Chat Completions and back.
+  translated through Chat Completions and back. Claude Desktop's Gateway mode
+  uses this endpoint as its Gateway base URL (its picker lists only Claude
+  models).
 - Codex CLI (same feature): `GET /api/v1/codex/models` (Codex's own catalog
   shape, `{models: [ModelInfo]}`) and `POST /api/v1/codex/responses` accept only
   `ow_gw_` keys. Same names as Cursor; OpenAI and Azure models get the Responses
@@ -158,6 +173,12 @@ before running the new runtime. Do not deploy it against the old table names.
   The gateway verifies all references and rewrites body/path models to `model_id`
   before provider-specific Vertex rewrites or AWS signing. Unambiguous raw model
   IDs also work; response model fields are not rewritten.
+- Aliases hide that a model is Claude, so clients send no prompt-cache
+  breakpoints. When the resolved `model_id` names Claude and the request marks
+  none, the gateway adds them (`src/prompt-cache.ts`): `cache_control` on Chat
+  Completions (OpenRouter, LiteLLM, custom) and Anthropic Messages, `cachePoint`
+  on Bedrock Converse for the Claude models Bedrock caches. At most four: the
+  last tool (Messages and Converse), the system prompt and the last messages.
 - GET provider `/models` is a local, non-cacheable list of accessible combinations,
   not the provider-account catalog. Each entry has the alias in both `id` and
   `config.id`, raw `upstreamModelId`, and group/set IDs and names. A listed grant

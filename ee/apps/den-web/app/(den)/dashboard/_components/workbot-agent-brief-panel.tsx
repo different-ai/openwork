@@ -20,7 +20,7 @@ import { DenButton } from "../../_components/ui/button";
 import { DenSelect } from "../../_components/ui/select";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { agentsSwitchLabel, type AgentPolicyScope } from "./workbot-agent-scope";
+import { AGENTS_SWITCH_LABEL, type AgentPolicyScope } from "./workbot-agent-scope";
 
 /**
  * Manage › Workbot › Members' agents with Your agent's brief (`workbotAgentBrief`): one rhythm ("Check every 2 hours,
@@ -175,7 +175,7 @@ export function WorkbotAgentBriefPanel({
   scope?: AgentPolicyScope;
 }) {
   const ids = { destination: useId(), rhythm: useId(), cap: useId(), extra: useId(), members: useId(), holdAt: useId(), skipAt: useId() };
-  const switchLabel = agentsSwitchLabel(scope);
+  const switchLabel = AGENTS_SWITCH_LABEL;
   const { settings, slackReady, runnerReady } = view;
   const locked = !canManage || saving;
   const switchNote = !runnerReady

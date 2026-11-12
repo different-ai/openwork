@@ -5,7 +5,19 @@ import { isImage } from "./images";
  * What a file Workbot made (or the person sent) is, for its card and the panel it opens in: which reader shows it,
  * the name it goes by, and its type in plain words.
  */
-export type ArtifactKind = "image" | "pdf" | "video" | "audio" | "markdown" | "text" | "csv" | "sheet" | "slides" | "document" | "html" | "other";
+export type ArtifactKind = "image" | "pdf" | "video" | "audio" | "markdown" | "text" | "csv" | "sheet" | "slides" | "document" | "html" | "app" | "other";
+
+/**
+ * An App built in OpenWork among a reply's outputs (the server's WORKBOT_APP_MEDIA_TYPE): not a file with bytes but
+ * the App itself. Its id is `app:<App id>` and its name is the App's title.
+ */
+export const OPENWORK_APP_MEDIA_TYPE = "application/vnd.openwork.app";
+const OPENWORK_APP_ID_PREFIX = "app:";
+
+/** The App's own id, for opening it; null for anything that is not an OpenWork App. */
+export function openworkAppId(file: Pick<WorkbotAttachment, "id" | "mediaType">): string | null {
+  return file.mediaType === OPENWORK_APP_MEDIA_TYPE && file.id.startsWith(OPENWORK_APP_ID_PREFIX) ? file.id.slice(OPENWORK_APP_ID_PREFIX.length) : null;
+}
 
 /** The page address names an open file with `?artifact=<id>` (Copy link), so the link opens it again. */
 export const ARTIFACT_PARAM = "artifact";
@@ -22,6 +34,7 @@ export const extensionOf = (name: string) => (name.includes(".") ? (name.split("
 export function artifactKind(file: Pick<WorkbotAttachment, "name" | "mediaType">): ArtifactKind {
   const extension = extensionOf(file.name);
   const type = file.mediaType.toLowerCase();
+  if (type === OPENWORK_APP_MEDIA_TYPE) return "app";
   if (isImage(type) || ["png", "jpg", "jpeg", "gif", "webp"].includes(extension)) return "image";
   if (type === "application/pdf" || extension === "pdf") return "pdf";
   if (type.startsWith("video/") || ["mp4", "mov", "webm", "m4v"].includes(extension)) return "video";
@@ -37,11 +50,15 @@ export function artifactKind(file: Pick<WorkbotAttachment, "name" | "mediaType">
 }
 
 const LABELS: Record<ArtifactKind, string> = {
-  html: "App", image: "Image", pdf: "PDF", video: "Video", audio: "Audio", markdown: "Note", text: "Text",
+  html: "Web page", app: "App", image: "Image", pdf: "PDF", video: "Video", audio: "Audio", markdown: "Note", text: "Text",
   csv: "Spreadsheet", sheet: "Spreadsheet", slides: "Presentation", document: "Document", other: "File",
 };
 
-/** The type under a card's title: "App", "PDF", "Spreadsheet". */
+/**
+ * The type under a card's title: "App", "PDF", "Spreadsheet". Only an App built in OpenWork is called an App: it is
+ * kept in OpenWork and can be shared and reopened. An .html file is a "Web page": a file like any other, that runs
+ * when opened.
+ */
 export function artifactLabel(file: Pick<WorkbotAttachment, "name" | "mediaType">): string {
   return LABELS[artifactKind(file)];
 }
@@ -53,7 +70,7 @@ export function artifactColor(kind: ArtifactKind): string {
   if (kind === "csv" || kind === "sheet") return "var(--wb-type-sheet)";
   if (kind === "slides") return "var(--wb-type-slides)";
   if (kind === "image" || kind === "video") return "var(--wb-type-image)";
-  if (kind === "html") return "var(--wb-browser-working)";
+  if (kind === "html" || kind === "app") return "var(--wb-browser-working)";
   return "var(--wb-muted)";
 }
 
@@ -74,7 +91,9 @@ export function htmlTitle(html: string): string | null {
 }
 
 /** The name a card and the panel show: an app's <title> when known, otherwise the file name without its extension. */
-export function artifactTitle(file: Pick<WorkbotAttachment, "name">, html?: string | null): string {
+export function artifactTitle(file: Pick<WorkbotAttachment, "name"> & { mediaType?: string }, html?: string | null): string {
+  // An OpenWork App's name is its title as written: "Budget v2.0" has no extension to drop.
+  if (file.mediaType === OPENWORK_APP_MEDIA_TYPE) return file.name;
   const fromHtml = html ? htmlTitle(html) : null;
   if (fromHtml) return fromHtml;
   const extension = extensionOf(file.name);

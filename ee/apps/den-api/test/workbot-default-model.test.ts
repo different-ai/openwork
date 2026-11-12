@@ -81,12 +81,15 @@ test("the model is stored in organization metadata without touching anything els
   assert.equal(readWorkbotModel("not json"), null)
 })
 
-test("settings take the model, and nothing else: the retired step limit is refused", () => {
+test("settings take the model and nothing else: a step limit is no longer one of them", () => {
   assert.deepEqual(workbotSettingsInputSchema.parse({ model: "gateway/model-a" }), { model: "gateway/model-a" })
   assert.deepEqual(workbotSettingsInputSchema.parse({ model: null }), { model: null })
   assert.equal(workbotSettingsInputSchema.safeParse({}).success, false)
-  assert.equal(workbotSettingsInputSchema.safeParse({ maxSteps: 500 }).success, false)
-  assert.equal(workbotSettingsInputSchema.safeParse({ model: null, maxSteps: 500 }).success, false)
-  // The response never carries a step limit.
+  for (const maxSteps of [500, 0, null]) {
+    assert.equal(workbotSettingsInputSchema.safeParse({ maxSteps }).success, false, String(maxSteps))
+    assert.equal(workbotSettingsInputSchema.safeParse({ model: null, maxSteps }).success, false, String(maxSteps))
+  }
+  // A limit saved in the organization's metadata before is kept there and read by nothing.
+  assert.equal(readWorkbotModel({ workbot: { model: "gateway/model-a", maxSteps: 250 } }), "gateway/model-a")
   assert.equal("maxSteps" in workbotSettingsSchema.parse({ ...workbotSettingsView(null, catalog), maxSteps: 250 }), false)
 })

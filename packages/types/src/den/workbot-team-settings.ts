@@ -1,4 +1,5 @@
 import {
+  agentSourcePolicySchema,
   agentTemplateContentSchema,
   readStoredWorkbotProactiveSettings,
   workbotProactiveViewSchema,
@@ -10,9 +11,9 @@ import { z } from "zod"
 /**
  * Workbot settings chosen by organization admins for one team (Den › Members ›
  * Teams › a team › Workbot), on top of the organization's own: the default
- * model, Workbot's name, whether Workbot is on at all and the policy for
- * its members' agents (`agent`, only while `workbotProactive` is on too). Available while
- * the `workbotTeamSettings` feature is on.
+ * model, Workbot's name, whether Workbot is on at all and the policy for its
+ * members' agents (`agent`, only while `workbotProactive` is on too).
+ * Available while the `workbotTeamSettings` feature is on.
  *
  * A team stores only what it overrides. In its settings a key that is absent
  * means "use the organization's"; a key that is present is the team's own
@@ -38,7 +39,8 @@ export const workbotTeamNameSchema = z.string().trim().min(1).max(WORKBOT_TEAM_N
 /**
  * What a team's row holds. Unknown keys are kept, so a server that does not
  * know a later group never drops it; a value that cannot be read counts as no
- * override.
+ * override. A row saved while teams had a step limit may still hold
+ * `maxSteps`: it is ignored, and dropped on the team's next change.
  */
 export const workbotTeamStoredSettingsSchema = z.looseObject({
   model: workbotTeamModelSchema.optional().catch(undefined),
@@ -206,10 +208,11 @@ export const workbotTeamSettingsTeamSchema = z
     enabled: workbotTeamEnabledSettingSchema,
     /**
      * Present only while `workbotProactive` is on: whether the team follows the
-     * organization's policy for members' agents, and whether agents are on
-     * under the policy the team has now (its own, or the organization's).
+     * organization's policy for members' agents, and, under the policy the
+     * team has now (its own, or the organization's), whether agents are on
+     * and whether they read the calendar.
      */
-    agent: z.object({ inherit: z.boolean(), enabled: z.boolean() }).optional(),
+    agent: z.object({ inherit: z.boolean(), enabled: z.boolean(), calendar: agentSourcePolicySchema.optional() }).optional(),
     /**
      * Members of this team who are also on another team that overrides a
      * setting differently; they get the organization's value for it.
@@ -223,14 +226,16 @@ export const workbotTeamSettingsViewSchema = z
   .object({
     /**
      * The organization's values, which teams without their own use: null is the deployment's default model, or no
-     * name set; `enabled` is whether Workbot is on for everyone; `agentEnabled` is whether members' agents are on for
-     * everyone, present only while `workbotProactive` is on.
+     * name set; `enabled` is whether Workbot is on for everyone; `agentEnabled` is whether members' agents are on
+     * for everyone and `agentCalendar` whether they read the calendar, both present only while `workbotProactive`
+     * is on.
      */
     organization: z.object({
       model: z.string().nullable(),
       name: z.string().nullable(),
       enabled: z.boolean(),
       agentEnabled: z.boolean().optional(),
+      agentCalendar: agentSourcePolicySchema.optional(),
     }),
     teams: z.array(workbotTeamSettingsTeamSchema),
     /** Whether the caller can change them (inference.manage). */
@@ -255,7 +260,7 @@ export function applyWorkbotTeamSettingsWrite(stored: Record<string, unknown>, w
   if (readable.model === undefined) delete next.model
   if (readable.name === undefined) delete next.name
   if (readable.enabled === undefined) delete next.enabled
-  // Rows saved while Workbot had a per-team step limit may still hold `maxSteps`; it no longer means anything.
+  // Teams no longer have a step limit: a value saved before is dropped.
   delete next.maxSteps
   if (readable.agent === undefined || write.agent) delete next.agent
   if (write.model) {

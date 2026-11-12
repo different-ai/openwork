@@ -121,10 +121,11 @@ test("Den's sandbox gateway flag reaches every chat's runner settings, and older
   for (const call of puts(older.calls)) assert.equal(call.body?.sandboxGateway, undefined)
 })
 
-test("a step limit from an older Den is ignored and never reaches the runner", async () => {
+test("a Den that still sends a step limit is read without it, and no chat's runner settings carry one", async () => {
   const base = { user: { id: "u", name: null, email: "a@example.test" }, organization: { id: "o", name: "O", brandAppName: null }, memberId: "m", enabled: true, canSchedule: false }
-  for (const maxSteps of [null, 0, 250]) assert.equal("maxSteps" in denSessionSchema.parse({ ...base, maxSteps }), false)
+  for (const maxSteps of [null, 0, 250]) assert.equal("maxSteps" in denSessionSchema.parse({ ...base, maxSteps }), false, String(maxSteps))
   const runner = fakeRunner()
+  restart()
   await workbotWith(runner).send(actor, { id: "message_0001", text: "Side", chat: SIDE })
   const updates = puts(runner.calls)
   assert.ok(updates.length >= 2, "main and side chat")

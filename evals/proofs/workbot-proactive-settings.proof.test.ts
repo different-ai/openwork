@@ -12,7 +12,7 @@ test("an owner sets up members' agents in Manage › Workbot; a member sees only
   const saved = () => ownerProbe.eventually(() => ownerProbe.dom('[data-testid="workbot-proactive-panel"] button[role="switch"]:not([disabled])'), { within: 30_000, until: (value) => value.elements.length > 0, label: "the last change is saved" });
 
   await step("before: agents are off and locked until the Workbot Slack app can send the DMs", async () => {
-    await owner.see({ role: "switch", label: "Agents for everyone" }, { timeoutMs: 90_000 });
+    await owner.see({ role: "switch", label: "Proactive Mode" }, { timeoutMs: 90_000 });
     await owner.see({ text: "Needs the Slack app first." });
     await owner.see({ text: "A DM from Workbot" });
     await owner.see({ text: "Version 1" });
@@ -29,10 +29,10 @@ test("an owner sets up members' agents in Manage › Workbot; a member sees only
   await step("with the Slack app installed, the owner turns agents on and edits the template", async () => {
     await world.installSlackApp();
     await owner.reload();
-    await owner.see({ role: "switch", label: "Agents for everyone" }, { timeoutMs: 60_000 });
+    await owner.see({ role: "switch", label: "Proactive Mode" }, { timeoutMs: 60_000 });
     await owner.notSee({ text: "Needs the Slack app first." }, { timeoutMs: 30_000 });
     await saved();
-    await owner.click({ role: "switch", label: "Agents for everyone" });
+    await owner.click({ role: "switch", label: "Proactive Mode" });
     await saved();
     await owner.click({ role: "switch", label: "Waiting on you" });
     await saved();
@@ -70,7 +70,7 @@ test("an owner sets up members' agents in Manage › Workbot; a member sees only
     expect(own.responsibilities.filter((entry) => entry.enabled && !entry.muted).map((entry) => entry.label)).toEqual(["Morning brief", "Meeting prep", "Calendar changes"]);
     await member.navigate(`${world.den.ref.webUrl}/dashboard/workbot-settings`);
     await memberProbe.eventually(() => memberProbe.dom('[data-testid="admin-access-state"][data-access-state="locked"], [data-testid="member-dashboard"]'), { within: 60_000, until: (value) => value.elements.length > 0, label: "the member's Workbot settings route is denied" });
-    await member.notSee({ role: "switch", label: "Agents for everyone" });
+    await member.notSee({ role: "switch", label: "Proactive Mode" });
     evidence.recordAssertionEvidence(
       "A plain member is refused the organization's settings; their own agent follows the template and says why its DMs can't arrive yet",
       `GET /v1/org/workbot-settings/proactive → ${read.response.status}; GET /v1/me/agent: on, tells them about ${own.responsibilities.filter((entry) => entry.enabled && !entry.muted).map((entry) => entry.label).join(", ")}; messages as a ${own.destination?.name}, blocked: ${own.destination?.blocked} (their Slack account isn't linked)`,

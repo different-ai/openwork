@@ -8,6 +8,7 @@ import { changedFiles, isBuildAffected } from "./build-inputs.mjs";
 import { QUICK_CHECKS, REQUIRED_JOBS, assertQuickChecks, assertSelectedChecks, classifyCiChanges, classifyQuickChanges, pullRequestChanges, pushChanges } from "./classify-ci-changes.mjs";
 
 const snapshot = "ee/apps/gateway/src/models/base.json";
+const snapshotV2 = "ee/apps/gateway/src/models/base-v2.json";
 const electron = "apps/desktop/electron/main.ts";
 const landing = "ee/apps/landing/app/page.tsx";
 const backend = "ee/apps/den-api/src/routes/example.ts";
@@ -49,6 +50,14 @@ test("the generated snapshot fast lane survives on push, not mixed changes", () 
   assert.equal(push([snapshot, landing]).lane, "affected");
   // A deleted snapshot must not claim a modified snapshot.
   expectFlags(push([{ filename: snapshot, status: "removed" }]), { core: true, den_api: true, snapshot: true });
+});
+
+test("the v1 and v2 model snapshots refreshed together stay in the snapshot fast lane", () => {
+  assert.equal(push([snapshot, snapshotV2]).lane, "snapshot");
+  assert.equal(push([snapshotV2]).lane, "snapshot");
+  expectFlags(push([snapshot, snapshotV2]), { snapshot: true });
+  assert.equal(push([snapshot, snapshotV2, landing]).lane, "affected");
+  expectFlags(push([snapshot, { filename: snapshotV2, status: "removed" }]), { core: true, den_api: true, snapshot: true });
 });
 
 for (const eventName of ["schedule", "workflow_dispatch", "pull_request", "unknown-event"]) {
@@ -325,7 +334,7 @@ test("cheap source guards need no install, build or classification", () => {
   assert.doesNotMatch(staticJob, /\bneeds:|setup-tests|\bbuild:|continue-on-error: false/);
   assert.doesNotMatch(staticJob, /^    if:/m);
   for (const file of [
-    ".github/scripts/contributor-pr.test.mjs", ".github/scripts/warden-check.test.mjs", ".github/scripts/pr-proof-selection.test.mjs",
+    ".github/scripts/contributor-pr.test.mjs", ".github/scripts/pr-proof-selection.test.mjs",
     ".github/scripts/build-inputs.test.mjs", ".github/scripts/classify-ci-changes.test.mjs", ".github/scripts/typecheck-shipped.test.mjs",
     ".github/scripts/build-boundaries-codeql.test.mjs", ".github/scripts/managed-stable-release.test.mjs",
     "scripts/ci/codeql-config.test.mjs", "scripts/ci/check-codeql-results.test.mjs",
@@ -333,6 +342,10 @@ test("cheap source guards need no install, build or classification", () => {
   for (const command of ["node scripts/check-outbound-access.mjs", "pnpm --filter @openwork/features test", "pnpm features:check"]) {
     assert.ok(staticJob.includes(`run: ${command}`), command);
   }
+  // Every PR checks what production Node loads from TypeScript source, after the install that provides its parser.
+  const importCheck = staticJob.indexOf("\n          node scripts/check-node-source-imports.mjs\n");
+  assert.ok(importCheck > staticJob.indexOf('--filter "@different-ai/openwork-workspace"'), "check Node's source imports after installing the root's dependencies");
+  assert.ok(staticJob.indexOf('--filter "@different-ai/openwork-workspace"') !== -1);
   // Every .github/scripts test runs in the quick check.
   const tests = readdirSync(new URL(".", import.meta.url)).filter((name) => name.endsWith(".test.mjs"));
   for (const name of tests) assert.ok(staticJob.includes(`.github/scripts/${name}`), name);

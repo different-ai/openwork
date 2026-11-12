@@ -43,7 +43,7 @@ return credentials or URLs. Public `/health` remains a liveness check. See
 |---|---|---|---|
 | `GET` | `/health` | | `{ ok: true }` |
 | `GET` | `/v1/models` | | `{ defaultModel, models: [{ id, name }] }`: the models the Gateway route serves with the runner's key (cached 5 min), for pickers. Pass one as a turn's `model` |
-| `POST` | `/v1/sessions` | `{ title?, instructions?, repeats?: { maxWaitingMs?, maxIdenticalFailures? }, maxSteps?, files?, computer?, reactions?, tasks?, owner?, ref?, timeZone?, autoTitle?, memoryOf?, memoryScope?: "owner" }` | session (`hs_…`). `files`, `computer`, `reactions` and `tasks` are off unless set to `true` (see [Isolation](#isolation)). `maxSteps` (0–100000) is the session's own limit on model calls per turn instead of `HEADLESS_MAX_STEPS`: `0` means no limit, and `null` goes back to the runner's. See [Several conversations per person](#several-conversations-per-person) for the rest |
+| `POST` | `/v1/sessions` | `{ title?, instructions?, repeats?: { maxWaitingMs?, maxIdenticalFailures? }, files?, computer?, reactions?, tasks?, owner?, ref?, timeZone?, autoTitle?, memoryOf?, memoryScope?: "owner" }` | session (`hs_…`). `files`, `computer`, `reactions` and `tasks` are off unless set to `true` (see [Isolation](#isolation)). `maxSteps` (0–100000) is the session's own limit on model calls per turn instead of `HEADLESS_MAX_STEPS`: `0` means no limit, and `null` goes back to the runner's. See [Several conversations per person](#several-conversations-per-person) for the rest |
 | `PUT` | `/v1/sessions/:id` | same body as `POST` | `201` session when created, `200` when updated; settings left out keep their value. The caller picks the id (`hs_` + 8–96 of `A-Za-z0-9_-`), so it can keep one durable conversation per person without storing the runner's id. Workbot derives one per member, and one per side chat |
 | `GET` | `/v1/sessions` | `?owner=&limit=` | `{ sessions: [{ id, ref, title, createdAt, updatedAt }] }`: one owner's conversations that have a message, most recently used first (on celld, chats in their own session cells included: [Session cells](./OWNER-CELLS.md#session-cells-each-workbot-chat-in-its-own-cell)) |
 | `POST` | `/v1/owner/split` | owner header (celld) | `{ split: "started" \| "running" \| "done" \| "not_needed" }`: moves the owner's chats into their own cells in the background (celld only; the Node host answers `not_needed`). Idempotent |
@@ -55,6 +55,7 @@ return credentials or URLs. Public `/health` remains a liveness check. See
 | `GET` | `/v1/sessions/:id/files` | | `{ files: [{ path, size, updatedAt }] }` |
 | `GET` | `/v1/sessions/:id/files/content` | `?path=` | file text |
 | `DELETE` | `/v1/sessions/:id` | | `204`: its rows go (scrubbed first), then its sealed segments, large bodies and saved files' bytes, and its computer (see [Deleting a conversation](#deleting-a-conversation)). `409 session_busy` while a turn is queued or running |
+| `DELETE` | `/v1/sessions/:id/computer` | | `204`: only its computer goes; the conversation, its files and its memory stay, and its next use makes a new computer. `409 session_busy` while a turn is queued or running, `404 unknown_session` |
 | `GET` | `/v1/sessions/:id/export` | | Every row of the conversation, sealed turns and large outputs inline (lossless; never segment files or step checkpoints), to [move it to Node](#move-conversations-to-node). A conversation on its owner's memory (`memoryScope: "owner"`) also carries that memory (`owner_memory`). `409 session_busy` while a turn is queued or running |
 | `POST` | `/v1/sessions/:id/import` | an export | Node only (celld answers `405`). `201 { id, rows }`, or `409 session_exists`. `owner_memory` is merged into the owner's memory (a file is written unless the owner already has a version at least as new; nothing is deleted); `400` (nothing written) for another conversation's, a cut-off or a newer runner's export |
 | `GET` | `/v1/files/status` | | `{ enabled, kind, maxFileBytes, maxSessionBytes }` |
@@ -71,7 +72,7 @@ Turn status is one of `queued`, `running`, `completed`, `failed`, `interrupted` 
 - `mcp_unavailable` (connecting to `HEADLESS_MCP_URL` failed three times in a row, 0.5 s and 2 s apart)
 - `model_http_<status>`
 - `turn_timeout`
-- `max_steps_exceeded` (only with `HEADLESS_MAX_STEPS` or the session's `maxSteps` set: the turn made that many model calls)
+- `max_steps_exceeded` (only with `HEADLESS_MAX_STEPS` set: the turn made that many model calls)
 - `stuck_repeating`
 - `output_limit` (the model's replies stopped at `HEADLESS_MAX_OUTPUT_TOKENS` three times in a row)
 - `runner_restarted`

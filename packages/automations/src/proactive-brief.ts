@@ -101,7 +101,7 @@ export function agentCheckInstructions(input: { name: string; brief: string }): 
     `- Write a checkpoint to ${AGENT_CHECKPOINT_DIR}{date}/{time}.md: what you checked, what you couldn't read, where to resume.`,
     `- If you have P0 or P1 findings, end with a report for the messenger: each finding as a short paragraph, most time-sensitive first, with its priority, source link and the ids of what it's about. Real names, numbers, dates and times. Otherwise end with exactly ${AGENT_NO_FINDINGS}.`,
     "- Your report has every finding still to tell: new ones, and ones from your last report that weren't sent and still hold.",
-    "- Write each id as <source>:<id>: the source as the wake lists it (calendar, email, chat or a connection id) and the id exactly as the tool returned it (a Slack permalink, a Gmail thread id, a calendar event id, an issue or pull request URL). Use the same ids every time you report the same thing.",
+    "- Write each id as <source>:<id>: the source as the wake lists it (calendar or a connection id) and the id exactly as the tool returned it (a Slack permalink, a Gmail thread id, a calendar event id, an issue or pull request URL). Use the same ids every time you report the same thing.",
     "",
     `${name}'s brief:`,
     '"""',

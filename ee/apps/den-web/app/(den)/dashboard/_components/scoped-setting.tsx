@@ -16,9 +16,11 @@ import { scopeChipState, scopeConflictLine, type TeamScope } from "./team-scope"
  */
 
 /** One setting: its label on the left, its chip and one control on the right, an optional line of state under it. */
-export function SettingRow({ label, labelId, aside, stateLine, children }: {
+export function SettingRow({ label, labelId, aside, stateLine, children, flush = false }: {
   label: string;
   labelId: string;
+  /** No side padding, for a row that sits straight on the page beside flat lists rather than in a panel. */
+  flush?: boolean;
   /** Shown beside the label. */
   aside?: ReactNode;
   /** One line of state under the row, only while it is true. */
@@ -26,7 +28,7 @@ export function SettingRow({ label, labelId, aside, stateLine, children }: {
   children: ReactNode;
 }) {
   return (
-    <div className="px-6 py-3">
+    <div className={flush ? "py-3" : "px-6 py-3"}>
       <div className="flex min-h-6 flex-wrap items-center justify-between gap-3">
         <span className="flex min-w-0 items-center gap-2">
           <span id={labelId} className="text-[13px] font-medium text-gray-900">{label}</span>
@@ -39,15 +41,13 @@ export function SettingRow({ label, labelId, aside, stateLine, children }: {
   );
 }
 
-/** Where a row's value comes from. Renders nothing on Everyone's page while no team changed the value. */
-export function ScopeChip({ scope, changed, changedTeams }: {
+/** Where a team's value comes from. Renders nothing on Everyone's page: Everyone's values are the default. */
+export function ScopeChip({ scope, changed }: {
   scope: TeamScope;
   /** On a team's page: the team has its own value. */
   changed: boolean;
-  /** On Everyone's page: the names of the teams with their own value. */
-  changedTeams?: readonly string[];
 }) {
-  const state = scopeChipState(scope, { changed, changedTeams });
+  const state = scopeChipState(scope, { changed });
   if (!state) return null;
   return (
     <DenChip tone={state.tone} className="min-w-0 max-w-56" title={state.label} data-scope-chip={state.tone === "info" ? "changed" : "everyone"}>
@@ -76,14 +76,20 @@ export function UseEveryonesButton({ settingLabel, disabled = false, onClick }: 
   );
 }
 
-/** After a row saved on change: what is now true, and the way back. */
-export function SavedUndoLine({ message, pending = false, onUndo }: { message: string; pending?: boolean; onUndo: () => void }) {
+/**
+ * After a row saved on change: what is now true, and the way back. Leave
+ * `onUndo` out when the previous value can no longer be chosen: the line then
+ * only says what is true, rather than offering an Undo that cannot succeed.
+ */
+export function SavedUndoLine({ message, pending = false, onUndo }: { message: string; pending?: boolean; onUndo?: () => void }) {
   return (
-    <div role="status" className="flex items-center justify-between gap-3 px-1 text-[13px] text-gray-600">
+    <div role="status" className="flex min-h-8 items-center justify-between gap-3 px-1 text-[13px] text-gray-600">
       <span className="min-w-0 [overflow-wrap:anywhere]">{message}</span>
-      <DenButton variant="ghost" size="xs" loading={pending} onClick={onUndo}>
-        Undo
-      </DenButton>
+      {onUndo ? (
+        <DenButton variant="ghost" size="xs" loading={pending} onClick={onUndo}>
+          Undo
+        </DenButton>
+      ) : null}
     </div>
   );
 }

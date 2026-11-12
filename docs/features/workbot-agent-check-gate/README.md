@@ -25,7 +25,7 @@ arrive that could matter? If not, the turn doesn't run.
 a scheduled check is due
   first check of the day, or one the agent asked for (request_check)  ─▶ run
   two checks already skipped in a row                                  ─▶ run
-  a source Den can't look at itself (team chat, another connection)    ─▶ run
+  a source Den can't look at itself (Slack, another connection)        ─▶ run
   ─▶ Den looks: Gmail (sender, subject, first words, category) and Google Calendar (meetings that changed)
        since each was last read by the agent
   a failed look, or more than 15 arrivals                              ─▶ run
@@ -56,7 +56,10 @@ a scheduled check is due
 
 ## What Den can and can't look at
 
-Den can look at Gmail and Google Calendar. If the check would also read anything else (Slack or Teams, another
+Den can look at Google Calendar, through the calendar, and at Gmail, through the member's Google Workspace
+connector when it is one of the check's sources (mail is no longer a source of its own; what else that connector
+reads, such as files, isn't looked at). If an admin turned any of that connector's reads off for agents, Den doesn't
+look at its mail either and the check runs. If the check would also read anything else (Slack or Teams, another
 connection the member turned on, Microsoft mail or calendar), Den can't tell whether something arrived there, so the
 gate never skips for that member. `workbot_agent_check_gate` logs say how often (`outcome: run:unknown_source`, with
 `unknown` naming the kind of source), which is how to decide what to teach it next.

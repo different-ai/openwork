@@ -42,4 +42,4 @@ export function connectionsWithheld(scopes: ReadonlySet<string>): ReadonlySet<st
   return ids.size ? ids : undefined
 }
 
-export const WORKBOT_CONNECTION_WITHHELD_MESSAGE = "isn't allowed for Workbot in your organization. An admin decides that in Manage › Workbot."
+export const WORKBOT_CONNECTION_WITHHELD_MESSAGE = "isn't allowed for Workbot in your organization. An admin decides that in Workbot's settings."

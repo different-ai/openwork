@@ -141,6 +141,26 @@
               ],
               "description": "AI Gateway: API keys for 3rd party tools: Admins allow members, in AI Gateway › API Keys, to create their own AI Gateway API keys and use the Gateway's models from 3rd party tools and harnesses. After creating a key (or from a key's Set up), members pick a tool (Cursor, OpenAI Codex, Claude Code, another tool) and get its steps with their key and models filled in; Cursor reaches every model through /api/v1/cursor. Members manage their keys in Library › Models; admins see and revoke every key on the same tab. Renders DEN_FEATURE_GATEWAY_MEMBER_API_KEYS."
             },
+            "localModelsPolicy": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "AI Gateway: limit local models (Ollama, LM Studio): Admins turn local models on or off in AI Gateway › Who can use models, separately from members adding their own provider keys. Off: local models follow the provider setting (\"Only models you provide\" blocks them). Renders DEN_FEATURE_LOCAL_MODELS_POLICY."
+            },
+            "shareDeviceProvider": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: share a provider key with your organization: In Settings › AI Providers, a person who manages AI Gateway shares an API key already saved on their device with everyone in the organization, after confirming who can use it and who pays. People they invite get those models without anyone pasting the key again. Off: sharing means adding the provider again in AI Gateway. Renders DEN_FEATURE_SHARE_DEVICE_PROVIDER."
+            },
             "plainFreeModel": {
               "enum": [
                 "",
@@ -150,6 +170,16 @@
                 false
               ],
               "description": "Desktop: OpenWork Free listed like any other model: The free model shows in the model picker under its own name (GPT-6 Luna) with the same row as every other model, stays selectable when its usage limit is used up, and the limit message appears in the chat after sending. Renders DEN_FEATURE_PLAIN_FREE_MODEL."
+            },
+            "singleOpenWorkModelsRow": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: one OpenWork Models row you can turn off: Settings › AI Providers and Connect a provider list OpenWork Models once. When the organization pays for it, the organization's row replaces the free on-device row, and it has Turn off / Turn on on this device: for every member, or only for admins when the organization manages models (Only models you provide). Renders DEN_FEATURE_SINGLE_OPEN_WORK_MODELS_ROW."
             },
             "settledSessions": {
               "enum": [
@@ -211,6 +241,16 @@
               ],
               "description": "Desktop: agents ask and keep working: Agents ask in chat instead of ending a turn to wait for your reply. A question that the rest of the work does not depend on stays open while the agent keeps going, and your answer reaches it even after its turn has ended. Renders DEN_FEATURE_AGENT_QUESTIONS."
             },
+            "followUpSuggestions": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: suggested follow-ups: After a reply finishes, the empty message box can show a suggested next message in gray. Tab fills it in; typing anything else ignores it. A small model writes the suggestion, and nothing shows when it has no clear next step to offer. Renders DEN_FEATURE_FOLLOW_UP_SUGGESTIONS."
+            },
             "steadyLiveTurn": {
               "enum": [
                 "",
@@ -241,6 +281,16 @@
               ],
               "description": "SSO: sign-in requirement on the SSO page: The \"Require SSO\" and \"Restrict this domain to our SSO\" settings move from Org settings to the top of the SSO page, next to the SSO connection they depend on. Off: they stay in Org settings under Authentication. Renders DEN_FEATURE_SSO_SETTINGS_ON_SSO_PAGE."
             },
+            "signInEmailSync": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Sign-in: account email follows Google or SSO: When someone's email changes at Google or at their company's identity provider, their OpenWork account moves to the new email the next time they sign in that way, so signing in with the new email opens the same account instead of creating a second one. Off: the account keeps the email it was created with. Renders DEN_FEATURE_SIGN_IN_EMAIL_SYNC."
+            },
             "multipleSsoConnections": {
               "enum": [
                 "",
@@ -250,6 +300,16 @@
                 false
               ],
               "description": "SSO: several connections per organization: An organization can set up more than one SSO connection: several identity providers, and each one covering one or more email domains. Each connection is verified, tested and turned on by itself, and sign-in shows one button per identity provider. Off: the SSO page manages a single connection. Renders DEN_FEATURE_MULTIPLE_SSO_CONNECTIONS."
+            },
+            "ssoOidcSetupCheck": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "SSO: check the OIDC issuer during setup: The OIDC setup form accepts the provider's issuer or its discovery URL, checks it while the administrator types and on save, shows the issuer and endpoints it found, and reports a wrong address on the field with the exact URL that was tried. Manual endpoints move behind a disclosure and reject a discovery URL as the issuer. Off: the form saves what was typed and reports discovery failures in the page banner. Renders DEN_FEATURE_SSO_OIDC_SETUP_CHECK."
             },
             "featureIntros": {
               "enum": [
@@ -270,6 +330,16 @@
                 false
               ],
               "description": "Den: Auth & Security settings: Settings shows one Auth & Security page with Single sign-on (SSO) and User provisioning (SCIM) tabs instead of separate SSO and SCIM pages; old SSO and SCIM links open the matching tab. Turning it off restores the separate pages. Renders DEN_FEATURE_AUTH_SECURITY_SETTINGS."
+            },
+            "denGreySidebar": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Den: grey sidebar, white pages: The Den dashboard shows its sidebar on a light grey band and every page on white, like the admin dashboard pictured on the website, instead of a white sidebar beside lightly tinted pages. Only colours change: navigation, page layouts and every control stay where they are. Turning it off restores the earlier colours at once. Renders DEN_FEATURE_DEN_GREY_SIDEBAR."
             },
             "teamSettingsSidebar": {
               "enum": [
@@ -521,6 +591,16 @@
               ],
               "description": "Workbot: pages on the left, the rest in its profile: The left navigation lists only full pages (Chats, Documents, Calendar). Files and Apps, which open beside the chat rather than as pages, move into Workbot's profile as tabs; the logo at the top of the navigation opens that profile. Requires the profile sheet. Renders DEN_FEATURE_WORKBOT_PROFILE_NAV."
             },
+            "workbotApps": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: Apps built in OpenWork open in the chat: An App that Workbot builds, changes or opens with OpenWork's App tools shows as a card under its reply, like a file it made, and opens beside the chat as the App itself. Off: the App is made but nothing shows in the chat. Renders DEN_FEATURE_WORKBOT_APPS."
+            },
             "workbotQuietCalendar": {
               "enum": [
                 "",
@@ -691,6 +771,36 @@
               ],
               "description": "Desktop: computer use on remote computers: Use a Linux cloud computer with its browser and desktop in OpenWork Web, or connect a VM from Desktop. Configured and conversation-owned desktops open directly when enabled, including follow-ups and internal session renewal. Take over and Stop stay available. Renders DEN_FEATURE_REMOTE_COMPUTERS."
             },
+            "remoteDevices": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Computers: Computers in Den lets organization owners and admins view their team's reported desktops, cloud computers, registered virtual computers and OpenWork instances, with owners, status, last contact, versions and supported inventory. My Computers in Den, Desktop Settings > Devices and Workbot's Devices page show each member their own and shared computers. Registration does not provision a computer or grant provider access. Off, these views are hidden and desktop reports stop; existing computer use and remote tasks are unchanged. Renders DEN_FEATURE_REMOTE_DEVICES."
+            },
+            "remoteSessionAccess": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: other devices can open sessions started on a computer: A member can let their other devices, Workbot and agents working for them open sessions they started on one of their own computers, continue them, stop them and answer what they wait on, not only tasks that were started remotely. Organization owners choose whether members may allow it (Manage > Computers > Remote access); each member then allows it per computer in Desktop Settings > Devices. It needs both choices and is enforced on that computer. Off, other devices reach only sessions started remotely, as before, and computers report no sessions. Renders DEN_FEATURE_REMOTE_SESSION_ACCESS."
+            },
+            "remoteTasksOptIn": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: other devices reach a computer only after its owner allows it: A signed-in computer takes nothing from its owner's other devices, Workbot or agents until the owner allows it in Desktop Settings > Devices: no task can be started there and no session reached. Off, a computer whose owner has not chosen keeps taking tasks started remotely, as before. In both cases the owner can turn a computer off, and organization owners can turn remote access off for everyone on Manage > Computers. Renders DEN_FEATURE_REMOTE_TASKS_OPT_IN."
+            },
             "remoteSessionPush": {
               "enum": [
                 "",
@@ -720,6 +830,16 @@
                 false
               ],
               "description": "Sandboxes: sample Microsoft 365 for Workbot: New sandbox organizations get one Microsoft 365 connector for the sample Outlook, Calendar and Drive instead of three separate ones, so Workbot chat, Calendar, Documents and the first hello read each person's own sample mail, calendar and files. Each person approves once in their own browser. Only sandbox organizations are affected; every other organization keeps Microsoft's real sign-in. Turning it off stops the sample connector without sending anything to Microsoft. Renders DEN_FEATURE_SANDBOX_MICROSOFT365."
+            },
+            "sandboxSlack": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Sandboxes: sample Slack for Workbot: New sandbox organizations get a sample Slack: a Slack connector at the sandbox's sample work apps with the Workbot Slack app already installed, so Proactive Mode can be turned on and each person's agent messages arrive on their own sample Slack page. Each person connects Slack once in their own browser. Only sandbox organizations are affected; every other organization keeps real Slack. Turning it off stops the sample Slack without sending anything to Slack. Renders DEN_FEATURE_SANDBOX_SLACK."
             },
             "connectStandardTools": {
               "enum": [

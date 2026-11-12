@@ -13,6 +13,7 @@ import type { AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import { contentText, isJsonObject, type AutoRouteInfo, type JsonObject } from "./chat.js"
 import type { ReasoningPayload } from "./reasoning-store.js"
 import type { AutoTranslator } from "./protocol.js"
+import { objectToolSchema } from "./tool-schema.js"
 
 /** Receives reasoning state to keep for the tool calls it preceded. */
 export type RememberReasoning = (toolCallIds: string[], payload: ReasoningPayload) => void
@@ -320,7 +321,7 @@ export function toGeminiBody(body: JsonObject, input: {
       if (tool.type !== "function" || !fn || typeof fn.name !== "string") return []
       const declaration: JsonObject = { name: fn.name }
       if (typeof fn.description === "string") declaration.description = fn.description
-      const parameters = sanitizeGeminiSchema(fn.parameters)
+      const parameters = sanitizeGeminiSchema(objectToolSchema(fn.parameters))
       // Gemini rejects an object schema without properties; leave it out.
       if (isJsonObject(parameters.properties) && Object.keys(parameters.properties).length) declaration.parameters = parameters
       return [declaration]

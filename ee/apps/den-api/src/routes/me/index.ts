@@ -26,7 +26,7 @@ import { readPromptsForMember } from "../../prompts.js"
 import { memberPromptsSchema } from "@openwork/types/den/prompts"
 import { getOrganizationFeatures } from "../../features.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
-import { findSsoAccessBlock, ssoRequiredErrorBody } from "../../organization-sso-access.js"
+import { findSsoAccessBlock, listMemberSsoSignIns, ssoRequiredErrorBody, ssoSignInUrl } from "../../organization-sso-access.js"
 import { registerMeActivationRoutes } from "./activation.js"
 import { registerMeAgentRoutes } from "./agent.js"
 import { registerMeFeatureIntroRoutes } from "./feature-intros.js"
@@ -58,6 +58,17 @@ const meInvitationsResponseSchema = z.object({
     expiresAt: z.string().datetime(),
   })),
 }).meta({ ref: "CurrentUserInvitationsResponse" })
+
+const meSsoSignInResponseSchema = z.object({
+  organizations: z.array(z.object({
+    organizationId: denTypeIdSchema("organization"),
+    organizationSlug: z.string(),
+    organizationName: z.string(),
+    signInPath: z.string(),
+    signInUrl: z.string().url(),
+    ssoOnly: z.boolean(),
+  })),
+}).meta({ ref: "CurrentUserSsoSignInResponse" })
 
 const meDesktopConfigResponseSchema = desktopConfigSchema.meta({
   ref: "CurrentUserDesktopConfigResponse",
@@ -234,6 +245,30 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       activeOrgId: c.get("activeOrganizationId") ?? null,
       activeOrgSlug: c.get("activeOrganizationSlug") ?? null,
     })
+    },
+  )
+
+  app.get(
+    "/v1/me/sso-sign-in",
+    describeRoute({
+      tags: ["Users"],
+      summary: "List current user's organization SSO sign-ins",
+      description: "Lists the signed-in person's organizations that have ready SSO (enabled connection on a verified domain), with each organization's SSO sign-in URL and whether only SSO may sign in there. Used to confirm identity before sensitive changes; unlike the sign-in page's email preflight it includes SSO that is offered but not required.",
+      responses: {
+        200: jsonResponse("Organization SSO sign-ins returned successfully.", meSsoSignInResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+      },
+    }),
+    userSessionRoute(),
+    async (c) => {
+      const user = c.get("user")
+      const organizations = await listMemberSsoSignIns(user.id)
+      return c.json({
+        organizations: organizations.map((organization) => ({
+          ...organization,
+          signInUrl: ssoSignInUrl(organization.signInPath),
+        })),
+      })
     },
   )
 
@@ -494,6 +529,9 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
 
       return c.json({
         ...desktopPolicy,
+        // Local models (Ollama, LM Studio) get their own switch only with the
+        // rollout on; otherwise they follow the provider setting, as before.
+        allowLocalModels: features.localModelsPolicy ? desktopPolicy.allowLocalModels : desktopPolicy.allowCustomProviders,
         // The Automations page shows when either kind is allowed; only Desktop Automations make this desktop a runner.
         automationsEnabled: env.automations.enabled && (automations.desktop || automations.cloud),
         desktopAutomationsEnabled: automations.desktop,

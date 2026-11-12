@@ -11,6 +11,8 @@ import type { HeadlessThreadAnswer, HeadlessThreadPending } from "./types.js";
 
 const QUESTIONS_MAX = 10;
 const OPTIONS_MAX = 50;
+/** Open requests listed at once; the rest follow as these are answered. */
+export const HEADLESS_THREAD_PENDING_ITEMS_MAX = 5;
 
 const optionSchema = z.object({ label: z.string().min(1), value: z.string().optional(), description: z.string().optional() }).passthrough();
 const v1QuestionSchema = z.object({

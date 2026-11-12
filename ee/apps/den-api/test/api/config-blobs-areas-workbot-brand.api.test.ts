@@ -76,7 +76,7 @@ const as = den.as(owner, source.orgId)
 assert.equal((await den.setFeature(source.orgId, "workbotProactive", true)).status, 200)
 await ok(as("PUT", "/v1/org/workbot-settings/proactive", {
   enabled: true, leadMinutes: 30, startHour: 9, dailyCap: 5, membersStart: "opted_out",
-  sources: { email: "members" }, responsibilities: { meeting_prep: false }, instructions: "Keep it short.",
+  sources: { calendar: "members" }, responsibilities: { meeting_prep: false }, instructions: "Keep it short.",
 }), "proactive settings")
 await setStoredModel(source.orgId, "custom/not-a-served-model")
 await ok(as("PATCH", "/v1/org", { brandAppName: "Acme Work", brandAccentColor: "#ff6600" }), "brand name")
@@ -121,9 +121,7 @@ test("export: allowlisted single items, valid specs, no secrets or source-bound 
   assert.deepEqual(proactive, {
     enabled: true, leadMinutes: 30, workingDays: "weekdays", startHour: 9, endHour: 19, dailyCap: 5, membersStart: "opted_out", destination: "workbot_dm",
     sources: {
-      calendar: "everyone", email: "members", chat: "everyone",
-      coreConnections: { calendar: null, email: null, chat: null },
-      coreDefaults: { calendar: null, email: null, chat: null },
+      calendar: "members",
       otherConnections: null, connections: [], toolOverrides: [],
     },
     brief: {},
@@ -188,6 +186,22 @@ test("update writes only what the plan's changes name", async () => {
   await workbotProactiveArea.apply(sourceCtx, {
     kind: "update", targetId: source.orgId, previous: after, item: { name: after.name, spec: before.spec },
     changes: [{ path: "startHour", from: 7, to: 9 }], secretPaths: [],
+  })
+  assert.deepEqual((await only(workbotProactiveArea, sourceCtx)).spec, before.spec)
+
+  // A file exported before mail and chat became part of their connections still imports: its email, chat, picked
+  // apps and defaults are read and ignored, and only the calendar's own setting is applied.
+  const legacy = { ...before.spec, sources: { ...Object(before.spec.sources), calendar: "off", email: "off", chat: "members", coreConnections: { calendar: null, email: null, chat: null }, coreDefaults: { calendar: null, email: null, chat: null } } }
+  assert.ok(workbotProactiveArea.specSchema.safeParse(legacy).success, "the older shape is still a valid file")
+  const imported = await workbotProactiveArea.apply(sourceCtx, {
+    kind: "update", targetId: source.orgId, previous: before, item: { name: before.name, spec: legacy },
+    changes: [{ path: "sources.calendar", from: "members", to: "off" }, { path: "sources.email", from: "everyone", to: "off" }, { path: "sources.coreDefaults.calendar", from: null, to: null }], secretPaths: [],
+  })
+  assert.deepEqual(imported.steps, [{ action: "set", target: "sources.calendar" }])
+  assert.deepEqual((await only(workbotProactiveArea, sourceCtx)).spec, { ...before.spec, sources: { ...Object(before.spec.sources), calendar: "off" } }, "nothing of email, chat or the picked apps is saved or exported")
+  await workbotProactiveArea.apply(sourceCtx, {
+    kind: "update", targetId: source.orgId, previous: before, item: { name: before.name, spec: before.spec },
+    changes: [{ path: "sources.calendar", from: "off", to: "members" }], secretPaths: [],
   })
   assert.deepEqual((await only(workbotProactiveArea, sourceCtx)).spec, before.spec)
 
@@ -271,21 +285,29 @@ test("round trip into a second organization; brand bytes identical; a model the 
   assert.deepEqual((await only(workbotSettingsArea, sourceCtx)).spec, { model: null, provider: null, enabled: true })
 })
 
-test("workbot.settings drops the retired step limit from older exports instead of refusing them", async () => {
+test("workbot.settings reads a step limit from a file exported before, applies the rest and no step limit", async () => {
   const stepOwner = await den.signUp("Step Limit Blob Owner")
   const org = await den.createOrg(stepOwner, "Step limit blob org")
   const ctx = await contextFor(org.orgId, org.owner)
   const before = await only(workbotSettingsArea, ctx)
-  assert.equal("maxSteps" in before.spec, false, "not exported")
-  const older = { ...before.spec, maxSteps: 40 }
-  const parsed = workbotSettingsArea.specSchema.safeParse(older)
-  assert.ok(parsed.success, "an older export still validates")
-  assert.deepEqual(parsed.data, before.spec)
-  const applied = await workbotSettingsArea.apply(ctx, {
-    kind: "update", targetId: org.orgId, previous: before, item: { name: before.name, spec: older }, changes: [{ path: "maxSteps" }], secretPaths: [],
+  assert.equal("maxSteps" in before.spec, false, "no step limit is exported")
+  // A file exported while Workbot had a step limit still carries one.
+  const exportedBefore = { ...before.spec, maxSteps: 40, enabled: false }
+  assert.equal(workbotSettingsArea.specSchema.safeParse(exportedBefore).success, true, "the old file is still a valid spec")
+  const apply = (paths: string[]) => workbotSettingsArea.apply(ctx, {
+    kind: "update", targetId: org.orgId, previous: before, item: { name: before.name, spec: exportedBefore }, changes: paths.map((path) => ({ path })), secretPaths: [],
   })
-  assert.deepEqual(applied.steps, [])
-  assert.deepEqual((await only(workbotSettingsArea, ctx)).spec, before.spec)
+
+  // The step limit alone: nothing is written.
+  assert.deepEqual((await apply(["maxSteps"])).steps, [])
+  // With another setting: that one is applied, the step limit is not.
+  assert.equal((await den.setFeature(org.orgId, "workbotTeamSettings", true)).status, 200)
+  assert.deepEqual((await apply(["maxSteps", "enabled"])).steps, [{ action: "set", target: "enabled", detail: "off" }])
+  const after = await only(workbotSettingsArea, ctx)
+  assert.deepEqual(after.spec, { ...before.spec, enabled: false })
+  const { db } = await import("../../src/db.js")
+  const [stored] = await db.$primary.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, normalizeDenTypeId("organization", org.orgId)))
+  assert.equal(field(stored?.metadata, "workbot", "maxSteps"), undefined)
 })
 
 test("settings.audit: the capture change names the config token the apply runs under", async () => {

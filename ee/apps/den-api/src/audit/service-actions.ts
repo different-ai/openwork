@@ -87,7 +87,7 @@ export const auditServiceActionDeclarations = [
     action: "remote_session.create", kind: "remote_session.execution", class: "tenant_job", resource: { type: "remote_session", idFrom: null }, origin: "mcp",
     tools: ["execute_capability remote-session:create"], callSites: ["src/mcp/capability-registry.ts:remoteSessionSource.execute → executeRemoteSessionCapability"],
     jobOutcome: "Desktop: runner callbacks POST /v1/remote-session-commands/:id/{claim,complete,session} (declared routes). Cloud: not_recorded: the session runs on the member's OpenWork Web worker.",
-    notes: MCP_PRINCIPAL,
+    notes: `A desktop or registered target that takes nothing from other devices (its owner's choice, no choice yet under remoteTasksOptIn, or the organization's ceiling) is refused with remote_access_off: nothing is queued and the refusal is recorded as a failed outcome. ${MCP_PRINCIPAL}`,
   },
   {
     action: "remote_session.send", kind: "remote_session.execution", class: "tenant_job", resource: { type: "remote_session", idFrom: "sessionId argument" }, origin: "mcp",
@@ -105,7 +105,13 @@ export const auditServiceActionDeclarations = [
     action: "remote_session.answer", kind: "remote_session.execution", class: "tenant_job", resource: { type: "remote_session", idFrom: "sessionId argument" }, origin: "mcp",
     tools: ["execute_capability remote-session:answer"], callSites: ["src/mcp/capability-registry.ts:remoteSessionSource.execute → executeRemoteSessionCapability"],
     jobOutcome: "Desktop: runner callbacks POST /v1/remote-session-requests/:id/{claim,complete} (declared routes). Cloud: not_recorded: the reply is synchronous on the member's OpenWork Web worker.",
-    notes: `The member's agent answers their own remote session's pending question or permission after asking them (mcp:write, agent chats only). ${MCP_PRINCIPAL}`,
+    notes: `The member's agent answers their own remote session's open question or permission after asking them, or dismisses a question they want skipped (mcp:write, agent chats only). ${MCP_PRINCIPAL}`,
+  },
+  {
+    action: "remote_session.attach", kind: "remote_session.execution", class: "tenant_job", resource: { type: "remote_session", idFrom: "sessionId argument" }, origin: "mcp",
+    tools: ["execute_capability remote-session:attach"], callSites: ["src/mcp/capability-registry.ts:remoteSessionSource.execute → executeRemoteSessionCapability"],
+    jobOutcome: "Runner callbacks POST /v1/remote-session-commands/:id/{claim,complete,session} (declared routes).",
+    notes: `remoteSessionAccess: the member's agent attaches to a session that was started on one of the member's own computers, where the organization's ceiling and the computer's owner both allow every session (mcp:write, agent chats only). Refusals queue nothing and are recorded as failed outcomes. REST equivalent remote_session.session.attach. ${MCP_PRINCIPAL}`,
   },
   {
     action: "slack_assistant.bot_message.send", kind: "slack_assistant.execution", class: "tenant_external", resource: { type: "slack_message", idFrom: null }, origin: "mcp",

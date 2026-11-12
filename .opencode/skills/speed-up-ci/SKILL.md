@@ -16,7 +16,7 @@ node .github/scripts/ci-time-to-green.mjs --hours 24            # all PRs
 node .github/scripts/ci-time-to-green.mjs --hours 6 --branch-prefix perf/ci-x --json
 ```
 
-- `required`: push → last merge-gating check green (`openwork-tests-required`, `warden-clear`).
+- `required`: push → last merge-gating check green (`openwork-tests-required`).
 - `full`: push → last GitHub Actions check green. "Evidence preview" is ignored (a link, not a test).
 - Failed or unfinished commits are excluded from the percentiles and counted separately.
 

@@ -100,6 +100,21 @@ const ADMIN_AND_BILLING_MANAGER = ["admin", "billing-manager"] as const
 const BILLING_MANAGER_ONLY = ["billing-manager"] as const
 
 export const PERMISSIONS = {
+  // Team computer inventory (owners always hold every permission).
+  "computers.view": {
+    area: "desktop",
+    label: "View team computers",
+    description: "View the team's computer inventory, owners, versions, availability and reported readiness. Does not grant control or access to files or screen content.",
+    defaultOn: ADMIN,
+  },
+  "computers.disconnect": {
+    area: "desktop",
+    label: "Disconnect team computers",
+    description: "Disconnect a member's signed-in computer from the organization, which signs OpenWork out there, and remove computers from the team list. Does not grant control or access to files, sessions or screen content.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+
   // Organization
   "organization.update": {
     area: "organization",

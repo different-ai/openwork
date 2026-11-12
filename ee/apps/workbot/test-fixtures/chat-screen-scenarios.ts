@@ -64,6 +64,21 @@ export const scenarios: Record<string, () => FixtureThread> = {
       ], { modelSteps: 2 })),
     ],
   }),
+  /** Work on the rest of Workbot's computer (not its browser): a finished Computer card, then one still working. */
+  "computer-use": () => ({
+    name: "Workbot", organizationName: "Example Team", status: "busy", hasEarlier: false, filesEnabled: true,
+    turns: [
+      hello(),
+      turn("c1", "Open Blender on the computer for me", ago(600), [
+        said("Sure, opening Blender on the computer now."),
+        { kind: "steps", steps: [{ ...computerStep(["Opening Blender", "Waiting for Blender to finish loading"], false, ago(590)), label: "Using my computer", shown: true }] },
+      ], { modelSteps: 2 }),
+      working(turn("c2", "Draw a lake around the duck, by hand in the menus", ago(40), [
+        said("Got it, no shortcuts this time. I'll do it by hand in Blender's menus so you can watch."),
+        { kind: "steps", steps: [{ ...computerStep(["Adding a cylinder", "Flattening the lake and setting it level"], true, ago(30)), label: "Using my computer", shown: true }] },
+      ], { modelSteps: 2 })),
+    ],
+  }),
   /** Deterministic running task for preview ownership/control proofs; no external identity. */
   "browser-lifecycle": () => ({
     name: "Workbot", organizationName: "Example Team", status: "busy", hasEarlier: false, filesEnabled: true,
@@ -110,6 +125,11 @@ export const scenarios: Record<string, () => FixtureThread> = {
         outputs: [ARTIFACT_FILES.report, ARTIFACT_FILES.shopping],
       }),
     ],
+  }),
+  /** Both kinds of app in one reply: an App built in OpenWork (it runs from its own server) beside an .html file. */
+  "openwork-app": () => ({
+    name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
+    turns: [hello(), turn("o1", "Create a simple hello world app", minutesAgo(2), [said("Your app is ready: Hello World Wave. It's in the card below.")], { outputs: [OPENWORK_APP, ARTIFACT_FILES.organizer] })],
   }),
   /** A tall phone screenshot Workbot sends back: its card and preview keep the picture's proportions. */
   photo: () => ({
@@ -313,6 +333,38 @@ export const ARTIFACT_BYTES: Record<string, { mediaType: string; bytes: string |
   "out-hostile": { mediaType: "text/html", bytes: HOSTILE_HTML },
   "out-report": { mediaType: "application/pdf", bytes: "%PDF-1.4\n% fixture\n" },
   "out-shopping": { mediaType: "text/csv", bytes: SHOPPING_CSV },
+}
+/** An App built in OpenWork as a reply lists it: no bytes, its title as its name. */
+export const OPENWORK_APP_ID = "cob_01kq8z0000000000000000000a"
+const OPENWORK_APP = { id: `app:${OPENWORK_APP_ID}`, name: "Hello World Wave", mediaType: "application/vnd.openwork.app", size: 0, updatedAt: 1 }
+/**
+ * What opening that App answers: a page that speaks the MCP Apps protocol to its host (initialize, then the opening
+ * result), and calls its own `wave` tool from a button.
+ */
+export const OPENWORK_APP_OPENED = {
+  result: { content: [{ type: "text", text: "Hello World Wave" }], structuredContent: { app: { appId: OPENWORK_APP_ID, title: "Hello World Wave" }, greeting: "Hello, World!" } },
+  html: `<!doctype html><html><head><meta charset="utf-8"><title>Hello World Wave</title><style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;font:16px system-ui;background:#f6f8f9;color:#11181c}
+main{display:grid;gap:12px;justify-items:center}h1{margin:0;font-size:28px}
+button{font:inherit;padding:8px 16px;border-radius:999px;border:0;background:#011627;color:#eef2f6}
+</style></head><body><main><h1 id="greeting">Waiting for the host</h1><p id="count">No waves yet</p><button id="wave" type="button">Wave back</button></main><script>
+let next = 1; const waiting = new Map()
+const ask = (method, params) => new Promise((resolve, reject) => { const id = next++; waiting.set(id, { resolve, reject }); parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*") })
+addEventListener("message", (event) => {
+  const message = event.data
+  if (!message || message.jsonrpc !== "2.0") return
+  if (message.method === "ui/notifications/tool-result") document.getElementById("greeting").textContent = message.params.structuredContent.greeting
+  const pending = waiting.get(message.id)
+  if (!pending) return
+  waiting.delete(message.id)
+  if (message.error) pending.reject(new Error(message.error.message)); else pending.resolve(message.result)
+})
+ask("ui/initialize", { protocolVersion: "2026-01-26" }).then(() => parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized" }, "*"))
+document.getElementById("wave").addEventListener("click", async () => {
+  const result = await ask("tools/call", { name: "wave", arguments: {} }).catch((error) => ({ structuredContent: { waves: error.message } }))
+  document.getElementById("count").textContent = "Waves: " + result.structuredContent.waves
+})
+</script></body></html>`,
 }
 const ARTIFACT_FILES = {
   organizer: { id: "out-organizer", name: "space-organizer.html", mediaType: "text/html", size: ORGANIZER_HTML.length, updatedAt: 1 },

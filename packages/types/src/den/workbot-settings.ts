@@ -109,7 +109,6 @@ export const workbotReadinessSchema = z.object({
 })
 export type WorkbotReadiness = z.infer<typeof workbotReadinessSchema>
 
-/** The organization's default model. */
 export const workbotSettingsInputSchema = z.strictObject({
   /** A model id from `models`, or null for the runner's default. */
   model: z.string().trim().min(1).max(255).nullable(),

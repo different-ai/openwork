@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { posix } from "node:path"
-import { ensureRunning, isSandboxError, shellQuote, SCOPE_LABEL, withBlocks, type RunSpec, type SandboxHandle, type SandboxProvider, type SandboxSpec } from "@openwork/sandbox"
+import { ensureRunning, isSandboxError, shellQuote, SCOPE_LABEL, withBlocks, type RunSpec, type SandboxHandle, type SandboxProvider, type SandboxSpec, type SandboxState } from "@openwork/sandbox"
 import { z } from "zod"
 import type { ComputerFile, ComputerFiles, FileReader, ToolResult, ToolSpec } from "./types.js"
 import { demonstrationReplySchema, type DemonstrationCommand } from "@openwork/types/browser-demonstration"
@@ -36,6 +36,16 @@ const UPDATING = "This computer is updating to a new version, which starts once 
  */
 const IDLE_REPLACEMENT_RETRY_MS = 24 * 60 * 60_000
 const NEEDED_REPLACEMENT_RETRY_MS = 10 * 60_000
+/** A computer replaced because its desktop wouldn't start isn't replaced again this soon: another fresh one won't do better. */
+const RECOVERY_RETRY_MS = 10 * 60_000
+/**
+ * How often a paused computer is looked at again. Pauses are scheduled only when this runner uses a computer, so one
+ * that anything else woke would run until its next use, and a provider's idle timeout doesn't see a desktop as idle
+ * while its browser keeps connections open.
+ */
+export const PAUSED_RECHECK_MS = 60 * 60_000
+/** How long a computer whose desktop won't start gets to hand its workspace and browser profile to its replacement. */
+const RECOVERY_CARRY_MS = 20_000
 
 const WORKSPACE = "/workspace"
 const FILES_DIR = `${WORKSPACE}/files`
@@ -87,6 +97,12 @@ export class Computers {
   private readonly working = new Map<string, number>()
   /** The replacement under way for each session, which concurrent callers (the view and the chat's glimpse) share. */
   private readonly replacing = new Map<string, Promise<SandboxHandle | null>>()
+  /** Of each session's operations in flight (`working`), those still waiting for its desktop to start. */
+  private readonly awaitingDesktop = new Map<string, number>()
+  /** The decision under way on a computer whose desktop won't start, which everyone waiting on that start shares. */
+  private readonly recovering = new Map<string, Promise<SandboxHandle | null>>()
+  /** When each session's computer was last replaced for a desktop that wouldn't start. */
+  private readonly recovered = new Map<string, number>()
 
   private readonly snapshot: string
   private readonly files?: ComputerFiles
@@ -340,7 +356,8 @@ export class Computers {
 
   /**
    * Pauses the conversation's computer if it is running and idle, for a host acting on a stored pause time
-   * (`pauses`), including after a restart, when this process never used it. It never wakes a paused computer.
+   * (`pauses`), including after a restart, when this process never used it. It never wakes a paused computer, and
+   * keeps one due for another look (PAUSED_RECHECK_MS).
    */
   async pauseIdle(sessionId: string) {
     this.cancelPause(sessionId)
@@ -348,40 +365,69 @@ export class Computers {
     const box = await (known ? known.then(box => this.provider.inspect(box)) : this.provider.find({ idempotencyKey: this.slug(sessionId), labels: this.spec(sessionId).labels })).catch(() => undefined)
     // Unknown: look again after another idle period rather than at once.
     if (box === undefined) return this.options.pauses?.set(sessionId, Date.now() + this.options.idlePauseMs)
-    if (box?.state !== "running") return this.options.pauses?.clear(sessionId)
+    if (box?.state !== "running") return this.resting(sessionId, box?.state)
     if (!known) this.vms.set(sessionId, Promise.resolve(box))
-    await this.pauseIfIdle(sessionId)
+    await this.pauseIfIdle(sessionId, true)
   }
 
-  private pauseIfIdle(sessionId: string): Promise<void> {
+  /** What stays due for a computer that isn't running: another look while it is paused, nothing once it is gone. */
+  private resting(sessionId: string, state: SandboxState | undefined) {
+    if (state === undefined || state === "missing" || state === "archived") return this.options.pauses?.clear(sessionId)
+    // Coming up: someone is starting it, so it is due as any running computer is.
+    const soon = state === "creating" || state === "starting"
+    this.options.pauses?.set(sessionId, Date.now() + (soon ? this.options.idlePauseMs : PAUSED_RECHECK_MS))
+  }
+
+  /** `running`: the caller has just seen the computer running. */
+  private pauseIfIdle(sessionId: string, running = false): Promise<void> {
     const current = this.pausing.get(sessionId)
     if (current) return current
-    const pending = this.checkIdle(sessionId).finally(() => this.pausing.delete(sessionId))
+    const pending = this.checkIdle(sessionId, running).finally(() => this.pausing.delete(sessionId))
     this.pausing.set(sessionId, pending)
     return pending
   }
 
-  private async checkIdle(sessionId: string) {
+  private async checkIdle(sessionId: string, running: boolean) {
     this.pauseTimers.delete(sessionId)
     const pending = this.vms.get(sessionId)
     if (!pending) return this.options.pauses?.clear(sessionId)
+    const started = Date.now()
+    // One line per check: a computer that keeps running says here why. Two `paused` in a row with no use between them
+    // mean something other than this runner woke it.
+    const log = (outcome: string, error?: unknown) => console.log(`[headless-computer] idle pause ${JSON.stringify({ sessionId, outcome, ms: Date.now() - started, ...(error === undefined ? {} : { error: (error instanceof Error ? error.message : String(error)).slice(0, 300) }) })}`)
     try {
       let vm = await pending
+      if (!running) {
+        // The person or the provider may have paused it since: the checks below run commands, which would wake it.
+        const state = (await this.provider.inspect(vm)).state
+        if (state !== "running") {
+          log(state)
+          return this.resting(sessionId, state)
+        }
+      }
       // A command already running would carry on past the checkpoint, and its work would be lost.
-      if (this.working.has(sessionId) || await this.runningJobs(vm) > 0) return this.release(sessionId)
+      if (this.working.has(sessionId) || await this.runningJobs(vm) > 0) {
+        log("in_use")
+        return this.release(sessionId)
+      }
       // Nobody is using it: the moment to move a computer built from an older image onto the current one.
       if (!this.working.has(sessionId) && await this.staleImage(sessionId, vm)) vm = await this.replace(sessionId, vm, { required: false }) ?? vm
       // A provider that can neither pause nor stop keeps the computer running until its own expiry.
-      if (!this.provider.describe().stopResume) return this.options.pauses?.clear(sessionId)
+      if (!this.provider.describe().stopResume) {
+        log("cannot_pause")
+        return this.options.pauses?.clear(sessionId)
+      }
       const callsOff = this.provider.describe().callsOffPause === true
       if (callsOff) this.checkpointing.add(sessionId)
       await (this.provider.blocks?.pause ? this.provider.blocks.pause(vm, { timeoutMs: PAUSE_TIMEOUT_MS }) : this.provider.stop(vm, { timeoutMs: PAUSE_TIMEOUT_MS }))
       // Called off: the computer is in use again, and `vm()` set when it is next due.
-      if (callsOff && !this.checkpointing.delete(sessionId)) return
-      this.options.pauses?.clear(sessionId)
-    } catch {
+      if (callsOff && !this.checkpointing.delete(sessionId)) return log("called_off")
+      log("paused")
+      this.options.pauses?.set(sessionId, Date.now() + PAUSED_RECHECK_MS)
+    } catch (error) {
       this.checkpointing.delete(sessionId)
-      // Not fatal: tried again after another idle period, and Freestyle's own idle timeout pauses it later.
+      log("failed", error)
+      // Not fatal: tried again after another idle period.
       this.options.pauses?.set(sessionId, Date.now() + this.options.idlePauseMs)
     }
   }
@@ -397,31 +443,69 @@ export class Computers {
     }
   }
 
-  private async runningJobs(box: SandboxHandle) {
-    const jobs = await this.execute(box, { command: `ls ${WORKSPACE}/.jobs/*.running 2>/dev/null | wc -l`, activity: "maintenance", timeoutMs: 10_000 })
+  private async runningJobs(box: SandboxHandle, timeoutMs = 10_000) {
+    const jobs = await this.execute(box, { command: `ls ${WORKSPACE}/.jobs/*.running 2>/dev/null | wc -l`, activity: "maintenance", timeoutMs })
     return Number(jobs.stdout?.trim() ?? "0")
   }
 
   /**
    * Starts the session's desktop on `box` and returns the computer it runs on. One whose image can't serve this runner
    * is replaced at once when nothing else is running on it (`self`: the caller's own operations in flight), carrying
-   * its browser profile and workspace over; otherwise the caller hears that it is updating.
+   * its browser profile and workspace over; otherwise the caller hears that it is updating. One whose desktop won't
+   * start is replaced the same way (`recover`), so the person isn't left to rebuild it themselves.
    */
   private async startDesktop(sessionId: string, box: SandboxHandle, self = 0): Promise<SandboxHandle> {
     const desktop = this.desktop
     if (!desktop) throw new Error("Desktop access is not configured.")
+    this.awaitingDesktop.set(sessionId, (this.awaitingDesktop.get(sessionId) ?? 0) + self)
     try {
       this.desktops.set(sessionId, await desktop.start(box))
       return box
     } catch (error) {
-      if (!(error instanceof DesktopError) || error.desktopCode !== "desktop_outdated") throw error
+      if (!(error instanceof DesktopError)) throw error
+      if (error.desktopCode === "desktop_unresponsive") {
+        const fresh = await this.recover(sessionId, box)
+        if (!fresh) throw error
+        this.desktops.set(sessionId, await desktop.start(fresh))
+        return fresh
+      }
+      if (error.desktopCode !== "desktop_outdated") throw error
       if ((this.working.get(sessionId) ?? 0) > self || await this.runningJobs(box).catch(() => 1) > 0) throw new DesktopError("desktop_updating", UPDATING)
       if (await desktop.replacedInVain(box, NEEDED_REPLACEMENT_RETRY_MS)) throw error
       const fresh = await this.replace(sessionId, box, { required: true })
       if (!fresh) throw error
       this.desktops.set(sessionId, await desktop.start(fresh))
       return fresh
+    } finally {
+      const left = (this.awaitingDesktop.get(sessionId) ?? self) - self
+      if (left > 0) this.awaitingDesktop.set(sessionId, left)
+      else this.awaitingDesktop.delete(sessionId)
     }
+  }
+
+  /**
+   * The replacement for a computer whose desktop won't start, or null when the computer stays: something other than
+   * that start is running on it, or it is itself a replacement made moments ago.
+   */
+  private recover(sessionId: string, box: SandboxHandle): Promise<SandboxHandle | null> {
+    let pending = this.recovering.get(sessionId)
+    if (!pending) {
+      pending = this.replaceUnresponsive(sessionId, box).finally(() => this.recovering.delete(sessionId))
+      this.recovering.set(sessionId, pending)
+    }
+    return pending
+  }
+
+  private async replaceUnresponsive(sessionId: string, box: SandboxHandle) {
+    if ((this.working.get(sessionId) ?? 0) > (this.awaitingDesktop.get(sessionId) ?? 0)) return null
+    // Remembered by this process only: requests close enough together to replace it over and over keep the process alive.
+    if (Date.now() - (this.recovered.get(sessionId) ?? 0) < RECOVERY_RETRY_MS) return null
+    // One that still answers may be running a background job; one that doesn't has nothing it can hand over.
+    const jobs = await this.runningJobs(box, 5_000).catch(() => null)
+    if (jobs) return null
+    this.recovered.set(sessionId, Date.now())
+    console.log("[headless-computer] replacing a computer whose desktop didn't start", { sessionId, answers: jobs !== null })
+    return this.replace(sessionId, box, { required: true, carryWithinMs: jobs === null ? 0 : RECOVERY_CARRY_MS })
   }
 
   /**
@@ -444,9 +528,10 @@ export class Computers {
   /**
    * Moves the session onto a new computer from the current snapshot, carrying the browser profile and workspace over
    * as far as the old computer can export them; the person's Files are copied in again on next use. When the move is
-   * optional (`required: false`), it only happens with everything carried, and otherwise returns null.
+   * optional (`required: false`), it only happens with everything carried, and otherwise returns null. `carryWithinMs`
+   * limits how long the old computer gets to export them.
    */
-  private replace(sessionId: string, box: SandboxHandle, options: { required: boolean }): Promise<SandboxHandle | null> {
+  private replace(sessionId: string, box: SandboxHandle, options: { required: boolean; carryWithinMs?: number }): Promise<SandboxHandle | null> {
     let pending = this.replacing.get(sessionId)
     if (!pending) {
       pending = this.move(sessionId, box, options).finally(() => this.replacing.delete(sessionId))
@@ -455,11 +540,12 @@ export class Computers {
     return pending
   }
 
-  private async move(sessionId: string, box: SandboxHandle, options: { required: boolean }): Promise<SandboxHandle | null> {
+  private async move(sessionId: string, box: SandboxHandle, options: { required: boolean; carryWithinMs?: number }): Promise<SandboxHandle | null> {
     const started = Date.now()
     const carried: Array<[CarriedState, Uint8Array]> = []
     for (const name of ["workspace", "profile"] as const) {
-      const bytes = await this.desktop?.exportState(box, name).catch(() => null)
+      const left = options.carryWithinMs === undefined ? undefined : started + options.carryWithinMs - Date.now()
+      const bytes = left !== undefined && left <= 0 ? null : await this.desktop?.exportState(box, name, left).catch(() => null)
       if (bytes) carried.push([name, bytes])
       else if (!options.required) return null
     }

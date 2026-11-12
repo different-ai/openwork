@@ -24,6 +24,7 @@ import type { GatewayMemberAccessRow } from "./provider-access.js"
 import type { ProviderCatalog } from "./provider-catalog.js"
 import { isEventStreamContentType, isJsonContentType } from "./relay.js"
 import { chatStreamToResponses, chatToResponses, responsesReasoningEffort, responsesToChat, type ResponsesToolNames } from "./cursor-responses.js"
+import { resolveSmartRouter, type SmartToolDependencies, type SmartToolRouter } from "./smart-tools.js"
 
 export const cursorPathPrefix = "/api/v1/cursor"
 export const cursorModelsPath = `${cursorPathPrefix}/models`
@@ -40,6 +41,8 @@ export type CursorDependencies = {
   reasoningStore: ReasoningStore
   /** The normal Gateway pipeline for a rewritten request. */
   forward: (target: AutoTarget) => Promise<Response>
+  /** Smart Routers (feature `autoRouter`): listed and routed when given. */
+  smart?: SmartToolDependencies
 }
 
 export type CursorModel = {
@@ -85,11 +88,11 @@ export function cursorModels(rows: GatewayMemberAccessRow[], catalog: ProviderCa
   return models.sort((a, b) => a.name.localeCompare(b.name) || a.modelId.localeCompare(b.modelId))
 }
 
-/** The OpenAI List Models shape, with each model's Cursor name as its id. */
-export function listCursorModels(models: CursorModel[]) {
+/** The OpenAI List Models shape, with each model's Cursor name as its id, then the member's Smart Routers. */
+export function listCursorModels(models: CursorModel[], routers: SmartToolRouter[] = []) {
   return {
     object: "list" as const,
-    data: models.map((model) => ({
+    data: [...models.map((model) => ({
       id: cursorModelName(model),
       object: "model" as const,
       created: model.row.model ? Math.floor(model.row.model.created_at.getTime() / 1000) : 0,
@@ -100,7 +103,19 @@ export function listCursorModels(models: CursorModel[]) {
         /** Append `:<level>` to the id to ask for one; `default` is the id alone. */
         thinking_levels: model.thinkingLevels,
       },
-    })),
+    })), ...routers.map((router) => ({
+      id: router.toolName,
+      object: "model" as const,
+      created: 0,
+      owned_by: "openwork",
+      name: router.name,
+      openwork: {
+        provider_name: "OpenWork",
+        /** Smart picks the model and its thinking level for every prompt. */
+        thinking_levels: ["default" as const],
+        smart_router: true,
+      },
+    }))],
   }
 }
 
@@ -214,6 +229,13 @@ export async function handleCursorChat(input: {
 }): Promise<Response> {
   const { request, identity, dependencies, api } = input
   const requested = input.body.model
+  const smart = await resolveSmartRouter(requested, identity, dependencies.smart)
+  if (smart.kind === "router" && dependencies.smart) {
+    // Smart chooses the thinking level, so a level in the name is ignored.
+    const body = normalizeCursorChatBody(api === "responses" ? responsesToChat(input.body) : input.body)
+    const chat = await dependencies.smart.route({ request, body, routerId: smart.routerId })
+    return api === "responses" ? asResponses(chat, typeof requested === "string" ? requested : "smart") : chat
+  }
   const parsed = parseCursorModelName(requested)
   if (!parsed) {
     return cursorError(400, "invalid_cursor_model", "model must be an OpenWork model name for Cursor, such as openwork/claude-opus-5.5-k3f9. Copy it from Set up Cursor in your OpenWork Library.")
@@ -225,6 +247,7 @@ export async function handleCursorChat(input: {
   }
   // Same answer for a model that does not exist and one this member cannot use.
   if (match.kind === "none" || !match.model.row.model) {
+    if (smart.kind === "unavailable") return smart.error()
     return cursorError(404, "model_not_found", `${String(requested)} is not one of your OpenWork models. Copy the name from Set up Cursor in your OpenWork Library.`)
   }
   const { model } = match

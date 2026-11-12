@@ -14,6 +14,8 @@ function DesktopReauth() {
   const [identity, setIdentity] = useState<URLSearchParams | null>(null);
   useEffect(() => { setIdentity(new URLSearchParams(window.location.hash.slice(1))); }, [nonce]);
   const userId = identity?.get("userId") ?? "";
+  // The desktop's active organization, a hint for which organization's SSO to offer. Older desktops omit it.
+  const organizationId = identity?.get("orgId") || null;
   const [email, setEmail] = useState("");
   const [emailInput, setEmailInput] = useState("");
   const [loadingSession, setLoadingSession] = useState(true);
@@ -71,7 +73,7 @@ function DesktopReauth() {
           <DenButton variant="secondary" onClick={() => void navigator.clipboard.writeText(link).then(() => setCopied(true)).catch(() => setCopied(false))}>{copied ? "Copied" : "Copy verification link"}</DenButton>
         </> : <p>Complete the security check to return to your pending share.</p>}
     </div>
-    <ReauthDialog open={valid && !loadingSession && Boolean(email) && !cancelled && !link} user={user} orgContext={null} onCancel={() => setCancelled(true)} onVerified={verified}
+    <ReauthDialog open={valid && !loadingSession && Boolean(email) && !cancelled && !link} user={user} orgContext={null} organizationId={organizationId} onCancel={() => setCancelled(true)} onVerified={verified}
       title="Confirm your identity to share apps" description="After verification, return to OpenWork to finish sharing your selected apps." />
   </div>;
 }

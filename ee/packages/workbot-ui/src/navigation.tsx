@@ -1,7 +1,7 @@
 "use client";
 
 import { Dialog } from "@base-ui/react/dialog";
-import { CalendarDays, FileText, FolderOpen, Lock, MessageCircle, PanelLeft, Plus, Search, Shapes, X } from "lucide-react";
+import { CalendarDays, FileText, FolderOpen, Lock, MessageCircle, MonitorSmartphone, PanelLeft, Plus, Search, Shapes, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { AccountAvatar } from "./account-menu";
 import { chatTitle, sinceLabel } from "./chats";
@@ -66,6 +66,8 @@ function destinations(props: NavigationProps, rail = false): Destination[] {
     },
     ...(host.documents === true ? [{ label: "Documents", icon: FileText, selected: props.page === "documents", onClick: () => props.onPage("documents") }] : []),
     ...(host.calendar === true ? [{ label: "Calendar", icon: CalendarDays, selected: props.page === "calendar", onClick: () => props.onPage("calendar") }] : []),
+    // The computers the person can reach, where Devices is on. Workbot's own computer still opens from the chat.
+    ...(host.devices === true ? [{ label: "Devices", icon: MonitorSmartphone, selected: props.page === "devices", onClick: () => props.onPage("devices") }] : []),
     // Files and Apps open beside the chat rather than as pages; with the profile navigation they are profile tabs.
     ...(props.onFiles && !props.onProfile ? [{ label: "Files", icon: FolderOpen, onClick: props.onFiles }] : []),
     ...(props.onApps && !props.onProfile ? [{ label: "Apps", icon: Shapes, onClick: props.onApps }] : []),
@@ -128,7 +130,8 @@ function Account({ account }: { account?: ReactNode }) {
 
 /**
  * Wide-screen icon rail, and beside it the chat list only while a chat is on screen: Documents and Calendar bring their
- * own navigation, so each view has one sidebar. No invented channels or Computer entry.
+ * own navigation, so each view has one sidebar. No invented channels or Computer entry: every destination is a real
+ * page the person has (Devices lists their computers; Workbot's own computer opens from the chat, or from its row there).
  */
 export function DesktopNavigation(props: NavigationProps) {
   const [filter, setFilter] = useState("");

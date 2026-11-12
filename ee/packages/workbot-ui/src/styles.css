@@ -17,29 +17,33 @@
   --wb-hairline: #0116270f;
   --wb-row-line: #0116270d;
   --wb-ring: #01162717;
-  --wb-composer-shadow: 0 0 0 1px #01162717, 0 4px 14px -6px #0116271a;
-  --wb-mark-shadow: 0 6px 16px -8px #01162780;
-  --wb-sheet-shadow: -1px 0 0 #0116270f, -12px 0 32px -24px #0116272e;
+  /* Workbot is flat: nothing casts a drop shadow. These are hairline edges only; focus keeps its halo (--wb-focus). */
+  --wb-composer-shadow: 0 0 0 1px #01162717;
+  --wb-sheet-shadow: -1px 0 0 #0116270f;
   --wb-thumb: linear-gradient(135deg, #dce6ee, #b9c9d6);
   --wb-type-pdf: #c4302b;
   --wb-type-doc: #2b5797;
   --wb-type-sheet: #1d7044;
   --wb-type-slides: #c55a11;
   --wb-danger: #c4302b;
+  /* A computer or app that can be reached, and one that needs the person to set something up. */
+  --wb-status-online: #30a46c;
+  --wb-status-attention: #ffba18;
   --wb-browser-success: #2b9a47;
   --wb-browser-success-bg: #e7f7e9;
   --wb-browser-working: #2589ed;
   --wb-browser-working-bg: #e5f4fc;
   --wb-type-image: #6e56cf;
-  --wb-card-shadow: 0 0 0 1px #0116270f, 0 1px 2px #0116270a;
-  /* Workbot's reply bubbles: lifted by shadow alone, never an outline (DESIGN V3), so they read on the near-white page. */
-  --wb-assistant-shadow: 0 1px 2px #0116270f, 0 4px 14px -6px #0116271f;
-  --wb-panel-shadow: 0 0 0 1px #0116270d, 0 12px 32px -12px #01162724, 0 2px 6px -2px #0116270f;
-  --wb-page-shadow: 0 0 0 1px #0116270f, 0 6px 16px -8px #0116271f;
+  --wb-card-shadow: 0 0 0 1px #0116270f;
+  /* Workbot's reply bubbles: a hairline edge, so they read on the near-white page. */
+  --wb-assistant-shadow: 0 0 0 1px #0116270f;
+  /* Menus and popovers sit over other content: a slightly firmer edge. */
+  --wb-panel-shadow: 0 0 0 1px #01162717;
+  --wb-page-shadow: 0 0 0 1px #0116270f;
   --wb-user-bubble: #eef1f4;
   /* Keyboard focus: a soft halo with a faint edge, the same on every control (Den's input focus, in Workbot's ink). */
   --wb-focus: 0 0 0 1px #01162733, 0 0 0 4px #01162712;
-  --wb-card-shadow-hover: 0 0 0 1px #01162714, 0 4px 12px -4px #0116271f;
+  --wb-card-shadow-hover: 0 0 0 1px #0116271f;
   /* Workbot's computer glyph: a soft blue screen; its lines brighten while it works. */
   --wb-computer-screen: #e6f4fe;
   --wb-computer-frame: #687076;
@@ -88,9 +92,9 @@
   --wb-float-control: color-mix(in srgb, var(--wb-surface) 58%, transparent);
   --wb-float-control-hover: color-mix(in srgb, var(--wb-surface) 86%, transparent);
   --wb-float-blur: blur(24px) saturate(180%);
-  /* A light top edge and a soft drop: glass without refraction. */
-  --wb-glass-shadow: inset 0 1px 0 0 #ffffffc7, inset 0 0 0 1px #ffffff4d, 0 0 0 0.5px #0116271f, 0 1px 2px #0116270d, 0 8px 24px -12px #01162738;
-  --wb-glass-composer-shadow: inset 0 1px 0 0 #ffffffd9, inset 0 0 0 1px #ffffff59, 0 0 0 0.5px #01162724, 0 2px 6px -2px #01162714, 0 14px 32px -16px #01162747;
+  /* A light top edge and a thin outer edge: glass without refraction, and without a drop. */
+  --wb-glass-shadow: inset 0 1px 0 0 #ffffffc7, inset 0 0 0 1px #ffffff4d, 0 0 0 0.5px #0116271f;
+  --wb-glass-composer-shadow: inset 0 1px 0 0 #ffffffd9, inset 0 0 0 1px #ffffff59, 0 0 0 0.5px #01162724;
   /* The tint behind the header and the message box, strongest at the screen's edge. */
   --wb-float-edge: color-mix(in srgb, var(--wb-bg) 78%, transparent);
   --wb-float-mid: color-mix(in srgb, var(--wb-bg) 46%, transparent);
