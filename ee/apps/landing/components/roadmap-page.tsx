@@ -231,12 +231,14 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "Workbot starts tasks on your computers",
         "Working status and a list of what it’s doing",
         "Calendar of Workbot’s scheduled work",
-        "Side chats"
+        "Side chats",
+        "A background agent for each member",
+        "Workbot settings for each team"
       ],
-      building: ["A background agent for each member", "Read and edit documents beside the chat", "Workbot settings for each team"],
+      building: ["Read and edit documents beside the chat"],
       soon: []
     },
-    fresh: ["Workbot on your phone", "Always-on cloud workspace", "Live browser work in the chat", "Workbot reads PDFs and Office files from Drive", "Workbot starts tasks on your computers", "Working status and a list of what it’s doing"]
+    fresh: ["Workbot on your phone", "Always-on cloud workspace", "Live browser work in the chat", "Workbot reads PDFs and Office files from Drive", "Workbot starts tasks on your computers", "Working status and a list of what it’s doing", "A background agent for each member", "Workbot settings for each team"]
   },
   {
     id: "automations",
