@@ -99,6 +99,7 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "Custom roles for a person or a team",
         "Allow, ask first, or block what agents can do",
         "OpenTelemetry-compatible server logs",
+        "Deterministic configs",
         "Managed install in your own AWS or Google Cloud"
       ],
       building: ["Fully managed desktop", "Share a provider key from your device", "Turn local models on or off"],
@@ -122,11 +123,11 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     heading: ["See what works,", "and what doesn’t."],
     intro: "Know which skills, connections, and teams are getting real work done, and which aren’t, so you can show the return on your AI spend.",
     items: {
-      ready: ["Usage and adoption by person", "Spend by team and model", "Daily usage trends"],
-      building: ["Organization activity: who shared and changed what", "What cloud agents spend on models"],
+      ready: ["Usage and adoption by person", "Spend by team and model", "Daily usage trends", "Organization activity: who shared and changed what"],
+      building: ["What cloud agents spend on models"],
       soon: ["What’s used, and what isn’t", "Failures by skill and connection", "Results and spend by team"]
     },
-    fresh: ["Daily usage trends"]
+    fresh: ["Daily usage trends", "Organization activity: who shared and changed what"]
   },
   {
     id: "mcp-gateway",
@@ -147,7 +148,7 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "An MCP server for each connection",
         "Each connected action as its own tool"
       ],
-      soon: ["Stricter sign-in checks for enterprise gateways"]
+      soon: []
     },
     fresh: ["OneDrive and SharePoint files"]
   },
@@ -158,11 +159,17 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     intro:
       "Make sure your organization uses its latest advances to push further. When someone shares a skill, publishes a new version, or connects an app, the people who can use it hear about it and can try it right away.",
     items: {
-      ready: ["Share skills and plugins with a team", "Company marketplaces", "See who can use each plugin", "Organization prompts for every agent"],
-      building: ["Activity: what’s new for you", "Try a new skill from its update", "Compare a new version with the last one"],
+      ready: [
+        "Share skills and plugins with a team",
+        "Company marketplaces",
+        "See who can use each plugin",
+        "Organization prompts for every agent",
+        "Activity: what’s new for you"
+      ],
+      building: [],
       soon: []
     },
-    fresh: ["Organization prompts for every agent"]
+    fresh: ["Organization prompts for every agent", "Activity: what’s new for you"]
   },
   {
     id: "web",
@@ -170,26 +177,30 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     heading: ["The same workspace,", "in your browser."],
     intro: "Everything from the desktop app, running in the cloud. Nothing to install, and work keeps going when you close the tab.",
     items: {
+      ready: ["The full workspace in your browser", "Your team’s skills and connections", "Self-hosted OpenWork Web"],
+      building: [],
+      soon: ["Session sharing"]
+    },
+    fresh: ["Self-hosted OpenWork Web"]
+  },
+  {
+    id: "workbot",
+    label: "Workbot",
+    heading: ["An assistant", "for every member."],
+    intro: "Workbot works from a chat in your browser or on your phone. It has its own cloud computer that stays on, your team’s skills, and your connected apps.",
+    items: {
       ready: [
-        "The full workspace in your browser",
-        "Your team’s skills and connections",
         "Workbot, an assistant for every member",
         "Workbot on your phone",
+        "Always-on cloud workspace",
         "Live browser work in the chat",
-        "Self-hosted OpenWork Web",
         "Watch and take over Workbot’s browser",
         "Workbot reads PDFs and Office files from Drive"
       ],
-      building: [
-        "Instant start",
-        "Always-on cloud workspace",
-        "A background agent for each member",
-        "Read and edit documents beside the chat",
-        "Workbot settings for each team"
-      ],
-      soon: ["Session sharing"]
+      building: ["A background agent for each member", "Read and edit documents beside the chat", "Workbot settings for each team"],
+      soon: []
     },
-    fresh: ["Workbot on your phone", "Live browser work in the chat", "Self-hosted OpenWork Web", "Workbot reads PDFs and Office files from Drive"]
+    fresh: ["Workbot on your phone", "Always-on cloud workspace", "Live browser work in the chat", "Workbot reads PDFs and Office files from Drive"]
   },
   {
     id: "automations",
@@ -428,7 +439,7 @@ export const ROADMAP_SHIPPED: ShippedEntry[] = [
   { date: "Nov 12", name: "Smart Model Router", detail: "Picks a model for each prompt, set per team", area: "Admin" },
   { date: "Nov 12", name: "Organization config export and import", detail: "Copy one organization’s setup into another", area: "Admin" },
   { date: "Nov 10", name: "Roles for any person or team", detail: "Custom roles, with Super admin and Billing manager ready-made", area: "Admin" },
-  { date: "Nov 10", name: "Workbot on your phone", detail: "Full-screen chat, documents, and results on iPhone", area: "Web" },
+  { date: "Nov 10", name: "Workbot on your phone", detail: "Full-screen chat, documents, and results on iPhone", area: "Workbot" },
   { date: "Nov 10", name: "Apps as sites", detail: "Open an App in a browser, public or behind sign-in", area: "Dashboards" },
   { date: "Nov 5", name: "Mac computer use across apps", detail: "Agents work in several apps and hand your files back", area: "Desktop" },
   { date: "Nov 5", name: "Saved Workflows", detail: "Name a Workflow and find it in My Library", area: "Workflows" },
