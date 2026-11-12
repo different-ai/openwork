@@ -346,6 +346,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: true,
   },
+  passwordSignInGoogle: {
+    label: "Sign-in: offer Google alongside a password",
+    description: "The email-first password step also offers Continue with Google when Google sign-in is configured. Off: the password step is unchanged. Resolved deployment-wide before sign-in; organization and member overrides do not apply.",
+    category: "administration",
+    added: "2026-11-12",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/password-sign-in-google/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   signInEmailSync: {
     label: "Sign-in: account email follows Google or SSO",
     description: "When someone's email changes at Google or at their company's identity provider, their OpenWork account moves to the new email the next time they sign in that way, so signing in with the new email opens the same account instead of creating a second one. Off: the account keeps the email it was created with.",
