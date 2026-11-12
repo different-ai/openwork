@@ -28,6 +28,11 @@ import { claudeImportItemsSchema, claudeImportResultsSchema } from "./claude-imp
 const desktopFreePreferencesSchema = z.object({ enabled: z.boolean(), available: z.boolean(), canEnable: z.boolean(), refresh: z.enum(["reloaded", "deferred"]).optional() });
 export type DesktopFreePreferences = z.infer<typeof desktopFreePreferencesSchema>;
 const desktopFreeAnalyticsSchema = z.object({ enabled: z.boolean() });
+const fileSendGrantsSchema = z.object({
+  enabled: z.boolean(),
+  grants: z.array(z.object({ id: z.string(), kind: z.string(), account: z.string(), directory: z.string(), createdAt: z.string() })),
+});
+export type FileSendGrants = z.infer<typeof fileSendGrantsSchema>;
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -1683,6 +1688,13 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       const suffix = query.size ? `?${query.toString()}` : "";
       return requestJson<OpenworkConnectState>(baseUrl, `/experimental/connect/state${suffix}`, { token, hostToken, timeoutMs: timeouts.config });
     },
+    /** "Always allow" on an open file-send approval; answer the approval with "always" right after. */
+    rememberFileSend: async (requestId: string) => {
+      await requestJson<unknown>(baseUrl, "/experimental/file-send/remember", { token, hostToken, method: "POST", body: { requestId }, timeoutMs: timeouts.config });
+    },
+    /** File sends this member always allows on this computer. */
+    listFileSendGrants: async () => fileSendGrantsSchema.parse(await requestJson<unknown>(baseUrl, "/experimental/file-send/grants", { token, hostToken, timeoutMs: timeouts.config })),
+    removeFileSendGrant: async (id: string) => fileSendGrantsSchema.parse(await requestJson<unknown>(baseUrl, `/experimental/file-send/grants/${encodeURIComponent(id)}`, { token, hostToken, method: "DELETE", timeoutMs: timeouts.config })),
     /** Has the server read the member's organization policy from Den again, as it does at sign-in. */
     refreshManagedPolicy: async () => {
       await requestJson<unknown>(baseUrl, "/managed-policy", { token, hostToken, timeoutMs: timeouts.config });

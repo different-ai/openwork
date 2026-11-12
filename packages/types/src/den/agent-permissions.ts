@@ -31,14 +31,15 @@ import { z } from "zod";
  *
  * To add a permission: add a definition below and enforce it wherever that
  * action can happen. Only engine actions belong in agent-permission-engine.ts;
- * browser_upload is browser-only and must never enter the engine grammar.
+ * browser_upload and file_send are enforced by the OpenWork host and must
+ * never enter the engine grammar.
  */
 
 export const AGENT_PERMISSION_DECISIONS = ["allow", "ask", "deny"] as const;
 export type AgentPermissionDecision = (typeof AGENT_PERMISSION_DECISIONS)[number];
 
 /** OpenCode permission actions, plus local MCP, computer use (with its files and clipboard) and app scripting enforced by OpenWork. */
-export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "browser_upload"] as const;
+export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "browser_upload", "file_send"] as const;
 
 export const AGENT_HARNESS_PERMISSION_KEYS = ["externalFolders", "computerUse", "computerFiles", "computerClipboard", "appScripting"] as const;
 export const AGENT_HARNESS_PERMISSION_ACTIONS = ["external_directory", "computer", "computer_files", "computer_clipboard", "script"] as const;
@@ -167,6 +168,16 @@ export const agentPermissionDefinitions = [
     patternNoun: "website",
   },
   {
+    key: "fileSends",
+    section: "files",
+    label: "Send files to connected accounts",
+    description: "Files the agent uploads to Google Drive, saves back to Drive, OneDrive or SharePoint, or attaches to Gmail and Outlook drafts. Member decides asks unless the member remembered approval. Ask first requires approval for every file, even when the member previously allowed it.",
+    action: "file_send",
+    control: "choice",
+    patterns: null,
+    patternNoun: null,
+  },
+  {
     key: "webSearch",
     section: "web",
     label: "Search the web",
@@ -223,9 +234,25 @@ export function agentPermissionDecisionsFor(definition: Pick<AgentPermissionDefi
 /** Existing permissions allow by default: the member's own settings apply. */
 export const AGENT_PERMISSION_DEFAULT_DECISION: AgentPermissionDecision = "allow";
 
-/** Browser uploads ask by default, without asserting an administrator's authority. */
+/**
+ * Permissions the member decides when the administrator sets nothing: the
+ * app asks, and the member may remember their answer. An explicit Allow is
+ * authority to skip that prompt; an explicit Ask first asks every time.
+ */
+export const AGENT_PERMISSION_MEMBER_DECIDES_KEYS = ["browserUploads", "fileSends"] as const satisfies readonly AgentPermissionKey[];
+export const AGENT_PERMISSION_MEMBER_DECIDES_ACTIONS = ["browser_upload", "file_send"] as const satisfies readonly AgentPermissionAction[];
+
+export function agentPermissionMemberDecides(key: string): boolean {
+  return AGENT_PERMISSION_MEMBER_DECIDES_KEYS.some((entry) => entry === key);
+}
+
+function actionMemberDecides(action: AgentPermissionAction): boolean {
+  return AGENT_PERMISSION_MEMBER_DECIDES_ACTIONS.some((entry) => entry === action);
+}
+
+/** Member-decided permissions ask by default, without asserting an administrator's authority. */
 export function agentPermissionDefaultDecision(key: AgentPermissionKey): AgentPermissionDecision {
-  return key === "browserUploads" ? "ask" : AGENT_PERMISSION_DEFAULT_DECISION;
+  return agentPermissionMemberDecides(key) ? "ask" : AGENT_PERMISSION_DEFAULT_DECISION;
 }
 
 export const AGENT_PERMISSION_LIST_MAX = 100;
@@ -494,6 +521,13 @@ export function withoutBrowserUploadPermissions(settings: AgentPermissionSetting
   return visible;
 }
 
+/** Hide only connected-account file settings while their independent rollout is off. */
+export function withoutFileSendPermissions(settings: AgentPermissionSettings): AgentPermissionSettings {
+  const visible = { ...settings };
+  delete visible.fileSends;
+  return visible;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -571,6 +605,11 @@ export function withoutBrowserUploadRules(rules: readonly AgentPermissionRule[])
   return rules.filter((rule) => rule.action !== "browser_upload");
 }
 
+/** Host-only file-send rules must not reach clients while the rollout is off, or clients that cannot read them. */
+export function withoutFileSendRules(rules: readonly AgentPermissionRule[]): AgentPermissionRule[] {
+  return rules.filter((rule) => rule.action !== "file_send");
+}
+
 export const AGENT_PERMISSION_EVERYONE = "Everyone";
 
 export type AgentPermissionPolicySettings = {
@@ -646,19 +685,22 @@ export function resolveAgentPermissions(input: {
  * other than Allow becomes a `*` rule, its allowed patterns follow as
  * exceptions, and blocked patterns come last so they always win. A
  * permission that allows adds no rules: the member's own settings apply,
- * except explicit browser upload Allow, which authorizes skipping its prompt.
- * Unset browser upload Ask emits no base rule or administrator source.
+ * except an explicit Allow of a member-decided permission (browser uploads,
+ * files sent to connected accounts), which authorizes skipping its prompt.
+ * An unset member-decided Ask emits no base rule or administrator source.
  */
 export function agentPermissionRules(resolved: readonly ResolvedAgentPermission[]): AgentPermissionRule[] {
   const rules = resolved.flatMap(({ definition, decision, decisionSource, allow, block }) => {
     const action = definition.action;
     const restricted = decision !== "allow" && decisionSource !== null;
-    // Unlike engine permissions, explicit browser upload Allow is authority to
-    // skip the member's prompt. An unset Ask has no admin source or base rule.
-    const explicit = decisionSource !== null && (restricted || action === "browser_upload");
+    // Unlike engine permissions, an explicit Allow of a member-decided
+    // permission is authority to skip the member's prompt. An unset Ask has
+    // no admin source or base rule.
+    const memberDecides = actionMemberDecides(action);
+    const explicit = decisionSource !== null && (restricted || memberDecides);
     return [
       ...(explicit ? [{ action, resource: "*", effect: decision, source: decisionSource }] : []),
-      ...(restricted || action === "browser_upload" ? allow.map(({ pattern, source }) => ({ action, resource: pattern, effect: "allow" as const, source })) : []),
+      ...(restricted || memberDecides ? allow.map(({ pattern, source }) => ({ action, resource: pattern, effect: "allow" as const, source })) : []),
       ...block.map(({ pattern, source }) => ({ action, resource: pattern, effect: "deny" as const, source })),
     ];
   });
@@ -723,7 +765,7 @@ export function decideAgentPermission(
   action: AgentPermissionAction,
   resources: readonly string[],
 ): AgentPermissionDecisionResult {
-  const defaultEffect = action === "browser_upload" ? "ask" : "allow";
+  const defaultEffect = actionMemberDecides(action) ? "ask" : "allow";
   let result: AgentPermissionDecisionResult | null = null;
   for (const resource of resources.length > 0 ? resources : ["*"]) {
     const rule = matchingAgentPermissionRule(rules, action, resource);
@@ -745,6 +787,7 @@ const BLOCKED_SUBJECT: Record<AgentPermissionAction, (resource: string) => strin
   script: () => "running app scripts",
   webfetch: (resource) => resource === "*" ? "opening websites" : `opening ${resource}`,
   browser_upload: (resource) => resource === "*" ? "uploading files to websites" : `uploading files to ${resource}`,
+  file_send: () => "sending files to connected accounts",
   websearch: () => "searching the web",
   skill: (resource) => resource === "*" ? "local skills" : `the local skill "${resource}"`,
   mcp: (resource) => resource === "*" ? "local MCP servers" : `the local MCP server "${resource}"`,

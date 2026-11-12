@@ -4,6 +4,7 @@ import {
   agentPermissionDecisionsFor,
   agentPermissionDecisionLabels,
   AGENT_PERMISSION_DEFAULT_DECISION,
+  agentPermissionMemberDecides,
   type AgentPermissionDefinition,
   type AgentPermissionDecision,
   type AgentPermissionAction,
@@ -41,7 +42,7 @@ export function effectiveAgentPermissionSettings(settings: AgentPermissionSettin
   return effective;
 }
 
-export function visibleAgentPermissionGroups(area: AgentPermissionsArea, harnessEnabled: boolean, computerUseEnabled: boolean, browserUploadsEnabled = false) {
+export function visibleAgentPermissionGroups(area: AgentPermissionsArea, harnessEnabled: boolean, computerUseEnabled: boolean, browserUploadsEnabled = false, fileSendsEnabled = false) {
   const groups = area === "browser" ? [{ label: "Websites", sections: ["web"] }] : EDITOR_GROUPS;
   return groups.map((group) => ({
     label: group.label,
@@ -50,7 +51,8 @@ export function visibleAgentPermissionGroups(area: AgentPermissionsArea, harness
       && inArea(area, definition.key)
       && (harnessEnabled || !HARNESS_KEYS.includes(definition.key))
       && (computerUseEnabled || !COMPUTER_USE_KEYS.includes(definition.key))
-      && (browserUploadsEnabled || definition.key !== "browserUploads")),
+      && (browserUploadsEnabled || definition.key !== "browserUploads")
+      && (fileSendsEnabled || definition.key !== "fileSends")),
   })).filter((group) => group.definitions.length > 0);
 }
 
@@ -59,29 +61,30 @@ const TRY_KINDS: readonly { action: AgentPermissionAction; label: string; placeh
   { action: "external_directory", label: "Outside folder", placeholder: "~/Documents/report.pdf" },
   { action: "webfetch", label: "Website", placeholder: "https://docs.example.com/guide" },
   { action: "browser_upload", label: "Website upload", placeholder: "https://docs.example.com/upload" },
+  { action: "file_send", label: "File to a connected account", placeholder: "report.pdf" },
   { action: "skill", label: "Local skill", placeholder: "meeting-notes" },
   { action: "mcp", label: "Local MCP server", placeholder: "issue-tracker" },
 ];
 
-export function visibleAgentPermissionTryKinds(area: AgentPermissionsArea, harnessEnabled: boolean, computerUseEnabled: boolean, browserUploadsEnabled = false) {
-  const keys = visibleAgentPermissionGroups(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled).flatMap((group) => group.definitions.map((definition) => definition.key));
+export function visibleAgentPermissionTryKinds(area: AgentPermissionsArea, harnessEnabled: boolean, computerUseEnabled: boolean, browserUploadsEnabled = false, fileSendsEnabled = false) {
+  const keys = visibleAgentPermissionGroups(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled, fileSendsEnabled).flatMap((group) => group.definitions.map((definition) => definition.key));
   return TRY_KINDS.filter((entry) => agentPermissionDefinitions.some((definition) => definition.action === entry.action && keys.includes(definition.key)));
 }
 
 export function agentPermissionChoiceOptions(definition: AgentPermissionDefinition, team: string | null): { value: AgentPermissionDecision | "inherit"; label: string }[] {
   return [
-    ...(definition.key === "browserUploads" ? [{ value: "inherit" as const, label: team === null ? "Member decides" : "Use Everyone's" }] : []),
+    ...(agentPermissionMemberDecides(definition.key) ? [{ value: "inherit" as const, label: team === null ? "Member decides" : "Use Everyone's" }] : []),
     ...agentPermissionDecisionsFor(definition).map((decision) => ({ value: decision, label: agentPermissionDecisionLabels[decision] })),
   ];
 }
 
 export function agentPermissionChoiceValue(definition: AgentPermissionDefinition, decision: AgentPermissionDecision | undefined, effective: AgentPermissionDecision): AgentPermissionDecision | "inherit" {
-  return definition.key === "browserUploads" ? decision ?? "inherit" : effective;
+  return agentPermissionMemberDecides(definition.key) ? decision ?? "inherit" : effective;
 }
 
-/** Preserve explicit upload Ask/Allow: they differ from the member-controlled default. */
+/** Preserve an explicit Ask/Allow of a member-decided permission: they differ from the member-controlled default. */
 export function storedAgentPermissionDecision(definition: AgentPermissionDefinition, team: string | null, decision: AgentPermissionDecision | undefined): AgentPermissionDecision | undefined {
-  return team === null && definition.key !== "browserUploads" && decision === AGENT_PERMISSION_DEFAULT_DECISION ? undefined : decision;
+  return team === null && !agentPermissionMemberDecides(definition.key) && decision === AGENT_PERMISSION_DEFAULT_DECISION ? undefined : decision;
 }
 
 /** Keep the dependent control visible, with the same neutral lock as commands (DESIGN.md P4, C5). */

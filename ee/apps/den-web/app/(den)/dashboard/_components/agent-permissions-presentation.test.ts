@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { agentPermissionDefaultDecision, agentPermissionDefinitions, decideAgentPermission, resolveAgentPermissionRules, type AgentPermissionSettings } from "@openwork/types/den/agent-permissions";
+import { agentPermissionDefaultDecision, agentPermissionDefinitions, agentPermissionMemberDecides, decideAgentPermission, resolveAgentPermissionRules, type AgentPermissionSettings } from "@openwork/types/den/agent-permissions";
 import { teamOverrideSummary } from "./agent-permissions-data";
 import { agentPermissionBlockedBy, agentPermissionChoiceOptions, agentPermissionChoiceValue, storedAgentPermissionDecision, effectiveAgentPermissionSettings, visibleAgentPermissionGroups, visibleAgentPermissionTryKinds } from "./agent-permissions-presentation";
 
@@ -84,8 +84,8 @@ test("browser uploads have an independent gate and reuse the website editor and 
     assert.equal(visibleAgentPermissionGroups("agents", harness, true, true).some(group => group.definitions.some(definition => definition.key === "browserUploads")), false);
   }
   for (const definition of agentPermissionDefinitions) {
-    assert.equal(agentPermissionDefaultDecision(definition.key), definition.key === "browserUploads" ? "ask" : "allow");
-    assert.equal(storedAgentPermissionDecision(definition, null, "allow"), definition.key === "browserUploads" ? "allow" : undefined);
+    assert.equal(agentPermissionDefaultDecision(definition.key), agentPermissionMemberDecides(definition.key) ? "ask" : "allow");
+    assert.equal(storedAgentPermissionDecision(definition, null, "allow"), agentPermissionMemberDecides(definition.key) ? "allow" : undefined);
     assert.equal(storedAgentPermissionDecision(definition, null, "ask"), "ask");
     assert.equal(storedAgentPermissionDecision(definition, "Test team", "allow"), "allow");
   }
@@ -95,7 +95,7 @@ test("upload defaults are distinct from explicit Ask without changing existing c
   for (const definition of agentPermissionDefinitions) {
     const everyoneOptions = agentPermissionChoiceOptions(definition, null);
     const teamOptions = agentPermissionChoiceOptions(definition, "Reviewers");
-    if (definition.key === "browserUploads") {
+    if (agentPermissionMemberDecides(definition.key)) {
       assert.deepEqual(everyoneOptions, [{ value: "inherit", label: "Member decides" }, { value: "allow", label: "Allow" }, { value: "ask", label: "Ask first" }, { value: "deny", label: "Block" }]);
       assert.deepEqual(teamOptions[0], { value: "inherit", label: "Use Everyone's" });
       assert.equal(agentPermissionChoiceValue(definition, undefined, "ask"), "inherit");
@@ -110,6 +110,19 @@ test("upload defaults are distinct from explicit Ask without changing existing c
       assert.equal(agentPermissionChoiceValue(definition, undefined, "ask"), "ask");
     }
   }
+});
+
+test("file sends have their own gate, sit with the other file permissions and let the member decide by default", () => {
+  const keys = (area: "all" | "agents" | "browser", fileSends: boolean) =>
+    visibleAgentPermissionGroups(area, true, true, true, fileSends).flatMap(group => group.definitions.map(definition => definition.key));
+  for (const area of ["all", "agents", "browser"] satisfies ("all" | "agents" | "browser")[]) {
+    assert.equal(keys(area, false).includes("fileSends"), false);
+    assert.equal(visibleAgentPermissionTryKinds(area, true, true, true, false).some(kind => kind.action === "file_send"), false);
+  }
+  assert.equal(keys("agents", true).includes("fileSends"), true);
+  assert.equal(keys("browser", true).includes("fileSends"), false);
+  assert.equal(visibleAgentPermissionTryKinds("agents", true, true, true, true).some(kind => kind.action === "file_send"), true);
+  assert.deepEqual([...agentPermissionDefinitions].filter(definition => agentPermissionMemberDecides(definition.key)).map(definition => definition.key), ["browserUploads", "fileSends"]);
 });
 
 test("the existing commands block retains its reason and test id suffix", () => {

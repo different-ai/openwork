@@ -6,6 +6,7 @@ import { useTeamSectionsHelp } from "./team-sections";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import {
   agentPermissionDefaultDecision,
+  agentPermissionMemberDecides,
   AGENT_PERMISSION_EVERYONE,
   agentPermissionDecisionLabels,
   agentPermissionDecisionsFor,
@@ -389,6 +390,7 @@ const ROW_COPY: Record<string, string> = {
   appScripting: "Run AppleScript and other scripts in Mac apps",
   websites: "Pages the agent fetches and the built-in browser opens",
   browserUploads: "Member decides asks unless remembered. Ask first asks every time.",
+  fileSends: "Drive uploads and saves, and Gmail and Outlook drafts with attachments",
   webSearch: "Look things up with a web search",
   localSkills: "Skills installed on the member's computer",
   localMcpServers: "MCP servers the member added themselves",
@@ -409,6 +411,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
   const { orgContext } = useOrgDashboard();
   const harnessEnabled = orgFeatureEnabled(orgContext, "agentHarnessPermissions");
   const browserUploadsEnabled = orgFeatureEnabled(orgContext, "browserUploadPermissions");
+  const fileSendsEnabled = orgFeatureEnabled(orgContext, "fileSendPermissions");
   const computerUseEnabled = orgFeatureEnabled(orgContext, "computerUse");
   const effectiveSettings = effectiveAgentPermissionSettings(settings, computerUseEnabled);
   const effectiveEveryone = effectiveAgentPermissionSettings(everyone, computerUseEnabled);
@@ -417,7 +420,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
     <div className="min-w-0" data-testid="agent-permissions-editor" data-scope={scopeId}>
       {/* The standard list panel; each group brings its own top and bottom padding. */}
       <ItemPanel className="!py-0">
-        {visibleAgentPermissionGroups(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled).map((group) => (
+        {visibleAgentPermissionGroups(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled, fileSendsEnabled).map((group) => (
           <div key={group.label} className="pb-1">
             <h3 className="px-5 pb-1 pt-3 text-[12px] font-medium text-gray-500">{group.label}</h3>
             {group.definitions.map((definition) => {
@@ -438,7 +441,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
           </div>
         ))}
       </ItemPanel>
-      <TryRequest area={area} harnessEnabled={harnessEnabled} browserUploadsEnabled={browserUploadsEnabled} computerUseEnabled={computerUseEnabled} everyone={team === null ? effectiveSettings : effectiveEveryone} team={team === null ? null : { name: team, settings: effectiveSettings }} />
+      <TryRequest area={area} harnessEnabled={harnessEnabled} browserUploadsEnabled={browserUploadsEnabled} fileSendsEnabled={fileSendsEnabled} computerUseEnabled={computerUseEnabled} everyone={team === null ? effectiveSettings : effectiveEveryone} team={team === null ? null : { name: team, settings: effectiveSettings }} />
     </div>
   );
 }
@@ -480,7 +483,7 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
           <ScopeChip scope={scope} changed={changed} />
           {changed && editable ? <UseEveryonesButton settingLabel={definition.label} onClick={() => onChange(null)} /> : null}
         </div>
-        <div className={`flex shrink-0 justify-end ${definition.key === "browserUploads" ? "w-[190px]" : "w-[140px]"}`}>
+        <div className={`flex shrink-0 justify-end ${agentPermissionMemberDecides(definition.key) ? "w-[190px]" : "w-[140px]"}`}>
           {definition.control === "toggle" ? (
             <DenSwitch
               size="sm"
@@ -685,8 +688,8 @@ function PatternLine({ list, label, noun, testId, kind, patterns, inherited, edi
 // Try a request
 // ---------------------------------------------------------------------------
 
-function TryRequest({ area, harnessEnabled, computerUseEnabled, browserUploadsEnabled, everyone, team }: { area: AgentPermissionsArea; harnessEnabled: boolean; computerUseEnabled: boolean; browserUploadsEnabled: boolean; everyone: AgentPermissionSettings; team: { name: string; settings: AgentPermissionSettings } | null }) {
-  const kinds = visibleAgentPermissionTryKinds(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled);
+function TryRequest({ area, harnessEnabled, computerUseEnabled, browserUploadsEnabled, fileSendsEnabled, everyone, team }: { area: AgentPermissionsArea; harnessEnabled: boolean; computerUseEnabled: boolean; browserUploadsEnabled: boolean; fileSendsEnabled: boolean; everyone: AgentPermissionSettings; team: { name: string; settings: AgentPermissionSettings } | null }) {
+  const kinds = visibleAgentPermissionTryKinds(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled, fileSendsEnabled);
   const [selectedAction, setAction] = useState<AgentPermissionAction>(kinds[0]?.action ?? "shell");
   // A rollout refresh can hide the selected kind without remounting this draft.
   const action = kinds.find((entry) => entry.action === selectedAction)?.action ?? kinds[0]?.action ?? "shell";

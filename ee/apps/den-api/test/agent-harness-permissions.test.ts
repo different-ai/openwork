@@ -144,7 +144,7 @@ test("unset permissions still allow every existing action and emit no rules", ()
     const rules = resolveAgentPermissionRules(input)
     assert.deepEqual(rules, [])
     for (const action of AGENT_PERMISSION_ACTIONS) {
-      assert.deepEqual(decideAgentPermission(rules, action, ["*"]), { effect: action === "browser_upload" ? "ask" : "allow", rule: null, resource: "*" })
+      assert.deepEqual(decideAgentPermission(rules, action, ["*"]), { effect: action === "browser_upload" || action === "file_send" ? "ask" : "allow", rule: null, resource: "*" })
     }
   }
 })

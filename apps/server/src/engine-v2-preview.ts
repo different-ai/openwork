@@ -732,6 +732,7 @@ export function createEngineV2Preview(options: {
   deferStart?: boolean;
   hostReadRequest?: (path: string, init?: RequestInit) => Promise<unknown>;
   prepareDriveUpload?: PrepareDriveUpload;
+  fileSends?: Parameters<typeof createV2ContextBridge>[3];
   providerSession?: () => CloudProviderDenSession | null;
   waits?: Partial<typeof ENGINE_V2_UPKEEP_WAITS>;
   /** Running-task probe for leaving v1; unknown is not idle. */
@@ -1157,7 +1158,7 @@ export function createEngineV2Preview(options: {
     // skills now use the same metadata/on-demand Connect path as v1.
     await rm(join(rootDir, "cloud-skills"), { recursive: true, force: true });
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
-    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest, connection, options.prepareDriveUpload) : undefined;
+    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest, connection, options.prepareDriveUpload, options.fileSends) : undefined;
     providerSessionBridge = options.providerSession ? await createV2ProviderSessionBridge(() =>
       options.providerSession?.() ?? null) : undefined;
     const globalSkills = globalSkillDirectories();

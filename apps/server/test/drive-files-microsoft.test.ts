@@ -188,3 +188,21 @@ test("Google Drive ids and links keep using the Google routes", async () => {
   assert.deepEqual(calls.map(({ url }) => url.pathname), ["/v1/direct-downloads/google-workspace/drive-files/1AbCdEfGhIjKlMnOp", "/v1/direct-downloads/google-workspace/drive-files/1AbCdEfGhIjKlMnOp"]);
   await assert.rejects(callDriveFileAction(workspace.config, "drive_pull_file", { fileId: "item-1", driveId: "b!lib", connectionId: "google-workspace" }, {}, dependencies), /Microsoft 365 connection/);
 });
+
+test("a save approved in the chat is not asked again by the desktop; every other save still is", async () => {
+  await using workspace = await fixture();
+  const { dependencies } = cloud();
+  await callDriveFileAction(workspace.config, "drive_pull_file", { fileId: LINK }, {}, dependencies);
+  await writeFile(join(workspace.root, "drive", "Plan.docx"), `${CONTENT}!`);
+  workspace.config.driveFileApproval = async (request) => { workspace.approvals.push(request); return false; };
+
+  await assert.rejects(callDriveFileAction(workspace.config, "drive_push_file", { path: "drive/Plan.docx" }, {}, dependencies), /was not approved/);
+  assert.deepEqual(workspace.approvals.splice(0).map(({ action }) => action), ["push"]);
+  // A caller's own arguments cannot claim the chat approval.
+  await assert.rejects(callDriveFileAction(workspace.config, "drive_push_file", { path: "drive/Plan.docx", approvedInChat: true }, {}, dependencies), /was not approved/);
+  workspace.approvals.splice(0);
+
+  const saved = await callDriveFileAction(workspace.config, "drive_push_file", { path: "drive/Plan.docx" }, {}, { ...dependencies, approvedInChat: true }) as Record<string, any>;
+  assert.equal(saved.file.revision, SAVED_ETAG);
+  assert.deepEqual(workspace.approvals, []);
+});

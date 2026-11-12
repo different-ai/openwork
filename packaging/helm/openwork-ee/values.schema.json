@@ -701,6 +701,16 @@
               ],
               "description": "Browser: managed and remembered file-sharing permissions: Admins set Allow, Ask first or Block for browser uploads, with website exceptions. Members can remember permission for one website and a folder on this computer across chats and Slack-started tasks, and revoke it in Settings. Renders DEN_FEATURE_BROWSER_UPLOAD_PERMISSIONS."
             },
+            "fileSendPermissions": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Connected accounts: one permission for files the agent sends: Drive uploads, saves back to Drive, OneDrive and SharePoint, and Gmail and Outlook drafts with attachments ask the same way: Allow once, Allow for this chat or Always allow. Admins set Allow, Ask first or Block on the Agents tab, and members revoke remembered approvals in Settings. Renders DEN_FEATURE_FILE_SEND_PERMISSIONS."
+            },
             "agentHarnessPermissions": {
               "enum": [
                 "",
