@@ -155,6 +155,7 @@ export function useNativeDictation(options: {
   }
   return {
     available, error, nativeMode, state, meter, installingModel,
+    local: Boolean(options.local),
     localRecording: Boolean(options.local && !nativeMode && state !== "idle"),
     active: options.enabled && (state !== "idle" || nativeMode),
     busy: state === "starting" || state === "stopping",

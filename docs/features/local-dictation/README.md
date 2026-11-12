@@ -34,9 +34,32 @@ moving meter with a static Listening label.
 
 ![Cancellable first-use model setup at 390 px](model-setup.png)
 
-These screenshots render the real composer in an isolated browser harness.
+[Watch the recording and Send transitions](transitions.mp4).
+
+These screenshots and the motion preview render the real composer in an isolated browser harness.
 Speech events are deterministic fixtures and model selection is omitted;
 they show the interaction, not an acoustic accuracy result.
+
+## Motion and responsiveness
+
+Recording controls expand beside the stationary Send button in 180 ms and
+collapse in 120 ms, with ease-out easing. Setup, waveform and finishing share
+a fixed footprint, so phase changes do not move Send or change the toolbar's
+height. The outgoing phase stays visible during collapse instead of flashing
+a different label. Icons crossfade over 150 ms; audio bars use 120 ms transform
+transitions between actual microphone measurements. Press feedback is subtle,
+with no bounce, fabricated activity or delay before an action takes effect.
+
+The main Mic/Stop button remains mounted. Keyboard cancellation returns focus
+to it after setup or capture; closed controls are inert and leave the tab order
+immediately, even while fading out. Reduced motion disables transitions, press
+scaling and spinner animation and uses a static Listening label.
+
+Browser frame sampling verified intermediate opening/closing widths, a fixed
+Send position and equal widths for setup/listening/finishing. A 390 px check
+covered rapid start/cancel and focus restoration without overflow. Reduced
+motion had zero active animations across all phases. These are focused
+interaction checks, not a device-wide rendering benchmark.
 
 ## Local recognition improvements
 

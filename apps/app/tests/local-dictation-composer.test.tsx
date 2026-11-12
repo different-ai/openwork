@@ -78,7 +78,9 @@ test.each(["Send", "Enter", "Send before words"])("%s finalizes and submits once
     expect(container.querySelector("[data-composer-actions] [data-dictation-recording]")).not.toBeNull();
     expect(button("Run task").disabled).toBe(false);
     expect(container.querySelector('[aria-label="Microphone level"]')).not.toBeNull();
-    expect(Number(container.querySelector('[data-dictation-waveform] rect:last-child')?.getAttribute("height"))).toBeCloseTo(24.4);
+    const bar = container.querySelector<SVGRectElement>('[data-dictation-waveform] rect:last-child');
+    const scale = Number(bar?.style.transform.match(/scaleY\((.+)\)/)?.[1] ?? 1);
+    expect(Number(bar?.getAttribute("height")) * scale).toBeCloseTo(24.4);
     const editor = container.querySelector<HTMLElement>('[contenteditable="true"]');
     if (!editor) throw new Error("Missing editor");
     await act(async () => {
@@ -159,12 +161,23 @@ test("Stop finishes the live draft for editing without submitting", async () => 
   }
   try {
     await act(async () => { root.render(<Harness />) });
-    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Dictate message"]')?.click() });
+    const microphone = container.querySelector<HTMLButtonElement>('[aria-label="Dictate message"]');
+    await act(async () => { microphone?.click() });
+    const stop = container.querySelector<HTMLButtonElement>('[aria-label="Stop dictation"]');
+    expect(stop === microphone).toBe(true);
     await act(async () => { latest?.words("plan the weak") });
     await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Stop dictation"]')?.click() });
     await act(async () => { latest?.words("plan the week."); latest?.onend?.() });
     expect(container.querySelector('[contenteditable="true"]')?.textContent).toBe("plan the week.");
     expect(sent).toEqual([]);
     expect(container.querySelector("[data-dictation-recording]")).toBeNull();
-  } finally { await act(async () => { root.unmount() }); client.clear(); container.remove(); }
+    expect(container.querySelector('[aria-label="Dictate message"]') === microphone).toBe(true);
+    prepareModel = true;
+    await act(async () => { microphone?.click() });
+    expect(microphone?.disabled).toBe(true);
+    const cancel = container.querySelector<HTMLButtonElement>('[aria-label="Cancel dictation"]');
+    await act(async () => { cancel?.focus(); cancel?.click() });
+    expect(document.activeElement === microphone).toBe(true);
+    expect(container.querySelector('[data-dictation-expansion]')?.hasAttribute("inert")).toBe(true);
+  } finally { prepareModel = false; await act(async () => { root.unmount() }); client.clear(); container.remove(); }
 });
