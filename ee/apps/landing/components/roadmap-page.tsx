@@ -211,10 +211,9 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     id: "workbot",
     label: "Workbot",
     heading: ["An assistant", "for every member."],
-    intro: "Workbot works from a chat in your browser or on your phone. It has its own cloud computer that stays on, your team’s skills, and your connected apps.",
+    intro: "Workbot works from a chat in your browser. It has its own cloud computer that stays on, your team’s skills, and your connected apps.",
     top: [
       "Workbot, an assistant for every member",
-      "Workbot on your phone",
       "Always-on cloud workspace",
       "Live browser work in the chat",
       "A background agent for each member",
@@ -223,7 +222,6 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     items: {
       ready: [
         "Workbot, an assistant for every member",
-        "Workbot on your phone",
         "Always-on cloud workspace",
         "Live browser work in the chat",
         "Watch and take over Workbot’s browser",
@@ -235,7 +233,7 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "A background agent for each member",
         "Workbot settings for each team"
       ],
-      building: ["Your Microsoft 365 and Google Drive documents, right in Workbot"],
+      building: ["Your Microsoft 365 and Google Drive documents, right in Workbot", "Workbot on your phone"],
       soon: ["Full virtual computers"]
     },
   },
@@ -509,7 +507,6 @@ export const ROADMAP_SHIPPED: ShippedEntry[] = [
   { date: "Nov 12", name: "Smart Model Router" },
   { date: "Nov 12", name: "Organization config export and import" },
   { date: "Nov 10", name: "Roles for any person or team" },
-  { date: "Nov 10", name: "Workbot on your phone" },
   { date: "Nov 10", name: "Apps as sites" },
   { date: "Nov 5", name: "Mac computer use across apps" },
   { date: "Nov 5", name: "Saved Workflows" },

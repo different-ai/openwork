@@ -460,10 +460,10 @@ function WorkbotBrowserCard({ compact }: { compact?: boolean }) {
   );
 }
 
-/** Workbot on a desktop browser and on a phone: the same chat, with what it read and the browser it used. */
+/** Workbot in a desktop browser: the chat, with what it read and the browser it used. */
 export function RoadmapWorkbotPreview() {
   return (
-    <div className="flex w-full flex-col lg:flex-row" aria-label="Workbot preview with sample data">
+    <div className="flex w-full" aria-label="Workbot preview with sample data">
       <div className="flex min-w-0 flex-1">
         <div className="hidden w-[196px] shrink-0 flex-col gap-0.5 border-r border-[#EDF1F6] bg-[#F8FAFC] p-3 md:flex">
           <span className="mb-3 flex items-center gap-2 px-1.5">
@@ -522,29 +522,6 @@ export function RoadmapWorkbotPreview() {
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center justify-center border-t border-[#EDF1F6] bg-[var(--lp-tonal)] px-10 py-8 lg:border-l lg:border-t-0">
-        <div className="flex h-[440px] w-[220px] rounded-[36px] bg-[var(--lp-ink)] p-[7px] shadow-[0_24px_48px_-24px_rgba(1,22,39,0.45)]">
-          <div className="flex flex-1 flex-col overflow-hidden rounded-[29px] bg-white">
-            <div className="flex items-center justify-between px-5 pt-3.5 text-[10.5px] font-semibold text-[#111827]">
-              <span>9:41</span>
-              <span className="h-4 w-14 rounded-full bg-[var(--lp-ink)]" aria-hidden="true" />
-              <span className="w-5" />
-            </div>
-            <div className="flex justify-center pt-3">
-              <span className="flex items-center gap-1.5 rounded-full bg-[#F4F6F9] py-[3px] pl-[3px] pr-2.5">
-                <WorkbotAvatar size={18} />
-                <span className="text-[11px] font-semibold text-[#07192C]">Workbot</span>
-              </span>
-            </div>
-            <div className="flex flex-1 flex-col gap-2 px-3 pt-4">
-              <span className="max-w-[88%] self-end rounded-2xl bg-[#EEF1F5] px-2.5 py-1.5 text-[11px] leading-4 text-[#07192C]">Where are we on the Northwind renewal?</span>
-              <WorkbotBrowserCard compact />
-              <span className="text-[11px] leading-4 text-[#07192C]">They agreed to the 2026 terms on Tuesday. The invoice is unpaid, and Dana is waiting on a signed order form.</span>
-            </div>
-            <span className="mx-3 mb-4 flex h-9 items-center rounded-full bg-white pl-3.5 text-[11px] text-[#9AA5BA] shadow-[0_0_0_1px_#E3E7EE]">Message Workbot</span>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
