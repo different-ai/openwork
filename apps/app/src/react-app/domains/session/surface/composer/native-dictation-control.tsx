@@ -70,7 +70,7 @@ function LocalDictationControl({ dictation, disabled }: {
         <div className="grid h-9 w-24 shrink-0 place-items-center">
           <div className="contents" aria-hidden="true">
             <DictationWaveform text="" levels={levels}
-              className={`col-start-1 row-start-1 h-5 w-24 text-dls-secondary transition-[opacity,scale,translate] duration-150 ease-out [&_rect]:transition-transform [&_rect]:duration-120 [&_rect]:ease-out motion-reduce:hidden ${listening ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"}`} />
+              className={`col-start-1 row-start-1 h-5 w-24 text-dls-secondary transition-[opacity,scale,translate] duration-150 ease-out motion-reduce:hidden ${listening ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"}`} />
             <span className={`col-start-1 row-start-1 w-24 text-center text-xs leading-4 text-dls-secondary transition-[opacity,scale,translate] duration-150 ease-out motion-reduce:transition-none motion-reduce:scale-100 motion-reduce:translate-y-0 ${installing ? "opacity-0" : listening ? "-translate-y-1 opacity-0 motion-reduce:opacity-100" : "translate-y-0 opacity-100"}`}>
               {status}
             </span>

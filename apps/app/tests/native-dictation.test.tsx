@@ -182,6 +182,8 @@ test("local recording shows revisions, accepts final words, and cancels on edits
     expect(container.textContent).toBe("Draft the weak");
     expect(controller?.localRecording).toBe(true);
     expect(controller?.meter.getSnapshot()).toEqual([0.75]);
+    await act(async () => { for (let index = 0; index < 24; index++) recognizer?.onlevel?.(0) });
+    expect(controller?.meter.getSnapshot()).toEqual(Array(24).fill(0));
     await act(async () => { root.render(<Harness />) });
     expect(controller?.state).toBe("listening");
     await act(async () => { await controller?.toggle() });

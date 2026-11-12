@@ -9,7 +9,7 @@ import Speech
 // stdout: one JSON object per line.
 //   {"type":"ready"}                       listening started
 //   {"type":"result","segments":[...]}     whole transcript so far, last segment still revisable
-//   {"type":"level","level":0...1}         microphone amplitude, at most 20 Hz
+//   {"type":"level","level":0...1}         microphone amplitude, at most 30 Hz
 //   {"type":"error","code":"..."}          Web Speech style error code
 //   {"type":"end"}                         final result sent, exiting
 // stdin: "stop" flushes the final words and ends; EOF cancels.
@@ -64,7 +64,7 @@ final class Dictation: DictationSession {
     input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { [weak self] buffer, _ in
       self?.request?.append(buffer)
       let now = ProcessInfo.processInfo.systemUptime
-      guard now - lastLevelAt >= 0.05 else { return }
+      guard now - lastLevelAt >= 1.0 / 30 else { return }
       lastLevelAt = now
       let level = dictationAudioLevel(buffer)
       DispatchQueue.main.async {
@@ -209,9 +209,10 @@ Task { @MainActor in
   if #available(macOS 26.0, *), SpeechTranscriber.isAvailable,
      let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: localeIdentifier)) {
     if arguments.contains("--check") {
-      let module = SpeechTranscriber(locale: locale, preset: .transcription)
-      let status = await AssetInventory.status(forModules: [module])
-      emit(["type": "check", "onDevice": true, "engine": "SpeechAnalyzer", "assetsInstalled": status == .installed])
+      // Inventory status also depends on this helper's locale reservation.
+      // This read-only probe reports assets present on the device instead.
+      let installed = await SpeechTranscriber.installedLocales.contains(locale)
+      emit(["type": "check", "onDevice": true, "engine": "SpeechAnalyzer", "assetsInstalled": installed])
       exit(0)
     }
     AVCaptureDevice.requestAccess(for: .audio) { granted in
