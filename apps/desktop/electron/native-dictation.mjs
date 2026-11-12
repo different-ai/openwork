@@ -49,8 +49,8 @@ if (-not [OpenWorkVoiceTyping]::Start()) { exit 2 }
 }
 
 export const SPEECH_DICTATION_EVENT = "openwork:dictation:event";
-const helperEvents = new Set(["ready", "result", "error", "end"]);
-const speechErrors = new Set(["not-allowed", "service-not-allowed", "audio-capture", "language-not-supported", "network"]);
+const helperEvents = new Set(["ready", "result", "level", "status", "error", "end"]);
+const speechErrors = new Set(["not-allowed", "service-not-allowed", "audio-capture", "language-not-supported", "network", "finalization-timeout", "model-unavailable", "no-speech"]);
 
 function trustedSender(event, window) {
   return Boolean(window && event.sender === window.webContents && event.senderFrame === event.sender.mainFrame
@@ -62,6 +62,16 @@ export function helperEvent(line) {
   let value;
   try { value = JSON.parse(line) } catch { return null }
   if (!value || !helperEvents.has(value.type)) return null;
+  if (value.type === "status") {
+    if (value.status !== "installing") return null;
+    if (value.progress === undefined) return { type: "status", status: "installing" };
+    if (typeof value.progress !== "number" || !Number.isFinite(value.progress) || value.progress < 0 || value.progress > 1) return null;
+    return { type: "status", status: "installing", progress: value.progress };
+  }
+  if (value.type === "level") {
+    if (typeof value.level !== "number" || !Number.isFinite(value.level) || value.level < 0 || value.level > 1) return null;
+    return { type: "level", level: value.level };
+  }
   if (value.type === "result") {
     if (!Array.isArray(value.segments) || value.segments.length > 500 || !value.segments.every(part => typeof part === "string")) return null;
     return { type: "result", segments: value.segments };

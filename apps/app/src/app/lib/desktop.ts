@@ -101,6 +101,8 @@ export type RemoteSessionAccessState = {
 export type SpeechDictationEvent =
   | { id: string; type: "ready" | "end" }
   | { id: string; type: "result"; segments: string[] }
+  | { id: string; type: "level"; level: number }
+  | { id: string; type: "status"; status: "installing"; progress?: number }
   | { id: string; type: "error"; code: string };
 
 // ---------------------------------------------------------------------------

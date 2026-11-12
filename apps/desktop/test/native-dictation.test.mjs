@@ -155,3 +155,29 @@ test("helper events outside the known shapes are dropped", () => {
   assert.deepEqual(helperEvent('{"type":"end","extra":true}'), { type: "end" });
   assert.deepEqual(helperEvent('{"type":"error","code":"not-allowed"}'), { type: "error", code: "not-allowed" });
 });
+
+test("microphone levels cross the bridge only as finite normalized amplitudes", () => {
+  assert.deepEqual(helperEvent('{"type":"level","level":0.4,"audio":"discard"}'), { type: "level", level: 0.4 });
+  for (const level of [-1, 1.01, "0.4", null]) {
+    assert.equal(helperEvent(JSON.stringify({ type: "level", level })), null);
+  }
+  assert.equal(helperEvent('{"type":"level","level":1e400}'), null);
+});
+
+test("model installation reports only the known state and actionable errors", () => {
+  assert.deepEqual(helperEvent('{"type":"status","status":"installing","path":"discard"}'), { type: "status", status: "installing" });
+  assert.equal(helperEvent('{"type":"status","status":"arbitrary"}'), null);
+  assert.deepEqual(helperEvent('{"type":"error","code":"model-unavailable"}'), { type: "error", code: "model-unavailable" });
+  assert.deepEqual(helperEvent('{"type":"error","code":"no-speech"}'), { type: "error", code: "no-speech" });
+});
+
+test("model download progress crosses the bridge only as a finite fraction", () => {
+  for (const progress of [0, 0.42, 1]) {
+    assert.deepEqual(helperEvent(JSON.stringify({ type: "status", status: "installing", progress, path: "discard" })),
+      { type: "status", status: "installing", progress });
+  }
+  for (const progress of [-0.1, 1.1, null, "0.42"]) {
+    assert.equal(helperEvent(JSON.stringify({ type: "status", status: "installing", progress })), null);
+  }
+  assert.equal(helperEvent('{"type":"status","status":"installing","progress":1e400}'), null);
+});
