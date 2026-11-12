@@ -3379,7 +3379,7 @@ export function createDenClient(options: {
         method: "GET", token, organizationId: orgId,
       });
       if (!isRecord(payload) || !Array.isArray(payload.items) || typeof payload.enabled !== "boolean") {
-        throw new Error("Your apps could not be loaded.");
+        throw new Error("Your artifacts could not be loaded.");
       }
       return { enabled: payload.enabled, sharingEnabled: payload.sharingEnabled === true, items: payload.items.map((item) => savedAppSummarySchema.parse(item)) };
     },

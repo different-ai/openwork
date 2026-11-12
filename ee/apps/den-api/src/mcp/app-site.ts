@@ -48,7 +48,7 @@ const SITE_SCRIPT = `
     let message = null
     try { message = JSON.parse(line ? line.slice(5) : text) } catch { message = null }
     if (!message || message.error || !("result" in message)) {
-      throw new Error(message && message.error && message.error.message || "This App is not available.")
+      throw new Error(message && message.error && message.error.message || "This artifact is not available.")
     }
     return message.result
   }
@@ -114,7 +114,7 @@ const SITE_SCRIPT = `
         body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }),
       }).catch(() => null)
       if (!minted || !minted.ok) {
-        status.textContent = "Sign in to OpenWork in this browser to open this App, then reload this page. "
+        status.textContent = "Sign in to OpenWork in this browser to open this artifact, then reload this page. "
         const link = document.createElement("a")
         link.href = root.dataset.signIn
         link.textContent = "Sign in"
@@ -126,11 +126,11 @@ const SITE_SCRIPT = `
     tools = (await rpc("tools/list")).tools || []
     const launch = tools.find((tool) => tool.name === "open_app")
     const uri = launch && launch._meta && launch._meta.ui && launch._meta.ui.resourceUri
-    if (!uri) throw new Error("This App is not available.")
+    if (!uri) throw new Error("This artifact is not available.")
     opened = await rpc("tools/call", { name: "open_app", arguments: { input: {} } })
     const resource = await rpc("resources/read", { uri })
     const html = resource.contents && resource.contents[0] && resource.contents[0].text
-    if (typeof html !== "string") throw new Error("This App is not available.")
+    if (typeof html !== "string") throw new Error("This artifact is not available.")
     const title = opened.structuredContent && opened.structuredContent.app && opened.structuredContent.app.title
     if (typeof title === "string") document.title = title
     status.hidden = true
@@ -138,7 +138,7 @@ const SITE_SCRIPT = `
     frame.srcdoc = html
   }
 
-  start().catch((error) => show(error.message || "This App is not available."))
+  start().catch((error) => show(error.message || "This artifact is not available."))
 })()
 `.trim()
 
@@ -167,7 +167,7 @@ const SITE_CSP = [
 ].join("; ")
 
 function sitePage(mode: "public" | "member"): string {
-  return `<!doctype html><html lang="en" data-mode="${mode}" data-sign-in="${escapeAttribute(env.webUrl)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="${NO_INDEX}"><title>OpenWork App</title><style>html,body{margin:0;height:100%}body{font:15px system-ui,sans-serif;color-scheme:light dark}#app{display:block;width:100%;height:100%;border:0}#status{margin:0;padding:24px}</style></head><body><p id="status" role="status">Opening…</p><iframe id="app" title="App" sandbox="allow-scripts allow-forms" hidden></iframe><script>${SITE_SCRIPT}</script></body></html>`
+  return `<!doctype html><html lang="en" data-mode="${mode}" data-sign-in="${escapeAttribute(env.webUrl)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="${NO_INDEX}"><title>OpenWork Artifact</title><style>html,body{margin:0;height:100%}body{font:15px system-ui,sans-serif;color-scheme:light dark}#app{display:block;width:100%;height:100%;border:0}#status{margin:0;padding:24px}</style></head><body><p id="status" role="status">Opening…</p><iframe id="app" title="Artifact" sandbox="allow-scripts allow-forms" hidden></iframe><script>${SITE_SCRIPT}</script></body></html>`
 }
 
 /** Sent by the page on its signed-in requests, so the App's server refuses an App that was not made a site. */

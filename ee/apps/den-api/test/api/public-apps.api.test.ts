@@ -47,7 +47,7 @@ async function anonymous(appId: string, method: string, params: Record<string, u
 
 const unavailable = async (appId: string, why: string) => {
   const refused = await anonymous(appId, "tools/list")
-  assert.equal(field(refused.error, "message"), "This App is not available.", `${why}: ${refused.call.text}`)
+  assert.equal(field(refused.error, "message"), "This artifact is not available.", `${why}: ${refused.call.text}`)
 }
 const available = async (appId: string, why: string) => {
   const served = await anonymous(appId, "tools/list")

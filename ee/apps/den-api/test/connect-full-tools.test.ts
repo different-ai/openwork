@@ -326,7 +326,7 @@ test("the full view changes only the searching instructions; the search view's t
   const full = await initializationInstructions(createAgentMcpServer({ toolView: "full", remoteSessionStatus: true }))
   assert.ok(Buffer.byteLength(full, "utf8") <= 2048)
   assert.equal(search, AGENT_MCP_INSTRUCTIONS)
-  assert.match(full, /Every connection action, Workflow, App and remote session you may use is its own tool/)
+  assert.match(full, /Every connection action, Workflow, artifact and remote session you may use is its own tool/)
   assert.match(full, /connection_status/)
   assert.doesNotMatch(full, /Search capabilities with 2-4 keyword variants/)
   const searchLines = search.split("\n")

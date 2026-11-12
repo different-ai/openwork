@@ -42,7 +42,7 @@ for (const toolShapes of [undefined, false, true]) {
           assert.ok(text.includes("invalid_capability_arguments"))
           assert.ok(text.includes("ambiguous_creation"))
           assert.ok(text.includes("cloudReadiness"))
-          assert.equal(text.includes("To build or change an App"), appServers)
+          assert.equal(text.includes("To build or change an artifact"), appServers)
           assert.equal(text.includes("Every match is an MCP tool with an inputSchema"), toolShapes === true)
           assert.equal(text.includes("path, query, and body inside arguments"), toolShapes === true)
           assert.equal(text.includes("Put an object matching argumentsSchema in execute_capability.body and copy schemaDigest into execute_capability.schemaDigest"), toolShapes !== true)
@@ -66,17 +66,17 @@ for (const toolShapes of [undefined, false, true]) {
       try {
         await client.connect(clientTransport)
         const instructions = client.getInstructions() ?? ""
-        assert.ok(instructions.includes("Every connection action, Workflow, App and remote session you may use is its own tool"))
+        assert.ok(instructions.includes("Every connection action, Workflow, artifact and remote session you may use is its own tool"))
         assert.equal(instructions.includes("Search capabilities with 2-4 keyword variants"), false)
         assert.equal(instructions.includes("argumentsSchema"), false)
         const guidance = await client.readResource({ uri: AGENT_MCP_GUIDANCE_URI })
         const text = guidance.contents.flatMap(content => "text" in content ? [content.text] : []).join("\n")
-        assert.ok(text.startsWith("Every connection action, Workflow, App and remote session you may use is its own tool"))
+        assert.ok(text.startsWith("Every connection action, Workflow, artifact and remote session you may use is its own tool"))
         assert.ok(text.includes("Call each tool directly with arguments matching its inputSchema."))
         // Search stays for OpenWork's own operations and skills, so the guidance says how to run a match.
         assert.equal(text.includes("Put an object matching argumentsSchema in execute_capability.body"), toolShapes !== true)
         assert.equal(text.includes("Every match is an MCP tool with an inputSchema"), toolShapes === true)
-        assert.equal(text.includes("To build or change an App"), appServers)
+        assert.equal(text.includes("To build or change an artifact"), appServers)
       } finally {
         await client.close()
         await server.close()

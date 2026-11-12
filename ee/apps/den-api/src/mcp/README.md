@@ -11,7 +11,7 @@ For third-party client setup and `invalid_target` troubleshooting, see
 including its purpose, public website, and scalable public SVG icon. Initialization
 keeps critical routing and safety guidance within 2048 UTF-8 bytes. Agents read
 `openwork://agent/guidance.md` for the full operating rules; those rules are retained
-rather than silently truncated. App authoring details live in `build-an-app`.
+rather than silently truncated. Artifact authoring details live in `build-an-app`.
 
 The fixed connection-action and Workflow-artifact views share one HTTPS widget
 origin and advertise descriptions through resource `_meta`, never resource
@@ -46,7 +46,7 @@ not invalidate calls from cached search-tool lists.
 ## Full tool view
 
 With `connectStandardTools` on, clients that search large tool lists themselves
-get every connection action, Workflow, App and remote session the member may use
+get every connection action, Workflow, artifact and remote session the member may use
 as its own tool (`connect-tool-view.ts`). `search_capabilities` and
 `execute_capability` stay for OpenWork's own operations and skills, which have
 no tool of their own: search leaves out every source the full view lists, except
@@ -217,8 +217,7 @@ drop the `openwork/mcpApp` and `openwork/serverTools` hints, which name tools on
 `/mcp/agent`. Plugin access is rechecked on every request; unavailable Apps
 return a JSON-RPC error.
 
-Agents learn App building from one owner per rule. Server instructions only
-route App requests to the built-in `build-an-app` skill
+Server instructions route artifact requests to the built-in `build-an-app` skill
 (`skill://build-an-app/SKILL.md`, listed while App servers are on), which owns
 the order of calls and the quality bar. `prepare_app` returns a starter wired
 to the verified tools: `lookup` when every tool reads, `action` when one

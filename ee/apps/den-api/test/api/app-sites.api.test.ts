@@ -89,10 +89,10 @@ test("before sign-in, the signed-in URL says nothing about whether an App exists
   // After sign-in the App's server decides: only the App made a site opens for the page.
   assert.notEqual((await asSitePage(site)).tools, undefined)
   const refused = await asSitePage(plain)
-  assert.equal(refused.error, "The App is not available.", refused.call.text)
+  assert.equal(refused.error, "The artifact is not available.", refused.call.text)
   await setFeature("appSites", false)
   try {
-    assert.equal((await asSitePage(site)).error, "The App is not available.", "feature off")
+    assert.equal((await asSitePage(site)).error, "The artifact is not available.", "feature off")
   } finally {
     await setFeature("appSites", true)
   }

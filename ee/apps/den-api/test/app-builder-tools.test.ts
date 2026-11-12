@@ -78,7 +78,7 @@ test("App builder metadata describes all inputs and keeps create_app concise", a
     assert.ok(descriptionBytes <= 2048)
     t.diagnostic(`create_app description: ${descriptionBytes} UTF-8 bytes`)
     assert.match(create.description, /skill:build-an-app/)
-    assert.equal(tools.find((tool) => tool.name === "read_app")?.title, "Read an App")
+    assert.equal(tools.find((tool) => tool.name === "read_app")?.title, "Read an artifact")
 
     // Only descriptions may differ from the shared validators' JSON schemas.
     const stripDescriptions = (value: unknown): unknown => {

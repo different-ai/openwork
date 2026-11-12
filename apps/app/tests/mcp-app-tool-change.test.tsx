@@ -29,10 +29,10 @@ test("nothing else counts: another tool, another reason, a success or an odd nam
 
 test("the conversation it starts updates the same App and never makes a copy", () => {
   const prompt = mcpAppToolRepairPrompt({ appId: "cob_01abc", title: "Sprint board", tool: "load_issues" });
-  expect(prompt).toContain("“Sprint board” (App ID: cob_01abc)");
+  expect(prompt).toContain("“Sprint board” (artifact ID: cob_01abc)");
   expect(prompt).toContain("“load_issues”");
   expect(prompt).toContain("read_app");
-  expect(prompt).toContain("update_app under this same App ID");
+  expect(prompt).toContain("update_app under this same artifact ID");
   expect(prompt).toContain("Do not create a copy");
 });
 
@@ -44,7 +44,7 @@ test("Fix with agent starts the conversation once and says so if it cannot", asy
   let next: () => Promise<void> = () => opening.promise;
   try {
     await act(async () => root.render(createElement(McpAppChangedToolPrompt, { tool: "load_issues", onFix: async (tool: string) => { asked.push(tool); await next(); } })));
-    expect(container.textContent).toContain("“load_issues” changed since this App was published");
+    expect(container.textContent).toContain("“load_issues” changed since this artifact was published");
     const button = () => container.querySelector("button");
     await act(async () => button()?.click());
     expect(asked).toEqual(["load_issues"]);

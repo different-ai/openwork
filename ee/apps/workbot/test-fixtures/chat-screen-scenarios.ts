@@ -126,10 +126,10 @@ export const scenarios: Record<string, () => FixtureThread> = {
       }),
     ],
   }),
-  /** Both kinds of app in one reply: an App built in OpenWork (it runs from its own server) beside an .html file. */
+  /** An artifact built in OpenWork and an HTML file in the same reply. */
   "openwork-app": () => ({
     name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
-    turns: [hello(), turn("o1", "Create a simple hello world app", minutesAgo(2), [said("Your app is ready: Hello World Wave. It's in the card below.")], { outputs: [OPENWORK_APP, ARTIFACT_FILES.organizer] })],
+    turns: [hello(), turn("o1", "Create a simple hello world artifact", minutesAgo(2), [said("Hello World Wave is ready. Open the artifact from the card below.")], { outputs: [OPENWORK_APP, ARTIFACT_FILES.organizer] })],
   }),
   /** A tall phone screenshot Workbot sends back: its card and preview keep the picture's proportions. */
   photo: () => ({

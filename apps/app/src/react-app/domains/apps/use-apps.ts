@@ -4,7 +4,7 @@ import { createDenClient, DenApiError, isDenOrgAdminRole, readDenSettings } from
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { useDenAuth } from "../cloud/den-auth-provider";
 
-export const dashboardManagementReason = "Only organization owners and admins can manage dashboards and apps.";
+export const dashboardManagementReason = "Only organization owners and admins can manage dashboards and artifacts.";
 
 export function useAppsClient() {
   const auth = useDenAuth();
@@ -44,7 +44,7 @@ export function useSavedApps() {
     queryKey: ["saved-apps", ...scope],
     enabled: Boolean(client && orgId),
     queryFn: async () => {
-      if (!client || !orgId) throw new Error("Sign in to open your apps.");
+      if (!client || !orgId) throw new Error("Sign in to open your artifacts.");
       try { return await client.listSavedApps(orgId); }
       catch (error) {
         if (error instanceof DenApiError && error.status === 404) return { enabled: false, sharingEnabled: false, items: [] };

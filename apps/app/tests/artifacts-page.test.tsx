@@ -126,7 +126,7 @@ test("Open in chat references the same artifact without creating another view", 
   await render(); await click("Open Overview");
   await click("Open in chat");
   expect(createPrompts).toHaveLength(1);
-  expect(createPrompts[0]).toContain("App ID: overview");
+  expect(createPrompts[0]).toContain("artifact ID: overview");
   expect(createPrompts[0]).toContain("do not create a copy");
   expect(launches).toHaveLength(1);
 });
@@ -195,7 +195,7 @@ test("Fix with agent starts a conversation that updates the same App", async () 
   await render(); await click("Open Overview");
   await act(async () => { await fixChangedTool?.("load_issues"); });
   expect(createPrompts).toHaveLength(1);
-  expect(createPrompts[0]).toContain("“Overview” (App ID: overview)");
+  expect(createPrompts[0]).toContain("“Overview” (artifact ID: overview)");
   expect(createPrompts[0]).toContain("“load_issues”");
   expect(createPrompts[0]).toContain("Do not create a copy");
   expect(featuresUsed).toEqual(["appToolRepair"]);
@@ -262,7 +262,7 @@ test("unverified identity cannot keep a legacy or live artifact mounted", async 
 test("New artifact opens the composer callback directly", async () => {
   await render(); await click("New artifact");
   expect(createPrompts).toHaveLength(1);
-  expect(createPrompts[0]).toContain("Create one live artifact");
+  expect(createPrompts[0]).toContain("Create and save one live artifact");
   expect(host.querySelector("[role=dialog]")).toBeNull();
   expect(launches).toEqual([]);
 });

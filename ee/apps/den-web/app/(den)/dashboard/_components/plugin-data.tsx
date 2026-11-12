@@ -207,9 +207,13 @@ export function getPluginComponentCount(plugin: DenPlugin): number {
 
 export function getPluginPartsSummary(plugin: DenPlugin): string {
   const parts: string[] = [];
-  const appCount = plugin.apps.length + plugin.authoredApps.length;
+  const artifactCount = plugin.authoredApps.length;
+  if (artifactCount > 0) {
+    parts.push(`${artifactCount} ${artifactCount === 1 ? "Artifact" : "Artifacts"}`);
+  }
+  const appCount = plugin.apps.length;
   if (appCount > 0) {
-    parts.push(`${appCount} ${appCount === 1 ? "App" : "Apps"}`);
+    parts.push(`${appCount} ${appCount === 1 ? "MCP App" : "MCP Apps"}`);
   }
   if (plugin.skills.length > 0) {
     parts.push(`${plugin.skills.length} ${plugin.skills.length === 1 ? "Skill" : "Skills"}`);

@@ -158,8 +158,8 @@ export const libraryUsageSourceLabels: Record<LibraryUsageSource, string> = {
   agent: "Agents",
   workflow: "Workflows",
   automation: "Automations",
-  app: "Apps",
-  artifact: "Live views",
+  app: "Artifacts",
+  artifact: "Workflow artifacts",
 };
 
 /** Uses per source across rows, most used first, leaving out sources nobody used. */

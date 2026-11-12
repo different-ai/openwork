@@ -331,8 +331,8 @@ export const BUILTIN_SKILLS: BuiltinSkillDefinition[] = [
   {
     descriptor: {
       name: "build-an-app",
-      title: "Build an App",
-      description: "Build or change an App (an artifact), such as a dashboard, tracker, lookup, form, or calculator, that opens beside the chat.",
+      title: "Build an artifact",
+      description: "Build or change an artifact, such as a dashboard, tracker, lookup, form, or calculator, that opens beside the chat.",
       capability: BUILTIN_BUILD_AN_APP_CAPABILITY,
       location: "skill://build-an-app/SKILL.md",
     },

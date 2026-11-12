@@ -19,7 +19,7 @@ import { useArtifactSurfaceActive } from "./retained-artifact-surface";
 import { pruneDashboardTiles, removeDashboardTileCache } from "./dashboard-tile-cache";
 import { artifactRows, groupArtifacts, readArtifactSelection, rememberArtifactSelection, selectedArtifact, type ArtifactRow } from "./artifacts-workspace";
 
-const CREATE_ARTIFACT_PROMPT = "Create one live artifact. Use my request to build and save one app that fetches fresh data with each viewer’s own connections whenever opened or refreshed. My artifact should ";
+const CREATE_ARTIFACT_PROMPT = "Create and save one live artifact that fetches fresh data with each viewer’s own connections whenever opened or refreshed. My artifact should ";
 
 export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTarget, active: routeActive = true }: {
   onCreateApp: CreateDashboardApp;
@@ -71,7 +71,7 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
   }, [built.ready, built.cacheScopeKey, rows]);
   const create = useMutation({ mutationFn: () => onCreateApp(CREATE_ARTIFACT_PROMPT) });
   const discuss = useMutation({ mutationFn: ({ appId, title }: { appId: string; title: string }) => onCreateApp(
-    `Work with the existing artifact “${title}” (App ID: ${appId}). Open this artifact; do not create a copy. If I request a change and have edit access, use read_app and update_app with this same App ID. My request is `,
+    `Work with the existing artifact “${title}” (artifact ID: ${appId}). Open this artifact; do not create a copy. If I request a change and have edit access, use read_app and update_app with this same artifact ID. My request is `,
   ) });
   const placement = useMutation({
     mutationFn: async ({ appId, added }: { appId: string; added: boolean }) => {

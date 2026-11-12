@@ -69,7 +69,7 @@ export type McpAppServerDefinition = { app: McpAppSummary; tools: McpAppToolBind
 export type ResolveMcpAppTools = (tools: McpAppToolDeclaration[]) => Promise<McpAppToolBinding[]>
 
 function notFound(): never {
-  throw new McpAppError(404, "mcp_app_not_found", "MCP App or revision is not available.")
+  throw new McpAppError(404, "mcp_app_not_found", "Artifact or revision is not available.")
 }
 
 function appId(value: string) {
@@ -168,9 +168,9 @@ function compileFailure(result?: GeneratedArtifactViewBuildResult): McpAppError 
   const hint = diagnostic && BUILDER_POLICY_MESSAGE.test(diagnostic.message)
     ? diagnostic.message
     : diagnostic && BUILDER_LIMIT_MESSAGE.test(diagnostic.message)
-      ? `${diagnostic.message} Reduce the source or compiled App size and complexity.`
+      ? `${diagnostic.message} Reduce the source or compiled artifact size and complexity.`
       : "Check React/TSX syntax and provide a default-exported React component."
-  return new McpAppError(422, "mcp_app_compile_failed", `MCP App compilation failed${location}. ${hint} No revision was published.`)
+  return new McpAppError(422, "mcp_app_compile_failed", `Artifact compilation failed${location}. ${hint} No revision was published.`)
 }
 
 /** The stored source of a revision, verified against the digest it was compiled from. */
@@ -179,11 +179,11 @@ function storedSource(version: Revision, payload: McpAppCompiledRevision): McpAp
   try {
     source = JSON.parse(version.rawSourceText ?? "")
   } catch {
-    throw new McpAppError(422, "mcp_app_invalid_source", "The stored App source is invalid.")
+    throw new McpAppError(422, "mcp_app_invalid_source", "The stored artifact source is invalid.")
   }
   const parsed = mcpAppSourceSchema.safeParse(source)
   if (!parsed.success || sourceDigest({ ...payload, ...parsed.data }) !== payload.sourceDigest) {
-    throw new McpAppError(422, "mcp_app_invalid_source", "The stored App source failed its integrity check.")
+    throw new McpAppError(422, "mcp_app_invalid_source", "The stored artifact source failed its integrity check.")
   }
   return parsed.data
 }
@@ -217,7 +217,7 @@ async function workflowsToAdd(context: PluginArchActorContext, pluginId: DenType
     } catch (error) {
       if (!(error instanceof PluginArchAuthorizationError) || error.error !== "forbidden") throw error
       const name = tools.find((entry) => entry.workflowId === id)?.tool.name
-      throw new McpAppError(422, "mcp_app_tool_unavailable", `Tool ${name}: sharing an App shares the Workflows its tools run, so only a manager of this Workflow can add it to an App. Bind a Workflow you manage, or ask its owner to add it. No revision was published.`)
+      throw new McpAppError(422, "mcp_app_tool_unavailable", `Tool ${name}: sharing an artifact shares the Workflows its tools run, so only a manager of this Workflow can add it to an artifact. Bind a Workflow you manage, or ask its owner to add it. No revision was published.`)
     }
   }
   return missing
@@ -246,23 +246,23 @@ async function addWorkflows(context: PluginArchActorContext, pluginId: DenTypeId
  */
 async function requirePublishable(organizationId: string, tools: McpAppToolBinding[]) {
   if (!await organizationFeatureEnabled(organizationId, "publicApps")) {
-    throw new McpAppError(409, "public_apps_off", "Public Apps are not turned on for this organization. Omit public, or ask an admin to turn the feature on. No revision was published.")
+    throw new McpAppError(409, "public_apps_off", "Public artifacts are not turned on for this organization. Omit public, or ask an admin to turn the feature on. No revision was published.")
   }
   if (tools.length > 0) {
-    throw new McpAppError(409, "public_app_has_tools", "A public App cannot have tools, because visitors are not signed in. Remove its tools (tools: []) or pass public: false. No revision was published.")
+    throw new McpAppError(409, "public_app_has_tools", "A public artifact cannot have tools, because visitors are not signed in. Remove its tools (tools: []) or pass public: false. No revision was published.")
   }
 }
 
 async function requireSites(organizationId: string) {
   if (!await organizationFeatureEnabled(organizationId, "appSites")) {
-    throw new McpAppError(409, "app_sites_off", "Opening Apps as sites is not turned on for this organization. Omit site, or ask an admin to turn the feature on. No revision was published.")
+    throw new McpAppError(409, "app_sites_off", "Opening artifacts as sites is not turned on for this organization. Omit site, or ask an admin to turn the feature on. No revision was published.")
   }
 }
 
 function publicNameTaken(name: string, saved: boolean): McpAppError {
   return new McpAppError(409, "public_name_taken", saved
-    ? `The App was saved and is public at its App id URL, but the public name "${name}" was just taken. Choose another publicName with update_app.`
-    : `The public name "${name}" is already used by another App. Choose another publicName. No revision was published.`)
+    ? `The artifact was saved and is public at its original URL, but the public name "${name}" was just taken. Choose another publicName with update_app.`
+    : `The public name "${name}" is already used by another artifact. Choose another publicName. No revision was published.`)
 }
 
 /**
@@ -271,7 +271,7 @@ function publicNameTaken(name: string, saved: boolean): McpAppError {
  */
 async function requirePublicNameFree(input: { name: string; isPublic: boolean; appId: DenTypeId<"configObject"> | null }) {
   if (!input.isPublic) {
-    throw new McpAppError(409, "public_name_needs_public", "publicName names a public App's URL. Pass public: true with it, or omit publicName. No revision was published.")
+    throw new McpAppError(409, "public_name_needs_public", "publicName names a public artifact's URL. Pass public: true with it, or omit publicName. No revision was published.")
   }
   const [row] = await db.select({ appId: PublicMcpAppNameTable.configObjectId }).from(PublicMcpAppNameTable)
     .where(eq(PublicMcpAppNameTable.name, input.name)).limit(1)
@@ -332,17 +332,17 @@ async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpApp
     ...(input.public ? { public: true } : {}),
     ...(input.site ? { site: true } : {}),
   })
-  if (!parsed.success) throw new McpAppError(422, "mcp_app_invalid_build", "The compiler did not produce a valid bounded MCP App revision. No revision was published.")
+  if (!parsed.success) throw new McpAppError(422, "mcp_app_invalid_build", "The compiler did not produce a valid bounded artifact revision. No revision was published.")
   const payload = parsed.data
   if (payload.resourceDigest !== digest(payload.html)
     || payload.htmlBytes !== Buffer.byteLength(payload.html)
     || payload.sourceDigest !== sourceDigest({ ...payload, reactSource, cssSource })) {
-    throw new McpAppError(422, "mcp_app_invalid_build", "The compiled MCP App failed its integrity check. No revision was published.")
+    throw new McpAppError(422, "mcp_app_invalid_build", "The compiled artifact failed its integrity check. No revision was published.")
   }
   const rawSourceText = JSON.stringify({ reactSource, cssSource })
   const storageLimit = MCP_APP_MAX_STORAGE_BYTES
   if (Buffer.byteLength(JSON.stringify(payload)) + Buffer.byteLength(rawSourceText) > storageLimit) {
-    throw new McpAppError(413, "mcp_app_too_large", `The encoded MCP App revision and source must fit within ${storageLimit / 1024 / 1024} MiB. Reduce its size; no revision was published.`)
+    throw new McpAppError(413, "mcp_app_too_large", `The encoded artifact revision and source must fit within ${storageLimit / 1024 / 1024} MiB. Reduce its size; no revision was published.`)
   }
   return { payload, rawSourceText }
 }
@@ -361,7 +361,7 @@ export function updateMcpApp(input: McpAppWriteInput<UpdateMcpAppInput>): Promis
 
 async function createMcpAppOnPrimary({ context, resolveTools, ...source }: McpAppWriteInput<CreateMcpAppInput>): Promise<McpAppSummary> {
   const parsed = createMcpAppInputSchema.safeParse(source)
-  if (!parsed.success) throw new McpAppError(400, "invalid_mcp_app_input", "Provide a title, complete React/CSS source, a non-empty text fallback, and uniquely named tools within the App limits.")
+  if (!parsed.success) throw new McpAppError(400, "invalid_mcp_app_input", "Provide a title, complete React/CSS source, a non-empty text fallback, and uniquely named tools within the artifact limits.")
   const input = parsed.data
   let pluginId = input.pluginId ? await editablePlugin(context, input.pluginId) : null
   const resolved = await resolveTools(input.tools ?? [])
@@ -379,7 +379,7 @@ async function createMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
       pluginId = createdPluginId = plugin.id
     } catch (error) {
       if (error instanceof PluginArchRouteFailure && error.error === "duplicate_plugin") {
-        throw new McpAppError(409, "duplicate_plugin", `${error.message} To add this App to it, pass its pluginId; otherwise choose a different title. No App was created.`)
+        throw new McpAppError(409, "duplicate_plugin", `${error.message} To add this artifact to it, pass its pluginId; otherwise choose a different title. No artifact was created.`)
       }
       throw error
     }
@@ -412,19 +412,19 @@ async function createMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
     await discardPlugin()
     throw error
   })
-  if (!saved.latestVersion) throw new McpAppError(422, "mcp_app_save_failed", "The MCP App revision could not be retrieved.")
+  if (!saved.latestVersion) throw new McpAppError(422, "mcp_app_save_failed", "The artifact revision could not be retrieved.")
   if (input.publicName) await savePublicName(context.organizationContext.organization.id, saved.id, input.publicName)
   return summarizeMcpAppRevision({ appId: saved.id, revisionId: saved.latestVersion.id, payload })
 }
 
 async function updateMcpAppOnPrimary({ context, resolveTools, ...source }: McpAppWriteInput<UpdateMcpAppInput>): Promise<McpAppSummary> {
   const parsed = updateMcpAppInputSchema.safeParse(source)
-  if (!parsed.success) throw new McpAppError(400, "invalid_mcp_app_input", "Provide appId, expectedRevisionId, and complete replacement App source, title, text fallback, and uniquely named tools.")
+  if (!parsed.success) throw new McpAppError(400, "invalid_mcp_app_input", "Provide appId, expectedRevisionId, and complete replacement artifact source, title, text fallback, and uniquely named tools.")
   const input = parsed.data
   const id = appId(input.appId)
   const expectedId = revisionId(input.expectedRevisionId)
   const current = await editableApp(context, id)
-  if (current.version.id !== expectedId) throw new McpAppError(409, "mcp_app_revision_conflict", "This MCP App has changed. Read it again before updating.")
+  if (current.version.id !== expectedId) throw new McpAppError(409, "mcp_app_revision_conflict", "This artifact has changed. Read it again before updating.")
   const pluginId = normalizeDenTypeId("plugin", current.payload.pluginId)
   // Omitted CSS, description, and tools keep the App's current ones; stored
   // tools stay as published instead of being resolved again.
@@ -457,7 +457,7 @@ async function updateMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
     if (!locked || locked.objectType !== "app" || locked.status !== "active" || locked.deletedAt) return notFound()
     const latest = await latestRevision(organizationId, id, tx)
     if (!latest || latest.id !== expectedId || !compiledRevision(latest)) {
-      throw new McpAppError(409, "mcp_app_revision_conflict", "This MCP App has changed. Read it again before updating.")
+      throw new McpAppError(409, "mcp_app_revision_conflict", "This artifact has changed. Read it again before updating.")
     }
     const now = new Date(Math.max(Date.now(), latest.createdAt.getTime() + 1))
     const newRevisionId = createDenTypeId("configObjectVersion")
@@ -696,7 +696,7 @@ export async function loadMcpAppResource(input: McpAppAccessInput & { appId: str
   // Hashed once per kept revision, not on every read.
   content.intact ??= digest(payload.html) === payload.resourceDigest && Buffer.byteLength(payload.html) === payload.htmlBytes
   if (!content.intact) {
-    throw new McpAppError(422, "mcp_app_digest_mismatch", "The MCP App revision failed its integrity check.")
+    throw new McpAppError(422, "mcp_app_digest_mismatch", "The artifact revision failed its integrity check.")
   }
   return {
     app: summarizeMcpAppRevision({ appId: id, revisionId: versionId, pluginId, payload }),

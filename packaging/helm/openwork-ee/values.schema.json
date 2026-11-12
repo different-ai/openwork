@@ -159,7 +159,7 @@
                 true,
                 false
               ],
-              "description": "Apps: fix a changed tool with an agent: When a connected tool an App uses changes at its provider, so OpenWork blocks the App's call to it, the App's managers see a Fix with agent button in Artifacts that starts a conversation to update the App. Renders DEN_FEATURE_APP_TOOL_REPAIR."
+              "description": "Artifacts: fix a changed tool with an agent: When a provider changes a tool an artifact uses, OpenWork blocks the call. The artifact’s managers can choose Fix with agent in Artifacts to start a conversation to update it. Renders DEN_FEATURE_APP_TOOL_REPAIR."
             },
             "publicApps": {
               "enum": [
@@ -169,7 +169,7 @@
                 true,
                 false
               ],
-              "description": "Apps: public Apps without sign-in: An App's editor, or their agent, can mark an App that has no tools as public. Anyone can then add its public MCP URL to an MCP client and open it without signing in to OpenWork. Renders DEN_FEATURE_PUBLIC_APPS."
+              "description": "Artifacts: public access without sign-in: An editor or their agent can make an artifact public if it has no tools. Anyone can then add its public MCP URL to an MCP client and open it without signing in to OpenWork. Renders DEN_FEATURE_PUBLIC_APPS."
             },
             "appSites": {
               "enum": [
@@ -179,7 +179,7 @@
                 true,
                 false
               ],
-              "description": "Apps: open an App as a site: An App its author made a site also opens as a web page: a browser that opens the App's MCP URL shows the App full page. Signed-in members use its tools there; an App marked public opens for anyone. Renders DEN_FEATURE_APP_SITES."
+              "description": "Artifacts: open as a site: An artifact published as a site opens full page when someone visits its MCP URL in a browser. Signed-in members can use its tools there. Anyone can open a public artifact. Renders DEN_FEATURE_APP_SITES."
             },
             "composerBackgroundTasks": {
               "enum": [
@@ -539,7 +539,7 @@
                 true,
                 false
               ],
-              "description": "Workbot: Apps built in OpenWork open in the chat: An App that Workbot builds, changes or opens with OpenWork's App tools shows as a card under its reply, like a file it made, and opens beside the chat as the App itself. Off: the App is made but nothing shows in the chat. Renders DEN_FEATURE_WORKBOT_APPS."
+              "description": "Workbot: open artifacts from chat: An artifact that Workbot builds, changes, or opens appears as a card under its reply. Select the card to open the artifact beside the chat. Renders DEN_FEATURE_WORKBOT_APPS."
             },
             "workbotQuietCalendar": {
               "enum": [
@@ -799,7 +799,7 @@
                 true,
                 false
               ],
-              "description": "Connect: standard tools: Claude Code and standalone OpenCode discover connected actions, Workflows and Apps as individual tools; OpenWork Desktop, Web and automation runs keep capability search. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas. Renders DEN_FEATURE_CONNECT_STANDARD_TOOLS."
+              "description": "Connect: standard tools: Claude Code and standalone OpenCode discover connected actions, Workflows and artifacts as individual tools; OpenWork Desktop, Web and automation runs keep capability search. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas. Renders DEN_FEATURE_CONNECT_STANDARD_TOOLS."
             },
             "connectEngineTools": {
               "enum": [
@@ -809,7 +809,7 @@
                 true,
                 false
               ],
-              "description": "Connect: a tool for each action in OpenWork's engine: OpenWork Desktop, Web and automation runs get each connected action, Workflow and App as its own tool, found with their engine's Code Mode search; capability search stays for OpenWork's own operations and skills. Other clients are unaffected. Turning this off restores capability search. Renders DEN_FEATURE_CONNECT_ENGINE_TOOLS."
+              "description": "Connect: a tool for each action in OpenWork's engine: OpenWork Desktop, Web and automation runs get each connected action, Workflow and artifact as its own tool, found with their engine's Code Mode search; capability search stays for OpenWork's own operations and skills. Other clients are unaffected. Turning this off restores capability search. Renders DEN_FEATURE_CONNECT_ENGINE_TOOLS."
             },
             "standardCodeMode": {
               "enum": [
