@@ -9,6 +9,11 @@ Previously, the engine asked for approval, then the host rejected an outside
 file with `File was not found inside an authorized workspace root.` The
 operation approval and the root-only file resolver were independent.
 
+> With `fileSendPermissions` on, the question in step 3 and what "Allow for
+> session" remembers are replaced by the shared approval in
+> `docs/features/file-send-permissions/README.md`. The file checks and the
+> single-use exact-file capability below still apply.
+
 ## Boundary
 
 1. The host checks the file before showing the approval prompt. Relative paths

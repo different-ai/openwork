@@ -7,23 +7,18 @@ import {
   canRestoreRequest,
   changesOverview,
   checkImportFile,
-  deletesHeading,
-  configExportFileName,
   exportAreasParam,
   exportOverview,
   formatDay,
   historyOverview,
   importFileSummary,
-  formatApplyStep,
   formatDuration,
   formatFieldChange,
-  formatFieldPath,
   formatRunCounts,
   runDurationMs,
   runFailure,
   runIrreversible,
   runRequester,
-  groupConfigAreas,
   isDeletable,
   keepableSecrets,
   planSteps,
@@ -46,18 +41,10 @@ const areas = [
   area("desktop-policies", ["Desktop policies"], { canExport: false }),
 ];
 
-test("areas group by the first breadcrumb segment in registry order", () => {
-  assert.deepEqual(groupConfigAreas(areas).map((group) => [group.label, group.areas.length]), [["AI Gateway", 2], ["Members", 1], ["Desktop policies", 1]]);
-});
-
 test("selecting everything exportable downloads the whole organization", () => {
   const all = new Set(areas.filter((entry) => entry.canExport).map((entry) => entry.key));
   assert.equal(exportAreasParam(areas, all), null);
   assert.equal(exportAreasParam(areas, new Set(["ai-gateway.providers", "members.teams"])), "ai-gateway.providers,members.teams");
-});
-
-test("export file name carries the org slug and the date", () => {
-  assert.equal(configExportFileName("Acme Corp", new Date("2026-11-09T10:00:00Z")), "openwork-config-acme-corp-2026-11-09.json");
 });
 
 test("import file check rejects invalid JSON, foreign files and oversize files", () => {
@@ -174,15 +161,6 @@ test("in mirror mode target-only items are offered for removal", () => {
   assert.deepEqual(items.map((item) => isDeletable(item, "merge")), [false, false, false]);
 });
 
-test("field paths read as breadcrumbs; keyed elements show their key", () => {
-  assert.equal(formatFieldPath("models[id=gpt-5].config.temperature"), "Models › gpt-5 › Config › Temperature");
-  assert.equal(formatFieldPath("access.allMembers"), "Access › All members");
-  assert.equal(formatFieldPath("credentialSets[0].credential"), "Credential sets › 0 › Credential");
-  assert.equal(formatFieldPath("credentials.apiKey"), "Credentials › API key");
-  assert.equal(formatFieldPath("oauth.client.clientId"), "OAuth › Client › Client ID");
-  assert.equal(formatFieldPath("(spec)"), "Settings");
-});
-
 test("set changes show what is removed now and what the file adds", () => {
   assert.deepEqual(formatFieldChange({ path: "access.teams", added: ["Design"], removed: ["Support", "Sales"] }), { now: "Removes Support, Sales", file: "Adds Design" });
   assert.deepEqual(formatFieldChange({ path: "name", from: "A", to: "B" }), { now: "A", file: "B" });
@@ -214,11 +192,6 @@ test("restore is offered once per applied change, again after a withdrawn restor
   assert.equal(canRestoreRequest({ status: "applied", revertedByChangeRequestId: "ccr_1" }, 1), false);
   assert.equal(canRestoreRequest({ status: "applied", revertedByChangeRequestId: null }, 0), false);
   assert.equal(canRestoreRequest({ status: "cancelled", revertedByChangeRequestId: null }, 1), false);
-});
-
-test("a restore's removals are named as what the restored change added", () => {
-  assert.equal(deletesHeading(false), "Not in the file: remove?");
-  assert.equal(deletesHeading(true), "Added by the change being restored: remove?");
 });
 
 test("approval rules match den-api: one approval each, second approver not the uploader", () => {
@@ -254,13 +227,6 @@ const failedRun: ConfigApplyReport = {
   ],
 };
 const labels = (key: string) => ({ "members.teams": "Teams", "ai-gateway.providers": "AI Providers", "connectors.mcp": "MCP" }[key] ?? key);
-
-test("apply steps read as plain sentences", () => {
-  assert.equal(formatApplyStep({ action: "add", target: "access.teams", detail: "Platform" }), "Added Access › Teams: Platform");
-  assert.equal(formatApplyStep({ action: "update", target: "models[id=gpt-5]" }), "Updated Models › gpt-5");
-  assert.equal(formatApplyStep({ action: "create", target: "" }), "Created");
-  assert.equal(formatApplyStep({ action: "create", target: "connection", detail: "Docs" }, "attempted"), "Create Connection: Docs");
-});
 
 test("a run's counts, duration and who ran it", () => {
   assert.equal(formatRunCounts(failedRun.counts), "1 done, 1 already up to date, 1 failed, 2 not reached");

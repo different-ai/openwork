@@ -1538,6 +1538,7 @@ export function SessionRoute() {
     sessionId: selectedSessionId,
     interactionSessionIds: selectedInteractionSessionIds,
     workspaceRoot: selectedWorkspaceRoot,
+    rememberFileSend: selectedWorkspaceEndpoint?.client?.rememberFileSend,
   });
   const activePermissionSourceTitle = useMemo(() => {
     if (!activePermission || activePermission.sessionID === selectedSessionId) return null;

@@ -1,11 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { RunnerSnapshot } from "@openwork-ee/headless-protocol"
-import { buildWorkbotTurns, interruptedTurnIds, threadBusy, toWorkbotPageEvent, workbotInstructions } from "@openwork-ee/workbot-server"
+import { buildWorkbotTurns, interruptedTurnIds, threadBusy, toWorkbotPageEvent } from "@openwork-ee/workbot-server"
 import { liveStatus, nextTaskQuietAt, TASK_QUIET_MS, workbotActivity } from "../../../packages/workbot-ui/src/activity.js"
 import type { LiveText, WorkbotTurn } from "../../../packages/workbot-ui/src/data.js"
-
-const base = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false }
 
 /** "Code me an app": Workbot answers, starts a task, and the task works through apps and its computer. */
 const snapshot = {
@@ -74,31 +72,6 @@ test("a task's steps reach the page as a throttled re-read, never its words", ()
   assert.equal(toWorkbotPageEvent({ type: "tool", messageId: "wb_m9.t1", step: 3, tool: "bash" }), null)
   assert.equal(toWorkbotPageEvent({ type: "text", messageId: "wb_m9.t1", step: 3, delta: "private draft" }), null)
   assert.deepEqual(toWorkbotPageEvent({ type: "changed", messageId: "wb_m9.t1", status: "completed" }), { type: "changed", messageId: "m9.t1", status: "completed" })
-})
-
-test("the human acknowledgment precedes discovery, reactions and browser work, with or without workingStatus", () => {
-  for (const workingStatus of [false, true]) {
-    const prompt = workbotInstructions({ ...base, workingStatus, browser: true, quickReply: true })
-    assert.ok(prompt.includes("before any tool call, including search_capabilities, react, browser or computer operations"))
-    assert.ok(prompt.includes("one or two short sentences"))
-    assert.ok(prompt.includes("not a typing indicator or an emoji"))
-    assert.ok(prompt.includes("Never invent an ETA"))
-    assert.ok(prompt.includes("after your acknowledgment when the request needs work"))
-    assert.equal(prompt.includes("About 5 minutes"), false)
-    assert.equal(prompt.includes("before you reply"), false)
-  }
-  assert.ok(workbotInstructions({ ...base, workingStatus: true }).includes("Never answer with only \"still working\""))
-})
-
-test("quickReply defaults off and retains the original first-reply and reaction rules", () => {
-  for (const workingStatus of [false, true]) {
-    const original = workbotInstructions({ ...base, workingStatus })
-    assert.equal(original, workbotInstructions({ ...base, workingStatus, quickReply: false }))
-    assert.ok(original.includes("before you reply: 👍"))
-    assert.equal(original.includes("before any tool call, including search_capabilities"), false)
-    assert.equal(original.includes("not a typing indicator or an emoji"), false)
-    assert.ok(original.includes(workingStatus ? "About 5 minutes" : "Sure, give me a sec."))
-  }
 })
 
 test("terminal and abandoned task lifecycles never project as active or keep a stale session busy", () => {

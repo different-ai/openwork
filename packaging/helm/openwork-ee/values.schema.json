@@ -449,7 +449,7 @@
                 true,
                 false
               ],
-              "description": "Workbot Documents: Members browse recent Google Drive files and folders in Workbot, open documents in tabs, and save supported text and spreadsheet edits to Drive. Renders DEN_FEATURE_WORKBOT_DOCUMENTS."
+              "description": "Workbot Documents: Members browse recent Google Drive files and folders in Workbot, open documents in tabs, play video and audio files in the tab, and save supported text and spreadsheet edits to Drive. Renders DEN_FEATURE_WORKBOT_DOCUMENTS."
             },
             "workbotDocumentEditing": {
               "enum": [
@@ -460,16 +460,6 @@
                 false
               ],
               "description": "Workbot Documents: editing: Members choose Edit from a document preview. Full Office editing starts their Cloud workspace only when requested. Requires Workbot Documents. Renders DEN_FEATURE_WORKBOT_DOCUMENT_EDITING."
-            },
-            "workbotDocumentMedia": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Workbot Documents: video and audio: Members play video and audio files from Drive and OneDrive in the document's tab, with seeking, instead of only a link to the original. Requires Workbot Documents. Renders DEN_FEATURE_WORKBOT_DOCUMENT_MEDIA."
             },
             "workbotWorkspaceAssistant": {
               "enum": [
@@ -720,6 +710,16 @@
                 false
               ],
               "description": "Browser: managed and remembered file-sharing permissions: Admins set Allow, Ask first or Block for browser uploads, with website exceptions. Members can remember permission for one website and a folder on this computer across chats and Slack-started tasks, and revoke it in Settings. Renders DEN_FEATURE_BROWSER_UPLOAD_PERMISSIONS."
+            },
+            "fileSendPermissions": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Connected accounts: one permission for files the agent sends: Drive uploads, saves back to Drive, OneDrive and SharePoint, and Gmail and Outlook drafts with attachments ask the same way: Allow once, Allow for this chat or Always allow. Admins set Allow, Ask first or Block on the Agents tab, and members revoke remembered approvals in Settings. Renders DEN_FEATURE_FILE_SEND_PERMISSIONS."
             },
             "agentHarnessPermissions": {
               "enum": [

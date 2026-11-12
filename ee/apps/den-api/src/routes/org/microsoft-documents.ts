@@ -187,7 +187,7 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
         if (meta.mimeType === DOCX) return c.json({ ...common, ...await openWord(source.bytes) })
         return c.json({ ...common, kind: "text", text: new TextDecoder("utf-8", { fatal: true }).decode(source.bytes) })
       }
-      const playable = c.get("organizationContext")!.features.workbotDocumentMedia ? documentMediaKind(meta.mimeType) : null
+      const playable = documentMediaKind(meta.mimeType)
       return c.json({ ...common, kind: "preview", mimeType: meta.mimeType, canEdit: false, ...(playable ? { media: playable } : {}) })
     } catch (error) { return failure(c, error instanceof Error ? error.message : "This file cannot be edited inline.") }
   })
@@ -225,7 +225,7 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     const meta = await item(c, access, fileId); if (!meta.ok) return meta.reply
     // Video and audio go to the browser's own player one byte range at a time, so it can start early and seek.
     const playable = documentMediaKind(meta.mimeType)
-    if (playable && c.get("organizationContext")?.features.workbotDocumentMedia) {
+    if (playable) {
       const size = meta.file.size ?? 0
       const range = documentMediaRange(c.req.header("range"), size)
       if (!range) return documentMediaUnsatisfiable(size)

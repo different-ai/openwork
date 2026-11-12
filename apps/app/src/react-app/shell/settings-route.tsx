@@ -2654,7 +2654,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           />
         );
       case "computer":
-        return <ComputerUseView />;
+        return <ComputerUseView fileSends={openworkClient} />;
       case "devices":
         return <DevicesView />;
       case "updates":

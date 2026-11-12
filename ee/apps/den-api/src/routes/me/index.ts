@@ -1,7 +1,7 @@
 import { and, eq, gt, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthUserTable, InvitationTable, MemberTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { withoutAgentHarnessRules, withoutBrowserUploadRules, type AgentPermissionRule } from "@openwork/types/den/agent-permissions"
+import { withoutAgentHarnessRules, withoutBrowserUploadRules, withoutFileSendRules, type AgentPermissionRule } from "@openwork/types/den/agent-permissions"
 import { BILLING_PLAN_TIERS } from "@openwork/types/den/billing-plans"
 import { desktopConfigSchema } from "@openwork/types/den/desktop-policies"
 import type { Hono } from "hono"
@@ -513,7 +513,11 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       const rules = await readAgentPermissionRulesForMember({ organizationId: organization.id, orgMemberId: currentMember.id, computerUseEnabled: features.computerUse })
       const supportsBrowserUploads = c.req.header("X-OpenWork-Browser-Upload-Permissions") === "1"
       const visibleRules = features.agentHarnessPermissions ? rules : withoutAgentHarnessRules(rules)
-      const deliveredRules: AgentPermissionRule[] = features.browserUploadPermissions && supportsBrowserUploads ? visibleRules : withoutBrowserUploadRules(visibleRules)
+      // Published desktops reject a rule list naming an action they do not know,
+      // so file-send rules reach only desktops that ask for them.
+      const supportsFileSends = c.req.header("X-OpenWork-File-Send-Permissions") === "1"
+      const uploadRules: AgentPermissionRule[] = features.browserUploadPermissions && supportsBrowserUploads ? visibleRules : withoutBrowserUploadRules(visibleRules)
+      const deliveredRules: AgentPermissionRule[] = features.fileSendPermissions && supportsFileSends ? uploadRules : withoutFileSendRules(uploadRules)
       // Published clients drop unknown actions. Refuse browsing conservatively
       // rather than silently dropping an active managed upload permission.
       if (features.browserUploadPermissions && !supportsBrowserUploads && rules.some((rule) => rule.action === "browser_upload")) {
@@ -547,6 +551,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         removeOpencodeZen: true,
         agentPermissions,
         ...(supportsBrowserUploads ? { browserUploadPermissions: { enabled: features.browserUploadPermissions, organizationId: organization.id, memberId: currentMember.id } } : {}),
+        ...(supportsFileSends ? { fileSendPermissions: { enabled: features.fileSendPermissions, organizationId: organization.id, memberId: currentMember.id } } : {}),
         ...(defaultModel ? { defaultModel } : {}),
         ...(Array.isArray(metadata.allowedDesktopVersions)
           ? { allowedDesktopVersions: metadata.allowedDesktopVersions }

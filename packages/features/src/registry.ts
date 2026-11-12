@@ -146,7 +146,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/google-calendar-recurrence/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   googleDrivePdfText: {
     label: "Google Drive PDF text",
@@ -157,7 +157,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/google-drive-pdf-text/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   autoRouter: {
     label: "AI Gateway: Smart Model Router",
@@ -223,7 +223,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/plain-free-model/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   singleOpenWorkModelsRow: {
     label: "Desktop: one OpenWork Models row you can turn off",
@@ -245,7 +245,7 @@ export const FEATURES = defineFeatures({
     author: "reachjalil",
     docs: "docs/features/settled-sessions/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   appToolRepair: {
     label: "Apps: fix a changed tool with an agent",
@@ -256,7 +256,7 @@ export const FEATURES = defineFeatures({
     author: "reachjalil",
     docs: "docs/features/app-tool-repair/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   publicApps: {
     label: "Apps: public Apps without sign-in",
@@ -267,7 +267,7 @@ export const FEATURES = defineFeatures({
     author: "reachjalil",
     docs: "docs/features/public-apps/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   appSites: {
     label: "Apps: open an App as a site",
@@ -278,7 +278,7 @@ export const FEATURES = defineFeatures({
     author: "reachjalil",
     docs: "docs/features/app-sites/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   composerBackgroundTasks: {
     label: "Desktop: background tasks on the composer",
@@ -289,7 +289,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/composer-background-tasks/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   agentQuestions: {
     label: "Desktop: agents ask and keep working",
@@ -300,7 +300,7 @@ export const FEATURES = defineFeatures({
     author: "reachjalil",
     docs: "docs/features/agent-questions/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   followUpSuggestions: {
     label: "Desktop: suggested follow-ups",
@@ -322,7 +322,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/steady-live-turn/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   ssoPerOrganization: {
     label: "SSO: optional unless required, enforced per organization",
@@ -333,7 +333,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/sso-per-organization/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   ssoSettingsOnSsoPage: {
     label: "SSO: sign-in requirement on the SSO page",
@@ -344,7 +344,7 @@ export const FEATURES = defineFeatures({
     author: "OmarMcAdam",
     docs: "docs/features/sso-settings-on-sso-page/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   signInEmailSync: {
     label: "Sign-in: account email follows Google or SSO",
@@ -443,7 +443,7 @@ export const FEATURES = defineFeatures({
     author: "OmarMcAdam",
     docs: "docs/features/session-security-settings/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   administratorRecovery: {
     label: "Deploy-time administrator recovery",
@@ -464,7 +464,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/super-admin-permission-set/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   nativeDictation: {
     label: "Native dictation",
@@ -496,7 +496,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/desktop-personal-connectors/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   opencodeV2Only: {
     label: "OpenCode v2 only",
@@ -522,7 +522,7 @@ export const FEATURES = defineFeatures({
   },
   workbotDocuments: {
     label: "Workbot Documents",
-    description: "Members browse recent Google Drive files and folders in Workbot, open documents in tabs, and save supported text and spreadsheet edits to Drive.",
+    description: "Members browse recent Google Drive files and folders in Workbot, open documents in tabs, play video and audio files in the tab, and save supported text and spreadsheet edits to Drive.",
     category: "workbot",
     added: "2026-10-16",
     since: "2026-10",
@@ -537,17 +537,6 @@ export const FEATURES = defineFeatures({
     added: "2026-10-20",
     since: "2026-10",
     author: "reachjalil",
-    deployments: everywhere,
-    default: false,
-  },
-  workbotDocumentMedia: {
-    label: "Workbot Documents: video and audio",
-    description: "Members play video and audio files from Drive and OneDrive in the document's tab, with seeking, instead of only a link to the original. Requires Workbot Documents.",
-    category: "workbot",
-    added: "2026-11-09",
-    since: "2026-11",
-    author: "reachjalil",
-    docs: "docs/features/workbot-document-media/README.md",
     deployments: everywhere,
     default: false,
   },
@@ -570,7 +559,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/workbot-drive-files/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   workbotAccountMenu: {
     label: "Workbot: account menu",
@@ -581,7 +570,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/workbot-account-menu/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   workbotBrowserChat: {
     label: "Workbot: chat beside the browser",
@@ -592,7 +581,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/workbot-browser-chat/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   workbotInstantOpen: {
     label: "Workbot: chats open instantly",
@@ -603,7 +592,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/workbot-instant-open/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   workbotScrollToBottom: {
     label: "Workbot: scroll to latest messages",
@@ -625,7 +614,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/workbot-browser-recovery/README.md",
     deployments: ["cloud"],
-    default: false,
+    default: true,
   },
   workbotQuickReply: {
     label: "Workbot: quick human acknowledgment",
@@ -636,7 +625,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/workbot-quick-reply/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   workbotWorkingStatus: {
     label: "Workbot: working status and task sheet",
@@ -647,7 +636,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/workbot-working-status/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   workbotCenteredProfile: {
     label: "Workbot: centred avatar and profile",
@@ -658,7 +647,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/workbot-centered-profile/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   workbotBrowserPreview: {
     label: "Workbot: inline browser preview",
@@ -669,7 +658,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/workbot-browser-preview/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   workbotProfileSheet: {
     label: "Workbot: profile",
@@ -680,7 +669,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/workbot-profile-sheet/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   workbotRemoteTasks: {
     label: "Workbot: remote tasks",
@@ -691,7 +680,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/workbot-remote-tasks/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   workbotProfileNav: {
     label: "Workbot: pages on the left, the rest in its profile",
@@ -702,7 +691,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/workbot-profile-nav/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   workbotApps: {
     label: "Workbot: Apps built in OpenWork open in the chat",
@@ -724,7 +713,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/workbot-quiet-calendar/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   workbotProactive: {
     label: "Workbot: Your agent",
@@ -780,7 +769,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/workbot-slack-answer-reply/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   workbotSettingsTabs: {
     label: "Workbot: settings in tabs",
@@ -824,6 +813,17 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/browser-upload-permissions/README.md",
     deployments: everywhere,
+    default: true,
+  },
+  fileSendPermissions: {
+    label: "Connected accounts: one permission for files the agent sends",
+    description: "Drive uploads, saves back to Drive, OneDrive and SharePoint, and Gmail and Outlook drafts with attachments ask the same way: Allow once, Allow for this chat or Always allow. Admins set Allow, Ask first or Block on the Agents tab, and members revoke remembered approvals in Settings.",
+    category: "connect",
+    added: "2026-11-12",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/file-send-permissions/README.md",
+    deployments: everywhere,
     default: false,
   },
   agentHarnessPermissions: {
@@ -835,7 +835,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/agent-harness-permissions/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   computerUse: {
     label: "Computer use",
@@ -846,7 +846,7 @@ export const FEATURES = defineFeatures({
     author: "reachjalil",
     docs: "docs/features/computer-use-background/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
 
   computerSessionHistory: {
@@ -858,7 +858,7 @@ export const FEATURES = defineFeatures({
     author: "reachjalil",
     docs: "docs/features/computer-session-history/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
 
   parallelComputerUse: {
@@ -870,7 +870,7 @@ export const FEATURES = defineFeatures({
     author: "reachjalil",
     docs: "docs/features/parallel-computer-use/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
 
   browserUse: {
@@ -882,7 +882,7 @@ export const FEATURES = defineFeatures({
     author: "reachjalil",
     docs: "docs/computer-use/workbot.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
 
   browserDemonstrations: {
@@ -950,7 +950,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/remote-session-push/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   sandboxGateway: {
     label: "Workbot: computers through the sandbox gateway",
@@ -972,7 +972,7 @@ export const FEATURES = defineFeatures({
     author: "benjaminshafii",
     docs: "docs/features/sandbox-microsoft-365/README.md",
     deployments: ["cloud"],
-    default: false,
+    default: true,
   },
   sandboxSlack: {
     label: "Sandboxes: sample Slack for Workbot",
@@ -1015,7 +1015,7 @@ export const FEATURES = defineFeatures({
     author: "reachjalil",
     docs: "docs/features/standard-code-mode/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
   outlookAttachments: {
     label: "Outlook attachments",
@@ -1026,7 +1026,7 @@ export const FEATURES = defineFeatures({
     author: "reachjalil",
     docs: "docs/features/outlook-attachments/README.md",
     deployments: everywhere,
-    default: false,
+    default: true,
   },
 })
 

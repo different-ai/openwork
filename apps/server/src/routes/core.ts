@@ -15,6 +15,7 @@ import { ApiError } from "../errors.js";
 import { callExperimentalExtensionAction, listExperimentalExtensionActions } from "../extensions/index.js";
 import { takeApprovedDriveUpload } from "../extensions/approved-drive-upload.js";
 import { callDriveFileAction } from "../extensions/drive-files.js";
+import { takeFileSendApproved } from "../file-send-approval.js";
 import type { TokenService } from "../tokens.js";
 import type { Capabilities, ServerConfig, WorkspaceInfo } from "../types.js";
 import { addRoute, type Route } from "./registry.js";
@@ -370,7 +371,8 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   });
 
   // Drive writes additionally require the in-process Desktop confirmation in
-  // callDriveFileAction. Neither an engine credential nor a request flag grants approval.
+  // callDriveFileAction, unless this host's shared file-send approval already
+  // approved the save in the chat. Neither an engine credential nor a request flag grants approval.
   addRoute(routes, "POST", "/experimental/drive-files/call", "client", async (ctx) => {
     if (ctx.actor?.scope === "viewer") {
       throw new ApiError(403, "forbidden", "Viewer tokens cannot call Drive file actions");
@@ -380,7 +382,8 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     const args = isRecord(body.args) ? body.args : {};
     const context = isRecord(body.context) ? body.context : {};
     if (action === "drive_push_file" || action === "drive_pull_file") ensureWritable(config);
-    const result = await callDriveFileAction(config, action, args, context, { signal: ctx.request.signal });
+    const approvedInChat = takeFileSendApproved(ctx.request) && action === "drive_push_file";
+    const result = await callDriveFileAction(config, action, args, context, { signal: ctx.request.signal, ...(approvedInChat ? { approvedInChat } : {}) });
     if (!result) throw new ApiError(404, "extension_action_not_found", "Drive file action not found");
     return jsonResponse(result);
   });

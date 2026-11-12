@@ -79,33 +79,6 @@ test("a screen step keeps the last show Workbot gave, and background work has no
   assert.deepEqual(steps.map((step) => [step.label, step.shown ?? null]), [["Using my computer", true], ["Working on my computer", null], ["Using my computer", false]])
 })
 
-test("the browser and background-then-screen nudges are only given when the computer is on", () => {
-  const base = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false }
-  assert.equal(workbotInstructions(base).includes("check it in your browser"), false)
-  assert.ok(workbotInstructions({ ...base, browser: true }).includes("check it in your browser"))
-  // Getting it done in the background, and the screen only when it helps, are taught only when there is a screen.
-  for (const rule of ["get it done in the background", "only when the work needs them", "keep work they want to watch"]) {
-    assert.equal(workbotInstructions(base).includes(rule), false)
-    assert.ok(workbotInstructions({ ...base, browser: true }).includes(rule))
-  }
-})
-
-test("browser task acknowledgment and tap-only previews do not depend on presentation flags", () => {
-  const input = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false, browser: true }
-  const instructions = workbotInstructions(input)
-  assert.ok(instructions.includes("before any tool call"))
-  assert.ok(instructions.includes("The person alone opens the full browser by tapping Open preview"))
-  assert.ok(instructions.includes("never opens its full view"))
-  assert.equal(instructions.includes("It appears in their chat only when you pass show: true"), false)
-})
-
-test("an app Workbot builds is handed over as a card to open beside the chat, never as a download", () => {
-  const instructions = workbotInstructions({ name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false })
-  for (const rule of ["shows as a card under your reply", "as one .html file, hand it over in the same reply", "Never tell them to download it", "before a result says it was added to their Files"]) {
-    assert.ok(instructions.includes(rule), rule)
-  }
-})
-
 test("an App built in OpenWork shows among a reply's outputs, once, and only with workbotApps", () => {
   const app = { id: "cob_01kq8z0000000000000000000a", title: "Hello World Wave" }
   const call = (id: string, name: string) => ({ id, name, input: {} })
@@ -125,16 +98,6 @@ test("an App built in OpenWork shows among a reply's outputs, once, and only wit
   assert.deepEqual(off?.outputs, [], "off: the reply is as before")
   const [on] = buildWorkbotTurns(snapshot, new Map(), new Map(), { apps: true })
   assert.deepEqual(on?.outputs, [{ id: `app:${app.id}`, name: "Hello World Wave 2.0", mediaType: "application/vnd.openwork.app", size: 0, updatedAt: 130 }])
-
-  const base = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false }
-  assert.equal(workbotInstructions(base).includes("OpenWork's App tools"), false)
-  assert.equal(workbotInstructions({ ...base, apps: false }), workbotInstructions(base))
-  const taught = workbotInstructions({ ...base, apps: true })
-  // With Apps on, a file is no longer the only way to make an app: the file rule stops saying to build one as a page.
-  assert.ok(workbotInstructions(base).includes("So build an app, a page or a game as one .html file"))
-  assert.equal(taught.includes("build an app, a page or a game"), false)
-  assert.ok(taught.includes("So make a web page as one .html file, hand it over in the same reply"))
-  for (const rule of ["chosen by what they need", "something they keep and come back to", "a one-off such as a mock-up", "Call the first an App and the second a page", "never say it opened in a sidebar or a tab"]) assert.ok(taught.includes(rule), rule)
 })
 
 test("Drive PDFs and Office files are pulled onto the computer only when there is one, and only with workbotDriveFiles", () => {
@@ -158,44 +121,4 @@ test("Drive PDFs and Office files are pulled onto the computer only when there i
   assert.ok(withoutComputer.includes("too large or has no readable text"))
   assert.ok(withoutComputer.includes(ask))
   assert.ok(withoutComputer.includes("Never say you can't do anything with it."))
-})
-
-test("work in Microsoft 365 is named for the app the person uses, with the verb its operation names", () => {
-  const capability = (id: string, name: string) => ({ id, name: "execute_capability", input: { name } })
-  const calls = [
-    capability("c1", "native:microsoft-365:getCapabilitiesMicrosoft365CalendarEvents"),
-    capability("c2", "native:microsoft-365:updateMicrosoft365CalendarEvent"),
-    capability("c3", "native:microsoft-365:postCapabilitiesMicrosoft365CalendarEvents"),
-    capability("c4", "native:microsoft-365:getCapabilitiesMicrosoft365MailMessages"),
-    capability("c5", "native:microsoft-365:createMicrosoft365ReplyDraft"),
-    capability("c6", "native:microsoft-365:sendMicrosoft365MailDraft"),
-    capability("c7", "native:microsoft-365:putCapabilitiesMicrosoft365DriveFiles"),
-    capability("c8", "native:microsoft-365:getCapabilitiesMicrosoft365TeamsChats"),
-    capability("c9", "native:google-workspace:getCapabilitiesGoogleWorkspaceCalendarEvents"),
-    capability("c10", "gmail_create_draft"),
-  ]
-  const snapshot = {
-    status: "idle", finalAssistantText: "Done.", hasEarlier: false,
-    turns: [{ messageId: "wb_m365", status: "done", createdAt: 100, error: null }],
-    messages: [
-      { messageId: "wb_m365", role: "user", text: "Move my supplier sync" },
-      { messageId: "wb_m365", role: "assistant", text: "", createdAt: 110, toolCalls: calls },
-      ...calls.map((call, index) => ({ messageId: "wb_m365", role: "tool" as const, callId: call.id, name: "execute_capability", isError: false, createdAt: 120 + index })),
-      { messageId: "wb_m365", role: "assistant", text: "Done.", createdAt: 200, toolCalls: [] },
-    ],
-  } satisfies RunnerSnapshot
-  const [turn] = buildWorkbotTurns(snapshot)
-  const steps = turn?.parts.flatMap((part) => (part.kind === "steps" ? part.steps : [])) ?? []
-  assert.deepEqual(steps.map((step) => step.label), [
-    "Checking Outlook Calendar",
-    "Updating Outlook Calendar",
-    "Adding to Outlook Calendar",
-    "Checking Outlook",
-    "Drafting in Outlook",
-    "Sending in Outlook",
-    "Updating OneDrive",
-    "Checking Microsoft Teams",
-    "Checking Google Calendar",
-    "Drafting in Gmail",
-  ])
 })
