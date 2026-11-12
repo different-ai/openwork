@@ -4,6 +4,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 const ownsDom = !GlobalRegistrator.isRegistered;
 if (ownsDom) GlobalRegistrator.register({ url: "http://localhost/" });
 let latest: Recognition | undefined;
+let prepareModel = false;
 class Recognition {
   lang = ""; continuous = false; interimResults = false; aborted = false;
   onstart: (() => void) | null = null;
@@ -11,8 +12,9 @@ class Recognition {
   onerror: ((event: { error: string }) => void) | null = null;
   onresult: ((event: { results: Array<Array<{ transcript: string }>> }) => void) | null = null;
   onlevel: ((level: number) => void) | null = null;
+  onstatus: ((status: "installing") => void) | null = null;
   constructor() { latest = this; }
-  start() { this.onstart?.(); }
+  start() { if (prepareModel) this.onstatus?.("installing"); else this.onstart?.(); }
   stop() {}
   abort() { this.aborted = true; }
   words(text: string) { this.onresult?.({ results: [[{ transcript: text }]] }); }
@@ -87,12 +89,14 @@ test("the composer meters speech, finishes before Send, and Escape cancels only 
     await act(async () => { button("Run task").click() });
     expect(sent).toEqual([draft]);
     await act(async () => { root.render(<Harness busy />) }); await settle();
-    await act(async () => { button("Dictate message").click(); latest?.words("discard me") });
+    prepareModel = true;
+    await act(async () => { button("Dictate message").click() });
+    expect(container.textContent).toContain("Downloading speech model");
     const beforeCancel = draft;
     await act(async () => { editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })) });
     expect(latest?.aborted).toBe(true);
     await act(async () => { latest?.words("late"); latest?.onend?.() });
     expect(draft).toBe(beforeCancel);
     expect(stoppedAgent).toBe(0);
-  } finally { await act(async () => { root.unmount() }); client.clear(); container.remove(); }
+  } finally { prepareModel = false; await act(async () => { root.unmount() }); client.clear(); container.remove(); }
 });

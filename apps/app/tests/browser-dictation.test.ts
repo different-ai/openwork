@@ -9,6 +9,7 @@ class Recognition implements BrowserSpeechRecognition {
   onend: BrowserSpeechRecognition["onend"] = null;
   onerror: BrowserSpeechRecognition["onerror"] = null;
   onresult: BrowserSpeechRecognition["onresult"] = null;
+  onstatus: BrowserSpeechRecognition["onstatus"] = null;
   aborted = 0;
   start() { this.onstart?.() }
   stop() {}
@@ -46,6 +47,21 @@ test("cancel discards buffered speech and fences late results without touching t
   recognition.onend?.();
   expect(changes).toEqual([]);
   expect(recognition.aborted).toBe(1);
+});
+
+test("model setup remains cancellable and download failures explain recovery", () => {
+  const recognition = new Recognition();
+  const statuses: string[] = [];
+  const errors: string[] = [];
+  const owner = createBrowserDictation({ recognition, text: "Draft", selection: { start: 5, end: 5 }, language: "en-US",
+    deferTranscript: true, onText: () => {}, onState: () => {}, onStatus: status => statuses.push(status), onError: error => errors.push(error) });
+  owner.start();
+  recognition.onstatus?.("installing");
+  expect(statuses).toEqual(["installing"]);
+  recognition.onerror?.({ error: "model-unavailable" });
+  expect(errors[0]).toContain("local speech model couldn’t download");
+  recognition.onstatus?.("installing");
+  expect(statuses).toHaveLength(1);
 });
 
 test("interim speech replaces a selection and revisions never duplicate earlier words", () => {

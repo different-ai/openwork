@@ -35,7 +35,12 @@ func isRestart(previous: String, next: String) -> Bool {
   return after.first?.lowercased() != before.first?.lowercased()
 }
 
-final class Dictation {
+protocol DictationSession: AnyObject {
+  @MainActor func stop()
+  @MainActor func cancel()
+}
+
+final class Dictation: DictationSession {
   private let recognizer: SFSpeechRecognizer
   private let engine = AVAudioEngine()
   private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -59,14 +64,9 @@ final class Dictation {
     input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { [weak self] buffer, _ in
       self?.request?.append(buffer)
       let now = ProcessInfo.processInfo.systemUptime
-      guard now - lastLevelAt >= 0.05, buffer.frameLength > 0,
-            let samples = buffer.floatChannelData?[0] else { return }
+      guard now - lastLevelAt >= 0.05 else { return }
       lastLevelAt = now
-      var energy: Float = 0
-      for index in 0..<Int(buffer.frameLength) { energy += samples[index] * samples[index] }
-      let rms = sqrt(energy / Float(buffer.frameLength))
-      let decibels = 20 * log10(max(rms, 0.000001))
-      let level = min(1, max(0, (decibels + 60) / 48))
+      let level = dictationAudioLevel(buffer)
       DispatchQueue.main.async {
         guard let self, !self.stopping, !self.finished else { return }
         emit(["type": "level", "level": level])
@@ -162,6 +162,8 @@ final class Dictation {
     emit(["type": "end"])
     exit(0)
   }
+
+  func cancel() { finish() }
 }
 
 func fail(_ code: String) -> Never {
@@ -174,37 +176,61 @@ let arguments = CommandLine.arguments
 let localeIndex = arguments.firstIndex(of: "--locale")
 let localeIdentifier = localeIndex.flatMap { $0 + 1 < arguments.count ? arguments[$0 + 1] : nil } ?? Locale.current.identifier
 
-if arguments.contains("--check") {
-  let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier))
-  emit(["type": "check", "onDevice": recognizer?.supportsOnDeviceRecognition == true])
-  exit(0)
-}
+var dictation: DictationSession?
 
-guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier)),
-      recognizer.supportsOnDeviceRecognition else { fail("language-not-supported") }
-
-var dictation: Dictation?
-
-Thread.detachNewThread {
+if !arguments.contains("--check") { Thread.detachNewThread {
   while let line = readLine() {
     if line.trimmingCharacters(in: .whitespaces) == "stop" { DispatchQueue.main.async { dictation?.stop() } }
   }
   DispatchQueue.main.async {
     guard let dictation else { exit(0) }
-    dictation.finish()
+    dictation.cancel()
+  }
+} }
+
+func startLegacy() {
+  guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier)),
+        recognizer.supportsOnDeviceRecognition else { fail("language-not-supported") }
+  SFSpeechRecognizer.requestAuthorization { status in
+    guard status == .authorized else { fail("service-not-allowed") }
+    AVCaptureDevice.requestAccess(for: .audio) { granted in
+      DispatchQueue.main.async {
+        guard granted else { fail("not-allowed") }
+        let session = Dictation(recognizer: recognizer)
+        dictation = session
+        do { try session.start() } catch { fail("audio-capture") }
+      }
+    }
   }
 }
 
-SFSpeechRecognizer.requestAuthorization { status in
-  guard status == .authorized else { fail("service-not-allowed") }
-  AVCaptureDevice.requestAccess(for: .audio) { granted in
-    DispatchQueue.main.async {
-      guard granted else { fail("not-allowed") }
-      let session = Dictation(recognizer: recognizer)
-      dictation = session
-      do { try session.start() } catch { fail("audio-capture") }
+Task { @MainActor in
+  #if OPENWORK_SPEECH_ANALYZER
+  if #available(macOS 26.0, *), SpeechTranscriber.isAvailable,
+     let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: localeIdentifier)) {
+    if arguments.contains("--check") {
+      let module = SpeechTranscriber(locale: locale, preset: .transcription)
+      let status = await AssetInventory.status(forModules: [module])
+      emit(["type": "check", "onDevice": true, "engine": "SpeechAnalyzer", "assetsInstalled": status == .installed])
+      exit(0)
     }
+    AVCaptureDevice.requestAccess(for: .audio) { granted in
+      DispatchQueue.main.async {
+        guard granted else { fail("not-allowed") }
+        let session = AnalyzerDictation(locale: locale)
+        dictation = session
+        session.start()
+      }
+    }
+    return
   }
+  #endif
+  if arguments.contains("--check") {
+    let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier))
+    emit(["type": "check", "onDevice": recognizer?.supportsOnDeviceRecognition == true, "engine": "SFSpeechRecognizer"])
+    exit(0)
+  }
+  startLegacy()
 }
 
 dispatchMain()

@@ -44,6 +44,7 @@ export function useNativeDictation(options: {
   const [nativeMode, setNativeMode] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [meter] = useState(createMeter)
+  const [installingModel, setInstallingModel] = useState(false)
   const session = useRef<ReturnType<typeof createBrowserDictation> | null>(null)
   const request = useRef<AbortController | null>(null)
   const generation = useRef(0)
@@ -55,7 +56,7 @@ export function useNativeDictation(options: {
   const available = native || Boolean(Constructor)
   useEffect(() => { setPlatform(dictationPlatform(navigator.userAgent, navigator.maxTouchPoints)) }, [])
   useEffect(() => {
-    setState("idle"); setNativeMode(false); setError(null); meter.reset()
+    setState("idle"); setNativeMode(false); setError(null); meter.reset(); setInstallingModel(false)
     return () => {
       generation.current++
       request.current?.abort(); request.current = null
@@ -74,7 +75,7 @@ export function useNativeDictation(options: {
     generation.current++
     request.current?.abort(); request.current = null
     session.current?.cancel(); session.current = null
-    setState("idle"); setNativeMode(false); meter.reset()
+    setState("idle"); setNativeMode(false); meter.reset(); setInstallingModel(false)
   }
   useEffect(() => {
     // Edits outside the text input (chips, imported drafts, navigation) also
@@ -92,6 +93,7 @@ export function useNativeDictation(options: {
     options.focusInput()
     setError(null)
     meter.reset()
+    setInstallingModel(false)
     if (native) return launchNative()
     const Speech = options.recognition ?? browserSpeechConstructor()
     if (!Speech) return
@@ -107,19 +109,21 @@ export function useNativeDictation(options: {
       language: options.recognition ? navigator.language || "en-US" : document.documentElement.lang || navigator.language || "en-US",
       deferTranscript: options.deferTranscript,
       onLevel: level => { if (id === generation.current) meter.push(level) },
+      onStatus: () => { if (id === generation.current) setInstallingModel(true) },
       onText: text => { if (id === generation.current) currentOptions.current.onText(text) },
       onState: next => {
         if (id !== generation.current) return
         if (next === "listening") listened = true
         setState(next)
+        if (next !== "starting") setInstallingModel(false)
         if (next !== "idle") return
         session.current = null
         if (failed !== null) void launchNative(failed)
       },
-      onError: message => {
+      onError: (message, code) => {
         if (id !== generation.current) return
         if (fallback && !listened) failed = message
-        else setError(options.deferTranscript && !listened
+        else setError(options.deferTranscript && !listened && code !== "model-unavailable"
           ? "Local dictation couldn’t start. Check microphone and Speech Recognition permissions and your system language."
           : message)
       },
@@ -143,7 +147,7 @@ export function useNativeDictation(options: {
     finally { if (id === generation.current) { request.current = null; setState("idle") } }
   }
   return {
-    available, error, nativeMode, state, meter,
+    available, error, nativeMode, state, meter, installingModel,
     buffering: Boolean(options.deferTranscript && !nativeMode && state !== "idle"),
     active: options.enabled && (state !== "idle" || nativeMode),
     busy: state === "starting" || state === "stopping",

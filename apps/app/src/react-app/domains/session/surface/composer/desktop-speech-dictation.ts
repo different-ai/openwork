@@ -32,6 +32,7 @@ export class DesktopSpeechRecognition implements BrowserSpeechRecognition {
   onerror: BrowserSpeechRecognition["onerror"] = null;
   onresult: BrowserSpeechRecognition["onresult"] = null;
   onlevel: BrowserSpeechRecognition["onlevel"] = null;
+  onstatus: BrowserSpeechRecognition["onstatus"] = null;
   private readonly id = crypto.randomUUID();
   private unsubscribe: (() => void) | null = null;
 
@@ -65,6 +66,7 @@ export class DesktopSpeechRecognition implements BrowserSpeechRecognition {
     if (event.id !== this.id || !this.unsubscribe) return;
     if (event.type === "ready") this.onstart?.();
     else if (event.type === "level") this.onlevel?.(event.level);
+    else if (event.type === "status") this.onstatus?.(event.status);
     else if (event.type === "result") this.onresult?.({ results: event.segments.map(transcript => [{ transcript }]) });
     else if (event.type === "error") this.onerror?.({ error: event.code });
     else { this.close(); this.onend?.() }

@@ -163,3 +163,10 @@ test("microphone levels cross the bridge only as finite normalized amplitudes", 
   }
   assert.equal(helperEvent('{"type":"level","level":1e400}'), null);
 });
+
+test("model installation reports only the known state and actionable errors", () => {
+  assert.deepEqual(helperEvent('{"type":"status","status":"installing","path":"discard"}'), { type: "status", status: "installing" });
+  assert.equal(helperEvent('{"type":"status","status":"arbitrary"}'), null);
+  assert.deepEqual(helperEvent('{"type":"error","code":"model-unavailable"}'), { type: "error", code: "model-unavailable" });
+  assert.deepEqual(helperEvent('{"type":"error","code":"no-speech"}'), { type: "error", code: "no-speech" });
+});

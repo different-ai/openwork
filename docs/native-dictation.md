@@ -16,7 +16,7 @@ verification limits. Other recognizers retain the compact text-activity indicato
 
 | Surface | Dictation |
 | --- | --- |
-| OpenWork desktop on macOS with the speech helper | Apple on-device recognition, audio-level waveform, Stop to review, Cancel to discard |
+| OpenWork desktop on macOS with the speech helper | SpeechAnalyzer + SpeechTranscriber on supported macOS 26 devices/languages; legacy on-device fallback, audio-level waveform, Stop to review, Cancel to discard |
 | macOS builds without the speech helper | Opens macOS Dictation in the focused editor through AppKit; native controls own listening and Stop |
 | OpenWork desktop on Windows | Bundled Windows online speech recognition with live text; falls back to native Win+H voice typing if unavailable |
 | Workbot and OpenWork in a supported browser | Starts the browser's SpeechRecognition implementation, showing live interim words directly in the draft; the mic stops dictation |
@@ -41,8 +41,10 @@ accessible alert. There are no automatic capture retries.
 
 ## Privacy and rollout
 
-The app installs no speech model and calls no application-owned transcription
-endpoint. The bundled macOS helper requires on-device recognition and does not
+The app calls no application-owned transcription endpoint. On macOS 26 the
+helper requests system-managed language assets from Apple when needed; the
+first download needs a connection. The bundled macOS helper transcribes on
+device and does not
 fall back to a network-backed service when it cannot start. Windows speech
 recognition is online. Browser recognition is
 processed by the browser's implementation and may use its online speech

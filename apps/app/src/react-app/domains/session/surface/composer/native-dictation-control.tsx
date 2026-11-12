@@ -27,7 +27,7 @@ export function NativeDictationControl({ dictation, disabled, text }: {
 export function NativeDictationRecording({ dictation }: { dictation: ReturnType<typeof useNativeDictation> }) {
   const levels = useSyncExternalStore(dictation.meter.subscribe, dictation.meter.getSnapshot, dictation.meter.getSnapshot);
   if (!dictation.buffering) return null;
-  const status = dictation.state === "starting" ? "Starting dictation" : dictation.state === "stopping" ? "Finishing dictation" : "Listening";
+  const status = dictation.installingModel ? "Downloading speech model" : dictation.state === "starting" ? "Starting dictation" : dictation.state === "stopping" ? "Finishing dictation" : "Listening";
   return <div data-dictation-recording className="flex min-w-0 items-center gap-3 py-2">
     <Button type="button" variant="ghost" size="icon" aria-label="Cancel dictation" title="Cancel dictation · Esc"
       onPointerDown={event => event.preventDefault()} onClick={dictation.cancel}>

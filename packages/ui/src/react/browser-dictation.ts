@@ -8,6 +8,7 @@ export interface BrowserSpeechRecognition {
   onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
   /** Optional host-provided microphone meter; browsers need no second stream. */
   onlevel?: ((level: number) => void) | null
+  onstatus?: ((status: "installing") => void) | null
   start(): void
   stop(): void
   abort(): void
@@ -24,6 +25,7 @@ export function browserSpeechConstructor(): BrowserSpeechConstructor | undefined
   return window.SpeechRecognition ?? window.webkitSpeechRecognition
 }
 function speechError(error: string) {
+  if (error === "model-unavailable") return "The local speech model couldn’t download. Check your connection and free disk space, then try again."
   if (error === "finalization-timeout") return "Dictation took too long to finish. Review the captured words before sending."
   if (error === "not-allowed" || error === "service-not-allowed") return "Allow microphone access in your browser."
   if (error === "audio-capture") return "Connect a microphone and try again."
@@ -40,9 +42,10 @@ export function createBrowserDictation(options: {
   language: string
   deferTranscript?: boolean
   onLevel?(level: number): void
+  onStatus?(status: "installing"): void
   onText(text: string): void
   onState(state: "starting" | "listening" | "stopping" | "idle"): void
-  onError(message: string): void
+  onError(message: string, code?: string): void
 }) {
   const recognition = options.recognition
   const start = Math.max(0, Math.min(options.text.length, options.selection.start))
@@ -71,9 +74,10 @@ export function createBrowserDictation(options: {
   recognition.onstart = () => { if (live) options.onState("listening") }
   recognition.onend = () => { if (live) endSession() }
   recognition.onlevel = level => { if (live && !stopping && Number.isFinite(level)) options.onLevel?.(Math.max(0, Math.min(1, level))) }
+  recognition.onstatus = status => { if (live && !stopping) options.onStatus?.(status) }
   recognition.onerror = event => {
     if (!live) return
-    if (event.error !== "aborted") options.onError(speechError(event.error))
+    if (event.error !== "aborted") options.onError(speechError(event.error), event.error)
     endSession()
   }
   recognition.onresult = event => {
