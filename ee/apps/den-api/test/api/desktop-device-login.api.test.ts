@@ -33,7 +33,8 @@ async function sessionCount(): Promise<number> {
   return (await db.$primary.select({ id: AuthSessionTable.id }).from(AuthSessionTable).where(eq(AuthSessionTable.userId, person.userId))).length
 }
 
-test("default off rejects desktop starts; existing CLI/plugin and raw approval protection are unchanged", async () => {
+test("explicit deployment off rejects desktop starts; existing CLI/plugin and raw approval protection are unchanged", async () => {
+  await rollout(false)
   const rejected = await start()
   assert.equal(rejected.status, 400)
   assert.equal(field(rejected.body, "error"), "invalid_client")
@@ -72,6 +73,7 @@ test("approval requires an organization and produces a distinct session in the s
 })
 
 test("deployment disable blocks decisions and redemption after approval", async () => {
+  await rollout(true)
   const code = await start()
   assert.equal(code.status, 200)
   await rollout(false)
@@ -112,6 +114,7 @@ test("organization/member overrides apply at decision and insert; deployment kil
 })
 
 test("a removed selected membership cannot fall back to the person's other organization", async () => {
+  await rollout(true)
   const code = await start()
   assert.equal((await decide(code)).status, 200)
   const before = await sessionCount()
@@ -127,6 +130,7 @@ test("a removed selected membership cannot fall back to the person's other organ
 })
 
 test("denial, expiry and client mismatch never create a desktop session", async () => {
+  await rollout(true)
   const denied = await start()
   assert.equal((await decide(denied, "deny")).status, 200)
   await noSession(denied)
