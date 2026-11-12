@@ -68,6 +68,8 @@ export type AiSettingsViewProps = {
   autoBusy?: boolean;
   autoError?: string | null;
   onSetAutoEnabled?: (enabled: boolean) => void | Promise<void>;
+  /** False when OpenWork Models is listed once, under the organization, instead of here. */
+  showOpenWorkModelsDeviceRow?: boolean;
   organizationProviderIds?: ReadonlySet<string>;
   /** Providers on this device the engine chat runs on cannot use, from the server's skipped list. */
   localProviderStates?: ReadonlyMap<string, LocalProviderEngineState>;
@@ -126,7 +128,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
   const local = props.connectedProviders.filter((provider) => provider.id !== CLAUDE_AGENT_PROVIDER_ID && !managed(provider) && provider.id !== AUTO_PROVIDER_ID && !isKeylessZenProvider(provider));
   const organization = props.connectedProviders.filter(managed);
   const disabled = props.onEnableProvider ? props.disabledProviders ?? [] : [];
-  const showAuto = !props.autoSwitchedOff && Boolean(props.autoPreferences || props.connectedProviders.some((provider) => provider.id === AUTO_PROVIDER_ID));
+  const showAuto = props.showOpenWorkModelsDeviceRow !== false && !props.autoSwitchedOff && Boolean(props.autoPreferences || props.connectedProviders.some((provider) => provider.id === AUTO_PROVIDER_ID));
   const autoOff = props.autoPreferences?.enabled === false;
   const autoAvailable = props.autoPreferences?.available ?? ready;
   const locked = !props.canAddProviders;
@@ -223,7 +225,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
       </ProviderList> : ready ? <p className="text-sm text-muted-foreground">{t("settings.no_providers_connected")}</p> : null}
 
       {props.autoError ? <SettingsNotice tone="error">{props.autoError}</SettingsNotice> : null}
-      {props.autoPreferences && !props.autoPreferences.canEnable ? <p className="text-xs text-muted-foreground">OpenWork Free is unavailable on this device or blocked by your organization administrator.</p> : null}
+      {showAuto && props.autoPreferences && !props.autoPreferences.canEnable ? <p className="text-xs text-muted-foreground">OpenWork Free is unavailable on this device or blocked by your organization administrator.</p> : null}
       {props.providerConnectError ? <SettingsNotice tone="error">{props.providerConnectError}</SettingsNotice> : null}
       {props.providerDisconnectStatus ? <SettingsNotice>{props.providerDisconnectStatus}</SettingsNotice> : null}
       {props.providerDisconnectError ? <SettingsNotice tone="error">{props.providerDisconnectError}</SettingsNotice> : null}

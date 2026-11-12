@@ -3149,6 +3149,34 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
+  /**
+   * Hide a provider on this device through `disabled_providers` without
+   * removing anything it came with. Used for OpenWork Models from the
+   * organization: Disconnect would drop the import, and the next sync would
+   * bring it straight back.
+   */
+  async function disableProvider(providerId: string) {
+    setStateField("providerAuthError", null);
+    const resolved = providerId.trim();
+    if (!resolved) {
+      throw new Error(t("providers.provider_id_required"));
+    }
+    const workspaceKey = currentWorkspaceKey();
+    const baseUrl = options.providerBaseUrl();
+    const isCurrentWorkspace = () => !disposed
+      && workspaceKey === currentWorkspaceKey()
+      && baseUrl === options.providerBaseUrl();
+    try {
+      const configChanged = await ensureProjectProviderDisabledState(resolved, true);
+      await refreshProviders({ dispose: true, configChanged }, isCurrentWorkspace);
+      return `${t("providers.disconnected_prefix")} ${resolved}`;
+    } catch (error) {
+      const message = describeProviderError(error, t("providers.disconnect_failed"));
+      setStateField("providerAuthError", message);
+      throw error instanceof Error ? error : new Error(message);
+    }
+  }
+
   function isProviderAddRestricted(providerId?: string | null) {
     return isProviderAddRestrictedByDesktopPolicy({
       providerId,
@@ -3541,6 +3569,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     removeCloudProvider,
     disconnectProvider,
     enableProvider,
+    disableProvider,
     ensureProjectProviderDisabledState,
     isProviderAddRestricted,
     openProviderAuthModal,
