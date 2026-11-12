@@ -8,7 +8,8 @@ On macOS 26 or later, supported devices and languages use Apple’s
 and languages retain the on-device `SFSpeechRecognizer` fallback.
 
 With the bundled speech helper, click the microphone, speak,
-and press Stop (or Enter). The waveform responds to microphone amplitude;
+and press Stop (or Enter). A compact waveform and recording controls sit in the
+composer’s top-right corner. The waveform responds to microphone amplitude;
 interim recognition stays out of the editor. Once recognition finishes, the
 transcript replaces the original selection or inserts at the original cursor.
 Review or edit it, then choose Send. Cancel or Escape discards the recording.
