@@ -172,6 +172,9 @@ export async function mintHeadlessTurnCredentials(input: {
   const minted = await mintHeadlessRunMcpToken(input)
   const resumeGrant = await resumeGrantForTurn({ ...input, authorizedAt })
   const indexCapability = await indexCapabilityForTurn(input)
+  if (input.indexKind === "workbot") {
+    await (await import("../mcp-events/context.js")).bindEventTurn({ ...input, tokenId: minted.tokenId, expiresAt: minted.expiresAt })
+  }
   return { ...minted, ...(resumeGrant ? { resumeGrant } : {}), modelAccess, ...(indexCapability ? { indexCapability } : {}) }
 }
 

@@ -42,6 +42,16 @@ export const auditServiceActionDeclarations = [
     notes: `Same store write as POST /v1/config-objects/:configObjectId/versions (config_object.version.create), reached without the route. ${MCP_PRINCIPAL}`,
   },
   {
+    action: "mcp_event.subscribe", kind: "mcp_event.subscription", class: "tenant_external", resource: { type: "mcp_event_subscription", idFrom: null }, origin: "mcp",
+    tools: ["subscribe_mcp_event"], callSites: ["src/mcp-events/tools.ts:subscribe"],
+    notes: `Thread-bound finite webhook subscription; callback secret and filters are never audit fields. ${MCP_PRINCIPAL}`,
+  },
+  {
+    action: "mcp_event.unsubscribe", kind: "mcp_event.subscription", class: "tenant_external", resource: { type: "mcp_event_subscription", idFrom: null }, origin: "mcp",
+    tools: ["unsubscribe_mcp_event"], callSites: ["src/mcp-events/tools.ts:unsubscribe"],
+    notes: `Local cancellation precedes best-effort remote unsubscribe. ${MCP_PRINCIPAL}`,
+  },
+  {
     action: "mcp_app.create", kind: "app.management", class: "tenant_change", resource: { type: "mcp_app", idFrom: null }, origin: "mcp",
     tools: ["create_app"], callSites: ["src/mcp/agent.ts:registerAppBuilderTools.create → createMcpApp"],
     notes: `Plugin, App config object and Workflow memberships; archives the Plugin on failure. ${MCP_PRINCIPAL}`,

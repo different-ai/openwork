@@ -104,6 +104,18 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  mcpThreadEvents: {
+    label: "MCP thread events",
+    description: "Subscribe a hosted chat to signed webhook events from its connected MCP servers.",
+    category: "connect",
+    added: "2026-11-12",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/mcp-thread-events/README.md",
+    deployments: everywhere,
+    default: false,
+    outcomes: true,
+  },
   remoteDesktopDeviceLogin: {
     label: "Remote desktop device sign-in",
     description: "Sign a remote OpenWork desktop into an organization by approving a code on another computer.",

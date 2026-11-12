@@ -212,6 +212,7 @@ function translateEnterpriseMcpError(
 }
 
 type OperationInput = {
+  webhookEvents?: boolean
   connection: ExternalMcpConnectionRow
   member?: ExternalMcpMemberContext
   diagnosticReferenceId?: string
@@ -272,6 +273,7 @@ function createOperationClient(
     : diagnosticFetch
   return createEnterpriseMcpClient({
     fetch: observedFetch,
+    webhookEvents: input.webhookEvents,
     diagnosticSink: diagnosticSink(tracker),
     ...(input.operationTimeoutMs ? { operationTimeoutMs: input.operationTimeoutMs } : {}),
     ...(input.lifecycleDeadline ? {
@@ -520,4 +522,16 @@ export function readExternalMcpResource(input: ExternalMcpResourceInput & { uri:
 
 export function inspectExternalMcpToolCall(input: ExternalMcpToolCallInput) {
   return withExternalMcpToolCallInspection((inspector) => runExternalMcpToolCall(input, inspector))
+}
+
+/** Events use the same member credentials, guarded fetch and OAuth lifecycle as tools. */
+export function requestExternalMcpEvents(input: ExternalMcpResourceInput & {
+  method: "events/list" | "events/subscribe" | "events/unsubscribe"
+  params: Record<string, unknown>
+}) {
+  return runEnterpriseMcpOperation({
+    ...input,
+    webhookEvents: true,
+    operation: (client, connection) => client.requestEvents({ connection, redirectUri: input.redirectUri, method: input.method, params: input.params }),
+  })
 }

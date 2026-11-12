@@ -1373,6 +1373,13 @@
       "when": 1794521633161,
       "tag": "0196_gateway_truefoundry_users",
       "breakpoints": true
+    },
+    {
+      "idx": 197,
+      "version": "5",
+      "when": 1794524250690,
+      "tag": "0197_mcp_thread_events",
+      "breakpoints": true
     }
   ]
 }

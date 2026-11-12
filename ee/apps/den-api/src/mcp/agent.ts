@@ -1,3 +1,5 @@
+import { eventThreadForPrincipal } from "../mcp-events/context.js"
+import { registerMcpEventTools } from "../mcp-events/tools.js"
 import { createAgentMcpServer, WORKFLOW_SAVE_INSTRUCTIONS } from "./agent-server.js"
 export { createAgentMcpServer, AGENT_MCP_INSTRUCTIONS, LEGACY_AGENT_MCP_INSTRUCTIONS, AGENT_MCP_GUIDANCE_URI } from "./agent-server.js"
 import { appAuthoringStarter, registerAppStarterResources } from "./app-authoring-starter.js"
@@ -779,6 +781,10 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     // Your agent's own background check (workbotAgentBrief) may ask for one extra check; no other caller sees it.
     if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true, workbotProactive: organizationFeatures.workbotProactive, workbotAgentBrief: organizationFeatures.workbotAgentBrief })) {
       registerAgentCheckRequestTool(server, { organizationId, memberId: memberIdentity.orgMembershipId, userId: normalizeDenTypeId("user", principal.userId), audit: auditPrincipal })
+    }
+    if (organizationFeatures.mcpThreadEvents && auditPrincipal) {
+      const eventThread = await eventThreadForPrincipal(principal)
+      if (eventThread) registerMcpEventTools(server, eventThread, [...principal.scopes], auditPrincipal)
     }
     registerAgentConnectionActionApp(server, { organizationId: principal.organizationId, member: memberIdentity })
     if (appServersEnabled) {

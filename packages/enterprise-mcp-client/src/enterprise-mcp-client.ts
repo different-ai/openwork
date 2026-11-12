@@ -329,8 +329,10 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       requestInit: requestInit(input.connection.authorization),
     })
     const capabilities = {
+      ...(options.webhookEvents ? { events: {} } : {}),
       extensions: {
         [MCP_APP_EXTENSION]: { mimeTypes: [MCP_APP_MIME_TYPE] },
+        ...(options.webhookEvents ? { "io.modelcontextprotocol/events": {} } : {}),
       },
     }
     const client = new Client(
@@ -666,6 +668,20 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
         },
         id: authorizationId,
         reason: input.reason,
+      })
+    },
+
+    async requestEvents(input) {
+      if (!options.webhookEvents) throw new Error("MCP webhook events are not enabled for this client.")
+      return runConnectedOperation({
+        connection: input.connection,
+        redirectUri: input.redirectUri,
+        operationPhase: "protocol-initialize",
+        operation: async (session) => {
+          // The SDK strips legacy top-level `events` from server capabilities. Probe the read-only
+          // events/list method instead; the caller must validate an advertised webhook descriptor before subscribing.
+          return session.client.request({ method: input.method, params: input.params }, z.record(z.string(), z.unknown()), session.requestOptions)
+        },
       })
     },
 

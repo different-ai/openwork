@@ -1,3 +1,4 @@
+import { registerMcpEventRoutes } from "./mcp-events/routes.js"
 import "./load-env.js"
 import { registerSlackAssistantRoutes } from "./slack-assistant/routes.js"
 import { registerWorkbotRoutes } from "./workbot/routes.js"
@@ -310,6 +311,7 @@ registerRemoteSessionRoutes(app)
 registerOrgRoutes(app)
 registerSlackAssistantRoutes(app)
 registerWorkbotRoutes(app)
+registerMcpEventRoutes(app)
 registerHeadlessRunnerRoutes(app)
 registerVersionRoutes(app)
 registerFeatureRoutes(app)

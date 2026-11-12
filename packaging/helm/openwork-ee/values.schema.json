@@ -61,6 +61,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "mcpThreadEvents": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "MCP thread events: Subscribe a hosted chat to signed webhook events from its connected MCP servers. Renders DEN_FEATURE_MCP_THREAD_EVENTS."
+            },
             "remoteDesktopDeviceLogin": {
               "enum": [
                 "",
