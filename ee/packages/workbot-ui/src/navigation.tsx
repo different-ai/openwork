@@ -136,9 +136,9 @@ function Account({ account }: { account?: ReactNode }) {
 export function DesktopNavigation(props: NavigationProps) {
   const [filter, setFilter] = useState("");
   const chatView = props.page === "home";
-  // Calm look: beside a chat, one quiet labelled column replaces the icon rail and the list next to it. Other pages
-  // keep the rail, since they bring their own navigation.
-  if (chatView && calmChat()) {
+  // Calm look: on every page, one quiet labelled column replaces the icon rail and the list next to it, so the
+  // sidebar stays put when the person moves between Chats, Documents and Calendar.
+  if (calmChat()) {
     const assistant = props.assistantName ?? "Workbot";
     const page = "flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] aria-[current=page]:bg-[var(--wb-surface)] aria-[current=page]:font-medium aria-[current=page]:text-[var(--wb-text)] aria-[current=page]:shadow-[0_0_0_1px_var(--wb-ring)] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
     return <aside className="workbot flex min-h-0 w-60 shrink-0 flex-col border-r border-[var(--wb-hairline)] bg-[var(--wb-tray)] px-2.5 pb-3 text-[var(--wb-text)] [--wb-nav-row-height:32px]" aria-label="Workbot navigation" data-workbot-desktop-navigation data-workbot-navigation-look="calm">
