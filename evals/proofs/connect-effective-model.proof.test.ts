@@ -40,10 +40,12 @@ test("a signed-in member's Connect health request uses the conversation model in
       until: entries => entries.some(entry => entry.status === 200),
     });
     const completed = requests.filter(entry => entry.status === 200);
+    const retiredRequested = requests.some(entry => entry.provider === world.stale.providerID || entry.model === world.stale.modelID);
+    evidence.recordAssertionEvidence("Real Connect health requests use the scoped model and never the retired preference", JSON.stringify(requests), completed.length > 0 && completed.every(entry => entry.provider === world.providerID && entry.model === world.modelID) && !retiredRequested);
     expect(completed.length).toBeGreaterThan(0);
-    expect(completed.every(entry => entry.provider === world.providerID && entry.model === world.modelID)).toBe(true);
-    expect(requests.some(entry => entry.provider === world.stale.providerID || entry.model === world.stale.modelID)).toBe(false);
-    evidence.recordAssertionEvidence("Real Connect health requests use the scoped model and never the retired preference", JSON.stringify(requests), completed.length > 0 && completed.every(entry => entry.provider === world.providerID && entry.model === world.modelID));
+    expect(completed.map(entry => ({ provider: entry.provider, model: entry.model })))
+      .toEqual(completed.map(() => ({ provider: world.providerID, model: world.modelID })));
+    expect(retiredRequested).toBe(false);
     await user.screenshot();
   });
 
