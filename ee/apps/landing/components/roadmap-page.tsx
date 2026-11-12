@@ -118,7 +118,6 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "A default model for the organization",
         "Organization API keys",
         "Install links and a setup checklist for new members",
-        "Sandbox organizations for testing",
         "Managed install in your own AWS or Google Cloud"
       ],
       building: ["Fully managed desktop", "Share a provider key from your device", "Turn local models on or off"],
