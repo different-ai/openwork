@@ -12,7 +12,7 @@ import {
 import { exchangeHandoffAndSignIn } from "../../app/lib/den-handoff";
 import { denDeviceLogin, isConfiguredDenDeviceDestination } from "../../app/lib/den-device-login";
 import { createDeviceLoginControl, readDeviceLoginRequestId } from "../../app/lib/device-login-control";
-import { useDeploymentFeature } from "../domains/session/status/use-desktop-feature";
+import { useDeploymentFeature } from "../domains/session/status/use-deployment-feature";
 import {
   denSettingsChangedEvent,
   denSessionUpdatedEvent,

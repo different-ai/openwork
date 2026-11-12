@@ -7,7 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { QueryClient as QueryClientType } from "@tanstack/react-query";
 import { createDeviceLoginControl } from "../src/app/lib/device-login-control";
 import { createDesktopDeviceLogin, type DeviceLoginStartOptions } from "../src/app/lib/device-login-flow";
-import type { DeploymentFeatureSnapshot } from "../src/react-app/domains/session/status/use-desktop-feature";
+import type { DeploymentFeatureSnapshot } from "../src/react-app/domains/session/status/use-deployment-feature";
 
 const ownedDom = typeof window === "undefined";
 if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
@@ -15,7 +15,7 @@ if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
 const { QueryClient, QueryClientProvider, isServer } = await import("@tanstack/react-query");
 const { readDenSettings, resolveDenBaseUrls, STORAGE_BASE_URL } = await import("../src/app/lib/den");
 const { isConfiguredDenDeviceDestination, readDeviceLoginDeployment } = await import("../src/app/lib/den-device-login");
-const { useDeploymentFeature } = await import("../src/react-app/domains/session/status/use-desktop-feature");
+const { useDeploymentFeature } = await import("../src/react-app/domains/session/status/use-deployment-feature");
 const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 
