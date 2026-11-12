@@ -109,16 +109,16 @@ test("a file opens in its own tab only under a type that can't run as a page", (
 
 const built: WorkbotAttachment = { id: "app:cob_01kq8z0000000000000000000a", name: "Hello World Wave 2.0", mediaType: "application/vnd.openwork.app", size: 0, updatedAt: 1 };
 
-test("an App built in OpenWork is a card like a file: its title as written, the type App, and its own id to open", () => {
+test("an artifact card shows its title and type and opens the existing artifact", () => {
   assert.equal(artifactKind(built), "app");
-  assert.equal(artifactLabel(built), "App");
-  assert.equal(artifactLabel(app), "Web page", "only an App built in OpenWork is called an App");
+  assert.equal(artifactLabel(built), "Artifact");
+  assert.equal(artifactLabel(app), "Web page", "an HTML file keeps its Web page label");
   assert.equal(artifactTitle(built), "Hello World Wave 2.0", "a title is not a file name: nothing is dropped after the dot");
   assert.equal(openworkAppId(built), "cob_01kq8z0000000000000000000a");
   assert.equal(openworkAppId(app), null, "a file named like an App is still a file");
   const card = cardOf(render([built]), built.id);
   assert.match(card, /data-workbot-artifact-placeholder="app"/, "nothing of the App runs or loads until it is opened");
-  assert.match(card, /aria-label="Hello World Wave 2.0, App"/);
+  assert.match(card, /aria-label="Hello World Wave 2.0, Artifact"/);
 });
 
 test("the App's page gets its opening result, its own tools and web links, and nothing else", async () => {

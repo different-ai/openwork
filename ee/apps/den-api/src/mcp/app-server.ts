@@ -60,11 +60,11 @@ const launchInputSchema: Tool["inputSchema"] = {
     input: {
       type: "object",
       additionalProperties: true,
-      description: "Optional JSON launch input the App receives.",
+      description: "Optional JSON launch input the artifact receives.",
     },
     timeZone: {
       type: "string",
-      description: "Optional IANA time zone for the data the App loads as it opens.",
+      description: "Optional IANA time zone for the data the artifact loads as it opens.",
     },
   },
   additionalProperties: false,
@@ -82,7 +82,7 @@ function launchTool(definition: McpAppServerDefinition): Tool {
   return {
     name: MCP_APP_LAUNCH_TOOL_NAME,
     title: `Open ${app.title}`,
-    description: `Open ${app.title}.${app.description ? ` ${app.description}` : ""} Returns its launch input and a readable summary${definition.loadsWithLaunch ? "; opening also loads the App's read-only data" : "; opening runs no other tools"}.`,
+    description: `Open ${app.title}.${app.description ? ` ${app.description}` : ""} Returns its launch input and a readable summary${definition.loadsWithLaunch ? "; opening also loads the artifact's read-only data" : "; opening runs no other tools"}.`,
     inputSchema: launchInputSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { ui: { resourceUri: app.resourceUri, visibility: ["model", "app"] }, "ui/resourceUri": app.resourceUri },
@@ -109,9 +109,9 @@ function boundTool(binding: McpAppToolBinding): Tool {
 type AppRefusal = "not_a_member" | "other_organization" | "apps_off" | "not_found"
 
 const REFUSAL_MESSAGES: Record<Exclude<AppRefusal, "other_organization">, string> = {
-  not_a_member: "The App is not available: this connection is not signed in to an organization you belong to.",
-  apps_off: "The App is not available: Apps built in OpenWork are turned off for this organization.",
-  not_found: "The App is not available.",
+  not_a_member: "The artifact is not available: this connection is not signed in to an organization you belong to.",
+  apps_off: "The artifact is not available: artifacts built in OpenWork are turned off for this organization.",
+  not_found: "The artifact is not available.",
 }
 
 /**
@@ -135,7 +135,7 @@ async function appOrganizationForMember(appId: string, userId: string) {
 async function refuseAppRequest(request: Request, input: { reason: AppRefusal; organizationId: string; appId: string; organizationName?: string }): Promise<Response> {
   console.error("mcp_app_server_refused", { reason: input.reason, organizationId: input.organizationId, appId: input.appId })
   const message = input.reason === "other_organization"
-    ? `This App belongs to ${input.organizationName ?? "another organization"}. Switch to ${input.organizationName ?? "that organization"} in OpenWork, then connect the App again.`
+    ? `This artifact belongs to ${input.organizationName ?? "another organization"}. Switch to ${input.organizationName ?? "that organization"} in OpenWork, then connect the artifact again.`
     : REFUSAL_MESSAGES[input.reason]
   return appUnavailableResponse(request, message, input.reason)
 }
@@ -188,7 +188,7 @@ export function createMcpAppServer(input: {
       resources: { listChanged: false, subscribe: false },
       extensions: { [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] } },
     },
-    instructions: input.instructions ?? `This is the ${app.title} App from OpenWork. Call ${MCP_APP_LAUNCH_TOOL_NAME} to open it. Its other tools run as you, with your own OpenWork access and connections.`,
+    instructions: input.instructions ?? `This is the ${app.title} artifact from OpenWork. Call ${MCP_APP_LAUNCH_TOOL_NAME} to open it. Its other tools run as you, with your own OpenWork access and connections.`,
   })
 
   server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -231,13 +231,13 @@ export function createMcpAppServer(input: {
   server.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const revision = parseMcpAppResourceUri(request.params.uri)
     if (!revision || revision.appId !== app.appId || !input.scopes.has(DEN_MCP_READ_SCOPE)) {
-      throw new McpError(ErrorCode.InvalidRequest, "The resource is not an available revision of this App.", { error: "mcp_app_not_found" })
+      throw new McpError(ErrorCode.InvalidRequest, "The resource is not an available revision of this artifact.", { error: "mcp_app_not_found" })
     }
     let resource: McpAppResource
     try {
       resource = await input.loadResource(revision)
     } catch (error) {
-      throw new McpError(ErrorCode.InvalidRequest, "The resource is not an available revision of this App.", {
+      throw new McpError(ErrorCode.InvalidRequest, "The resource is not an available revision of this artifact.", {
         error: error instanceof McpAppError ? error.code : "mcp_app_unavailable",
       })
     }

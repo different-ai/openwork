@@ -86,8 +86,8 @@ export function AppArtifact({ appId, revisionId, receiptId, onClose, onAsk, fall
         }}>{app.view.activeRevisionId ? "Save changes" : "Save"}</Button> : null}
         <AppActionsMenu appId={appId} title={app.view.title} canManage={app.canManage} canDelete={app.canManage && app.view.status !== "retired"}
           busy={asking} onUpdate={onUpdate} onDeleted={onClose ?? (() => navigate("/dashboard"))}
-          onRun={onAsk && saved ? () => void ask(`Run my saved app “${app.view.title}” with fresh data and show the new results in the saved app.`) : undefined}
-          onEdit={onAsk ? () => void ask(`Help me improve my saved app “${app.view.title}”. Read its existing app source, ask what I want to change, and show a draft preview for me to save.`) : undefined} />
+          onRun={onAsk && saved ? () => void ask(`Run my saved artifact “${app.view.title}” with fresh data and show the new results in the saved artifact.`) : undefined}
+          onEdit={onAsk ? () => void ask(`Help me improve my saved artifact “${app.view.title}”. Read its existing source, ask what I want to change, and show a draft preview for me to save.`) : undefined} />
         {onClose ? <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={onClose} aria-label="Close artifact"><X className="size-4" /></Button> : null}
       </div>
     </header>

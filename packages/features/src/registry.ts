@@ -46,7 +46,7 @@ export const FEATURE_CATEGORIES = {
   workbot: { label: "Workbot", description: "Documents, the workspace assistant and navigation in Workbot." },
   automations: { label: "Automations", description: "Scheduled work and where it shows up." },
   administration: { label: "Administration and security", description: "Organization controls, deployments and how Den stores sign-ins." },
-  experience: { label: "Onboarding and everyday use", description: "Getting set up, signing in, dictation, imports and Apps." },
+  experience: { label: "Onboarding and everyday use", description: "Getting set up, signing in, dictation, imports and artifacts." },
 } as const satisfies Record<string, { label: string; description: string }>
 
 export type FeatureCategory = keyof typeof FEATURE_CATEGORIES
@@ -204,8 +204,8 @@ export const FEATURES = defineFeatures({
     default: true,
   },
   appToolRepair: {
-    label: "Apps: fix a changed tool with an agent",
-    description: "When a connected tool an App uses changes at its provider, so OpenWork blocks the App's call to it, the App's managers see a Fix with agent button in Artifacts that starts a conversation to update the App.",
+    label: "Artifacts: fix a changed tool with an agent",
+    description: "When a provider changes a tool an artifact uses, OpenWork blocks the call. The artifact’s managers can choose Fix with agent in Artifacts to start a conversation to update it.",
     category: "experience",
     added: "2026-11-03",
     since: "2026-11",
@@ -215,8 +215,8 @@ export const FEATURES = defineFeatures({
     default: true,
   },
   publicApps: {
-    label: "Apps: public Apps without sign-in",
-    description: "An App's editor, or their agent, can mark an App that has no tools as public. Anyone can then add its public MCP URL to an MCP client and open it without signing in to OpenWork.",
+    label: "Artifacts: public access without sign-in",
+    description: "An editor or their agent can make an artifact public if it has no tools. Anyone can then add its public MCP URL to an MCP client and open it without signing in to OpenWork.",
     category: "experience",
     added: "2026-11-09",
     since: "2026-11",
@@ -226,8 +226,8 @@ export const FEATURES = defineFeatures({
     default: true,
   },
   appSites: {
-    label: "Apps: open an App as a site",
-    description: "An App its author made a site also opens as a web page: a browser that opens the App's MCP URL shows the App full page. Signed-in members use its tools there; an App marked public opens for anyone.",
+    label: "Artifacts: open as a site",
+    description: "An artifact published as a site opens full page when someone visits its MCP URL in a browser. Signed-in members can use its tools there. Anyone can open a public artifact.",
     category: "experience",
     added: "2026-11-09",
     since: "2026-11",
@@ -606,8 +606,8 @@ export const FEATURES = defineFeatures({
     default: true,
   },
   workbotApps: {
-    label: "Workbot: Apps built in OpenWork open in the chat",
-    description: "An App that Workbot builds, changes or opens with OpenWork's App tools shows as a card under its reply, like a file it made, and opens beside the chat as the App itself. Off: the App is made but nothing shows in the chat.",
+    label: "Workbot: open artifacts from chat",
+    description: "An artifact that Workbot builds, changes, or opens appears as a card under its reply. Select the card to open the artifact beside the chat.",
     category: "workbot",
     added: "2026-11-10",
     since: "2026-11",
@@ -899,7 +899,7 @@ export const FEATURES = defineFeatures({
   },
   connectStandardTools: {
     label: "Connect: standard tools",
-    description: "Claude Code and standalone OpenCode discover connected actions, Workflows and Apps as individual tools; OpenWork Desktop, Web and automation runs keep capability search. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas.",
+    description: "Claude Code and standalone OpenCode discover connected actions, Workflows and artifacts as individual tools; OpenWork Desktop, Web and automation runs keep capability search. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas.",
     category: "connect",
     added: "2026-10-21",
     since: "2026-10",
@@ -909,7 +909,7 @@ export const FEATURES = defineFeatures({
   },
   connectEngineTools: {
     label: "Connect: a tool for each action in OpenWork's engine",
-    description: "OpenWork Desktop, Web and automation runs get each connected action, Workflow and App as its own tool, found with their engine's Code Mode search; capability search stays for OpenWork's own operations and skills. Other clients are unaffected. Turning this off restores capability search.",
+    description: "OpenWork Desktop, Web and automation runs get each connected action, Workflow and artifact as its own tool, found with their engine's Code Mode search; capability search stays for OpenWork's own operations and skills. Other clients are unaffected. Turning this off restores capability search.",
     category: "connect",
     added: "2026-10-28",
     since: "2026-10",

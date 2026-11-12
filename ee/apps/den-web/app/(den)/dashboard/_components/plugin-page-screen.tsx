@@ -52,8 +52,8 @@ export function WhatsInside({
       logo: <LetterTile name={app.name} />,
       title: app.name,
       description: "",
-      kind: "App",
-      href: appMcpServersEnabled ? pluginChatDeepLink({ name: `the ${app.name} app from ${plugin.name}` }) : undefined,
+      kind: "Artifact",
+      href: appMcpServersEnabled ? pluginChatDeepLink({ name: `the ${app.name} artifact from ${plugin.name}` }) : undefined,
     })),
     ...plugin.skills.map((skill) => ({
       key: `skill:${skill.id}`,

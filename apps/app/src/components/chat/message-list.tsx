@@ -1646,7 +1646,7 @@ function MessageGroup({
       className="mx-auto flex w-full max-w-3xl flex-col px-2 empty:hidden md:px-10"
     >
       {builtMcpAppId(part) && !newestAppCalls.has(part.toolCallId)
-        ? <p className="mt-2 text-xs text-muted-foreground">This App has a newer version below.</p>
+        ? <p className="mt-2 text-xs text-muted-foreground">This artifact has a newer version below.</p>
         : builtAppSummary(part) ? null : <McpAppFrame part={part} />}
     </Message>
   )

@@ -286,7 +286,7 @@
         ]
       },
       {
-        "tab": "Dashboards",
+        "tab": "Artifacts",
         "pages": [
           "dashboards/overview",
           "dashboards/build-an-mcp-app"

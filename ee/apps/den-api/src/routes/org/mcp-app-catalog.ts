@@ -46,11 +46,11 @@ export function registerOrgMcpAppCatalogRoutes<T extends { Variables: OrgRouteVa
   app.get(
     "/v1/mcp-apps",
     describeRoute({
-      tags: ["Apps"],
-      summary: "List Apps built in OpenWork",
-      description: "Lists the Apps built in OpenWork that the calling member can use, in the same element shape connection MCP Apps use, so the desktop can show them on a personal Dashboard. Each element opens the App through its own MCP server with open_app. Members see an App only when its Plugin is shared with them. Empty when Apps built in OpenWork are turned off.",
+      tags: ["Artifacts"],
+      summary: "List artifacts built in OpenWork",
+      description: "Lists the artifacts built in OpenWork that the calling member can use, in the same element shape connection MCP Apps use, so OpenWork can list them in Artifacts. Each element opens the artifact through its own MCP server with open_app. Members see an App only when its Plugin is shared with them. Empty when Apps built in OpenWork are turned off.",
       responses: {
-        200: jsonResponse("Apps built in OpenWork the member can use.", builtMcpAppListResponseSchema),
+        200: jsonResponse("Artifacts the member can use.", builtMcpAppListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         403: jsonResponse("The caller must be an organization member.", forbiddenSchema),
       },

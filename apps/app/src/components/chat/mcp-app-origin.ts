@@ -32,9 +32,9 @@ export function createMcpAppActions(
   // connection the App on screen is waiting for.
   const background = new AbortController();
   const assertActive = () => {
-    if (!active) throw new Error("This App view has closed or changed. Reopen it before using its actions.");
-    if (origin.readOnly) throw new Error("This view is read-only and cannot perform App actions.");
-    if (!app.launchId) throw new Error("This App has no live launch context. Update OpenWork and reopen the App.");
+    if (!active) throw new Error("This view has closed or changed. Reopen it before using its actions.");
+    if (origin.readOnly) throw new Error("This view is read-only and cannot perform actions.");
+    if (!app.launchId) throw new Error("This view has no live launch context. Update OpenWork and reopen the view.");
   };
   return {
     dispose: () => {

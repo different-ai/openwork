@@ -1506,7 +1506,7 @@ export async function executeExternalCapability(input: {
           error: "policy_blocked",
           reason: "provider_schema_changed",
           capability: buildExternalCapabilityName(connection.id, input.toolName),
-          message: `${input.toolName} now takes different inputs than when this App was published, so OpenWork blocked the call. An editor can update the App to use the tool's current inputs.`,
+          message: `${input.toolName} now takes different inputs than when this artifact was published, so OpenWork blocked the call. An editor can update the artifact to use the tool's current inputs.`,
           sameArgumentsRetryable: false,
           retry: { action: "search_capabilities", searchRequired: true },
         }

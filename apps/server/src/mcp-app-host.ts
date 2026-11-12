@@ -130,7 +130,7 @@ export function releaseMcpAppLaunch(serverConfig: ServerConfig, workspaceId: str
 }
 
 function staleLaunch(): McpAppHostError {
-  return new McpAppHostError("stale_launch_context", "This App launch has expired, closed, or changed. Reopen the App in its original conversation before trying again.");
+  return new McpAppHostError("stale_launch_context", "This view’s launch has expired, closed, or changed. Reopen the view in its original conversation before trying again.");
 }
 
 /** Values and private credential revisions stay on the host, never in the resource response. */
@@ -378,7 +378,7 @@ function connectionFailure(error: unknown): string {
 function remoteAccessError(error: unknown): McpAppHostError | null {
   if (error instanceof UnauthorizedError
     || ((error instanceof StreamableHTTPError || error instanceof SseError) && error.code === 401)) {
-    return new McpAppHostError("mcp_auth_required", "This App's connection needs authentication. Check its sign-in in connection settings before reopening the App.");
+    return new McpAppHostError("mcp_auth_required", "Sign in to the connection in settings, then reopen this view.");
   }
   if ((error instanceof StreamableHTTPError || error instanceof SseError) && error.code === 403) {
     return new McpAppHostError("mcp_access_denied", "Access to this App's connection was denied. Ask your connection administrator to review your access before reopening the App.");
@@ -1169,7 +1169,7 @@ export async function callMcpAppTool(input: {
   /** Required for conversation leases; the HTTP host checks current ownership/archive state. */
   assertSessionActive?: () => Promise<void>;
 }): Promise<McpAppToolResult> {
-  if (!input.launchId) throw new McpAppHostError("missing_launch_context", "This App has no live launch context. Update OpenWork and reopen the App before using its actions.");
+  if (!input.launchId) throw new McpAppHostError("missing_launch_context", "This view has no live launch context. Update OpenWork and reopen the view before using its actions.");
   const launchId = input.launchId;
   const launch = liveLaunches(input.serverConfig).get(launchId);
   const assertLive = () => {
@@ -1197,7 +1197,7 @@ export async function callMcpAppTool(input: {
     const item = input.serverName.startsWith(CONNECT_MCP_APP_HOST_NAME_PREFIX)
       ? privateItem : configured.find((candidate) => candidate.name === input.serverName);
     if (!item || item.config.enabled === false) {
-      throw new McpAppHostError("server_unavailable", "The originating MCP server is not available to this workspace. Reopen the App after restoring the connection.");
+      throw new McpAppHostError("server_unavailable", "The originating MCP server is not available to this workspace. Reopen the view after restoring the connection.");
     }
     if (await launchFingerprint(input, input.serverName, item.config) !== launch.fingerprint) {
       releaseMcpAppLaunch(input.serverConfig, input.workspaceId, launchId);
@@ -1219,7 +1219,7 @@ export async function callMcpAppTool(input: {
     try {
       const resource = await readAppResource(input, input.serverName, launch.fingerprint, launch.resourceUri, client).catch((cause: unknown) => {
         if (cause instanceof McpAppHostError) throw cause;
-        throw new McpAppHostError("resource_read_failed", "The original App resource is no longer available. Reopen the App before using its actions.");
+        throw new McpAppHostError("resource_read_failed", "The original view resource is no longer available. Reopen the view before using its actions.");
       });
       if (expectedResourceDigest !== undefined) {
         const resourceDigest = mcpAppResourceDigest(resource);

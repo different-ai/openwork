@@ -62,7 +62,7 @@ const COMPONENT_TYPE_LABELS: Record<string, { singular: string; plural: string }
   lsp_server: { singular: "LSP server", plural: "LSP servers" },
   monitor: { singular: "monitor", plural: "monitors" },
   workflow: { singular: "Workflow", plural: "Workflows" },
-  app: { singular: "App", plural: "Apps" },
+  app: { singular: "Artifact", plural: "Artifacts" },
   settings: { singular: "setting", plural: "settings" },
 };
 

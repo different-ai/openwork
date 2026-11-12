@@ -76,7 +76,7 @@ try {
     assert.equal(await thumbnail.getAttribute("sandbox"), "", "the thumbnail frame runs no scripts")
     const shown = await thumbnail.getAttribute("srcdoc")
     assert.ok(shown && shown.includes("Content-Security-Policy") && !/<script/i.test(shown), "the thumbnail page has no scripts and blocks requests")
-    assert.match(await organizer.innerText(), /App/)
+    assert.match(await organizer.innerText(), /Web page/)
     const report = cards.filter({ hasText: "Room plan" })
     assert.equal(await report.locator("[data-workbot-artifact-placeholder='pdf']").count(), 1, "a file without a rendering shows its type's placeholder")
     assert.match(await report.innerText(), /PDF/)

@@ -7,7 +7,7 @@ const tool = { name: "load_issues", readOnly: false }
 
 test("a tool whose inputs changed at its provider needs the App updated, whatever it does", () => {
   assert.match(appToolChangeMessage(tool, "provider_schema_changed") ?? "", /^load_issues now takes different inputs/)
-  assert.match(appToolChangeMessage({ ...tool, readOnly: true }, "provider_schema_changed") ?? "", /An editor of this App needs to update its tools/)
+  assert.match(appToolChangeMessage({ ...tool, readOnly: true }, "provider_schema_changed") ?? "", /An editor of this artifact needs to update its tools/)
 })
 
 test("a provider's new label needs the App updated only where the App relied on the old one", () => {

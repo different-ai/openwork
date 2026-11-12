@@ -7,7 +7,7 @@ import { useDenAuth } from "./den-auth-provider";
 import { tryOpenBrowserAuthUrl } from "./open-browser-auth";
 
 /** Verification replaces only this account's session; it cannot enroll another account or workspace. */
-export function DenReauthNotice({ onVerified, onCancel, title = "Confirm your identity to share apps", description = "Verify in your browser, then return here. Your selected apps and teammate’s email will be kept." }: {
+export function DenReauthNotice({ onVerified, onCancel, title = "Confirm your identity to share artifacts", description = "Verify in your browser, then return here. Your selected artifacts and teammate’s email will be kept." }: {
   /** `token` is the newer sign-in, for callers whose request is sent by this computer's own server. */
   onVerified: (client: ReturnType<typeof createDenClient>, commitSession: () => void, token: string) => Promise<void>;
   onCancel: () => void;

@@ -136,7 +136,7 @@ export function OpenWorkApp({ appId, title }: { appId: string; title: string }) 
   if (failed) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center" data-workbot-app-failed>
-        <p className="text-[13px] leading-5 text-[var(--wb-muted)]">This App couldn&apos;t open. It may have been removed, or not shared with you.</p>
+        <p className="text-[13px] leading-5 text-[var(--wb-muted)]">This artifact couldn&apos;t open. It may have been removed, or not shared with you.</p>
         <button
           type="button"
           onClick={() => setAttempt((current) => current + 1)}
