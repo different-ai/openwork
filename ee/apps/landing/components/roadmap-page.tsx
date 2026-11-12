@@ -75,14 +75,13 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "Zoom into diagrams"
       ],
       building: [
-        "Sandboxed workspaces",
         "Pick up work on any device",
         "Dictation",
         "Teach a browser task by showing it once",
         "Suggested next message",
         "Use Claude through your Claude Code login"
       ],
-      soon: []
+      soon: ["Sandboxed workspaces"]
     },
     fresh: [
       "Computer use on Mac and Windows",
