@@ -91,7 +91,9 @@ test("Google Calendar recurrence is gated, normalized and confirmed through the 
   const connected = await den.request(null, "GET", callback.pathname + callback.search)
   assert.equal(connected.status, 200, summary(connected))
 
-  await t.test("default-off recurrence rejects structured and raw creates before contacting Google", async () => {
+  await t.test("recurrence turned off for the organization rejects structured and raw creates before contacting Google", async () => {
+    const disabled = await den.setFeature(orgId, "googleCalendarRecurrence", false)
+    assert.equal(disabled.status, 200, summary(disabled))
     const org = await call("GET", "/v1/org")
     assert.equal(org.status, 200, summary(org))
     assert.equal(field(org.body, "features", "googleCalendarRecurrence"), false)

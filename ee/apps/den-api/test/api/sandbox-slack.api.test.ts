@@ -47,6 +47,9 @@ before(async () => {
 
 const admin = await den.signUp("Platform Admin", `platform-admin+${den.stamp}@example.test`)
 const rollout = (body: { enabled?: boolean; killed?: boolean }) => den.request(admin.token, "PUT", "/v1/admin/features/sandboxSlack", { body })
+// These sandboxes keep the five separate sample connectors, so the counts below show only what the sample Slack adds.
+const separateConnectors = await den.request(admin.token, "PUT", "/v1/admin/features/sandboxMicrosoft365", { body: { enabled: false } })
+assert.equal(separateConnectors.status, 200, summary(separateConnectors))
 const create = (name: string) => den.request(admin.token, "POST", "/v1/admin/sandbox-orgs", {
   body: { name, connectorBaseUrl: workplace, days: 14, memberLimit: 5, allowedEmailDomains: [], joinRole: "member" },
 })
@@ -95,7 +98,8 @@ async function connect(person: Session, orgId: string, connectionId: string, pro
   assert.equal(finished.status, 200, finished.text.slice(0, 300))
 }
 
-test("off by default: a sandbox gets no sample Slack, and Workbot has no Slack app", async () => {
+test("off: a sandbox gets no sample Slack, and Workbot has no Slack app", async () => {
+  assert.equal((await rollout({ enabled: false })).status, 200)
   const created = await create("Before the rollout")
   assert.equal(created.status, 200, summary(created))
   const sandbox = field(created.body, "sandbox")

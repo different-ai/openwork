@@ -212,7 +212,9 @@ test("Require SSO is refused without a working connection, and the last one can'
   const [orgRow] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, orgB.orgId))
   assert.ok(!JSON.stringify(orgRow?.metadata ?? null).includes("\"requireSso\":true"))
 
-  // Source: SSO is ready, so requiring it is allowed (ssoPerOrganization off: no SSO-session rule).
+  // Source: SSO is ready, so requiring it is allowed. ssoPerOrganization is turned off here (not
+  // left to the registry default), so the route's SSO-session rule doesn't apply.
+  assert.equal((await den.setFeature(orgA.orgId, "ssoPerOrganization", false)).status, 200)
   const ctxA = await ctxFor(orgA)
   const sessionA = byKind(await area.exportItems(ctxA), "session")
   const required = await area.apply(ctxA, {

@@ -272,11 +272,14 @@ test("round trip into a second organization: refs resolve there, preferred ids a
 })
 
 test("agent permissions: a permission whose feature is off on the target is skipped with a warning", async () => {
-  assert.equal(targetCtx.features.agentHarnessPermissions, false, "fixture: harness permissions are off")
-  const result = await membersAgentPermissionsArea.apply(targetCtx, {
+  // The feature is turned off for the target here, not left to the registry default.
+  assert.equal((await den.setFeature(target.orgId, "agentHarnessPermissions", false)).status, 200)
+  const gatedCtx = await contextFor(target.orgId, target.owner)
+  assert.equal(gatedCtx.features.agentHarnessPermissions, false, "fixture: harness permissions are off")
+  const result = await membersAgentPermissionsArea.apply(gatedCtx, {
     kind: "update",
-    targetId: (await membersAgentPermissionsArea.exportItems(targetCtx))[0]!.id,
-    previous: (await membersAgentPermissionsArea.exportItems(targetCtx))[0]!,
+    targetId: (await membersAgentPermissionsArea.exportItems(gatedCtx))[0]!.id,
+    previous: (await membersAgentPermissionsArea.exportItems(gatedCtx))[0]!,
     item: { name: "Everyone", key: "everyone", spec: { team: null, settings: { commands: { decision: "ask", allow: ["npm test *"], block: ["rm -rf *"] }, fileEdits: { decision: "allow" }, webSearch: { decision: "deny" }, computerUse: { decision: "deny" } } } },
     changes: [{ path: "settings.computerUse", to: { decision: "deny" } }],
     secretPaths: [],

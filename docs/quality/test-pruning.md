@@ -64,6 +64,18 @@ counts executable `test`/`it` cases, not individual assertions.
 Deleted-file references are removed from their declared runners rather than
 leaving broken test commands or adding skip/soft-fail rules.
 
+## Tests that assumed a default
+
+A second pass (after the GA default flips) deleted nothing. Twenty Den API
+cases were red because their fixtures leaned on a feature being off by
+default. Each one now turns the feature off (or on) for its own organization
+or deployment before asserting, and the features config-blob tests compute
+the expected keys from the registry instead of a literal list. The gating,
+permission, kill-switch, lock and secret assertions are unchanged.
+
+Rule for new tests: a test that needs a feature state sets it. Never read it
+from the registry default.
+
 ## Verification
 
 Run on Node 24.22.1, with zero failures or skips in these focused checks:

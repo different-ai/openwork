@@ -62,11 +62,10 @@ test("a member creates a key, picks Claude Desktop, and Claude Desktop's request
     await user.see({ text: /Configure Third-Party Inference/ });
     await user.see({ text: /Static API key/ });
     await user.see({ text: /Continue with Gateway/ });
-    let models = "";
-    for (const deadline = Date.now() + 30_000; Date.now() < deadline; await new Promise((resolve) => setTimeout(resolve, 500))) {
-      models = (await probe.dom('[data-testid="gateway-tool-claude-desktop-models"]')).elements[0]?.text ?? "";
-      if (models && !/Loading/.test(models)) break;
-    }
+    const models = await probe.eventually(
+      async () => (await probe.dom('[data-testid="gateway-tool-claude-desktop-models"]')).elements[0]?.text ?? "",
+      { within: 30_000, intervalMs: 500, label: "the Claude models list", until: (listed) => listed !== "" && !/Loading/.test(listed) },
+    );
     evidence.recordAssertionEvidence(
       "Claude Desktop's steps",
       `Gateway base URL ${baseUrl}; key is the new key=${key === shown || shown === ""}; models listed "${models}"`,

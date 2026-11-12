@@ -16,10 +16,8 @@ after(() => den.close())
 async function world(label: string, options: { feature?: boolean } = {}) {
   const olivia = await den.signUp(`Olivia ${label}`)
   const { orgId, owner } = await den.createOrg(olivia, `Super admin set ${label}`)
-  if (options.feature !== false) {
-    const enabled = await den.setFeature(orgId, "superAdminPermissionSet", true)
-    assert.equal(enabled.status, 200, summary(enabled))
-  }
+  const changed = await den.setFeature(orgId, "superAdminPermissionSet", options.feature !== false)
+  assert.equal(changed.status, 200, summary(changed))
   const sam = await den.newMember(owner, orgId, `Sam ${label}`)
   const adam = await den.newMember(owner, orgId, `Adam ${label}`, "admin")
   const ownerCall = den.as(owner, orgId)

@@ -167,6 +167,8 @@ test("the rollout migration keeps SSO required for organizations that have it to
 
 test("turning SSO on while the flag is off stores that it is required", async () => {
   const { orgId } = await den.createOrg(owner, "Enable while flag off")
+  const off = await den.setFeature(orgId, "ssoPerOrganization", false)
+  assert.equal(off.status, 200, summary(off))
   await client.execute("UPDATE organization SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.plan', JSON_OBJECT('tier', 'enterprise', 'source', 'manual')) WHERE id = ?", [orgId])
   const providerId = `sso-${createDenTypeId("ssoProvider")}`
   const enableDomain = `${providerId}.example`
