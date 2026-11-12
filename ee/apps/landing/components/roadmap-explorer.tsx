@@ -3,7 +3,7 @@
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-export type RoadmapAudience = { id: string; label: string; blurb: string; productIds: string[] };
+export type RoadmapAudience = { id: string; label: string; productIds: string[] };
 
 type Props = {
   audiences: RoadmapAudience[];
@@ -13,7 +13,7 @@ type Props = {
   panels: Record<string, ReactNode>;
 };
 
-/* One product at a time: pick what you care about, then a product. The
+/* One product at a time: pick who it is for, then a product. The
  * address keeps the product (#workbot), so a link opens the same view. */
 export function RoadmapExplorer({ audiences, labels, panels }: Props) {
   const order = audiences.flatMap((audience) => audience.productIds);
@@ -55,7 +55,7 @@ export function RoadmapExplorer({ audiences, labels, panels }: Props) {
 
   return (
     <div data-testid="roadmap-explorer">
-      <div role="tablist" aria-label="What you care about" className="grid gap-2 sm:grid-cols-3 sm:gap-3">
+      <div role="tablist" aria-label="Who it is for" className="flex gap-6 border-b border-[var(--lp-border)] sm:gap-9">
         {audiences.map((entry) => {
           const selected = entry.id === audience.id;
           return (
@@ -66,14 +66,13 @@ export function RoadmapExplorer({ audiences, labels, panels }: Props) {
               aria-selected={selected}
               data-audience={entry.id}
               onClick={() => select(entry.productIds[0], false)}
-              className={`flex min-h-[48px] flex-col justify-center gap-0.5 rounded-[16px] px-4 py-3 text-left transition-colors sm:min-h-[92px] sm:px-5 ${
+              className={`-mb-px h-12 whitespace-nowrap border-b-2 text-[15px] font-medium transition-colors sm:text-[17px] ${
                 selected
-                  ? "bg-white shadow-[inset_0_0_0_1.5px_var(--lp-ink)]"
-                  : "bg-[var(--lp-tonal)] hover:bg-white hover:shadow-[inset_0_0_0_1px_var(--lp-border)]"
+                  ? "border-[var(--lp-ink)] text-[var(--lp-ink)]"
+                  : "border-transparent text-[var(--lp-muted)] hover:text-[var(--lp-ink)]"
               }`}
             >
-              <span className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--lp-ink)] sm:text-[16px]">{entry.label}</span>
-              <span className={`text-[13px] leading-[19px] text-[var(--lp-muted)] sm:block ${selected ? "" : "hidden"}`}>{entry.blurb}</span>
+              {entry.label}
             </button>
           );
         })}
@@ -83,7 +82,7 @@ export function RoadmapExplorer({ audiences, labels, panels }: Props) {
         ref={row}
         role="tablist"
         aria-label="Products"
-        className="relative -mx-6 mt-4 flex scroll-mt-20 gap-2 overflow-x-auto px-6 pb-1 [scrollbar-width:none] md:mx-0 md:flex-wrap md:px-0 [&::-webkit-scrollbar]:hidden"
+        className="relative -mx-6 mt-5 flex scroll-mt-20 gap-2 overflow-x-auto px-6 pb-1 [scrollbar-width:none] md:mx-0 md:flex-wrap md:px-0 [&::-webkit-scrollbar]:hidden"
       >
         {audience.productIds.map((id) => {
           const selected = id === active;
@@ -107,7 +106,7 @@ export function RoadmapExplorer({ audiences, labels, panels }: Props) {
         })}
       </div>
 
-      <div role="tabpanel" key={active} id={active} className="mt-12 motion-safe:animate-[fade-up_320ms_ease_both] md:mt-16">
+      <div role="tabpanel" key={active} id={active} className="mt-10 motion-safe:animate-[fade-up_320ms_ease_both] md:mt-14">
         {panels[active]}
       </div>
 
@@ -126,9 +125,6 @@ export function RoadmapExplorer({ audiences, labels, panels }: Props) {
         ) : (
           <span />
         )}
-        <span className="hidden text-[13px] tabular-nums text-[var(--lp-muted)] sm:block">
-          {position + 1} of {order.length}
-        </span>
         {next ? (
           <button
             type="button"
