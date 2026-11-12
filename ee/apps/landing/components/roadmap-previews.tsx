@@ -2,7 +2,7 @@ import { AlertTriangle, ArrowUp, Circle, CornerDownLeft, GitBranch, Play, Wrench
 import type { ReactNode } from "react";
 
 import { BrandLogo } from "./lp-brand-logos";
-import { GoogleDriveMark, GoogleMark, LinearMark, SkillMark, SlackMark } from "./lp-service-marks";
+import { GoogleMark, LinearMark, SkillMark, SlackMark } from "./lp-service-marks";
 import { OpenWorkMark } from "./openwork-mark";
 
 /* Static previews for the roadmap. Each one shows what a product looks like
@@ -485,12 +485,6 @@ export function RoadmapPhonePreview() {
 
 const WORKBOT_CHATS = ["Northwind renewal", "Monday pipeline review", "Launch checklist", "Expense report for October"];
 
-const WORKBOT_STEPS: { mark: ReactNode; sentence: string; result: string }[] = [
-  { mark: <GoogleMark className="h-3.5 w-3.5" />, sentence: "Read the Northwind thread in Gmail", result: "14 emails" },
-  { mark: <GoogleDriveMark className="h-3.5 w-3.5" />, sentence: "Opened Renewal terms 2026.docx", result: "6 pages" },
-  { mark: <SlackMark className="h-3.5 w-3.5" />, sentence: "Checked #northwind in Slack", result: "3 threads" }
-];
-
 function WorkbotAvatar({ size }: { size: number }) {
   return (
     <span className="flex shrink-0 items-center justify-center rounded-full bg-white shadow-[0_0_0_1px_#E3E7EE]" style={{ width: size, height: size }}>
@@ -567,15 +561,6 @@ export function RoadmapWorkbotPreview() {
           <div className="mx-auto flex w-full max-w-[560px] flex-1 flex-col gap-3 px-5 py-6">
             <span className="max-w-[85%] self-end rounded-2xl bg-[#EEF1F5] px-3.5 py-2 text-[13px] leading-5 text-[#07192C]">
               Where are we on the Northwind renewal? Check their billing portal too.
-            </span>
-            <span className="flex flex-col">
-              {WORKBOT_STEPS.map((step) => (
-                <span key={step.sentence} className="flex h-7 items-center gap-2.5 text-[12px]">
-                  {step.mark}
-                  <span className="min-w-0 flex-1 truncate text-[#4B5A75]">{step.sentence}</span>
-                  <span className="shrink-0 tabular-nums text-[#8A96AC]">{step.result}</span>
-                </span>
-              ))}
             </span>
             <WorkbotBrowserCard />
             <span className="text-[13px] leading-[21px] text-[#07192C]">
