@@ -32,7 +32,6 @@ import { composeNativeSessionHistory } from "@/app/lib/opencode-session-native";
 import { prefetchOpeningSessionHistory, sessionHistoryIdentity, sessionHistoryRuntimeOwner, useSessionHistoryRuntimeOwners } from "@/react-app/domains/session/surface/session-history";
 import { sendSessionCommand, sessionWorkHeld } from "@/app/lib/opencode-interruption";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
-import { settleWorkspaceIds, useSessionSettleState } from "@/react-app/domains/session/sidebar/session-settle";
 import { getDisplaySessionTitle } from "@/app/lib/session-title";
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
 import { buildOpenworkWorkspaceBaseUrl } from "@/app/lib/openwork-server";
@@ -213,6 +212,7 @@ import {
   type CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
+import { cloudSurfaceAvailable } from "@/react-app/domains/cloud/cloud-surface-availability";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import {
   hasOpenWorkModelsAvailable,
@@ -222,7 +222,9 @@ import { ModelPickerModal, MODEL_PICKER_UNAVAILABLE_SUBTITLE } from "@/react-app
 import { CommandPalette, type PaletteItem, type SessionGroupOption } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { commandPaletteModelOptions, commandPaletteModelTarget, createCommandPaletteModelControls } from "./command-palette-models";
-import { requestRenameSession } from "./session-actions-bus";
+import { requestSessionDialog } from "./session-actions-bus";
+import { buildSessionMenuActions } from "@/react-app/domains/session/sidebar/session-menu-actions";
+import { sessionMenuActionsToPalette } from "./command-palette-session-actions";
 import type { ThinkingModeShortcutDirection } from "./thinking-mode-shortcut";
 import { SessionSearchDialog } from "./session-search-dialog";
 import { useBootState } from "./boot-state";
@@ -315,8 +317,6 @@ import {
  * so the session surface can detect ProviderModelNotFoundError and offer
  * recovery actions like "Change model".
  */
-const NO_SETTLE_WORKSPACES: ReadonlySet<string> = new Set();
-
 function serializeSDKError(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -429,11 +429,15 @@ export function SessionRoute() {
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
   const denAuth = useDenAuth();
   const artifactsLabel = "Artifacts";
-  // On desktop, Dashboard and Automations stay in the sidebar while signed
-  // out: each page explains that it needs OpenWork Cloud and calls nothing.
+  // Artifacts and Automations stay in the sidebar while signed out, on Desktop
+  // and Web alike: each page is an empty state that asks to sign in and calls
+  // nothing.
   const denAuthChecking = denAuth.status === "checking";
-  const signedOutDesktopSurfaces = isDesktopRuntime() && !denAuthChecking && !denAuth.isSignedIn;
-  const dashboardSurfaceAvailable = mcpAppsDashboardEnabled || signedOutDesktopSurfaces;
+  const dashboardSurfaceAvailable = cloudSurfaceAvailable({
+    deploymentEnabled: mcpAppsDashboardEnabled,
+    authChecking: denAuthChecking,
+    signedIn: denAuth.isSignedIn,
+  });
   const dashboardRouteActive = dashboardSurfaceAvailable && dashboardRouteRequested;
   const dashboardWorkspaceRoute = dashboardRouteRequested
     && (dashboardAvailabilityLoading || dashboardSurfaceAvailable);
@@ -444,7 +448,11 @@ export function SessionRoute() {
   // Desktop and Web share one Automations surface; the runtime only decides
   // the placement of what each creates. Den's deployment flag stays the gate.
   const automationsEnabled = automationDeploymentEnabled;
-  const automationsSurfaceAvailable = automationsEnabled || signedOutDesktopSurfaces;
+  const automationsSurfaceAvailable = cloudSurfaceAvailable({
+    deploymentEnabled: automationsEnabled,
+    authChecking: denAuthChecking,
+    signedIn: denAuth.isSignedIn,
+  });
   const automationsRouteActive = automationsSurfaceAvailable && automationsRouteRequested;
   const denSettings = readDenSettings();
   const retainedArtifactsScope = dashboardSurfaceAvailable && denAuth.isSignedIn && denAuth.verifiedIdentity
@@ -943,26 +951,25 @@ export function SessionRoute() {
     return { statusById: withSideChatActivity(statusById, sideChats, workspaceSessionGroups), labelById, sourceById, kindById };
   }, [attentionLocale, remoteAttentionKey, selectWorkspaceAttention, sideChats, sessionActivityByWorkspaceId, sessionWaitingByWorkspaceId, sessionChildIdsByWorkspaceId, workspaceSessionGroups]);
   const sidebarSessionStatusById = sidebarSessionAttention.statusById;
-  // Settling ships behind `settledSessions` and for OpenCode v2 only; v1 workspaces keep today's sidebar.
+  // The Feed view and the header's Archive toggle ship behind `settledSessions`.
   const settledSessionsEnabled = useDesktopFeature("settledSessions");
-  const settleWorkspaceIdSet = useMemo(
-    () => settledSessionsEnabled
-      ? settleWorkspaceIds(workspaces, (workspace) => endpointForSessionWorkspace(workspace)?.opencodeBaseUrl)
-      : NO_SETTLE_WORKSPACES,
-    [endpointForSessionWorkspace, settledSessionsEnabled, workspaces],
-  );
   const selectedSidebarSession = useMemo(() => {
     if (!selectedWorkspaceId || !selectedSessionId) return null;
     return workspaceSessionGroups.find((group) => group.workspace.id === selectedWorkspaceId)
       ?.sessions.find((session) => session?.id === selectedSessionId) ?? null;
   }, [selectedSessionId, selectedWorkspaceId, workspaceSessionGroups]);
-  // Sidebar row, palette, header button and Cmd/Ctrl+Shift+E all run this one toggle.
-  const currentSessionSettle = useSessionSettleState(
-    selectedSidebarSession,
-    selectedSessionId ? sidebarSessionStatusById[selectedSessionId] : undefined,
-    getDisplaySessionTitle(selectedSidebarSession?.title),
-    settleWorkspaceIdSet.has(selectedWorkspaceId),
-  );
+  // Palette, header button and Cmd/Ctrl+Shift+E all run this one toggle. The archive flow is set up further down.
+  const archiveSessionRef = useRef<((sessionId: string, archived: boolean, workspaceId: string) => Promise<unknown>) | null>(null);
+  const currentSessionArchived = (selectedSidebarSession?.time?.archived ?? 0) > 0;
+  const currentSessionArchive = useMemo(() => {
+    const sessionId = selectedSidebarSession?.id;
+    const workspaceId = selectedWorkspaceId;
+    if (!settledSessionsEnabled || !sessionId || !workspaceId || !opencodeClient) return undefined;
+    return {
+      archived: currentSessionArchived,
+      toggle: () => { void archiveSessionRef.current?.(sessionId, !currentSessionArchived, workspaceId); },
+    };
+  }, [currentSessionArchived, opencodeClient, selectedSidebarSession?.id, selectedWorkspaceId, settledSessionsEnabled]);
 
   const sidebarActiveWorkspaceId = useMemo(() => {
     const sessionId = selectedSessionId?.trim() ?? "";
@@ -3032,7 +3039,7 @@ export function SessionRoute() {
     onCycleFavoriteModel: cycleFavoriteModel,
     onCycleModelSource: () => { cycleFavoriteModel(true); },
     onToggleFastMode: toggleFastMode,
-    onToggleSettleSession: currentSessionSettle.toggle,
+    onToggleArchiveSession: currentSessionArchive?.toggle,
   });
   useReactRenderWatchdog("SessionRoute", {
     selectedSessionId,
@@ -3062,7 +3069,7 @@ export function SessionRoute() {
     modelPicker.setOpen(true);
   }, [selectedSessionId]);
 
-  const { archiveSession, archiveDialog } = useSessionArchive({
+  const { archiveSession, archiveSessionInWorkspace, archiveDialog } = useSessionArchive({
     workspaces,
     sessionsByWorkspaceId,
     endpointForSessionWorkspace,
@@ -3081,9 +3088,10 @@ export function SessionRoute() {
       });
     },
   });
-  const handleArchiveSession = async (sessionId: string, archived: boolean) => {
-    await archiveSession(sessionId, archived);
+  const handleArchiveSession = async (sessionId: string, archived: boolean, workspaceId: string) => {
+    await archiveSessionInWorkspace(workspaceId, sessionId, archived);
   };
+  archiveSessionRef.current = handleArchiveSession;
 
   useSessionControlActions({
     workspaces,
@@ -3094,6 +3102,7 @@ export function SessionRoute() {
     canCreateTask,
     openworkClient: client,
     opencodeClient,
+    sessionStatusById: sidebarSessionStatusById,
     endpointForWorkspace,
     navigateToSession: navigateToSessionForControl,
     navigateToSessionRoot: navigateToSessionRootForControl,
@@ -3103,6 +3112,7 @@ export function SessionRoute() {
     },
     openModelPicker: openModelPickerForControl,
     refreshRouteState,
+    reloadWorkspaceSessions,
     archiveSession,
   });
 
@@ -3384,54 +3394,27 @@ export function SessionRoute() {
     ) ?? null;
   }, [paletteSessionOptions, selectedSessionId, selectedWorkspaceId]);
 
+  // Management actions intentionally target the route/main session, not the focused side chat.
   const currentSessionActionPaletteItems = useMemo<PaletteItem[]>(() => {
     if (!selectedSessionId || !selectedWorkspaceId || !currentSessionForGroupMove) return [];
-    const items: PaletteItem[] = [{
-      id: "session.pin.toggle",
-      title: currentSessionPinned
-        ? t("session_management.unpin_session")
-        : t("session_management.pin_session"),
-      detail: currentSessionForGroupMove.title,
-      meta: "Session",
-      keywords: ["pin", "unpin", "favorite", "star", "keep on top", "sidebar"],
-      group: "actions",
-      action: () => {
-        setCommandPaletteOpen(false);
-        sessionManagementStore.getState().togglePin(selectedSessionId);
-      },
-    }];
-    if (currentSessionSettle.settled || currentSessionSettle.canSettle) {
-      items.push({
-        id: "session.settle.toggle",
-        title: currentSessionSettle.settled
-          ? t("session_management.unsettle_session")
-          : t("session_management.settle_session"),
-        detail: currentSessionForGroupMove.title,
-        meta: "Session",
-        keywords: ["settle", "un-settle", "unsettle", "done", "finished", "clear", "tidy", "sidebar"],
-        group: "actions",
-        action: () => {
-          setCommandPaletteOpen(false);
-          currentSessionSettle.toggle();
-        },
-      });
-    }
-    if (opencodeClient) {
-      items.push({
-        id: "session.rename",
-        title: "Rename session…",
-        detail: currentSessionForGroupMove.title,
-        meta: "Session",
-        keywords: ["rename", "title", "name", "edit title"],
-        group: "actions",
-        action: () => {
-          setCommandPaletteOpen(false);
-          requestRenameSession(selectedSessionId);
-        },
-      });
-    }
-    return items;
-  }, [currentSessionForGroupMove, currentSessionPinned, currentSessionSettle, opencodeClient, selectedSessionId, selectedWorkspaceId]);
+    const target = { workspaceId: selectedWorkspaceId, sessionId: selectedSessionId, title: currentSessionForGroupMove.title };
+    const isArchived = (selectedSidebarSession?.time?.archived ?? 0) > 0;
+    const actions = buildSessionMenuActions({
+      isPinned: currentSessionPinned,
+      isArchived,
+      groups: [], assignedGroupId: null,
+      onTogglePin: () => sessionManagementStore.getState().togglePin(target.sessionId),
+      onAssignGroup: () => {}, // The palette's group submode also supports unsent drafts.
+      onRename: opencodeClient ? () => requestSessionDialog({ action: "rename", target }) : undefined,
+      onDelete: client ? () => requestSessionDialog({ action: "delete", target }) : undefined,
+      onArchive: opencodeClient ? async () => {
+        await archiveSessionInWorkspace(target.workspaceId, target.sessionId, !isArchived);
+      } : undefined,
+    });
+    return sessionMenuActionsToPalette(actions, target.title, () => setCommandPaletteOpen(false));
+  }, [archiveSessionInWorkspace, client, currentSessionForGroupMove, currentSessionPinned, opencodeClient, selectedSessionId, selectedSidebarSession, selectedWorkspaceId]);
+
+  const paletteSecondarySession = useWorkbenchStore((state) => state.secondary);
 
   // An empty composer has a group too: the one its new task will be created in.
   // The focused unsent side chat wins over the main empty composer.
@@ -3453,7 +3436,7 @@ export function SessionRoute() {
     ? paletteDraftGroupMove.groupId
     : selectedSessionId ? selectedWorkspaceGroupState?.assignments[selectedSessionId] ?? null : null;
 
-  const handleMoveCurrentSessionToGroup = useCallback((groupId: string) => {
+  const handleMoveCurrentSessionToGroup = useCallback((groupId: string | null) => {
     if (paletteDraftGroupMove) {
       window.dispatchEvent(new CustomEvent(MOVE_NEW_TASK_DRAFT_EVENT, { detail: { draftOwnerKey: paletteDraftGroupMove.draftOwnerKey, groupId } }));
       focusPromptSoon();
@@ -3922,7 +3905,7 @@ export function SessionRoute() {
       />
     ) : null}
     <SessionPage
-      currentSessionSettle={currentSessionSettle}
+      currentSessionArchive={currentSessionArchive}
       sessionReferenceInventories={sessionReferenceInventories}
       createWorkspaceSessionMetadataCallbacks={createWorkspaceSessionMetadataCallbacks}
       isSessionReferenceCurrent={isSessionReferenceCurrent}
@@ -3989,6 +3972,11 @@ export function SessionRoute() {
             ([providerId]) => !isDesktopProviderBlocked({ providerId, checkRestriction: checkDesktopRestriction }),
           ),
         ),
+        claudeAgent: sessionProviderAuthSnapshot.claudeAgent,
+        onConnectClaudeAgent: sessionProviderAuthStore.connectClaudeAgent,
+        onSignInClaudeAgent: sessionProviderAuthStore.signInClaudeAgent,
+        onCancelClaudeAgentSignIn: sessionProviderAuthStore.cancelClaudeAgentSignIn,
+        onCheckClaudeAgentInstalled: sessionProviderAuthStore.checkClaudeAgentInstalled,
         onSelect: sessionProviderAuthStore.startProviderAuth,
         onSubmitApiKey: async (providerId, apiKey) => {
           const result = await sessionProviderAuthStore.submitProviderApiKey(providerId, apiKey);
@@ -4087,7 +4075,6 @@ export function SessionRoute() {
         selectedSessionId,
         developerMode: false,
         sessionStatusById: sidebarSessionStatusById,
-        settleWorkspaceIds: settleWorkspaceIdSet,
         feedEnabled: settledSessionsEnabled,
         sessionAttentionLabelById: sidebarSessionAttention.labelById,
         sessionAttentionSourceById: sidebarSessionAttention.sourceById,
@@ -4210,28 +4197,32 @@ export function SessionRoute() {
       safeStringify={safeStringify}
       onRenameSession={
         opencodeClient
-          ? async (sessionId, nextTitle) => {
+          ? async (sessionId, nextTitle, workspaceId) => {
               const trimmed = nextTitle.trim();
               if (!trimmed) return;
-              await opencodeClient.session.update({
-                sessionID: sessionId,
-                title: trimmed,
-                directory: selectedWorkspaceRoot || undefined,
-              });
-              await refreshRouteState();
+              const owner = workspaces.find((workspace) => workspace.id === workspaceId
+                && sessionsByWorkspaceId[workspace.id]?.some((session) => session.id === sessionId));
+              const endpoint = owner ? endpointForSessionWorkspace(owner) : null;
+              if (!owner || !endpoint) throw new Error("The session's workspace is no longer connected.");
+              const createEngineClient = isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl) ? createClientV2 : createClient;
+              const ownerClient = createEngineClient(endpoint.opencodeBaseUrl, owner.path, { token: endpoint.token, mode: "openwork" });
+              unwrap(await ownerClient.session.update({ sessionID: sessionId, title: trimmed, directory: owner.path }));
+              await reloadWorkspaceSessions(owner.id);
             }
           : undefined
       }
       onDeleteSession={
         client && selectedWorkspaceId
-          ? async (sessionId) => {
-              const endpoint = endpointForWorkspace(selectedWorkspace);
-              if (!endpoint) return;
+          ? async (sessionId, workspaceId) => {
+              const owner = workspaces.find((workspace) => workspace.id === workspaceId
+                && sessionsByWorkspaceId[workspace.id]?.some((session) => session.id === sessionId));
+              const endpoint = owner ? endpointForWorkspace(owner) : null;
+              if (!owner || !endpoint) throw new Error("The session's workspace is no longer connected.");
               await deleteRouteSession(endpoint, sessionId);
-              if (selectedSessionId === sessionId) {
-                navigateToWorkspaceSession(selectedWorkspaceId);
+              if (selectedWorkspaceId === workspaceId && selectedSessionId === sessionId) {
+                navigateToWorkspaceSession(workspaceId);
               }
-              await refreshRouteState();
+              await reloadWorkspaceSessions(workspaceId);
             }
           : undefined
       }
@@ -4306,6 +4297,8 @@ export function SessionRoute() {
       }}
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
       currentSession={selectedSessionId ? { workspaceId: selectedWorkspaceId, sessionId: selectedSessionId } : null}
+      secondarySession={paletteSecondarySession}
+      onCloseSplitSession={paletteSecondarySession ? () => useWorkbenchStore.getState().setSplit(null) : undefined}
       onOpenSessionInSplit={(workspaceId, sessionId) => {
         const option = paletteSessionOptions.find((candidate) => (
           candidate.workspaceId === workspaceId && candidate.sessionId === sessionId
@@ -4353,6 +4346,7 @@ export function SessionRoute() {
       currentSessionForGroupMove={paletteDraftGroupMove ? { title: "this new task" } : currentSessionForGroupMove}
       currentSessionGroupId={currentSessionGroupId}
       onMoveCurrentSessionToGroup={handleMoveCurrentSessionToGroup}
+      onCreateGroup={selectedWorkspaceId ? () => requestSessionDialog({ action: "create-group", workspaceId: selectedWorkspaceId }) : undefined}
       extraItems={[...currentSessionActionPaletteItems, ...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...terminalPaletteItems, ...(checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]), diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
       listAgents={listAgents}
       selectedAgent={selectedAgent}

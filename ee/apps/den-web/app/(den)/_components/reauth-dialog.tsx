@@ -2,11 +2,13 @@
 
 import { ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { DenButton, buttonVariants } from "./ui/button";
 import { DenInput } from "./ui/input";
 import { DenNotice } from "./ui/notice";
 import { type AuthUser, getErrorMessage, getUser, requestJson, type SocialAuthProvider, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../_lib/den-flow";
-import { type DenOrgContext, getRequireSsoFromMetadata } from "../_lib/den-org";
+import { type DenOrgContext, getRequireSsoFromMetadata, getRestrictDomainToSsoFromMetadata, orgFeatureEnabled } from "../_lib/den-org";
+import { type MemberSsoSignIn, type ResolvedDomainSso, parseMemberSsoSignIns, parseResolvedDomainSso, resolveReauthSsoTarget } from "../_lib/reauth-sso";
 
 function getSocialLabel(provider: SocialAuthProvider) {
   return provider === "google" ? "Google" : "GitHub";
@@ -56,6 +58,7 @@ export function ReauthDialog({
   open,
   user,
   orgContext,
+  organizationId,
   onCancel,
   onVerified,
   title = "Confirm your identity to change workspace settings",
@@ -64,6 +67,8 @@ export function ReauthDialog({
   open: boolean;
   user: AuthUser | null;
   orgContext: DenOrgContext | null;
+  /** The organization the change is for when there is no `orgContext` (the desktop's active organization). A hint only. */
+  organizationId?: string | null;
   onCancel: () => void;
   onVerified: () => Promise<void>;
   title?: string;
@@ -75,7 +80,8 @@ export function ReauthDialog({
   const [loadingMethods, setLoadingMethods] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<string[]>([]);
-  const [ssoUrl, setSsoUrl] = useState<string | null>(null);
+  const [resolvedDomainSso, setResolvedDomainSso] = useState<ResolvedDomainSso | null>(null);
+  const [memberSsoSignIns, setMemberSsoSignIns] = useState<MemberSsoSignIn[] | null>(null);
   const [nonce, setNonce] = useState("");
   const wasOpenRef = useRef(false);
   const onVerifiedRef = useRef(onVerified);
@@ -88,9 +94,28 @@ export function ReauthDialog({
     () => REAUTH_SOCIAL_PROVIDERS.filter((provider) => effectiveProviders.includes(provider)),
     [effectiveProviders],
   );
+  const organizationMetadata = orgContext?.organization.metadata ?? null;
+  const ssoTarget = resolveReauthSsoTarget({
+    resolvedDomainSso,
+    organizationId: orgContext?.organization.id ?? organizationId ?? null,
+    memberSsoSignIns,
+    organization: orgContext
+      ? {
+          slug: orgContext.organization.slug,
+          hasSso: orgContext.authMethods.sso,
+          perOrganization: orgFeatureEnabled(orgContext, "ssoPerOrganization"),
+          requireSso: getRequireSsoFromMetadata(organizationMetadata),
+          restrictDomainToSso: getRestrictDomainToSsoFromMetadata(organizationMetadata),
+        }
+      : null,
+  });
+  const ssoUrl = ssoTarget?.signInUrl ?? null;
+  // Other methods stay available unless only SSO may confirm (Require SSO,
+  // a restricted domain, or legacy SSO): those sessions would be refused.
+  const ssoOnly = ssoTarget?.ssoOnly ?? false;
   const hasManagedOrgSignIn = Boolean(
     ssoUrl ||
-      getRequireSsoFromMetadata(orgContext?.organization.metadata ?? null) ||
+      getRequireSsoFromMetadata(organizationMetadata) ||
       orgContext?.authMethods.sso ||
       orgContext?.authMethods.scim ||
       effectiveProviders.includes("sso") ||
@@ -156,17 +181,22 @@ export function ReauthDialog({
         const refreshedUser = getUser(meResult.payload);
         if (!cancelled && refreshedUser && refreshedUser.id === user?.id) {
           setProviders(refreshedUser.authProviders);
+          // Only this account's organizations: a different signed-in account's SSO cannot confirm it.
+          try {
+            const ssoSignInResult = await requestJson("/v1/me/sso-sign-in", { method: "GET" }, 12000);
+            if (!cancelled && ssoSignInResult.response.ok) {
+              setMemberSsoSignIns(parseMemberSsoSignIns(ssoSignInResult.payload));
+            }
+          } catch {
+            // An older Den API: the organization context is the fallback.
+          }
         }
 
         const email = user?.email ?? "";
         if (email) {
           const ssoResult = await requestJson(`/v1/orgs/sso/resolve?email=${encodeURIComponent(email)}`, { method: "GET" }, 12000);
           if (!cancelled && ssoResult.response.ok) {
-            const payload = ssoResult.payload;
-            const nextUrl = payload && typeof payload === "object" && "signInUrl" in payload && typeof payload.signInUrl === "string"
-              ? payload.signInUrl
-              : null;
-            setSsoUrl(nextUrl);
+            setResolvedDomainSso(parseResolvedDomainSso(ssoResult.payload));
           }
         }
       } catch (nextError) {
@@ -338,12 +368,15 @@ export function ReauthDialog({
     }
   }
 
-  if (!open) {
+  if (!open || typeof document === "undefined") {
     return null;
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-[2px]">
+  // Portal to <body> above every other overlay: the action that needs a fresh
+  // sign-in usually comes from a confirm dialog (z-50, portaled) or the profile
+  // dialog / command palette (z-[80]), and this check has to sit on top of them.
+  return createPortal(
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-[2px]">
       <div
         role="dialog"
         aria-modal="true"
@@ -416,7 +449,7 @@ export function ReauthDialog({
                 </DenButton>
               ) : null}
 
-              {!ssoUrl && socialProviders.map((provider) => {
+              {!ssoOnly && socialProviders.map((provider) => {
                 const primarySocial = !hasManagedOrgSignIn && (provider === "google" || socialProviders.length === 1);
                 return (
                   <button
@@ -431,7 +464,7 @@ export function ReauthDialog({
                 );
               })}
 
-              {hasPassword && !ssoUrl ? (
+              {hasPassword && !ssoOnly ? (
                 <form className="grid gap-3" onSubmit={submitPassword}>
                   <label className="grid gap-2">
                     <span className="text-[13px] font-medium text-gray-700">Password</span>
@@ -462,6 +495,7 @@ export function ReauthDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

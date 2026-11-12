@@ -14,6 +14,9 @@ after(() => den.close())
 const { client } = await import("../../src/db.js")
 if (!("getConnection" in client)) throw new Error("Security fixtures require the disposable MySQL harness")
 const query = (statement: string, values: (string | number | null)[] = []) => client.execute(statement, values)
+// Timestamps as Den stores them: UTC text. A Date passed to the driver is written in the machine's
+// local time, which moves these rows by hours anywhere but UTC.
+const utc = (at: Date) => at.toISOString().replace("T", " ").replace("Z", "")
 const { securityReportResponseSchema, securityRequestsResponseSchema } = await import("../../src/routes/admin/security.js")
 
 const admin = await den.signUp("Platform Admin", process.env.DEN_BOOTSTRAP_ADMIN_EMAILS)
@@ -36,7 +39,7 @@ const farm = await den.createOrg(farmer, "Farm")
 async function freeUsage(organizationId: string, memberId: string, at: Date, amount: number) {
   await query(
     "INSERT INTO inference_free_usage (request_id, principal_hash, organization_id, org_membership_id, inference_key_id, model_id, amount, created_at) VALUES (?, ?, ?, ?, ?, 'example-model', ?, ?)",
-    [randomUUID(), `principal-${memberId}`, organizationId, memberId, createDenTypeId("inferenceKey"), amount, at],
+    [randomUUID(), `principal-${memberId}`, organizationId, memberId, createDenTypeId("inferenceKey"), amount, utc(at)],
   )
 }
 const yesterday = Math.floor(Date.now() / 86_400_000) * 86_400_000 - 86_400_000
@@ -48,7 +51,7 @@ const hourStart = Math.floor(Date.now() / 3_600_000) * 3_600_000
 for (let index = 0; index < 120; index += 1) {
   await query(
     "INSERT INTO platform_audit_event (id, occurred_at, method, route, action, outcome, status, reason_code, actor_type, origin) VALUES (?, ?, 'POST', '/api/auth/sign-in/email', 'auth.sign_in.email.attempted', 'denied', 401, 'request_denied', 'unknown', 'api')",
-    [createDenTypeId("platformAuditEvent"), new Date(hourStart + index * 1_000)],
+    [createDenTypeId("platformAuditEvent"), utc(new Date(hourStart + index * 1_000))],
   )
 }
 

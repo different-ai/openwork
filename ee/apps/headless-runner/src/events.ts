@@ -16,9 +16,10 @@ export type SessionEvent =
   | { type: "text"; messageId: string; step: number; delta: string; reset?: boolean }
   /**
    * The model started writing a call to `tool` in model call `step`; the stored call follows when it finishes. Sent
-   * again with the call's `description` (what it is doing, for the person) as soon as that much of the input is written.
+   * again, with everything known so far, as soon as the desktop `view` it works in (browser or computer) or the call's
+   * `description` (what it is doing, for the person) is written, so a caller never has to guess the kind of work.
    */
-  | { type: "tool"; messageId: string; step: number; tool: string; description?: string }
+  | { type: "tool"; messageId: string; step: number; tool: string; description?: string; view?: "browser" | "computer" }
 
 type Listener = (event: SessionEvent) => void
 

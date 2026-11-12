@@ -12,6 +12,7 @@ import {
   ConnectorSourceBindingTable,
   ConnectorSourceTombstoneTable,
   ConnectorSyncEventTable,
+  ConnectorTargetReconcileTable,
   ConnectorTargetTable,
   ExternalMcpConnectionAccessGrantTable,
   ExternalMcpConnectionTable,
@@ -1690,6 +1691,8 @@ export async function getConfigObjectDetail(context: PluginArchActorContext, con
 
 export async function createConfigObject(input: {
   context: PluginArchActorContext
+  /** Use this id for the new object (config-blob imports reuse the source id); a fresh one otherwise. */
+  id?: ConfigObjectId
   objectType: ConfigObjectRow["objectType"]
   pluginIds?: PluginId[]
   /** Where an imported object came from in its source repository; a re-import matches and prunes on it. */
@@ -1710,7 +1713,7 @@ export async function createConfigObject(input: {
   const projection = deriveProjection({ objectType: input.objectType, value: input.value })
   const organizationId = input.context.organizationContext.organization.id
   const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
-  const configObjectId = createDenTypeId("configObject")
+  const configObjectId = input.id ?? createDenTypeId("configObject")
   const versionId = createDenTypeId("configObjectVersion")
 
   await db.transaction(async (tx) => {
@@ -2783,6 +2786,8 @@ export async function getPluginDetail(context: PluginArchActorContext, pluginId:
 export async function createPlugin(input: {
   context: PluginArchActorContext
   description?: string | null
+  /** Use this id for the new plugin (config-blob imports reuse the source id); a fresh one otherwise. */
+  id?: PluginId
   name: string
   sourceFormat?: string | null
   sourceRepositoryUrl?: string | null
@@ -2812,7 +2817,7 @@ export async function createPlugin(input: {
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
     deletedAt: null,
     description: normalizeOptionalString(input.description ?? undefined),
-    id: createDenTypeId("plugin"),
+    id: input.id ?? createDenTypeId("plugin"),
     name,
     organizationId: input.context.organizationContext.organization.id,
     sourceFormat: normalizeOptionalString(input.sourceFormat ?? undefined),
@@ -3664,7 +3669,8 @@ export async function getMarketplaceDetail(context: PluginArchActorContext, mark
   return serializeMarketplace(row, memberships.length)
 }
 
-export async function createMarketplace(input: { context: PluginArchActorContext; description?: string | null; logoUrl?: string | null; name: string; externalKey?: string }) {
+/** `id`: reuse this id for the new row (config-blob imports; the caller checked it is free). */
+export async function createMarketplace(input: { context: PluginArchActorContext; description?: string | null; logoUrl?: string | null; name: string; externalKey?: string; id?: MarketplaceId }) {
   const now = new Date()
   const row = {
     externalKey: input.externalKey ?? null,
@@ -3672,7 +3678,7 @@ export async function createMarketplace(input: { context: PluginArchActorContext
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
     deletedAt: null,
     description: normalizeOptionalString(input.description ?? undefined),
-    id: createDenTypeId("marketplace"),
+    id: input.id ?? createDenTypeId("marketplace"),
     logoUrl: normalizeOptionalString(input.logoUrl ?? undefined),
     name: input.name.trim(),
     organizationId: input.context.organizationContext.organization.id,
@@ -4063,6 +4069,10 @@ export async function disconnectConnectorAccount(input: { connectorAccountId: Co
     }
 
     if (instanceIds.length > 0) {
+      await tx.delete(ConnectorTargetReconcileTable).where(inArray(
+        ConnectorTargetReconcileTable.connectorTargetId,
+        tx.select({ id: ConnectorTargetTable.id }).from(ConnectorTargetTable).where(inArray(ConnectorTargetTable.connectorInstanceId, instanceIds)),
+      ))
       await tx.delete(ConnectorTargetTable).where(inArray(ConnectorTargetTable.connectorInstanceId, instanceIds))
       await tx.delete(ConnectorInstanceAccessGrantTable).where(inArray(ConnectorInstanceAccessGrantTable.connectorInstanceId, instanceIds))
       await tx.delete(ConnectorInstanceTable).where(inArray(ConnectorInstanceTable.id, instanceIds))
@@ -4110,7 +4120,7 @@ export async function listConnectorInstances(input: { connectorAccountId?: Conne
   return pageItems(filtered, input.cursor, input.limit)
 }
 
-export async function createConnectorInstance(input: { connectorAccountId: ConnectorAccountId; connectorType: ConnectorInstanceRow["connectorType"]; config?: Record<string, unknown>; context: PluginArchActorContext; name: string; remoteId?: string | null }) {
+export async function createConnectorInstance(input: { connectorAccountId: ConnectorAccountId; connectorType: ConnectorInstanceRow["connectorType"]; config?: Record<string, unknown>; context: PluginArchActorContext; id?: ConnectorInstanceId; name: string; remoteId?: string | null }) {
   const account = await getConnectorAccountRow(input.context.organizationContext.organization.id, input.connectorAccountId)
   if (!account) {
     throw new PluginArchRouteFailure(404, "connector_account_not_found", "Connector account not found.")
@@ -4121,7 +4131,7 @@ export async function createConnectorInstance(input: { connectorAccountId: Conne
     connectorType: input.connectorType,
     createdAt: now,
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
-    id: createDenTypeId("connectorInstance"),
+    id: input.id ?? createDenTypeId("connectorInstance"),
     instanceConfigJson: input.config ?? null,
     lastSyncCursor: null,
     lastSyncStatus: null,
@@ -4541,6 +4551,10 @@ export async function removeConnectorInstance(input: { connectorInstanceId: Conn
       await tx.delete(ConnectorMappingTable).where(inArray(ConnectorMappingTable.id, mappingIds))
     }
 
+    await tx.delete(ConnectorTargetReconcileTable).where(inArray(
+      ConnectorTargetReconcileTable.connectorTargetId,
+      tx.select({ id: ConnectorTargetTable.id }).from(ConnectorTargetTable).where(eq(ConnectorTargetTable.connectorInstanceId, instance.id)),
+    ))
     await tx.delete(ConnectorTargetTable).where(eq(ConnectorTargetTable.connectorInstanceId, instance.id))
     await tx.delete(ConnectorInstanceAccessGrantTable).where(eq(ConnectorInstanceAccessGrantTable.connectorInstanceId, instance.id))
     await tx.delete(ConnectorInstanceTable).where(eq(ConnectorInstanceTable.id, instance.id))
@@ -5582,7 +5596,7 @@ async function derivePluginMcpRequirementAccess(input: {
   }
 }
 
-async function syncPluginMcpRequirementBindingAccess(row: PluginMcpRequirementBindingRow) {
+export async function syncPluginMcpRequirementBindingAccess(row: PluginMcpRequirementBindingRow) {
   const access = await derivePluginMcpRequirementAccess({
     configObjectId: row.configObjectId,
     organizationId: row.organizationId,
@@ -6740,6 +6754,7 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
         directRole: member.directRole,
         adminTeams: member.adminTeams,
         userId: member.userId,
+        openworkWeb: member.openworkWeb,
       },
       organization: {
         allowedEmailDomains: organization.allowedEmailDomains ?? null,

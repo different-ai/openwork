@@ -17,6 +17,12 @@ the highest risks only, in about a minute:
 - **Typecheck of shipped code:** every changed package and every package that
   depends on it, test files left out (`.github/scripts/typecheck-shipped.mjs`),
   plus Electron main when the desktop is affected.
+- **Imports Node loads from source:** Den API and the Gateway run in plain Node
+  and load some workspace packages from TypeScript source. Node resolves less
+  than tsx, bundlers and the typecheck do, so an import that works everywhere
+  else can fail the deploy. `pnpm check:node-source-imports` follows each
+  service's runtime imports into that source, on every PR (see "Modules Node
+  loads from source" in `AGENTS.md`).
 - **Den API auth and permission tests** and audit route coverage, when Den API
   inputs change (`pnpm --filter @openwork-ee/den-api test:api:security`).
 

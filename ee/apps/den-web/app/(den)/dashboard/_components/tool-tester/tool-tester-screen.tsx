@@ -22,6 +22,8 @@ import { DenToggleRow } from "../../../_components/ui/toggle-row";
 import { DenRequestTimeoutError } from "../../../_lib/den-flow";
 import { getMcpConnectionsRoute, getOrgAccessFlags } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
+import { useFeatureIntro, useFeatureIntroRuntime } from "../../_features/feature-intros";
+import { useConnectorsIntroFacts } from "../connectors-intro-facts";
 import { marketplaceConnectionNeedsAdminSetup } from "../mcp-connection-setup";
 import { personalApiKeyStatus, personalApiKeyStatusLabel } from "../member-api-key";
 import {
@@ -116,6 +118,14 @@ export function ToolTesterScreen() {
       marketplaceConnectionNeedsAdminSetup(connection, presetsQuery.data ?? []),
     ))
   ), [access.canManageConnections, connectionsQuery.data, presetsQuery.data]);
+  // With `featureIntros` on: the Connectors full screen with no connector at all, else a box in place
+  // of "No connected, testable MCP connections" (DESIGN.md I1, I2).
+  const connectorsFacts = useConnectorsIntroFacts(useFeatureIntroRuntime().enabled);
+  const testableKnown = Boolean(connectionsQuery.data && presetsQuery.data) && !connectionsQuery.error;
+  const intro = useFeatureIntro(
+    "connectors.tool-tester",
+    connectorsFacts && testableKnown ? { ...connectorsFacts, testableConnectors: testableConnections.length } : null,
+  );
   const [selectedConnectionId, setSelectedConnectionId] = useState(requestedConnectionId ?? "");
   const [selectedToolName, setSelectedToolName] = useState("");
   const [toolSearch, setToolSearch] = useState("");
@@ -401,6 +411,8 @@ export function ToolTesterScreen() {
     }
   }
 
+  if (intro.size === "fullscreen") return intro.element;
+
   return (
     <DashboardPageTemplate
       icon={Wrench}
@@ -415,6 +427,8 @@ export function ToolTesterScreen() {
         <div className="flex items-center gap-2 rounded-2xl border border-gray-100 bg-white px-5 py-6 text-[13px] text-gray-500">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Loading testable connections…
         </div>
+      ) : testableConnections.length === 0 && intro.size === "box" ? (
+        intro.element
       ) : testableConnections.length === 0 ? (
         <DenNotice
           tone="neutral"

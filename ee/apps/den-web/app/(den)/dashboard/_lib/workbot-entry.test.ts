@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { getNewAiGatewayProviderRoute, getOrgAccessFlags, type DenOrgCapabilities } from "../../_lib/den-org";
+import { getMembersTeamsRoute, getNewAiGatewayProviderRoute, getOrgAccessFlags, type DenOrgCapabilities } from "../../_lib/den-org";
 import { buildDashboardNavSections } from "./dashboard-navigation";
 import { decideWorkbotEntry, isWorkbotEntryHref, WORKBOT_ENTRY_COPY, WORKBOT_ENTRY_HREF, workbotDestination, workbotEntryHref, type WorkbotEntry } from "./workbot-entry";
 
@@ -38,15 +38,37 @@ test("everyone else is told an organization admin has to add one", () => {
   assert.deepEqual(decide({ access: owner, orgSlug: null }), { kind: "ask-admin" });
 });
 
+test("Workbot turned off for the viewer never opens the app, whatever the provider's state", () => {
+  const modelsManager = getOrgAccessFlags("member", false, ["inference.view", "inference.manage"]);
+  for (const readiness of [
+    { gatewayRequired: false, hasGatewayProvider: false, enabled: false },
+    { gatewayRequired: true, hasGatewayProvider: true, enabled: false },
+    { ...noProvider, enabled: false },
+  ]) {
+    assert.deepEqual(decide({ readiness }), { kind: "off", teamsHref: null });
+    // Someone who can change Workbot's settings is sent to where it is turned on.
+    assert.deepEqual(decide({ readiness, access: modelsManager }), { kind: "off", teamsHref: getMembersTeamsRoute("workspace") });
+    assert.deepEqual(decide({ readiness, access: owner }), { kind: "off", teamsHref: getMembersTeamsRoute("workspace") });
+  }
+  assert.deepEqual(decide({ readiness: { gatewayRequired: false, hasGatewayProvider: false, enabled: false }, access: owner, orgSlug: null }), { kind: "off", teamsHref: null });
+  // On, said or not, changes nothing.
+  assert.deepEqual(decide({ readiness: { gatewayRequired: false, hasGatewayProvider: false, enabled: true } }), { kind: "open" });
+  assert.deepEqual(decide({ readiness: { ...noProvider, enabled: true } }), { kind: "ask-admin" });
+});
+
 const capabilities: DenOrgCapabilities = {
   auditLogs: false, installLinks: false, mcpConnections: false, workflows: true,
   openworkWeb: false, cloud: false, workbot: true,
 };
 
-function workbotItem(workbotEntry?: WorkbotEntry) {
+function navItems(workbotEntry?: WorkbotEntry) {
   return buildDashboardNavSections({
-    orgSlug: "workspace", access: member, capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, workbotEntry,
-  }).flatMap((section) => section.items).find((item) => item.href === WORKBOT_ENTRY_HREF);
+    orgSlug: "workspace", access: member, capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, workbotEntry, myBot: true,
+  }).flatMap((section) => section.items);
+}
+
+function workbotItem(workbotEntry?: WorkbotEntry) {
+  return navItems(workbotEntry).find((item) => item.href === WORKBOT_ENTRY_HREF);
 }
 
 test("a blocked Workbot entry stays in the navigation with a quiet marker (P4)", () => {
@@ -65,6 +87,27 @@ test("a blocked Workbot entry stays in the navigation with a quiet marker (P4)",
   assert.equal(others?.href, WORKBOT_ENTRY_HREF);
   assert.equal(others?.locked, WORKBOT_ENTRY_COPY.askAdminTitle);
   assert.equal(others?.attention, undefined);
+});
+
+test("Workbot turned off takes Workbot and My bot out of the navigation: no lock", () => {
+  const myBot = (entry?: WorkbotEntry) => navItems(entry).find((item) => item.testId === "dashboard-nav-my-bot");
+  assert.ok(myBot({ kind: "open" }));
+  assert.equal(myBot({ kind: "ask-admin" })?.locked, undefined);
+
+  for (const off of [{ kind: "off", teamsHref: null }, { kind: "off", teamsHref: getMembersTeamsRoute("workspace") }] satisfies WorkbotEntry[]) {
+    assert.equal(workbotItem(off), undefined);
+    assert.equal(myBot(off), undefined);
+    assert.equal(navItems(off).some((item) => item.locked), false);
+  }
+});
+
+test("Manage has no Workbot entry once its settings are on Members › Teams › Everyone", () => {
+  const manage = (workbotSettingsInTeams?: boolean) => buildDashboardNavSections({
+    orgSlug: "workspace", access: owner, capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, workbotSettingsInTeams,
+  }).flatMap((section) => section.items).find((item) => item.testId === "dashboard-nav-workbot-settings");
+  assert.ok(manage());
+  assert.ok(manage(false));
+  assert.equal(manage(true), undefined);
 });
 
 test("the Workbot entry names the workspace on screen, and Den passes only a well-formed id on to Workbot", () => {

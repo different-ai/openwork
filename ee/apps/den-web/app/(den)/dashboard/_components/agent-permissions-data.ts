@@ -156,10 +156,10 @@ export function hasTeamRecord(policy: AgentPermissionPolicy): boolean {
   return policy.scopeId !== EVERYONE_SCOPE && policy.updatedAt !== null;
 }
 
-/** A team's own agent permissions, counted for lists: "1 override", or null while it follows Everyone. */
+/** A team's own agent permissions, counted for lists: "1 change", or null while it follows Everyone. */
 export function teamOverrideSummary(policy: AgentPermissionPolicy | undefined): string | null {
   if (!policy || !hasTeamRecord(policy)) return null;
   const count = Object.keys(normalizeAgentPermissionSettings(policy.settings)).length;
   if (count === 0) return null;
-  return `${count} ${count === 1 ? "override" : "overrides"}`;
+  return `${count} ${count === 1 ? "change" : "changes"}`;
 }

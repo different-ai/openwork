@@ -5,6 +5,7 @@ import { agentLedgerKey, AGENT_WAKE_MARKER, parseAgentReply, parseAgentState } f
 import {
   DEFAULT_AGENT_TEMPLATE,
   DEFAULT_WORKBOT_PROACTIVE_SETTINGS,
+  agentSourcesPolicyInputSchema,
   mergeAgentTemplate,
   mergeWorkbotProactiveSettings,
   readWorkbotProactiveSettings,
@@ -57,7 +58,6 @@ const organizationId = createDenTypeId("organization")
 const memberId = createDenTypeId("member")
 const userId = createDenTypeId("user")
 const slackConnectionId = createDenTypeId("externalMcpConnection")
-const settingsOn: WorkbotProactiveSettings = { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS, enabled: true }
 
 type RawEvent = Record<string, unknown>
 function meeting(overrides: RawEvent = {}): RawEvent {
@@ -105,6 +105,13 @@ const message = (text: string, items: ({ responsibility: string; ref: string } |
 const GOOGLE: MemberConnection = { id: "google-workspace", name: "Google Workspace", url: "https://google.com", native: "google-workspace", state: "connected" }
 const SLACK: MemberConnection = { id: "emc_01k8z5wq0s0000000000000001", name: "Slack", url: "https://mcp.slack.com/mcp", native: null, state: "connected" }
 const NOTES: MemberConnection = { id: "emc_01k8z5wq0s0000000000000002", name: "Meeting notes", url: "https://mcp.granola.ai/mcp", native: null, state: "connected" }
+/**
+ * Agents on, the calendar on for everyone (the default) and Slack on for everyone too. Mail and chat are not sources of
+ * their own: chat is read through the Slack connection, under that connection's policy.
+ */
+const settingsOn: WorkbotProactiveSettings = { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS, enabled: true, sources: { calendar: "everyone", connections: { [SLACK.id]: "everyone" } } }
+/** "Someone is waiting on you", found in Slack: an item names the connection it came from. */
+const waiting = (id: string) => ({ source: SLACK.id, id, preset: "waiting_on_you" })
 
 type HarnessState = {
   records: AgentCheckRecord[]
@@ -195,17 +202,39 @@ describe("waking a member's agent", () => {
     assert.equal(h.state.turns[0]?.sessionId, agentSessionId(organizationId, memberId))
     assert.match(h.state.turns[0]?.sessionId ?? "", /^hs_agent_[a-f0-9]{40}$/)
     assert.ok(h.state.turns[0]?.prompt.startsWith(`${AGENT_WAKE_MARKER} Scheduled check: the morning pass.`), "the first pass of the day is the morning pass")
-    assert.match(h.state.turns[0]?.prompt ?? "", /- email: Email through Gmail: their inbox\. never read yet\./)
+    assert.match(h.state.turns[0]?.prompt ?? "", /- calendar: Calendar through Google Calendar: their meetings today and tomorrow\. never read yet\./)
+    assert.match(h.state.turns[0]?.prompt ?? "", new RegExp(`- ${SLACK.id}: Slack: DMs to them, mentions of them and threads they're in\\. never read yet\\.`))
+    assert.doesNotMatch(h.state.turns[0]?.prompt ?? "", /- (email|chat): /, "mail and chat are not sources of their own")
     assert.deepEqual(h.state.delivered, [])
     const saved = parseAgentState(h.state.row.state)
     assert.equal(saved.lastPassAt, NOW)
     assert.equal(saved.nextPassAt, NOW + 3 * 3_600_000, "the next check is in about three hours")
-    assert.deepEqual(saved.lastLook, { calendar: NOW, email: NOW, chat: NOW }, "every source it read, by id")
+    assert.deepEqual(saved.lastLook, { calendar: NOW, [SLACK.id]: NOW }, "every source it read, by id")
     assert.equal(h.state.row.nextWakeAt.getTime(), NOW + 5 * 60_000, "the calendar is looked at again in five minutes")
   })
 
+  test("a team with its own policy decides for its members: woken while Everyone's is off, not woken while the team's is off", async () => {
+    const template = { ...DEFAULT_AGENT_TEMPLATE, instructions: "Research only.", versionId: createDenTypeId("configObjectVersion"), version: 2 }
+    const never = async (): Promise<never> => { throw new Error("Everyone's must not be read") }
+    // Everyone's is off, the member's team turned agents on: the pass runs on the team's policy and template alone.
+    const on = harness({ settings: { enabled: false } })
+    const asked: string[] = []
+    const teamOn = { ...on.deps, settings: never, template: never, teamPolicy: async (member: { memberId: string }) => { asked.push(member.memberId); return { settings: { ...settingsOn, leadMinutes: 30 }, template } } }
+    assert.deepEqual(await wakeAgent(on.state.row, teamOn), { status: "ran", reasons: ["scheduled"], reply: "quiet", delivered: null })
+    assert.deepEqual(asked, [memberId], "asked for this member only")
+    assert.match(on.state.turns[0]?.prompt ?? "", /Research only\./, "the team's instructions")
+    assert.equal(on.state.settles.at(-1)?.templateVersionId, template.versionId, "the team's template version is recorded")
+    // Everyone's is on, the member's team turned agents off: no wake, no turn, no message.
+    const off = harness({})
+    assert.deepEqual(await wakeAgent(off.state.row, { ...off.deps, teamPolicy: async () => ({ settings: { ...settingsOn, enabled: false }, template }) }), { status: "skipped", reason: "off" })
+    assert.equal(off.state.turns.length, 0)
+    // No team policy for the member (the feature off, no team with its own, or teams that differ): Everyone's, as before.
+    const everyone = harness({})
+    assert.deepEqual(await wakeAgent(everyone.state.row, { ...everyone.deps, teamPolicy: async () => null }), { status: "ran", reasons: ["scheduled"], reply: "quiet", delivered: null })
+  })
+
   test("a message is delivered once; the same item is never delivered again", async () => {
-    const reply = message("Northwind is waiting on the renewal proposal (since 9:10 AM).", [{ responsibility: "waiting_on_you", ref: "thread-abc" }])
+    const reply = message("Northwind is waiting on the renewal proposal (since 9:10 AM).", [waiting("thread-abc")])
     const h = harness({ replies: [reply, reply] })
     assert.deepEqual(await h.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "sent" })
     assert.deepEqual(h.state.delivered, ["Northwind is waiting on the renewal proposal (since 9:10 AM)."])
@@ -230,7 +259,7 @@ describe("waking a member's agent", () => {
   })
 
   test("each completed pass adds to the health counters: what it asked about, what stayed quiet, what it sent", async () => {
-    const h = harness({ replies: [message("A thread is waiting.", [{ responsibility: "waiting_on_you", ref: "t1" }])] })
+    const h = harness({ replies: [message("A thread is waiting.", [waiting("t1")])] })
     await h.run()
     assert.deepEqual(h.state.checks, [{
       day: "2026-10-20",
@@ -247,14 +276,14 @@ describe("waking a member's agent", () => {
   })
 
   test("past the daily limit nothing is sent, and the items are not retried later", async () => {
-    const h = harness({ sentToday: 3, replies: [message("Two threads are waiting on you.", [{ responsibility: "waiting_on_you", ref: "t1" }])] })
+    const h = harness({ sentToday: 3, replies: [message("Two threads are waiting on you.", [waiting("t1")])] })
     assert.deepEqual(await h.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "daily_limit" })
     assert.deepEqual(h.state.delivered, [])
-    assert.equal(h.state.ledger.get("email:t1"), "capped")
+    assert.equal(h.state.ledger.get(`${SLACK.id}:t1`), "capped")
   })
 
   test("a muted responsibility is neither asked about nor delivered", async () => {
-    const h = harness({ row: { overrides: { muted: ["waiting_on_you"] } }, replies: [message("A thread is waiting.", [{ responsibility: "waiting_on_you", ref: "t1" }])] })
+    const h = harness({ row: { overrides: { muted: ["waiting_on_you"] } }, replies: [message("A thread is waiting.", [waiting("t1")])] })
     assert.deepEqual(await h.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "nothing_new" })
     assert.doesNotMatch(h.state.turns[0]?.prompt ?? "", /- waiting_on_you:/)
   })
@@ -292,7 +321,7 @@ describe("waking a member's agent", () => {
   })
 
   test("a kill switch between deciding and delivering wins", async () => {
-    const h = harness({ allowed: [true, false], replies: [message("A thread is waiting.", [{ responsibility: "waiting_on_you", ref: "t1" }])] })
+    const h = harness({ allowed: [true, false], replies: [message("A thread is waiting.", [waiting("t1")])] })
     assert.deepEqual(await h.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "failed" })
     assert.deepEqual(h.state.delivered, [])
   })
@@ -490,20 +519,24 @@ describe("organization policy", () => {
     assert.deepEqual(withWorkbotProactiveSettings({ workbot: { model: "m" } }, DEFAULT_WORKBOT_PROACTIVE_SETTINGS), { workbot: { model: "m", proactive: DEFAULT_WORKBOT_PROACTIVE_SETTINGS } })
   })
 
-  test("the connections behind calendar, email and chat: picked per source, kept across other changes, null goes back to all", () => {
-    assert.equal(DEFAULT_WORKBOT_PROACTIVE_SETTINGS.sources.coreConnections, undefined, "unpicked: every connection that serves it")
-    const picked = mergeWorkbotProactiveSettings(DEFAULT_WORKBOT_PROACTIVE_SETTINGS, { sources: { coreConnections: { email: ["gws_work", "gws_work"], calendar: ["gws_work"] } } })
-    assert.deepEqual(picked?.sources.coreConnections, { calendar: ["gws_work"], email: ["gws_work"] })
-    const kept = picked && mergeWorkbotProactiveSettings(picked, { sources: { chat: "off" } })
-    assert.deepEqual(kept?.sources.coreConnections, { calendar: ["gws_work"], email: ["gws_work"] })
-    const reset = kept && mergeWorkbotProactiveSettings(kept, { sources: { coreConnections: { email: null, calendar: null } } })
-    assert.equal(reset?.sources.coreConnections, undefined)
-    assert.equal(readWorkbotProactiveSettings({ workbot: { proactive: { sources: { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS.sources } } } }).sources.coreConnections, undefined, "policies saved before picks read as before")
+  test("a policy saved with email, team chat and per-app picks reads without them; a change can't bring them back", () => {
+    assert.deepEqual(DEFAULT_WORKBOT_PROACTIVE_SETTINGS.sources, { calendar: "everyone", connections: {} }, "the calendar, and each connection by id: nothing else")
+    const before = { calendar: "members", email: "everyone", chat: "off", coreConnections: { calendar: ["gws_work"], email: ["gws_work"] }, coreDefaults: { calendar: "gws_work" }, connections: { emc_notes: "everyone" } }
+    const read = readWorkbotProactiveSettings({ workbot: { proactive: { enabled: true, sources: before } } })
+    assert.equal(read.enabled, true, "the rest of the policy is kept")
+    assert.deepEqual(read.sources, { calendar: "members", connections: { emc_notes: "everyone" } }, "email, chat, the picked apps and the defaults are dropped")
+    const changed = mergeWorkbotProactiveSettings(read, { sources: { calendar: "off" } })
+    assert.deepEqual(changed?.sources, { calendar: "off", connections: { emc_notes: "everyone" } })
+    assert.equal(agentSourcesPolicyInputSchema.safeParse({ email: "off" }).success, false, "no email setting to change")
+    assert.equal(agentSourcesPolicyInputSchema.safeParse({ coreConnections: { calendar: ["gws_work"] } }).success, false, "no calendar app to pick")
+    assert.equal(agentSourcesPolicyInputSchema.safeParse({ calendar: "members", connections: { emc_notes: null } }).success, true)
   })
 })
 
 describe("My agent: every check is recorded for the member (workbotProactive)", () => {
-  const reply = (responsibility: string, ref: string, extra: Record<string, unknown> = {}) => JSON.stringify({ message: "A thread is waiting.", items: [{ responsibility, ref }], ...extra })
+  // A waiting ask was found in Slack; a calendar change in the calendar.
+  const reply = (responsibility: string, ref: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ message: "A thread is waiting.", items: [{ source: responsibility === "waiting_on_you" ? SLACK.id : "calendar", id: ref, preset: responsibility }], ...extra })
   const only = (h: { state: HarnessState }) => {
     assert.equal(h.state.records.length, 1, JSON.stringify(h.state.records))
     const [record] = h.state.records
@@ -567,7 +600,7 @@ describe("My agent: every check is recorded for the member (workbotProactive)", 
     const google = harness({ google: "needs_connection" })
     await google.run()
     const notice = google.state.records.find((record) => record.reason === "source_disconnected")
-    assert.deepEqual([notice?.outcome, notice?.summary, notice?.sources.map((source) => source.name)], ["failed", "Couldn't read Google Calendar and Gmail: connect your account again.", ["Google Calendar", "Gmail"]])
+    assert.deepEqual([notice?.outcome, notice?.summary, notice?.sources.map((source) => source.name)], ["failed", "Couldn't read Google Calendar: connect your account again.", ["Google Calendar"]])
     assert.equal(google.state.records.find((record) => record.key.startsWith("ran:"))?.reason, "nothing_new", "it still read Slack")
 
     const unlinked = harness({ blocked: "member_not_linked" })
@@ -697,40 +730,49 @@ describe("sources, not categories", () => {
   const scopeFor = (id: string) => `openwork:agent-connection:${id}`
 
   test("a Slack-only ask is delivered once, with its Slack link kept, and never again", async () => {
-    const reply = message(`Worth catching: a pricing question came in on Slack before your 2 PM call. I haven't checked the email thread yet. <${SLACK_LINK}|Slack message>`, [{ source: "chat", id: SLACK_LINK }])
+    const reply = message(`Worth catching: a pricing question came in on Slack before your 2 PM call. I haven't checked the email thread yet. <${SLACK_LINK}|Slack message>`, [{ source: SLACK.id, id: SLACK_LINK }])
     const h = harness({ replies: [reply, reply] })
     assert.deepEqual(await h.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "sent" })
     assert.match(h.state.delivered[0] ?? "", new RegExp(`<${SLACK_LINK.replaceAll(".", "\\.")}\\|Slack message>`), "a link to the Slack message it read stays")
-    assert.equal(h.state.ledger.get(`chat:${SLACK_LINK}`), "sent")
+    assert.equal(h.state.ledger.get(`${SLACK.id}:${SLACK_LINK}`), "sent")
     h.state.clock = NOW + 3 * 3_600_000
     assert.deepEqual(await h.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "nothing_new" })
     assert.equal(h.state.delivered.length, 1)
-    assert.ok(h.state.turns[0]?.scopes.includes(scopeFor(SLACK.id)) && h.state.turns[0]?.scopes.includes("openwork:agent-source:chat"), "the turn's token may read Slack")
+    assert.ok(h.state.turns[0]?.scopes.includes(scopeFor(SLACK.id)), "the turn's token may read Slack")
+    assert.deepEqual(h.state.turns[0]?.scopes.filter((scope) => scope.startsWith("openwork:agent-source:")), ["openwork:agent-source:calendar"], "the calendar is the only source that isn't a connection")
   })
 
   test("an item naming its source the way people do (\"slack\") is the same source; one from a source it didn't read is dropped", async () => {
     const h = harness({ replies: [message("Worth catching: x.", [{ source: "slack", id: "C1:1" }, { source: "emc_unknown", id: "X-1" }])] })
     await h.run()
-    assert.deepEqual([...h.state.ledger.keys()], ["chat:C1:1"])
+    assert.deepEqual([...h.state.ledger.keys()], [`${SLACK.id}:C1:1`])
+    // An agent with an older habit still says "chat" and "email": chat is the Slack connection it read; mail has no
+    // connection here (Google Workspace is only the calendar without Your agent's brief), so its item is dropped.
+    const old = harness({ replies: [message("Worth catching: x.", [{ source: "chat", id: "C1:1" }, { source: "email", id: "t1" }])] })
+    assert.deepEqual(await old.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "sent" })
+    assert.deepEqual([...old.state.ledger.keys()], [`${SLACK.id}:C1:1`])
+    const noSlack = harness({ connections: [GOOGLE], replies: [message("Worth catching: x.", [{ source: "chat", id: "C1:1" }, { source: "email", id: "t1" }])] })
+    assert.deepEqual(await noSlack.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "nothing_new" }, "with no connection that reads them, email and chat name no source")
   })
 
   test("the member's source switches and instructions change the allowlist and the prompt; the admin's \"not allowed\" wins", async () => {
-    const settings = { sources: { calendar: "everyone" as const, email: "everyone" as const, chat: "members" as const, connections: {} } }
+    // Slack is up to each member here (the default for a connection), and this member left it off.
+    const settings = { sources: { calendar: "everyone" as const, connections: {} } }
     const h = harness({
       settings,
       connections: [GOOGLE, SLACK, NOTES],
-      row: { preferences: withChoices({ chat: { on: false }, [NOTES.id]: { on: true, instruction: "Use my meeting notes for context and action items." } }) },
-      replies: [message("Worth catching: x.", [{ source: "chat", id: "C1:2" }])],
+      row: { preferences: withChoices({ [SLACK.id]: { on: false }, [NOTES.id]: { on: true, instruction: "Use my meeting notes for context and action items." } }) },
+      replies: [message("Worth catching: x.", [{ source: SLACK.id, id: "C1:2" }])],
     })
-    assert.deepEqual(await h.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "nothing_new" }, "chat is off for them, so its item is dropped")
+    assert.deepEqual(await h.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "nothing_new" }, "Slack is off for them, so its item is dropped")
     const turn = h.state.turns[0]
     assert.ok(turn)
-    assert.ok(!turn.scopes.includes(scopeFor(SLACK.id)) && !turn.scopes.includes("openwork:agent-source:chat"), "no Slack on the token")
+    assert.ok(!turn.scopes.includes(scopeFor(SLACK.id)), "no Slack on the token")
     assert.ok(turn.scopes.includes(scopeFor(NOTES.id)), "the connection they turned on is")
-    assert.doesNotMatch(turn.prompt, /- chat:/)
+    assert.doesNotMatch(turn.prompt, new RegExp(`- ${SLACK.id}:`))
     assert.match(turn.prompt, new RegExp(`- ${NOTES.id}: Meeting notes\\. never read yet\\. .*The person's instruction for it, in their own words: """Use my meeting notes for context and action items\\."""`))
 
-    const blocked = harness({ connections: [GOOGLE, SLACK, NOTES], settings: { sources: { calendar: "everyone", email: "everyone", chat: "everyone", connections: { [NOTES.id]: "off" } } }, row: { preferences: withChoices({ [NOTES.id]: { on: true } }) } })
+    const blocked = harness({ connections: [GOOGLE, SLACK, NOTES], settings: { sources: { calendar: "everyone", connections: { [NOTES.id]: "off" } } }, row: { preferences: withChoices({ [NOTES.id]: { on: true } }) } })
     await blocked.run()
     assert.ok(!blocked.state.turns[0]?.scopes.includes(scopeFor(NOTES.id)), "not allowed by the admin, whatever the member chose")
     const off = harness({ connections: [GOOGLE, SLACK, NOTES] })
@@ -752,9 +794,9 @@ describe("sources, not categories", () => {
 
   test("mutes still apply: a muted preset's item is dropped, anything else still goes out", async () => {
     const muted = { overrides: { muted: ["waiting_on_you"] } }
-    const presetOnly = harness({ row: muted, replies: [message("Worth catching: x.", [{ source: "email", id: "t1", preset: "waiting_on_you" }])] })
+    const presetOnly = harness({ row: muted, replies: [message("Worth catching: x.", [waiting("t1")])] })
     assert.deepEqual(await presetOnly.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "nothing_new" })
-    const other = harness({ row: muted, replies: [message("Quick check: a security notice.", [{ source: "email", id: "t2" }])] })
+    const other = harness({ row: muted, replies: [message("Quick check: a security notice.", [{ source: SLACK.id, id: "t2" }])] })
     await other.run()
     assert.equal(other.state.delivered.length, 1)
   })
@@ -763,9 +805,9 @@ describe("sources, not categories", () => {
     const broken: MemberConnection = { ...GOOGLE, state: "reconnect" }
     const h = harness({ connections: [broken, SLACK] })
     await h.run()
-    assert.deepEqual(h.state.delivered, ["Quick check: I can't read your Google Calendar and Gmail, so I've paused checking them and kept reading the rest. <https://den.example/dashboard/library/connectors/google-workspace|Reconnect Google Workspace>"])
+    assert.deepEqual(h.state.delivered, ["Quick check: I can't read your Google Calendar, so I've paused checking it and kept reading the rest. <https://den.example/dashboard/library/connectors/google-workspace|Reconnect Google Workspace>"])
     assert.ok(!h.state.turns[0]?.scopes.includes(scopeFor(GOOGLE.id)), "the paused source isn't on the token")
-    assert.match(h.state.turns[0]?.prompt ?? "", /Turned on but not readable now, so don't try: Calendar \(needs reconnecting\), Email \(needs reconnecting\)\./)
+    assert.match(h.state.turns[0]?.prompt ?? "", /Turned on but not readable now, so don't try: Calendar \(needs reconnecting\)\./)
     h.state.clock = NOW + 3 * 3_600_000
     await h.run()
     assert.equal(h.state.delivered.length, 1, "not repeated every run")
@@ -785,22 +827,17 @@ describe("sources, not categories", () => {
     assert.equal(h.state.delivered.length, 1)
   })
 
-  test("two Google accounts, the admin picked the work one: only it is read, and the other is never asked for", async () => {
+  test("two Google accounts and no pick to make: the one the member connected is read, and the other is never asked for", async () => {
     const work: MemberConnection = { ...GOOGLE, id: "gws_work", name: "Acme Google" }
     const personal: MemberConnection = { ...GOOGLE, id: "gws_personal", name: "Personal Google", state: "needs_connection" }
-    const picked = { ...settingsOn.sources, coreConnections: { calendar: [work.id], email: [work.id] } }
-    const h = harness({ connections: [work, personal, SLACK], settings: { sources: picked } })
+    const h = harness({ connections: [work, personal, SLACK] })
     await h.run()
-    assert.deepEqual(h.state.calendarVia, [work.id], "the calendar is read through the picked connection, not a default")
-    assert.deepEqual(h.state.delivered, [], "no Connect message for the account the admin didn't pick")
+    assert.deepEqual(h.state.calendarVia, [work.id], "every calendar app serves the calendar, and the connected one is read")
+    assert.deepEqual(h.state.delivered, [], "one connected account is enough; the other isn't asked for")
     const scopes = h.state.turns[0]?.scopes ?? []
-    assert.ok(scopes.includes("openwork:agent-core:email:gws_work") && scopes.includes("openwork:agent-core:calendar:gws_work"))
+    assert.ok(scopes.includes("openwork:agent-core:calendar:gws_work"))
     assert.ok(!scopes.some((scope) => scope.includes(personal.id)), "nothing of the other account on the token")
-
-    const unpicked = harness({ connections: [work, personal, SLACK] })
-    await unpicked.run()
-    assert.deepEqual(unpicked.state.calendarVia, [work.id], "unpicked: every connection serves it, and the connected one is read")
-    assert.deepEqual(unpicked.state.delivered, [], "one connected account is enough; the other isn't asked for")
+    assert.ok(!scopes.some((scope) => scope.startsWith("openwork:agent-core:email:") || scope.startsWith("openwork:agent-native:")), "its mail is not read: Google Workspace is only the calendar here")
   })
 
   test("Google refusing the calendar it reads holds up only that, never falling back to another account", async () => {
@@ -811,8 +848,8 @@ describe("sources, not categories", () => {
     assert.deepEqual(scope.state.calendarVia, [work.id], "only the one connection the calendar reads is tried")
     assert.deepEqual(scope.state.delivered, ["Quick check: I can't read your Google Calendar, so I've paused checking it and kept reading the rest. <https://den.example/dashboard/library/connectors/gws_work|Reconnect Google Workspace>"])
     const scopes = scope.state.turns[0]?.scopes ?? []
-    assert.ok(scopes.includes("openwork:agent-core:email:gws_work"), "the work account's email still reads")
-    assert.ok(!scopes.some((entry) => entry.includes("calendar:gws_") || entry.includes(personal.id)), "no calendar, and nothing of the other account")
+    assert.ok(scopes.includes(scopeFor(SLACK.id)), "Slack still reads")
+    assert.ok(!scopes.some((entry) => entry.includes("gws_")), "no calendar, and nothing of either Google account")
 
     const only = harness({ connections: [work, SLACK], google: { [work.id]: "missing_scope" } })
     await only.run()
@@ -820,7 +857,7 @@ describe("sources, not categories", () => {
   })
 
   test("the calendar turned off by the admin is neither read by Den nor offered to the agent", async () => {
-    const h = harness({ settings: { sources: { calendar: "off", email: "everyone", chat: "everyone", connections: {} } } })
+    const h = harness({ settings: { sources: { calendar: "off", connections: { [SLACK.id]: "everyone" } } } })
     await h.run()
     assert.equal(h.state.calendarReads, 0)
     assert.doesNotMatch(h.state.turns[0]?.prompt ?? "", /- calendar:/)
@@ -831,37 +868,62 @@ describe("sources, not categories", () => {
 describe("Connect's read allowlist for an agent's token", () => {
   test("only Den adds it; a plain read token keeps its rules", () => {
     assert.equal(agentRead.agentReadAllowlist(new Set(["mcp:read"])), null)
-    const allowlist = agentRead.agentReadAllowlist(new Set(["mcp:read", ...agentRead.agentReadScopes({ kinds: ["email", "chat"], connectionIds: ["google-workspace", SLACK.id], pairs: [{ kind: "email", connectionId: "google-workspace" }] })]))
-    assert.deepEqual(allowlist && [[...allowlist.kinds], [...allowlist.connectionIds], [...allowlist.pairs]], [["email", "chat"], ["google-workspace", SLACK.id], ["email:google-workspace"]])
+    const allowlist = agentRead.agentReadAllowlist(new Set(["mcp:read", ...agentRead.agentReadScopes({ kinds: ["calendar"], connectionIds: ["google-workspace", SLACK.id], pairs: [{ kind: "calendar", connectionId: "google-workspace" }] })]))
+    assert.deepEqual(allowlist && [[...allowlist.kinds], [...allowlist.connectionIds], [...allowlist.pairs]], [["calendar"], ["google-workspace", SLACK.id], ["calendar:google-workspace"]])
+    const stale = agentRead.agentReadAllowlist(new Set(["mcp:read", "openwork:agent-read", "openwork:agent-source:email", "openwork:agent-source:chat", "openwork:agent-core:email:google-workspace"]))
+    assert.deepEqual(stale && [[...stale.kinds], [...stale.pairs]], [[], []], "a token minted before: email and chat name no source, so they open nothing")
   })
 
-  test("native reads: GETs of a core source that is on, through its connection; nothing else", () => {
-    const allowlist = { kinds: new Set(["email" as const]), connectionIds: new Set(["google-workspace"]), pairs: new Set(["email:google-workspace"]) }
+  test("native reads: GETs of the calendar while it is on, through its connection; nothing else", () => {
+    const allowlist = { kinds: new Set(["calendar" as const]), connectionIds: new Set(["google-workspace"]), pairs: new Set(["calendar:google-workspace"]) }
     const get = (path: string) => ({ method: "GET", path })
-    assert.equal(agentRead.agentMayUseNative(allowlist, "google-workspace", get("/v1/capabilities/google-workspace/gmail-messages")), true)
-    assert.equal(agentRead.agentMayUseNative(allowlist, "google-workspace", get("/v1/capabilities/google-workspace/calendar-events")), false, "calendar is off")
+    assert.equal(agentRead.agentMayUseNative(allowlist, "google-workspace", get("/v1/capabilities/google-workspace/calendar-events")), true)
+    assert.equal(agentRead.agentMayUseNative(allowlist, "google-workspace", get("/v1/capabilities/google-workspace/gmail-messages")), false, "mail is not the calendar")
     assert.equal(agentRead.agentMayUseNative(allowlist, "google-workspace", get("/v1/capabilities/google-workspace/drive-files")), false, "files are not a source")
-    assert.equal(agentRead.agentMayUseNative(allowlist, "google-workspace", { method: "POST", path: "/v1/capabilities/google-workspace/gmail-drafts" }), false)
-    assert.equal(agentRead.agentMayUseNative(allowlist, "other-google", get("/v1/capabilities/google-workspace/gmail-messages")), false)
-    assert.equal(agentRead.nativeSourceKind("/v1/capabilities/microsoft-365/teams-chats/:chatId/messages"), "chat")
+    assert.equal(agentRead.agentMayUseNative(allowlist, "google-workspace", { method: "POST", path: "/v1/capabilities/google-workspace/calendar-events" }), false)
+    assert.equal(agentRead.agentMayUseNative(allowlist, "other-google", get("/v1/capabilities/google-workspace/calendar-events")), false)
+    assert.equal(agentRead.agentMayUseNative({ ...allowlist, kinds: new Set() }, "google-workspace", get("/v1/capabilities/google-workspace/calendar-events")), false, "the calendar is off")
+    assert.equal(agentRead.nativeSourceKind("/v1/capabilities/google-workspace/calendar-events/:eventId"), "calendar")
+    for (const path of ["/v1/capabilities/google-workspace/gmail-messages", "/v1/capabilities/microsoft-365/mail-messages", "/v1/capabilities/microsoft-365/teams-chats/:chatId/messages", "/v1/capabilities/google-workspace/drive-files"]) {
+      assert.equal(agentRead.nativeSourceKind(path), null, `${path}: read through the connection, not a source of its own`)
+    }
   })
 
-  test("native reads are per source and connection: email through one account never opens calendar through it", () => {
+  test("the calendar is read through one connection: a second account on the token never opens through it", () => {
     const allowlist = agentRead.agentReadAllowlist(new Set(["mcp:read", ...agentRead.agentReadScopes({
-      kinds: ["email", "calendar"],
+      kinds: ["calendar"],
       connectionIds: ["gws_work", "gws_personal"],
-      pairs: [{ kind: "email", connectionId: "gws_work" }, { kind: "calendar", connectionId: "gws_personal" }],
+      pairs: [{ kind: "calendar", connectionId: "gws_personal" }],
     })]))
     assert.ok(allowlist)
     const get = (path: string) => ({ method: "GET", path })
-    assert.equal(agentRead.agentMayUseNative(allowlist, "gws_work", get("/v1/capabilities/google-workspace/gmail-messages")), true)
-    assert.equal(agentRead.agentMayUseNative(allowlist, "gws_work", get("/v1/capabilities/google-workspace/calendar-events")), false)
     assert.equal(agentRead.agentMayUseNative(allowlist, "gws_personal", get("/v1/capabilities/google-workspace/calendar-events")), true)
-    assert.equal(agentRead.agentMayUseNative(allowlist, "gws_personal", get("/v1/capabilities/google-workspace/gmail-messages")), false)
+    assert.equal(agentRead.agentMayUseNative(allowlist, "gws_work", get("/v1/capabilities/google-workspace/calendar-events")), false)
+  })
+
+  test("mail is read through the Google Workspace connection when it is a source, never through the calendar alone", () => {
+    const get = (path: string, name?: string) => ({ method: "GET", path, ...(name ? { name } : {}) })
+    const mail = "/v1/capabilities/google-workspace/gmail-messages"
+    // The calendar only: the connection is on the token for its calendar, and that opens no mail.
+    const calendarOnly = agentRead.agentReadAllowlist(new Set(["mcp:read", ...agentRead.agentReadScopes({ kinds: ["calendar"], connectionIds: ["gws_work"], pairs: [{ kind: "calendar", connectionId: "gws_work" }] })]))
+    assert.ok(calendarOnly)
+    assert.equal(agentRead.agentMayUseNative(calendarOnly, "gws_work", get(mail)), false)
+    // Without Your agent's brief the token never carries a provider's other reads, so mail stays closed.
+    const perTool = agentRead.agentReadAllowlist(new Set(["mcp:read", ...agentRead.agentReadScopes({ kinds: ["calendar"], connectionIds: ["gws_work"], pairs: [{ kind: "calendar", connectionId: "gws_work" }], tools: [] })]))
+    assert.ok(perTool)
+    assert.equal(agentRead.agentMayUseNative(perTool, "gws_work", get(mail)), false, "the connection isn't one of the check's sources")
+    // Google Workspace as a connection of its own (workbotAgentBrief): its mail, and its other reads, open.
+    const asSource = agentRead.agentReadAllowlist(new Set(["mcp:read", ...agentRead.agentReadScopes({ kinds: [], connectionIds: ["gws_work"], tools: [], nativeReads: [{ connectionId: "gws_work", denied: ["listGmailMessages"] }] })]))
+    assert.ok(asSource)
+    assert.equal(agentRead.agentMayUseNative(asSource, "gws_work", get(mail, "getGmailMessage")), true)
+    assert.equal(agentRead.agentMayUseNative(asSource, "gws_work", get(mail, "listGmailMessages")), false, "a read an admin turned off")
+    assert.equal(agentRead.agentMayUseNative(asSource, "gws_work", { method: "POST", path: "/v1/capabilities/google-workspace/gmail-drafts" }), false, "never a write")
+    assert.equal(agentRead.agentMayUseNative(asSource, "gws_work", get("/v1/capabilities/google-workspace/calendar-events")), false, "the calendar is its own setting, and it is off here")
+    assert.equal(agentRead.agentMayUseNative(asSource, "gws_personal", get(mail)), false, "another account isn't on the token")
   })
 
   test("a connection's tools: only its service's reviewed reads; provider hints and read-shaped names never are enough", () => {
-    const allowlist = { kinds: new Set(["chat" as const]), connectionIds: new Set([SLACK.id, NOTES.id, "emc_crm"]) }
+    const allowlist = { kinds: new Set<"calendar">(), connectionIds: new Set([SLACK.id, NOTES.id, "emc_crm"]), pairs: new Set<string>() }
     const slack = { id: SLACK.id, url: SLACK.url }
     assert.equal(agentRead.agentMayUseExternalTool(allowlist, slack, { name: "slack_read_thread" }), true, "reviewed")
     assert.equal(agentRead.agentMayUseExternalTool(allowlist, slack, { name: "slack_send_message" }), false)
@@ -890,7 +952,7 @@ describe("a member's sources, in chat or on the page", () => {
 
   test("only services agents can read are sources of their own", () => {
     const listed = resolveMemberSources({ connections: [...connections, { id: "emc_crm", name: "CRM", url: "https://mcp.crm.example/mcp", native: null, state: "connected" }], policy: admin.sources, choices: {}, lastLook: {} })
-    assert.deepEqual(listed.map((source) => source.id), ["calendar", "email", "chat", NOTES.id, "emc_01k8z5wq0s0000000000000003"])
+    assert.deepEqual(listed.map((source) => source.id), ["calendar", SLACK.id, NOTES.id, "emc_01k8z5wq0s0000000000000003"], "the calendar, then each connection with reviewed reads: no email or chat, and Google Workspace is only the calendar")
   })
 
   test("\"also look at my meeting notes for action items, and skip the issue tracker\": saved by name, one line per source, Connect where needed", () => {
@@ -908,12 +970,15 @@ describe("a member's sources, in chat or on the page", () => {
 
   test("the admin's policy is enforced on the server: no widening, no turning off what is on for everyone", () => {
     assert.deepEqual(change({ sources: [{ source: "Meeting notes", on: true }] }, preferences.emptyStoredPreferences(), { ...admin.sources, connections: { [NOTES.id]: "off" } }),
-      { ok: false, status: 400, error: "source_not_allowed", message: "Meeting notes isn't allowed for agents in your organization. An admin can change it in Manage › Workbot." })
+      { ok: false, status: 400, error: "source_not_allowed", message: "Meeting notes isn't allowed for agents in your organization. An admin can change it in Workbot's settings." })
     assert.deepEqual(change({ sources: [{ source: "Slack", on: false }] }),
-      { ok: false, status: 400, error: "source_locked", message: "Team chat is on for everyone in your organization. An admin can change it in Manage › Workbot." })
-    const steer = change({ sources: [{ source: "email", instruction: "Skip newsletters." }] })
+      { ok: false, status: 400, error: "source_locked", message: "Slack is on for everyone in your organization. An admin can change it in Workbot's settings." })
+    const steer = change({ sources: [{ source: "slack", instruction: "Skip #random." }] })
     assert.ok(steer.ok, "an instruction on a source that is on for everyone is fine")
-    assert.deepEqual(steer.lines, ["Email: “Skip newsletters.”"])
+    assert.deepEqual(steer.lines, ["Slack: “Skip #random.”"])
+    const gone = change({ sources: [{ source: "email", on: false }] })
+    assert.ok(gone.ok)
+    assert.deepEqual([gone.lines, gone.connect], [[], [{ name: "email", connectionId: null }]], "email is no source: nothing is saved for it")
   })
 
   test("undo reverts a source change like any other", () => {
@@ -928,7 +993,7 @@ describe("a member's sources, in chat or on the page", () => {
   })
 })
 
-describe("connections as sources, picked per category", () => {
+describe("connections as sources", () => {
   /** An MCP connection whose service has no reviewed read tools: never a source. */
   const CRM: MemberConnection = { id: "emc_01k8z5wq0s0000000000000009", name: "Acme CRM", url: "https://mcp.crm.example/mcp", native: null, state: "connected" }
   const TRACKER: MemberConnection = { id: "emc_01k8z5wq0s0000000000000003", name: "Issue tracker", url: "https://mcp.linear.app/mcp", native: null, state: "connected" }
@@ -941,123 +1006,122 @@ describe("connections as sources, picked per category", () => {
     })
     assert.deepEqual(listed.map((connection) => [connection.id, connection.native]), [["google-workspace", "google-workspace"], ["gws_personal", "google-workspace"]])
     const groups = groupSourceConnections(listed)
-    assert.deepEqual(groups.calendar.map((connection) => connection.id), ["google-workspace", "gws_personal"], "both read the calendar until the admin picks")
+    assert.deepEqual(groups.calendar.map((connection) => connection.id), ["google-workspace", "gws_personal"], "both serve the calendar; nobody picks one")
     assert.deepEqual(groups.all.map((option) => [option.id, option.native, option.slots.join(",")]), [
-      ["google-workspace", true, "calendar,email"],
-      ["gws_personal", true, "calendar,email"],
+      ["google-workspace", true, "calendar"],
+      ["gws_personal", true, "calendar"],
     ])
+    assert.deepEqual(Object.keys(groups).sort(), ["all", "calendar", "other"], "no email, chat or defaults")
     const none = await listOrganizationSourceConnections(organizationId, { rows: async () => [], hasLegacyClient: async () => false })
     assert.deepEqual(none, [])
   })
 
-  test("only MCPs with reviewed read tools can be added, anywhere; any other MCP isn't offered", () => {
-    const all = groupSourceConnections([NOTES, CRM]).all
-    assert.deepEqual(all.map((option) => [option.id, option.slots.join(",")]), [[NOTES.id, "calendar,email,chat,other"]], "the CRM isn't offered at all")
+  test("only MCPs with reviewed read tools can be added, as connections of their own; any other MCP isn't offered", () => {
+    const groups = groupSourceConnections([SLACK, NOTES, CRM])
+    assert.deepEqual(groups.all.map((option) => [option.id, option.slots.join(",")]), [[SLACK.id, "other"], [NOTES.id, "other"]], "the CRM isn't offered at all; nothing can be added to the calendar")
+    assert.deepEqual(groups.other.map((connection) => connection.id), [SLACK.id, NOTES.id], "Slack is a connection like any other")
+    assert.deepEqual(groups.calendar, [])
   })
 
-  test("a reviewed MCP added to Email is read; Other context is what the admin added; the last one removed reads nothing", async () => {
-    const sources = { ...settingsOn.sources, coreConnections: { email: [GOOGLE.id, NOTES.id] }, otherConnections: [TRACKER.id], connections: { [TRACKER.id]: "everyone" as const } }
+  test("the connections agents read are what the admin added; the last one removed reads nothing; an unreviewed MCP is never read", async () => {
+    const sources = { ...settingsOn.sources, otherConnections: [TRACKER.id], connections: { [TRACKER.id]: "everyone" as const } }
     const listed = resolveMemberSources({ connections: org, policy: sources, choices: {}, lastLook: {} })
-    assert.deepEqual(listed.map((source) => source.id), ["calendar", "email", "chat", TRACKER.id], "Granola left Other context: no longer its own source")
-    const email = listed.find((source) => source.id === "email")
-    assert.deepEqual(email?.options.map((connection) => connection.id), [GOOGLE.id, NOTES.id], "both allowed for email")
-    assert.deepEqual(email?.connections.map((connection) => connection.id), [GOOGLE.id], "one read: Den's own provider by default")
-    const h = harness({ connections: [GOOGLE, SLACK, NOTES, TRACKER, CRM], settings: { sources }, row: { preferences: JSON.stringify({ v: 1, words: { always: "", never: "", when: "", how: "" }, sources: { email: { connectionId: NOTES.id } }, log: [] }) } })
+    assert.deepEqual(listed.map((source) => source.id), ["calendar", TRACKER.id], "Slack and Granola were not added: no longer sources")
+    const calendar = listed.find((source) => source.id === "calendar")
+    assert.deepEqual(calendar?.options.map((connection) => connection.id), [GOOGLE.id, "gws_personal"], "every calendar app, with no admin pick")
+    assert.deepEqual(calendar?.connections.map((connection) => connection.id), [GOOGLE.id], "one read")
+    const h = harness({ connections: [GOOGLE, SLACK, NOTES, TRACKER, CRM], settings: { sources } })
     await h.run()
     const scopes = h.state.turns[0]?.scopes ?? []
-    assert.ok(scopes.includes(`openwork:agent-connection:${NOTES.id}`) && scopes.includes(`openwork:agent-connection:${TRACKER.id}`), "the member read email from Granola")
-    assert.ok(!scopes.includes(`openwork:agent-core:email:${GOOGLE.id}`), "and not from Google as well")
+    assert.ok(scopes.includes(`openwork:agent-connection:${TRACKER.id}`) && scopes.includes(`openwork:agent-core:calendar:${GOOGLE.id}`))
+    assert.ok(!scopes.some((scope) => scope.includes(SLACK.id) || scope.includes(NOTES.id)), "connections the admin didn't add are not on the token")
     assert.ok(!scopes.some((scope) => scope.includes(CRM.id)), "an MCP without reviewed reads is never on the token")
     assert.deepEqual(h.state.calendarVia, [GOOGLE.id], "only Google's calendar wakes the agent early")
     const empty = resolveMemberSources({ connections: org, policy: { ...sources, otherConnections: [] }, choices: {}, lastLook: {} })
-    assert.deepEqual(empty.map((source) => source.id), ["calendar", "email", "chat"], "the last one removed: Other context reads nothing")
-    const noEmail = resolveMemberSources({ connections: org, policy: { ...sources, coreConnections: { email: [] } }, choices: {}, lastLook: {} })
-    assert.deepEqual(noEmail.find((source) => source.id === "email")?.connections, [], "a category's last source removed: it reads nothing")
-    const sneaked = resolveMemberSources({ connections: org, policy: { ...sources, coreConnections: { email: [CRM.id] }, otherConnections: [CRM.id] }, choices: {}, lastLook: {} })
-    assert.ok(!sneaked.some((source) => source.connections.some((connection) => connection.id === CRM.id)), "even if saved, an unreviewed MCP isn't read")
+    assert.deepEqual(empty.map((source) => source.id), ["calendar"], "the last one removed: only the calendar is read")
+    const sneaked = resolveMemberSources({ connections: org, policy: { ...sources, otherConnections: [CRM.id, GOOGLE.id] }, choices: {}, lastLook: {} })
+    assert.deepEqual(sneaked.map((source) => source.id), ["calendar"], "even if saved, an unreviewed MCP or Den's own provider isn't read as a connection")
   })
 
-  test("policies saved before this read and behave exactly as before; null resets the new fields", () => {
-    const old = { calendar: "everyone", email: "members", chat: "off", coreConnections: { email: ["google-workspace"] }, connections: { [NOTES.id]: "everyone" } }
+  test("a policy saved with email, chat and picked apps reads as the calendar and its connections; null resets the list", () => {
+    const old = { calendar: "everyone", email: "members", chat: "off", coreConnections: { email: ["google-workspace"], calendar: ["gws_personal"] }, coreDefaults: { calendar: "gws_personal" }, connections: { [NOTES.id]: "everyone" } }
     const read = readWorkbotProactiveSettings({ workbot: { proactive: { sources: old } } }).sources
-    assert.deepEqual(read, old)
+    assert.deepEqual(read, { calendar: "everyone", connections: { [NOTES.id]: "everyone" } })
     const resolvedOld = resolveMemberSources({ connections: org, policy: read, choices: {}, lastLook: {} })
-    assert.deepEqual(resolvedOld.map((source) => [source.id, source.connections.map((connection) => connection.id).join(",")]), [
-      ["calendar", "google-workspace"], ["email", "google-workspace"], ["chat", SLACK.id], [NOTES.id, NOTES.id], [TRACKER.id, TRACKER.id],
-    ], "reviewed services only in Other context; the CRM isn't read; one connection per category")
-    assert.deepEqual(resolvedOld.find((source) => source.id === "calendar")?.options.map((connection) => connection.id), ["google-workspace", "gws_personal"], "still both allowed, as before")
-    assert.equal(read.coreDefaults, undefined, "no default saved: automatic")
+    assert.deepEqual(resolvedOld.map((source) => [source.id, source.on, source.connections.map((connection) => connection.id).join(",")]), [
+      ["calendar", true, "google-workspace"], [SLACK.id, false, SLACK.id], [NOTES.id, true, NOTES.id], [TRACKER.id, false, TRACKER.id],
+    ], "the saved pick of a calendar app is gone: automatic; chat \"off\" no longer holds Slack back, it is up to each member like any connection")
+    assert.deepEqual(resolvedOld.find((source) => source.id === "calendar")?.options.map((connection) => connection.id), ["google-workspace", "gws_personal"])
     const added = mergeWorkbotProactiveSettings({ ...settingsOn, sources: read }, { sources: { otherConnections: [TRACKER.id, TRACKER.id] } })
     assert.deepEqual(added?.sources.otherConnections, [TRACKER.id])
     const reset = added && mergeWorkbotProactiveSettings(added, { sources: { otherConnections: null } })
     assert.deepEqual(reset?.sources, read)
   })
 
-  test("an admin's change is checked: the organization's connections, where they can go, and only reviewed MCPs", () => {
+  test("an admin's change is checked: the organization's connections, and only reviewed MCPs", () => {
     const connections = org.map(({ id, name, url, native }) => ({ id, name, url, native }))
     const check = (change: Parameters<typeof checkSourcesChange>[0]["change"]) => checkSourcesChange({ change, connections })
-    assert.equal(check({ coreConnections: { email: [GOOGLE.id, NOTES.id] }, otherConnections: [TRACKER.id] }), null)
-    assert.equal(check({ coreConnections: { email: [CRM.id] } }), "Acme CRM can't serve email.")
+    assert.equal(check({ calendar: "members", otherConnections: [TRACKER.id, SLACK.id], connections: { [SLACK.id]: "everyone" } }), null)
     assert.equal(check({ otherConnections: [CRM.id] }), "Agents can't read Acme CRM yet.")
     assert.equal(check({ connections: { [CRM.id]: "everyone" } }), "Agents can't read Acme CRM yet.")
     assert.equal(check({ connections: { [CRM.id]: null } }), null)
-    assert.equal(check({ coreConnections: { chat: [GOOGLE.id] } }), "Google Workspace can't serve team chat.")
-    assert.equal(check({ coreConnections: { chat: [NOTES.id, SLACK.id] } }), null, "a reviewed MCP can serve any category")
     assert.equal(check({ otherConnections: [GOOGLE.id] }), "Google Workspace can't be other context.")
+    assert.equal(check({ connections: { [GOOGLE.id]: "everyone" } }), "Agents can't read Google Workspace yet.", "without Your agent's brief, Den's own provider is only the calendar")
     assert.equal(check({ otherConnections: ["emc_nope"] }), "No connection emc_nope in this organization.")
+    assert.equal(check({ toolOverrides: { [SLACK.id]: { slack_read_thread: "deny" } } }), "Choosing tools for agents isn't on for this organization.")
+    const withBrief = (change: Parameters<typeof checkSourcesChange>[0]["change"]) => checkSourcesChange({ change, connections, mode: "any" })
+    assert.equal(withBrief({ connections: { [GOOGLE.id]: "everyone", [CRM.id]: "members" } }), null, "with the brief, any connection: Google Workspace for its mail and files")
   })
 })
 
-describe("guardrails: the admin allows and sets a default, each member's agent reads one connection per category", () => {
+describe("the calendar: no admin pick, each member's agent reads one calendar app", () => {
   const WORK: MemberConnection = { ...GOOGLE, id: "gws_work", name: "Acme Google" }
   const PERSONAL: MemberConnection = { ...GOOGLE, id: "gws_personal", name: "Personal Google", state: "needs_connection" }
   const MICROSOFT: MemberConnection = { id: "m365_main", name: "Microsoft 365", url: "https://microsoft.com", native: "microsoft-365", state: "needs_connection" }
   const base = settingsOn.sources
-  const calendarOf = (input: { connections: MemberConnection[]; policy?: WorkbotProactiveSettings["sources"]; choice?: string; counts?: Map<string, number> }) => {
+  const calendarOf = (input: { connections: MemberConnection[]; choice?: string; counts?: Map<string, number> }) => {
     const source = resolveMemberSources({
       connections: input.connections,
-      policy: input.policy ?? base,
+      policy: base,
       choices: input.choice ? { calendar: { connectionId: input.choice } } : {},
       lastLook: {},
       connectedMembers: input.counts,
     }).find((entry) => entry.id === "calendar")
     return { id: source?.connections[0]?.id ?? null, state: source?.connections[0]?.state ?? null, chosenBy: source?.chosenBy ?? null, options: source?.options.map((connection) => connection.id) ?? [], count: source?.connections.length ?? 0 }
   }
-  const withDefault = (id: string) => ({ ...base, coreDefaults: { calendar: id } })
 
-  test("the member's pick wins, even before they connect it; a pick that is no longer allowed is ignored", () => {
+  test("the member's pick wins, even before they connect it; a pick that is no longer a calendar app is ignored", () => {
     assert.deepEqual(calendarOf({ connections: [WORK, PERSONAL], choice: PERSONAL.id }), { id: PERSONAL.id, state: "needs_connection", chosenBy: "member", options: [WORK.id, PERSONAL.id], count: 1 })
-    const notAllowed = { ...base, coreConnections: { calendar: [WORK.id] } }
-    assert.deepEqual(calendarOf({ connections: [WORK, PERSONAL], policy: notAllowed, choice: PERSONAL.id }).id, WORK.id, "the admin took it away: back to the default")
+    assert.deepEqual(calendarOf({ connections: [WORK], choice: PERSONAL.id }), { id: WORK.id, state: "connected", chosenBy: "auto", options: [WORK.id], count: 1 }, "the organization removed it: back to automatic")
+    assert.deepEqual(calendarOf({ connections: [WORK, SLACK], choice: SLACK.id }).id, WORK.id, "only a calendar app can be picked")
   })
 
-  test("else the admin's default when the member's account is ready; else one they already connected; else the default to connect", () => {
+  test("else the one most members connected when the member's account is ready; else one they already connected; else that one to connect", () => {
     const connectedPersonal = { ...PERSONAL, state: "connected" as const }
-    assert.deepEqual(calendarOf({ connections: [WORK, connectedPersonal], policy: withDefault(PERSONAL.id) }).chosenBy, "admin")
-    assert.deepEqual(calendarOf({ connections: [WORK, connectedPersonal], policy: withDefault(PERSONAL.id) }).id, PERSONAL.id)
-    assert.deepEqual(calendarOf({ connections: [WORK, PERSONAL], policy: withDefault(PERSONAL.id) }), { id: WORK.id, state: "connected", chosenBy: "auto", options: [WORK.id, PERSONAL.id], count: 1 }, "never asked to connect the default when another allowed one is ready")
-    const nothing = calendarOf({ connections: [{ ...WORK, state: "needs_connection" }, PERSONAL], policy: withDefault(PERSONAL.id) })
-    assert.deepEqual([nothing.id, nothing.state, nothing.chosenBy], [PERSONAL.id, "needs_connection", "admin"], "nothing connected: the default, to connect")
-    const stale = calendarOf({ connections: [WORK, PERSONAL], policy: { ...withDefault("gws_gone"), coreConnections: { calendar: [WORK.id, PERSONAL.id] } } })
-    assert.deepEqual([stale.id, stale.chosenBy], [WORK.id, "auto"], "a default that is no longer there falls back to automatic")
+    const counts = new Map([[WORK.id, 1], [PERSONAL.id, 6]])
+    assert.deepEqual(calendarOf({ connections: [WORK, connectedPersonal], counts }), { id: PERSONAL.id, state: "connected", chosenBy: "auto", options: [WORK.id, PERSONAL.id], count: 1 })
+    assert.deepEqual(calendarOf({ connections: [WORK, PERSONAL], counts }), { id: WORK.id, state: "connected", chosenBy: "auto", options: [WORK.id, PERSONAL.id], count: 1 }, "never asked to connect the popular one when another is ready")
+    const nothing = calendarOf({ connections: [{ ...WORK, state: "needs_connection" }, PERSONAL], counts })
+    assert.deepEqual([nothing.id, nothing.state, nothing.chosenBy], [PERSONAL.id, "needs_connection", "auto"], "nothing connected: the popular one, to connect")
+    assert.deepEqual(calendarOf({ connections: [SLACK, NOTES] }), { id: null, state: null, chosenBy: null, options: [], count: 0 }, "no calendar app at all: nothing to read")
   })
 
-  test("the automatic default is the allowed connection most members connected; unknown counts go to the first", () => {
+  test("the automatic choice is the calendar app most members connected; unknown counts go to the first", () => {
     const counts = new Map([[WORK.id, 2], [MICROSOFT.id, 5]])
     const notConnected = [{ ...WORK, state: "needs_connection" as const }, MICROSOFT]
     assert.deepEqual(calendarOf({ connections: notConnected, counts }).id, MICROSOFT.id)
     assert.deepEqual(calendarOf({ connections: notConnected, counts }).chosenBy, "auto")
-    assert.deepEqual(calendarOf({ connections: notConnected }).id, WORK.id, "without counts: the first allowed")
+    assert.deepEqual(calendarOf({ connections: notConnected }).id, WORK.id, "without counts: the first")
     assert.deepEqual(calendarOf({ connections: [MICROSOFT, { ...WORK, state: "needs_connection" }], counts: new Map([[WORK.id, 1]]) }).id, WORK.id)
   })
 
   test("only the chosen connection is on the token and in connect notices: an unused personal account is never asked for", async () => {
-    const h = harness({ connections: [WORK, PERSONAL, SLACK], settings: { sources: withDefault(PERSONAL.id) } })
+    const h = harness({ connections: [WORK, PERSONAL, SLACK] })
     await h.run()
     assert.deepEqual(h.state.delivered, [], "no Connect message for the personal account")
     assert.deepEqual(h.state.calendarVia, [WORK.id])
     const scopes = h.state.turns[0]?.scopes ?? []
-    assert.ok(scopes.includes(`openwork:agent-core:calendar:${WORK.id}`) && scopes.includes(`openwork:agent-core:email:${WORK.id}`))
+    assert.ok(scopes.includes(`openwork:agent-core:calendar:${WORK.id}`))
     assert.ok(!scopes.some((scope) => scope.includes(PERSONAL.id)), "nothing of the personal account on the token")
   })
 
@@ -1069,21 +1133,21 @@ describe("guardrails: the admin allows and sets a default, each member's agent r
     assert.deepEqual(h.state.calendarVia, [PERSONAL.id])
     const scopes = h.state.turns[0]?.scopes ?? []
     assert.ok(scopes.includes(`openwork:agent-core:calendar:${PERSONAL.id}`) && !scopes.includes(`openwork:agent-core:calendar:${WORK.id}`))
-    assert.ok(scopes.includes(`openwork:agent-core:email:${WORK.id}`), "email still reads the default")
+    assert.ok(!scopes.some((scope) => scope.includes(WORK.id)), "the account they didn't pick is not on the token at all")
     const notConnected = harness({ connections: [WORK, PERSONAL, SLACK], row: { preferences: picked } })
     await notConnected.run()
     assert.deepEqual(notConnected.state.calendarVia, [], "picked but not connected: no calendar read through another account")
     assert.deepEqual(notConnected.state.delivered, ["Quick check: I can't read your Google Calendar, so I've paused checking it and kept reading the rest. <https://den.example/dashboard/library/connectors/gws_personal|Connect Google Workspace>"])
   })
 
-  test("a member picks where calendar reads from, only among the allowed connections; it is logged and undone like any change", () => {
+  test("a member picks where the calendar reads from, only among the calendar apps; it is logged and undone like any change", () => {
     let next = 0
     const newId = () => `chg_g${++next}`
     const connections = [WORK, PERSONAL, SLACK, NOTES]
     const change = (request: Parameters<typeof preferences.applyMemberAgentChange>[0]["request"], stored = preferences.emptyStoredPreferences(), policy = base) =>
       preferences.applyMemberAgentChange({ request, overrides: null, stored, settings: { ...settingsOn, sources: policy }, source: "chat", now: NOW, newId, sources: resolveMemberSources({ connections, policy, choices: stored.sources, lastLook: {} }) })
-    assert.deepEqual(change({ sources: [{ source: "calendar", connectionId: SLACK.id }] }), { ok: false, status: 400, error: "connection_not_allowed", message: "Calendar can't read from that connection in your organization. An admin chooses the allowed apps in Manage › Workbot." })
-    assert.deepEqual(change({ sources: [{ source: "Meeting notes", connectionId: NOTES.id }] }), { ok: false, status: 400, error: "connection_not_allowed", message: "Meeting notes always reads its own connection. Only calendar, email and team chat read from a connection you pick." })
+    assert.deepEqual(change({ sources: [{ source: "calendar", connectionId: SLACK.id }] }), { ok: false, status: 400, error: "connection_not_allowed", message: "Calendar can't read from that connection. Choose one of your organization's calendar apps." })
+    assert.deepEqual(change({ sources: [{ source: "Meeting notes", connectionId: NOTES.id }] }), { ok: false, status: 400, error: "connection_not_allowed", message: "Meeting notes always reads its own connection. Only the calendar reads from a connection you pick." })
     assert.equal(change({ sources: [{ source: "calendar", connectionId: WORK.id }] }, preferences.emptyStoredPreferences(), { ...base, calendar: "off" }).ok, false, "not allowed at all")
 
     const saved = change({ sources: [{ source: "my calendar", connectionId: PERSONAL.id }] })
@@ -1108,29 +1172,29 @@ describe("guardrails: the admin allows and sets a default, each member's agent r
     assert.equal(reverted.stored.sources.calendar?.connectionId, PERSONAL.id, "undo restores the previous pick")
   })
 
-  test("preferences and choices saved before this read as before", () => {
-    const old = preferences.parseStoredPreferences(JSON.stringify({ v: 1, words: { always: "", never: "", when: "", how: "" }, sources: { chat: { on: false, changedFrom: "page", changedAt: 1 } }, log: [] }))
-    assert.deepEqual(old.sources, { chat: { on: false, changedFrom: "page", changedAt: 1 } })
+  test("choices a member saved for email or team chat are kept as stored and read nothing", () => {
+    const old = preferences.parseStoredPreferences(JSON.stringify({ v: 1, words: { always: "", never: "", when: "", how: "" }, sources: { chat: { on: false, changedFrom: "page", changedAt: 1 }, email: { connectionId: "gws_work" } }, log: [] }))
+    assert.deepEqual(old.sources, { chat: { on: false, changedFrom: "page", changedAt: 1 }, email: { connectionId: "gws_work" } }, "still parsed: nothing is lost on read")
     const resolved = resolveMemberSources({ connections: [GOOGLE, SLACK], policy: base, choices: old.sources, lastLook: {} })
     assert.deepEqual(resolved.map((source) => [source.id, source.on, source.connections.map((connection) => connection.name).join(","), source.chosenBy]), [
-      ["calendar", true, "Google Calendar", "auto"], ["email", true, "Gmail", "auto"], ["chat", true, "Slack", "auto"],
-    ])
+      ["calendar", true, "Google Calendar", "auto"], [SLACK.id, true, "Slack", null],
+    ], "no email or chat source for them to apply to; Slack follows its own policy")
   })
 
-  test("the admin's view: each connection's member count and the default each category uses now", async () => {
+  test("the admin's view: the calendar apps with each one's member count, and every connection that is a source of its own", async () => {
     const org = [
       { id: "gws_work", name: "Acme Google", url: "https://google.com", native: "google-workspace" },
       { id: "m365_main", name: "Microsoft 365", url: "https://microsoft.com", native: "microsoft-365" },
       { id: SLACK.id, name: "Slack", url: SLACK.url, native: null },
     ]
     const counts = new Map([["gws_work", 3], ["m365_main", 7]])
-    const automatic = groupSourceConnections(org, { connectedMembers: counts })
-    assert.deepEqual(automatic.calendar.map((entry) => [entry.id, entry.connectedMembers]), [["gws_work", 3], ["m365_main", 7]])
-    assert.deepEqual(automatic.chat.map((entry) => [entry.id, entry.connectedMembers]), [["m365_main", 7], [SLACK.id, null]], "a shared Slack: unknown")
-    assert.deepEqual(automatic.defaults, { calendar: "m365_main", email: "m365_main", chat: "m365_main" })
-    const chosen = groupSourceConnections(org, { connectedMembers: counts, policy: { ...base, coreDefaults: { calendar: "gws_work", chat: "gws_work" } } })
-    assert.deepEqual(chosen.defaults, { calendar: "gws_work", email: "m365_main", chat: "m365_main" }, "the admin's default while allowed; Google can't serve chat")
-    assert.deepEqual(groupSourceConnections(org, { policy: { ...base, coreConnections: { calendar: [] } } }).defaults.calendar, null, "nothing allowed: no default")
+    const reviewed = groupSourceConnections(org, { connectedMembers: counts })
+    assert.deepEqual(reviewed.calendar.map((entry) => [entry.id, entry.connectedMembers]), [["gws_work", 3], ["m365_main", 7]])
+    assert.deepEqual(reviewed.other, [{ id: SLACK.id, name: "Slack", url: SLACK.url }], "Slack is a connection of its own; Den's providers are only the calendar")
+    assert.deepEqual(reviewed.all.map((entry) => [entry.id, entry.slots.join(","), entry.connectedMembers]), [["gws_work", "calendar", 3], ["m365_main", "calendar", 7], [SLACK.id, "other", null]], "a shared Slack: unknown")
+    const any = groupSourceConnections(org, { connectedMembers: counts, mode: "any", policy: { ...base, connections: { gws_work: "everyone" } } })
+    assert.deepEqual(any.other.map((entry) => [entry.id, entry.native, entry.policy]), [["gws_work", true, "everyone"], ["m365_main", true, "members"], [SLACK.id, false, "members"]], "with the brief, Den's providers are connections too: their mail, chats and files")
+    assert.deepEqual(any.all.map((entry) => [entry.id, entry.slots.join(",")]), [["gws_work", "calendar,other"], ["m365_main", "calendar,other"], [SLACK.id, "other"]])
 
     const counted = await countConnectedMembers(organizationId, {
       rows: async () => [
@@ -1146,35 +1210,5 @@ describe("guardrails: the admin allows and sets a default, each member's agent r
     assert.equal(counted.get("microsoft-365"), 0)
     assert.equal(counted.get("emc_personal_signin"), 0, "each member signs in: counted, none yet")
     assert.equal(counted.has("emc_shared") || counted.has("emc_open"), false, "a shared credential or no sign-in: unknown")
-  })
-
-  test("an admin's default is checked: one that can serve the category, allowed after the change, and never removed without another", () => {
-    const org = [
-      { id: "gws_work", name: "Acme Google", url: "https://google.com", native: "google-workspace" },
-      { id: "gws_personal", name: "Personal Google", url: "https://google.com", native: "google-workspace" },
-      { id: SLACK.id, name: "Slack", url: SLACK.url, native: null },
-      { id: NOTES.id, name: "Meeting notes", url: NOTES.url, native: null },
-    ]
-    const check = (change: Parameters<typeof checkSourcesChange>[0]["change"], current = base) => checkSourcesChange({ change, connections: org, current })
-    assert.equal(check({ coreDefaults: { calendar: "gws_work" } }), null)
-    assert.equal(check({ coreDefaults: { chat: "gws_work" } }), "Acme Google can't serve team chat.")
-    assert.equal(check({ coreDefaults: { email: "emc_nope" } }), "No connection emc_nope in this organization.")
-    assert.equal(check({ coreDefaults: { email: NOTES.id } }), "Meeting notes isn't allowed for email. Allow it first.", "a reviewed MCP has to be allowed first")
-    assert.equal(check({ coreConnections: { email: ["gws_work", NOTES.id] }, coreDefaults: { email: NOTES.id } }), null, "allowed and made default in one change")
-    assert.equal(check({ coreConnections: { calendar: ["gws_personal"] }, coreDefaults: { calendar: "gws_work" } }), "Acme Google isn't allowed for calendar. Allow it first.")
-    const withWorkDefault = { ...base, coreDefaults: { calendar: "gws_work" } }
-    assert.equal(check({ coreConnections: { calendar: ["gws_personal"] } }, withWorkDefault), "Acme Google is the default for calendar. Choose another default first.")
-    assert.equal(check({ coreConnections: { calendar: ["gws_personal"] }, coreDefaults: { calendar: "gws_personal" } }, withWorkDefault), null)
-    assert.equal(check({ coreConnections: { calendar: ["gws_personal"] }, coreDefaults: { calendar: null } }, withWorkDefault), null, "back to automatic with it")
-    assert.equal(check({ coreConnections: { calendar: null } }, { ...base, coreConnections: { calendar: ["gws_work", NOTES.id] }, coreDefaults: { calendar: NOTES.id } }), "Meeting notes is the default for calendar. Choose another default first.")
-    assert.equal(check({ calendar: "members" }, { ...base, coreDefaults: { calendar: "gws_gone" } }), null, "a default whose connection is gone doesn't block other changes")
-
-    const merged = mergeWorkbotProactiveSettings(settingsOn, { sources: { coreDefaults: { calendar: "gws_work", email: "gws_work" } } })
-    assert.deepEqual(merged?.sources.coreDefaults, { calendar: "gws_work", email: "gws_work" })
-    const kept = merged && mergeWorkbotProactiveSettings(merged, { sources: { chat: "off", coreDefaults: { email: null } } })
-    assert.deepEqual(kept?.sources.coreDefaults, { calendar: "gws_work" }, "null goes back to automatic; the rest is kept")
-    const reset = kept && mergeWorkbotProactiveSettings(kept, { sources: { coreDefaults: { calendar: null } } })
-    assert.equal(reset?.sources.coreDefaults, undefined)
-    assert.equal(readWorkbotProactiveSettings({ workbot: { proactive: { sources: { ...base, coreDefaults: { calendar: "gws_work" } } } } }).sources.coreDefaults?.calendar, "gws_work")
   })
 })

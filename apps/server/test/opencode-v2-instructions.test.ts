@@ -23,6 +23,8 @@ test("V2 Desktop instructions direct recurring work to a reviewable proposal", (
   assert.match(instructions.automations, /openwork_execute id automation\.propose/);
   assert.match(instructions.automations, /review and create it in the app/);
   assert.match(instructions.automations, /each occurrence requires the signed-in desktop runner/);
+  assert.match(instructions.automations, /pass executionTarget "cloud"/);
+  assert.match(instructions.automations, /Do not tell them Desktop chat can only make Desktop Automations/);
   assert.match(instructions.automations, /never claim a Desktop Automation will run while the app is offline/);
 });
 

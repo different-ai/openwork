@@ -19,6 +19,7 @@ import {
   type DenOrgTeam,
 } from "../../_lib/den-org";
 import { formatUsageCost } from "../_features/analytics/stacked-daily-chart";
+import { useFeatureIntro } from "../_features/feature-intros";
 import { directoryAccess, directoryLimit, limitSourceLabel, limitSummary, memberSubject, type DirectorySubject } from "./gateway-directory-data";
 import { initials } from "./gateway-spend-breakdown";
 import { useGatewayAccessProviders, type GatewayAccessProvider } from "./gateway-subject-access-data";
@@ -97,6 +98,11 @@ export function GatewayUsersTeamsSection({ orgId, orgSlug, orgContext }: { orgId
   const teamUsage = useGatewayUsage(orgId, "team", []);
   const [query, setQuery] = useState("");
   const [pages, setPages] = useState(1);
+  // Feature intros (flag `featureIntros`): providers nobody can use yet → a banner above the directory.
+  const accessIntro = useFeatureIntro(
+    "ai-gateway.users-and-teams",
+    providers.data ? { accessGrants: providers.data.reduce((count, provider) => count + provider.accessGrants.length, 0) } : null,
+  );
 
   const teamId = searchParams.get("team");
   const view: DirectoryView = !teamId && searchParams.get("view") === "teams" ? "teams" : "people";
@@ -138,6 +144,7 @@ export function GatewayUsersTeamsSection({ orgId, orgSlug, orgContext }: { orgId
 
   return (
     <section aria-label="Users and teams" data-testid="gateway-users-teams" className="flex flex-col gap-4">
+      {accessIntro.size === "banner" ? <div className="mb-2">{accessIntro.element}</div> : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <DenSegmented<DirectoryView>
           aria-label="Show"

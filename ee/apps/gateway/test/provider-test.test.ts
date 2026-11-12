@@ -112,7 +112,7 @@ test("a custom provider address is only tested when the operator allowlisted it"
 function routeApp(deps: ProviderTestDependencies) {
   const app = new Hono<ProviderTestEnv>()
   app.use("*", async (c, next) => {
-    const identity: ProviderTestEnv["Variables"]["inference"] = { kind: "gateway", organizationId: "org_fixture", orgMembershipId: "om_fixture", gatewayKeyId: "gky_fixture" }
+    const identity: ProviderTestEnv["Variables"]["inference"] = { kind: "gateway", organizationId: "org_fixture", orgMembershipId: "om_fixture", keySource: "member", gatewayKeyId: "gky_fixture" }
     c.set("inference", identity)
     await next()
   })
@@ -165,3 +165,126 @@ for (const location of ["eu", "us"]) {
     })
   }
 }
+
+// --- Custom OpenAI-compatible providers (feature gatewayCustomProviders) ---
+
+const customModel = {
+  id: "acme-large", attachment: false, reasoning: false, tool_call: true, structured_output: true, temperature: true,
+  modalities: { input: ["text" as const], output: ["text" as const] }, limit: { context: 128_000, output: 8_192 },
+}
+const customKey = { kind: "api_key" as const, secret: "sk-custom-fixture-0000000" }
+
+function customDependencies(respond: (sent: Sent) => Response, sent: Sent[] = [], addresses = [{ address: "93.184.216.34", family: 4 }]): ProviderTestDependencies {
+  return { ...dependencies(respond, sent), resolveHost: async () => addresses }
+}
+
+async function withAllowedOrigins<T>(value: string, run: () => Promise<T>) {
+  const previous = process.env.GATEWAY_EGRESS_ALLOWED_ORIGINS
+  process.env.GATEWAY_EGRESS_ALLOWED_ORIGINS = value
+  try { return await run() } finally {
+    if (previous === undefined) delete process.env.GATEWAY_EGRESS_ALLOWED_ORIGINS
+    else process.env.GATEWAY_EGRESS_ALLOWED_ORIGINS = previous
+  }
+}
+
+test("a custom provider is tested at its public HTTPS address through chat completions", async () => {
+  const sent: Sent[] = []
+  const result = await runProviderTest({ providerId: "openwork-custom", model: "acme-large", settings: { upstreamBaseUrl: "https://api.acme.example/v1/chat/completions/" }, credential: customKey, customModel },
+    customDependencies(() => Response.json({ choices: [] }), sent))
+  assert.deepEqual(result, { ok: true, model: "acme-large", status: 200, code: null, message: null })
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0]?.url, "https://api.acme.example/v1/chat/completions")
+  assert.equal(sent[0]?.headers.get("authorization"), "Bearer sk-custom-fixture-0000000")
+  assert.deepEqual(sent[0]?.body, {
+    model: "acme-large", max_tokens: 16, messages: [{ role: "user", content: "Reply with the single word OK." }],
+    tools: [{ type: "function", function: { name: "noop", description: "Does nothing. Do not call it.", parameters: { type: "object", properties: {} } } }],
+  })
+})
+
+test("a custom provider never reaches a private, loopback or plain-HTTP address unless the operator allowed it", async () => {
+  for (const upstreamBaseUrl of ["http://127.0.0.1:4100/v1", "https://127.0.0.1/v1", "https://10.0.0.5/v1", "https://localhost/v1", "http://api.acme.example/v1", "https://[::1]/v1"]) {
+    const sent: Sent[] = []
+    const result = await runProviderTest({ providerId: "openwork-custom", model: "acme-large", settings: { upstreamBaseUrl }, credential: customKey }, customDependencies(() => Response.json({}), sent))
+    assert.equal(result.code, "address_not_allowed", upstreamBaseUrl)
+    assert.match(result.message ?? "", /public HTTPS/)
+    assert.equal(sent.length, 0)
+  }
+  const sent: Sent[] = []
+  const internal = await runProviderTest({ providerId: "openwork-custom", model: "acme-large", settings: { upstreamBaseUrl: "https://llm.internal.example/v1" }, credential: customKey },
+    customDependencies(() => Response.json({}), sent, [{ address: "10.1.2.3", family: 4 }]))
+  assert.equal(internal.code, "address_not_allowed")
+  const missing = await runProviderTest({ providerId: "openwork-custom", model: "acme-large", settings: { upstreamBaseUrl: "https://nowhere.example/v1" }, credential: customKey },
+    { ...customDependencies(() => Response.json({}), sent), resolveHost: async () => { throw new Error("ENOTFOUND") } })
+  assert.equal(missing.code, "upstream_unreachable")
+  const noAddress = await runProviderTest({ providerId: "openwork-custom", model: "acme-large", settings: {}, credential: customKey }, customDependencies(() => Response.json({}), sent))
+  assert.equal(noAddress.code, "invalid_settings")
+  assert.equal(sent.length, 0)
+})
+
+test("an operator-allowlisted origin can host a custom provider", async () => {
+  const sent: Sent[] = []
+  const result = await withAllowedOrigins("http://127.0.0.1:4100", () =>
+    runProviderTest({ providerId: "openwork-custom", model: "acme-large", settings: { upstreamBaseUrl: "http://127.0.0.1:4100/v1" }, credential: customKey }, customDependencies(() => Response.json({}), sent)))
+  assert.equal(result.ok, true)
+  assert.equal(sent[0]?.url, "http://127.0.0.1:4100/v1/chat/completions")
+})
+
+test("catalog providers still refuse a public address the operator didn't allow", async () => {
+  const sent: Sent[] = []
+  const refused = await runProviderTest({ providerId: "openai", model: "gpt-6-luna", settings: { upstreamBaseUrl: "https://api.acme.example/v1" }, credential: { kind: "api_key", secret: "sk-openai-fixture-0000" } },
+    customDependencies(() => Response.json({}), sent))
+  assert.equal(refused.code, "invalid_settings")
+  const withModel = await runProviderTest({ providerId: "openai", model: "acme-large", settings: {}, credential: { kind: "api_key", secret: "sk-openai-fixture-0000" }, customModel },
+    customDependencies(() => Response.json({}), sent))
+  assert.equal(withModel.code, "invalid_request")
+  assert.equal(sent.length, 0)
+})
+
+test("custom provider failures name the cause so Den can send the admin to the right step", async () => {
+  const run = (respond: () => Response, model = "acme-large") => runProviderTest({ providerId: "openwork-custom", model, settings: { upstreamBaseUrl: "https://api.acme.example/v1" }, credential: customKey, customModel: { ...customModel, id: model } },
+    customDependencies(respond))
+  assert.equal((await run(() => Response.json({ error: { message: "Invalid API key" } }, { status: 401 }))).code, "provider_authentication_failed")
+  assert.equal((await run(() => Response.json({ error: { message: "Forbidden" } }, { status: 403 }))).code, "provider_permission_denied")
+  assert.equal((await run(() => Response.json({ error: { message: "The model `acme-large` does not exist" } }, { status: 404 }))).code, "model_not_found")
+  assert.equal((await run(() => Response.json({ error: { message: "model acme-large not found" } }, { status: 400 }))).code, "model_not_found")
+  assert.equal((await run(() => new Response("<html>Not Found</html>", { status: 404 }))).code, "endpoint_not_found")
+  const tools = await run(() => Response.json({ error: { message: "Unsupported parameter: 'tools' is not supported with this model." } }, { status: 400 }))
+  assert.equal(tools.code, "unsupported_parameter")
+  assert.equal(tools.status, 400)
+  assert.equal((await run(() => Response.json({ error: { message: "Insufficient balance" } }, { status: 402 }))).code, "insufficient_credit")
+  assert.equal((await run(() => Response.json({ error: { message: "slow down" } }, { status: 429 }))).code, "rate_limited")
+  assert.equal((await run(() => Response.json({}, { status: 503 }))).code, "upstream_error")
+  const unreachable = await runProviderTest({ providerId: "openwork-custom", model: "acme-large", settings: { upstreamBaseUrl: "https://api.acme.example/v1" }, credential: customKey },
+    { ...customDependencies(() => new Response(null)), fetch: async () => { throw new TypeError("fetch failed") } })
+  assert.equal(unreachable.code, "upstream_unreachable")
+  const mismatched = await runProviderTest({ providerId: "openwork-custom", model: "acme-large", settings: { upstreamBaseUrl: "https://api.acme.example/v1" }, credential: customKey, customModel: { ...customModel, id: "other" } },
+    customDependencies(() => Response.json({})))
+  assert.equal(mismatched.code, "invalid_request")
+})
+
+test("a custom reasoning model that refuses max_tokens is retried once with max_completion_tokens", async () => {
+  const sent: Sent[] = []
+  const result = await runProviderTest({ providerId: "openwork-custom", model: "acme-think", settings: { upstreamBaseUrl: "https://api.acme.example/v1" }, credential: customKey },
+    customDependencies((entry) => isRecordWith(entry.body, "max_tokens")
+      ? Response.json({ error: { message: "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead." } }, { status: 400 })
+      : Response.json({ choices: [] }), sent))
+  assert.equal(result.ok, true)
+  assert.equal(sent.length, 2)
+  assert.deepEqual(sent[1]?.body, { model: "acme-think", messages: [{ role: "user", content: "Reply with the single word OK." }], max_completion_tokens: 16 })
+})
+
+function isRecordWith(value: unknown, key: string) {
+  return typeof value === "object" && value !== null && key in value
+}
+
+test("the signed route accepts a custom provider test with its model settings", async () => {
+  const sent: Sent[] = []
+  const deps = customDependencies(() => Response.json({}), sent)
+  const app = routeApp(deps)
+  const body = JSON.stringify({ providerId: "openwork-custom", model: "acme-large", settings: { upstreamBaseUrl: "https://api.acme.example/v1" }, credential: customKey, customModel })
+  const signature = signProviderTest("fixture-shared-secret-0000000000000000", { organizationId: "org_fixture", memberId: "om_fixture", body }, deps.now().getTime())
+  const response = await app.request("/api/v1/provider-tests", { method: "POST", body, headers: { "x-openwork-provider-test-signature": signature } })
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), { ok: true, model: "acme-large", status: 200, code: null, message: null })
+  assert.equal(sent[0]?.url, "https://api.acme.example/v1/chat/completions")
+})

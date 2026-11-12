@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { CLAUDE_AGENT_HOST_PROVIDER_ID, CLAUDE_AGENT_PROVIDER_ID, CLAUDE_CODE_NAME, claudeAgentConnected, claudeAgentProblem, type ClaudeAgentSetupState } from "@/app/lib/claude-agent";
 import { Lock, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { DesktopFreePreferences } from "@/app/lib/openwork-server";
@@ -14,6 +15,7 @@ import { LayoutStack } from "../settings-layout";
 import { SettingsPanel, SettingsPanelDescription, SettingsPanelHeading, SettingsPanelTitle } from "../shell/panel";
 import { getSettingsTabLabel } from "../shell/settings-page";
 import { CredentialHealthStatus, LocalProviderStatus, ProviderList, ProviderMeta, ProviderRow, ProviderStatus, ProviderTile } from "./provider-rows";
+import type { DeviceProviderShareRow } from "../provider-share/device-provider-share";
 
 export type ConnectedProvider = {
   id: string;
@@ -22,6 +24,10 @@ export type ConnectedProvider = {
 };
 
 export type AiSettingsViewProps = {
+  /** Claude Code sign-in; absent when the person cannot use it. Its row shows only once connected. */
+  claudeAgent?: ClaudeAgentSetupState;
+  /** Opens Connect a provider on the Claude Code step, to sign in again. */
+  onOpenClaudeAgent?: () => void | Promise<void>;
   busy: boolean;
   runtimeWorkspaceId?: string | null;
   onReplaceProviderKey?: (providerId: string) => void | Promise<void>;
@@ -62,10 +68,15 @@ export type AiSettingsViewProps = {
   autoBusy?: boolean;
   autoError?: string | null;
   onSetAutoEnabled?: (enabled: boolean) => void | Promise<void>;
+  /** False when OpenWork Models is listed once, under the organization, instead of here. */
+  showOpenWorkModelsDeviceRow?: boolean;
   organizationProviderIds?: ReadonlySet<string>;
   /** Providers on this device the engine chat runs on cannot use, from the server's skipped list. */
   localProviderStates?: ReadonlyMap<string, LocalProviderEngineState>;
   onOpenDen?: () => void;
+  /** Den feature shareDeviceProvider: which keys on this device can be shared with the organization, or already are. */
+  shareRows?: ReadonlyMap<string, DeviceProviderShareRow>;
+  onShareProvider?: (provider: { id: string; name: string }) => void;
 };
 
 function deviceSourceLabel(source: ConnectedProvider["source"]) {
@@ -95,8 +106,10 @@ export function GatewayConnectRow({ provider, busy, onConnect, onCancel }: {
   );
 }
 
-export function aiProvidersDescription(input: { signedIn: boolean; organizationName?: string }) {
-  const base = "Models your agents can use in this workspace. Keys you add here stay on this device.";
+export function aiProvidersDescription(input: { signedIn: boolean; organizationName?: string; canShare?: boolean }) {
+  const base = input.canShare
+    ? "Models your agents can use in this workspace. Your keys stay on this device unless you share them."
+    : "Models your agents can use in this workspace. Keys you add here stay on this device.";
   return input.signedIn
     ? `${base} Providers from ${input.organizationName || "your organization"} are included automatically and run through the OpenWork Gateway.`
     : `${base} Sign in to OpenWork to also get the providers your organization already pays for.`;
@@ -112,15 +125,19 @@ export function AiSettingsView(props: AiSettingsViewProps) {
   const signedIn = props.signedIn ?? Boolean(props.organizationName);
   const managed = (provider: ConnectedProvider) => provider.id !== AUTO_PROVIDER_ID && (isCloudManagedProviderKey(provider.id) || props.cloudProviderIds?.has(provider.id) || props.gatewayProviderIds?.has(provider.id));
   // Keyless built-in Zen is offered under "Available to add" in Connect a provider, not listed as connected.
-  const local = props.connectedProviders.filter((provider) => !managed(provider) && provider.id !== AUTO_PROVIDER_ID && !isKeylessZenProvider(provider));
+  const local = props.connectedProviders.filter((provider) => provider.id !== CLAUDE_AGENT_PROVIDER_ID && !managed(provider) && provider.id !== AUTO_PROVIDER_ID && !isKeylessZenProvider(provider));
   const organization = props.connectedProviders.filter(managed);
   const disabled = props.onEnableProvider ? props.disabledProviders ?? [] : [];
-  const showAuto = !props.autoSwitchedOff && Boolean(props.autoPreferences || props.connectedProviders.some((provider) => provider.id === AUTO_PROVIDER_ID));
+  const showAuto = props.showOpenWorkModelsDeviceRow !== false && !props.autoSwitchedOff && Boolean(props.autoPreferences || props.connectedProviders.some((provider) => provider.id === AUTO_PROVIDER_ID));
   const autoOff = props.autoPreferences?.enabled === false;
   const autoAvailable = props.autoPreferences?.available ?? ready;
   const locked = !props.canAddProviders;
-  const deviceCount = local.length + Number(showAuto);
+  const claudeConnected = claudeAgentConnected(props.claudeAgent);
+  const claudeProblem = claudeAgentProblem(props.claudeAgent);
+  const deviceCount = local.length + Number(showAuto) + Number(claudeConnected);
   const rowsBusy = props.busy || props.providerAuthBusy || props.disconnectingProviderId !== null;
+  const organizationLabel = props.organizationName || "your organization";
+  const shareState = (providerId: string) => props.shareRows?.get(providerId)?.state ?? null;
   const needsCredentialRecovery = (providerId: string) => providerHealth(providerId) === "rejected"
     && props.localProviderStates?.get(providerId) !== "managed_by_organization"
     && props.localProviderStates?.get(providerId) !== "not_on_engine";
@@ -129,15 +146,15 @@ export function AiSettingsView(props: AiSettingsViewProps) {
     <SettingsPanel>
       <SettingsPanelHeading className="max-w-xl">
         <SettingsPanelTitle>{getSettingsTabLabel("ai")}</SettingsPanelTitle>
-        <SettingsPanelDescription>{aiProvidersDescription({ signedIn, organizationName: props.organizationName })}</SettingsPanelDescription>
+        <SettingsPanelDescription>{aiProvidersDescription({ signedIn, organizationName: props.organizationName, canShare: Boolean(props.shareRows?.size) })}</SettingsPanelDescription>
       </SettingsPanelHeading>
-      <Button className="shrink-0 self-start" disabled={locked || props.busy || props.providerAuthBusy || !ready} onClick={() => void props.onOpenProviderAuth()}>
+      <Button className="shrink-0 self-start" disabled={locked || props.busy || props.providerAuthBusy || (!ready && !props.claudeAgent)} onClick={() => void props.onOpenProviderAuth()}>
         {locked ? <Lock className="size-4" /> : <Plus className="size-4" />}Connect a provider
       </Button>
     </SettingsPanel>
 
     {locked ? <p className="-mt-3 text-xs text-muted-foreground">Provider connections are managed by your organization administrator.</p> : null}
-    {error ? <SettingsNotice tone="error" className="flex flex-wrap items-center justify-between gap-3"><div role="alert"><p>{error}</p>{props.connectedProviders.length ? <p>{t("settings.providers_not_refreshed")}</p> : null}</div><Button variant="outline" disabled={props.busy || loading} aria-busy={loading} onClick={() => void props.onRetryProviders()}>{t("settings.providers_retry")}</Button></SettingsNotice> : null}
+    {error ? <SettingsNotice tone="error" className="flex flex-wrap items-center justify-between gap-3"><div role="alert"><p>{props.claudeAgent ? "Other provider settings could not be loaded." : error}</p>{props.connectedProviders.length ? <p>{t("settings.providers_not_refreshed")}</p> : null}</div><Button variant="outline" disabled={props.busy || loading} aria-busy={loading} onClick={() => void props.onRetryProviders()}>{t("settings.providers_retry")}</Button></SettingsNotice> : null}
 
     <section className="flex flex-col gap-3" aria-labelledby="ai-providers-device">
       <div className="space-y-1">
@@ -145,12 +162,27 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           <h2 id="ai-providers-device" className="text-base font-medium text-dls-text">On this device</h2>
           {ready ? <span className="text-xs text-muted-foreground">{deviceCount === 1 ? "1 provider" : `${deviceCount} providers`}</span> : null}
         </div>
-        <p className="text-sm text-muted-foreground">{signedIn ? "Signed in or pasted by you. Keys never leave this device and only you can disconnect them." : "Works without an account. Keys you paste never leave this device and only you can disconnect them."}</p>
+        <p className="text-sm text-muted-foreground">{signedIn ? props.shareRows?.size ? "Signed in or pasted by you. A key stays on this device unless you share it, and only you can disconnect it." : "Signed in or pasted by you. Keys never leave this device and only you can disconnect them." : "Works without an account. Keys you paste never leave this device and only you can disconnect them."}</p>
       </div>
 
       {loading && !props.connectedProviders.length ? <div role="status" aria-label={t("settings.loading_providers")} className="grid gap-2">{[0, 1].map((key) => <div key={key} className="h-16 animate-pulse rounded-2xl bg-muted" />)}</div> : null}
 
-      {showAuto || local.length || disabled.length ? <ProviderList>
+      {claudeConnected || showAuto || local.length || disabled.length ? <ProviderList>
+        {claudeConnected ? <ProviderRow
+          testId="local-provider-claude-agent"
+          scope="device"
+          tile={<ProviderTile providerId={CLAUDE_AGENT_HOST_PROVIDER_ID} name={CLAUDE_CODE_NAME} />}
+          name={CLAUDE_CODE_NAME}
+          status={claudeProblem ? <ProviderStatus tone="attention">Needs your sign-in</ProviderStatus>
+            : props.claudeAgent?.checking ? <ProviderStatus tone="neutral">Checking</ProviderStatus>
+            : props.claudeAgent?.verified ? <ProviderStatus tone="ready">Ready to use</ProviderStatus>
+            : <ProviderStatus tone="neutral">Not checked yet</ProviderStatus>}
+          meta={<ProviderMeta id={CLAUDE_AGENT_PROVIDER_ID} parts={[claudeProblem ? claudeProblem.message : "Claude Code login"]} />}
+          actions={<>
+            {claudeProblem ? <Button disabled={rowsBusy || props.claudeAgent?.busy || !props.onOpenClaudeAgent} onClick={() => void props.onOpenClaudeAgent?.()}>Sign in again</Button> : null}
+            <Button variant="ghost" disabled={rowsBusy || props.claudeAgent?.busy} onClick={() => void Promise.resolve(props.onDisconnectProvider(CLAUDE_AGENT_PROVIDER_ID)).catch(() => undefined)}>{t("settings.disconnect")}</Button>
+          </>}
+        /> : null}
         {showAuto ? <ProviderRow
           testId="settings-auto-provider"
           scope="device"
@@ -170,12 +202,15 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           tile={<ProviderTile providerId={provider.id} name={provider.name} />}
           name={provider.name}
           status={<LocalProviderStatus state={props.localProviderStates?.get(provider.id)} organizationName={props.organizationName} credentialHealth={providerHealth(provider.id)} />}
-          meta={<ProviderMeta id={provider.id} parts={[deviceSourceLabel(provider.source), props.organizationProviderIds?.has(provider.id) ? `also available from ${props.organizationName || "your organization"}` : null, needsCredentialRecovery(provider.id) && provider.source === "env" ? "Update the environment credential, then restart the workspace." : null]} />}
+          meta={<ProviderMeta id={provider.id} parts={[deviceSourceLabel(provider.source), shareState(provider.id) === "shared" ? `also available from ${organizationLabel}` : props.organizationProviderIds?.has(provider.id) ? `also available from ${organizationLabel}` : null, needsCredentialRecovery(provider.id) && provider.source === "env" ? "Update the environment credential, then restart the workspace." : null]} />}
           actions={needsCredentialRecovery(provider.id) && provider.source === "env"
             ? <span className="text-xs text-muted-foreground" title="Update the environment credential, then restart the workspace.">Update environment</span>
             : needsCredentialRecovery(provider.id)
             ? <Button variant="outline" disabled={rowsBusy || !ready || locked || !props.onReplaceProviderKey} onClick={() => void props.onReplaceProviderKey?.(provider.id)}>Replace key</Button>
-            : <Button variant="ghost" disabled={rowsBusy || !ready || !props.canDisconnectProvider(provider)} onClick={() => void props.onDisconnectProvider(provider.id)}>{props.disconnectingProviderId === provider.id ? t("settings.disconnecting") : props.canDisconnectProvider(provider) ? t("settings.disconnect") : t("settings.managed_by_env")}</Button>}
+            : <>
+              {shareState(provider.id) === "shareable" && props.onShareProvider ? <Button variant="outline" data-testid={`share-provider-${provider.id}`} aria-label={`Share ${provider.name} with ${organizationLabel}`} title={`Share ${provider.name} with ${organizationLabel}`} disabled={rowsBusy} onClick={() => props.onShareProvider?.({ id: provider.id, name: provider.name })}>Share</Button> : null}
+              <Button variant="ghost" disabled={rowsBusy || !ready || !props.canDisconnectProvider(provider)} onClick={() => void props.onDisconnectProvider(provider.id)}>{props.disconnectingProviderId === provider.id ? t("settings.disconnecting") : props.canDisconnectProvider(provider) ? t("settings.disconnect") : t("settings.managed_by_env")}</Button>
+            </>}
         />)}
         {disabled.map((provider) => <ProviderRow
           key={`disabled:${provider.id}`}
@@ -190,7 +225,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
       </ProviderList> : ready ? <p className="text-sm text-muted-foreground">{t("settings.no_providers_connected")}</p> : null}
 
       {props.autoError ? <SettingsNotice tone="error">{props.autoError}</SettingsNotice> : null}
-      {props.autoPreferences && !props.autoPreferences.canEnable ? <p className="text-xs text-muted-foreground">OpenWork Free is unavailable on this device or blocked by your organization administrator.</p> : null}
+      {showAuto && props.autoPreferences && !props.autoPreferences.canEnable ? <p className="text-xs text-muted-foreground">OpenWork Free is unavailable on this device or blocked by your organization administrator.</p> : null}
       {props.providerConnectError ? <SettingsNotice tone="error">{props.providerConnectError}</SettingsNotice> : null}
       {props.providerDisconnectStatus ? <SettingsNotice>{props.providerDisconnectStatus}</SettingsNotice> : null}
       {props.providerDisconnectError ? <SettingsNotice tone="error">{props.providerDisconnectError}</SettingsNotice> : null}

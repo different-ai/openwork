@@ -7,6 +7,7 @@ import {
 import { MICROSOFT_FOUNDRY_PROVIDER_ID, microsoftFoundryBaseUrl } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { inferenceCredentialEnvNames } from "@openwork-ee/utils/inference-credentials"
 import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
+import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { env } from "./env.js"
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./mcp/connection-navigation.js"
 
@@ -109,6 +110,8 @@ export type GatewayCredentialShape =
 
 export function gatewayCredentialShape(providerId: string, envNames: readonly string[]): GatewayCredentialShape | null {
   if (isLiteLlmProviderId(providerId)) return null
+  // Custom OpenAI-compatible providers take exactly one API key, whatever env names the row declares.
+  if (isGatewayCustomProviderId(providerId)) return { kind: "api_key" }
   if (providerId === "google-vertex" || providerId === "google-vertex-anthropic") return { kind: "gcp_service_account" }
   if (providerId === "amazon-bedrock" || providerId === "amazon-bedrock-mantle") return { kind: "aws_keys" }
   if (envNames.length === 1) return { kind: "api_key" }

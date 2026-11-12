@@ -6,26 +6,21 @@ description: Review a fork PR, review an external contributor PR, check provenan
 # Skill: review-a-contributor-pr
 
 Use for every PR whose head is not in `different-ai/openwork`
-(`isCrossRepository: true`). Fork PRs get no automatic clearance: `warden.yml`
-skips them (`head.repo.full_name == github.repository`, no secrets on fork
-heads) and `warden-clearance.yml` refuses them. As at GitLab, contributing
+(`isCrossRepository: true`). As at GitLab, contributing
 means accepting the DCO, or the Individual or Corporate CLA for `ee/`
 (CONTRIBUTING.md). There is no `Signed-off-by` requirement, no CLA signature
 and no label to enforce.
 
 The contributor flow is fork-only, including fork bots. Same-repository
 PRs use normal CI and review, with no contributor merge status or `/test`.
-The merge safeguards are the required `openwork-tests-required` and
-`warden-clear` checks plus trusted maintainer review. `warden-clear` is
-Warden's verdict on the head, posted by the diff-warden App; for forks it
-appears after `/test` runs the sandboxed review. The fork screen and AI
-screen statuses are advisory.
+The merge safeguards are the required `openwork-tests-required` check plus
+trusted maintainer review. The fork screen status is advisory.
 Everything below runs from dev and never executes PR code:
 
 - `contributor-pr.yml` (`pull_request_target`, every fork push): runs the
   free screen and blocks CI or agent configuration changes. A maintainer
   carries those changes to a same-repository branch instead.
-- The free screen (`contributor-warden.yml`, stage `scan`,
+- The free screen (`contributor-screen.yml`,
   no model, no secrets) sets `contributor-pr/screen` and keeps one PR
   comment. Nothing that costs money runs before your `/test`:
   - **blocked** (red): hidden or look-alike characters, invalid UTF-8. The
@@ -33,21 +28,15 @@ Everything below runs from dev and never executes PR code:
   - **needs review** (yellow): dependency or lockfile changes, database
     changes (`ee/packages/den-db/**`, `*.sql`, migration jobs), binaries,
     encoded or obfuscated-looking lines, text aimed at an AI reviewer (in
-    the diff or commit messages; treat later Warden results on that commit
-    as unreliable). Read each listed item yourself before `/test`.
+    the diff or commit messages; treat any AI review of that commit as
+    unreliable). Read each listed item yourself before `/test`.
   - **passed** (green): nothing flagged. Still review before `/test`.
 - After you finish this checklist, comment `/test` (binds the head as it was
   when you commented) or `/test <sha>`. `contributor-pr-test.yml` checks you
   have write access, the head hasn't moved, and the screen isn't blocked,
-  then runs the AI screen (Warden's `contributor-screen` skill, once per
-  commit, `contributor-pr/ai-screen`).
-  - **AI screen clear:** it approves only this PR's waiting test runs on
-    the reviewed SHA and runs the Warden security review
-    (`contributor-pr/warden`). Check Warden is clear and
-    `openwork-tests-required` (quick-check.yml, no secrets) succeeds before
-    approving the PR; no combined contributor status is posted.
-  - **AI screen flagged or incomplete:** nothing else runs. Read the
-    findings in its PR comment; comment `/test` again to proceed anyway.
+  then approves only this PR's waiting test runs on the reviewed SHA. Check
+  `openwork-tests-required` (quick-check.yml, no secrets) succeeds before
+  approving the PR; no combined contributor status is posted.
   - A new push needs a new review and a new `/test`.
 - Fork tests run without secrets. The Freestyle, live and Windows proofs
   still need the carry in section 6.
@@ -55,8 +44,7 @@ Everything below runs from dev and never executes PR code:
 Repository Actions settings must require approval for **all outside
 collaborators**, not only first-time contributors. Never approve fork runs
 manually as a shortcut around `/test`. Required CI, CODEOWNERS and approval
-of the latest push remain enabled. This checklist is the human merge gate;
-the ruleset separately blocks any PR without a passing `warden-clear`.
+of the latest push remain enabled. This checklist is the human merge gate.
 See [deployment and security caveats](../../../docs/fork-contributor-ci.md).
 Fork diffs with 300 or more changed files need a maintainer carry (GitHub's
 immutable comparison file list is capped).
@@ -107,36 +95,21 @@ gh pr view $N -R $R --json files --jq '[.files[].path | select(startswith("ee/")
   Corporate CLA (`legal/corporate-contributor-license-agreement.md`) in the
   review so they can confirm they are authorized.
 
-## 3. Warden ran on the exact head being merged
+## 3. Security and confidentiality on the exact head being merged
 
-Two Warden skills must have reviewed the diff: `diff-security-review` and
-`confidentiality-review` (this repo is public; see AGENTS.md Confidentiality).
-On a same-repo head they appear as check runs and clearance is a review by
-`diff-warden`:
+This repo is public (AGENTS.md Confidentiality). Read the diff for both:
 
 ```bash
 HEAD=$(gh pr view $N -R $R --json headRefOid --jq .headRefOid)
-gh api "repos/$R/commits/$HEAD/check-runs" --paginate \
-  --jq '.check_runs[] | select(.name | startswith("warden")) | "\(.name) \(.conclusion)"'
-gh pr view $N -R $R --json reviews --jq '.reviews[] | select(.author.login == "diff-warden") | .state'
+gh api "repos/$R/commits/$HEAD/status" --jq '.statuses[] | select(.context | startswith("contributor-pr")) | "\(.context) \(.state) \(.description)"'
 ```
 
-- Fork head: `warden.yml` skips forks by design. Warden runs for forks
-  after your `/test` (section 7), in the sandboxed `contributor-warden.yml`,
-  and reports the `contributor-pr/ai-screen` and `contributor-pr/warden`
-  statuses plus one PR comment each. Check them on the head being merged:
-
-  ```bash
-  gh api "repos/$R/commits/$HEAD/status" --jq '.statuses[] | select(.context | startswith("contributor-pr")) | "\(.context) \(.state) \(.description)"'
-  ```
-
-  `contributor-pr/warden` not `success` on that head -> Blocked.
-- Same-repo head with `warden: diff-security-review` or
-  `warden: confidentiality-review` missing, skipped, or failed -> Blocked.
-- Any PR that touches `.github/`, `warden.toml`, `.warden/`,
-  `.agents/skills/`, or `.claude/skills/` is never self-cleared by Warden
-  (`warden-clearance.yml` refuses review machinery); a human security review
-  is the gate.
+- Anything that names a customer, prospect, partner or outside person in
+  code, fixtures, comments, commit messages or the PR body -> Blocked.
+- Auth, permission, token, secret-handling or sandbox changes get a line-by-
+  line security read; anything that weakens a check -> Blocked.
+- Any PR that touches `.github/`, `.opencode/`, `.agents/skills/`, or
+  `.claude/skills/` is review machinery; a human security review is the gate.
 
 ## 4. A human read the full diff
 
@@ -158,7 +131,7 @@ Grep the diff, then ask the PR to justify every hit or remove it:
 ```bash
 gh pr diff $N -R $R | grep -n -E '^\+.*(ipcMain|ipcRenderer|contextBridge|exposeInMainWorld|webContents\.send|handle\(|fetch\(|http\.|https\.|net\.|WebSocket|child_process|spawn\(|exec\(|shell\.openExternal|eval\(|new Function)' | head -50
 gh pr diff $N -R $R | awk '/^diff --git/ { pkg = /package\.json/ } pkg && /^\+ +"/'   # added package.json lines
-gh pr diff $N -R $R --name-only | grep -E 'pnpm-lock\.yaml|^\.github/|opencode\.json|^\.opencode/|^warden\.toml|^\.warden/'
+gh pr diff $N -R $R --name-only | grep -E 'pnpm-lock\.yaml|^\.github/|opencode\.json|^\.opencode/'
 ```
 
 - New IPC channels or preload exposure: which renderer needs it, what data
@@ -188,7 +161,7 @@ git cherry-pick -x origin/dev..contributor/pr-$N         # keeps Author: as the 
 git log origin/dev.. --format='%h %an <%ae> %s'                    # the contributor must still be the author
 git push -u origin carry/pr-$N
 gh pr create -R $R --base dev --head carry/pr-$N --title "<original title>" \
-  --body "Carries #$N by @<contributor> onto a same-repo branch so Warden can run. Original commits: <shas>."
+  --body "Carries #$N by @<contributor> onto a same-repo branch so CI can run with trusted configuration. Original commits: <shas>."
 ```
 
 Rules:
@@ -200,8 +173,8 @@ Rules:
   so the credit trail survives.
 - Close the fork PR with a comment linking the carry PR so the contributor
   keeps the credit trail and knows where review continues.
-- The carry PR is a normal same-repo PR: Warden runs, clearance applies, and
-  sections 1 to 5 still apply to it.
+- The carry PR is a normal same-repo PR: normal CI runs, and sections 1 to 5
+  still apply to it.
 
 ## 7. Record the review
 
@@ -212,7 +185,7 @@ the head changes after the comment, the review is stale; rerun sections 1,
 
 If the pre-test review is clear, authorize tests on the commit you actually
 read (`HEAD` recorded in section 3), not a fresh lookup of a possibly newer
-head. Only approve the PR after its Warden results and required CI are clear:
+head. Only approve the PR after required CI is clear:
 
 ```bash
 gh pr comment $N -R $R --body "/test $HEAD"

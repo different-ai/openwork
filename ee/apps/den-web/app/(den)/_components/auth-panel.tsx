@@ -35,7 +35,20 @@ type LoginOption = {
   alternativeStep: AlternativeLoginStep | null;
   ssoRequired: boolean;
   organizationName: string | null;
+  /** multipleSsoConnections: the identity providers that sign in this email; several get one button each. */
+  ssoProviders: SsoProviderOption[];
 };
+
+type SsoProviderOption = { providerId: string; name: string };
+
+function readSsoProviders(value: unknown): SsoProviderOption[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.providerId !== "string" || typeof entry.name !== "string") return [];
+    const name = entry.name.trim();
+    return entry.providerId && name ? [{ providerId: entry.providerId, name }] : [];
+  });
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -61,6 +74,7 @@ function readLoginOption(payload: unknown): LoginOption | null {
     alternativeStep: payload.nextStep === "sso" ? readAlternativeLoginStep(payload.alternativeStep) : null,
     ssoRequired: payload.ssoRequired === true,
     organizationName: typeof payload.organizationName === "string" && payload.organizationName.trim() ? payload.organizationName.trim() : null,
+    ssoProviders: payload.nextStep === "sso" ? readSsoProviders(payload.ssoProviders) : [],
   };
 }
 
@@ -432,11 +446,21 @@ export function AuthPanel({
   const ssoContinueLabel = loginOption?.organizationName ? `Continue with ${loginOption.organizationName} SSO` : "Continue with SSO";
   const canRememberSignIn = emailFirstFlow && !prefilledEmail?.trim() && !lockEmail && !hideSocialAuth && !emailFirstInvite;
 
+  // Read the remembered method once. setAuthMode is a new function on every
+  // provider render, so without this guard any later render (a session check,
+  // typing the email) re-ran this effect, closed the email form the person had
+  // just opened from "Continue with email", and cleared sign-in errors.
+  const rememberedMethodReadRef = useRef(false);
   useEffect(() => {
     if (!canRememberSignIn) {
+      rememberedMethodReadRef.current = false;
       setRememberedMethod(null);
       return;
     }
+    if (rememberedMethodReadRef.current) {
+      return;
+    }
+    rememberedMethodReadRef.current = true;
     const method = readLastSignInMethod(document.cookie);
     if (!method) {
       setRememberedMethod(null);
@@ -623,7 +647,8 @@ export function AuthPanel({
     window.location.assign(nextUrl.toString());
   };
 
-  const startEmailFirstSso = () => {
+  /** Start SSO at the organization's sign-in page; with a provider id, that identity provider (several to choose from). */
+  const startEmailFirstSso = (providerId?: string) => {
     const target = loginOption?.signInPath ?? loginOption?.signInUrl;
     if (!target) {
       setLoginOptionError("Could not find your organization SSO sign-in link. Try again.");
@@ -631,6 +656,9 @@ export function AuthPanel({
     }
 
     const nextUrl = new URL(target, window.location.origin);
+    if (providerId) {
+      nextUrl.searchParams.set("providerId", providerId);
+    }
     nextUrl.searchParams.set("callbackURL", getSocialCallbackUrl(runtimeConfig.openworkAuthCallbackUrl));
     const trimmedEmail = email.trim();
     if (trimmedEmail) {
@@ -991,11 +1019,27 @@ export function AuthPanel({
           </form>
         ) : null}
 
-        {!waitingForPrefilledLoginOption && emailFirstStep === "sso" ? (
+        {!waitingForPrefilledLoginOption && emailFirstStep === "sso" && (loginOption?.ssoProviders.length ?? 0) > 1 ? (
+          <div className="grid gap-2" data-testid="email-first-sso-providers">
+            {loginOption?.ssoProviders.map((provider) => (
+              <button
+                key={provider.providerId}
+                type="button"
+                className="den-button-primary w-full"
+                onClick={() => startEmailFirstSso(provider.providerId)}
+                disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+                data-testid="email-first-sso-provider"
+              >
+                {`Continue with ${provider.name}`}
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            ))}
+          </div>
+        ) : !waitingForPrefilledLoginOption && emailFirstStep === "sso" ? (
           <button
             type="button"
             className="den-button-primary w-full"
-            onClick={startEmailFirstSso}
+            onClick={() => startEmailFirstSso()}
             disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
             data-testid="email-first-sso"
           >

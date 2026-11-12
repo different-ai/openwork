@@ -1,0 +1,117 @@
+---
+title: "Use the Codex CLI with AI Gateway"
+description: "Point OpenAI's Codex CLI at your organization's AI Gateway with a provider in ~/.codex/config.toml, and use your models, OpenAI or not."
+keywords: ["Codex", "Codex CLI", "config.toml", "model_providers", "OPENWORK_API_KEY", "AI Gateway API key", "3rd party tools"]
+---
+
+With an [AI Gateway API key](/ai-gateway/third-party-tools) you can run OpenAI's
+Codex CLI on the models your organization gives you. Requests go through AI
+Gateway like any other: the key only reaches models you're allowed, and usage
+counts toward your limit.
+
+Codex works best with OpenAI models, which get Codex's requests as they are.
+Other models (Claude, Gemini, DeepSeek and the rest) work too: AI Gateway
+answers Codex in the format it expects for every model.
+
+Using Codex in the ChatGPT desktop app? See [Use the Codex app](/ai-gateway/codex-desktop).
+
+## Set it up
+
+Create a key in **My Library › Models** and pick **OpenAI Codex** under **Start
+using this key**. Already have a key? Open its menu and select **Set up**.
+
+1. **Put the key in your shell profile.** Add this line to `~/.zshrc` (or
+   `~/.bashrc`), then open a new terminal:
+
+   ```bash
+   export OPENWORK_API_KEY="<your API key>"
+   ```
+
+2. **Add the provider to Codex.** Choose a model (and a thinking level, for
+   models that have levels) on the page, then put the configuration it shows at
+   the top of `~/.codex/config.toml`, replacing any `model` or `model_provider`
+   lines already there. It looks like this:
+
+   ```toml
+   model_provider = "openwork"
+   model = "openwork/gpt-5.5-k3f9"
+   model_reasoning_effort = "high"
+
+   [model_providers.openwork]
+   name = "OpenWork"
+   base_url = "https://<your AI Gateway>/api/v1/codex"
+   wire_api = "responses"
+
+   [model_providers.openwork.auth]
+   command = "sh"
+   args = ["-c", "echo $OPENWORK_API_KEY"]
+   ```
+
+3. **Restart Codex's background server.** In a new terminal (one that has the
+   key), run:
+
+   ```bash
+   codex app-server daemon restart
+   ```
+
+   Codex runs a background server that keeps going after you quit Codex or close
+   the terminal. It reads the key and `config.toml` when it starts, so without
+   this step it keeps using what it had before, even in a new terminal. Run it
+   again whenever you change the key or `config.toml`.
+4. **Start Codex** in your project with `codex`.
+5. **Check it.** Run `/status`: it should show the `openwork` provider. `/model`
+   lists your models and their thinking levels.
+
+The key is read through a command (the `auth` block) rather than `env_key`:
+only then does Codex load your models from AI Gateway, with their context
+windows and thinking levels, for `/model`.
+
+### On Windows
+
+Set the key with `setx OPENWORK_API_KEY "<your API key>"`, open a new
+terminal, run `codex app-server daemon restart`, and use this `auth` block
+instead:
+
+```toml
+[model_providers.openwork.auth]
+command = "powershell"
+args = ["-NoProfile", "-Command", "Write-Output $env:OPENWORK_API_KEY"]
+```
+
+## Model names
+
+Each of your models has a name for Codex:
+
+```text
+openwork/<model name>-<4 characters>
+```
+
+The four characters tell apart models with the same name. Copy names from the
+page rather than typing them, or pick one with `/model`.
+
+- **Thinking level:** `model_reasoning_effort` (or the level you pick in
+  `/model`) sets it. A level at the end of the name
+  (`openwork/gpt-5.5-k3f9:high`) wins over it.
+- **OpenAI models** (including Azure OpenAI) get Codex's requests as they are,
+  so reasoning carries across turns as it does with OpenAI.
+- **Other models** are translated. Codex's tools (running commands, editing
+  files with `apply_patch`, sub-agents) work on them too.
+- **Web search** isn't available through AI Gateway: it runs on OpenAI's side.
+  Codex works without it.
+- `/model` also lists Codex's own OpenAI models, after yours. They only work
+  when your organization offers that model.
+- **[Smart Routers](/ai-gateway/auto-model-routing)** you can use are listed
+  after your models as `openwork/smart-<router name>-<4 characters>`. Smart
+  picks the model and thinking level for each prompt, so
+  `model_reasoning_effort` doesn't apply to them.
+
+## When it doesn't work
+
+| Codex shows | What to do |
+| --- | --- |
+| `401 Unauthorized` / `invalid_api_key` | Codex's background server started before the key was set. In a new terminal, run `codex app-server daemon restart`, then `codex`. Still failing? Check that `echo $OPENWORK_API_KEY` prints the key there, and that the key isn't revoked or expired and 3rd party tools are on for your organization (**My Library › Models**). |
+| `model_not_found: … is not one of your OpenWork models` | The model name isn't one of yours anymore. Copy the configuration again from the page, or pick a model with `/model`. |
+| `Model metadata for … not found` | Codex didn't load your models: check that the provider uses the `auth` block above, not `env_key`. |
+| `unsupported_thinking_level` | The model doesn't have that thinking level. Pick one in `/model`, or remove `model_reasoning_effort`. |
+| `404 … not available for this organization` | 3rd party tools are turned off for your organization. Ask an admin. |
+| A new model, a new key or a `config.toml` change isn't picked up | Run `codex app-server daemon restart` in a terminal that has the key, then start `codex` again. |

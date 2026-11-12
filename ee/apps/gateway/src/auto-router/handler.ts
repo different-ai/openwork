@@ -61,7 +61,7 @@ export type AutoRouterDependencies = {
   onJevError?: (error: unknown) => void
 }
 
-type RoutedCandidate = AutoCandidate & {
+export type RoutedCandidate = AutoCandidate & {
   route: AutoRouterConfigModel
   row: GatewayMemberAccessRow
   family: ProtocolFamily
@@ -100,7 +100,7 @@ function isThinkingLevel(value: string): value is AutoRouterThinkingLevel {
   return AUTO_ROUTER_THINKING_LEVELS.some((level) => level === value)
 }
 
-function accessPriority(row: GatewayMemberAccessRow) {
+export function accessPriority(row: GatewayMemberAccessRow) {
   return row.grant.org_membership_id !== null ? 3 : row.grant.team_id !== null ? 2 : 1
 }
 
@@ -108,11 +108,22 @@ function autoError(status: number, code: string, message: string) {
   return Response.json({ error: { message, type: status >= 500 ? "api_error" : "invalid_request_error", code } }, { status })
 }
 
+const AUTO_ROUTER_ERRORS = {
+  notConfigured: { status: 404, code: "auto_router_not_configured", message: "Smart models aren't available yet: the AI Gateway is missing its routing key. Ask your administrator, or choose another model." },
+  unavailable: { status: 404, code: "auto_router_unavailable", message: "This Smart model isn't available to you anymore. Choose another model." },
+} as const
+
+/** Why a Smart model can't be used, as a Chat Completions error. */
+export function autoRouterError(kind: keyof typeof AUTO_ROUTER_ERRORS) {
+  const error = AUTO_ROUTER_ERRORS[kind]
+  return autoError(error.status, error.code, error.message)
+}
+
 function modelName(row: GatewayMemberAccessRow) {
   return row.model?.name ?? row.model?.model_id ?? "model"
 }
 
-function maxOutputTokens(row: GatewayMemberAccessRow) {
+export function maxOutputTokens(row: GatewayMemberAccessRow) {
   const config = row.model?.model_config
   const limit = config && isJsonObject(config.limit) ? config.limit.output : null
   return typeof limit === "number" && Number.isInteger(limit) && limit > 0 ? Math.min(limit, 128_000) : null
@@ -146,7 +157,7 @@ export function autoCandidates(config: AutoRouterConfig, rows: GatewayMemberAcce
   return candidates
 }
 
-function forwardedHeaders(request: Request, extra: Record<string, string>) {
+export function forwardedHeaders(request: Request, extra: Record<string, string>) {
   const headers = new Headers()
   for (const name of ["content-type", "accept", "user-agent", "x-opencode-session-id", "x-openwork-session-id"]) {
     const value = request.headers.get(name)
@@ -230,25 +241,38 @@ async function readJson(response: Response): Promise<unknown> {
   return response.json().catch(() => null)
 }
 
-async function translateResponse(response: Response, translator: AutoTranslator, input: TranslateResponseInput): Promise<Response> {
+/**
+ * An upstream response as Chat Completions. Smart responses (`smart`, the default) also name the
+ * routed model in headers and on every error; other callers get the translated response alone.
+ */
+export async function translateResponse(response: Response, translator: AutoTranslator, input: TranslateResponseInput, options: { smart: boolean } = { smart: true }): Promise<Response> {
   const contentType = response.headers.get("content-type")
   const { route } = input
+  const respond = (body: BodyInit | null, type?: string) => {
+    if (options.smart) return withRouteHeaders(response, route, body, type)
+    const headers = new Headers(response.headers)
+    headers.delete("content-length")
+    if (type) headers.set("content-type", type)
+    return new Response(body, { status: response.status, statusText: response.statusText, headers })
+  }
+  const error = (body: JsonObject) => options.smart ? annotateChatError(body, route) : body
+  const stream = (body: ReadableStream<Uint8Array>) => options.smart ? annotateChatStreamErrors(body, route) : body
   if (!response.ok) {
     const body = isJsonContentType(contentType) ? await readJson(response) : (await response.body?.cancel().catch(() => {}), null)
-    return withRouteHeaders(response, route, JSON.stringify(annotateChatError(translator.errorToChat(body, response.status), route)), "application/json")
+    return respond(JSON.stringify(error(translator.errorToChat(body, response.status))), "application/json")
   }
   if (response.body && (isEventStreamContentType(contentType) || isAwsEventStreamContentType(contentType) || (input.stream && !isJsonContentType(contentType)))) {
-    return withRouteHeaders(response, route, annotateChatStreamErrors(translator.streamToChat(response.body, input), route), "text/event-stream; charset=utf-8")
+    return respond(stream(translator.streamToChat(response.body, input)), "text/event-stream; charset=utf-8")
   }
   if (isJsonContentType(contentType)) {
     const body = await readJson(response)
     // Google streams a JSON array without alt=sse; translators accept it as a body.
     if (input.stream && Array.isArray(body)) {
-      return withRouteHeaders(response, route, annotateChatStreamErrors(translator.streamToChat(new Response(`data: ${body.map((item) => JSON.stringify(item)).join("\n\ndata: ")}\n\n`).body ?? new ReadableStream(), input), route), "text/event-stream; charset=utf-8")
+      return respond(stream(translator.streamToChat(new Response(`data: ${body.map((item) => JSON.stringify(item)).join("\n\ndata: ")}\n\n`).body ?? new ReadableStream(), input)), "text/event-stream; charset=utf-8")
     }
-    return withRouteHeaders(response, route, JSON.stringify(translator.jsonToChat(body, input)), "application/json")
+    return respond(JSON.stringify(translator.jsonToChat(body, input)), "application/json")
   }
-  return withRouteHeaders(response, route, response.body)
+  return respond(response.body)
 }
 
 export async function handleAutoRequest(input: {
@@ -261,12 +285,12 @@ export async function handleAutoRequest(input: {
 }): Promise<Response> {
   const { request, body, routerId, identity, dependencies } = input
   if (!dependencies.routingConfigured) {
-    return autoError(404, "auto_router_not_configured", "Smart models aren't available yet: the AI Gateway is missing its routing key. Ask your administrator, or choose another model.")
+    return autoRouterError("notConfigured")
   }
   const config = identity.orgMembershipId
     ? await dependencies.loadConfig({ organizationId: identity.organizationId, routerId, memberId: identity.orgMembershipId })
     : null
-  if (!config) return autoError(404, "auto_router_unavailable", "This Smart model isn't available to you anymore. Choose another model.")
+  if (!config) return autoRouterError("unavailable")
   const candidates = autoCandidates(config, await dependencies.loadMemberGatewayAccess(identity), dependencies.catalog)
   if (!candidates.length) return autoError(403, "auto_router_no_models", "None of this Smart model's models are available to you. Choose another model, or ask your administrator for access.")
 

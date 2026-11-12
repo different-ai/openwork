@@ -47,3 +47,14 @@ test("the Free plan allows users up to its limit; the next one needs the Team pl
   assert.equal(canAddUserWithoutSeatSubscription({ total: 4, free: 5 }), true)
   assert.equal(canAddUserWithoutSeatSubscription({ total: 5, free: 5 }), false)
 })
+
+test("OpenWork Web bills only the users with Web, while seats and Models bill everyone", () => {
+  // 9 people, an admin gave Web to 3 of them (webPerMember).
+  const quantities = calculateOrganizationBillingQuantities({ users: 9, webUsers: 3 })
+  assert.equal(quantities.web.quantity, 3)
+  assert.equal(quantities.seats.chargeable, 9)
+  assert.equal(quantities.models.quantity, 9)
+  // Never more Web users than users, and malformed counts bill nobody extra.
+  assert.equal(calculateOrganizationBillingQuantities({ users: 2, webUsers: 5 }).web.quantity, 2)
+  assert.equal(calculateOrganizationBillingQuantities({ users: 4, webUsers: Number.NaN }).web.quantity, 0)
+})

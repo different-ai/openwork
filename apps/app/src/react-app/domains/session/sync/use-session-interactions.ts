@@ -452,8 +452,9 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
   );
 
   const activeQuestion = pendingQuestions[0] ?? null;
+  // `answers: null` dismisses the question without answering it.
   const respondQuestion = useCallback(
-    async (requestID: string, answers: string[][]) => {
+    async (requestID: string, answers: string[][] | null) => {
       if (!client || !workspaceId || !sessionId) throw new Error("The conversation is no longer available.");
       if (questionReplyBusyRef.current) throw new Error("A question reply is already in progress.");
       const pendingQuestion = pendingQuestions.find((question) => question.id === requestID);
@@ -461,11 +462,20 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
       questionReplyBusyRef.current = true;
       setQuestionReplyBusy(true);
       try {
-        unwrap(
-          await (isOpencodeV2Client(client)
-            ? client.replySessionQuestion({ sessionID: pendingQuestion.sessionID, requestID, answers })
-            : client.question.reply({ requestID, answers, directory: workspaceRoot || undefined })),
-        );
+        const directory = workspaceRoot || undefined;
+        if (answers === null) {
+          unwrap(
+            await (isOpencodeV2Client(client)
+              ? client.rejectSessionQuestion({ sessionID: pendingQuestion.sessionID, requestID })
+              : client.question.reject({ requestID, directory })),
+          );
+        } else {
+          unwrap(
+            await (isOpencodeV2Client(client)
+              ? client.replySessionQuestion({ sessionID: pendingQuestion.sessionID, requestID, answers })
+              : client.question.reply({ requestID, answers, directory })),
+          );
+        }
         settleQuestionState(workspaceId, pendingQuestion.sessionID, requestID);
       } catch (error) {
         toast.error(t("app.error_request_failed"), {

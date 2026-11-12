@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 
 @MainActor
 final class SessionRuntime {
@@ -38,6 +39,11 @@ final class SessionRuntime {
         let mode: AccessMode
         /// Background until the app shows it needs the front for keys or pointer steps.
         var delivery: InputDelivery
+        /// The app takes real input: a known app that drops input addressed to its process,
+        /// or one where a real-input step the agent asked for visibly worked (`RealInputUse`).
+        var realInput = false
+        /// How the last act's input went, read by the next observation (`RealInputUse`).
+        var lastInput: RealInputUse.Sent?
         /// Whether the person follows along in OpenWork; nil when the host does not say.
         var follow: FollowAlong?
         /// The person watches this chat: the session works in front, beside OpenWork.
@@ -48,6 +54,9 @@ final class SessionRuntime {
         var parents: [(app: AppIdentity, target: WindowTarget, kind: DialogTarget.Kind?)] = []
         /// Windows the last action opened: the only new windows a session follows.
         var openedByLastAction: Set<CGWindowID> = []
+        /// The app's windows before the last act that sent input: what a window the app put in place
+        /// of the closed session window is new against (`WindowReplacement`).
+        var windowsBeforeInput: (windows: Set<CGWindowID>, at: TimeInterval)?
         var dialogKind: DialogTarget.Kind?
         /// A dialog closed since the last observation and the session is back in its window.
         var returnedFromDialog = false
@@ -83,6 +92,9 @@ final class SessionRuntime {
         var yielded = false
         /// Where the window was before the session first arranged it; put back on close.
         var placement: WindowArrangement.Placement?
+        /// When the last act's last input was the agent's own click (or focus step) in this window, in
+        /// uptime: canvas text typed in the next act may go where it put the keyboard.
+        var lastClick: TimeInterval?
     }
     init(policy: RuntimePolicy = .desktop, clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.policy = policy; self.clock = clock
@@ -92,7 +104,7 @@ final class SessionRuntime {
         controls.onStop = { [weak self] in self?.close(stoppedByPerson: true) }
         controls.onTick = { [weak self] in self?.expire() }
         controls.onWatch = { [weak self] visible in self?.watchWindow(visible: visible) }
-        controls.onFollow = { [weak self] watching, beside in self?.session?.follow?.host(watching: watching, beside: beside) }
+        controls.onFollow = { [weak self] watching, beside, stage in self?.session?.follow?.host(watching: watching, beside: beside, stage: stage) }
     }
     private var now: TimeInterval { clock() }
 
@@ -118,7 +130,7 @@ final class SessionRuntime {
             // Set only by the trusted host: whether the person watches this chat, whether the
             // window may go beside OpenWork (not while the chat has several apps open), the
             // chat's clipboard key, and the file approval for opening the app onto a file.
-            try a.only(policy == .embedded ? ["app_id", "pid", "window_id", "mode", "purpose", "following", "beside", "clipboard", "file", "file_approval"] : ["app_id", "pid", "window_id", "mode", "purpose"])
+            try a.only(policy == .embedded ? ["app_id", "pid", "window_id", "mode", "purpose", "following", "beside", "stage_slot", "stage_count", "clipboard", "file", "file_approval"] : ["app_id", "pid", "window_id", "mode", "purpose"])
             guard session == nil else { throw UseError("session_exists", "Close this connection's session before opening another.", next: "close_session") }
             defer { if session == nil { controls.close() } }
             let appID = try a.string("app_id")
@@ -132,7 +144,8 @@ final class SessionRuntime {
             let frameworks = installed.map { (try? FileManager.default.contentsOfDirectory(atPath: $0.appendingPathComponent("Contents/Frameworks").path)) ?? [] } ?? []
             let delivery = InputDelivery.decide(enabled: backgroundDelivery, available: BackgroundFocus.available, mode: mode, bundleID: appID,
                 info: installed.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:], frameworks: frameworks)
-            var follow = values["following"] == nil ? nil : FollowAlong(watching: try a.bool("following", default: false), beside: try a.bool("beside", default: true))
+            var follow = values["following"] == nil ? nil : FollowAlong(watching: try a.bool("following", default: false), beside: try a.bool("beside", default: true),
+                stage: values["stage_count"] == nil ? nil : try StageSlot.parse(a))
             // A person watching the chat sees the app come forward; otherwise it opens behind their work.
             let followed = mode == .control && follow?.follows(frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier, host: Responsibility.hostPID,
                 target: pid ?? NSRunningApplication.runningApplications(withBundleIdentifier: appID).first?.processIdentifier) == true
@@ -160,7 +173,7 @@ final class SessionRuntime {
             }
             // An app that is not running starts on the document, instead of an empty window or an Open panel.
             var launchedOnFile: pid_t?
-            if let file, approved, pid == nil, NSRunningApplication.runningApplications(withBundleIdentifier: appID).isEmpty,
+            if let file, approved, pid == nil, !NSRunningApplication.runningApplications(withBundleIdentifier: appID).contains(where: AppIdentity.isLive),
                AppIdentity.isAllowed(bundleID: appID), let installed, Bundle(url: installed)?.bundleIdentifier == appID {
                 launchedOnFile = try await FileHandoff.open(file, in: installed, activates: !background).processIdentifier
                 var tries = 0
@@ -199,6 +212,22 @@ final class SessionRuntime {
                     windows = try await access.windows(identity)
                 }
             }
+            var movedHere: String?
+            let requestedID = values["window_id"] == nil ? nil : try a.integer("window_id", min: 1, max: Int(UInt32.max))
+            let elsewhere = access.windowsOnOtherSpaces(identity)
+            // The window asked for (a dialog the app opened out of sight), or the app's only windows,
+            // are on another Space: brought over without activating the app.
+            let wanted = requestedID.flatMap { id in elsewhere.contains(CGWindowID(id)) ? [CGWindowID(id)] : nil }
+                ?? (windows.isEmpty ? Array(elsewhere.prefix(1)) : [])
+            if !wanted.isEmpty, let way = await access.bringOver(wanted).first {
+                movedHere = way
+                windows = try await access.windows(identity)
+            }
+            if windows.isEmpty, let elsewhere = access.windowsElsewhere(identity).first {
+                // Its window is on another Space or in the Dock: minimized and restored here, as a person would.
+                if await access.moveToThisSpace(elsewhere) { movedHere = "minimize_restore"; windows = try await access.windows(identity) }
+            }
+            if windows.isEmpty, access.hasWindowsOnOtherSpaces(identity) { throw WindowPresence.offSpace }
             guard !windows.isEmpty else { throw UseError("window_unavailable", "The app opened, but did not expose a usable window. Check for a sign-in or app dialog, then request a session again.", next: "human_takeover") }
             try Task.checkCancellation()
             let requested = values["window_id"] == nil ? nil : try a.integer("window_id", min: 1, max: Int(UInt32.max))
@@ -211,6 +240,8 @@ final class SessionRuntime {
             let reservation = try ControlLease(pid: identity.pid, window: target.id)
             let id = UUID().uuidString.lowercased()
             session = Session(id: id, app: identity, target: target, mode: mode, delivery: delivery, follow: follow, followed: followed, started: now, lastUsed: now, purpose: purpose)
+            session?.realInput = mode == .control && InputDelivery.needsRealInput(bundleID: appID,
+                info: installed.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:], frameworks: frameworks)
             lease = reservation
             controls.show(app: identity, target: target, mode: mode, purpose: purpose, background: background)
             if mode == .control, !background, let current = session {
@@ -224,6 +255,8 @@ final class SessionRuntime {
                     // Nothing stays half open: the host opens the session again later.
                     close()
                     throw error
+                } catch let error as UseError where error.code == WindowFront.refused.code {
+                    // The session opens with its window where it is: each step takes the front again.
                 }
                 if followed { arrangeBeside(id) }
             }
@@ -232,6 +265,8 @@ final class SessionRuntime {
                 "window_id": Int(target.id), "window_title": target.title, "mode": mode.rawValue, "delivery": delivery.rawValue, "followed": followed,
                 "state": opened.paused ? "paused" : "active", "expires_in_seconds": 900,
                 "next": next(opened)]
+            // Which way its window came over from another Space, so a report can tell which works.
+            if let movedHere { result["moved_here"] = movedHere }
             if file != nil {
                 result["file"] = FileOpenCheck.outcome(alert: fileAlert, documentWindowOpened: fileWindow != nil, retitled: false)
                 if let typeNote { result["type_note"] = typeNote }
@@ -243,14 +278,16 @@ final class SessionRuntime {
             return try await observe(try a.string("session_id"), image: options.image, elements: options.elements, menus: options.menus,
                 filePanelAccess: policy == .embedded ? (values["file_panel_access"] as? NSNumber)?.uint32Value : nil)
         case "computer_act":
-            try a.only(policy == .embedded ? ["session_id", "observation_id", "request_id", "action", "actions", "intent", "file_approval", "file_panel_access", "pacing", "retry_ms", "credential_approval"] : ["session_id", "observation_id", "request_id", "action"])
+            try a.only(policy == .embedded ? ["session_id", "observation_id", "request_id", "action", "actions", "intent", "file_approval", "file_panel_access", "pacing", "retry_ms", "credential_approval", "input"] : ["session_id", "observation_id", "request_id", "action"])
             let id = try a.string("session_id")
             let observationID = try a.string("observation_id")
             let requestID = try a.string("request_id", max: 100)
             let actions = try Action.batch(values, policy: policy)
             let pacing = policy == .embedded ? try BatchPacing(values) : .fast
-            // Pacing changes how the batch runs, so a reused request_id must name it too.
-            let raw: Any = ["steps": values["actions"] ?? values["action"] ?? NSNull(), "pacing": pacing.mode.rawValue, "retry_ms": Int(pacing.retry * 1_000)]
+            let requestedReal = policy == .embedded ? try RealInputUse.requested(values["input"]) : false
+            // Pacing and input change how the batch runs, so a reused request_id must name them too.
+            let raw: Any = ["steps": values["actions"] ?? values["action"] ?? NSNull(), "pacing": pacing.mode.rawValue, "retry_ms": Int(pacing.retry * 1_000),
+                "input": requestedReal ? "real" : "auto"]
             // Display only: shown on the person's desktop cursor, never part of the receipt identity.
             let intent = values["intent"] == nil ? nil : try a.string("intent", max: 120)
             // Set only by the trusted host: the exact names the person approved handing over,
@@ -262,7 +299,7 @@ final class SessionRuntime {
             let credentialApproval = policy == .embedded ? values["credential_approval"] as? String : nil
             do {
                 return try await act(id: id, observationID: observationID, requestID: requestID, actions: actions, raw: raw, intent: intent,
-                    fileApproval: fileApproval, filePanelAccess: panelAccess, pacing: pacing, credentialApproval: credentialApproval)
+                    fileApproval: fileApproval, filePanelAccess: panelAccess, pacing: pacing, credentialApproval: credentialApproval, requestedReal: requestedReal)
             } catch let error as UseError {
                 // Refused before anything was sent: the cursor shakes it off and tries another way.
                 if error.next == "observe" || error.next == "correct_request" { controls.react(.refused) }
@@ -289,7 +326,8 @@ final class SessionRuntime {
     }
 
     private func discover() -> [String: Any] {
-        let running = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && AppIdentity.isAllowed($0) }
+        // An app macOS quit while it had no windows is listed as installed, with no pid to pin.
+        let running = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && AppIdentity.isAllowed($0) && AppIdentity.isLive($0) }
             .compactMap { app -> [String: Any]? in
                 guard let id = app.bundleIdentifier else { return nil }
                 return ["app_id": id, "name": app.localizedName ?? id, "pid": Int(app.processIdentifier)]
@@ -425,13 +463,80 @@ final class SessionRuntime {
               "next": waited ? "human_takeover" : "observe", "message": HandoverRules.message(prompt.reason, waited: waited)])
     }
     /// A file panel lists the person's files: nothing of it reaches the agent until they allow it.
+    /// The session's window closed after the agent's own input and the app showed exactly one new
+    /// window: the session works there from now on, as `computer_open` onto a file opens in the
+    /// window the file shows in. Its controls and refs are new, so the next act needs an observation.
+    /// Only for the session's own window, never a dialog's, and only into a window no other agent holds.
+    /// `settle` waits that long for the app to close the window and show its replacement.
+    private func followReplacement(_ id: String, settle: TimeInterval = 0) async -> [String: Any]? {
+        guard let current = session, current.id == id, current.parents.isEmpty, !current.paused,
+              let before = current.windowsBeforeInput, now - before.at < WindowReplacement.within else { return nil }
+        let until = now + settle
+        var found: (id: UInt32, windows: [WindowTarget])?
+        while found == nil {
+            let changes = access.windowChanges(current.app)
+            let after = changes.windows.union(changes.panels)
+            if !after.contains(current.target.id), after.subtracting(before.windows).count > 0 {
+                let windows = (try? await access.windows(current.app)) ?? []
+                let focused = access.focusedWindowID(current.app, windows: windows, requireActive: false).map(UInt32.init)
+                if let replacement = WindowReplacement.replacement(before: before.windows, after: after, target: current.target.id, focused: focused) {
+                    found = (replacement, windows)
+                    break
+                }
+            }
+            guard now < until, (try? await Task.sleep(nanoseconds: 100_000_000)) != nil, session?.id == id else { break }
+        }
+        guard let found, let target = found.windows.first(where: { $0.id == found.id }),
+              (try? access.validate(target, app: current.app)) != nil,
+              let reservation = try? ControlLease(pid: current.app.pid, window: target.id),
+              session?.id == id else { return nil }
+        lease = reservation
+        session?.target = target; session?.windowsBeforeInput = nil; session?.dialogKind = nil
+        session?.generation += 1; session?.observation = nil; session?.records = []; session?.focus = nil; session?.needsRefresh = true
+        controls.update("Working in the app's new window…", paused: false)
+        return ["window_id": Int(target.id), "window_title": target.title]
+    }
+    private enum PanelWait { case unchanged, observed(String), approval([[String: Any]]) }
+    /// An Open or Place panel the app is still opening when open_in_panel arrives (a menu command's
+    /// panel can take seconds): wait for it (`OpenPanelRules.wait`), follow it, sheet or window of its
+    /// own, and look at it here. The step uses only the panel, never an observed element or point, so
+    /// the model need not see it first. A panel the person has not let the agent see asks them first.
+    private func awaitOpenPanel(_ id: String, filePanelAccess: CGWindowID?) async throws -> PanelWait {
+        let until = now + OpenPanelRules.wait
+        var followed = false
+        while true {
+            if try await followDialog(id) { followed = true }
+            let current = try current(id)
+            if OpenPanelRules.isOpenPanel(kind: current.dialogKind, saveField: access.saveNameField(current.target) != nil,
+                defaultButton: access.defaultButton(current.target).flatMap { access.attribute($0, kAXTitleAttribute) as? String }) {
+                guard followed || current.observation == nil else { return .unchanged }
+                if current.filePanelAllowed != current.target.id, filePanelAccess != current.target.id { return .approval(filePanelAccessRequired(current)) }
+                _ = try await observe(id, image: false, elements: "interactive", filePanelAccess: filePanelAccess)
+                return session?.observation.map { .observed($0.id) } ?? .unchanged
+            }
+            guard now < until else { return .unchanged }
+            try await Task.sleep(nanoseconds: 100_000_000); try checkActive(current)
+        }
+    }
     private func filePanelAccessRequired(_ current: Session) -> [[String: Any]] {
         text(["ok": false, "code": "file_panel_approval_required", "app": current.frontApp.name, "panel_id": Int(current.target.id), "dispatched": false, "next": "observe",
               "message": "A file panel opened. The person is asked before the agent sees their files; nothing was read."])
     }
+    /// The app replaced the session's window while it was being read: the read starts over on the new one.
+    private struct ReplacementFollowed: Error { let replaced: [String: Any] }
     private func observe(_ id: String, image: Bool?, elements: String, menus: Bool = false, filePanelAccess: CGWindowID? = nil) async throws -> [[String: Any]] {
+        do { return try await observeOnce(id, image: image, elements: elements, menus: menus, filePanelAccess: filePanelAccess) }
+        catch let followed as ReplacementFollowed {
+            return try await observeOnce(id, image: image, elements: elements, menus: menus, filePanelAccess: filePanelAccess, replaced: followed.replaced)
+        }
+    }
+    private func observeOnce(_ id: String, image: Bool?, elements: String, menus: Bool, filePanelAccess: CGWindowID?,
+                             replaced known: [String: Any]? = nil) async throws -> [[String: Any]] {
         // A paused session never resumes from an observation: only the person's Continue does.
         // Retry only read-only capture races. Never repeat an action or cross takeover.
+        // The app put a new window in place of the one the last action closed, after its receipt.
+        var replaced = known
+        if replaced == nil { replaced = await followReplacement(id) }
         try await followDialog(id)
         if access.personPrompt() != nil {
             // Only the person can answer it: wait here, so the agent carries on once they
@@ -454,6 +559,7 @@ final class SessionRuntime {
         }
         session?.needsRefresh = true
         controls.update("Refreshing the selected window before continuing…", paused: false)
+        if current.parents.isEmpty { try await access.bringHere(current.target, app: current.app) }
         // A foreground observation shows the window in front, as input will see it.
         // Background reads the window where it is: capture works behind other windows.
         let focus = current.takesFront ? try await FocusLease.acquire(check: { try self.checkActive(current) }) : nil
@@ -492,6 +598,9 @@ final class SessionRuntime {
                 // The person clicked or typed first: look without the front, which stays with them.
                 self.handFrontBack(current)
                 otherWindowFocused = true
+            } catch let error as UseError where error.code == WindowFront.refused.code {
+                // A look does not need the front: read the window where it is; the next step tries again.
+                otherWindowFocused = true
             }
         }
         return try await ObservationPreparation.capture(mode: current.mode, check: {
@@ -499,11 +608,17 @@ final class SessionRuntime {
         }, focus: bringBack, read: {
             for attempt in 0..<3 {
                 try self.checkActive(current)
-                do { return try await self.observeAttempt(id, image: image, elements: elements, menus: menus, otherWindowFocused: otherWindowFocused) }
+                do { return try await self.observeAttempt(id, image: image, elements: elements, menus: menus, otherWindowFocused: otherWindowFocused, replaced: replaced) }
                 catch let error as UseError {
                     if error.code == "window_not_frontmost", current.checksFront, attempt < 2 {
                         try await bringBack()
                         continue
+                    }
+                    // The window is going away under the read, as one a step just replaced does: once
+                    // the app shows the new one, the read is of that window.
+                    if ["accessibility_unavailable", "window_unavailable"].contains(error.code), attempt < 2,
+                       let followed = await self.followReplacement(id, settle: WindowReplacement.settle) {
+                        throw ReplacementFollowed(replaced: followed)
                     }
                     guard error.code == "stale_observation", attempt < 2 else { throw SharedDesktop.yielding(error) }
                     try await Task.sleep(nanoseconds: 75_000_000)
@@ -512,7 +627,8 @@ final class SessionRuntime {
             throw UseError("stale_observation", "The window is still changing. Observe again.", next: "observe")
         })
     }
-    private func observeAttempt(_ id: String, image requested: Bool?, elements filter: String, menus: Bool = false, otherWindowFocused: Bool = false) async throws -> [[String: Any]] {
+    private func observeAttempt(_ id: String, image requested: Bool?, elements filter: String, menus: Bool = false, otherWindowFocused: Bool = false,
+                                replaced: [String: Any]? = nil) async throws -> [[String: Any]] {
         let current = try current(id)
         session?.observation = nil; session?.records = []; session?.focus = nil
         let frontmost = current.checksFront && !otherWindowFocused
@@ -552,7 +668,26 @@ final class SessionRuntime {
                     state = try await readState()
                 }
             }
-        } else if policy == .desktop {
+        }
+        // Right after the agent's input, an animating window is observed once it holds still.
+        var stillChanging = false
+        if let first = png, policy == .embedded,
+           ObservationSettle.applies(info: current.app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:], baseline: current.baseline) {
+            let (settled, still) = try await ObservationSettle.settle(first: (state, first, width, height), digest: { self.access.imageDigest($0.1) + ((try? self.access.captureDigest($0.0)) ?? Data()) },
+                capture: { () async throws -> (WindowState, Data, Int, Int)? in
+                    do {
+                        let next = try await readState()
+                        let captured = try await self.observationImage(current, bounds: bounds, state: next, requireFrontmost: frontmost, check: check)
+                        return (next, captured.0, captured.1, captured.2)
+                    } catch let error as UseError where error.code == "stale_observation" {
+                        // Still changing mid-capture: keep the last complete look.
+                        return nil
+                    }
+                }, now: { self.now }, sleep: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)); try check() })
+            state = settled.0; png = settled.1; width = settled.2; height = settled.3
+            stillChanging = !still
+        }
+        if !image, policy == .desktop {
             let after = try await access.read(current.target, check: check)
             guard try access.captureDigest(state) == access.captureDigest(after) else {
                 throw UseError("stale_observation", "The window changed during the read. Observe again.", next: "observe")
@@ -587,8 +722,12 @@ final class SessionRuntime {
         let afterAction = current.baseline.flatMap { baseline in
             baseline.generation == current.generation ? baseline.changes(stateDigest: observation.stateDigest, imageDigest: observation.imageDigest) : nil
         }
+        // Whether the app took the last input: real input that visibly worked stays on for this
+        // session; input that changed nothing gets the hint to try it once as real input.
+        let inputUse = RealInputUse.after(current.lastInput, changes: afterAction, alreadyReal: current.realInput)
         session?.observation = observation; session?.records = shown; session?.focus = observedFocus
-        session?.lastUsed = now; session?.needsRefresh = false; session?.baseline = nil
+        session?.lastUsed = now; session?.needsRefresh = false; session?.baseline = nil; session?.lastInput = nil
+        if inputUse.keepReal { session?.realInput = true }
         if repeated == nil, let digest = observation.imageDigest {
             session?.lastImage = ImagePolicy.Sent(observationID: observation.id, generation: current.generation,
                 window: current.target.id, width: width, height: height, digest: digest)
@@ -597,6 +736,8 @@ final class SessionRuntime {
         let sent = repeated == nil ? png : nil
         var imageInfo: [String: Any] = ["width": width, "height": height, "included": sent != nil, "coordinate_space": "image_pixels"]
         if let imageFailure { imageInfo["unavailable"] = imageFailure.payload }
+        // The window was still animating when the look was taken: coordinates may need another look.
+        if stillChanging { imageInfo["still_changing"] = true }
         if !image { imageInfo["omitted"] = requested == false ? "requested" : "accessible_controls_suffice" }
         if let repeated {
             imageInfo["omitted"] = "unchanged"
@@ -606,9 +747,14 @@ final class SessionRuntime {
             "window_title": current.target.title, "mode": current.mode.rawValue, "image": imageInfo, "elements": elements,
             "truncated": state.truncated || state.listCapped, "protected_fields": state.protectedFrames.count,
             "content_trust": "untrusted_app_content", "next": "act_once_then_observe"]
-        if let afterAction { payload["after_action"] = afterAction }
+        if var afterAction {
+            if inputUse.suggest { afterAction["real_input"] = RealInputUse.suggestion }
+            if inputUse.keepReal { afterAction["real_input"] = "on" }
+            payload["after_action"] = afterAction
+        }
         if let reaction = CursorReaction.after(afterAction) { controls.react(reaction) }
         if otherWindowFocused { payload["other_window_focused"] = true }
+        if let replaced { payload["window_replaced"] = replaced }
         if let kind = current.dialogKind {
             // Elements and coordinates are the dialog's; it is worked in until it closes.
             payload["dialog"] = ["kind": kind.rawValue, "title": current.target.title, "depth": current.parents.count]
@@ -622,7 +768,9 @@ final class SessionRuntime {
             if let focus = observedFocus { payload["focused_ref"] = focus.ref }
             if let issue = state.privacyIssue { payload["privacy_issue"] = issue }
             if menus {
-                // Read without opening a menu, so the agent can run a command in one step.
+                // Read without opening a menu, so the agent can run a command in one step. An app in
+                // the background lists its document commands once its window is its key window.
+                if current.parents.isEmpty, !current.app.app.isActive { await MenuFocus.prime(app: current.app, window: current.target.id) }
                 let catalog = access.menuCatalog(current.app)
                 payload["menus"] = catalog.entries.map(\.display)
                 if catalog.truncated { payload["menus_truncated"] = true }
@@ -638,11 +786,12 @@ final class SessionRuntime {
     /// The re-capture that guards coordinate input uses the same encoding, so digests compare;
     /// a session's mode never changes, so neither does its profile.
     static let observationMimeType = "image/jpeg"
-    private func observationImage(_ current: Session, bounds: CGRect, state: WindowState, requireFrontmost: Bool,
+    private func observationImage(_ current: Session, bounds: CGRect, state: WindowState, requireFrontmost: Bool, comparisonOnly: Bool = false,
                                   check: () throws -> Void) async throws -> (Data, Int, Int, Int64) {
         let profile = ImagePolicy.profile(mode: current.mode, policy: policy)
         return try await access.capture(target: current.target, app: current.app, bounds: bounds, state: state,
-            maxLongSide: profile.maxLongSide, jpegQuality: profile.jpegQuality, requireFrontmost: requireFrontmost, check: check)
+            maxLongSide: profile.maxLongSide, jpegQuality: profile.jpegQuality, requireFrontmost: requireFrontmost,
+            comparisonOnly: comparisonOnly, check: check)
     }
 
     /// A sharper look at part of the current observation, for reading only. It
@@ -729,12 +878,22 @@ final class SessionRuntime {
     }
 
     private func act(id: String, observationID: String, requestID: String, actions: [Action], raw: Any, intent: String? = nil,
-                     fileApproval: [String]? = nil, filePanelAccess: CGWindowID? = nil, pacing: BatchPacing = .fast, credentialApproval: String? = nil) async throws -> [[String: Any]] {
+                     fileApproval: [String]? = nil, filePanelAccess: CGWindowID? = nil, pacing: BatchPacing = .fast, credentialApproval: String? = nil,
+                     requestedReal: Bool = false) async throws -> [[String: Any]] {
         let cached = try current(id, allowPaused: true)
         let fingerprint = try JSONSerialization.data(withJSONObject: ["observation_id": observationID, "action": raw], options: [.sortedKeys])
         if let receipt = cached.receipts[requestID] {
             guard cached.receiptInputs[requestID] == fingerprint else { throw UseError("request_id_reused", "A request_id cannot name a different action.") }
             return text(receipt)
+        }
+        // open_in_panel sent right after the command that opens the panel: wait for the panel and look at it here.
+        var observationID = observationID
+        if actions.count == 1, case .openInPanel = actions[0] {
+            switch try await awaitOpenPanel(id, filePanelAccess: filePanelAccess) {
+            case .observed(let looked): observationID = looked
+            case .approval(let prompt): return prompt
+            case .unchanged: break
+            }
         }
         // A dialog opened or closed since the last look: its controls are not the observed ones.
         if try await followDialog(id) {
@@ -743,6 +902,8 @@ final class SessionRuntime {
         if let prompt = access.personPrompt() { return personNeeded(prompt) }
         refreshFollow(id)
         let current = try current(id)
+        // A hidden or minimized window comes back without activating its app; one on another Space is reported.
+        if current.parents.isEmpty { try await access.bringHere(current.target, app: current.app) }
         // Saving an image sends no input: any mode, no front, and the observation stays valid.
         if actions.contains(where: { if case .saveImage = $0 { return true }; return false }) {
             guard actions.count == 1, case .saveImage(let file, let region, let replace) = actions[0] else {
@@ -757,7 +918,7 @@ final class SessionRuntime {
             session?.filePanelAllowed = current.target.id
         }
         guard current.mode != .observe, !actions.contains(where: \.requiresControl) || current.mode == .control else {
-            throw UseError("scope_denied", "This action is outside the selected mode. Close the session and open the needed mode.", next: "open_session")
+            throw current.mode.refusal(actions)
         }
         if current.actionCount + actions.count > 200 { session?.actionCount = 0 }
         if current.receipts.count >= 200, let oldest = current.receipts.keys.first {
@@ -771,7 +932,12 @@ final class SessionRuntime {
         // and gives back their app, window, field and caret (`scheduleHandBack`, `PersonPlace`).
         let route = input.route(for: current.app)
         let inBackground = current.mode == .control && current.working == .background && current.parents.isEmpty
-        let front = current.takesFront || inBackground && actions.contains { InputDelivery.stepNeedsFront($0, route: route) }
+        // Real input the agent asks for works only with the window in front, like a person's.
+        let asksReal = requestedReal && current.mode == .control && current.parents.isEmpty
+        // A sandboxed app's Save or Open panel is drawn by a macOS process of its own, which takes
+        // keys (Go To's Command-Shift-G, Return) only as a person's: real input with the window in front.
+        let panelKeys = current.mode == .control && current.dialogKind == .filePanel && actions.contains(where: \.usesFilePanel)
+        let front = asksReal || panelKeys || current.takesFront || inBackground && actions.contains { InputDelivery.stepNeedsFront($0, route: route) }
         // Whether `target` itself must be the front window: never for a dialog.
         let frontCheck = front && current.parents.isEmpty
         let background = inBackground && !front
@@ -791,6 +957,14 @@ final class SessionRuntime {
             try await self.takeGap(current, front: front)
             moment = ProcessInfo.processInfo.systemUptime; returns = 0
             return try await self.shareDesktop(current, returns: &returns, since: moment, front: front)
+        }
+        // macOS reports the new front app a moment after the window comes forward; real input
+        // checks the front app before each event, so the first one waits for that report.
+        if front {
+            await FrontReport.wait(for: current.frontApp.pid, frontmost: { NSWorkspace.shared.frontmostApplication?.processIdentifier })
+            // The window itself comes above the others a moment after its app is reported in front;
+            // a pointer step checks what is under its point before then.
+            if current.parents.isEmpty { await FrontReport.waitOnTop(current.target.id, pid: current.app.pid) }
         }
         // The person had other work in front, and the window was just brought back for this
         // step. Coordinate steps still check the live window against the observation, where
@@ -822,8 +996,14 @@ final class SessionRuntime {
         // which accessibility cannot name; the editor is checked before every character. A
         // password or code the person confirmed goes only into a field that can be named.
         let editorTyping = current.focus == nil && actions.first.map { if case .type = $0 { return true }; return false } == true
+        // The step that types into the editor: the first, or one whose re-read after a click found no listed focus.
+        var editorStep = editorTyping ? 0 : -1
         if editorTyping, credentialApproval != nil {
             throw UseError("protected_input", "A password or code goes only into a field the computer can identify. Nothing was sent.", next: "human_takeover")
+        }
+        // Focused input names no field, so it never carries a password or code.
+        if credentialApproval != nil, actions.contains(where: { if case .focused = $0 { return $0.entersText }; return false }) {
+            throw UseError("protected_input", "A password or code goes only into a field the computer can identify, never with target focused. Nothing was sent.", next: "human_takeover")
         }
         // Confirming a file panel hands the chosen files to the app, which can upload them:
         // the person approves first. Nothing is sent and the observation stays valid.
@@ -942,11 +1122,30 @@ final class SessionRuntime {
         let activity = actions.contains(where: \.changesWindow) ? AXActivity(pid: current.app.pid, clock: clock) : nil
         defer { activity?.stop() }
         let windowsBefore = access.windowChanges(current.app)
+        // Windows of the app already on another Space; any new one after the input was opened by it.
+        let elsewhereBefore = Set(access.windowsOnOtherSpaces(current.frontApp))
         var focus = current.focus
+        // A click or focus step of this batch, or its typing into the app's editor, already chose what
+        // has the keyboard: typing and editing keys after it may go there (`BatchContinuation.goesToEditor`).
+        var clicked = false
+        // A design app that draws its own text editor reports no focus: after the agent's own click,
+        // here or as the last input of the previous act with no input of the person's since, typing
+        // goes to its key window (`BatchContinuation.canvasText`).
+        let designApp = InputDelivery.takesToolKeys(info: current.app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:])
+        let clickedBefore = current.lastClick.map { !personInterrupted(since: $0) } == true
+        session?.lastClick = nil
+        var lastWasClick = false
+        // Whether the design app showed a text edit session before the agent's click, and once typing began.
+        var editBefore: Bool?
+        var editSession: [String: Any]?
+        func canvasText() -> Bool {
+            designApp && credentialApproval == nil && (clicked || clickedBefore && !progress.hasInput)
+        }
+        // What each expect step checked, and whether it held; never a value.
+        var checks: [[String: Any]] = []
         var activated = false
         var primed = false
         var needsObservation = false
-        var lastPressed = false
         // The observed controls, refreshed when pacing confirms one that moved.
         var records = current.records
         var failure: UseError?
@@ -957,29 +1156,62 @@ final class SessionRuntime {
         // selection before the step's first character, and what went in before the pause.
         var resumeText: String?
         var typingStart: CFRange?
+        // Its own window in front, never a dialog of another process over it: real input,
+        // bound to that window by the gate for the whole batch. The one dialog it reaches is
+        // the app's own file panel, for a save_as or open_in_panel step.
+        let realInput = front && current.mode == .control && ((current.realInput || asksReal) && current.parents.isEmpty || panelKeys)
+        if realInput {
+            try RealInputGate.shared.arm(pid: current.app.pid, window: current.target.id,
+                panels: panelKeys ? AppIdentity.filePanelServices(for: current.app.pid) : [])
+        }
+        defer { if realInput { RealInputGate.shared.abandon() } }
         var typedBefore = ""
         var pausedForPerson = false
         steps: while index < actions.count {
             let action = resumeText.map(Action.type) ?? actions[index]
             do {
                 // A shortcut with no observed field or control to type into, such as Command-S on a
-                // canvas, runs as the app's own menu command for it when there is one.
-                let shortcutMenu = focus == nil ? InputDelivery.menuForShortcut(action, in: access.menuCatalog(current.app).entries) : nil
+                // canvas, runs as the app's own menu command for it when there is one. A Command
+                // shortcut the menus do not list, such as one Blender draws in its own menus, goes
+                // to the app as a key; blocked chords never get this far.
+                let menuOnly = NativeKey.isMenuShortcut(action)
+                let shortcutMenu = focus == nil || menuOnly ? InputDelivery.menuForShortcut(action, in: access.menuCatalog(current.app).entries) : nil
                 let action = shortcutMenu.map { Action.menu($0) } ?? action
+                // An expect step sends nothing: it reads the live state and stops the batch when a check
+                // does not hold. What the next step needs is still read back before that step runs.
+                if case .expect(let expectation) = action {
+                    try checkInput()
+                    let results = try await evaluate(expectation, records: records, current: current, background: background)
+                    checks += results.map { ["step": index, "check": $0.check, "ok": $0.ok] }
+                    if let failed = Expectation.failure(results) { throw failed }
+                    progress.dispatched(path: "expected")
+                    index += 1
+                    continue steps
+                }
                 // Drawing: drags in a row are strokes on the same canvas, sent in one call while no
                 // window opens or closes. Each still lands only in the selected window.
                 let followsStrokes = Action.isStroke(action) && index > 0 && actions[..<index].allSatisfy(Action.isStroke)
                 try checkInput()
-                if needsObservation, lastPressed,
-                   case .ready(let live) = try await readyAfterPress(action, records: records, current: current, windowsBefore: windowsBefore, pacing: pacing, check: check) {
-                    needsObservation = false
-                    if let live, let at = records.firstIndex(where: { $0.ref == live.ref }) { records[at] = live }
-                }
                 if followsStrokes, access.windowChanges(current.app).opened(since: windowsBefore) {
                     throw UseError("observation_required", "A window opened or closed after the last stroke. Observe before drawing more.", next: "observe")
                 }
-                guard !needsObservation || followsStrokes, !action.usesCoordinates || !progress.hasInput || followsStrokes else {
-                    throw UseError("observation_required", "The preceding step may have changed the view or focus. Observe before executing the remaining steps.", next: "observe")
+                // After a step that may have changed the view or focus, the next step runs only
+                // when what it needs reads back as a fresh observation would show it.
+                // A wait sends nothing: the step after it reads back instead, with the app given that time.
+                if !followsStrokes, BatchContinuation.need(action) != .later, needsObservation || action.usesCoordinates && progress.hasInput {
+                    switch try await readyToContinue(action, records: records, current: current, windowsBefore: windowsBefore, bounds: bounds,
+                        pacing: pacing, background: background, credentialApproval: credentialApproval, afterClick: clicked,
+                        canvasText: canvasText(), check: check) {
+                    case .stop:
+                        throw UseError("observation_required", "The preceding step may have changed the view or focus. Observe before executing the remaining steps.", next: "observe")
+                    case .control(let live):
+                        if let live, let at = records.firstIndex(where: { $0.ref == live.ref }) { records[at] = live }
+                    case .keyboard(let live):
+                        focus = live
+                        if live == nil { editorStep = index }
+                    case .pointer: break
+                    }
+                    needsObservation = false
                 }
                 // Between steps, bring the window back if something else came to the front.
                 // Before any input, the window must still match the observation; after it,
@@ -988,26 +1220,37 @@ final class SessionRuntime {
                 try checkWindow()
                 try observation.validate(id: observationID, generation: current.generation, frame: bounds, now: now)
                 var pointerTarget: AXUIElement?
-                if !followsStrokes, action.usesCoordinates || (policy == .desktop && index == 0) || (disturbed && !progress.hasInput) {
+                // A step on an observed control or the open file panel re-checks exactly that right
+                // before input: the rest of the window, such as a panel's file list, may change.
+                if !followsStrokes, !action.checksOwnTarget, action.usesCoordinates || (policy == .desktop && index == 0) || (disturbed && !progress.hasInput) {
                     let live = try await access.read(current.target, check: check)
                     // The helper bringing the window forward moves keyboard focus by itself: after
                     // its own raise only the content must match. Keys still check focus before they send.
+                    // A pointer step checks the image where it lands instead, and what is under the point.
                     guard try access.captureDigest(live) == observation.stateDigest
-                            || disturbed && (try access.captureDigest(live, focus: false)) == observation.contentDigest else {
+                            || disturbed && (try access.captureDigest(live, focus: false)) == observation.contentDigest
+                            || action.usesCoordinates else {
                         throw UseError("stale_observation", "The observed window content or focus changed.", next: "observe")
                     }
                     if action.usesCoordinates {
-                        let captured = try await observationImage(current, bounds: bounds, state: live,
-                            requireFrontmost: frontCheck, check: check)
                         let points: [CGPoint]
                         switch action {
                         case .move(let p), .click(let p, _, _), .scroll(let p, _, _), .rightClick(let p), .hold(let p, _): points = [p]
                         case .drag(let path): points = path
                         default: throw UseError("invalid_arguments", "This action has no coordinates.")
                         }
-                        guard access.imageDigest(captured.0) == observation.imageDigest
-                                || ImageRegions.unchanged(observation.image, captured.0, around: points) else {
-                            throw UseError("stale_observation", "The window image changed where this step lands. Observe before coordinate input.", next: "observe")
+                        // Scrolling again after this batch's own scroll or drag moves the same view on:
+                        // what changed under the point is the agent's own doing (a map panned, a list
+                        // scrolled), so no new image is taken. What is at the point is still checked below.
+                        if !(BatchContinuation.continuesPan(action, after: actions[..<index]) && progress.hasInput) {
+                            // Compared where the step lands, never shown: a window whose privacy scan cannot
+                            // finish (Maps' map pins) still gets its pointer steps.
+                            let captured = try await observationImage(current, bounds: bounds, state: live,
+                                requireFrontmost: frontCheck, comparisonOnly: true, check: check)
+                            guard access.imageDigest(captured.0) == observation.imageDigest
+                                    || ImageRegions.unchanged(observation.image, captured.0, around: points) else {
+                                throw UseError("stale_observation", "The window image changed where this step lands. Observe before coordinate input.", next: "observe")
+                            }
                         }
                         pointerTarget = try access.checkHit(observation.screenPoint(points[0]), target: current.target, app: current.app, background: background || !current.parents.isEmpty)
                     }
@@ -1024,7 +1267,7 @@ final class SessionRuntime {
                     activated = BackgroundFocus.post(pid: current.app.pid, window: current.target.id, makeKey: false)
                     if activated { try await Task.sleep(nanoseconds: UInt64(BackgroundFocus.settle * 1_000_000_000)) }
                 }
-                if background, action.name == "key" || action.name == "type", !primed {
+                if background, ["key", "type", "enter_value"].contains(action.name), !primed {
                     // Keys go to the app's own key window: make it the selected one inside the
                     // app and read it back. Never type into another window of the app.
                     do {
@@ -1040,6 +1283,11 @@ final class SessionRuntime {
                 }
                 try check()
                 try observation.validate(id: observationID, generation: current.generation, frame: bounds, now: now)
+                // After this batch's own click, typing and editing keys with no listed text field go to the app's editor.
+                if editorStep != index, BatchContinuation.goesToEditor(action, afterClick: clicked,
+                    focus: focus.map { ($0.protected, $0.textField) }, credentialGiven: credentialApproval != nil) {
+                    editorStep = index; focus = nil
+                }
                 if resumeText == nil, case .type = action {
                     typedBefore = ""
                     typingStart = focus.flatMap { $0.protected ? nil : PersonPlace.selection($0.element) }
@@ -1062,13 +1310,25 @@ final class SessionRuntime {
                     choosing = (window, access.attribute(window.element, kAXTitleAttribute) as? String,
                         state.flatMap { try? access.captureDigest($0, focus: false) }, access.windowChanges(current.frontApp).windows)
                 }
+                if designApp, case .click = action, actions[(index + 1)...].contains(where: { switch $0 { case .type, .focused: return true; default: return false } }) {
+                    editBefore = access.editSession(in: current.target) != nil
+                }
                 var path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
                     access: access, records: records, focus: focus, pointerTarget: pointerTarget,
-                    check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, editorTyping: editorTyping && index == 0, feedback: { [weak self] feedback in
+                    // A dialog's input is addressed to its app in the background, except a file panel's real
+                    // input: macOS's panel process takes only that, with the window in front.
+                    check: checkInput, checkWindow: checkWindow, background: (background || !current.parents.isEmpty) && !(realInput && panelKeys), editorTyping: editorStep == index,
+                    clickToFocus: FocusStep.clicks(in: current.mode), canvasText: canvasText(), realInput: realInput, feedback: { [weak self] feedback in
                         guard let self, self.session?.id == id else { return }
                         self.controls.inputFeedback(feedback)
                     })
                 uncertain = path != "waited"
+                if path == "canvas_text" { editSession = ["before_click": editBefore.map { $0 as Any } ?? NSNull(), "while_typing": true] }
+                if case .focused = action, designApp, editBefore != nil {
+                    // Read again after the step: what the before/after pair of this edit session showed.
+                    editSession = ["before_click": editBefore.map { $0 as Any } ?? NSNull(), "after_step": access.editSession(in: current.target) != nil]
+                }
+                if editorStep == index, case .type = action { clicked = true }
                 if case .arrange = action {
                     // Remember the person's frame once, and where this arrange left the window.
                     var placement = session?.placement ?? WindowArrangement.Placement(window: current.target.element, original: bounds)
@@ -1142,6 +1402,7 @@ final class SessionRuntime {
                 }
                 try check()
                 progress.dispatched(path: shortcutMenu == nil ? path : "menu_for_shortcut"); uncertain = false
+                lastWasClick = { switch action { case .click, .focus: return true; default: return false } }()
                 let dispatchedAt = now
                 // The press already ran: outline the control only where it still is.
                 controls.showAction(action, records: records, live: { [access] record in access.frame(record.element, within: 0.05) })
@@ -1153,6 +1414,16 @@ final class SessionRuntime {
                 case .click:
                     focus = current.records.first { record in record.textField && pointerTarget.map { CFEqual($0, record.element) } == true }
                     needsObservation = focus == nil
+                    clicked = true
+                case .enterValue:
+                    // The value was committed: what has the keyboard now is read again before more keys.
+                    focus = nil; needsObservation = true
+                case .focus(let ref):
+                    // The focused control is the next keys' target: exactly, when it is the listed text field
+                    // itself; otherwise (a field editor, a value field drawn by the app) the editor rule.
+                    let live = try? access.focusedEditor(target: current.target, app: current.app, requireFront: !background)
+                    focus = records.first { record in record.ref == ref && record.textField && live.map { CFEqual($0, record.element) } == true }
+                    clicked = true
                 case .press(let ref):
                     focus = records.first { $0.ref == ref && $0.textField }
                     needsObservation = focus == nil
@@ -1166,7 +1437,6 @@ final class SessionRuntime {
                 case .key: needsObservation = action.endsFocusSequence
                 default: break
                 }
-                switch action { case .press, .menu: lastPressed = true; default: lastPressed = false }
                 if policy == .embedded, action.changesWindow, index + 1 < actions.count {
                     if pacing.mode != .fast {
                         // Let the app finish reacting before the next step looks at it.
@@ -1237,9 +1507,23 @@ final class SessionRuntime {
                 break
             }
         }
+        if progress.hasInput, current.mode == .control { session?.lastInput = realInput ? .real : .targeted }
+        // After the app has taken the input in, the person's pointer goes back. Anything
+        // held back or unconfirmed at the window server ends the step as uncertain.
+        var realRoute: [[String: Any]] = []
+        if realInput {
+            if let error = await RealInputGate.shared.finish(), failure == nil { failure = error; uncertain = true }
+            input.restorePointer()
+            // Where each real event went, for a step that failed or worked in a file panel.
+            let trace = RealInputGate.shared.takeTrace()
+            if failure != nil || panelKeys {
+                realRoute = RealInputRoute.describe(trace, app: current.app.pid, bundle: { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier })
+            }
+        }
         var settled: Bool?
         if progress.hasInput || uncertain {
-            session?.baseline = ActionBaseline(generation: current.generation, stateDigest: observation.stateDigest, imageDigest: observation.imageDigest)
+            session?.baseline = ActionBaseline(generation: current.generation, stateDigest: observation.stateDigest, imageDigest: observation.imageDigest,
+                moved: actions.contains { switch $0 { case .drag, .scroll: return true; default: return false } })
             do {
                 settled = try await InputSettle.wait(since: now, lastActivity: { activity?.last ?? 0 }, now: { self.now },
                     check: check, sleep: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) })
@@ -1251,17 +1535,36 @@ final class SessionRuntime {
             do { try check() }
             catch { failure = (error as? UseError) ?? UseError("action_interrupted", "Control ended after dispatch.", next: "human_takeover") }
         }
+        if lastWasClick, session?.id == id { session?.lastClick = ProcessInfo.processInfo.systemUptime }
         var receipt = progress.receipt(requestID: requestID, failure: failure, uncertain: uncertain, detailed: policy == .embedded)
         if let settled { receipt["settled"] = settled }
         if let savedFile { receipt["saved_file"] = savedFile }
+        if let editSession { receipt["edit_session"] = editSession }
+        // A dialog or window this step opened on another Space (Live's "Collect All and Save") comes
+        // over to the person's, so the session can follow it and nobody is asked to fetch it.
+        if progress.hasInput {
+            let opened = access.windowsOnOtherSpaces(current.frontApp).filter { !elsewhereBefore.contains($0) }
+            let ways = opened.isEmpty ? [] : await access.bringOver(opened)
+            if !ways.isEmpty { receipt["moved_here"] = ways }
+        }
         let windowsAfter = access.windowChanges(current.app)
         if settled != nil, let changes = windowsBefore.diff(windowsAfter, target: current.target.id) {
             receipt["window_changes"] = changes
         }
-        if progress.hasInput { session?.openedByLastAction = windowsAfter.windows.subtracting(windowsBefore.windows) }
+        if progress.hasInput {
+            session?.openedByLastAction = windowsAfter.windows.subtracting(windowsBefore.windows)
+            // An app's own panel window (QuickTime's launch Open window) can be the session's window too.
+            session?.windowsBeforeInput = (windowsBefore.windows.union(windowsBefore.panels), now)
+            // A step that closed its own window waits a moment for the app's new one.
+            let closedOwn = !windowsAfter.windows.union(windowsAfter.panels).contains(current.target.id) && current.parents.isEmpty
+            if let replaced = await followReplacement(id, settle: closedOwn ? WindowReplacement.settle : 0) { receipt["window_replaced"] = replaced }
+        }
         receipt["delivery"] = (background ? InputDelivery.background : .foreground).rawValue
+        if !realRoute.isEmpty { receipt["real_input_route"] = realRoute }
+        if panelKeys, !input.goToTrace.isEmpty { receipt["go_to_trace"] = input.goToTrace }
         if let typeNote { receipt["type_note"] = typeNote }
         if let fileAlert { receipt["file_alert"] = fileAlert }
+        if !checks.isEmpty { receipt["checks"] = checks }
         var desktop = desktopBefore.changes(to: DesktopState.now())
         if current.follow != nil { desktop["followed"] = current.followed }
         receipt["desktop"] = desktop
@@ -1270,45 +1573,132 @@ final class SessionRuntime {
         if session?.id == id { session?.receipts[requestID] = receipt }
         return text(receipt)
     }
-    private enum Readiness { case stop, ready(ElementRecord?) }
-    /// After a press or menu command, the batch's next press, set_value or menu command
-    /// still runs when nothing opened over the window and its exact control reads back
-    /// as observed: the check a fresh observation would make, without a model round trip.
-    /// wait_retry also waits for a control that is briefly disabled, moving or gone,
-    /// and returns it as it is now. Anything else needs an observation.
-    private func readyAfterPress(_ action: Action, records: [ElementRecord], current: Session, windowsBefore: WindowChanges,
-                                 pacing: BatchPacing, check: () throws -> Void) async throws -> Readiness {
-        guard policy == .embedded else { return .stop }
-        let observed: ElementRecord?
-        switch action {
-        case .press(let ref), .setValue(let ref, _):
+    /// An expect step's checks against the live window, in `Expectation.checks` order. Refs must
+    /// come from the observation; a secure field's value is never read.
+    private func evaluate(_ expectation: Expectation, records: [ElementRecord], current: Session, background: Bool) async throws -> [(check: String, ok: Bool)] {
+        func record(_ ref: String) throws -> ElementRecord {
+            guard let record = records.first(where: { $0.ref == ref }) else { throw UseError("unknown_ref", "Use an element ref from the current observation.", next: "observe") }
+            return record
+        }
+        for ref in expectation.refs { _ = try record(ref) }
+        if let ref = expectation.valueRef { try FocusStep.checkComparable(protected: try record(ref).protected) }
+        func present(_ record: ElementRecord) -> Bool {
+            access.attribute(record.element, kAXRoleAttribute) != nil && access.isInWindow(record.element, target: current.target)
+        }
+        let editor = expectation.focused == nil ? nil : try? access.focusedEditor(target: current.target, app: current.app, requireFront: !background)
+        var results: [(check: String, ok: Bool)] = []
+        for check in expectation.checks {
+            let ok: Bool
+            switch check {
+            case "focused":
+                switch expectation.focused {
+                case .ref(let ref)?: ok = try editor.map { access.isWithin($0, try record(ref).element) } == true
+                default: ok = editor.map(access.isTextEditor) == true
+                }
+            case "front":
+                let front = access.isFocusedWindow(current.target, app: current.app)
+                    && (background || NSWorkspace.shared.frontmostApplication?.processIdentifier == current.frontApp.pid)
+                ok = front == expectation.front
+            case "enabled":
+                let control = try record(expectation.enabled!)
+                ok = present(control) && (access.attribute(control.element, kAXEnabledAttribute) as? Bool) != false
+            case "exists": ok = present(try record(expectation.exists!))
+            case "gone": ok = !present(try record(expectation.gone!))
+            case "dialog": ok = (await access.dialog(over: current.target, app: current.app) != nil) == expectation.dialog
+            case "value":
+                let field = try record(expectation.valueRef!)
+                ok = present(field) && Expectation.valueMatches(access.attribute(field.element, kAXValueAttribute), expectation.valueEquals ?? "")
+            default:
+                ok = (access.attribute(current.target.element, kAXTitleAttribute) as? String)?.localizedCaseInsensitiveContains(expectation.titleContains ?? "") == true
+            }
+            results.append((check, ok))
+        }
+        return results
+    }
+    private enum Readiness { case stop, control(ElementRecord?), keyboard(ElementRecord?), pointer }
+    /// After a step that may have changed the view or focus, the batch's next step still runs
+    /// in the same call when nothing opened over the window and what it needs reads back as a
+    /// fresh observation would show it (`BatchContinuation`): a press, set_value or menu
+    /// command's control (`BatchContinuation.sameControl`); for keys and typing, a focused
+    /// control or text field in the window, never a secure one; for a pointer step, nothing
+    /// here (it compares the window image where it lands). What is not ready yet, such as a
+    /// field a menu command is still focusing, is read again for `BatchContinuation.reread`,
+    /// or until retry_ms with wait_retry. Anything else needs an observation.
+    private func readyToContinue(_ action: Action, records: [ElementRecord], current: Session, windowsBefore: WindowChanges, bounds: CGRect,
+                                 pacing: BatchPacing, background: Bool, credentialApproval: String?, afterClick: Bool = false,
+                                 canvasText: Bool = false, check: () throws -> Void) async throws -> Readiness {
+        guard policy == .embedded, let need = BatchContinuation.need(action), need != .later else { return .stop }
+        // An app that takes real input lists no focused field: its keys and typing go to its key
+        // window, as on the first step, once nothing opened over it and no secure input is on.
+        if current.realInput, case .keyboard = need {
+            guard windowsBefore.diff(access.windowChanges(current.app), target: current.target.id) == nil, access.personPrompt() == nil,
+                  (try? access.checkKeyWindow(target: current.target, app: current.app, requireFront: true)) != nil else { return .stop }
+            return .keyboard(nil)
+        }
+        var observed: ElementRecord?
+        if case .control(let ref) = need {
             guard let record = records.first(where: { $0.ref == ref }) else { return .stop }
             observed = record
-        case .menu: observed = nil
-        default: return .stop
         }
         // The wait modes already let the app settle after the previous step.
         if pacing.mode == .fast { try await Task.sleep(nanoseconds: 50_000_000); try check() }
-        let deadline = now + pacing.retry
+        let deadline = now + max(pacing.retry, BatchContinuation.reread)
         while true {
-            // Nothing waits past a window, dialog, menu or system prompt that opened.
-            guard windowsBefore.diff(access.windowChanges(current.app), target: current.target.id) == nil,
+            // Nothing waits past a window, dialog, menu or system prompt that opened. Keys and typing
+            // may run past a window that opened beside the session's while it keeps the keyboard.
+            let changes = windowsBefore.diff(access.windowChanges(current.app), target: current.target.id)
+            guard BatchContinuation.runsPast(changes, need: need, sessionHasKeyboard: changes != nil && access.isFocusedWindow(current.target, app: current.app)),
                   access.personPrompt() == nil else { return .stop }
             if await access.openMenu(of: current.app) != nil { return .stop }
             if await access.dialog(over: current.target, app: current.app) != nil { return .stop }
-            guard let observed else { return .ready(nil) }
+            switch need {
+            case .menu: return .control(nil)
+            // Focused input checks the key window itself when it sends.
+            case .pointer, .keyWindow: return .pointer
+            case .control, .keyboard, .later: break
+            }
             var live: WindowState?
             do { live = try await access.read(current.target, check: check) }
             catch is CancellationError { throw CancellationError() }
             catch { try check() }
-            if let live {
-                if let same = live.records.first(where: { ElementRecord.sameControl($0, observed) }) { return .ready(same.with(ref: observed.ref)) }
-                if pacing.mode == .waitRetry, let moved = live.records.first(where: { ElementRecord.sameControl($0, observed, allowMove: true) }) {
-                    return .ready(moved.with(ref: observed.ref))
+            if let live, case .keyboard(let field) = need, !live.truncated {
+                let focused = live.focusRecord
+                let typing: Bool = { if case .type = action { return true }; return false }()
+                let shortcut: Bool = { if case .key(let key, let flags) = action { return InputDelivery.sendsToKeyWindow(key, flags) }; return false }()
+                // A design app's editing or tool key goes to what has the keyboard in the window, as on the first step.
+                let editingKey: Bool = { if case .key(let key, let flags) = action { return NativeKey.isEditingKey(key, flags) }; return false }()
+                let designKey: Bool = {
+                    guard case .key(let key, let flags) = action, editingKey || NativeKey.isToolKey(key, flags) else { return false }
+                    return InputDelivery.takesToolKeys(info: current.app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:])
+                }()
+                switch BatchContinuation.keyboard(focused: focused.map { ($0.enabled, $0.protected, $0.takesTyping) }, field: field,
+                    typing: typing, entersText: action.entersText, secureInput: IsSecureEventInputEnabled(),
+                    protectedOnScreen: live.records.contains(where: \.protected) || !live.protectedFrames.isEmpty,
+                    credentialConfirmed: credentialApproval == current.app.bundleID, credentialGiven: credentialApproval != nil, shortcut: shortcut,
+                    designKey: designKey, editingKey: editingKey, afterClick: afterClick) {
+                case .focus: return .keyboard(focused)
+                case .keyWindow where (try? access.checkKeyWindow(target: current.target, app: current.app, requireFront: !background)) != nil:
+                    return .keyboard(nil)
+                // The same editor check as typing with no observed field: whatever has the keyboard in this
+                // window. Delete and Backspace erase only editable text there.
+                case .editor where (try? access.focusedEditor(target: current.target, app: current.app, requireFront: !background))
+                        .map { typing || !field || access.isTextEditor($0) } == true:
+                    return .keyboard(nil)
+                // A design app's canvas text after this batch's click, where the app reports no focus.
+                case .editor where typing && canvasText && BatchContinuation.canvasText(designApp: true, afterOwnClick: true, credentialGiven: false,
+                        reported: access.reportedFocus(target: current.target, app: current.app))
+                        && access.editSession(in: current.target).map({ session in (try? access.checkCanvasText(target: current.target, app: current.app,
+                            requireFront: !background, reported: access.reportedFocus(target: current.target, app: current.app), session: session)) != nil }) == true:
+                    return .keyboard(nil)
+                case .editor, .keyWindow, .stop: break
                 }
+            } else if let live, let observed,
+                      let same = live.records.first(where: { BatchContinuation.sameControl($0, observed, for: action, window: bounds) }) {
+                return .control(same.with(ref: observed.ref))
             }
-            guard pacing.mode == .waitRetry, now < deadline else { return .stop }
-            try await Task.sleep(nanoseconds: 100_000_000); try check()
+            // Not ready yet: the keyboard is still moving, or the control is briefly disabled or gone.
+            guard now < deadline else { return .stop }
+            try await Task.sleep(nanoseconds: pacing.mode == .waitRetry ? 100_000_000 : 50_000_000); try check()
         }
     }
     private func next(_ current: Session) -> String {
@@ -1346,7 +1736,12 @@ final class SessionRuntime {
     /// HID system state holds only device input, never the agent's process-targeted
     /// events. Reads only timing, with no permission beyond computer use's own.
     private func lastPersonInput(_ type: CGEventType) -> TimeInterval {
-        ProcessInfo.processInfo.systemUptime - CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: type)
+        // While a batch sends real input, the agent's own events reach the HID state too:
+        // the gate tells the person's events from the agent's tagged ones.
+        let gate = RealInputGate.shared
+        let armed = gate.isArmed
+        return RealInput.personInput(hid: ProcessInfo.processInfo.systemUptime - CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: type),
+            untagged: armed ? gate.personInput(type) : nil, armed: armed)
     }
     private func personInterrupted(since start: TimeInterval) -> Bool {
         Self.interruptions.contains { SharedDesktop.personInterrupted(inputAt: lastPersonInput($0), since: start) }
@@ -1533,6 +1928,8 @@ final class SessionRuntime {
             var next = await access.openMenu(of: scope.app)
             if next == nil { next = await access.dialog(over: scope.target, app: scope.app) }
             if next == nil, scope.dialogKind != .menu { next = await access.openedWindow(by: opened, over: scope.target, app: scope.app) }
+            // An Open or Place panel that is a window of its own, which the app focused after the action returned.
+            if next == nil, scope.dialogKind != .menu, scope.dialogKind != .filePanel { next = await access.focusedFilePanel(than: scope.target, app: scope.app) }
             if let dialog = next, session?.id == id, !scope.parents.contains(where: { $0.target.id == dialog.target.id }) {
             session?.parents.append((scope.app, scope.target, scope.dialogKind))
             session?.app = dialog.app; session?.target = dialog.target; session?.dialogKind = dialog.kind
@@ -1549,18 +1946,35 @@ final class SessionRuntime {
         guard desktopAvailable else { throw UseError("desktop_unavailable", "The desktop is temporarily unavailable. Observe again when available.", next: "observe") }
         // A dialog comes forward with its parent window and app.
         let window = current.frontTarget, owner = current.frontApp
+        // In a dialog, only the app comes forward and the dialog keeps the keyboard: raising or
+        // focusing its parent window takes the keyboard from a Save panel, whose keys then go nowhere.
+        let inDialog = !current.parents.isEmpty
         if current.mode == .control {
             _ = try access.validate(window, app: owner)
-            guard AXUIElementPerformAction(window.element, kAXRaiseAction as CFString) == .success,
-                  owner.app.activate(options: []) else {
-                throw UseError("window_unavailable", "The selected window could not be focused. Refresh the app state.", next: "observe")
-            }
-            // Request focus once; never keep stealing it if a person intervenes.
-            for attempt in 0..<10 {
-                guard session?.id == current.id, session?.generation == current.generation else { throw UseError("session_changed", "Control changed during focus. No input was dispatched.", next: "observe") }
-                if inFront(current) { break }
-                if attempt < 9 { try await Task.sleep(nanoseconds: 50_000_000) }
-            }
+            // Each way once, read back after each; never keep stealing the front if a person intervenes.
+            let app = AXUIElementCreateApplication(owner.pid)
+            _ = try await WindowFront.bring(attempt: { way in
+                switch way {
+                case .raise:
+                    if !inDialog { _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString) }
+                    _ = owner.app.activate(options: [])
+                case .frontmost:
+                    _ = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+                case .mainWindow:
+                    if !inDialog {
+                        _ = AXUIElementSetAttributeValue(window.element, kAXMainAttribute as CFString, kCFBooleanTrue)
+                        _ = AXUIElementSetAttributeValue(window.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                    }
+                    _ = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+                case .keyRecords:
+                    // The dialog's own window takes the keyboard, never its parent's.
+                    _ = BackgroundFocus.post(pid: owner.pid, window: inDialog ? current.target.id : window.id, makeKey: true)
+                    _ = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+                    _ = owner.app.activate(options: [])
+                }
+            }, inFront: { self.inFront(current) }, check: {
+                guard self.session?.id == current.id, self.session?.generation == current.generation else { throw UseError("session_changed", "Control changed during focus. No input was dispatched.", next: "observe") }
+            }, sleep: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) })
         }
         guard desktopAvailable else { throw UseError("desktop_unavailable", "The desktop is temporarily unavailable. Observe again when available.", next: "observe") }
         guard session?.id == current.id, session?.generation == current.generation else { throw UseError("session_changed", "Control changed during focus.", next: "observe") }
@@ -1629,18 +2043,22 @@ final class SessionRuntime {
         let followed = follow.follows(frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier, host: Responsibility.hostPID,
             target: current.app.pid, shown: FollowAlong.onScreen(current.target.id))
         session?.follow = follow; session?.followed = followed
-        if followed != current.followed { controls.layer(background: !followed && current.delivery == .background) }
         return followed
     }
-    /// Puts the window beside OpenWork once per return to the chat, unless it was placed
-    /// since; closing the session puts it back, as after `arrange`.
+    /// Puts the window beside OpenWork once per return to the chat, or in its tile when several
+    /// agents work in view, unless it was placed since; closing the session puts it back, as
+    /// after `arrange`. Only this session's own window moves.
     private func arrangeBeside(_ id: String) {
         guard let current = session, current.id == id, current.followed, current.parents.isEmpty, var follow = current.follow else { return }
         let frame = WindowArrangement.frame(of: current.target.element)
         let due = follow.arrangeNow(current: frame, arranged: current.placement?.arranged)
         session?.follow = follow
-        guard due, let frame, let beside = try? WindowArrangement.frame(.besideOpenWork, window: frame,
-                  screens: WindowArrangement.visibleScreens(), host: WindowArrangement.hostWindow()),
+        let screens = WindowArrangement.visibleScreens(), host = WindowArrangement.hostWindow()
+        let place = { (frame: CGRect) throws -> CGRect in
+            guard let stage = follow.stage else { return try WindowArrangement.frame(.besideOpenWork, window: frame, screens: screens, host: host) }
+            return try WindowArrangement.stage(count: stage.count, window: frame, screens: screens, host: host)[stage.slot]
+        }
+        guard due, let frame, let beside = try? place(frame),
               (try? WindowArrangement.apply(beside, to: current.target.element, check: { try self.checkActive(current) })) != nil else { return }
         var placement = current.placement ?? WindowArrangement.Placement(window: current.target.element, original: frame)
         placement.arranged = WindowArrangement.frame(of: current.target.element)

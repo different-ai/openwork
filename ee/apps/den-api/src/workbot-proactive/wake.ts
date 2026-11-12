@@ -40,7 +40,7 @@ import {
   type MemberConnection,
   type ResolvedSource,
 } from "./sources.js"
-import { checkSources, noticeUnreadableSources, readMemberCalendar } from "./wake-shared.js"
+import { checkSources, noticeUnreadableSources, readMemberCalendar, sourcePromptService } from "./wake-shared.js"
 import type { AgentCheckCount, AgentInstanceRow, AgentSettle, DeliveryOutcome } from "./repository.js"
 import type { AgentTemplateVersion } from "./template.js"
 import type { AgentTurnResult } from "./turn.js"
@@ -60,6 +60,11 @@ export type AgentWakeDeps = {
   allowed: (organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">) => Promise<boolean>
   settings: (organizationId: DenTypeId<"organization">) => Promise<WorkbotProactiveSettings>
   template: (organizationId: DenTypeId<"organization">) => Promise<AgentTemplateVersion>
+  /**
+   * The member's teams' own policy and template (`workbotTeamSettings`), or null to follow the organization's
+   * (`settings` and `template`, read as before). Without it every member follows the organization's.
+   */
+  teamPolicy?: (member: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member"> }) => Promise<{ settings: WorkbotProactiveSettings; template: AgentTemplateVersion } | null>
   user: (organizationId: DenTypeId<"organization">, memberId: DenTypeId<"member">) => Promise<DenTypeId<"user"> | null>
   /** One read-only calendar GET as the member, through exactly this Google Workspace connection. */
   calendar: (input: { organizationId: DenTypeId<"organization">; orgMembershipId: DenTypeId<"member">; connectionId: string; timeMin: string; timeMax: string }) => Promise<MemberCalendarRead>
@@ -113,7 +118,9 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
     return { status: "skipped", reason }
   }
 
-  const settings = await deps.settings(organizationId)
+  // The member's policy: their team's own when it has one, else the organization's. Off in theirs is off for them.
+  const own = deps.teamPolicy ? await deps.teamPolicy({ organizationId, memberId }) : null
+  const settings = own?.settings ?? await deps.settings(organizationId)
   if (!settings.enabled) return skip("off", now + HOUR_MS)
   const userId = await deps.user(organizationId, memberId)
   if (!userId || !(await deps.allowed(organizationId, userId))) return skip("not_allowed", now + HOUR_MS)
@@ -165,7 +172,7 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
     await record({ reason: blocked, key: `${blocked}:${slot}` })
     return skip(blocked, now + HOUR_MS)
   }
-  const template = await deps.template(organizationId)
+  const template = own?.template ?? await deps.template(organizationId)
   const responsibilities = activeResponsibilities(template, row)
   if (!responsibilities.length) {
     await record({ reason: "nothing_to_check", key: `nothing_to_check:${slot}` })
@@ -255,6 +262,7 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
         id: source.id,
         name: source.name,
         via: source.kind === "other" ? [] : readableConnections(source).map((connection) => connection.name),
+        ...sourcePromptService(source),
         instruction: source.instruction,
         lastReadAt: source.lastReadAt,
       })),

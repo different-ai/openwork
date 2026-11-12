@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import { createServer, type Server } from "node:http"
 import { Hono } from "hono"
 import { createAuth, type AppEnv, type DenAuth } from "../src/server/auth.js"
-import { createDen, DenRateLimitedError, DenSignedOutError, tokenRetryAfterSeconds, type DenSession } from "../src/server/den.js"
+import { createDen, DenRateLimitedError, DenSignedOutError, DenUnavailableError, WorkbotTurnAccessError, tokenRetryAfterSeconds, type DenSession } from "../src/server/den.js"
 import type { Tokens } from "../src/server/sealed.js"
 import { loadConfig } from "../src/server/config.js"
 
@@ -509,4 +510,194 @@ test("switching workspace asks Den to show its workspace chooser and returns to 
   const state = new URL(login.headers.get("location") ?? "").searchParams.get("state")
   const callback = await app.request(`/auth/callback?state=${state}&code=test-code`, { headers: { cookie: `__Host-workbot-login=${loginCookie}` } })
   assert.equal(callback.headers.get("location"), "/documents")
+})
+
+/** A Den whose answer about who someone is can be held, fail in passing, or refuse; it counts each time it is asked. */
+function denChecks(options: { tokenLifeMs?: number; routes?(app: Hono<AppEnv>, auth: ReturnType<typeof createAuth>): void } = {}) {
+  let clock = 1_000_000
+  let outcome: "ok" | "unavailable" | "signed_out" | "refused" = "ok"
+  let asked = 0
+  let tokens = 0
+  let held: Promise<void> | null = null
+  let release = () => {}
+  const reports: string[] = []
+  const issue = (): Tokens => ({ accessToken: accessToken(tokens++), refreshToken: `refresh-${tokens}`, expiresAt: clock + (options.tokenLifeMs ?? 45 * 60_000) })
+  const den: DenAuth = {
+    authorizeUrl: async ({ state }) => `https://den.test/authorize?state=${state}`,
+    exchangeCode: async () => issue(),
+    session: async () => {
+      asked += 1
+      if (held) await held
+      if (outcome === "unavailable") throw new DenUnavailableError("den_timeout")
+      if (outcome === "signed_out") throw new DenSignedOutError()
+      if (outcome === "refused") throw new Error("den_session_403")
+      return who
+    },
+    refresh: async () => issue(),
+    revoke: async () => {},
+  }
+  const auth = createAuth({ config, den, now: () => clock, report: (code, _error, tags = {}) => { reports.push(`${code}:${String(tags.response ?? "")}`) } })
+  const app = new Hono<AppEnv>()
+  auth.register(app)
+  app.onError(auth.onError)
+  app.get("/v1/workbot/me", auth.member, (c) => c.json({ token: c.get("member").accessToken.slice(0, 9) }))
+  options.routes?.(app, auth)
+  return {
+    app, reports,
+    asked: () => asked,
+    advance: (ms: number) => { clock += ms },
+    answer: (next: typeof outcome) => { outcome = next },
+    hold: () => { held = new Promise<void>((resolve) => { release = resolve }) },
+    release: () => { held = null; release() },
+  }
+}
+
+test("requests that miss Den's cached answer together share one check", async () => {
+  const d = denChecks()
+  const { session } = await signIn(d.app)
+  assert.equal((await me(d.app, session)).status, 200)
+  const before = d.asked()
+  assert.equal((await me(d.app, session)).status, 200)
+  assert.equal(d.asked(), before, "a fresh answer is reused")
+  d.advance(31_000)
+  d.hold()
+  const together = Array.from({ length: 5 }, () => me(d.app, session))
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  d.release()
+  assert.deepEqual((await Promise.all(together)).map((response) => response.status), [200, 200, 200, 200, 200])
+  assert.equal(d.asked(), before + 1, "one check, however many requests waited on it")
+  // A check that fails is shared the same way, and the next request asks again.
+  d.advance(31_000)
+  d.answer("refused")
+  d.hold()
+  const failing = Array.from({ length: 3 }, () => me(d.app, session))
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  d.release()
+  assert.deepEqual((await Promise.all(failing)).map((response) => response.status), [503, 503, 503])
+  assert.equal(d.asked(), before + 2)
+  d.answer("ok")
+  assert.equal((await me(d.app, session)).status, 200)
+  assert.equal(d.asked(), before + 3)
+})
+
+test("while Den can't be reached, its answer from the last two minutes stands in; an older one doesn't", async (t) => {
+  t.mock.method(console, "error", () => {})
+  const d = denChecks()
+  const { session } = await signIn(d.app)
+  assert.equal((await me(d.app, session)).status, 200)
+  const before = d.asked()
+  d.advance(31_000)
+  d.answer("unavailable")
+  const covered = await me(d.app, session)
+  assert.equal(covered.status, 200)
+  assert.deepEqual(await covered.json(), { token: "access-0-" })
+  assert.equal(d.asked(), before + 1)
+  assert.deepEqual(d.reports, ["den_unavailable:recent_session"], "Den failing is still reported")
+  // Right after a failed check, the covered person doesn't send another one to Den.
+  d.advance(5_000)
+  assert.equal((await me(d.app, session)).status, 200)
+  assert.equal(d.asked(), before + 1)
+  d.advance(10_000)
+  assert.equal((await me(d.app, session)).status, 200)
+  assert.equal(d.asked(), before + 2)
+  // Two minutes after Den last answered, nothing stands in, however recently it was used.
+  d.advance(75_000)
+  const uncovered = await me(d.app, session)
+  assert.equal(uncovered.status, 503)
+  assert.deepEqual(await uncovered.json(), { error: "den_unavailable" })
+  assert.equal(uncovered.headers.getSetCookie().length, 0, "Den being unreachable is not signing out")
+  d.answer("ok")
+  assert.equal((await me(d.app, session)).status, 200)
+})
+
+test("Den's refusal always wins over its remembered answer, and removes it", async (t) => {
+  t.mock.method(console, "error", () => {})
+  // Den answers, but not with a session (not a member any more): an error as before, and nothing is remembered.
+  const refused = denChecks()
+  const first = await signIn(refused.app)
+  assert.equal((await me(refused.app, first.session)).status, 200)
+  refused.advance(31_000)
+  refused.answer("refused")
+  assert.equal((await me(refused.app, first.session)).status, 503)
+  refused.answer("unavailable")
+  assert.equal((await me(refused.app, first.session)).status, 503, "the answer from before the refusal can't stand in")
+
+  // Den signs the person out while its last answer is still recent.
+  const signedOut = denChecks()
+  const second = await signIn(signedOut.app)
+  assert.equal((await me(signedOut.app, second.session)).status, 200)
+  signedOut.advance(31_000)
+  signedOut.answer("signed_out")
+  const out = await me(signedOut.app, second.session)
+  assert.equal(out.status, 401)
+  assert.deepEqual(await out.json(), { error: "signed_out" })
+  assert.ok(out.headers.getSetCookie().some((cookie) => cookie.startsWith("__Host-workbot=;")))
+  signedOut.answer("unavailable")
+  assert.equal((await me(signedOut.app, second.session)).status, 503, "the old cookie finds nothing remembered")
+})
+
+test("Den's remembered answer never covers another sign-in or another token", async (t) => {
+  t.mock.method(console, "error", () => {})
+  const d = denChecks()
+  const known = await signIn(d.app)
+  const other = await signIn(d.app)
+  assert.equal((await me(d.app, known.session)).status, 200)
+  d.advance(31_000)
+  d.answer("unavailable")
+  assert.equal((await me(d.app, known.session)).status, 200)
+  assert.equal((await me(d.app, other.session)).status, 503, "another sign-in of the same person has no answer of its own")
+
+  // Tokens that need refreshing 31 s in: the refreshed token has no answer yet, and the old token's doesn't count.
+  const short = denChecks({ tokenLifeMs: 150_000 })
+  const { session } = await signIn(short.app)
+  assert.equal((await me(short.app, session)).status, 200)
+  short.advance(31_000)
+  short.answer("unavailable")
+  const refreshed = await me(short.app, session)
+  assert.equal(refreshed.status, 503)
+  assert.ok(cookieValue(refreshed, "__Host-workbot"), "the refreshed tokens are still kept")
+})
+
+test("a route's own Den call answers like sign-in does: signed out, Den unavailable, or an unexpected error", async (t) => {
+  t.mock.method(console, "error", () => {})
+  const refusing = await new Promise<Server>((resolve) => {
+    const server = createServer((_request, response) => { response.writeHead(401, { "content-type": "application/json" }).end("{}") })
+    server.listen(0, "127.0.0.1", () => resolve(server))
+  })
+  t.after(() => refusing.close())
+  const address = refusing.address()
+  assert.ok(address && typeof address === "object")
+  const refusingDen = createDen({ apiUrl: `http://127.0.0.1:${address.port}`, publicUrl: config.publicUrl })
+  const unreachableDen = createDen({ apiUrl: "http://127.0.0.1:1", publicUrl: config.publicUrl })
+  const d = denChecks({ routes: (app, auth) => {
+    app.get("/v1/workbot/refused", auth.member, async (c) => c.json(await refusingDen.activation(c.get("member").accessToken)))
+    app.get("/v1/workbot/unreachable", auth.member, async (c) => c.json(await unreachableDen.activation(c.get("member").accessToken)))
+    app.get("/v1/workbot/timeout", auth.member, () => { throw new DenUnavailableError("den_timeout") })
+    app.get("/v1/workbot/access", auth.member, () => { throw new WorkbotTurnAccessError("rate_limited", 429, 30) })
+    app.get("/v1/workbot/broken", auth.member, () => { throw new Error("boom") })
+  } })
+  const { session } = await signIn(d.app)
+  const get = (path: string) => d.app.request(path, { headers: { cookie: `__Host-workbot=${session}` } })
+
+  for (const path of ["/v1/workbot/unreachable", "/v1/workbot/timeout"]) {
+    const unavailable = await get(path)
+    assert.equal(unavailable.status, 503)
+    assert.deepEqual(await unavailable.json(), { error: "den_unavailable" })
+  }
+  const access = await get("/v1/workbot/access")
+  assert.equal(access.status, 429)
+  assert.deepEqual(await access.json(), { error: "workbot_turn_access_denied", reason: "rate_limited", retryAfter: 30 })
+  const broken = await get("/v1/workbot/broken")
+  assert.equal(broken.status, 500)
+  assert.deepEqual(await broken.json(), { error: "internal_error" })
+  assert.deepEqual(d.reports, ["den_unavailable:den_unavailable", "den_unavailable:den_unavailable", "route_error:"], "only the unexpected failure is a route error")
+
+  // Den refusing the token on a route's call: the page's signed-out answer, and the next request asks Den again.
+  const asked = d.asked()
+  const refused = await get("/v1/workbot/refused")
+  assert.equal(refused.status, 401)
+  assert.deepEqual(await refused.json(), { error: "signed_out" })
+  assert.equal(d.reports.length, 3, "being signed out is not a fault")
+  assert.equal((await me(d.app, session)).status, 200)
+  assert.equal(d.asked(), asked + 1, "Den's earlier answer is not trusted after it refused the token")
 })

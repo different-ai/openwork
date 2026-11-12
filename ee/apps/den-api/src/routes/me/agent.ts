@@ -24,7 +24,7 @@ import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, queryValidator, type OrganizationContextVariables } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { cameThroughConnect, type AuthContextVariables } from "../../session.js"
-import { agentBriefAllowed, readProactiveSettings } from "../../workbot-proactive/access.js"
+import { agentBriefAllowed } from "../../workbot-proactive/access.js"
 import { carriedMemberLines, memberBriefLines, memberNextChecks, memberRhythm } from "../../workbot-proactive/brief.js"
 import { memberAgentCheck } from "../../workbot-proactive/checks.js"
 import { destinationBlock } from "../../workbot-proactive/deliver.js"
@@ -54,8 +54,9 @@ import { sourceReadToolCounts } from "../../workbot-proactive/agent-tools.js"
 import { getCatalog } from "../../mcp/index.js"
 import type { McpToolOperation } from "../../mcp/catalog.js"
 import { nativeOperations } from "../../mcp/native-capabilities.js"
-import { readAgentTemplate, type AgentTemplateVersion } from "../../workbot-proactive/template.js"
+import type { AgentTemplateVersion } from "../../workbot-proactive/template.js"
 import { workbotOrigin } from "../../workbot/config.js"
+import { resolveMemberAgentPolicy, resolveMemberWorkbotSettings, type AgentPolicy, type MemberTeamAgent } from "../../workbot/team-settings.js"
 
 /** How long the page waits for a connection's tools before saying nothing about them (the tool cache answers most). */
 const PAGE_TOOLS_DEADLINE_MS = 4_000
@@ -98,12 +99,12 @@ function nextScheduledCheck(row: NonNullable<ViewRow>, settings: WorkbotProactiv
 }
 
 /**
- * The organization's brief settings when `workbotAgentBrief` is on for this member (null keeps today's agent), and the
- * template they are carried over from.
+ * The brief settings of the member's policy (their team's own, else the organization's) when `workbotAgentBrief` is
+ * on for this member (null keeps today's agent), and the template they are carried over from.
  */
-async function agentSetup(member: MemberContext, settings: WorkbotProactiveSettings): Promise<{ template: AgentTemplateVersion; brief: AgentBriefPolicy | null }> {
-  const [template, briefOn] = await Promise.all([readAgentTemplate(member.organizationId), agentBriefAllowed(member.organizationId, member.userId)])
-  return { template, brief: briefOn ? resolveAgentBrief(settings, template) : null }
+async function agentSetup(member: MemberContext, policy: AgentPolicy): Promise<{ template: AgentTemplateVersion; brief: AgentBriefPolicy | null }> {
+  const briefOn = await agentBriefAllowed(member.organizationId, member.userId)
+  return { template: policy.template, brief: briefOn ? resolveAgentBrief(policy.settings, policy.template) : null }
 }
 
 async function memberAgentView(input: {
@@ -115,7 +116,7 @@ async function memberAgentView(input: {
   template: AgentTemplateVersion
   /** `workbotAgentBrief`: the organization's brief settings; null keeps today's view. */
   brief: AgentBriefPolicy | null
-  /** Den's operations, for counting what its own providers read outside calendar, mail and chat. */
+  /** Den's operations, for counting what its own providers read outside the calendar. */
   catalog: () => Promise<readonly McpToolOperation[]>
 }): Promise<MemberAgentView> {
   const { settings, row, template, brief } = input
@@ -217,14 +218,19 @@ function disabled(feature: string): { error: "feature_disabled"; feature: string
 }
 
 type MemberContext = { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user"> }
+/** The member with what their own teams say about their agent, so their policy is resolved without reading teams again. */
+type AgentMember = MemberContext & { workbot: MemberTeamAgent }
 
 export function registerMeAgentRoutes<T extends { Variables: AuthContextVariables & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
   /** The signed-in member, or why the route is off for them. */
-  const memberOf = (context: OrganizationContextVariables["organizationContext"] | undefined): MemberContext | { error: "workbot" | "workbotProactive" } => {
+  const memberOf = async (context: OrganizationContextVariables["organizationContext"] | undefined): Promise<AgentMember | { error: "workbot" | "workbotProactive" }> => {
     if (!context || workbotOrigin() === null) return { error: "workbot" }
     const userId = context.currentMember.userId
     if (!userId) return { error: "workbotProactive" }
-    return { organizationId: context.organization.id, memberId: context.currentMember.id, userId }
+    const member = { organizationId: context.organization.id, memberId: context.currentMember.id, userId }
+    // Workbot turned off for this member (workbotTeamSettings) is Workbot not being there for them: no agent either.
+    const workbot = await resolveMemberWorkbotSettings({ ...member, organization: context.organization, featureOn: context.features.workbotTeamSettings })
+    return workbot.enabled ? { ...member, workbot: { agent: workbot.agent, agentFrom: workbot.agentFrom } } : { error: "workbot" }
   }
 
   app.get(
@@ -233,21 +239,22 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
       tags: ["Users"],
       summary: "Get my agent",
       description:
-        "The signed-in member's own agent in the active organization: whether it is on for them, what it will tell them about (each responsibility, whether the organization turned it on and whether they muted it), where its messages go (a DM from the Workbot Slack app) and whether they can arrive yet (the Slack app installed, their Slack account linked), the working hours and daily limit it follows, and when it looks next. It also says what it did: `lastCheck` and `todayChecks` (each with an outcome sent, quiet, waited or failed, and a `summary` sentence that says why, for example \"Stayed quiet: nothing new.\" or \"Couldn't read Gmail: reconnect Google.\"), `sentToday` against `limits.dailyCap`, the member's own words (`preferences`: always, never, when, how), their narrower `limits` inside the admin's, their recent `changes`, and `sources`: what the agent reads (calendar, email, team chat and each other connection), each with the admin's `policy` (`everyone` = on for everyone, `members` = the member chooses, `off` = not allowed), whether it is `on`, the member's `instruction` for it, when it was last read, and whether the member's account on each connection is ready (`connected`, `needs_connection`, `reconnect`). Calendar, email and team chat each read exactly one connection: `connections` holds that one (none when nothing allowed is usable), `options` lists the allowed connections the member can pick from, and `chosenBy` says who picked it (`member`, `admin` = the organization's default, `auto` = the default most members use or the first allowed one the member already connected); other sources have empty `options` and null `chosenBy`. With Your agent's brief on (workbotAgentBrief), what it tells them about is text, not four switches: `brief.lines` are the member's own lines, `brief.organization` the organization's brief (read only), `brief.carriedOver` says the lines came from their earlier settings; `nextChecks` lists the next check on its rhythm and any extra checks the agent asked for, soonest first, each with why (\"before your 2 PM with Northwind\"); `limits.checkEveryHours` is how often it checks (`limits.admin.checkEveryHours` the most often allowed), `limits.quietWindow` is quiet hours (nothing sent), `responsibilities` is empty, and `sources` lists every connection the member can use (MCP and Den's own, which there reads what isn't calendar, email or chat), each other source with `readTools`: how many of its tools the agent may call (0: none read only, so an admin should review its tools; null while unknown). Answer \"why was it quiet?\" from these records, never by guessing. Requires the workbotProactive feature and Workbot on this deployment.",
+        "The signed-in member's own agent in the active organization: whether it is on for them, what it will tell them about (each responsibility, whether the organization turned it on and whether they muted it), where its messages go (a DM from the Workbot Slack app) and whether they can arrive yet (the Slack app installed, their Slack account linked), the working hours and daily limit it follows, and when it looks next. It also says what it did: `lastCheck` and `todayChecks` (each with an outcome sent, quiet, waited or failed, and a `summary` sentence that says why, for example \"Stayed quiet: nothing new.\" or \"Couldn't read Gmail: reconnect Google.\"), `sentToday` against `limits.dailyCap`, the member's own words (`preferences`: always, never, when, how), their narrower `limits` inside the admin's, their recent `changes`, and `sources`: what the agent reads (the calendar and each connection, such as Google Workspace or Slack for mail and chat), each with the admin's `policy` (`everyone` = on for everyone, `members` = the member chooses, `off` = not allowed), whether it is `on`, the member's `instruction` for it, when it was last read, and whether the member's account on each connection is ready (`connected`, `needs_connection`, `reconnect`). The calendar reads exactly one connection: `connections` holds that one (none when no calendar app is usable), `options` lists the calendar apps the member can pick from, and `chosenBy` says who picked it (`member`, or `auto` = the one most members use or the first one the member already connected); other sources have empty `options` and null `chosenBy`. With Your agent's brief on (workbotAgentBrief), what it tells them about is text, not four switches: `brief.lines` are the member's own lines, `brief.organization` the organization's brief (read only), `brief.carriedOver` says the lines came from their earlier settings; `nextChecks` lists the next check on its rhythm and any extra checks the agent asked for, soonest first, each with why (\"before your 2 PM with Northwind\"); `limits.checkEveryHours` is how often it checks (`limits.admin.checkEveryHours` the most often allowed), `limits.quietWindow` is quiet hours (nothing sent), `responsibilities` is empty, and `sources` lists every connection the member can use (MCP and Den's own, which there reads what isn't the calendar: mail, chat, files), each other source with `readTools`: how many of its tools the agent may call (0: none read only, so an admin should review its tools; null while unknown). Answer \"why was it quiet?\" from these records, never by guessing. Requires the workbotProactive feature and Workbot on this deployment.",
       responses: {
         200: jsonResponse("The member's agent.", memberAgentDocumentSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        404: jsonResponse("Agents are off for this organization.", featureDisabledSchema),
+        404: jsonResponse("Agents are off for this organization, or Workbot is off for the member.", featureDisabledSchema),
       },
     }),
     orgMemberRoute(),
     requireFeature("workbotProactive"),
     async (c) => {
-      const member = memberOf(c.get("organizationContext"))
+      const member = await memberOf(c.get("organizationContext"))
       if ("error" in member) return c.json(disabled(member.error), 404)
       c.header("Cache-Control", "no-store")
-      const settings = await readProactiveSettings(member.organizationId)
-      return c.json(await memberAgentView({ ...member, settings, row: await readAgentInstance(member.memberId), ...(await agentSetup(member, settings)), catalog: () => getCatalog(app as unknown as Hono, c.env) }))
+      // Only ever the caller's own teams' policy, or the organization's.
+      const policy = await resolveMemberAgentPolicy(member)
+      return c.json(await memberAgentView({ ...member, settings: policy.settings, row: await readAgentInstance(member.memberId), ...(await agentSetup(member, policy)), catalog: () => getCatalog(app as unknown as Hono, c.env) }))
     },
   )
 
@@ -262,14 +269,14 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
         200: jsonResponse("The member's agent checks.", memberAgentChecksDocumentSchema),
         400: jsonResponse("The request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        404: jsonResponse("Agents are off for this organization.", featureDisabledSchema),
+        404: jsonResponse("Agents are off for this organization, or Workbot is off for the member.", featureDisabledSchema),
       },
     }),
     orgMemberRoute(),
     requireFeature("workbotProactive"),
     queryValidator(checksQuerySchema),
     async (c) => {
-      const member = memberOf(c.get("organizationContext"))
+      const member = await memberOf(c.get("organizationContext"))
       if ("error" in member) return c.json(disabled(member.error), 404)
       c.header("Cache-Control", "no-store")
       const days = c.req.valid("query").days ?? 7
@@ -285,12 +292,12 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
       tags: ["Users"],
       summary: "Change my agent",
       description:
-        "Changes the signed-in member's own agent, as they would say it: turn it on or off (`on`), snooze it until the next working morning or resume (`snooze: \"tomorrow\"` or null), stop or restart one kind of message (`mute` / `unmute`: morning_brief, meeting_prep, calendar_changes, waiting_on_you). Also: what they want in their own words (`preferences.always`, `.never`, `.when`, `.how`; plain text, an empty string clears one), narrower working hours (`hours: {startHour, endHour}`, null for the admin's), a lower daily limit (`dailyCap`, null for the admin's), hours inside the day when only urgent messages go out (`quietWindow: {startHour, endHour}`, null removes it), `sources`: what the agent reads, by source id or name, each with `on` and/or an `instruction` in the member's words (for \"also look at my Granola for context, especially action items after meetings, and skip Linear\" send [{source: \"Granola\", on: true, instruction: \"Use for meeting context and action items after meetings.\"}, {source: \"Linear\", on: false}]; for calendar, email or team chat also `connectionId`, one of that source's `options` ids from GET, for \"read my calendar from my Microsoft 365\" send [{source: \"calendar\", connectionId: \"<id>\"}]); and `undo`: \"last\" reverts the member's last save, a change id reverts one change (send undo on its own). A source the admin didn't allow answers 400 source_not_allowed, one that is on for everyone can't be turned off (400 source_locked), a `connectionId` that isn't one of the source's allowed options (or on a source other than calendar, email or team chat) answers 400 connection_not_allowed, each with a message that says who can change it; a source the member hasn't connected is saved and `saved.connect` names where to connect it. For \"between 12 and 2 only urgent stuff, stop telling me about calendar changes\" send preferences.when, quietWindow 12–14 and mute calendar_changes in one call. A member can only narrow the admin's limits: wider hours or a higher limit answer 400 limit_wider_than_admin with a message to relay. The response's `saved.reply` says exactly what was saved, \"Reply \\\"undo\\\" to revert.\" and the link to My agent: reply with it as is, in plain text. With Your agent's brief on (workbotAgentBrief), change what it tells them with `brief` in their words: for \"also watch our Render bill\" send brief: {add: [\"Also watch our Render bill.\"]}, for \"never tell me about newsletters\" brief: {add: [\"Never tell me about newsletters.\"]}, for \"stop watching Render\" brief: {remove: [\"Render bill\"]} (matched without case; 400 brief_line_not_found lists their lines), and `set` for the whole text; and how often it checks with `checkEveryHours` (1, 2, 3 or 4; \"check every 3 hours\" is 3; never more often than the admin's, else 400 limit_wider_than_admin; null for the admin's). With the brief, any connector the member can use is a source, MCP or Den's own (for \"also use Linear\" send [{source: \"Linear\", on: true}], for \"use my Granola for meeting context\" [{source: \"Granola\", on: true, instruction: \"Use for meeting context.\"}]); its agent only calls the tools that read. `mute`/`unmute` and `preferences` are for the agent before the brief. Without the brief these answer 400 brief_unavailable. Organization settings and limits still apply. Requires the workbotProactive feature and Workbot on this deployment.",
+        "Changes the signed-in member's own agent, as they would say it: turn it on or off (`on`), snooze it until the next working morning or resume (`snooze: \"tomorrow\"` or null), stop or restart one kind of message (`mute` / `unmute`: morning_brief, meeting_prep, calendar_changes, waiting_on_you). Also: what they want in their own words (`preferences.always`, `.never`, `.when`, `.how`; plain text, an empty string clears one), narrower working hours (`hours: {startHour, endHour}`, null for the admin's), a lower daily limit (`dailyCap`, null for the admin's), hours inside the day when only urgent messages go out (`quietWindow: {startHour, endHour}`, null removes it), `sources`: what the agent reads, by source id or name, each with `on` and/or an `instruction` in the member's words (for \"also look at my Granola for context, especially action items after meetings, and skip Linear\" send [{source: \"Granola\", on: true, instruction: \"Use for meeting context and action items after meetings.\"}, {source: \"Linear\", on: false}]; for the calendar also `connectionId`, one of its `options` ids from GET, for \"read my calendar from my Microsoft 365\" send [{source: \"calendar\", connectionId: \"<id>\"}]); and `undo`: \"last\" reverts the member's last save, a change id reverts one change (send undo on its own). A source the admin didn't allow answers 400 source_not_allowed, one that is on for everyone can't be turned off (400 source_locked), a `connectionId` that isn't one of the calendar's options (or on a source other than the calendar) answers 400 connection_not_allowed, each with a message that says who can change it; a source the member hasn't connected is saved and `saved.connect` names where to connect it. For \"between 12 and 2 only urgent stuff, stop telling me about calendar changes\" send preferences.when, quietWindow 12–14 and mute calendar_changes in one call. A member can only narrow the admin's limits: wider hours or a higher limit answer 400 limit_wider_than_admin with a message to relay. The response's `saved.reply` says exactly what was saved, \"Reply \\\"undo\\\" to revert.\" and the link to My agent: reply with it as is, in plain text. With Your agent's brief on (workbotAgentBrief), change what it tells them with `brief` in their words: for \"also watch our Render bill\" send brief: {add: [\"Also watch our Render bill.\"]}, for \"never tell me about newsletters\" brief: {add: [\"Never tell me about newsletters.\"]}, for \"stop watching Render\" brief: {remove: [\"Render bill\"]} (matched without case; 400 brief_line_not_found lists their lines), and `set` for the whole text; and how often it checks with `checkEveryHours` (1, 2, 3 or 4; \"check every 3 hours\" is 3; never more often than the admin's, else 400 limit_wider_than_admin; null for the admin's). With the brief, any connector the member can use is a source, MCP or Den's own (for \"also use Linear\" send [{source: \"Linear\", on: true}], for \"use my Granola for meeting context\" [{source: \"Granola\", on: true, instruction: \"Use for meeting context.\"}]); its agent only calls the tools that read. `mute`/`unmute` and `preferences` are for the agent before the brief. Without the brief these answer 400 brief_unavailable. Organization settings and limits still apply. Requires the workbotProactive feature and Workbot on this deployment.",
       responses: {
         200: jsonResponse("The member's agent after the change.", memberAgentSavedDocumentSchema),
         400: jsonResponse("The request was invalid, or asked for more than the admin allows.", changeRefusedSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        404: jsonResponse("Agents are off for this organization.", featureDisabledSchema),
+        404: jsonResponse("Agents are off for this organization, or Workbot is off for the member.", featureDisabledSchema),
         409: jsonResponse("There is nothing to undo, or the change was changed again since.", changeRefusedSchema),
       },
     }),
@@ -298,12 +305,13 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
     requireFeature("workbotProactive"),
     jsonValidator(memberAgentInputDocumentSchema),
     async (c) => {
-      const member = memberOf(c.get("organizationContext"))
+      const member = await memberOf(c.get("organizationContext"))
       if ("error" in member) return c.json(disabled(member.error), 404)
       c.header("Cache-Control", "no-store")
       const input = c.req.valid("json")
-      const settings = await readProactiveSettings(member.organizationId)
-      const setup = await agentSetup(member, settings)
+      const policy = await resolveMemberAgentPolicy(member)
+      const settings = policy.settings
+      const setup = await agentSetup(member, policy)
       const now = Date.now()
 
       // On, snooze stay as before; everything else (mutes too) is logged with where it came from, so it can be undone.

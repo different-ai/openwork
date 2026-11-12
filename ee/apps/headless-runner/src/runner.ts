@@ -38,6 +38,7 @@ import {
   taskInstructions,
   taskPrompt,
   taskMessageId,
+  taskProgress,
   tasksSection,
 } from "./tasks.js"
 import { formatBytes, withoutAttachments } from "./tool-files.js"
@@ -45,12 +46,14 @@ import {
   ACTIVE,
   RESUMABLE,
   type Attachment,
+  type DesktopView,
   type Execution,
   type HeadlessModelAccess,
   type Message,
   type RepeatLimits,
   type SessionComputer,
   type ToolCall,
+  type ToolMessage,
   type ToolResult,
   type ToolSpec,
   type TurnCredentials,
@@ -95,6 +98,9 @@ export const MAX_CUT_OFF_STEPS = 3
 function stepSystem(base: string, askedToStop: boolean, cutOffs: number) {
   return [base, ...(askedToStop ? [STOP_REPEATING_INSTRUCTION] : []), ...(cutOffs > 0 ? [CUT_OFF_INSTRUCTION] : [])].join("\n\n")
 }
+
+/** A failed connection to the person's apps is tried again after each of these waits; then the turn fails. */
+export const MCP_CONNECT_RETRY_MS = [500, 2_000]
 
 const abortableSleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
@@ -178,7 +184,10 @@ export type RunnerOptions = {
    */
   memory?: MemoryResolver
   now?: () => number
-  /** Waits between repeated steps; tests pass a fake. Rejects with the signal's reason when the turn is stopped. */
+  /**
+   * Waits between repeated steps and before connecting to the person's apps again; tests pass a fake. Rejects with
+   * the signal's reason when the turn is stopped.
+   */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>
   /**
    * Step-mode turns' steps run when the host calls `runDueSteps` (a cell's durable alarm), not right away in this
@@ -273,7 +282,16 @@ type TurnSetup = {
   memory: MemoryAccess | null
   baseSystem: string
   toolSpecs: ToolSpec[]
+  /** Tools whose calls only read: the local read tools, and app tools whose server says so (ToolSpec.readOnly). */
+  readOnlyTools: ReadonlySet<string>
 }
+
+/**
+ * Whether a step's calls run at the same time: only when none of them can change anything (a read-only turn's, or
+ * calls to tools that only read), so their order can't matter. Any other step runs its calls one by one, in order.
+ */
+const runsTogether = (setup: TurnSetup, calls: readonly ToolCall[]) =>
+  calls.length > 1 && (setup.readOnly || calls.every((call) => setup.readOnlyTools.has(call.name)))
 
 /** A held step-mode run whose due step the alarm may start now: not mid-step, and not over. */
 const runsStepNow = (running: Running) => running.steps !== undefined && !running.steps.inStep && !running.steps.finished
@@ -317,12 +335,59 @@ export function attachmentNote(attachments: Attachment[]) {
     .join("\n")
 }
 
+/** Stands in for an older tool result's images and PDFs in a long turn; its text stays in context. */
+export const TRIMMED_TOOL_ATTACHMENTS =
+  "[This result's images and files were removed to keep this long task within limits. Get them again if needed.]"
+/**
+ * How much of the images and PDFs its tools returned a turn sends with each request, newest first. In base64
+ * characters: requests are capped at 32 MB, and the text, the tools and the person's own files need room too. And in
+ * images: providers limit them per request (Anthropic takes none over 2000 px once a request has more than 20).
+ */
+export const TURN_ATTACHMENT_CHARS = 20_000_000
+export const TURN_IMAGES = 16
+
+const attachmentChars = (message: ToolMessage) =>
+  [...(message.images ?? []), ...(message.documents ?? [])].reduce((sum, file) => sum + file.data.length, 0)
+
+/**
+ * A long turn (a browser or computer task) would resend every screenshot and PDF its tools returned with every later
+ * request. Once they outgrow the limits above, the oldest results lose theirs, in one cut down to CONTEXT_REFILL of
+ * the limits: the request then starts the same way, and the prompt cache keeps hitting, until they fill up again.
+ * The newest result always keeps its own. Files the person sent are not counted and never removed.
+ */
+function staleAttachments(turn: Message[]): Set<number> {
+  const holders = turn.flatMap((message, index) => {
+    if (message.role !== "tool") return []
+    const chars = attachmentChars(message)
+    return chars > 0 ? [{ index, chars, images: message.images?.length ?? 0 }] : []
+  })
+  let chars = 0
+  let images = 0
+  let removed = 0
+  // Replayed from the turn's start, so every step of the turn cuts at the same places.
+  for (const [position, holder] of holders.entries()) {
+    chars += holder.chars
+    images += holder.images
+    if (chars <= TURN_ATTACHMENT_CHARS && images <= TURN_IMAGES) continue
+    while (removed < position && (chars > TURN_ATTACHMENT_CHARS * CONTEXT_REFILL || images > TURN_IMAGES * CONTEXT_REFILL)) {
+      chars -= holders[removed].chars
+      images -= holders[removed].images
+      removed += 1
+    }
+  }
+  return new Set(holders.slice(0, removed).map((holder) => holder.index))
+}
+
+/** In characters of text. Tool results' images and PDFs have their own limits (staleAttachments). */
 const messageSize = (message: Message) => (message.role === "tool" ? message.output.length + 200 : JSON.stringify(message).length)
 
-/** A turn bigger than the budget on its own keeps every call and its newest outputs; the oldest large outputs go first. */
+/**
+ * A turn bigger than the budget on its own keeps every call and its newest outputs; the oldest large outputs go first.
+ * Whatever its size, its tool results keep only their newest images and PDFs (staleAttachments).
+ */
 function fitTurn(turn: Message[], budget: number): Message[] {
+  const stale = staleAttachments(turn)
   let size = turn.reduce((sum, message) => sum + messageSize(message), 0)
-  if (size <= budget) return turn
   const candidates = turn.flatMap((message, index) =>
     message.role === "tool" && message.output.length > TRIM_MIN_CHARS ? [{ index, saved: message.output.length - TRIMMED_TOOL_OUTPUT.length }] : [],
   )
@@ -332,9 +397,13 @@ function fitTurn(turn: Message[], budget: number): Message[] {
     count += 1
   }
   const trimmed = new Set(candidates.slice(0, Math.min(candidates.length, Math.ceil(count / TRIM_BLOCK) * TRIM_BLOCK)).map((candidate) => candidate.index))
-  return turn.map((message, index) =>
-    trimmed.has(index) && message.role === "tool" ? { ...message, output: TRIMMED_TOOL_OUTPUT, images: undefined, documents: undefined } : message,
-  )
+  if (trimmed.size === 0 && stale.size === 0) return turn
+  return turn.map((message, index) => {
+    if (message.role !== "tool") return message
+    if (trimmed.has(index)) return { ...message, output: TRIMMED_TOOL_OUTPUT, images: undefined, documents: undefined }
+    if (stale.has(index)) return { ...message, output: `${message.output}\n${TRIMMED_TOOL_ATTACHMENTS}`, images: undefined, documents: undefined }
+    return message
+  })
 }
 
 /**
@@ -385,7 +454,8 @@ export type Context = {
 /**
  * The conversation as the model sees it, in whole turns: a turn read from its middle is left out, since its tool
  * results would lose the calls they answer. Earlier turns are compacted; the current turn is kept whole unless it
- * alone outgrows the budget (a long task), when its oldest large tool outputs are replaced by a short note.
+ * alone outgrows the budget (a long task), when its oldest large tool outputs are replaced by a short note. Its tool
+ * results keep their newest images and PDFs; older ones are replaced by a note too (staleAttachments).
  *
  * When everything no longer fits, the oldest turns are left out until it fills CONTEXT_REFILL of the budget: one
  * deep cut instead of one turn per message, so the context starts the same way, and the provider's prompt cache
@@ -454,6 +524,7 @@ function toolMessage(call: ToolCall, outcome: ToolResult): Message {
     isError: outcome.isError,
     ...(outcome.images?.length ? { images: outcome.images } : {}),
     ...(outcome.documents?.length ? { documents: outcome.documents } : {}),
+    ...(outcome.app ? { app: outcome.app } : {}),
   }
 }
 
@@ -522,6 +593,22 @@ export class Runner {
       errorCode: turn.error ? telemetryFailureCode(turn.error) : null }, token, modelApiKey, modelBaseUrl)
   }
 
+  /**
+   * Connects to the person's apps. One failed connect (a deploy there, a dropped connection) shouldn't end the turn,
+   * so it is tried again after a short wait. Throws the last failure, or the signal's reason once the turn is stopped.
+   */
+  private async connectTools(mcp: McpConnector, token: string, signal: AbortSignal): Promise<ToolSession> {
+    const sleep = this.options.sleep ?? abortableSleep
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await mcp({ token, signal })
+      } catch (error) {
+        if (signal.aborted || attempt >= MCP_CONNECT_RETRY_MS.length) throw error
+        await sleep(MCP_CONNECT_RETRY_MS[attempt], signal)
+      }
+    }
+  }
+
   private scopedModel(access: HeadlessModelAccess) {
     return this.options.modelForAccess?.(access) ?? createModelAdapter(access, { maxOutputTokens: 16_384 })
   }
@@ -568,6 +655,7 @@ export class Runner {
             tools: [],
             model: selectedModel,
             apiKey,
+            ...(access ? { sessionId } : {}),
             signal: AbortSignal.timeout(30_000),
           })
           title = cleanTitle(named.text)
@@ -888,7 +976,14 @@ export class Runner {
       .filter(Boolean)
       .join("\n\n")
     const toolSpecs = kind === "report" ? FILE_TOOLS.filter((tool) => READ_ONLY_LOCAL_TOOLS.has(tool.name)) : [...FILE_TOOLS.filter((tool) => !readOnly || READ_ONLY_LOCAL_TOOLS.has(tool.name)), ...(files ? SAVED_FILE_TOOLS.filter((tool) => !readOnly || READ_ONLY_LOCAL_TOOLS.has(tool.name)) : []), ...(computer?.tools ?? []), ...(session?.desktop ? desktopToolsFor(computer?.desktopTools ?? [], session.desktopViews) : []), ...(reactions ? REACTION_TOOLS : []), ...(taskTools ? TASK_TOOLS : []), ...(session?.documentNavigation && kind === "message" ? [DOCUMENT_NAVIGATION_TOOL] : []), ...(tools?.tools ?? [])]
-    return { turn, session, repeatLimits, files, readOnly, computer, reactions, taskTools, memory, baseSystem, toolSpecs }
+    // A local tool answers a call before an app tool of the same name would (runCall), so only the first of a name counts.
+    const readOnlyTools = new Set(READ_ONLY_LOCAL_TOOLS)
+    const named = new Set<string>()
+    for (const tool of toolSpecs) {
+      if (tool.readOnly && !named.has(tool.name)) readOnlyTools.add(tool.name)
+      named.add(tool.name)
+    }
+    return { turn, session, repeatLimits, files, readOnly, computer, reactions, taskTools, memory, baseSystem, toolSpecs, readOnlyTools }
   }
 
   /** The current turn's files as the model sees them, read once (into `expanded`) and shown on every step. */
@@ -948,7 +1043,9 @@ export class Runner {
     const history = await this.withFiles(sessionId, setup, expanded, context.messages)
     const recentTasks = kind !== "task" && session?.tasks ? store.recentTasks(sessionId, 8) : []
     // Task state changes while the conversation goes on, so it comes last: everything before it stays cached.
-    const state: Message[] = recentTasks.length ? [{ role: "user", text: tasksSection(recentTasks, Date.now()) }] : []
+    // Unfinished tasks (at most MAX_OPEN_TASKS) add how far they've got, read from their own rows.
+    const progress = new Map(recentTasks.filter((task) => ["queued", "running", "interrupted"].includes(task.status)).map((task) => [task.messageId, taskProgress(store.turnMessages(sessionId, task.messageId))] as const))
+    const state: Message[] = recentTasks.length ? [{ role: "user", text: tasksSection(recentTasks, Date.now(), progress) }] : []
     const { messages, repairs } = normalizeTranscript([...history, ...state])
     if (repairs) console.warn(`[headless-runner] context repaired ${JSON.stringify({ sessionId, messageId, repairs })}`)
     // Cached up to the two newest earlier turns (so the next turn starts from the cache) and the newest message.
@@ -987,7 +1084,7 @@ export class Runner {
           ? this.runTaskTool(turn, call.name, call.input, context.held)
         : call.name === "desktop" && store.getSession(sessionId)?.desktop && computer?.desktopRun
           ? desktopViewRefused(store.getSession(sessionId)?.desktopViews ?? null, call.input)
-            ?? await computer.desktopRun(sessionId, call.input, signal).catch((error: unknown) => ({ output: error instanceof Error ? error.message : "Desktop unavailable", isError: true }))
+            ?? await computer.desktopRun(sessionId, call.input, signal, { browserRecovery: store.getSession(sessionId)?.browserRecovery === true }).catch((error: unknown) => ({ output: error instanceof Error ? error.message : "Desktop unavailable", isError: true }))
         : computer?.toolNames.has(call.name)
           ? await computer.run(sessionId, call.name, call.input).catch((error: unknown) => ({
               output: `The computer didn't respond: ${error instanceof Error ? error.message : "unknown error"}. Its outcome is unknown; check before repeating it.`,
@@ -1091,7 +1188,7 @@ export class Runner {
       }
       if (kind !== "report" && this.options.mcp && credentials.mcpToken) {
         try {
-          tools = await this.options.mcp({ token: credentials.mcpToken, signal })
+          tools = await this.connectTools(this.options.mcp, credentials.mcpToken, signal)
         } catch (error) {
           if (signal.aborted) throw error
           store.setTurnStatus(sessionId, messageId, "failed", "mcp_unavailable")
@@ -1099,11 +1196,12 @@ export class Runner {
         }
       }
       const setup = await this.turnSetup(sessionId, messageId, kind, tools, credentials)
+      const maxSteps = limits.maxSteps
       const expanded = new Map<string, Message>()
 
       // The model call index within this turn, counting steps an interrupted run already stored.
       let modelStep = turnMessages().filter((message) => message.role === "assistant").length
-      for (let step = 0; step < limits.maxSteps; step += 1) {
+      for (let step = 0; step < maxSteps; step += 1) {
         timing.step()
         signal.throwIfAborted()
         // Between steps: the step a follow-up arrived during has finished, so nothing is cut off mid-way.
@@ -1147,6 +1245,8 @@ export class Runner {
             tools: setup.toolSpecs,
             model: setup.turn?.model ?? this.options.defaultModel,
             apiKey: credentials.modelAccess?.apiKey ?? credentials.modelApiKey ?? this.options.defaultModelApiKey ?? "",
+            // Only through Den's own access (the gateway): a deployment's direct provider key never sees the id.
+            ...(credentials.modelAccess ? { sessionId } : {}),
             signal: AbortSignal.any([signal, writing.signal]),
             ...(events
               ? {
@@ -1159,9 +1259,9 @@ export class Runner {
                     written = ""
                     events.emit(sessionId, { type: "text", messageId, step: streamStep, delta: "", reset: true })
                   },
-                  onTool: (tool: string, description?: string) => {
+                  onTool: (tool: string, description?: string, view?: DesktopView) => {
                     timing.output()
-                    events.emit(sessionId, { type: "tool", messageId, step: streamStep, tool, ...(description ? { description } : {}) })
+                    events.emit(sessionId, { type: "tool", messageId, step: streamStep, tool, ...(description ? { description } : {}), ...(view ? { view } : {}) })
                   },
                 }
               : {}),
@@ -1203,8 +1303,8 @@ export class Runner {
           store.appendMessage(sessionId, messageId, prepared.message, prepared.body)
         }
         const outcomes: ToolResult[] = []
-        if (setup.readOnly && result.toolCalls.length > 1) {
-          // A read-only turn can't change anything, so its calls (lookups in the person's apps) run at the same time.
+        if (runsTogether(setup, result.toolCalls)) {
+          // Calls that can't change anything (lookups in the person's apps) run at the same time.
           signal.throwIfAborted()
           const settled = await Promise.all(result.toolCalls.map(runCall))
           for (const [index, call] of result.toolCalls.entries()) {
@@ -1734,7 +1834,8 @@ export class Runner {
         if (!chosen) return end("failed", "model_credentials_missing")
         if (needsTools && this.options.mcp && credentials.mcpToken) {
           try {
-            tools = await this.options.mcp({ token: credentials.mcpToken, signal })
+            // Every step connects again (between steps nothing is held open), so one failed connect is retried.
+            tools = await this.connectTools(this.options.mcp, credentials.mcpToken, signal)
           } catch (error) {
             if (signal.aborted) throw error
             return end("failed", "mcp_unavailable")
@@ -1775,6 +1876,8 @@ export class Runner {
             tools: setup.toolSpecs,
             model: setup.turn?.model ?? this.options.defaultModel,
             apiKey: chosen.apiKey,
+            // Only through Den's own access (the gateway): a deployment's direct provider key never sees the id.
+            ...(credentials.modelAccess ? { sessionId } : {}),
             signal: AbortSignal.any([signal, writing.signal]),
             ...(continueFrom ? { continueFrom } : {}),
             // Always streamed: the text so far is what a cut-off step continues from.
@@ -1789,9 +1892,9 @@ export class Runner {
               checkpoints.note(written)
               restartText()
             },
-            onTool: (tool: string, description?: string) => {
+            onTool: (tool: string, description?: string, view?: DesktopView) => {
               lane.timing.output()
-              events?.emit(sessionId, { type: "tool", messageId, step: modelStep, tool, ...(description ? { description } : {}) })
+              events?.emit(sessionId, { type: "tool", messageId, step: modelStep, tool, ...(description ? { description } : {}), ...(view ? { view } : {}) })
             },
           })
         } catch (error) {
@@ -1833,8 +1936,8 @@ export class Runner {
         }
         const runCall = (call: ToolCall) =>
           lane.timing.tool(call.name, () => this.runCall(setup, call, { sessionId, kind, tools, signal, held: { credentials: lane.held?.credentials ?? {}, at: lane.issuedAt } }))
-        if (setup.readOnly && answer.toolCalls.length > 1) {
-          // A read-only turn can't change anything, so its calls (lookups in the person's apps) run at the same time.
+        if (runsTogether(setup, answer.toolCalls)) {
+          // Calls that can't change anything (lookups in the person's apps) run at the same time.
           signal.throwIfAborted()
           await Promise.all(answer.toolCalls.map(async (call) => record(call, await runCall(call))))
         } else {

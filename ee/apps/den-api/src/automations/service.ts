@@ -23,8 +23,9 @@ import type {
 } from "@openwork/types/automations"
 import { env } from "../env.js"
 import { isActiveAutomationOwner, resolveAutomationModelAccess } from "./authority.js"
+import { runnerStanding } from "../computer-disconnect.js"
 import { shouldApplyAutomationModelAccessFailure } from "./model-attention-rollout.js"
-import { automationRepository, runWorkspaceId } from "./repository.js"
+import { automationDesktopLeaseOwner, automationRepository, runWorkspaceId, type StoredRunnerSessionReport } from "./repository.js"
 import { recordAutomationRunCompleted, recordAutomationRunStarted } from "./audit.js"
 import { validateWorkflowAutomationAction } from "../workflows.js"
 import type { CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
@@ -85,7 +86,7 @@ export type DesktopRunnerScope = OwnerScope & {
   capabilities?: readonly AutomationDesktopRunnerCapability[]
 }
 
-const desktopLeaseOwner = (scope: DesktopRunnerScope) => `desktop:${scope.ownerMemberId}:${scope.runnerId}`
+const desktopLeaseOwner = automationDesktopLeaseOwner
 
 type ModelSelection = { providerId: string; modelId: string; variant?: string | null }
 
@@ -213,14 +214,14 @@ export class AutomationService {
    * Cloud placement needs somewhere to run: the headless runner (included in
    * Team, no Web seat) or, as before, the owner's OpenWork Web computer.
    */
-  private async requireCloudRuntimeAccess(organizationId: string) {
-    if (await this.cloudRuntime(organizationId) === "headless") return
-    await requireOpenWorkWebRuntimeAccess(organizationId, this.getOpenWorkWebAccess)
+  private async requireCloudRuntimeAccess(scope: OwnerScope) {
+    if (await this.cloudRuntime(scope.organizationId) === "headless") return
+    await requireOpenWorkWebRuntimeAccess(scope.organizationId, this.getOpenWorkWebAccess, { memberId: scope.ownerMemberId })
   }
 
   /** Whether the owner has an OpenWork Web computer that can run agent Automations, with its files. */
   private async cloudComputerAvailable(scope: OwnerScope) {
-    return (await this.getOpenWorkWebAccess(scope.organizationId)).hasAccess
+    return (await this.getOpenWorkWebAccess(scope.organizationId, { memberId: scope.ownerMemberId })).hasAccess
       && cloudAgentRuntimeAvailable !== null
       && await cloudAgentRuntimeAvailable(scope)
   }
@@ -266,7 +267,7 @@ export class AutomationService {
       }
       return
     }
-    await this.requireCloudRuntimeAccess(scope.organizationId)
+    await this.requireCloudRuntimeAccess(scope)
     if (action?.kind === "agent" && !await this.cloudAgentAvailable(scope, action.model)) {
       throw new Error("automation_cloud_worker_required")
     }
@@ -377,7 +378,7 @@ export class AutomationService {
       if (definition.executionTarget !== "cloud") {
         throw new Error("automation_action_target_mismatch")
       }
-      await this.requireCloudRuntimeAccess(scope.organizationId)
+      await this.requireCloudRuntimeAccess(scope)
       if (definition.action.kind === "agent") {
         // Action-based creation is Cloud placement. The legacy Zen exception
         // exists only for already-published Desktop clients.
@@ -410,7 +411,7 @@ export class AutomationService {
     }
     // Moving off the cloud needs no cloud access; moving onto it needs what creation needs.
     if (moved) await this.requireTargetMove(scope, nextAction, nextTarget, options)
-    else if (currentTarget === "cloud") await this.requireCloudRuntimeAccess(scope.organizationId)
+    else if (currentTarget === "cloud") await this.requireCloudRuntimeAccess(scope)
     if (nextAction?.kind === "saved_script") {
       await validateWorkflowAutomationAction({ ...scope, action: nextAction })
     } else if (nextAction?.kind === "agent") {
@@ -438,7 +439,7 @@ export class AutomationService {
     const current = await this.get(scope, automationId)
     if (!current) return null
     if ((current.revision.executionTarget ?? "desktop") === "cloud") {
-      await this.requireCloudRuntimeAccess(scope.organizationId)
+      await this.requireCloudRuntimeAccess(scope)
     }
     if (current.revision.action?.kind === "saved_script") {
       if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
@@ -480,7 +481,7 @@ export class AutomationService {
     if (target !== savedTarget) await this.requireTargetMove(scope, current.revision.action, target, options)
     else {
       await this.requireTargetAllowed(scope.organizationId, target)
-      if (target === "cloud") await this.requireCloudRuntimeAccess(scope.organizationId)
+      if (target === "cloud") await this.requireCloudRuntimeAccess(scope)
     }
     // This one occurrence runs on `target`; the Automation keeps its own.
     const revision = { ...current.revision, executionTarget: target }
@@ -662,7 +663,7 @@ export class AutomationService {
     // full runtime; an interrupted run is recovered after its lease expires.
   }
 
-  registerDesktopRunner(scope: OwnerScope, registration: AutomationDesktopRunnerRegistration) {
+  registerDesktopRunner(scope: OwnerScope, registration: AutomationDesktopRunnerRegistration, authSessionId: string | null = null) {
     return automationRepository.registerDesktopRunner({
       organizationId: scope.organizationId,
       ownerMemberId: scope.ownerMemberId,
@@ -673,13 +674,14 @@ export class AutomationService {
       appVersion: registration.appVersion,
       platform: registration.platform,
       concurrency: registration.concurrency,
+      authSessionId,
       now: Date.now(),
     })
   }
 
-  /** Runner tokens are revoked in effect the moment the owner leaves the org. */
-  isActiveRunnerOwner(scope: OwnerScope) {
-    return isActiveAutomationOwner(scope)
+  /** Runner tokens are revoked in effect the moment the owner leaves the org or the computer is disconnected. */
+  runnerStanding(scope: DesktopRunnerScope) {
+    return runnerStanding(scope)
   }
 
   /** False when the runner has no registration to attach the report to. */
@@ -689,6 +691,18 @@ export class AutomationService {
       ownerMemberId: scope.ownerMemberId,
       runnerId: scope.runnerId,
       inventory,
+      now: Date.now(),
+    })
+  }
+
+  /** False when the runner has no registration to attach the report to. */
+  saveDesktopRunnerSessions(scope: DesktopRunnerScope, report: StoredRunnerSessionReport) {
+    return automationRepository.saveDesktopRunnerSessions({
+      organizationId: scope.organizationId,
+      ownerMemberId: scope.ownerMemberId,
+      runnerId: scope.runnerId,
+      access: report.access,
+      sessions: report.sessions,
       now: Date.now(),
     })
   }
@@ -942,7 +956,7 @@ export class AutomationService {
     // Web seat gates only work that executes on one.
     const webAccess = headlessEngine || (runtime === "headless" && claimed.revision.action?.kind === "saved_script")
       ? { hasAccess: true }
-      : await this.getOpenWorkWebAccess(claimed.automation.organizationId)
+      : await this.getOpenWorkWebAccess(claimed.automation.organizationId, { memberId: claimed.automation.ownerMemberId })
     if (!webAccess.hasAccess) {
       const now = Date.now()
       await this.skipRun({
@@ -1156,7 +1170,7 @@ export class AutomationService {
       runId: claimed.run.id,
       leaseOwner,
       status: result.ok ? "succeeded" : result.status,
-      resultSummary: result.ok ? result.resultSummary : result.message,
+      resultSummary: result.ok ? result.resultSummary : result.resultSummary ?? result.message,
       usage: result.usage,
       updateArtifactState: false,
       error: result.ok ? null : { code: result.code, message: result.message, retryable: result.retryable },

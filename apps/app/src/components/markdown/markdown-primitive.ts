@@ -442,6 +442,13 @@ function renderImage(profile: MarkdownProfile, href: string, title: string | nul
   const titleAttr = title ? ` title="${escapeAttribute(title)}"` : "";
 
   if (profile.imagePresentation === "chat") {
+    // A local file has no address the window can load: the chat reads it into the
+    // image once it can, and shows the file reference until then (or for good).
+    if (!/^https?:/i.test(href.trim())) {
+      const fallback = renderLinkHtml(profile, href, title, escapeHtml(text || href));
+      if (!parseLocalPathReference(href, { decode: true })) return fallback;
+      return `<span data-openwork-image=""><span data-openwork-image-loaded="" hidden><button type="button" data-openwork-image-preview="" class="my-4 inline-block max-w-full cursor-zoom-in align-top text-left transition-opacity hover:opacity-90" aria-label="Expand ${escapeAttribute(text)}"><img data-openwork-image-path="${escapeAttribute(href)}" data-openwork-path-decode="true" alt="${escapeAttribute(text)}"${titleAttr} decoding="async" class="block h-auto w-auto rounded-lg border border-border/70 object-contain" style="max-height: ${MARKDOWN_IMAGE_PREVIEW_MAX_HEIGHT}px; max-width: ${MARKDOWN_IMAGE_PREVIEW_MAX_WIDTH}px"></button></span><span data-openwork-image-fallback="">${fallback}</span></span>`;
+    }
     return `<button type="button" data-openwork-image-preview="" class="my-4 inline-block max-w-full cursor-zoom-in align-top text-left transition-opacity hover:opacity-90" aria-label="Expand ${escapeAttribute(text)}"><img src="${safe}" alt="${escapeAttribute(text)}"${titleAttr} loading="lazy" decoding="async" class="block h-auto w-auto rounded-lg border border-border/70 object-contain" style="max-height: ${MARKDOWN_IMAGE_PREVIEW_MAX_HEIGHT}px; max-width: ${MARKDOWN_IMAGE_PREVIEW_MAX_WIDTH}px"></button>`;
   }
 

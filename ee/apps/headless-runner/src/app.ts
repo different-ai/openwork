@@ -41,6 +41,8 @@ const createSessionBody = z
     documentNavigation: z.boolean().optional(),
     /** Run this conversation's computer through the runner's sandbox gateway (SANDBOX_GATEWAY), not its own provider. Off unless asked for. */
     sandboxGateway: z.boolean().optional(),
+    /** Trusted host rollout for read-only browser recovery. */
+    browserRecovery: z.boolean().optional(),
     /** Who the conversation belongs to, in the caller's terms, so the caller can list one person's conversations. */
     owner: z.string().min(1).max(200).optional(),
     /** The caller's own id for the conversation, returned when listing. */
@@ -199,6 +201,13 @@ export function createApp(input: {
     return actual.length === expected.length && timingSafeEqual(actual, expected)
   }
   const app = new Hono()
+
+  // Nothing here belongs in a search index (Google: block indexing with the X-Robots-Tag response header).
+  // A WebSocket upgrade is left as it is: it is not a document, and its response cannot be rebuilt.
+  app.use("*", async (c, next) => {
+    await next()
+    if (c.res.status !== 101) c.header("X-Robots-Tag", "noindex, nofollow, noarchive")
+  })
 
   app.get("/health", (c) => c.json({ ok: true }))
 
@@ -477,6 +486,16 @@ export function createApp(input: {
     const savedKeys = store.savedFileKeys(id)
     if (!(await storage.deleteSession(id))) return c.json({ error: "unknown_session" }, 404)
     await input.files?.deleteSession(id, savedKeys)
+    return c.body(null, 204)
+  })
+
+  // Only the computer goes (its owner left the organization): the conversation, its files and its memory stay, and
+  // its next use makes a new computer.
+  app.delete("/v1/sessions/:id/computer", async (c) => {
+    const id = c.req.param("id")
+    if (!store.getSession(id)) return c.json({ error: "unknown_session" }, 404)
+    if (store.activeTurn(id)) return c.json({ error: "session_busy" }, 409)
+    await input.computer?.delete(id)
     return c.body(null, 204)
   })
 

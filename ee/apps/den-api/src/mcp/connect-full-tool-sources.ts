@@ -179,9 +179,10 @@ export async function loadConnectFullTools(input: {
   const namespaceContext = await ctx.resolveNamespaceContext()
   const candidates: ConnectFullToolCandidate[] = []
 
-  // OpenWork's own API operations stay in search: whether a member may call one
-  // depends on per-route roles a list cannot check. The exception is the key
-  // request a connection card tells the agent to run.
+  // OpenWork's own API operations stay in search_capabilities, which the full
+  // view keeps for them: whether a member may call one depends on per-route
+  // roles a list cannot check. The exception is the key request a connection
+  // card tells the agent to run.
   if (scope !== "status") {
     if (wants("den")) {
       const keyRequest = ctx.catalog.filter((operation) => operation.name === CONNECTION_KEY_REQUEST_CAPABILITY)
@@ -248,7 +249,7 @@ export async function loadConnectFullTools(input: {
   }
 
   if (member && wants(REMOTE_SESSION_TOOL_NAMESPACE)) {
-    candidates.push(...listRemoteSessionCapabilities({ answer: ctx.remoteSessionAnswersAllowed }).map((capability) => ({
+    candidates.push(...listRemoteSessionCapabilities({ answer: ctx.remoteSessionAnswersAllowed, attach: ctx.remoteSessionAttachAllowed }).map((capability) => ({
       namespace: REMOTE_SESSION_TOOL_NAMESPACE,
       toolName: capability.action,
       capability: capability.name,

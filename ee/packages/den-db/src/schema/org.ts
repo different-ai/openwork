@@ -98,6 +98,12 @@ export const MemberTable = mysqlTable(
      * removed when the workspace is claimed or expires.
      */
     isSetupAgent: boolean("is_setup_agent").notNull().default(false),
+    /**
+     * Whether this person (or pending invitation) has OpenWork Web. Web is
+     * billed per member with it on, and only they can use a Web computer.
+     * On by default, so every member keeps Web until an admin turns it off.
+     */
+    openworkWeb: boolean("openwork_web").notNull().default(true),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [

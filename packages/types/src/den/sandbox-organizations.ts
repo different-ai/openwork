@@ -16,8 +16,8 @@ export const SANDBOX_MAX_CREDIT_USD = 5000;
 
 const creditUsdSchema = z.number().int().min(1).max(SANDBOX_MAX_CREDIT_USD);
 
-/** What people who join with the link become. Owners stay owners. */
-export const sandboxJoinRoleSchema = z.enum(["member", "admin"]);
+/** What people who join with the link become. Owners stay owners. New sandboxes default to super-admin. */
+export const sandboxJoinRoleSchema = z.enum(["member", "admin", "super-admin"]);
 export type SandboxJoinRole = z.infer<typeof sandboxJoinRoleSchema>;
 
 const domainSchema = z.string().trim().toLowerCase().regex(/^(?!-)[a-z0-9-]+(\.[a-z0-9-]+)+$/, "Enter a domain such as example.com.");
@@ -30,7 +30,7 @@ export const sandboxCreateInputSchema = z.object({
   memberLimit: z.number().int().min(1).max(SANDBOX_MAX_MEMBERS),
   /** Empty means anyone with the link can join. */
   allowedEmailDomains: z.array(domainSchema).max(20),
-  /** Omitted means member, as before. */
+  /** Omitted means super-admin. */
   joinRole: sandboxJoinRoleSchema.optional(),
   /**
    * Spending cap for the sandbox's own model key, when the deployment mints one per sandbox. Omitted uses the
@@ -60,6 +60,8 @@ export const sandboxSchema = z.object({
   connectorCount: z.number().int(),
   /** Outlook, Calendar and Drive come as one Microsoft 365 connector Workbot can use (sandboxMicrosoft365). Older servers omit it. */
   sampleMicrosoft365: z.boolean().optional(),
+  /** The sandbox has the sample Slack with the Workbot Slack app installed (sandboxSlack). Older servers omit it. */
+  sampleSlack: z.boolean().optional(),
   /** AI Gateway providers in the sandbox organization. Older servers omit it. */
   modelProviderCount: z.number().int().optional(),
   /** The organization's plan tier; sandboxes are created on Enterprise. Older servers omit it. */

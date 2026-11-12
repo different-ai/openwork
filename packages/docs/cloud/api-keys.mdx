@@ -1,0 +1,79 @@
+---
+title: "API keys"
+description: "Create an organization API key in Settings › API Keys so scripts and CI can call the OpenWork API as you, without anyone signing in."
+keywords: ["API key", "API keys", "x-api-key", "den_", "token", "secret", "CI", "automation", "script", "provisioning"]
+---
+
+An API key lets a script or CI job call the OpenWork API without anyone signing
+in. Use one, for example, to
+[keep teams, providers and connectors in sync from a script](/self-host/declarative-configuration).
+
+Keys live in **Settings › API Keys** in OpenWork Cloud.
+
+## How keys work
+
+- **A key acts as you.** It can do what you can do in the organization, and
+  only that.
+- **One organization only.** A key works in the organization you created it in,
+  and nowhere else.
+- **Shown once.** You see the full key only when you create it. OpenWork keeps
+  only a hash, so it can't show the key again.
+- **Expires after 90 days.** Create a new key before then. You can't choose a
+  different expiry.
+- **Rate limited.** Each key can make up to 600 requests a minute.
+
+## Who can create keys
+
+Creating and deleting keys needs the **Manage API keys** permission. Only the
+owner has it by default; the owner can give it to others by editing a role (see
+[Roles](/cloud/members-and-rbac#roles)). Because keys are sensitive, OpenWork asks
+you to sign in again first if you haven't signed in recently.
+
+Seeing the list of keys needs **View API keys**, which admins have by default.
+People who can see but not manage keys get a read-only page.
+
+## Create a key
+
+1. Open **Settings › API Keys**.
+2. Click **New key**.
+3. Enter a **Key name** that says what it's for, such as `CI worker`.
+4. Click **Create API key**.
+5. Click **Copy key** and store it in your secret manager or CI secrets right
+   away. The key will only be shown once.
+
+Keys start with `den_`.
+
+## Use a key
+
+Send the key in the `x-api-key` header, exactly as you copied it:
+
+```sh
+curl https://api.openworklabs.com/v1/me \
+  -H "x-api-key: $OPENWORK_API_KEY"
+```
+
+Don't send it as `Authorization: Bearer`; that header only accepts sign-in
+session tokens, so an API key there is rejected.
+
+On a self-hosted installation, use your own Den API address instead of
+`api.openworklabs.com`. The **API** tab of these docs lists every endpoint.
+
+## Delete a key
+
+In **Settings › API Keys**, click **Delete** next to the key. It stops working
+at once. People with **Manage API keys** can delete any key in the
+organization, not only their own.
+
+OpenWork also turns a person's keys off by itself when they're removed from the
+organization, their role or permissions change, or ownership is transferred.
+
+Creating, deleting and revoking keys is recorded in
+[Audit logs](/cloud/audit-logs).
+
+## Good practice
+
+- Make one key per script or system, named after it, so you can delete one
+  without breaking the others.
+- Create keys from an account whose permissions match the job. A key can do
+  everything its owner can.
+- Use **Last used** to find keys nobody uses any more, and delete them.

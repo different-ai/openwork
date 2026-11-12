@@ -174,7 +174,10 @@ export function buildInputPatterns(target, options = {}) {
     case "api-docs": patterns = [...api(), ...render, ...CONTRACT_SCRIPTS, ".github/scripts/runtime-scope.mjs", ".github/workflows/refresh-api-docs.yml"]; break;
     case "i18n": patterns = ["apps/app/src/**", "scripts/i18n-audit.mjs", ".github/workflows/ci-i18n.yml"]; break;
     case "docs": patterns = ["packages/docs/**", CI_WORKFLOW, ".github/scripts/classify-ci-changes.mjs"]; break;
-    case "models": patterns = ["ee/apps/gateway/src/models/base.json", CI_WORKFLOW, ".github/scripts/classify-ci-changes.mjs"]; break;
+    case "models": patterns = [
+      "ee/apps/gateway/src/models/base.json", "ee/apps/gateway/src/models/base-v2.json",
+      CI_WORKFLOW, ".github/scripts/classify-ci-changes.mjs",
+    ]; break;
     case "review": patterns = [
       ...closure("@openwork/review-app"), "apps/app/src/styles/colors.css",
       ".vercelignore", ".github/workflows/review-app-deploy.yml",

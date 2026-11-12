@@ -6,11 +6,13 @@ import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { DenNotice } from "../../_components/ui/notice";
-import { getOrgAccessFlags } from "../../_lib/den-org";
+import { LockKeyhole } from "lucide-react";
+import { getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
 import { requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { parseDesktopPolicyList, createDesktopPolicy, updateDesktopPolicy, useOrgDesktopPolicies, type DenDesktopPolicy } from "./desktop-policy-data";
+import { parseDesktopPolicyList, createDesktopPolicy, orgScopeHeaders, updateDesktopPolicy, useOrgDesktopPolicies, type DenDesktopPolicy } from "./desktop-policy-data";
 import { ItemMenu, ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection } from "./item-list";
+import { ReadOnlyNotice } from "./scoped-setting";
 
 type Suggestion = { prompt: string; description: string };
 const emptySuggestions = () => [{ prompt: "", description: "" }, { prompt: "", description: "" }];
@@ -56,8 +58,8 @@ export function DesktopSuggestionsPanel({ team }: { team: { id: string; name: st
     setSaving(true);
     try {
       await runReauthableAction("save-desktop-suggestions", async () => {
-        const latest = await requestJson("/v1/desktop-policies", { method: "GET" }, 12000);
-        if (!latest.response.ok) throw new Error("Could not verify current suggestions. Reload and try again.");
+        const latest = await requestJson("/v1/desktop-policies", { method: "GET", headers: orgScopeHeaders(orgId) }, 12000);
+        if (!latest.response.ok) throw new Error("Couldn't verify current suggestions. Reload and try again.");
         // Do not overwrite policy changes made in AI Gateway or another tab while this editor was open.
         if (JSON.stringify(parseDesktopPolicyList(latest.payload).desktopPolicies) !== JSON.stringify(desktopPolicies)) {
           await reloadPolicies();
@@ -73,9 +75,9 @@ export function DesktopSuggestionsPanel({ team }: { team: { id: string; name: st
             memberIds: own.assignments.flatMap((assignment) => assignment.orgMemberId ? [assignment.orgMemberId] : []),
             teamIds: own.assignments.flatMap((assignment) => assignment.teamId ? [assignment.teamId] : []),
             roles: own.roles,
-          });
+          }, orgId);
         } else if (team && suggestions) {
-          await createDesktopPolicy({ policyName: `${team.name} prompt suggestions`, policy: fields, teamIds: [team.id], priority: 0, isEnabled: true });
+          await createDesktopPolicy({ policyName: `${team.name} prompt suggestions`, policy: fields, teamIds: [team.id], priority: 0, isEnabled: true }, orgId);
         } else {
           throw new Error("Everyone's default policy is unavailable. Reload and try again.");
         }
@@ -83,20 +85,20 @@ export function DesktopSuggestionsPanel({ team }: { team: { id: string; name: st
         setDraft(null);
       });
     } catch (cause) {
-      setSaveError(cause instanceof Error ? cause.message : "Could not save suggestions. Try again.");
+      setSaveError(cause instanceof Error ? cause.message : "Couldn't save suggestions. Try again.");
     } finally {
       setSaving(false);
     }
   }
 
-  if (!canView) return <DenNotice tone="neutral" message="Viewing prompt suggestions needs Desktop policies access. Ask an organization owner or admin." />;
+  if (!canView) return <DenNotice tone="neutral" icon={LockKeyhole} message={permissionLockReason("desktop_policies.view")} />;
   if (busy && desktopPolicies.length === 0) return <ItemPanel><ItemRowsSkeleton label="Loading prompt suggestions" rows={2} /></ItemPanel>;
-  if (error) return <DenNotice tone="error" message={error} action={<DenButton variant="secondary" onClick={() => void reloadPolicies()}>Try again</DenButton>} />;
+  if (error) return <DenNotice tone="error" message={error} action={<DenButton variant="secondary" size="sm" onClick={() => void reloadPolicies()}>Try again</DenButton>} />;
   return (
     <div className="flex flex-col gap-4" data-testid="desktop-suggestions">
       <ItemSection title="Prompt suggestions" meta={team ? inherited ? "Inherit from Everyone" : "Changed for team" : undefined}>
         {blocked ? <DenNotice tone="neutral" message="Suggestions have shared or overlapping policy assignments. Editing is locked to preserve other teams and members. Ask an organization owner to separate these assignments before changing suggestions." /> : null}
-        {!access?.canManageDesktopPolicies ? <DenNotice tone="neutral" message="Read only. Ask an organization owner or admin for permission to manage desktop policies." /> : !orgContext?.entitlements.desktopPolicies ? <DenNotice tone="neutral" message="Changing prompt suggestions requires an Enterprise plan. Ask an organization owner." /> : null}
+        {!access?.canManageDesktopPolicies ? <ReadOnlyNotice permission="desktop_policies.manage" /> : !orgContext?.entitlements.desktopPolicies ? <DenNotice tone="neutral" message="Changing prompt suggestions requires an Enterprise plan. Ask an organization owner." /> : null}
         <ItemPanel>
           {shown.length === 0 ? <div className="px-5 py-4 text-[13px] text-gray-500">Built-in desktop suggestions</div> : shown.map((entry, index) => (
             <ItemRow key={index} title={entry.prompt} description={entry.description} testId={`desktop-suggestion-${index}`} action={canManage && !inherited ? <ItemMenu label={`Actions for suggestion ${index + 1}`} entries={[

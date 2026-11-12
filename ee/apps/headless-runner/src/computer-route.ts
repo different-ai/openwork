@@ -148,7 +148,7 @@ export function routeComputers(input: {
     image: any.image,
     ...(any.desktopTools ? { desktopTools: any.desktopTools } : {}),
     available: (sessionId) => (input.viaGateway(sessionId) ? gateway ?? direct : direct) !== undefined,
-    desktopRun: async (sessionId, args, signal) => (await desktop(sessionId, true)).desktopRun(sessionId, args, signal),
+    desktopRun: async (sessionId, args, signal, policy) => (await desktop(sessionId, true)).desktopRun(sessionId, args, signal, policy),
     desktopViewer: async (sessionId, view) => (await desktop(sessionId, false)).desktopViewer(sessionId, view),
     browserDemonstration: async (sessionId, command) => (await desktop(sessionId, true)).browserDemonstration(sessionId, command),
     desktopAction: async (sessionId, action) => (await desktop(sessionId, false)).desktopAction(sessionId, action),

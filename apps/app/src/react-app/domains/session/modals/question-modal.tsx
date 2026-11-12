@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect, useReducer } from "react";
 import type { QuestionInfo } from "@opencode-ai/sdk/v2/client";
-import { Check, ChevronRight, HelpCircle } from "lucide-react";
+import { Check, ChevronRight, HelpCircle, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
@@ -10,6 +10,8 @@ export type QuestionPanelProps = {
   questions: QuestionInfo[];
   busy: boolean;
   onReply: (answers: string[][]) => void;
+  /** Declines the whole request without answering. Hidden when omitted. */
+  onDismiss?: () => void;
 };
 
 type QuestionState = {
@@ -169,6 +171,19 @@ export function QuestionPanel(props: QuestionPanelProps) {
               {currentQuestion.question}
             </div>
           </div>
+          {props.onDismiss ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="-mr-2 -mt-1 shrink-0 text-gray-10"
+              disabled={props.busy}
+              title={t("question_modal.dismiss_hint")}
+              onClick={props.onDismiss}
+            >
+              <X data-icon="inline-start" />
+              {t("question_modal.dismiss")}
+            </Button>
+          ) : null}
         </div>
       </div>
 

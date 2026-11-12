@@ -285,3 +285,48 @@ test("legacy providers: custom shared keys are listed, per-person providers are 
   assert.deepEqual(results[2].check.members, { connected: 1, needsAttention: 1 })
   assert.deepEqual(calls.map((call) => call.url), ["https://llm.example.com/v1/models"])
 })
+
+test("custom OpenAI-compatible providers list models at their saved address with their one key, or are honestly not checked", async () => {
+  const customConfig = { id: "openwork-custom", name: "Acme AI", npm: "@ai-sdk/openai-compatible", env: ["OPENWORK_CUSTOM_API_KEY"] }
+  const customSettings = (status: "detailed" | "basic" | "unavailable", upstreamBaseUrl = "https://custom.example.com/v1", listedModelIds = ["acme/house"]) => ({
+    upstreamBaseUrl,
+    custom: { version: 1, catalog: [{ id: "acme/house", name: "House", attachment: false, reasoning: false, tool_call: true, structured_output: false, temperature: true, modalities: { input: ["text"], output: ["text"] }, limit: { context: 32000, output: 4096 } }], discovery: { status, lastFetchedAt: null, listedModelIds } },
+  })
+  const listed = provider({ provider_id: "openwork-custom", name: "Listed", provider_config: customConfig, settings: customSettings("detailed") })
+  const missingModel = provider({ provider_id: "openwork-custom", name: "Missing model", provider_config: customConfig, settings: customSettings("basic", "https://other.example.com/v1") })
+  const unlisted = provider({ provider_id: "openwork-custom", name: "No list", provider_config: customConfig, settings: customSettings("unavailable", "https://nolist.example.com/v1") })
+  const unreadable = provider({ provider_id: "openwork-custom", name: "Unreadable", provider_config: customConfig, settings: { upstreamBaseUrl: "https://custom.example.com/v1", custom: { version: 2 } } })
+  const keyMap = provider({ provider_id: "openwork-custom", name: "Key map", provider_config: customConfig, settings: customSettings("detailed") })
+  const byHand = provider({ provider_id: "openwork-custom", name: "Added by hand", provider_config: customConfig, settings: customSettings("basic", "https://other.example.com/v1", []) })
+  const all = [listed, missingModel, unlisted, unreadable, keyMap, byHand]
+  const sets = all.map((entry) => set(entry.id))
+  const targets = buildGatewayProviderTargets({
+    providers: all,
+    sets,
+    credentials: [
+      ...all.slice(0, 4).map((entry, index) => orgCredential(entry.id, sets[index].id)),
+      orgCredential(keyMap.id, sets[4].id, { kind: "api_key_map", secret: JSON.stringify({ OPENWORK_CUSTOM_API_KEY: SECRET }) }),
+      orgCredential(byHand.id, sets[5].id),
+    ],
+    models: all.flatMap((entry) => models(entry.id, ["acme/house"])),
+    now: NOW,
+  })
+  const { fetchImpl, calls } = fakeFetch((url) => {
+    if (url.hostname === "custom.example.com" && url.pathname === "/v1/models") return { status: 200, body: { data: [{ id: "acme/house" }] } }
+    if (url.hostname === "other.example.com" && url.pathname === "/v1/models") return { status: 200, body: { data: [{ id: "acme/other" }] } }
+    return { status: 404 }
+  })
+  const results = await evaluateProviderTargets(targets, { live: true, deps: { fetchImpl, now: () => NOW } })
+  for (const result of results) providerCheckSchema.parse(result.check)
+  const check = (name: string) => results.find((result) => result.check.name === name)?.check
+  assert.deepEqual([check("Listed")?.state, check("Listed")?.reason], ["ready", "models_listed"], "the saved address and stored models, never a models.dev lookup")
+  assert.deepEqual([check("Missing model")?.state, check("Missing model")?.models.missing], ["model_missing", ["acme/house"]])
+  assert.deepEqual([check("Added by hand")?.state, check("Added by hand")?.models.missing], ["ready", []], "a model the provider never listed is not reported missing")
+  assert.deepEqual([check("No list")?.state, check("No list")?.reason], ["not_checked", "no_live_check"], "no /models at setup: no false failure")
+  assert.deepEqual([check("Unreadable")?.state, check("Unreadable")?.reason], ["misconfigured", "configuration_error"])
+  assert.deepEqual([check("Key map")?.state, check("Key map")?.reason], ["misconfigured", "configuration_error"], "custom providers hold one API key")
+  assert.ok(!calls.some((call) => call.url.includes("nolist.example.com")))
+  assert.equal(calls.find((call) => call.url.startsWith("https://custom.example.com"))?.headers.get("authorization"), `Bearer ${SECRET}`)
+  assertNoCompletions(calls)
+  assert.ok(!JSON.stringify(results).includes(SECRET))
+})

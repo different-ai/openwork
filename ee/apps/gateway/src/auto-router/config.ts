@@ -37,6 +37,12 @@ type StoredRouter = AutoRouterConfig & { assignment: AutoRouterAssignment }
  */
 export type LoadAutoRouterConfig = (input: { organizationId: string; routerId: string; memberId: string }) => Promise<AutoRouterConfig | null>
 
+/**
+ * Every router that applies to the member and has models; empty when
+ * the feature is off. The 3rd party tool endpoints list these.
+ */
+export type LoadMemberAutoRouters = (input: { organizationId: string; memberId: string }) => Promise<AutoRouterConfig[]>
+
 const CACHE_MS = 15_000
 const routerCache = new Map<string, { expires: number; value: StoredRouter[] }>()
 const teamCache = new Map<string, { expires: number; value: string[] }>()
@@ -107,4 +113,13 @@ export const loadAutoRouterConfigFromDb: LoadAutoRouterConfig = async ({ organiz
   const teamIds = await cached(teamCache, `${organizationId}:${memberId}`, () => readMemberTeams(organizationId, memberId))
   if (!autoRouterAssignmentIncludes(router.assignment, memberId, teamIds)) return null
   return { id: router.id, name: router.name, models: router.models }
+}
+
+export const loadMemberAutoRoutersFromDb: LoadMemberAutoRouters = async ({ organizationId, memberId }) => {
+  const routers = (await cached(routerCache, organizationId, () => readRouters(organizationId))).filter((router) => router.models.length > 0)
+  if (routers.length === 0) return []
+  const teamIds = await cached(teamCache, `${organizationId}:${memberId}`, () => readMemberTeams(organizationId, memberId))
+  return routers
+    .filter((router) => autoRouterAssignmentIncludes(router.assignment, memberId, teamIds))
+    .map((router) => ({ id: router.id, name: router.name, models: router.models }))
 }

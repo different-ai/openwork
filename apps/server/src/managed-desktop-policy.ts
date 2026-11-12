@@ -1,6 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { DESKTOP_POLICY_ENFORCEMENT_ENABLED, desktopConfigSchema, type DesktopConfig } from "@openwork/types/den/desktop-policies-runtime";
+import { DESKTOP_POLICY_ENFORCEMENT_ENABLED, desktopConfigSchema, isLocalModelProviderId, localModelsAllowed, type DesktopConfig } from "@openwork/types/den/desktop-policies-runtime";
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
 import type { ServerConfig } from "./types.js";
 import { isRecord } from "./workspace-kv-store.js";
@@ -216,7 +216,7 @@ class ManagedDesktopPolicy {
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
     // While only model access and agent permissions are enforced, cache a policy only when it carries
     // one of them, so other organizations keep exactly the engine config and reload behaviour they had.
-    const restrictsModelAccess = policy.allowCustomProviders === false;
+    const restrictsModelAccess = policy.allowCustomProviders === false || !localModelsAllowed(policy);
     const hasAgentPermissions = (policy.agentPermissions?.rules.length ?? 0) > 0;
     const result = DESKTOP_POLICY_ENFORCEMENT_ENABLED || restrictsModelAccess || hasAgentPermissions
       ? await writeManagedDesktopPolicy(this.config, policy)
@@ -292,9 +292,10 @@ class ManagedDesktopPolicy {
     if (/\/session\/[^/]+\/command(?:\/|$)/.test(enginePath)) await assert("saved_command");
     if (/^\/(?:config|global\/config)(?:\/|$)/.test(enginePath)) await assert("engine_config");
     if (/^\/(?:mcp|plugins?|skills?|agents?)(?:\/|$)/.test(enginePath)) await assert("extensions");
-    if (/^\/(?:auth|providers?)(?:\/|$)/.test(enginePath)) {
+    if (/^\/(?:auth|providers?|integration)(?:\/|$)/.test(enginePath)) {
       const providerID = enginePath.match(/^\/auth\/([^/]+)(?:\/|$)/)?.[1]
-        ?? enginePath.match(/^\/provider\/([^/]+)\/oauth\/(?:authorize|callback)$/)?.[1];
+        ?? enginePath.match(/^\/provider\/([^/]+)\/oauth\/(?:authorize|callback)$/)?.[1]
+        ?? enginePath.match(/^\/integration\/([^/]+)(?:\/|$)/)?.[1];
       await assert("provider", providerID ? { providerID } : {});
     }
     const model = typeof input.model === "object" && input.model !== null ? Object.fromEntries(Object.entries(input.model)) : input;
@@ -309,10 +310,11 @@ class ManagedDesktopPolicy {
     if (!engine || ["GET", "HEAD", "OPTIONS"].includes(request.method)) return;
     // Without a known restrictive policy there is nothing to check, so sends are never read or delayed.
     const policy = this.knownPolicy();
-    if (policy?.allowCustomProviders !== false) return;
+    if (policy?.allowCustomProviders !== false && localModelsAllowed(policy)) return;
     const enginePath = decodeURIComponent(path).replace(/^\/opencode2?/, "").replace(/^\/api/, "");
     const providerID = enginePath.match(/^\/auth\/([^/]+)(?:\/|$)/)?.[1]
-      ?? enginePath.match(/^\/provider\/([^/]+)\/oauth\/(?:authorize|callback)$/)?.[1];
+      ?? enginePath.match(/^\/provider\/([^/]+)\/oauth\/(?:authorize|callback)$/)?.[1]
+      ?? enginePath.match(/^\/integration\/([^/]+)(?:\/|$)/)?.[1];
     if (providerID) return this.assert("provider", { providerID });
     if (!request.body || !/^\/session(?:\/|$)/.test(enginePath)) return;
     let body: unknown;
@@ -457,12 +459,21 @@ class ManagedDesktopPolicy {
   private assertModelAccess(action: ManagedPolicyAction, input: Record<string, unknown>): void {
     if (action !== "provider" && action !== "model") return;
     const policy = this.knownPolicy();
-    if (policy?.allowCustomProviders !== false) return;
+    const localAllowed = localModelsAllowed(policy);
+    if (policy?.allowCustomProviders !== false && localAllowed) return;
     const ids = Array.isArray(input.providerIDs) ? input.providerIDs.filter((id): id is string => typeof id === "string")
       : typeof input.providerID === "string" ? [input.providerID] : [];
     for (const id of ids) {
       // OpenCode Zen is not part of model access; it stays as it is today.
       if (id.toLowerCase() === "opencode") continue;
+      // Ollama and LM Studio follow their own switch, in either model access mode.
+      if (isLocalModelProviderId(id)) {
+        if (localAllowed) continue;
+        throw action === "model"
+          ? new ApiError(403, "organization_local_models_denied", "Your organization has turned off local models. Choose another model.")
+          : new ApiError(403, "organization_local_models_denied", "Your organization has turned off local models.");
+      }
+      if (policy?.allowCustomProviders !== false) continue;
       if (!MANAGED_PROVIDER.test(id)) {
         throw action === "model"
           ? new ApiError(403, "organization_model_denied", "Choose an AI model assigned by your organization.")

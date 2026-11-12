@@ -14,6 +14,8 @@ import {
   agentMessageInstructions,
   agentMessagePrompt,
   agentMessageRetryPrompt,
+  agentToldToday,
+  checkGateApplies,
   decideBriefDelivery,
   extraChecksLeft,
   isFirstCheckOfDay,
@@ -21,6 +23,7 @@ import {
   parseAgentMessages,
   parseCheckReport,
   pendingCheckRequests,
+  planCheckGate,
   rememberSent,
   sentLead,
   settleCheckRequests,
@@ -52,10 +55,12 @@ import {
 } from "./sources.js"
 import type { AgentReadToolInput } from "@openwork/automations/agent-read-tools"
 import { planAgentTools, sourceUsable, unusableWhy } from "./agent-tools.js"
+import { peekArrivals, type AgentCheckGate } from "./check-gate.js"
+import type { AgentSendCheck } from "./send-check.js"
 import type { MemberConnection } from "./sources.js"
 import type { AgentRawTurnResult } from "./turn.js"
 import type { AgentWakeDeps, AgentWakeOutcome } from "./wake.js"
-import { checkSources, noticeUnreadableSources, readMemberCalendar, type CheckRecordInput } from "./wake-shared.js"
+import { checkSources, noticeUnreadableSources, readMemberCalendar, sourcePromptService, type CheckRecordInput } from "./wake-shared.js"
 
 /**
  * One check of a member's agent under `workbotAgentBrief`: one rhythm, the brief, and two steps.
@@ -94,6 +99,17 @@ export type AgentBriefWakeDeps = AgentWakeDeps & {
    * the check may call; null when its server didn't answer.
    */
   readTools: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; connection: MemberConnection }) => Promise<readonly AgentReadToolInput[] | null>
+  /**
+   * `workbotAgentCheckGate`: Den's own look at what arrived for this member (and the evaluation model, where the
+   * deployment has its key), or null while the feature is off for them. Asked only when the member's policy turned
+   * the gate on and this check is one the gate may skip.
+   */
+  checkGate?: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user"> }) => Promise<AgentCheckGate | null>
+  /**
+   * `workbotAgentSendCheck`: the check for this member, or null while the feature is off for them or the deployment
+   * has no key for the evaluation model. Asked only when the member's policy turned the check on.
+   */
+  sendCheck?: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user"> }) => Promise<AgentSendCheck | null>
 }
 
 type Skip = "off" | "not_allowed" | "opted_out" | "snoozed" | "outside_hours" | "quiet_hours" | "no_destination" | "slack_app_not_installed" | "member_not_linked" | "no_sources" | "nothing_due"
@@ -132,13 +148,15 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     return { status: "skipped", reason: reason === "quiet_hours" ? "outside_hours" : reason }
   }
 
-  const settings = await deps.settings(organizationId)
+  // The member's policy, brief and template: their team's own when it has one, else the organization's.
+  const own = deps.teamPolicy ? await deps.teamPolicy({ organizationId, memberId }) : null
+  const settings = own?.settings ?? await deps.settings(organizationId)
   if (!settings.enabled) return skip("off", now + HOUR_MS)
   const userId = await deps.user(organizationId, memberId)
   if (!userId || !(await deps.allowed(organizationId, userId))) return skip("not_allowed", now + HOUR_MS)
   if (!memberAgentOn(row, settings)) return skip("opted_out", now + 6 * HOUR_MS)
 
-  const template = await deps.template(organizationId)
+  const template = own?.template ?? await deps.template(organizationId)
   const brief = resolveAgentBrief(settings, template)
   const limits = memberLimits(settings, row.overrides, brief)
   const rhythm = memberRhythm(limits, brief)
@@ -245,17 +263,64 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   if (!readable.length) {
     return skip("no_sources", now + Math.min(6, row.failures + 1) * HOUR_MS, { state: JSON.stringify({ ...state, notices }), timeZone, failures: row.failures + 1 })
   }
+  const name = (await deps.person(organizationId, memberId).catch(() => null))?.trim() || "the member"
+  const briefText = agentBriefForCheck({ name, organization: brief.text, member: memberBriefLines(stored, row.overrides).lines })
+  const nextAfter = nextScheduledCheck({ rhythm, lastCheckAt: now, now, timeZone, snoozedUntil: null })
+
+  // The check gate, when this policy turned it on: is this scheduled check worth running? Den looks itself at what
+  // reached the member since their agent last looked. Nothing arrived, or (with the evaluation model) only routine
+  // things: no agent turn. Anything Den can't tell runs the check, as without the gate.
+  const skips = state.skips ?? 0
+  const gate = settings.checkGate === true && deps.checkGate && checkGateApplies({ occasion: occasion.kind, skips }).applies
+    ? await deps.checkGate({ organizationId, memberId, userId }).catch(() => null)
+    : null
+  if (gate) {
+    const peek = await peekArrivals({
+      sources: readable,
+      lastLook: state.lastLook,
+      now,
+      timeZone,
+      restricted: new Set(toolPlan.nativeReads.filter((entry) => entry.denied.length > 0).map((entry) => entry.connectionId)),
+      mail: gate.mail,
+      calendar: (read) => deps.calendar({ organizationId, orgMembershipId: memberId, connectionId: read.connectionId, timeMin: iso(read.timeMin), timeMax: iso(read.timeMax) }),
+    })
+    const plan = planCheckGate({ occasion: occasion.kind, skips, peek, brief: briefText })
+    const answer = plan.kind === "ask" && gate.model ? await gate.model(plan.request, settings.checkGateThreshold) : null
+    const skip = plan.kind === "skip" ? plan.why : answer?.verdict.kind === "skip" ? answer.verdict.why : null
+    // Counts and timings only: never a sender, a subject or the model's answer.
+    appLogger.info("workbot_agent_check_gate", {
+      member_id: memberId,
+      outcome: skip ? `skip:${skip}` : plan.kind === "run" ? `run:${plan.why}` : answer ? `run:${answer.verdict.why}` : "run:no_model",
+      arrivals: peek.kind === "arrivals" ? peek.items.length : -1,
+      unknown: peek.kind === "unknown" ? peek.why : "",
+      skips,
+      duration_ms: answer?.durationMs ?? 0,
+      input_tokens: answer?.inputTokens ?? 0,
+    })
+    if (skip) {
+      // Nothing is marked as read: the next look, and the next check that runs, cover the same arrivals again.
+      const requests = settleCheckRequests(state.requests ?? [], now)
+      await record({ reason: "nothing_new", key: `ran:${now}`, kind })
+      await deps.recordChecks({
+        organizationId,
+        day: new Date(now).toISOString().slice(0, 10),
+        counts: [{ responsibility: AGENT_RHYTHM_COUNTER, checks: 1, quiet: 1, sent: 0 }],
+      }).catch(() => appLogger.warn("workbot_agent_checks_unrecorded", { member_id: memberId }))
+      const skipped: AgentState = { ...state, lastPassAt: now, nextPassAt: nextAfter, notices, requests, skips: skips + 1 }
+      await deps.settle(row, { state: JSON.stringify(skipped), timeZone, templateVersionId: template.versionId, failures: 0, nextWakeAt: nextWake(nextAfter, requests) })
+      return { status: "ran", reasons: ["scheduled"], reply: "quiet", delivered: null }
+    }
+  }
+
   const actor = { userId, organizationId }
   const model = await deps.model(actor).catch(() => null)
   if (!model) return retry("model_unavailable")
 
   // Step 1: the check. The brief is text people in OpenWork wrote; the sources are data from other people.
-  const name = (await deps.person(organizationId, memberId).catch(() => null))?.trim() || "the member"
-  const nextAfter = nextScheduledCheck({ rhythm, lastCheckAt: now, now, timeZone, snoozedUntil: null })
   const check = await deps.check({
     actor,
     sessionId: deps.sessionId(organizationId, memberId),
-    instructions: agentCheckInstructions({ name, brief: agentBriefForCheck({ name, organization: brief.text, member: memberBriefLines(stored, row.overrides).lines }) }),
+    instructions: agentCheckInstructions({ name, brief: briefText }),
     model,
     prompt: agentCheckPrompt({
       occasion,
@@ -269,6 +334,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
         id: source.id,
         name: source.name,
         via: source.kind === "other" ? [] : readableConnections(source).map((connection) => connection.name),
+        ...sourcePromptService(source),
         instruction: source.instruction,
         lastReadAt: source.lastReadAt,
       })),
@@ -296,6 +362,8 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     nextPassAt: nextAfter,
     notices,
     requests,
+    // A check that ran: the gate may skip the next ones again.
+    skips: 0,
   }
 
   // Step 2 and Den's limits, only with something worth a message.
@@ -325,10 +393,31 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
       } else if (reply.kind === "quiet") {
         outcome = { reason: "findings_held" }
       } else {
+        // The send check, when this policy turned it on: each message is read once more against the brief and what
+        // the member was told today. Only a confident answer holds one; no answer sends it, as without the check.
+        const sendCheck = settings.sendCheck === true && deps.sendCheck ? await deps.sendCheck({ organizationId, memberId, userId }).catch(() => null) : null
+        let messages = reply.messages
+        let heldForBrief = 0
+        if (sendCheck) {
+          const toldToday = agentToldToday({ conversation: conversation ?? [], sent: state.sent, since: zonedDayStart(now, timeZone) })
+          const checked = await Promise.all(reply.messages.map((message) => sendCheck({ brief: briefText, message: message.text, update: message.update, toldToday, holdAt: settings.sendCheckThreshold })))
+          messages = reply.messages.filter((_, index) => checked[index]?.verdict.kind !== "hold")
+          heldForBrief = checked.filter((result) => result.verdict.kind === "hold" && result.verdict.reason === "brief").length
+          // Counts and timings only: never the message, the brief or the model's answer.
+          appLogger.info("workbot_agent_send_check", {
+            member_id: memberId,
+            messages: reply.messages.length,
+            held_brief: heldForBrief,
+            held_repeat: reply.messages.length - messages.length - heldForBrief,
+            unavailable: checked.filter((result) => result.status === "unavailable").length,
+            duration_ms: Math.max(0, ...checked.map((result) => result.durationMs)),
+            input_tokens: checked.reduce((sum, result) => sum + (result.inputTokens ?? 0), 0),
+          })
+        }
         const resolveSource = (source: string) => findSource(sources, source)?.id ?? null
-        const about = reply.messages.flatMap((message) => message.about.flatMap((entry) => parseAboutId(entry, resolveSource) ?? []))
+        const about = messages.flatMap((message) => message.about.flatMap((entry) => parseAboutId(entry, resolveSource) ?? []))
         const decision = decideBriefDelivery({
-          messages: reply.messages,
+          messages,
           sources: new Set(readIds),
           resolveSource,
           told: await deps.told(memberId, about),
@@ -378,7 +467,9 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
           delivered = sent ? "sent" : failed ? "failed" : capped ? "daily_limit" : "nothing_new"
           outcome = sent
             ? { reason: "sent", sources: checkSources(drew, sources), message: first, messages: sent }
-            : lost ? null : failed ? { reason: "send_failed" } : capped ? { reason: "daily_limit" } : unreadable ? { reason: "unreadable_reply" } : { reason: "already_told" }
+            : lost ? null : failed ? { reason: "send_failed" } : capped ? { reason: "daily_limit" } : unreadable ? { reason: "unreadable_reply" }
+              // Everything the messenger wrote was held because the brief says to leave it out: quiet, not a repeat.
+              : !messages.length && heldForBrief ? { reason: "findings_held" } : { reason: "already_told" }
         }
       }
     }

@@ -32,7 +32,8 @@ export function ProviderIcon(props: ProviderIconProps) {
   const hasProviderFamily = (family: string) =>
     normalizedId === family || normalizedName.includes(family);
 
-  const isAnthropic = hasProviderFamily("anthropic");
+  // Claude Code (the engine's `claude-agent` provider) is Anthropic's, so it wears Anthropic's mark.
+  const isAnthropic = hasProviderFamily("anthropic") || normalizedId === "claude-agent";
   const isOpenAI = hasProviderFamily("openai");
   const isOpenCode = hasProviderFamily("opencode");
   const isOpenWork = hasProviderFamily("openwork");

@@ -43,6 +43,7 @@ import {
   drainPendingDeepLinks,
 } from "../../../app/lib/deep-link-bridge";
 import { parseDenAuthDeepLink } from "../../../app/lib/openwork-links";
+import { explainSignOutAfterDisconnect } from "../devices/disconnected-sign-out";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -339,6 +340,8 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       failStartup("signed_in", classifyStartupError(nextError));
       const failureStatus = resolveDenAuthFailureStatus(nextError);
       if (failureStatus === "signed_out") {
+        // Before the session is cleared: afterwards nothing says this computer was disconnected.
+        explainSignOutAfterDisconnect();
         clearDenSession();
         setUser(null);
         verifiedCredentialRef.current = null;

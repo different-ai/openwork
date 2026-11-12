@@ -13,13 +13,16 @@ export type BarSeries = {
   values: number[];
 };
 
-export function TrendChart({ title, subtitle, weeks, series, intervalLabel = "Week of", isLoading = false }: {
+export function TrendChart({ title, subtitle, weeks, series, intervalLabel = "Week of", isLoading = false, formatValue = String, emptyLabel = "No usage events yet" }: {
   title: string;
   subtitle: string;
   weeks: { weekStart: string }[];
   series: BarSeries[];
   intervalLabel?: string;
   isLoading?: boolean;
+  /** How a bar's value reads in its tooltip and the screen-reader table (money, for example). */
+  formatValue?: (value: number) => string;
+  emptyLabel?: string;
 }) {
   const colorFor = (item: BarSeries) => item.label === "Failed" && item.values.some((value) => value > 0) ? "var(--ow-danger)" : "var(--dls-accent)";
   const max = Math.max(1, ...series.flatMap((s) => s.values));
@@ -57,7 +60,7 @@ export function TrendChart({ title, subtitle, weeks, series, intervalLabel = "We
                 return (
                   <div
                     key={s.label}
-                    title={`${intervalLabel ? `${intervalLabel} ` : ""}${formatWeekLabel(week.weekStart)} — ${s.label}: ${value}`}
+                    title={`${intervalLabel ? `${intervalLabel} ` : ""}${formatWeekLabel(week.weekStart)} — ${s.label}: ${formatValue(value)}`}
                     className="w-full max-w-[24px] rounded-t-[4px] transition-[height]"
                     style={{
                       height: `${height}%`,
@@ -71,7 +74,7 @@ export function TrendChart({ title, subtitle, weeks, series, intervalLabel = "We
         </div>
         {!hasData ? (
           <div className="absolute inset-0 flex items-center justify-center">
-            <span role="status" className="rounded-full bg-white/90 px-3 py-1 text-[12px] text-[#637291]">{isLoading ? "Loading activity…" : "No usage events yet"}</span>
+            <span role="status" className="rounded-full bg-white/90 px-3 py-1 text-[12px] text-[#637291]">{isLoading ? "Loading activity…" : emptyLabel}</span>
           </div>
         ) : null}
       </div>
@@ -81,7 +84,7 @@ export function TrendChart({ title, subtitle, weeks, series, intervalLabel = "We
         <span>{weeks.length > 0 ? formatWeekLabel(weeks[weeks.length - 1].weekStart) : ""}</span>
       </div>
       <table className="sr-only"><caption>{title}</caption><thead><tr><th>Date</th>{series.map((s) => <th key={s.label}>{s.label}</th>)}</tr></thead>
-        <tbody>{weeks.map((week, i) => <tr key={week.weekStart}><th>{formatWeekLabel(week.weekStart)}</th>{series.map((s) => <td key={s.label}>{s.values[i] ?? 0}</td>)}</tr>)}</tbody>
+        <tbody>{weeks.map((week, i) => <tr key={week.weekStart}><th>{formatWeekLabel(week.weekStart)}</th>{series.map((s) => <td key={s.label}>{formatValue(s.values[i] ?? 0)}</td>)}</tr>)}</tbody>
       </table>
     </figure>
   );

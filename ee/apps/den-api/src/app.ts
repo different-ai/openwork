@@ -20,6 +20,7 @@ import { registerAdminMcpRoutes } from "./mcp/admin.js"
 import { registerAgentMcpRoutes } from "./mcp/agent.js"
 import { registerConnectionServerRoutes } from "./mcp/connection-server.js"
 import { registerExternalConnectionProxyRoutes } from "./mcp/external-connection-proxy.js"
+import { registerPublicMcpAppRoutes } from "./mcp/public-app-server.js"
 import { registerMcpRoutes } from "./mcp/index.js"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "./middleware/index.js"
 import { buildOperationId, htmlResponse, jsonResponse } from "./openapi.js"
@@ -60,8 +61,9 @@ import { sessionMiddleware } from "./session.js"
 import { inventoryRevisionMiddleware } from "./middleware/inventory-revision.js"
 import { preclaimScopeMiddleware } from "./middleware/preclaim-scope.js"
 import { auditRequestMiddleware } from "./audit/request-capture.js"
+import { confineConfigTokens } from "./config-blobs/token.js"
 import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
-import { sanitizePublicResponseHeaders } from "./public-response-headers.js"
+import { noIndex, sanitizePublicResponseHeaders } from "./public-response-headers.js"
 import { isDraining } from "./drain-state.js"
 import { AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER, AUTOMATION_SCHEDULE_KINDS_HEADER } from "@openwork/types/automations"
 
@@ -132,6 +134,7 @@ app.use("*", async (c, next) => {
   c.header("X-Content-Type-Options", "nosniff")
   c.header("Strict-Transport-Security", strictTransportSecurityHeader)
 })
+app.use("*", noIndex)
 app.use("*", createTelemetryErrorSanitizerMiddleware())
 app.use("*", async (c, next) => {
   await next()
@@ -213,6 +216,8 @@ app.use("*", sessionMiddleware)
 // Registered before preclaimScopeMiddleware so its 403 denials are recorded
 // (platform store) against the endpoint they refused.
 app.use("*", auditRequestMiddleware)
+// Config tokens (API keys of type `config`) only reach /v1/config-blobs/*.
+app.use("*", confineConfigTokens)
 app.use("/v1/*", preclaimScopeMiddleware)
 
 app.get(
@@ -315,6 +320,7 @@ registerMcpTokenRoutes(app)
 registerMcpRoutes(app)
 registerAgentMcpRoutes(app)
 registerExternalConnectionProxyRoutes(app)
+registerPublicMcpAppRoutes(app)
 registerConnectionServerRoutes(app)
 registerAdminMcpRoutes(app)
 registerTelemetryRoutes(app)
@@ -433,6 +439,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Permissions", description: "Organization permissions: the permission catalog, Member, Admin and team permission sets, their history, and each member's effective permissions." },
       { name: "API Keys", description: "Organization API key management routes." },
       { name: "Desktop Policies", description: "Desktop app policies applied to the organization, members, or teams." },
+      { name: "Config blobs", description: "Export the organization's configuration as JSON and import it through reviewed change requests: plan, decisions, secret inputs, approval, apply and revert." },
       { name: "Agent Permissions", description: "What agents may do on members' computers, set for everyone and per team." },
       { name: "LLM Providers", description: "Organization LLM provider catalog, configuration, and access routes." },
       { name: "Inference", description: "Organization inference settings." },
@@ -443,6 +450,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },
       { name: "Managed deployments", description: "OpenWork installations in an organization's own cloud account: launch approval, installer milestones and health reports." },
       { name: "Automations", description: "Scheduled Automations, their runs, and desktop runner presence." },
+      { name: "Devices", description: "Personal and shared computers, plus permission-gated team computer inventory for the current organization, including registered OpenWork instances. Inventory grants no control or access to private content." },
       { name: "Documents", description: "Connected Drive documents, inline editing and file-bound temporary Office sessions." },
       { name: "Workbot", description: "The signed-in member's single Workbot conversation." },
       { name: "Workflows", description: "Saved Workflows (Code Mode scripts), their versions, snapshots, and views." },

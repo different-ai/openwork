@@ -99,6 +99,7 @@ export function getSettingsTabIcon(tab: SettingsTab) {
     case "shortcuts":
       return Keyboard;
     case "computer":
+    case "devices":
       return Monitor;
     case "updates":
       return RefreshCcw;
@@ -147,6 +148,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return "Keyboard shortcuts";
     case "computer":
       return "Computer use";
+    case "devices":
+      return "Devices";
     case "updates":
       return t("settings.tab_updates");
     case "recovery":
@@ -196,6 +199,8 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return "Keys that switch to the models you use most";
     case "computer":
       return "Let the agent use apps on this computer";
+    case "devices":
+      return "Your desktops and cloud computers";
     case "updates":
       return t("settings.tab_description_updates");
     case "recovery":
@@ -278,13 +283,14 @@ export function useSettingsNavGroups(developerMode: boolean): SettingsNavGroups 
   const checkRestriction = useCheckDesktopRestriction();
   // Computer use runs in the desktop app; the web app has no local computer.
   const computerUse = useDesktopFeature("computerUse") && isElectronRuntime();
+  const remoteDevices = useDesktopFeature("remoteDevices");
   const allowed = (tabs: SettingsTab[]) =>
     tabs.filter((tab) => isSettingsTabAllowed({ tab, checkRestriction }));
   return {
     hub: allowed(["general"]),
     workspace: allowed(getWorkspaceSettingsTabs()),
     global: allowed(getGlobalSettingsTabs(developerMode, platform.capabilities, { computerUse })),
-    cloud: allowed(CLOUD_SETTINGS_TABS),
+    cloud: allowed([...CLOUD_SETTINGS_TABS, ...(remoteDevices ? ["devices" as const] : [])]),
   };
 }
 
@@ -434,7 +440,7 @@ export function SettingsPageHeading({ activeTab }: Pick<SettingsPageProps, "acti
   return (
     <SettingsPanelHeading>
       <SettingsPanelTitle>{getSettingsTabLabel(activeTab)}</SettingsPanelTitle>
-      <SettingsPanelDescription>{getSettingsTabDescription(activeTab)}</SettingsPanelDescription>
+      {activeTab !== "devices" ? <SettingsPanelDescription>{getSettingsTabDescription(activeTab)}</SettingsPanelDescription> : null}
     </SettingsPanelHeading>
   );
 }

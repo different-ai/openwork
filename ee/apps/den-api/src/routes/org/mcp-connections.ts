@@ -56,6 +56,7 @@ import type { PermissionKey } from "@openwork/types/den/permissions"
 import { forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, okSchema, unauthorizedSchema } from "../../openapi.js"
 import { createOAuthStateToken, verifyOAuthStateToken } from "../../capability-sources/generic-oauth.js"
 import { matchesLegacyExternalMcpOAuthStateIdentityBinding } from "../../capability-sources/external-mcp-oauth-state-identity.js"
+import { externalMcpUrlCredentialProblems } from "../../capability-sources/external-mcp-url-credentials.js"
 import {
   EXTERNAL_MCP_REQUEST_HEADERS_LIMIT,
   externalMcpRequestHeaderNames,
@@ -160,8 +161,6 @@ import {
 import { ensureFreshPrivilegedSession } from "../../privileged-session.js"
 import { resolvePluginArchPluginRoles, type PluginArchActorContext } from "./plugin-system/access.js"
 import {
-  getFreshPrivilegedSessionRequiredResponse,
-  hasFreshPrivilegedSession,
   hasPermission,
   idParamSchema,
   orgAccessFailureStatus,
@@ -272,23 +271,7 @@ const externalMcpUrlSchema = z.string().trim().url().max(2048).superRefine((valu
   if (url.hash) {
     context.addIssue({ code: "custom", message: "MCP URLs must not contain a fragment." })
   }
-  if (url.username || url.password) {
-    context.addIssue({ code: "custom", message: "MCP URLs must not contain embedded credentials." })
-  }
-  const sensitiveParameters = new Set([
-    "access_token",
-    "api_key",
-    "client_secret",
-    "token",
-    "refresh_token",
-    "id_token",
-    "code_verifier",
-  ])
-  for (const parameter of url.searchParams.keys()) {
-    if (sensitiveParameters.has(parameter.toLowerCase())) {
-      context.addIssue({ code: "custom", message: `MCP URL query parameter "${parameter}" must not contain credentials.` })
-    }
-  }
+  for (const message of externalMcpUrlCredentialProblems(value)) context.addIssue({ code: "custom", message })
 })
 
 // Bounds only; validateExternalMcpRequestHeaders enforces the exact rules
@@ -560,6 +543,8 @@ const connectionResponseSchema = z.object({
   createdByName: z.string().nullable().optional(),
   /** Present with createdByName: whether the calling member added this connection (and so may always edit or remove it). */
   createdByYou: z.boolean().optional(),
+  /** Present with createdByName: the org membership id of whoever added it, so "shared beyond its creator" can be told apart from "shared beyond you". */
+  createdByOrgMembershipId: z.string().nullable().optional(),
   /** Present with createdByName: whether the calling member may remove this connection right now (Remove any connection, or they added it). */
   canRemove: z.boolean().optional(),
   createdAt: z.string().datetime().optional(),
@@ -1507,6 +1492,7 @@ async function toConnectionResponse(
     ...(options.includeAccess ? {
       createdByName: options.createdByName ?? null,
       createdByYou: row.createdByOrgMembershipId === options.callerOrgMembershipId,
+      createdByOrgMembershipId: row.createdByOrgMembershipId ?? null,
       canRemove: options.callerCanRemoveAnyConnection === true || row.createdByOrgMembershipId === options.callerOrgMembershipId,
     } : {}),
     createdAt: row.createdAt.toISOString(),
@@ -1555,6 +1541,7 @@ export type MemberUsableConnectionFacts = {
   name: string
   url: string
   nativeProviderKey: string | null
+  authType?: "oauth" | "apikey" | "none"
   credentialMode: "shared" | "per_member"
   createdAt?: string
   connected: boolean
@@ -1892,8 +1879,8 @@ async function handleExternalMcpOAuthCallback(input: {
   return mcpOAuthCallbackHtml(completionPage({ ok: true, name: connection.name }))
 }
 
-type McpConnectionOrganizationContext = NonNullable<OrgRouteVariables["organizationContext"]>
-type CreateExternalConnectionBody = z.infer<typeof createExternalConnectionBodySchema>
+export type McpConnectionOrganizationContext = NonNullable<OrgRouteVariables["organizationContext"]>
+export type CreateExternalConnectionBody = z.infer<typeof createExternalConnectionBodySchema>
 type ConnectionAccessInput = z.infer<typeof accessInputSchema>
 
 /**
@@ -1956,10 +1943,10 @@ function memberManagedAccess(access: ConnectionAccessInput, creatorId: string): 
     teamIds: [...new Set(access.teamIds)],
   }
 }
-type UpdateConnectionBody = z.infer<typeof updateConnectionBodySchema>
-type McpConnectionResponseContext = Pick<Context, "json">
+export type UpdateConnectionBody = z.infer<typeof updateConnectionBodySchema>
+export type McpConnectionResponseContext = Pick<Context, "json">
 
-async function createExternalConnectionResponse(
+export async function createExternalConnectionResponse(
   c: McpConnectionResponseContext,
   payload: McpConnectionOrganizationContext,
   body: CreateExternalConnectionBody,
@@ -1968,6 +1955,8 @@ async function createExternalConnectionResponse(
   sessionId: string | null | undefined,
   requestId: string,
   apiKeyCaller = false,
+  /** `preferredId`: reuse this id for the new row (config-blob imports; the caller checked it is free). */
+  options: { preferredId?: ExternalMcpConnectionRow["id"] } = {},
 ): Promise<Response> {
   // Secrets must not travel through chat transcripts: when the caller is
   // the agent (internal MCP principal), refuse API-key connections.
@@ -2057,6 +2046,7 @@ async function createExternalConnectionResponse(
       memberIds: body.access.memberIds.map((id) => normalizeDenTypeId("member", id)),
       teamIds: body.access.teamIds.map((id) => normalizeDenTypeId("team", id)),
     },
+    ...(options.preferredId ? { id: options.preferredId } : {}),
   })
 
   const oauthClient = body.authType === "oauth" ? body.oauthClient ?? externalMcpPresetOAuthClient(body.url) : undefined
@@ -2133,7 +2123,7 @@ async function createExternalConnectionResponse(
   return responseStatus === 201 ? c.json(responseBody, 201) : c.json(responseBody)
 }
 
-async function replaceExternalConnectionResponse(
+export async function replaceExternalConnectionResponse(
   c: McpConnectionResponseContext,
   payload: McpConnectionOrganizationContext,
   body: UpdateConnectionBody,
@@ -2525,7 +2515,7 @@ function directAccessInput(grants: Awaited<ReturnType<typeof listDirectExternalM
   }
 }
 
-async function deleteExternalConnection(
+export async function deleteExternalConnection(
   c: McpConnectionResponseContext,
   payload: McpConnectionOrganizationContext,
   connection: ExternalMcpConnectionRow,
@@ -3512,8 +3502,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return createExternalConnectionResponse(c, payload, body, externalKey, 201, c.get("session")?.id, c.get("requestId"), Boolean(c.get("apiKey")))
       }
 
-      if (!c.get("apiKey") && !hasFreshPrivilegedSession({ session: c.get("session") })) {
-        return c.json(getFreshPrivilegedSessionRequiredResponse(), 403)
+      const freshSession = ensureFreshPrivilegedSession(c)
+      if (!freshSession.ok) {
+        return c.json(freshSession.response, 403)
       }
       const canUpdateAnyConnection = await hasPermission(c, "connections.update")
       if (!canUpdateAnyConnection && connection.createdByOrgMembershipId !== payload.currentMember.id) {
@@ -3565,8 +3556,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     paramValidator(externalKeyParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!c.get("apiKey") && !hasFreshPrivilegedSession({ session: c.get("session") })) {
-        return c.json(getFreshPrivilegedSessionRequiredResponse(), 403)
+      const freshSession = ensureFreshPrivilegedSession(c)
+      if (!freshSession.ok) {
+        return c.json(freshSession.response, 403)
       }
 
       const { externalKey } = c.req.valid("param")
@@ -3603,8 +3595,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     jsonValidator(updateConnectionBodySchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!c.get("apiKey") && !hasFreshPrivilegedSession({ session: c.get("session") })) {
-        return c.json(getFreshPrivilegedSessionRequiredResponse(), 403)
+      const freshSession = ensureFreshPrivilegedSession(c)
+      if (!freshSession.ok) {
+        return c.json(freshSession.response, 403)
       }
 
       const { connectionId } = c.req.valid("param")
@@ -3711,7 +3704,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Remove an External MCP Connection",
-      description: "Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. The workspace owner (or anyone with the Remove any connection permission) can remove any connection; other members only the connections they created. Session callers must have signed in within the last 2 hours (403 reauth); API-key callers are exempt.",
+      description: "Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. The workspace owner (or anyone with the Remove any connection permission) can remove any connection; other members only the connections they created. Session callers must have signed in recently, within the organization's admin re-authentication window (2 hours unless it sets another; 403 reauth); API-key callers are exempt.",
       responses: {
         200: jsonResponse("The connection was removed.", okSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -3723,8 +3716,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     paramValidator(connectionParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!c.get("apiKey") && !hasFreshPrivilegedSession({ session: c.get("session") })) {
-        return c.json(getFreshPrivilegedSessionRequiredResponse(), 403)
+      const freshSession = ensureFreshPrivilegedSession(c)
+      if (!freshSession.ok) {
+        return c.json(freshSession.response, 403)
       }
 
       const { connectionId } = c.req.valid("param")

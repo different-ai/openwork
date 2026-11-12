@@ -1,0 +1,58 @@
+---
+title: "Native integrations"
+description: "Services OpenWork connects to directly, without an MCP server: Google Workspace and Microsoft 365."
+keywords: ["native integrations", "non-MCP", "Google Workspace", "Gmail", "Google Drive", "Google Calendar", "Microsoft 365", "Outlook", "OneDrive", "SharePoint", "Teams", "enterprise integrations", "custom integration"]
+---
+
+OpenWork reaches most apps through MCP: an admin adds the app's MCP server as a
+[connector](/cloud/share-with-your-team/connectors). For a few services we built
+the integration ourselves, directly on the provider's own API. These are native
+integrations. They need no MCP server.
+
+## Available today
+
+| Integration | What it covers | Set it up |
+| --- | --- | --- |
+| **Google Workspace** | Gmail, Google Calendar, Drive, Sheets, and Chat | [Google Workspace](/start-here/connect-your-stack/connect-services#google-workspace) |
+| **Microsoft 365** | Outlook, Calendar, OneDrive, SharePoint, and Teams | [Connect Microsoft 365](/cloud/share-with-your-team/microsoft-365) |
+
+For the full list of actions in each service, see
+[Manage connected services](/start-here/connect-your-stack/connect-services#manage-connected-services).
+
+## How a native integration differs from an MCP connector
+
+- **Nothing extra to host or find.** There is no MCP server to deploy, and the
+  integration does not depend on the provider publishing one.
+- **Your organization's own sign-in app.** Google Workspace uses your Google
+  Cloud OAuth client; Microsoft 365 uses an app registered in your Microsoft
+  Entra tenant. An admin sets it up once, then each member signs in with their
+  own work account.
+- **Admins choose what the AI can do.** Each kind of action is a separate
+  permission. Sending mail and managing mailboxes are off until an admin turns
+  them on.
+- **Whole files stay out of the conversation.** The agent can pull a Drive,
+  OneDrive, or SharePoint file into the workspace, edit it there, and save it
+  back when you ask.
+
+Everything else works like any other connector. Admins add both from **Manage ›
+Connectors**, members find them in their Library, and they are available in the
+OpenWork desktop app, OpenWork Cloud, and other AI clients through the
+[MCP Gateway](/cloud/run-in-the-cloud/cloud-mcp).
+
+## Other apps use MCP
+
+Slack, Notion, Linear, GitHub, and most other apps connect through their MCP
+server. Pick one from the **Add connector** list, or paste the address of any
+MCP server. See [Connectors](/cloud/share-with-your-team/connectors) and
+[MCP server compatibility](/cloud/share-with-your-team/mcp-server-compatibility).
+
+## Need another integration?
+
+We build more native integrations on request for enterprise customers. If your
+team depends on a service that has no MCP server, or one whose MCP server does
+not cover what you need, tell us which service and what your team needs to do
+in it.
+
+<Card title="Talk to our team" icon="calendar" href="https://calendar.app.google/86QpCENvhfEzDFLu5">
+  Book a 30-minute call, or email [team@openworklabs.com](mailto:team@openworklabs.com?subject=Integration%20request).
+</Card>

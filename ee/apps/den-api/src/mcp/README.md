@@ -47,8 +47,10 @@ not invalidate calls from cached search-tool lists.
 
 With `connectStandardTools` on, clients that search large tool lists themselves
 get every connection action, Workflow, App and remote session the member may use
-as its own tool instead of `search_capabilities` and `execute_capability`
-(`connect-tool-view.ts`). The supported-client allowlist recognizes Claude Code
+as its own tool (`connect-tool-view.ts`). `search_capabilities` and
+`execute_capability` stay for OpenWork's own operations and skills, which have
+no tool of their own: search leaves out every source the full view lists, except
+for an explicit connect request. The supported-client allowlist recognizes Claude Code
 and standalone OpenCode v2 by the request's `io.modelcontextprotocol/clientInfo`.
 OpenWork Desktop, Web and headless runs report OpenCode's name but hold a token
 Den minted for OpenWork (`/v1/mcp/token` or a run token), so they keep
@@ -59,10 +61,7 @@ view unless explicitly opted in. Off always restores the search view.
 
 OpenWork's own engine has its own rollout, `connectEngineTools`
 (`engine-tool-view.ts`, docs/features/connect-engine-tools). With it on, the
-engine gets the full view whatever `connectStandardTools` says, plus
-`search_capabilities` and `execute_capability` for OpenWork's own operations and
-skills, which have no tool of their own (search leaves out every source the
-full view lists, except for an explicit connect request). Its instructions list
+engine gets the full view whatever `connectStandardTools` says. Its instructions list
 the member's connected services by tool-name prefix, and its tool descriptions
 carry related words from Den's synonym table, because the engine's own search
 ranks plain keywords.
@@ -71,8 +70,8 @@ Tools are named like their Code Mode calls (`linear.list_issues`), at most 64
 characters, and run through the executor `execute_capability` uses. Only
 external MCP tools advertise an output schema: the provider promises structured
 results for them, while Den's own routes return text. OpenWork's role-gated API
-operations stay in the search view, except the key request a connection card
-names. `connection_status` shows the card for a connection that is not ready. A write that changes what an organization's
+operations stay in `search_capabilities`, except the key request a connection
+card names, which is also a tool. `connection_status` shows the card for a connection that is not ready. A write that changes what an organization's
 members may use sends `notifications/tools/list_changed` to its full-view streams
 on the same replica; the `tools/list` cache hint (60 s, private) covers the rest.
 

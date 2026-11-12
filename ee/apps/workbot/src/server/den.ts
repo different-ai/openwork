@@ -4,7 +4,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { skillCreatedPayloadSchema } from "@openwork/types/skill-created-app"
 import { headlessModelAccessSchema } from "@openwork-ee/headless-protocol"
+import { remoteSessionStatusResultSchema, type RemoteSessionStatusRequest } from "@openwork/types/automations"
 import { workbotAccessFailureSchema, type WorkbotAccessReason } from "@openwork/types/den/workbot-settings"
+import type { RemoteDeviceWorkbotReport } from "@openwork/types/den/remote-devices"
 import type { Tokens } from "./sealed.js"
 
 /**
@@ -16,6 +18,31 @@ import type { Tokens } from "./sealed.js"
 export const WORKBOT_CLIENT_ID = "openwork-workbot"
 const SCOPES = "openid profile email offline_access mcp:read mcp:write"
 const TIMEOUT_MS = 20_000
+/** Each remote-session:status attempt; Workbot retries once. */
+const REMOTE_STATUS_TIMEOUT_MS = 8_000
+/** A report about a chat's computer is never worth holding a connection for: nothing waits on it. */
+const DEVICE_REPORT_TIMEOUT_MS = 5_000
+const remoteErrorCodeSchema = z.object({ error: z.string().max(120) })
+
+/** A remote-session call that failed: `signed_out` needs the person; anything else is passing. No token or body text. */
+export class DenRemoteSessionError extends Error {
+  constructor(readonly reason: "signed_out" | "unavailable", readonly code: string) {
+    super(`remote_session_${reason}:${code}`)
+    this.name = "DenRemoteSessionError"
+  }
+}
+
+/** An App could not be opened or used: `signed_out` needs the person to sign in again; anything else reads as unavailable. */
+export class DenAppError extends Error {
+  constructor(readonly reason: "signed_out" | "unavailable", readonly code: string) {
+    super(`app_${reason}:${code}`)
+    this.name = "DenAppError"
+  }
+}
+
+/** The most of an App's page Workbot passes on (Den's own limit for a built page is below it). */
+const MAX_APP_HTML_CHARS = 2_000_000
+const appLaunchToolSchema = z.object({ _meta: z.object({ ui: z.object({ resourceUri: z.string().min(1) }) }) })
 
 const protectedResourceSchema = z.object({ resource: z.string(), authorization_servers: z.array(z.string()).min(1) })
 const metadataSchema = z.object({
@@ -36,6 +63,7 @@ export const denSessionSchema = z.object({
   browserDemonstrations: z.boolean().default(false),
   /** Workbot's computers run through the runner's sandbox gateway. Older Dens omit it: the runner's own provider. */
   sandboxGateway: z.boolean().default(false),
+  browserRecovery: z.boolean().default(false),
   /** Workbot's Calendar tab is on (while Workbot is on). Older Dens omit it: off. */
   calendar: z.boolean().optional(),
   documents: z.boolean().default(false),
@@ -52,7 +80,27 @@ export const denSessionSchema = z.object({
   sideChats: z.boolean().default(false),
   /** The header avatar opens the account menu with Sign out. A Den from before it doesn't say: off. */
   accountMenu: z.boolean().default(false),
-  /** The Cmd+K / Ctrl+K command palette. A Den from before it doesn't say: off. */
+  /** Work in progress shows in the header and task sheet, not the chat. A Den from before it doesn't say: off. */
+  workingStatus: z.boolean().default(false),
+  quickReply: z.boolean().default(false),
+  /** The conversation docks beside the Browser and Computer views (`workbotBrowserChat`). A Den from before it doesn't say: off. */
+  browserChat: z.boolean().default(false),
+  /** Chats open on the newest page kept on the device (`workbotInstantOpen`). A Den from before it doesn't say: off. */
+  instantOpen: z.boolean().default(false),
+  /** Reading earlier messages keeps its place (`workbotScrollToBottom`). A Den from before it doesn't say: off. */
+  scrollToBottom: z.boolean().default(false),
+  /** Workbot's profile: tasks, permissions and read-only memory. A Den from before it doesn't say: off. */
+  profileSheet: z.boolean().default(false),
+  centeredProfile: z.boolean().default(false),
+  browserPreview: z.boolean().default(false),
+  /** Remote task discovery and live reads (`workbotRemoteTasks`); absent means off. */
+  remoteTasks: z.boolean().default(false),
+  /** Pages-only navigation with Files and Apps in the profile (`workbotProfileNav`); absent means off. */
+  profileNav: z.boolean().default(false),
+  /** Apps built in OpenWork show as cards and open beside the chat (`workbotApps`); absent means off. */
+  openworkApps: z.boolean().default(false),
+  /** Quiet calendar (`workbotQuietCalendar`); absent means off. */
+  quietCalendar: z.boolean().default(false),
   /** The organization's default model for Workbot's turns. Null, or a Den from before it, means the runner's default. */
   model: z.string().nullable().default(null),
   verifyModel: z.boolean().default(false),
@@ -62,6 +110,8 @@ export const denSessionSchema = z.object({
   stepTurns: z.boolean().default(false),
   /** New chats get their own session cell on the runner (per-chat session cells). A Den from before it doesn't say: off. */
   sessionCells: z.boolean().default(false),
+  /** The Devices page and reports about each chat's computer (`remoteDevices`, while Workbot is on). A Den from before it doesn't say: off. */
+  devices: z.boolean().default(false),
 })
 
 const runTokenSchema = z.object({
@@ -82,6 +132,20 @@ export class DenSignedOutError extends Error {
     this.name = "DenSignedOutError"
   }
 }
+
+/**
+ * Den couldn't be reached, didn't answer in time, or answered 5xx. A passing failure: never an answer about the
+ * person. `message` is a plain code (`den_unreachable`, `den_timeout`, `den_session_503`).
+ */
+export class DenUnavailableError extends Error {
+  constructor(code: string) {
+    super(code)
+    this.name = "DenUnavailableError"
+  }
+}
+
+/** A call to Den that got no answer at all, as the error callers tell apart from Den's own answers. */
+const unanswered = (error: unknown) => new DenUnavailableError(error instanceof Error && error.name === "TimeoutError" ? "den_timeout" : "den_unreachable")
 
 /** Den's token endpoint asked Workbot to wait this many seconds before asking again. */
 export class DenRateLimitedError extends Error {
@@ -177,24 +241,92 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     }
   }
 
-  const authorized = async (method: "GET" | "POST" | "PATCH", path: string, accessToken: string, body?: unknown) => {
+  const authorized = async (method: "GET" | "POST" | "PATCH", path: string, accessToken: string, body?: unknown, timeoutMs = TIMEOUT_MS) => {
     const response = await fetch(`${options.apiUrl}${path}`, {
       method,
       headers: { authorization: `Bearer ${accessToken}`, accept: "application/json", ...(body ? { "content-type": "application/json" } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    })
+      signal: AbortSignal.timeout(timeoutMs),
+    }).catch((error: unknown) => { throw unanswered(error) })
     if (response.status === 401) throw new DenSignedOutError()
     const payload: unknown = await response.json().catch(() => null)
     return { status: response.status, payload }
   }
 
+  /** Member-scoped calls to the existing remote-session protocol, never a service credential or caller-supplied org. */
+  const remoteCall = async (accessToken: string, action: "status" | "read" | "stop", body: unknown, timeoutMs = TIMEOUT_MS): Promise<unknown> => {
+    const client = new Client({ name: "openwork-workbot", version: "1" })
+    const transport = new StreamableHTTPClientTransport(new URL(`${options.apiUrl}/mcp/agent`), {
+      requestInit: { headers: { authorization: `Bearer ${accessToken}` } },
+    })
+    try {
+      let result: Awaited<ReturnType<Client["callTool"]>>
+      try {
+        await client.connect(transport, { timeout: timeoutMs })
+        result = await client.callTool({ name: "execute_capability", arguments: { name: `remote-session:${action}`, body } }, undefined, { timeout: timeoutMs })
+      } catch (error) {
+        const status = typeof error === "object" && error !== null && "code" in error ? error.code : null
+        throw new DenRemoteSessionError(status === 401 || status === 403 ? "signed_out" : "unavailable", typeof status === "number" ? `http_${status}` : error instanceof Error ? error.name : "transport")
+      }
+      if (result.isError) {
+        const code = remoteErrorCodeSchema.safeParse(result.structuredContent)
+        const error = code.success ? code.data.error : "remote_session_unavailable"
+        throw new DenRemoteSessionError(error === "membership_required" || error === "insufficient_mcp_scope" ? "signed_out" : "unavailable", error)
+      }
+      if (result.structuredContent) return result.structuredContent
+      const blocks = z.array(z.object({ type: z.string(), text: z.string().optional() })).safeParse(result.content)
+      for (const block of blocks.success ? blocks.data : []) {
+        if (block.type !== "text" || !block.text) continue
+        try { return JSON.parse(block.text) } catch { /* Not a JSON receipt. */ }
+      }
+      throw new DenRemoteSessionError("unavailable", "not_json")
+    } finally { await client.close().catch(() => undefined) }
+  }
+
+  /**
+   * One exchange with an App's own MCP server (`/mcp/agent/connections/<App id>`), as the member: Den decides there
+   * whether they may use the App, and runs its tools as them. The same sign-in Workbot's other member calls use.
+   */
+  const withApp = async <T>(accessToken: string, appId: string, run: (client: Client) => Promise<T>): Promise<T> => {
+    const client = new Client({ name: "openwork-workbot", version: "1" })
+    const transport = new StreamableHTTPClientTransport(new URL(`${options.apiUrl}/mcp/agent/connections/${encodeURIComponent(appId)}`), {
+      requestInit: { headers: { authorization: `Bearer ${accessToken}` } },
+    })
+    try {
+      await client.connect(transport, { timeout: TIMEOUT_MS })
+      return await run(client)
+    } catch (error) {
+      if (error instanceof DenAppError) throw error
+      const status = typeof error === "object" && error !== null && "code" in error ? error.code : null
+      throw new DenAppError(status === 401 ? "signed_out" : "unavailable", typeof status === "number" ? `code_${status}` : error instanceof Error ? error.name : "transport")
+    } finally { await client.close().catch(() => undefined) }
+  }
+
   return {
     discover,
+    /** An App built in OpenWork, opened as the member: its page, and what its `open_app` answered (the App reads it). */
+    openApp: (accessToken: string, appId: string) =>
+      withApp(accessToken, appId, async (client) => {
+        const listed = await client.listTools(undefined, { timeout: TIMEOUT_MS })
+        const launch = appLaunchToolSchema.safeParse(listed.tools.find((tool) => tool.name === "open_app"))
+        if (!launch.success) throw new DenAppError("unavailable", "no_launch")
+        const result = await client.callTool({ name: "open_app", arguments: { input: {} } }, undefined, { timeout: TIMEOUT_MS })
+        const resource = await client.readResource({ uri: launch.data._meta.ui.resourceUri }, { timeout: TIMEOUT_MS })
+        const page = resource.contents.flatMap((entry) => ("text" in entry && typeof entry.text === "string" ? [entry.text] : []))[0]
+        if (page === undefined || page.length > MAX_APP_HTML_CHARS) throw new DenAppError("unavailable", "no_page")
+        return { html: page, result }
+      }),
+    /** One of the App's own tools, called for its page as the member. Den checks the tool and what it reaches. */
+    callApp: (accessToken: string, appId: string, name: string, args: Record<string, unknown>) =>
+      withApp(accessToken, appId, (client) => client.callTool({ name, arguments: args }, undefined, { timeout: TIMEOUT_MS })),
     modelRecovery: (accessToken: string) => authorized("GET", "/v1/workbot/model-recovery", accessToken),
     /** The member's Get set up checklist; Den computes every step and enforces the feature. */
     activation: (accessToken: string) => authorized("GET", "/v1/workbot/activation", accessToken),
     activationEvent: (accessToken: string, body: unknown) => authorized("POST", "/v1/workbot/activation/events", accessToken, body),
+    /** The computers the member can reach; Den builds the list and enforces the feature. */
+    devices: (accessToken: string) => authorized("GET", "/v1/workbot/devices", accessToken),
+    /** What happened to a chat's cloud computer, for Den's registry. Den answers 204, or 404 where Devices is off. */
+    reportComputer: (accessToken: string, report: RemoteDeviceWorkbotReport) => authorized("POST", "/v1/workbot/devices/computer", accessToken, report, DEVICE_REPORT_TIMEOUT_MS),
     /** Where to send the browser to sign in; Den returns it to /auth/callback with a code. */
     async authorizeUrl(input: { state: string; verifier: string; chooseWorkspace?: boolean }) {
       const { authorizationEndpoint, resource } = await discover()
@@ -242,6 +374,15 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
         signal: AbortSignal.timeout(TIMEOUT_MS),
       }).catch(() => undefined)
     },
+    /** Same owner-scoped status capability agents call; OAuth org, scopes and membership stay Den's decision. */
+    async remoteStatus(accessToken: string, input: RemoteSessionStatusRequest) {
+      // Bounded well below the browser's wait so the server can retry once and still answer in time.
+      const parsed = remoteSessionStatusResultSchema.safeParse(await remoteCall(accessToken, "status", input, REMOTE_STATUS_TIMEOUT_MS))
+      if (!parsed.success) throw new DenRemoteSessionError("unavailable", "invalid_status")
+      return parsed.data
+    },
+    remoteRead: (accessToken: string, input: { sessionId: string; workspaceId?: string; limit: number; from: "end" } | { requestId: string }) => remoteCall(accessToken, "read", input),
+    remoteStop: (accessToken: string, input: { sessionId: string; workspaceId?: string; messageId: string }) => remoteCall(accessToken, "stop", input),
     /** The normal private Cloud-skill path: Den owns permissions, audit, and persistence. */
     async saveBrowserSkill(accessToken: string, pluginName: string, skillMarkdown: string) {
       const client = new Client({ name: "openwork-workbot", version: "1" })
@@ -258,6 +399,8 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     async session(accessToken: string): Promise<DenSession> {
       const { status, payload } = await authorized("GET", "/v1/workbot/session", accessToken)
       const parsed = denSessionSchema.safeParse(payload)
+      // 5xx is Den failing, not Den answering: only that (and no answer at all) may be covered by a recent answer.
+      if (status >= 500) throw new DenUnavailableError(`den_session_${status}`)
       if (status !== 200 || !parsed.success) throw new Error(`den_session_${status}`)
       return parsed.data
     },
@@ -290,12 +433,23 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
       if (!parsed.success) throw new Error("den_run_token_200")
       return parsed.data
     },
-    /** The Gmail, Slack and Microsoft 365 connections the person's admins set up, and whether each is ready for them. */
+    /**
+     * The Gmail, Slack and Microsoft 365 connections the person's admins set up, and whether each is ready for them;
+     * with the profile (`workbotProfileSheet`), also every app they can use, connected or not. A Den from before
+     * `apps` (or with the profile off) leaves it out.
+     */
     async connections(accessToken: string) {
       const { status, payload } = await authorized("GET", "/v1/workbot/connections", accessToken)
       const parsed = workbotConnectionsSchema.safeParse(payload)
       if (status !== 200 || !parsed.success) throw new Error(`den_connections_${status}`)
-      return parsed.data.connections
+      return parsed.data
+    },
+    /** Every connected app this member may use (id, name, website): what Workbot's steps in them are called. */
+    async connectors(accessToken: string) {
+      const { status, payload } = await authorized("GET", "/v1/workbot/connections", accessToken)
+      const parsed = workbotConnectionsSchema.safeParse(payload)
+      if (status !== 200 || !parsed.success) throw new Error(`den_connections_${status}`)
+      return parsed.data.connectors
     },
     async connect(accessToken: string, connectionId: string, body: unknown) {
       return authorized("POST", `/v1/workbot/connections/${encodeURIComponent(connectionId)}/connect/start`, accessToken, body)
@@ -311,8 +465,16 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     async documents(accessToken: string, path: string, method: "GET" | "POST" = "GET", body?: unknown) {
       return authorized(method, `/v1/workbot/documents${path}`, accessToken, body)
     },
-    async documentContent(accessToken: string, path: string) {
-      const response = await fetch(`${options.apiUrl}/v1/workbot/documents${path}`, { headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(TIMEOUT_MS) })
+    /**
+     * A document's bytes for a preview or a media player. `range` is the player's own Range header. The time limit
+     * covers Den's answer, not the bytes after it: a player reads a video at its own pace.
+     */
+    async documentContent(accessToken: string, path: string, range?: string) {
+      const waiting = new AbortController()
+      const timer = setTimeout(() => waiting.abort(new DOMException("Den did not answer in time.", "TimeoutError")), TIMEOUT_MS)
+      const response = await fetch(`${options.apiUrl}/v1/workbot/documents${path}`, { headers: { authorization: `Bearer ${accessToken}`, ...(range ? { range } : {}) }, signal: waiting.signal })
+        .catch((error: unknown) => { throw unanswered(error) })
+        .finally(() => clearTimeout(timer))
       if (response.status === 401) throw new DenSignedOutError()
       return response
     },
@@ -333,6 +495,21 @@ const workbotConnectionsSchema = z.object({
     nativeProviderKey: z.string().nullable().optional(),
     connectMode: z.enum(["inline", "external", "admin"]).optional(),
   })),
+  apps: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    iconCandidates: z.array(z.string()).optional(),
+    nativeProviderKey: z.string().nullable(),
+    authType: z.enum(["oauth", "apikey", "none"]),
+    status: z.enum(["connected", "needs_sign_in", "not_connected", "needs_attention"]),
+    managedBy: z.enum(["you", "organization"]),
+    action: z.enum(["connect", "ask_admin", "admin_settings"]).nullable(),
+    connectMode: z.enum(["inline", "external", "admin"]),
+    connectUrl: z.string().nullable(),
+    ready: z.boolean(),
+  })).optional(),
+  /** Every connected app this member may use, by connection id, for naming Workbot's work in it. Older Dens omit it. */
+  connectors: z.array(z.object({ id: z.string(), name: z.string(), site: z.string().nullable() })).default([]),
 })
 
 export type Den = ReturnType<typeof createDen>

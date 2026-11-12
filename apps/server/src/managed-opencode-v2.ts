@@ -218,6 +218,22 @@ export function engineListsModel(provider: OpencodeV2ProviderSpec, model: Openco
   return passesModelFilters(provider, model) && !isDeprecatedModel(model);
 }
 
+const OPENAI_COMPATIBLE_PACKAGE = "@opencode/ai/providers/openai-compatible";
+
+/**
+ * The model's engine compatibility settings, kept from its provider definition.
+ * The engine marks prompt-cache breakpoints for Claude behind an
+ * OpenAI-compatible endpoint only with `cacheFormat: "anthropic"`, so a Claude
+ * model there gets it unless the definition chose a format.
+ */
+export function modelCompatibility(config: Record<string, unknown>, modelId: string, providerPackage: string): Record<string, unknown> | undefined {
+  const declared = isRecord(config.compatibility) ? config.compatibility : undefined;
+  if (declared?.cacheFormat !== undefined || providerPackage !== OPENAI_COMPATIBLE_PACKAGE) return declared;
+  const upstreamId = typeof config.id === "string" ? config.id : modelId;
+  if (!/claude|anthropic/i.test(upstreamId) && !/claude|anthropic/i.test(modelId)) return declared;
+  return { ...declared, cacheFormat: "anthropic" };
+}
+
 /** The whole generated engine config: every writer emits all current keys. */
 export function renderOpencodeV2Config(input: {
   providers: OpencodeV2ProviderSpec[];
@@ -258,6 +274,7 @@ export function renderOpencodeV2Config(input: {
       if (!passesModelFilters(provider, model)) continue;
       const config = model.config ?? {};
       const modalities = isRecord(config.modalities) ? config.modalities : {};
+      const compatibility = modelCompatibility(config, model.id, providerPackage);
       models[model.id] = {
         name: model.name,
         ...(typeof config.id === "string" ? { modelID: config.id } : {}),
@@ -277,6 +294,7 @@ export function renderOpencodeV2Config(input: {
           variants: nativeModelVariants(config.variants, providerPackage),
         } : {}),
         ...(isRecord(config.headers) ? { headers: config.headers } : {}),
+        ...(compatibility ? { compatibility } : {}),
         ...(isDeprecatedModel(model) ? { disabled: true } : {}),
       };
     }
@@ -357,7 +375,13 @@ const ENGINE_INHERITED_ENV = [
   "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM", "CI",
   "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR",
   "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+  // Windows profile and install roots. Microsoft Win32-OpenSSH needs
+  // ProgramData at process start; without it ssh exits 255 with no message (#5538).
+  "SystemDrive", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
+  "ALLUSERSPROFILE", "PUBLIC", "CommonProgramFiles", "CommonProgramFiles(x86)",
   "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR",
+  // Executable location only: Claude Code owns its login and tokens.
+  "OPENCODE_CLAUDE_PATH",
 ];
 
 /** Caller values win; on Windows each name matches any spelling (`Path`, `windir`) and is passed once. */

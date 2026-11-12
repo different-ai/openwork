@@ -42,14 +42,17 @@ const base64 = (bytes) => Buffer.from(bytes).toString("base64");
 /**
  * `restricted` windows are listed with the reason they can't be used and are
  * never opened. A driver with `wholeScreen: false` offers no desktop target.
- * @param {{ id: string, label: string, driver: ComputerDriver, placement?: "local" | "remote", now?: () => number }} options
+ * `device` names a VM for the organization's devices list: who runs it and the
+ * provider's id for it, never a credential.
+ * @param {{ id: string, label: string, driver: ComputerDriver, placement?: "local" | "remote", device?: { provider: "freestyle" | "daytona", externalId: string }, now?: () => number }} options
  */
-export function createRemoteComputerAdapter({ id, label, driver, placement = "remote", now = Date.now }) {
+export function createRemoteComputerAdapter({ id, label, driver, placement = "remote", device, now = Date.now }) {
   return {
     id,
     label,
     placement,
     protocol: COMPUTER_PROTOCOL,
+    ...(device ? { device: Object.freeze({ provider: device.provider, externalId: device.externalId }) } : {}),
     async readiness() {
       return driver.describe();
     },

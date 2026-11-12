@@ -15,7 +15,7 @@ export type WorkbotErrorCode =
   | "sign_in_failed"
   /** Refreshing a signed-in person's Den tokens failed for a reason other than Den signing them out. */
   | "token_refresh_failed"
-  /** Den couldn't say who someone is: the page got 503 `den_unavailable`. */
+  /** Den couldn't say who someone is, or didn't answer a route's own call: the page got 503 `den_unavailable`. */
   | "den_unavailable"
   /** The runner couldn't be reached, or didn't answer in time. */
   | "runner_unreachable"

@@ -2,6 +2,7 @@ import { and, eq, gt, inArray, isNotNull, isNull, lte, or, sql } from "@openwork
 import { InvitationTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { calculateOrganizationBillingQuantities, normalizeUserCount, type OrganizationBillingQuantities } from "./billing-quantities.js"
 import { db } from "./db.js"
+import { getFeaturesForOrganizations, organizationFeatureEnabled } from "./features.js"
 import { peopleMemberCondition } from "./setup-agent-members.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
@@ -25,48 +26,79 @@ export function billingUserCondition(now = new Date()) {
   )
 }
 
-/** The one query that counts billable users, for several organizations at once. */
-export async function countBillingUsersForOrganizations(organizationIds: readonly OrgId[]): Promise<Map<OrgId, number>> {
-  const result = new Map<OrgId, number>()
+type BillingUserCounts = { users: number; webUsers: number }
+
+/**
+ * The one query that counts billable users, for several organizations at
+ * once: every user, and the users with OpenWork Web.
+ */
+export async function countBillingUsersAndWebUsersForOrganizations(organizationIds: readonly OrgId[]): Promise<Map<OrgId, BillingUserCounts>> {
+  const result = new Map<OrgId, BillingUserCounts>()
   if (organizationIds.length === 0) return result
   const rows = await db
-    .select({ organizationId: MemberTable.organizationId, users: sql<number>`count(*)` })
+    .select({
+      organizationId: MemberTable.organizationId,
+      users: sql<number>`count(*)`,
+      webUsers: sql<number>`sum(case when ${MemberTable.openworkWeb} then 1 else 0 end)`,
+    })
     .from(MemberTable)
     .where(and(inArray(MemberTable.organizationId, [...organizationIds]), billingUserCondition()))
     .groupBy(MemberTable.organizationId)
   for (const organizationId of organizationIds) {
-    result.set(organizationId, 0)
+    result.set(organizationId, { users: 0, webUsers: 0 })
   }
   for (const row of rows) {
-    result.set(row.organizationId, normalizeUserCount(Number(row.users)))
+    result.set(row.organizationId, {
+      users: normalizeUserCount(Number(row.users)),
+      webUsers: normalizeUserCount(Number(row.webUsers ?? 0)),
+    })
   }
   return result
+}
+
+export async function countBillingUsersForOrganizations(organizationIds: readonly OrgId[]): Promise<Map<OrgId, number>> {
+  const counts = await countBillingUsersAndWebUsersForOrganizations(organizationIds)
+  return new Map([...counts].map(([organizationId, count]) => [organizationId, count.users]))
 }
 
 export async function countBillingUsers(organizationId: OrgId): Promise<number> {
   return (await countBillingUsersForOrganizations([organizationId])).get(organizationId) ?? 0
 }
 
-/** Billing quantities for one organization: its users and free seats. */
+/**
+ * Without the webPerMember feature, every user has OpenWork Web whatever is
+ * stored, so turning the feature off bills (and opens) Web for everyone again.
+ */
+function quantityCounts(count: BillingUserCounts | undefined, webPerMember: boolean) {
+  const counts = count ?? { users: 0, webUsers: 0 }
+  return webPerMember ? counts : { users: counts.users, webUsers: counts.users }
+}
+
+/** Billing quantities for one organization: its users, its Web users and free seats. */
 export async function getOrganizationBillingQuantities(organizationId: OrgId): Promise<OrganizationBillingQuantities> {
-  const [users, rows] = await Promise.all([
-    countBillingUsers(organizationId),
+  const [counts, rows, webPerMember] = await Promise.all([
+    countBillingUsersAndWebUsersForOrganizations([organizationId]),
     db
       .select({ metadata: OrganizationTable.metadata })
       .from(OrganizationTable)
       .where(eq(OrganizationTable.id, organizationId))
       .limit(1),
+    organizationFeatureEnabled(organizationId, "webPerMember"),
   ])
-  return calculateOrganizationBillingQuantities({ users, metadata: rows[0]?.metadata })
+  return calculateOrganizationBillingQuantities({ ...quantityCounts(counts.get(organizationId), webPerMember), metadata: rows[0]?.metadata })
 }
 
 /** Billing quantities for several organizations at once (admin lists). */
 export async function getBillingQuantitiesForOrganizations(organizations: ReadonlyArray<{ id: OrgId; metadata: Record<string, unknown> | null | undefined }>) {
-  const usersByOrg = await countBillingUsersForOrganizations(organizations.map((organization) => organization.id))
+  const ids = organizations.map((organization) => organization.id)
+  const [countsByOrg, featuresByOrg] = await Promise.all([
+    countBillingUsersAndWebUsersForOrganizations(ids),
+    getFeaturesForOrganizations(ids),
+  ])
   const result = new Map<OrgId, OrganizationBillingQuantities>()
   for (const organization of organizations) {
     result.set(organization.id, calculateOrganizationBillingQuantities({
-      users: usersByOrg.get(organization.id) ?? 0,
+      ...quantityCounts(countsByOrg.get(organization.id), featuresByOrg.get(organization.id)?.webPerMember === true),
       metadata: organization.metadata,
     }))
   }

@@ -1,6 +1,7 @@
 import type { DynamicToolUIPart, ToolUIPart } from "ai"
 import { credentialPromptSchema, type CredentialPrompt } from "@openwork/types/den/credential-prompt"
 import { isOpenworkCloudCapabilityTool } from "@/components/tools/error-attribution"
+import { connectDenOperation } from "@/lib/capability-call"
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
 
 const MAX_PARSED_RESULT_LENGTH = 256 * 1_024
@@ -35,6 +36,8 @@ type PromptTargetType = CredentialPrompt["target"]["type"]
  * key each may ask for. Results of an organization's MCP servers, plugins or
  * Workflows also pass through execute_capability, but under prefixed names
  * (mcp:..., plugin:...), so they can never match and cannot forge a key field.
+ * Listed as its own tool, an operation is `den.<operation>`, a namespace no
+ * connection, Workflow or App can take.
  */
 const DEN_PROMPT_OPERATIONS = new Map<string, ReadonlySet<PromptTargetType>>([
   ["postMcpConnections", new Set(["mcp_connection_key"])],
@@ -45,6 +48,8 @@ const DEN_PROMPT_OPERATIONS = new Map<string, ReadonlySet<PromptTargetType>>([
 ])
 
 function denPromptTargets(part: DynamicToolUIPart): ReadonlySet<PromptTargetType> | null {
+  const operation = connectDenOperation(part.toolName)
+  if (operation) return DEN_PROMPT_OPERATIONS.get(operation) ?? null
   if (!isOpenworkCloudCapabilityTool(part.toolName) || !/(?:^|_)execute_capability$/.test(part.toolName)) return null
   const name = isRecord(part.input) ? part.input.name : undefined
   return typeof name === "string" ? DEN_PROMPT_OPERATIONS.get(name) ?? null : null

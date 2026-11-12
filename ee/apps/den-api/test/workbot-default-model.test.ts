@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { readWorkbotModel, withWorkbotModel, workbotSettingsInputSchema } from "@openwork/types/den/workbot-settings"
+import { readWorkbotModel, withWorkbotModel, workbotSettingsInputSchema, workbotSettingsSchema } from "@openwork/types/den/workbot-settings"
 
 // Importing these modules never touches the database; the values only satisfy env validation.
 for (const [name, value] of Object.entries({
@@ -79,4 +79,17 @@ test("the model is stored in organization metadata without touching anything els
   assert.deepEqual(withWorkbotModel(saved, null), { brandAppName: "Acme Helper", workbot: { other: 1 } })
   assert.equal(readWorkbotModel(null), null)
   assert.equal(readWorkbotModel("not json"), null)
+})
+
+test("settings take the model and nothing else: a step limit is no longer one of them", () => {
+  assert.deepEqual(workbotSettingsInputSchema.parse({ model: "gateway/model-a" }), { model: "gateway/model-a" })
+  assert.deepEqual(workbotSettingsInputSchema.parse({ model: null }), { model: null })
+  assert.equal(workbotSettingsInputSchema.safeParse({}).success, false)
+  for (const maxSteps of [500, 0, null]) {
+    assert.equal(workbotSettingsInputSchema.safeParse({ maxSteps }).success, false, String(maxSteps))
+    assert.equal(workbotSettingsInputSchema.safeParse({ model: null, maxSteps }).success, false, String(maxSteps))
+  }
+  // A limit saved in the organization's metadata before is kept there and read by nothing.
+  assert.equal(readWorkbotModel({ workbot: { model: "gateway/model-a", maxSteps: 250 } }), "gateway/model-a")
+  assert.equal("maxSteps" in workbotSettingsSchema.parse({ ...workbotSettingsView(null, catalog), maxSteps: 250 }), false)
 })

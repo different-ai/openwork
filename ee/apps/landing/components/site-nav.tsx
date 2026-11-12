@@ -7,12 +7,14 @@ import { OpenWorkMark } from "./openwork-mark";
 import { DownloadLink } from "./download-link";
 import { LP_PRODUCTS } from "./lp-products";
 
-type ActivePage =
+export type ActivePage =
   | "home"
   | "pricing"
   | "download"
   | "enterprise"
   | "connect"
+  | "ai-gateway"
+  | "desktop"
   | "cloud"
   | "dashboard"
   | "docs"
@@ -31,6 +33,14 @@ type NavItem = {
   label: string;
   key: ActivePage;
   newTab?: boolean;
+};
+
+/** Pages that are a product in the Products menu, so the menu can mark the current one. */
+const PRODUCT_PAGE_HREF: Partial<Record<ActivePage, string>> = {
+  connect: "/connect",
+  "ai-gateway": "/ai-gateway",
+  desktop: "/desktop",
+  cloud: "/cloud"
 };
 
 export function SiteNav(props: Props) {
@@ -57,8 +67,11 @@ export function SiteNav(props: Props) {
   ];
   const productsActive =
     props.active === "connect" ||
-    props.active === "cloud" ||
-    props.active === "download";
+    props.active === "ai-gateway" ||
+    props.active === "desktop" ||
+    props.active === "cloud";
+
+  const activeProductHref = props.active ? PRODUCT_PAGE_HREF[props.active] : undefined;
 
   const opensInNewTab = (item: NavItem) =>
     item.newTab || /^(?:https?:\/\/)/.test(item.href);
@@ -82,7 +95,7 @@ export function SiteNav(props: Props) {
           </Link>
 
           <nav className="hidden items-center justify-start gap-7 pl-10 text-[14px] font-normal lg:flex">
-            <ProductsMenu active={productsActive} />
+            <ProductsMenu active={productsActive} currentHref={activeProductHref} />
             {navItems.map(item => (
               <Link
                 key={item.key}
@@ -142,7 +155,8 @@ export function SiteNav(props: Props) {
                 <Link
                   key={product.key}
                   href={product.href}
-                  className="flex items-center gap-3 rounded-2xl px-4 py-3 text-[var(--lp-ink)]"
+                  aria-current={product.href === activeProductHref ? "page" : undefined}
+                  className={`flex items-center gap-3 rounded-2xl px-4 py-3 text-[var(--lp-ink)] ${product.href === activeProductHref ? "bg-[var(--lp-tonal)]" : ""}`}
                   onClick={() => setMobileOpen(false)}
                 >
                   <product.icon size={16} strokeWidth={1.5} aria-hidden="true" />
@@ -207,7 +221,7 @@ export function SiteNav(props: Props) {
   );
 }
 
-function ProductsMenu({ active }: { active: boolean }) {
+function ProductsMenu({ active, currentHref }: { active: boolean; currentHref?: string }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -309,8 +323,9 @@ function ProductsMenu({ active }: { active: boolean }) {
             <li key={product.key}>
               <Link
                 href={product.href}
+                aria-current={product.href === currentHref ? "page" : undefined}
                 onClick={() => setOpen(false)}
-                className="flex h-12 items-center gap-3 rounded-[10px] px-2.5 text-[var(--lp-ink)] transition-colors duration-150 hover:bg-[#f5f7fa] focus-visible:bg-[#f5f7fa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--lp-ink)]"
+                className={`flex h-12 items-center gap-3 rounded-[10px] px-2.5 text-[var(--lp-ink)] transition-colors duration-150 hover:bg-[#f5f7fa] focus-visible:bg-[#f5f7fa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--lp-ink)] ${product.href === currentHref ? "bg-[#f5f7fa]" : ""}`}
               >
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--lp-tonal)]">
                   <product.icon size={16} strokeWidth={1.5} aria-hidden="true" />

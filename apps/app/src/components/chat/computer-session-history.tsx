@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react"
+import type { ComputerCrewMember } from "@openwork/types/desktop-ipc"
+import { ComputerCrew } from "./computer-crew"
 import type { DynamicToolUIPart } from "ai"
-import { ChevronRight, CodeXml, ExternalLink, FileText, FolderOpen, Monitor, Paperclip, Pause, PictureInPicture2, Play } from "lucide-react"
+import { ChevronRight, CodeXml, ExternalLink, FileText, FolderOpen, Monitor, MoreHorizontal, Paperclip, Pause, PictureInPicture2, Play } from "lucide-react"
 
 import { markFeatureUsed } from "@/app/lib/den"
 import { desktopBridge } from "@/app/lib/desktop"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Image } from "@/components/ui/image"
 import { toast } from "@/components/ui/sonner"
 import { isToolPartInFlight } from "@/lib/tool-activity"
@@ -50,6 +53,9 @@ export function desktopSavedFileActions(sessionId: string): SavedFileActions {
     list: () => desktopBridge.computerChatFiles({ sessionId }).then(result => result.files) }
 }
 
+/** Saved files shown before the rest fold behind "Show N more". */
+const FILES_SHOWN = 2
+
 /**
  * `live` is the chat's working computer: the card shows its work, and its live
  * view opens only from here.
@@ -57,7 +63,7 @@ export function desktopSavedFileActions(sessionId: string): SavedFileActions {
 /** Replay speeds, in turn: a capture every 1.5 s at 1×. */
 const SPEEDS = [1, 2, 4, 0.5] as const
 
-export function ComputerSessionHistory({ history, active, renderAction, live, fileActions, turnEndedAt = null }: {
+export function ComputerSessionHistory({ history, active, renderAction, live, fileActions, turnEndedAt = null, turnStartedAt = null, crew }: {
   history: History
   active: boolean
   renderAction: (part: DynamicToolUIPart) => ReactNode
@@ -66,6 +72,10 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
   fileActions?: SavedFileActions
   /** When this session's turn ended; null while it runs. Output-folder files after it belong to a later turn. */
   turnEndedAt?: number | null
+  /** When the turn started: the chat's subagents may have saved files before its own first step. */
+  turnStartedAt?: number | null
+  /** `parallelComputerUse`: the chat's subagents on its computer, one row each. */
+  crew?: { members: readonly ComputerCrewMember[]; onOpen: (member: ComputerCrewMember) => void }
 }) {
   // The output folder is read again as the session works and when its turn ends.
   const [folder, setFolder] = useState<ComputerFolderFile[]>([])
@@ -76,7 +86,9 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
     void list?.().then(files => { if (current) setFolder(files) }, () => {})
     return () => { current = false }
   }, [list, steps, active, turnEndedAt])
-  const handedBack = useMemo(() => computerHandedBackFiles(history, folder, turnEndedAt), [history, folder, turnEndedAt])
+  const handedBack = useMemo(() => computerHandedBackFiles(history, folder, turnEndedAt, turnStartedAt), [history, folder, turnEndedAt, turnStartedAt])
+  const [allFiles, setAllFiles] = useState(false)
+  const shownFiles = allFiles ? handedBack : handedBack.slice(0, FILES_SHOWN)
   const [open, setOpen] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState<(typeof SPEEDS)[number]>(1)
@@ -153,19 +165,31 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
           <PictureInPicture2 aria-hidden="true" />{live.watching ? "Hide live view" : "Watch live"}
         </Button> : null}
       </div>
+      {crew ? <ComputerCrew members={crew.members} onOpen={crew.onOpen} /> : null}
       {/* What the session made for the person, without opening the card. */}
-      {handedBack.length > 0 ? <ul data-computer-saved-files="" aria-label="Saved files" className="space-y-1 border-t border-border px-3 py-2">
-        {handedBack.map(file => <li key={file.path} data-computer-saved-file="" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate text-sm" title={file.path}>{file.name}</span>
-          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatFileSize(file.bytes)}</span>
-          {fileActions ? <span className="flex shrink-0 items-center">
-            <Button variant="ghost" size="xs" aria-label={`Open ${file.name}`} onClick={() => fileActions.open(file.path)}><ExternalLink aria-hidden="true" />Open</Button>
-            <Button variant="ghost" size="xs" aria-label={`Show ${file.name} in Finder`} onClick={() => fileActions.reveal(file.path)}><FolderOpen aria-hidden="true" />Show in Finder</Button>
-            <Button variant="ghost" size="xs" aria-label={`Attach ${file.name} to chat`} onClick={() => fileActions.attach(file.path)}><Paperclip aria-hidden="true" />Attach to chat</Button>
-          </span> : null}
-        </li>)}
-      </ul> : null}
+      {handedBack.length > 0 ? <div data-computer-saved-files="" className="border-t border-border px-3 py-2">
+        <ul aria-label="Saved files" className="space-y-1">
+          {shownFiles.map(file => <li key={file.path} data-computer-saved-file="" className="flex min-w-0 items-center gap-2">
+            <FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate text-sm" title={file.path}>{file.name}</span>
+            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatFileSize(file.bytes)}</span>
+            {fileActions ? <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" className="shrink-0 text-muted-foreground" aria-label={`Actions for ${file.name}`} />}>
+                <MoreHorizontal aria-hidden="true" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-40">
+                <DropdownMenuItem onClick={() => fileActions.open(file.path)}><ExternalLink aria-hidden="true" />Open</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => fileActions.reveal(file.path)}><FolderOpen aria-hidden="true" />Show in Finder</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => fileActions.attach(file.path)}><Paperclip aria-hidden="true" />Attach to chat</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu> : null}
+          </li>)}
+        </ul>
+        {handedBack.length > FILES_SHOWN ? <Button data-computer-saved-files-toggle="" variant="ghost" size="xs" className="mt-1 text-muted-foreground" aria-expanded={allFiles} onClick={() => setAllFiles(value => !value)}>
+          <ChevronRight aria-hidden="true" className={cn("transition-transform duration-150 ease-out motion-reduce:transition-none", allFiles && "rotate-90")} />
+          {allFiles ? "Show fewer" : `Show ${handedBack.length - FILES_SHOWN} more`}
+        </Button> : null}
+      </div> : null}
       <CollapsibleContent>
         <div className="space-y-3 border-t border-border p-3">
           <Collapsible>

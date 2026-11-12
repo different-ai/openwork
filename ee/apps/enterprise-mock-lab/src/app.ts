@@ -106,6 +106,7 @@ export function createEnterpriseMockLabApp(options: EnterpriseMockLabAppOptions)
     context.header("Referrer-Policy", "same-origin")
     context.header("X-Content-Type-Options", "nosniff")
     context.header("X-Frame-Options", "DENY")
+    context.header("X-Robots-Tag", "noindex, nofollow, noarchive")
   })
 
   app.get("/health", (context) => context.json({ ok: true, service: "enterprise-mock-lab", exposure: "loopback-only" }))

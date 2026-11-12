@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { afterAll, afterEach, describe, expect, jest, spyOn, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
@@ -9,6 +9,9 @@ import type { ResolvedWorkspaceEndpoint } from "../src/app/lib/workspace-endpoin
 import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../src/react-app/domains/session/sidebar/use-session-archive";
 import type { RouteSession, RouteWorkspace } from "../src/react-app/shell/route-workspaces";
 import type { OpenworkControlAPI, OpenworkControlAction } from "../src/react-app/shell/control/control-provider";
+
+mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({ useCheckDesktopRestriction: () => () => false }));
+mock.module("../src/react-app/domains/cloud/den-auth-provider", () => ({ useDenAuth: () => ({ isSignedIn: false }) }));
 
 // The archive hook talks to a real (fake) engine over HTTP; happy-dom's fetch
 // polyfill cannot parse Bun.serve responses, so keep the runtime's fetch.
@@ -227,6 +230,7 @@ describe("archiving a working session: the warning goes back through the request
   async function mountArchive(engine: Engine, sessions: RouteSession[], hooks: {
     reloadWorkspaceSessions?: () => Promise<unknown>;
     onArchivedChange?: (workspaceId: string, sessionId: string, archived: boolean) => void;
+    otherOwner?: { engine: Engine; sessions: RouteSession[] };
   } = {}) {
     const workspace: RouteWorkspace = {
       id: "ws", name: "Client A / Production", displayNameResolved: "Client A / Production", path: directory, preset: "starter", workspaceType: "local",
@@ -243,11 +247,13 @@ describe("archiving a working session: the warning goes back through the request
     document.body.append(host);
     const root = createRoot(host);
     let archiveSession: ((sessionId: string, archived: boolean, options?: ArchiveSessionOptions) => Promise<ArchiveSessionOutcome>) | null = null;
+    let archiveInWorkspace: ReturnType<typeof useSessionArchive>["archiveSessionInWorkspace"] = async () => ({ kind: "cancelled" });
     function Harness() {
       const archive = useSessionArchive({
-        workspaces: [workspace],
-        sessionsByWorkspaceId: { ws: sessions },
-        endpointForSessionWorkspace: () => endpoint,
+        workspaces: hooks.otherOwner ? [workspace, { ...workspace, id: "other", name: "Other workspace" }] : [workspace],
+        sessionsByWorkspaceId: { ws: sessions, ...(hooks.otherOwner ? { other: hooks.otherOwner.sessions } : {}) },
+        endpointForSessionWorkspace: (owner) => owner.id === "other" && hooks.otherOwner
+          ? { ...endpoint, workspaceId: "other", opencodeBaseUrl: hooks.otherOwner.engine.baseUrl } : endpoint,
         selectedWorkspaceId: "ws",
         selectedSessionId: null,
         draftScope: null,
@@ -260,17 +266,17 @@ describe("archiving a working session: the warning goes back through the request
         selectedWorkspaceRoot: directory, selectedSessionId: null, canCreateTask: false,
         openworkClient: endpoint.client, opencodeClient: createClient(engine.baseUrl),
         endpointForWorkspace: () => endpoint, navigateToSession: () => {}, navigateToSessionRoot: () => {},
-        createTaskInWorkspace: () => null, openModelPicker: () => {}, refreshRouteState: () => {},
+        createTaskInWorkspace: () => null, openModelPicker: () => {}, refreshRouteState: () => {}, reloadWorkspaceSessions: async () => {},
         archiveSession: archive.archiveSession,
       });
-      useEffect(() => { archiveSession = archive.archiveSession; });
+      useEffect(() => { archiveSession = archive.archiveSession; archiveInWorkspace = archive.archiveSessionInWorkspace; });
       return archive.archiveDialog;
     }
     await act(async () => root.render(<MemoryRouter><OpenworkControlProvider><Harness /></OpenworkControlProvider></MemoryRouter>));
     const unmount = async () => { await act(async () => root.unmount()); host.remove(); };
     cleanups.push(unmount);
     if (!archiveSession) throw new Error("archive hook did not mount");
-    return Object.assign(archiveSession, { unmount });
+    return Object.assign(archiveSession, { unmount, inWorkspace: archiveInWorkspace });
   }
 
   function stubFetch(engine: Engine, intercept: (request: Request, requests: Request[]) => Response | Promise<Response> | undefined = () => undefined) {
@@ -570,6 +576,38 @@ describe("archiving a working session: the warning goes back through the request
     expect(result.error).toContain("Engine unavailable for archive");
     if (stage === "patch") expect(result.error).toContain("outcome is unknown");
     expect(result).toMatchObject({ ok: false, code: stage === "patch" ? "archive_outcome_unknown" : "verification_failed" });
+  });
+
+  test.each([true, false])("explicit human owner and Undo never pick the first workspace with the same session id (archive=%s)", async (archived) => {
+    const first = startEngine();
+    const owner = startEngine();
+    const changes: { workspaceId: string; sessionId: string; archived: boolean }[] = [];
+    const originalPins = useSessionManagementStore.getState().pinnedIds;
+    useSessionManagementStore.setState({ pinnedIds: ["same"] });
+    cleanups.push(() => useSessionManagementStore.setState({ pinnedIds: originalPins }));
+    const undo = spyOn(toast, "undo").mockImplementation(() => "");
+    cleanups.push(() => undo.mockRestore());
+    const archive = await mountArchive(first, [session("same", "Wrong owner", 1)], {
+      otherOwner: { engine: owner, sessions: [session("same", "Captured owner", 2)] },
+      onArchivedChange: (workspaceId, sessionId, archived) => { changes.push({ workspaceId, sessionId, archived }); },
+    });
+    let result: ArchiveSessionOutcome | undefined;
+    void archive.inWorkspace("other", "same", archived).then(value => { result = value; });
+    await until(() => result !== undefined, "explicit-owner archive/restore");
+    expect(result).toEqual({ kind: "done" });
+    expect(first.requests).toEqual([]);
+    expect(changes).toEqual([{ workspaceId: "other", sessionId: "same", archived }]);
+    expect(useSessionManagementStore.getState().pinnedIds).toEqual(["same"]);
+    if (archived) expect(undo.mock.calls[0]?.[0]).toMatchObject({ props: { title: expect.stringContaining("Captured owner") } });
+    const undoAction = undo.mock.calls[0]?.[1].undo.onClick;
+    if (!undoAction) throw new Error("Archive did not offer Undo");
+    await act(async () => { undoAction(); });
+    await until(() => changes.length === 2, "Undo restores the captured owner");
+    expect(changes[1]).toEqual({ workspaceId: "other", sessionId: "same", archived: !archived });
+    expect(first.requests).toEqual([]);
+    expect(await archive.inWorkspace("missing", "same", true)).toMatchObject({ kind: "verification_failed" });
+    expect(await archive.inWorkspace("", "same", true)).toMatchObject({ kind: "verification_failed" });
+    expect(first.requests).toEqual([]);
   });
 
   test("the person's own archive of a working session keeps a simple confirmation: title, one question, two buttons", async () => {

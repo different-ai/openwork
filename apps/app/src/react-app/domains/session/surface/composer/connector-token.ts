@@ -20,10 +20,21 @@ export function parseConnectorToken(segment: string): string | null {
   return name ? name : null;
 }
 
+function prompt(name: string, discovery: string) {
+  return `This request is about the "${name}" connector; do not assume it is connected or that its tools are available. Answer planning and general questions without requiring a connection. For work needing live data or actions, ${discovery} Offer setup only if the requested operation needs an unavailable connection or the user explicitly asks to connect or set up the service; use intent connect only for an explicit setup request. Follow returned connection guidance and let the user authorize any connection themselves. This connector selection does not authorize sign-in, scope changes, or external writes; perform writes only when explicitly requested.`;
+}
+
 /** Expand a connector token into the model-facing steering text (same precedent as the skill load instruction). */
 export function connectorPrompt(name: string) {
-  return `This request is about the "${name}" connector; do not assume it is connected or that its tools are available. Answer planning and general questions without requiring a connection. For work needing live data or actions, discover capabilities normally with search_capabilities, omitting intent connect. Offer setup only if the requested operation needs an unavailable connection or the user explicitly asks to connect or set up the service; use intent connect only for an explicit setup request. Follow returned connection guidance and let the user authorize any connection themselves. This connector selection does not authorize sign-in, scope changes, or external writes; perform writes only when explicitly requested.`;
+  // Connect lists a connection's actions as tools for some organizations and behind search for others.
+  return prompt(name, "call the connector's own tools when Connect lists them; otherwise discover capabilities with search_capabilities, omitting intent connect.");
 }
+
+/** Every wording `connectorPrompt` has sent, newest first, so earlier messages still show their chip. */
+export const CONNECTOR_PROMPT_HISTORY: readonly ((name: string) => string)[] = [
+  connectorPrompt,
+  (name) => prompt(name, "discover capabilities normally with search_capabilities, omitting intent connect."),
+];
 
 /** Draft text for a seeded chat: the connector chip, then the prompt. */
 export function seededConnectorDraft(input: { connector: string | null; prompt: string }) {

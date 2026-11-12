@@ -40,6 +40,7 @@ import {
 import { executeCapabilityWithBudget } from "./agent.js"
 import { runsWithoutClick } from "./app-tool-access.js"
 import { launchInitialResults, launchReadHandoff, requiredScope, type LaunchReadHandoff, type McpAppLaunchDataStore } from "./app-launch-data.js"
+import { APP_SITE_HEADER } from "./app-site.js"
 import { callMcpAppTool, mcpAppToolKeepable } from "./app-tools.js"
 import { mcpAuditPrincipal } from "../audit/mcp-service-audit.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
@@ -177,6 +178,8 @@ export function createMcpAppServer(input: {
   canKeep?: (binding: McpAppToolBinding) => boolean
   /** Where a launch read past its budget waits for this caller's own call. */
   launchReads?: LaunchReadHandoff
+  /** Replaces the default instructions, which describe tools that run as the caller. */
+  instructions?: string
 }) {
   const { app, tools } = input.definition
   const server = new McpServer({ name: app.title, version: "1.0.0" }, {
@@ -185,7 +188,7 @@ export function createMcpAppServer(input: {
       resources: { listChanged: false, subscribe: false },
       extensions: { [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] } },
     },
-    instructions: `This is the ${app.title} App from OpenWork. Call ${MCP_APP_LAUNCH_TOOL_NAME} to open it. Its other tools run as you, with your own OpenWork access and connections.`,
+    instructions: input.instructions ?? `This is the ${app.title} App from OpenWork. Call ${MCP_APP_LAUNCH_TOOL_NAME} to open it. Its other tools run as you, with your own OpenWork access and connections.`,
   })
 
   server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -298,6 +301,9 @@ async function handleMcpAppServerRequestUntimed(input: {
     if (error instanceof McpAppError) return refuse("not_found")
     throw error
   }
+  // The site page asks on a signed-in visitor's behalf. An App that was not
+  // made a site reads the same to it as one that does not exist.
+  if (context.req.header(APP_SITE_HEADER) && !(definition.site && organizationFeatures.appSites)) return refuse("not_found")
   const server = createMcpAppServer({
     definition,
     scopes: principal.scopes,

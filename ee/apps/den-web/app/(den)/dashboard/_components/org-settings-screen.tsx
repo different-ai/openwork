@@ -6,8 +6,7 @@ import { getErrorMessage, requestJson, SsoSessionRequiredError } from "../../_li
 import {
   getAllowedDesktopVersionsFromMetadata,
   getOrgAccessFlags,
-  getRequireSsoFromMetadata,
-  getRestrictDomainToSsoFromMetadata,
+  getSsoSettingsFromMetadata,
   orgFeatureEnabled,
   permissionLockReason,
 } from "../../_lib/den-org";
@@ -22,7 +21,9 @@ import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 import { OrgWebOriginsSection } from "./org-web-origins-section";
 import { OrgDefaultModelSection } from "./default-model-section";
 import { OrgAutomationSettingsSection } from "./org-automation-settings-section";
-import { SettingsToggle } from "./settings-toggle";
+import { DenSwitch } from "../../_components/ui/switch";
+import { SsoRequirementFields, ssoRequirementDescription } from "./sso-requirement-fields";
+import { ssoSettingsChanges, type SsoSettings } from "../../_lib/sso-settings";
 import {
   allPublishedDesktopVersionsAllowed,
   compareDesktopVersions,
@@ -172,8 +173,7 @@ export function OrgSettingsScreen() {
   const [allowedDomainsDraft, setAllowedDomainsDraft] = useState("");
   const [domainRestrictionsEnabled, setDomainRestrictionsEnabled] =
     useState(false);
-  const [requireSsoEnabled, setRequireSsoEnabled] = useState(false);
-  const [restrictDomainToSsoEnabled, setRestrictDomainToSsoEnabled] = useState(false);
+  const [ssoDraft, setSsoDraft] = useState<SsoSettings>({ requireSso: false, restrictDomainToSso: false });
   const [domainEditModeEnabled, setDomainEditModeEnabled] = useState(false);
   const [desktopVersionOptions, setDesktopVersionOptions] = useState<string[]>(
     [],
@@ -263,8 +263,7 @@ export function OrgSettingsScreen() {
     setDomainRestrictionsEnabled(
       (orgContext.organization.allowedEmailDomains?.length ?? 0) > 0,
     );
-    setRequireSsoEnabled(getRequireSsoFromMetadata(orgContext.organization.metadata));
-    setRestrictDomainToSsoEnabled(getRestrictDomainToSsoFromMetadata(orgContext.organization.metadata));
+    setSsoDraft(getSsoSettingsFromMetadata(orgContext.organization.metadata));
     setDomainEditModeEnabled(false);
   }, [orgContext]);
 
@@ -421,10 +420,11 @@ export function OrgSettingsScreen() {
           : null,
         ...(ssoSettingsOnSsoPage
           ? {}
-          : {
-              requireSso: requireSsoEnabled,
-              ...(ssoPerOrganization ? { restrictDomainToSso: restrictDomainToSsoEnabled } : {}),
-            }),
+          : ssoSettingsChanges({
+              perOrganization: ssoPerOrganization,
+              saved: getSsoSettingsFromMetadata(orgContext?.organization.metadata ?? null),
+              draft: ssoDraft,
+            })),
         ...(supportedDesktopVersionOptions.length > 0
           ? {
               allowedDesktopVersions: allDesktopVersionsAllowed
@@ -573,7 +573,7 @@ export function OrgSettingsScreen() {
           </div>
         </DenCard>
 
-        <DenCard size="spacious" className="grid gap-6">
+        <DenCard id="allowed-email-domains" size="spacious" className="grid scroll-mt-6 gap-6">
           <div className="flex items-start justify-between gap-4">
             <div className="grid gap-2">
               <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
@@ -591,8 +591,8 @@ export function OrgSettingsScreen() {
               <span className="text-[13px] font-medium text-gray-500">
                 {domainRestrictionsEnabled ? "On" : "Off"}
               </span>
-              <SettingsToggle
-                label="Restrict allowed email domains"
+              <DenSwitch
+                aria-label="Restrict allowed email domains"
                 checked={domainRestrictionsEnabled}
                 disabled={
                   !canManageSettings || (domainRestrictionsEnabled && hasDraftDomains)
@@ -668,60 +668,15 @@ export function OrgSettingsScreen() {
               <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">
                 Single sign-on requirement
               </h2>
-              <p className="text-[14px] text-gray-500">
-                {ssoPerOrganization
-                  ? "SSO is offered first at sign-in. Choose whether this organization, or your whole email domain, requires it."
-                  : "Require members to use the workspace SSO entrypoint when their email domain matches this organization."}
-              </p>
+              <p className="text-[14px] text-gray-500">{ssoRequirementDescription(ssoPerOrganization)}</p>
             </div>
 
-            {ssoPerOrganization ? (
-              <>
-                <div className="flex items-start justify-between gap-4 rounded-[24px] border border-gray-200 bg-white px-5 py-4" data-testid="require-sso-row">
-                  <div className="grid gap-1 pr-4">
-                    <p className="text-[15px] font-medium text-gray-900">Require SSO</p>
-                    <p className="text-[13px] text-gray-500">
-                      Members open this organization only after signing in with its SSO. They can still use their password or Google for other organizations.
-                    </p>
-                  </div>
-                  <SettingsToggle
-                    label="Require SSO for this organization"
-                    checked={requireSsoEnabled}
-                    disabled={!canManageSettings}
-                    onChange={setRequireSsoEnabled}
-                  />
-                </div>
-                <div className="flex items-start justify-between gap-4 rounded-[24px] border border-gray-200 bg-white px-5 py-4" data-testid="restrict-domain-sso-row">
-                  <div className="grid gap-1 pr-4">
-                    <p className="text-[15px] font-medium text-gray-900">Restrict this domain to our SSO</p>
-                    <p className="text-[13px] text-gray-500">
-                      Everyone with an email on your verified SSO domain must sign in with this organization's SSO, including people invited to other organizations.
-                    </p>
-                  </div>
-                  <SettingsToggle
-                    label="Restrict this domain to our SSO"
-                    checked={restrictDomainToSsoEnabled}
-                    disabled={!canManageSettings}
-                    onChange={setRestrictDomainToSsoEnabled}
-                  />
-                </div>
-              </>
-            ) : (
-              <div className="flex items-start justify-between gap-4 rounded-[24px] border border-gray-200 bg-white px-5 py-4">
-                <div className="grid gap-1 pr-4">
-                  <p className="text-[15px] font-medium text-gray-900">Require SSO for matching domains</p>
-                  <p className="text-[13px] text-gray-500">
-                    Email/password sign-in will redirect users to the org SSO flow when their email domain matches the configured SSO connection.
-                  </p>
-                </div>
-                <SettingsToggle
-                  label="Require SSO for this organization"
-                  checked={requireSsoEnabled}
-                  disabled={!canManageSettings}
-                  onChange={setRequireSsoEnabled}
-                />
-              </div>
-            )}
+            <SsoRequirementFields
+              perOrganization={ssoPerOrganization}
+              draft={ssoDraft}
+              disabled={!canManageSettings}
+              onChange={setSsoDraft}
+            />
           </DenCard>
         )}
 

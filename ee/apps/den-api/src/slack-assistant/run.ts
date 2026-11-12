@@ -37,6 +37,14 @@ export const checkpointSchema = z.object({
   workbot: z.boolean().default(false),
   /** Told how to read Drive files (`workbotDriveFiles`). Chosen once per message, like `workbot`. */
   driveFiles: z.boolean().default(false),
+  /**
+   * `workbotSlackAnswerReply`: notes written on the way stream into one message, and the final answer is posted as a
+   * new reply that notifies the person. Chosen once per message, like `workbot`.
+   */
+  answerReply: z.boolean().default(false),
+  /** The final answer waiting to be posted as its own reply, and how many of its parts already went out. */
+  answerText: z.string().optional(),
+  answerPartsPosted: z.number().default(0),
   /** The person's message, to react to; unset when a reaction would show in a channel the reply avoids. */
   reactTo: z.object({ channel: z.string(), ts: z.string() }).optional(),
   reacted: z.boolean().default(false),
@@ -351,6 +359,10 @@ export async function advanceSlackRun(input: RunInput): Promise<Step> {
         await appendText(input.slack, cp, failureText(snapshot.terminalError), now)
         cp.finalStatus = "suspended"
         cp.phase = "finish"
+      } else if (finishedTurn(cp, snapshot) && cp.answerReply) {
+        // Its own reply, posted when the run finishes; the notes on the way were never shown after going quiet.
+        cp.answerText = notesAndAnswer(snapshot, true).answer || snapshot.lastAssistantText
+        cp.phase = "finish"
       } else if (finishedTurn(cp, snapshot)) {
         // Only the final answer: the person did not see the progress notes before it.
         await appendText(input.slack, cp, snapshot.lastAssistantText || snapshot.finalAssistantText, now, async (part) => {
@@ -384,26 +396,19 @@ export async function advanceSlackRun(input: RunInput): Promise<Step> {
   cp.completedAt ??= now()
   // The run is over; the prompt is only needed to start it again.
   cp.prompt = undefined
-  await stopSlackStream(input.slack, cp, {
-    blocks: [
-      {
-        type: "context_actions",
-        elements: [
-          {
-            type: "feedback_buttons",
-            action_id: `slack_feedback:${input.messageId.replace(/^msg_/, "")}`,
-            positive_button: { text: { type: "plain_text", text: "Helpful" }, value: "positive" },
-            negative_button: { text: { type: "plain_text", text: "Needs work" }, value: "negative" },
-          },
-        ],
-      },
-    ],
-  })
+  const feedback = feedbackBlock(input.messageId)
+  if (cp.answerReply && cp.answerText) {
+    // The answer goes out as its own reply (which notifies), then the notes message above it closes.
+    await postAnswer(input, cp, feedback)
+    await stopSlackStream(input.slack, cp)
+  } else await stopSlackStream(input.slack, cp, { blocks: [feedback] })
   // A reaction alone is the whole reply: nobody needs a ping about it.
   const reactedOnly = cp.workbot && !cp.sentText && cp.finalStatus !== "suspended"
   // A quiet task's answer is a new reply, which already notifies; only a streamed reply needs the extra mention.
+  // With the answer as its own reply, only a task that stopped without one still needs it.
   if (
     (cp.live || cp.workbot) &&
+    !(cp.answerReply && cp.finalStatus !== "suspended") &&
     !reactedOnly &&
     cp.startedAt !== undefined &&
     cp.completedAt - cp.startedAt > DONE_PING_AFTER_MS &&
@@ -434,6 +439,59 @@ export async function advanceSlackRun(input: RunInput): Promise<Step> {
 /** A turn that ended with an answer; with Workbot replies a turn that only reacted counts, though it wrote nothing. */
 function finishedTurn(cp: Checkpoint, snapshot: SlackRunSnapshot) {
   return snapshot.status === "idle" && !snapshot.terminalError && (cp.workbot || Boolean(snapshot.finalAssistantText))
+}
+
+/**
+ * With `answerReply`: what the turn wrote on the way (messages that went on to do work, in order) and, once it ended,
+ * its answer (the last message, when it did no work after). A last message that went on to work, such as "On it,
+ * I've started that", is a note and the turn has no separate answer.
+ */
+export function notesAndAnswer(snapshot: SlackRunSnapshot, finished: boolean) {
+  const written = snapshot.assistantTexts.flatMap((text, index) =>
+    text.trim() ? [{ text: text.trim(), worked: snapshot.assistantWorked[index] === true }] : [],
+  )
+  const last = written.at(-1)
+  const notes = written.flatMap((entry) => (entry.worked ? [entry.text] : [])).join("\n\n")
+  // A turn that wrote nothing still has the runner's line for it (a background task started); a reaction has none.
+  const answer = !finished ? "" : last ? (last.worked ? "" : last.text) : snapshot.lastAssistantText.trim()
+  return { notes, answer }
+}
+
+/** Helpful / Needs work buttons, under the reply. */
+function feedbackBlock(messageId: string) {
+  return {
+    type: "context_actions",
+    elements: [
+      {
+        type: "feedback_buttons",
+        action_id: `slack_feedback:${messageId.replace(/^msg_/, "")}`,
+        positive_button: { text: { type: "plain_text", text: "Helpful" }, value: "positive" },
+        negative_button: { text: { type: "plain_text", text: "Needs work" }, value: "negative" },
+      },
+    ],
+  }
+}
+
+/** Characters of an answer in one reply (Slack allows 12,000 across markdown blocks); longer ones continue in more. */
+const ANSWER_LIMIT = 11_000
+
+/** Posts the answer as new replies in the thread, the feedback buttons under the last; a retry skips parts already out. */
+async function postAnswer(input: RunInput, cp: Checkpoint, feedback: Record<string, unknown>) {
+  const parts = splitSlackText(withoutBroadcasts(cp.answerText ?? ""), ANSWER_LIMIT)
+  for (const [index, part] of parts.entries()) {
+    if (index < cp.answerPartsPosted) continue
+    await input.slack("chat.postMessage", {
+      channel: cp.channel,
+      thread_ts: cp.threadTs,
+      // The notification and fallback text; the blocks carry the answer in Markdown.
+      text: slackSafeText(excerpt(markdownToPlainText(part), 300)),
+      blocks: [{ type: "markdown", text: part }, ...(index === parts.length - 1 ? [feedback] : [])],
+      unfurl_links: false,
+      unfurl_media: false,
+    })
+    cp.answerPartsPosted = index + 1
+    await input.persist?.(cp)
+  }
 }
 
 /** Remembers the background tasks the turn started, and puts its reaction on the person's message once. */
@@ -566,8 +624,15 @@ async function applyReply(input: RunInput, cp: Checkpoint, snapshot: SlackRunSna
     await input.persist?.(cp)
     return "quiet"
   }
+  // With the answer as its own reply, only finished notes stream here; the answer waits for the end of the run.
+  const split = cp.answerReply ? notesAndAnswer(snapshot, finished) : null
+  if (split && finished) cp.answerText = split.answer
   // Once the turn ended its stored text is final: post whatever of it is missing, even after a retried step.
-  const delta = cp.workbot && (finished || snapshot.terminalError) ? catchUpText(cp.sentText, text) : currentReplyDelta(cp.sentText, text)
+  const delta = split
+    ? currentReplyDelta(cp.sentText, split.notes)
+    : cp.workbot && (finished || snapshot.terminalError)
+      ? catchUpText(cp.sentText, text)
+      : currentReplyDelta(cp.sentText, text)
   if (delta)
     await appendText(input.slack, cp, delta, now, async (part) => {
       cp.sentText += part

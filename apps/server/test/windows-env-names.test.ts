@@ -46,12 +46,52 @@ test("on Windows reserved names cannot be saved in another case", async () => {
 });
 
 test("on Windows the engine inherits each allowed variable once, under any spelling", () => {
-  const parent = { PATH: "C:\\Windows", SystemRoot: "C:\\Windows", windir: "C:\\Windows", ComSpec: "cmd.exe", SECRET_TOKEN: "x" };
+  const parent = {
+    PATH: "C:\\Windows",
+    SystemRoot: "C:\\Windows",
+    windir: "C:\\Windows",
+    ComSpec: "cmd.exe",
+    ProgramData: "C:\\ProgramData",
+    "ProgramFiles(x86)": "C:\\Program Files (x86)",
+    SECRET_TOKEN: "x",
+  };
   assert.deepEqual(inheritedEngineEnv({ Path: "C:\\Sidecars;C:\\Windows" }, parent, "win32"), {
     PATH: "C:\\Sidecars;C:\\Windows",
     SystemRoot: "C:\\Windows",
     WINDIR: "C:\\Windows",
     COMSPEC: "cmd.exe",
+    ProgramData: "C:\\ProgramData",
+    "ProgramFiles(x86)": "C:\\Program Files (x86)",
+  });
+});
+
+test("on Windows the engine inherits ProgramData so Microsoft OpenSSH can start", () => {
+  // Repro for #5538: without ProgramData, Win32-OpenSSH exits 255 with no message.
+  const parent = {
+    PATH: "C:\\Windows\\System32",
+    SystemRoot: "C:\\Windows",
+    ProgramData: "C:\\ProgramData",
+    SystemDrive: "C:",
+    ALLUSERSPROFILE: "C:\\ProgramData",
+    SECRET_TOKEN: "x",
+  };
+  const inherited = inheritedEngineEnv(undefined, parent, "win32");
+  assert.equal(inherited.ProgramData, "C:\\ProgramData");
+  assert.equal(inherited.SystemDrive, "C:");
+  assert.equal(inherited.ALLUSERSPROFILE, "C:\\ProgramData");
+  assert.equal(inherited.SECRET_TOKEN, undefined);
+});
+
+test("the engine inherits the Claude executable override but not Claude credentials", () => {
+  const inherited = inheritedEngineEnv(undefined, {
+    OPENCODE_CLAUDE_PATH: "/opt/claude/bin/claude",
+    CLAUDE_CODE_OAUTH_TOKEN: "must-stay-private",
+    ANTHROPIC_API_KEY: "must-stay-private",
+    CLAUDE_SESSION_TOKEN: "must-stay-private",
+  }, "darwin");
+  assert.deepEqual(inherited, { OPENCODE_CLAUDE_PATH: "/opt/claude/bin/claude" });
+  assert.deepEqual(inheritedEngineEnv({ opencode_claude_path: "C:\\Claude\\claude.exe" }, {}, "win32"), {
+    OPENCODE_CLAUDE_PATH: "C:\\Claude\\claude.exe",
   });
 });
 

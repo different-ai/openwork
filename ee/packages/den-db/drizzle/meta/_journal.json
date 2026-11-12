@@ -1247,6 +1247,118 @@
       "when": 1793822622848,
       "tag": "0178_device_sso_approval",
       "breakpoints": true
+    },
+    {
+      "idx": 179,
+      "version": "5",
+      "when": 1793829706172,
+      "tag": "0179_session_sso_proof",
+      "breakpoints": true
+    },
+    {
+      "idx": 180,
+      "version": "5",
+      "when": 1793829712727,
+      "tag": "0180_keep_sso_required_on_rollout",
+      "breakpoints": true
+    },
+    {
+      "idx": 181,
+      "version": "5",
+      "when": 1793836042492,
+      "tag": "0181_feature_intro_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 182,
+      "version": "5",
+      "when": 1793915251109,
+      "tag": "0182_member_openwork_web",
+      "breakpoints": true
+    },
+    {
+      "idx": 183,
+      "version": "5",
+      "when": 1793923522173,
+      "tag": "0183_multiple_sso_connections",
+      "breakpoints": true
+    },
+    {
+      "idx": 184,
+      "version": "5",
+      "when": 1793998552033,
+      "tag": "0184_super_admin_permission_set",
+      "breakpoints": true
+    },
+    {
+      "idx": 185,
+      "version": "5",
+      "when": 1794003256221,
+      "tag": "0185_connector_target_reconcile",
+      "breakpoints": true
+    },
+    {
+      "idx": 186,
+      "version": "5",
+      "when": 1794267959453,
+      "tag": "0186_public_mcp_app_names",
+      "breakpoints": true
+    },
+    {
+      "idx": 187,
+      "version": "5",
+      "when": 1794269738592,
+      "tag": "0187_workbot_team_setting",
+      "breakpoints": true
+    },
+    {
+      "idx": 188,
+      "version": "5",
+      "when": 1794272898643,
+      "tag": "0188_config_blobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 189,
+      "version": "5",
+      "when": 1794274271920,
+      "tag": "0189_gateway_api_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 190,
+      "version": "5",
+      "when": 1794346605377,
+      "tag": "0190_unified_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 191,
+      "version": "5",
+      "when": 1794352331660,
+      "tag": "0191_workbot_usage_day",
+      "breakpoints": true
+    },
+    {
+      "idx": 192,
+      "version": "5",
+      "when": 1794364751118,
+      "tag": "0192_remote_devices",
+      "breakpoints": true
+    },
+    {
+      "idx": 193,
+      "version": "5",
+      "when": 1794376055148,
+      "tag": "0193_remote_session_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 194,
+      "version": "5",
+      "when": 1794417781063,
+      "tag": "0194_computer_disconnect",
+      "breakpoints": true
     }
   ]
 }

@@ -8,7 +8,7 @@ import { hasEnabledOrganizationSsoConnection } from "../../sso.js"
 import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
 import { appendDomainChangesAfterCommit, finishLegacyAuditAction } from "../../audit/domain/legacy.js"
 import { scimReconciledEvent, scimTokenRotatedEvent } from "../../audit/domain/scim.js"
-import { auditChangeCapture } from "../../audit/request-capture.js"
+import { auditChangeCapture, type AuditChangeCapture } from "../../audit/request-capture.js"
 import { jsonValidator, orgPermissionRoute } from "../../middleware/index.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { enterprisePlanRequiredSchema } from "../../openapi.js"
@@ -106,6 +106,37 @@ function serializeHealth(health: Awaited<ReturnType<typeof getOrganizationScimHe
     nextRetryAt: health.nextRetryAt?.toISOString() ?? null,
     lastSuccessfulSyncAt: health.lastSuccessfulSyncAt?.toISOString() ?? null,
   }
+}
+
+type ScimConnection = NonNullable<Awaited<ReturnType<typeof getOrganizationScimConnection>>>
+type ScimOrganizationPayload = NonNullable<OrgRouteVariables["organizationContext"]>
+
+/**
+ * PATCH /v1/scim's write: the group mapping mode with its audit trail
+ * (scim.manage re-checked inside the transaction). Also used by config-blob
+ * imports (config-blobs/areas/settings-auth-security.ts).
+ */
+export async function updateScimGroupMappingMode(input: {
+  payload: ScimOrganizationPayload
+  connection: ScimConnection
+  mode: "metadata_only" | "create_teams"
+  capture: AuditChangeCapture | null
+}): Promise<{ ok: true } | { ok: false; permission: PermissionRevokedError["key"] }> {
+  const { payload, capture } = input
+  let auditEventIds: string[]
+  try {
+    auditEventIds = await setScimGroupMappingMode({ provider: input.connection, mode: input.mode, actorMemberId: payload.currentMember.id }, capture)
+  } catch (error) {
+    if (!(error instanceof PermissionRevokedError)) throw error
+    return { ok: false, permission: error.key }
+  }
+  await finishLegacyAuditAction(capture, {
+    organizationId: payload.organization.id,
+    actorUserId: payload.currentMember.userId,
+    action: ORGANIZATION_AUDIT_ACTIONS.scimGroupMappingUpdated,
+    payload: { groupMappingMode: input.mode },
+  }, auditEventIds)
+  return { ok: true }
 }
 
 export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
@@ -318,21 +349,11 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const input = c.req.valid("json")
-      const capture = auditChangeCapture(c)
-      let auditEventIds: string[]
-      try {
-        auditEventIds = await setScimGroupMappingMode({ provider: connection, mode: input.groupMappingMode, actorMemberId: payload.currentMember.id }, capture)
-      } catch (error) {
-        if (!(error instanceof PermissionRevokedError)) throw error
-        const denied = permissionDeniedResponse(error.key)
+      const mappingUpdated = await updateScimGroupMappingMode({ payload, connection, mode: input.groupMappingMode, capture: auditChangeCapture(c) })
+      if (!mappingUpdated.ok) {
+        const denied = permissionDeniedResponse(mappingUpdated.permission)
         return c.json(denied, 403, permissionFailureHeaders(denied))
       }
-      await finishLegacyAuditAction(capture, {
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
-        action: ORGANIZATION_AUDIT_ACTIONS.scimGroupMappingUpdated,
-        payload: { groupMappingMode: input.groupMappingMode },
-      }, auditEventIds)
 
       const [updated, health, ssoReady] = await Promise.all([
         // primary: reads back the mode written above.

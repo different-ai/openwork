@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import {
   Cable,
   GitFork,
@@ -19,8 +19,11 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { DenInput } from "../../_components/ui/input";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
-import { getNewPluginRoute, getPluginRoute } from "../../_lib/den-org";
+import { getNewPluginRoute, getOrgAccessFlags, getPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { FeatureIntroGate, useFeatureIntroUnseen, type FeatureIntroKey } from "../_features/feature-intros";
+import { PluginSourcesIntro } from "./plugin-sources-intro";
+import { pluginDirectoryIntroFacts } from "./plugins-intro-facts";
 import { useIntegrations } from "./integration-data";
 import {
   type DenPlugin,
@@ -44,6 +47,20 @@ const PLUGIN_TABS = [
   { value: "sources" as const, label: "Sources", icon: GitFork },
 ];
 
+/** Each tab's feature intro, for its box and unseen dot (DESIGN.md I9). */
+const PLUGIN_TAB_INTROS: Record<PluginView, FeatureIntroKey> = {
+  plugins: "plugins",
+  agents: "plugins.agents",
+  commands: "plugins.commands",
+  hooks: "plugins.hooks",
+  mcps: "plugins.mcps",
+  sources: "plugins.sources",
+};
+
+function parsePluginView(value: string | null): PluginView | null {
+  return PLUGIN_TABS.find((tab) => tab.value === value)?.value ?? null;
+}
+
 const SEARCH_PLACEHOLDERS: Record<PluginView, string> = {
   plugins: "Search plugins...",
   agents: "Search agents...",
@@ -55,12 +72,28 @@ const SEARCH_PLACEHOLDERS: Record<PluginView, string> = {
 
 export function PluginsScreen() {
   const searchParams = useSearchParams();
-  const { orgSlug } = useOrgDashboard();
-  const { data: plugins = [], isLoading, error } = usePlugins();
-  const { data: connections = [], isLoading: integrationsLoading } = useIntegrations();
+  const router = useRouter();
+  const pathname = usePathname();
+  const { orgSlug, orgContext } = useOrgDashboard();
+  const { data: pluginsData, isLoading, error } = usePlugins();
+  const { data: connectionsData, isLoading: integrationsLoading, error: integrationsError } = useIntegrations();
+  const plugins = pluginsData ?? [];
+  const connections = connectionsData ?? [];
   const hasAnyIntegration = connections.length > 0;
-  const [activeView, setActiveView] = useState<PluginView>(searchParams.get("view") === "sources" ? "sources" : "plugins");
+  const viewParam = parsePluginView(searchParams.get("view"));
+  const [activeView, setActiveViewState] = useState<PluginView>(viewParam ?? "plugins");
   const [query, setQuery] = useState("");
+  const introUnseen = useFeatureIntroUnseen();
+
+  // The tab lives in `?view=` so links (and feature intro actions) can open one.
+  useEffect(() => {
+    if (viewParam) setActiveViewState(viewParam);
+  }, [viewParam]);
+
+  function setActiveView(view: PluginView) {
+    setActiveViewState(view);
+    router.replace(`${pathname}?view=${view}`, { scroll: false });
+  }
 
   const normalizedQuery = query.trim().toLowerCase();
 
@@ -161,6 +194,123 @@ export function PluginsScreen() {
   };
 
   const searchPlaceholder = SEARCH_PLACEHOLDERS[activeView];
+  // Feature intros (flag `featureIntros`): null until both lists are known, so nothing flashes while loading.
+  // Data, not isLoading: a paused or not-yet-enabled query has no data and isn't loading either.
+  const seesAllPlugins = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.currentMember.permissions,
+  ).canManageAllShared;
+  const introFacts = !pluginsData || !connectionsData || error || integrationsError
+    ? null
+    : pluginDirectoryIntroFacts(pluginsData, connectionsData, seesAllPlugins);
+
+  const catalog = isLoading || integrationsLoading ? (
+    <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
+      Loading plugin catalog...
+    </div>
+  ) : !hasAnyIntegration && plugins.length === 0 ? (
+    <ConnectIntegrationEmptyState onOpenSources={() => setActiveView("sources")} />
+  ) : activeView === "plugins" ? (
+    filteredPlugins.length === 0 ? (
+      <EmptyState
+        title={plugins.length === 0 ? "No plugins available yet." : "No plugins match that search."}
+        description={
+          plugins.length === 0
+            ? "Imported plugins and connected integration plugins will show up here when they are available."
+            : "Try a different search term or browse the hooks or MCPs tabs."
+        }
+      />
+    ) : (
+      <DenCatalogList
+        label={describePluginScope(filteredPlugins)}
+        valueLabel="Components"
+        valueWidth="150px"
+      >
+        {filteredPlugins.map((plugin) => {
+          const componentCount = getPluginComponentCount(plugin);
+          return (
+            <DenCatalogRow
+              key={plugin.id}
+              href={getPluginRoute(orgSlug, plugin.id)}
+              leading={<CatalogIdentityTile name={plugin.name} />}
+              title={plugin.name}
+              description={plugin.description}
+              meta={(plugin.marketplaces ?? []).map((marketplace) => marketplace.name).join(" · ")}
+              value={String(componentCount)}
+              valueMuted={componentCount === 0}
+              valueCaption={componentCount > 0 ? getPluginPartsSummary(plugin) : undefined}
+              valueWidth="150px"
+            />
+          );
+        })}
+      </DenCatalogList>
+    )
+  ) : activeView === "agents" ? (
+    <PrimitiveList
+      icon={Users}
+      emptyLabel="No agents in this catalog yet."
+      emptyDescriptionEmpty="Agents declared by plugins will show up here."
+      emptyDescriptionFiltered="No agents match that search."
+      unfilteredCount={allAgents.length}
+      rows={filteredAgents.map((agent) => ({
+        id: agent.id,
+        title: agent.name,
+        description: agent.description,
+        pluginName: agent.pluginName,
+        href: getPluginRoute(orgSlug, agent.pluginId),
+      }))}
+    />
+  ) : activeView === "commands" ? (
+    <PrimitiveList
+      icon={Terminal}
+      emptyLabel="No commands in this catalog yet."
+      emptyDescriptionEmpty="Slash-commands declared by plugins will show up here."
+      emptyDescriptionFiltered="No commands match that search."
+      unfilteredCount={allCommands.length}
+      rows={filteredCommands.map((command) => ({
+        id: command.id,
+        title: command.name,
+        description: command.description,
+        pluginName: command.pluginName,
+        monospacedTitle: true,
+        href: getPluginRoute(orgSlug, command.pluginId),
+      }))}
+    />
+  ) : activeView === "hooks" ? (
+    <PrimitiveList
+      icon={Webhook}
+      emptyLabel="No hooks in this catalog yet."
+      emptyDescriptionEmpty="Hooks declared by plugins will show up here."
+      emptyDescriptionFiltered="No hooks match that search."
+      unfilteredCount={allHooks.length}
+      rows={filteredHooks.map((hook) => ({
+        id: hook.id,
+        title: hook.event,
+        description: hook.description,
+        pluginName: hook.pluginName,
+        monospacedTitle: true,
+        meta: hook.matcher ? `matcher: ${hook.matcher}` : undefined,
+        href: getPluginRoute(orgSlug, hook.pluginId),
+      }))}
+    />
+  ) : (
+    <PrimitiveList
+      icon={Server}
+      emptyLabel="No MCP servers in this catalog yet."
+      emptyDescriptionEmpty="MCP servers exposed by plugins will show up here."
+      emptyDescriptionFiltered="No MCPs match that search."
+      unfilteredCount={allMcps.length}
+      rows={filteredMcps.map((mcp) => ({
+        id: mcp.id,
+        title: mcp.name,
+        description: mcp.description,
+        pluginName: mcp.pluginName,
+        meta: `${mcp.transport}${mcp.toolCount > 0 ? ` · ${mcp.toolCount} tool${mcp.toolCount === 1 ? "" : "s"}` : ""}`,
+        href: getPluginRoute(orgSlug, mcp.pluginId),
+      }))}
+    />
+  );
 
   return (
     <DashboardPageTemplate
@@ -171,7 +321,7 @@ export function PluginsScreen() {
       <div className="mb-8 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-col gap-4">
           <UnderlineTabs
-            tabs={PLUGIN_TABS.map((tab) => ({ ...tab, count: tabCounts[tab.value] }))}
+            tabs={PLUGIN_TABS.map((tab) => ({ ...tab, count: tabCounts[tab.value], unseen: introUnseen(PLUGIN_TAB_INTROS[tab.value]) }))}
             activeTab={activeView}
             onChange={setActiveView}
             showZeroCounts
@@ -204,112 +354,14 @@ export function PluginsScreen() {
       ) : null}
 
       {activeView === "sources" ? (
-        <IntegrationsPanel />
-      ) : isLoading || integrationsLoading ? (
-        <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
-          Loading plugin catalog...
-        </div>
-      ) : !hasAnyIntegration && plugins.length === 0 ? (
-        <ConnectIntegrationEmptyState onOpenSources={() => setActiveView("sources")} />
-      ) : activeView === "plugins" ? (
-        filteredPlugins.length === 0 ? (
-          <EmptyState
-            title={plugins.length === 0 ? "No plugins available yet." : "No plugins match that search."}
-            description={
-              plugins.length === 0
-                ? "Imported plugins and connected integration plugins will show up here when they are available."
-                : "Try a different search term or browse the hooks or MCPs tabs."
-            }
-          />
-        ) : (
-          <DenCatalogList
-            label={describePluginScope(filteredPlugins)}
-            valueLabel="Components"
-            valueWidth="150px"
-          >
-            {filteredPlugins.map((plugin) => {
-              const componentCount = getPluginComponentCount(plugin);
-              return (
-                <DenCatalogRow
-                  key={plugin.id}
-                  href={getPluginRoute(orgSlug, plugin.id)}
-                  leading={<CatalogIdentityTile name={plugin.name} />}
-                  title={plugin.name}
-                  description={plugin.description}
-                  meta={(plugin.marketplaces ?? []).map((marketplace) => marketplace.name).join(" · ")}
-                  value={String(componentCount)}
-                  valueMuted={componentCount === 0}
-                  valueCaption={componentCount > 0 ? getPluginPartsSummary(plugin) : undefined}
-                  valueWidth="150px"
-                />
-              );
-            })}
-          </DenCatalogList>
-        )
-      ) : activeView === "agents" ? (
-        <PrimitiveList
-          icon={Users}
-          emptyLabel="No agents in this catalog yet."
-          emptyDescriptionEmpty="Agents declared by plugins will show up here."
-          emptyDescriptionFiltered="No agents match that search."
-          unfilteredCount={allAgents.length}
-          rows={filteredAgents.map((agent) => ({
-            id: agent.id,
-            title: agent.name,
-            description: agent.description,
-            pluginName: agent.pluginName,
-            href: getPluginRoute(orgSlug, agent.pluginId),
-          }))}
-        />
-      ) : activeView === "commands" ? (
-        <PrimitiveList
-          icon={Terminal}
-          emptyLabel="No commands in this catalog yet."
-          emptyDescriptionEmpty="Slash-commands declared by plugins will show up here."
-          emptyDescriptionFiltered="No commands match that search."
-          unfilteredCount={allCommands.length}
-          rows={filteredCommands.map((command) => ({
-            id: command.id,
-            title: command.name,
-            description: command.description,
-            pluginName: command.pluginName,
-            monospacedTitle: true,
-            href: getPluginRoute(orgSlug, command.pluginId),
-          }))}
-        />
-      ) : activeView === "hooks" ? (
-        <PrimitiveList
-          icon={Webhook}
-          emptyLabel="No hooks in this catalog yet."
-          emptyDescriptionEmpty="Hooks declared by plugins will show up here."
-          emptyDescriptionFiltered="No hooks match that search."
-          unfilteredCount={allHooks.length}
-          rows={filteredHooks.map((hook) => ({
-            id: hook.id,
-            title: hook.event,
-            description: hook.description,
-            pluginName: hook.pluginName,
-            monospacedTitle: true,
-            meta: hook.matcher ? `matcher: ${hook.matcher}` : undefined,
-            href: getPluginRoute(orgSlug, hook.pluginId),
-          }))}
-        />
+        <>
+          <PluginSourcesIntro githubSources={integrationsLoading || integrationsError ? null : connections.filter((connection) => connection.provider === "github").length} />
+          <IntegrationsPanel />
+        </>
       ) : (
-        <PrimitiveList
-          icon={Server}
-          emptyLabel="No MCP servers in this catalog yet."
-          emptyDescriptionEmpty="MCP servers exposed by plugins will show up here."
-          emptyDescriptionFiltered="No MCPs match that search."
-          unfilteredCount={allMcps.length}
-          rows={filteredMcps.map((mcp) => ({
-            id: mcp.id,
-            title: mcp.name,
-            description: mcp.description,
-            pluginName: mcp.pluginName,
-            meta: `${mcp.transport}${mcp.toolCount > 0 ? ` · ${mcp.toolCount} tool${mcp.toolCount === 1 ? "" : "s"}` : ""}`,
-            href: getPluginRoute(orgSlug, mcp.pluginId),
-          }))}
-        />
+        // With feature intros on, a tab with nothing in it shows its box, and the Plugins intro takes over
+        // while there are no plugins at all (DESIGN.md I1, I2); with the flag off, the catalog renders as before.
+        <FeatureIntroGate introKey={PLUGIN_TAB_INTROS[activeView]} facts={introFacts}>{catalog}</FeatureIntroGate>
       )}
     </DashboardPageTemplate>
   );

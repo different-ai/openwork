@@ -99,4 +99,33 @@ final class FollowAlongTests: XCTestCase {
         elsewhere.record(frontmost: openWork, target: app, own: 1, host: 0, at: 0)
         XCTAssertTrue(elsewhere.eachMoment)
     }
+
+    func testAStageReTilesAsAgentsComeAndGoUntilThePersonMovesTheWindow() {
+        let tile = CGRect(x: 480, y: 25, width: 480, height: 875)
+        var follow = FollowAlong(watching: true, beside: false, stage: StageSlot(slot: 0, count: 2))
+        XCTAssertTrue(follow.follows(frontmost: openWork, host: openWork, target: app))
+        XCTAssertTrue(follow.arrangeNow(current: CGRect(x: 0, y: 0, width: 500, height: 400), arranged: nil), "a stage tile even when not beside")
+        XCTAssertFalse(follow.arrangeNow(current: tile, arranged: tile), "once")
+        // A third agent opens an app: the host sends the new stage, and the next look re-tiles.
+        follow.host(watching: true, beside: false, stage: StageSlot(slot: 0, count: 3))
+        XCTAssertTrue(follow.arrangeNow(current: tile, arranged: tile))
+        // The same stage again changes nothing.
+        follow.host(watching: true, beside: false, stage: StageSlot(slot: 0, count: 3))
+        XCTAssertFalse(follow.arrangeNow(current: tile, arranged: tile))
+        // The others closed: no stage, and the window goes beside OpenWork as for one agent.
+        follow.host(watching: true, beside: true, stage: .some(nil))
+        XCTAssertNil(follow.stage)
+        XCTAssertTrue(follow.arrangeNow(current: tile, arranged: tile))
+        // The person moved the window: it leaves the stage for the rest of the session.
+        follow.host(watching: true, beside: false, stage: StageSlot(slot: 1, count: 2))
+        XCTAssertFalse(follow.arrangeNow(current: CGRect(x: 50, y: 60, width: 700, height: 500), arranged: tile))
+        follow.host(watching: true, beside: false, stage: StageSlot(slot: 0, count: 3))
+        XCTAssertFalse(follow.arrangeNow(current: tile, arranged: tile))
+    }
+
+    func testNotWatchingNothingMovesForAStage() {
+        var follow = FollowAlong(watching: false, beside: false, stage: StageSlot(slot: 0, count: 2))
+        XCTAssertFalse(follow.follows(frontmost: openWork, host: openWork, target: app))
+        XCTAssertFalse(follow.arrangeNow(current: nil, arranged: nil))
+    }
 }

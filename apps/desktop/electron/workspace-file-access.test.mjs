@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { chmod, mkdtemp, mkdir, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { chatOutputFolder, listChatOutputFiles, openChatWorkspaceFile, opensFromChatOutput, resolveChatFilePath } from "./workspace-file-access.mjs";
+import { chatOutputFolder, listChatOutputFiles, openChatWorkspaceFile, opensFromChatOutput, readChatOutputImage, resolveChatFilePath } from "./workspace-file-access.mjs";
 
 let root;
 let workspace;
@@ -132,4 +132,32 @@ test("Open launches a file from the chat's own output folder, never a link, a pr
   assert.equal(await opensFromChatOutput(folder, path.join(other, "theirs.pdf")), false);
   assert.equal(await opensFromChatOutput(folder, path.join(folder, "missing.pdf")), false);
   assert.equal(await opensFromChatOutput(null, path.join(folder, "flyer.pdf")), false);
+});
+
+test("a reply shows only an image the chat saved in its own output folder", async () => {
+  const home = path.join(root, "home-images");
+  const downloads = path.join(home, "Downloads");
+  const folder = chatOutputFolder(downloads, "ses_1");
+  const other = chatOutputFolder(downloads, "ses_2");
+  await mkdir(folder, { recursive: true });
+  await mkdir(other, { recursive: true });
+  await writeFile(path.join(folder, "Dolores Park postcard.png"), "png!");
+  await writeFile(path.join(folder, "notes.txt"), "text");
+  await writeFile(path.join(other, "theirs.png"), "png");
+  await symlink(path.join(other, "theirs.png"), path.join(folder, "link.png"));
+
+  const saved = await readChatOutputImage(folder, path.join(folder, "Dolores Park postcard.png"));
+  assert.equal(saved?.contentType, "image/png");
+  assert.equal(Buffer.from(saved?.data ?? []).toString(), "png!");
+  // The chat writes home-folder paths with `~`.
+  const tilde = await readChatOutputImage(folder, "~/Downloads/OpenWork/ses_1/Dolores Park postcard.png", { home });
+  assert.equal(tilde?.contentType, "image/png");
+
+  assert.equal(await readChatOutputImage(folder, path.join(folder, "notes.txt")), null);
+  assert.equal(await readChatOutputImage(folder, path.join(folder, "link.png")), null);
+  assert.equal(await readChatOutputImage(folder, path.join(other, "theirs.png")), null);
+  assert.equal(await readChatOutputImage(folder, path.join(folder, "../ses_2/theirs.png")), null);
+  assert.equal(await readChatOutputImage(folder, path.join(folder, "missing.png")), null);
+  assert.equal(await readChatOutputImage(folder, path.join(folder, "Dolores Park postcard.png"), { maxBytes: 2 }), null);
+  assert.equal(await readChatOutputImage(null, path.join(folder, "Dolores Park postcard.png")), null);
 });

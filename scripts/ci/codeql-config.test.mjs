@@ -45,7 +45,7 @@ for (const path of [
   "packages/sdk/src/client.ts",
   "packages/computer-use/native/Sources/ComputerUse/main.swift",
   "apps/desktop/scripts/build.mjs",
-  ".github/scripts/warden-check.mjs",
+  ".github/scripts/contributor-pr.mjs",
   ".github/workflows/codeql.yml",
 ]) {
   test(`keeps production and CI source in scope: ${path}`, () => {

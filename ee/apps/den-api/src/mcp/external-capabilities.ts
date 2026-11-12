@@ -46,6 +46,7 @@ import { compareCapabilityMatches, scoreText, tokenize } from "./search.js"
 import { EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT, scoreExternalTool, selectExternalMcpSearchConnections } from "./external-search-selection.js"
 import type { CapabilityMatch, CapabilityToolAnnotations } from "./search.js"
 import { AGENT_SOURCE_BLOCKED_MESSAGE, agentMayUseExternalTool, agentReadAllowlist, type AgentReadAllowlist } from "./agent-read-sources.js"
+import { WORKBOT_CONNECTION_WITHHELD_MESSAGE } from "./workbot-turn-limits.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import {
   codemodeScriptPath,
@@ -102,6 +103,8 @@ export function parseExternalCapabilityName(name: string): { connectionId: strin
 export type McpMemberIdentity = {
   orgMembershipId: DenTypeId<"member">
   teamIds: DenTypeId<"team">[]
+  /** A Workbot turn: connections an admin set to "Not allowed" for Workbot (workbot-turn-limits.ts). */
+  withheldConnectionIds?: ReadonlySet<string>
 }
 
 /**
@@ -936,6 +939,7 @@ export async function searchExternalCapabilities(input: {
     organizationId: normalizeDenTypeId("organization", input.organizationId),
     orgMembershipId: input.member.orgMembershipId,
     teamIds: input.member.teamIds,
+    withheldConnectionIds: input.member.withheldConnectionIds,
   })
   const connections = agent ? usable.filter((connection) => agent.connectionIds.has(connection.id)) : usable
   const scriptNamespaces = namespaceContext?.namespaces.externalMcp
@@ -1233,6 +1237,9 @@ async function prepareExternalCapability(input: {
   }
   if (connection.kind !== "external_mcp") {
     return { ok: false, error: "unknown_capability", message: `Connection "${input.connectionId}" is a native provider connector and does not expose MCP tools.` }
+  }
+  if (input.member.withheldConnectionIds?.has(connection.id)) {
+    return { ok: false, error: "forbidden", message: `"${connection.name}" ${WORKBOT_CONNECTION_WITHHELD_MESSAGE}` }
   }
 
   const canUse = await memberCanUseExternalMcpConnection({

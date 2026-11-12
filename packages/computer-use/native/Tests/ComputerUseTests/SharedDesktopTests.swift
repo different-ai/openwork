@@ -527,4 +527,53 @@ final class SharedDesktopTests: XCTestCase {
             XCTAssertEqual(SharedDesktop.afterPause(error).code, error.code)
         }
     }
+
+    @MainActor
+    func testAnIgnoredActivationFallsBackUntilTheWindowReadsBackInFront() async throws {
+        // macOS 26 answers activate with true and does nothing; the app makes its window main when asked.
+        var tried: [WindowFront.Way] = []
+        var front = false
+        let way = try await WindowFront.bring(attempt: { way in
+            tried.append(way)
+            if way == .mainWindow { front = true }
+        }, inFront: { front }, check: {}, sleep: { _ in })
+        XCTAssertEqual(way, .mainWindow)
+        XCTAssertEqual(tried, [.raise, .frontmost, .mainWindow], "each way once, in order, stopping at the first that reads back")
+    }
+
+    @MainActor
+    func testAWindowAlreadyComingForwardTakesNothingMore() async throws {
+        var tried: [WindowFront.Way] = []
+        var reads = 0
+        let way = try await WindowFront.bring(attempt: { tried.append($0) }, inFront: { reads += 1; return reads > 2 }, check: {}, sleep: { _ in })
+        XCTAssertEqual(way, .raise)
+        XCTAssertEqual(tried, [.raise], "a slow app that comes forward within the read-back is not pushed again")
+    }
+
+    @MainActor
+    func testAWindowThatNeverComesForwardIsRefusedBeforeInput() async throws {
+        var tried: [WindowFront.Way] = []
+        do {
+            _ = try await WindowFront.bring(attempt: { tried.append($0) }, inFront: { false }, check: {}, sleep: { _ in })
+            XCTFail("expected a refusal")
+        } catch let error as UseError {
+            XCTAssertEqual(error.code, "front_unavailable")
+            XCTAssertEqual(error.next, "observe")
+        }
+        XCTAssertEqual(tried, WindowFront.Way.allCases, "every way is tried once, never in a loop")
+    }
+
+    @MainActor
+    func testControlChangingWhileTheWindowComesForwardStopsTheFallbacks() async throws {
+        var tried: [WindowFront.Way] = []
+        do {
+            _ = try await WindowFront.bring(attempt: { tried.append($0) }, inFront: { false }, check: {
+                if tried.count > 1 { throw UseError("session_changed", "Control changed during focus.", next: "observe") }
+            }, sleep: { _ in })
+            XCTFail("expected the change to stop it")
+        } catch let error as UseError {
+            XCTAssertEqual(error.code, "session_changed")
+        }
+        XCTAssertEqual(tried, [.raise, .frontmost])
+    }
 }

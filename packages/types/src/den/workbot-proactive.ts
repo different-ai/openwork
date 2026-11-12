@@ -2,8 +2,8 @@ import { z } from "zod"
 
 /**
  * "Your agent" (behind the `workbotProactive` feature): one persistent background agent per member that reads their
- * sources (calendar, email, team chat and any other connection they turn on) on a schedule and messages them only
- * when something needs them.
+ * sources (their calendar and any connection they turn on, such as Google Workspace, Microsoft 365 or Slack for mail
+ * and chat) on a schedule and messages them only when something needs them.
  *
  * Three kinds of settings, kept apart on purpose:
  * - Organization policy (Den › Manage › Workbot), in the organization's metadata under `workbot.proactive`: on/off,
@@ -43,15 +43,17 @@ export type AgentDestinationBlock = (typeof AGENT_DESTINATION_BLOCKS)[number]
 
 // ---- Sources: what agents read --------------------------------------------------------------------------------------
 
-/** What every agent reads when the member has it connected: their calendar, email and team chat. */
-export const AGENT_CORE_SOURCES = ["calendar", "email", "chat"] as const
+/**
+ * What every agent reads when the member has it connected: their calendar, through whichever calendar app the
+ * organization connected (no admin picks one). Mail and chat are not sources of their own: an agent reads them through
+ * the Google Workspace, Microsoft 365 or Slack connection, under that connection's own policy.
+ */
+export const AGENT_CORE_SOURCES = ["calendar"] as const
 export type AgentCoreSource = (typeof AGENT_CORE_SOURCES)[number]
 export const agentCoreSourceSchema = z.enum(AGENT_CORE_SOURCES)
 
 export const AGENT_CORE_SOURCE_COPY: Record<AgentCoreSource, { label: string; via: string }> = {
   calendar: { label: "Calendar", via: "Google Calendar or Outlook" },
-  email: { label: "Email", via: "Gmail or Outlook" },
-  chat: { label: "Team chat", via: "Slack or Teams: DMs, mentions and threads they're in" },
 }
 
 /**
@@ -108,19 +110,16 @@ export const AGENT_SOURCE_POLICY_COPY: Record<AgentSourcePolicy, string> = {
   off: "Not allowed",
 }
 
-/** A core source (`calendar`, `email`, `chat`) or another connection's id. */
+/** The core source (`calendar`) or a connection's id. */
 const agentSourceIdSchema = z.string().trim().min(1).max(64)
 /**
  * Input bounds only, far above any organization's connections: every connection is listed whatever its count
  * (`workbotAgentBrief`); these only stop a request from carrying an unbounded list.
  */
 const AGENT_SOURCE_CONNECTIONS_MAX = 2000
-const AGENT_CORE_CONNECTIONS_MAX = 2000
 /** Tools per connection an admin can decide on; a server lists far fewer. */
 const AGENT_TOOL_OVERRIDES_MAX = 2000
 const agentToolNameSchema = z.string().trim().min(1).max(255)
-/** The connections an admin picked for one core source; empty reads nothing (turning it off is its policy). */
-const agentCoreConnectionIdsSchema = z.array(agentSourceIdSchema).max(AGENT_CORE_CONNECTIONS_MAX)
 /** The connections an admin added to Other context. */
 const agentOtherConnectionIdsSchema = z.array(agentSourceIdSchema).max(AGENT_SOURCE_CONNECTIONS_MAX)
 const tooManyConnections = { message: "Too many connections." }
@@ -129,36 +128,16 @@ const tooManyTools = { message: "Too many tools." }
 const withinToolLimit = (value: Record<string, unknown>) => Object.keys(value).length <= AGENT_TOOL_OVERRIDES_MAX
 
 /**
- * The organization's policy per source. Calendar, email and team chat are on for everyone by default; every other
- * connection is up to members (off for them until they turn it on). Agents only ever read, whatever the policy.
+ * The organization's policy per source. The calendar is on for everyone by default; every connection is up to members
+ * (off for them until they turn it on). Agents only ever read, whatever the policy. A policy saved before mail and chat
+ * became part of their connections may still hold `email`, `chat`, `coreConnections` and `coreDefaults`: they are
+ * dropped when it is read.
  */
 export const agentSourcesPolicySchema = z.object({
   calendar: agentSourcePolicySchema,
-  email: agentSourcePolicySchema,
-  chat: agentSourcePolicySchema,
-  /**
-   * Which of the organization's connections serve calendar, email and team chat, by id: Den's own providers for what
-   * they serve, or an MCP connection whose read tools we reviewed. A source that isn't listed reads through every
-   * connection that can serve it (Google Workspace, Microsoft 365, Slack); an empty list reads nothing.
-   */
-  coreConnections: z.object({
-    calendar: agentCoreConnectionIdsSchema.optional(),
-    email: agentCoreConnectionIdsSchema.optional(),
-    chat: agentCoreConnectionIdsSchema.optional(),
-  }).optional(),
-  /**
-   * The admin's default connection per core source, by id: what a member's agent reads when the member hasn't picked
-   * one of the allowed connections and their account on it is ready. Absent (or no longer allowed): automatic, the
-   * allowed connection most members already connected.
-   */
-  coreDefaults: z.object({
-    calendar: agentSourceIdSchema.optional(),
-    email: agentSourceIdSchema.optional(),
-    chat: agentSourceIdSchema.optional(),
-  }).optional(),
   /** The connections in Other context, by id. Absent: every connection whose read tools we reviewed. */
   otherConnections: agentOtherConnectionIdsSchema.optional(),
-  /** Other connections by id; one that isn't listed is up to members. */
+  /** Connections by id; one that isn't listed is up to members. */
   connections: z.record(agentSourceIdSchema, agentSourcePolicySchema).refine(withinConnectionLimit, tooManyConnections),
   /**
    * `workbotAgentBrief`: per connection id, an admin's choice per tool name ("Tools agents may use"). A tool that isn't
@@ -170,28 +149,15 @@ export const agentSourcesPolicySchema = z.object({
 })
 export type AgentSourcesPolicy = z.infer<typeof agentSourcesPolicySchema>
 
-export const DEFAULT_AGENT_SOURCES_POLICY: AgentSourcesPolicy = { calendar: "everyone", email: "everyone", chat: "everyone", connections: {} }
+export const DEFAULT_AGENT_SOURCES_POLICY: AgentSourcesPolicy = { calendar: "everyone", connections: {} }
 
 /**
- * An admin's change: any core source, the connections allowed behind a core source (null goes back to every connection
- * that serves it), its default connection (null goes back to automatic), the connections in Other context (null goes
- * back to every reviewed one), and other connections by id (null goes back to "members choose").
+ * An admin's change: the calendar, the connections in Other context (null goes back to every reviewed one), and
+ * connections by id (null goes back to "members choose").
  */
 export const agentSourcesPolicyInputSchema = z
   .object({
     calendar: agentSourcePolicySchema.optional(),
-    email: agentSourcePolicySchema.optional(),
-    chat: agentSourcePolicySchema.optional(),
-    coreConnections: z.object({
-      calendar: agentCoreConnectionIdsSchema.nullable().optional(),
-      email: agentCoreConnectionIdsSchema.nullable().optional(),
-      chat: agentCoreConnectionIdsSchema.nullable().optional(),
-    }).strict().optional(),
-    coreDefaults: z.object({
-      calendar: agentSourceIdSchema.nullable().optional(),
-      email: agentSourceIdSchema.nullable().optional(),
-      chat: agentSourceIdSchema.nullable().optional(),
-    }).strict().optional(),
     otherConnections: agentOtherConnectionIdsSchema.nullable().optional(),
     connections: z.record(agentSourceIdSchema, agentSourcePolicySchema.nullable()).refine(withinConnectionLimit, tooManyConnections).optional(),
     /**
@@ -206,22 +172,12 @@ export const agentSourcesPolicyInputSchema = z
   .strict()
 export type AgentSourcesPolicyInput = z.infer<typeof agentSourcesPolicyInputSchema>
 
-/** The connections an admin picked for a core source, or null for every connection that serves it. */
-export function agentCoreConnections(policy: AgentSourcesPolicy, kind: AgentCoreSource): readonly string[] | null {
-  return policy.coreConnections?.[kind] ?? null
-}
-
-/** The admin's default connection for a core source, or null for automatic. */
-export function agentCoreDefault(policy: AgentSourcesPolicy, kind: AgentCoreSource): string | null {
-  return policy.coreDefaults?.[kind] ?? null
-}
-
 /** The connections an admin put in Other context, or null for every connection whose read tools we reviewed. */
 export function agentOtherConnections(policy: AgentSourcesPolicy): readonly string[] | null {
   return policy.otherConnections ?? null
 }
 
-/** Where a connection can be added: a core source, or Other context. */
+/** Where a connection is read: the calendar, or as a connection of its own (Other context). */
 export const AGENT_SOURCE_SLOTS = [...AGENT_CORE_SOURCES, "other"] as const
 export type AgentSourceSlot = (typeof AGENT_SOURCE_SLOTS)[number]
 
@@ -235,13 +191,13 @@ export type AgentSourceConnection = z.infer<typeof agentSourceConnectionSchema>
  */
 const connectedMembersSchema = z.number().int().min(0).nullable().default(null)
 
-/** A connection behind calendar, email or team chat, with how many members connected it. */
+/** A connection that serves the calendar, with how many members connected it. */
 export const agentCoreSourceConnectionSchema = agentSourceConnectionSchema.extend({ connectedMembers: connectedMembersSchema })
 export type AgentCoreSourceConnection = z.infer<typeof agentCoreSourceConnectionSchema>
 
 /**
  * A connection in Other context. `workbotAgentBrief` adds whether it is one of Den's own providers (read there for what
- * isn't calendar, email or chat) and the policy it has now, which can differ from `settings.sources.connections`: a
+ * isn't the calendar: mail, chat, files) and the policy it has now, which can differ from `settings.sources.connections`: a
  * reviewed connection an admin took out of Other context before every connection was listed stays not allowed.
  */
 export const agentOtherSourceConnectionSchema = agentSourceConnectionSchema.extend({
@@ -285,7 +241,7 @@ export const agentConnectionToolsViewSchema = z.object({
   /** Tools agents may call. */
   readTools: z.number().int().min(0),
   tools: z.array(agentToolDecisionViewSchema),
-  /** Den's own providers: calendar, mail and chat are read under those sources, not here. */
+  /** Den's own providers: the calendar is read under its own setting, not here. */
   coreSourcesElsewhere: z.boolean(),
 })
 export type AgentConnectionToolsView = z.infer<typeof agentConnectionToolsViewSchema>
@@ -304,27 +260,11 @@ export function mergeAgentSourcesPolicy(current: AgentSourcesPolicy, change: Age
     if (value === null || value === "members") delete connections[id]
     else connections[id] = value
   }
-  const coreConnections: NonNullable<AgentSourcesPolicy["coreConnections"]> = {}
-  for (const kind of AGENT_CORE_SOURCES) {
-    const requested = change.coreConnections?.[kind]
-    const picked = requested === undefined ? current.coreConnections?.[kind] : requested
-    if (picked) coreConnections[kind] = [...new Set(picked)]
-  }
-  const coreDefaults: NonNullable<AgentSourcesPolicy["coreDefaults"]> = {}
-  for (const kind of AGENT_CORE_SOURCES) {
-    const requested = change.coreDefaults?.[kind]
-    const chosen = requested === undefined ? current.coreDefaults?.[kind] : requested
-    if (chosen) coreDefaults[kind] = chosen
-  }
   const requestedOther = change.otherConnections
   const otherConnections = requestedOther === undefined ? current.otherConnections : requestedOther ?? undefined
   const toolOverrides = mergeToolOverrides(current.toolOverrides, change.toolOverrides)
   return {
     calendar: change.calendar ?? current.calendar,
-    email: change.email ?? current.email,
-    chat: change.chat ?? current.chat,
-    ...(Object.keys(coreConnections).length ? { coreConnections } : {}),
-    ...(Object.keys(coreDefaults).length ? { coreDefaults } : {}),
     ...(otherConnections ? { otherConnections: [...new Set(otherConnections)] } : {}),
     connections,
     ...(toolOverrides ? { toolOverrides } : {}),
@@ -375,6 +315,20 @@ export const AGENT_MEMBER_BRIEF_MAX = 1_000
 export const AGENT_BRIEF_LINE_MAX = 300
 export const AGENT_BRIEF_DAILY_CAP_MAX = 10
 export const AGENT_EXTRA_CHECKS_MAX = 6
+/**
+ * `workbotAgentCheckGate`: a scheduled check is skipped only when the evaluation model puts the chance that something
+ * new could matter at or below this. The choices are what Manage › Workbot offers; the API takes any value in range.
+ */
+export const AGENT_CHECK_GATE_SKIP_AT_DEFAULT = 0.2
+export const AGENT_CHECK_GATE_SKIP_AT_CHOICES = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5] as const
+/**
+ * `workbotAgentSendCheck`: a message is held only when the evaluation model is at least this sure it should not be
+ * sent. The choices are what Manage › Workbot offers; the API takes any value in range.
+ */
+export const AGENT_SEND_CHECK_HOLD_AT_DEFAULT = 0.8
+export const AGENT_SEND_CHECK_HOLD_AT_CHOICES = [0.6, 0.7, 0.8, 0.9, 0.95] as const
+/** A threshold on the evaluation model's probability: never 0 or 1, which would turn a check into always or never. */
+export const agentEvaluationThresholdSchema = z.number().min(0.01).max(0.99)
 /** Why the agent asked for an extra check, as My bot shows it ("before your 2 PM with Northwind"). */
 export const AGENT_CHECK_REQUEST_WHY_MAX = 120
 
@@ -463,6 +417,20 @@ const workbotProactiveFieldsSchema = z.object({
    * field: a field not saved is carried over from the settings above and the template (`resolveAgentBrief`).
    */
   brief: storedAgentBriefSchema.optional(),
+  /**
+   * `workbotAgentCheckGate`: before a scheduled check, Den looks at what reached the member since their agent last
+   * looked and skips the check when nothing that could matter arrived. Absent means off.
+   */
+  checkGate: z.boolean().optional(),
+  /** `workbotAgentCheckGate`: the gate's threshold; absent means `AGENT_CHECK_GATE_SKIP_AT_DEFAULT`. */
+  checkGateThreshold: agentEvaluationThresholdSchema.optional(),
+  /**
+   * `workbotAgentSendCheck`: before a message is sent, a fast second model reads it against the brief and what the
+   * member was already told today, and Den holds one it is confident should not go. Absent means off.
+   */
+  sendCheck: z.boolean().optional(),
+  /** `workbotAgentSendCheck`: the check's threshold; absent means `AGENT_SEND_CHECK_HOLD_AT_DEFAULT`. */
+  sendCheckThreshold: agentEvaluationThresholdSchema.optional(),
 })
 
 const hoursInOrder = (value: { startHour: number; endHour: number }) => value.endHour > value.startHour
@@ -535,28 +503,32 @@ export const workbotProactiveViewSchema = z.object({
    * organization's connections.
    */
   sourceConnections: z.object({
+    /** The connections that serve the calendar. Each member's agent reads one of them, with no admin pick. */
     calendar: z.array(agentCoreSourceConnectionSchema),
-    email: z.array(agentCoreSourceConnectionSchema),
-    chat: z.array(agentCoreSourceConnectionSchema),
     /**
-     * Every other connection agents can read, each its own source: with `workbotAgentBrief` every connection (Den's
-     * own providers for what isn't calendar, email or chat), else a service with reviewed read tools.
+     * Every connection agents can read, each its own source: with `workbotAgentBrief` every connection (Den's own
+     * providers for what isn't the calendar: mail, chat, files), else a service with reviewed read tools.
      */
     other: z.array(agentOtherSourceConnectionSchema),
     /** Every connection an admin can add as a source, with where it can go. */
     all: z.array(agentSourceOptionSchema),
-    /**
-     * The default each core source uses now, by connection id: the admin's `coreDefaults` while it is still allowed,
-     * else the automatic one (the allowed connection most members connected). Null when nothing is allowed.
-     */
-    defaults: z.object({ calendar: z.string().nullable(), email: z.string().nullable(), chat: z.string().nullable() })
-      .default({ calendar: null, email: null, chat: null }),
   }).nullable(),
   /**
    * `workbotAgentBrief` only: the rhythm, limits and brief agents follow now. Absent while the feature is off, and from
    * servers before it.
    */
   brief: agentBriefViewSchema.optional(),
+  /**
+   * `workbotAgentCheckGate` only: `model` is whether this deployment can also judge new mail as routine (it has the
+   * key for the evaluation model); without it a check is skipped only when nothing arrived. Absent while the feature
+   * is off, and from servers before it; `settings.checkGate` is the switch.
+   */
+  checkGate: z.object({ model: z.boolean() }).optional(),
+  /**
+   * `workbotAgentSendCheck` only: `ready` is whether this deployment can run the check (it has the key for the
+   * evaluation model). Absent while the feature is off, and from servers before it; `settings.sendCheck` is the switch.
+   */
+  sendCheck: z.object({ ready: z.boolean() }).optional(),
 })
 export type WorkbotProactiveView = z.infer<typeof workbotProactiveViewSchema>
 
@@ -613,8 +585,8 @@ export type AgentHourWindow = z.infer<typeof agentHourWindowSchema>
 
 /**
  * Everything a member's change can touch: their words, their narrower limits, each responsibility's mute, and per
- * source whether it is read (`source`), their instruction for it (`sourceInstruction`) and, for calendar, email and
- * team chat, which allowed connection it reads (`sourceConnection`).
+ * source whether it is read (`source`), their instruction for it (`sourceInstruction`) and, for the calendar, which
+ * calendar app it reads (`sourceConnection`).
  */
 export const AGENT_CHANGE_FIELDS = [
   ...AGENT_PREFERENCE_FIELDS, "hours", "dailyCap", "quietWindow", ...AGENT_RESPONSIBILITIES, "source", "sourceInstruction", "sourceConnection",
@@ -735,27 +707,27 @@ export const memberAgentSourceConnectionSchema = agentSourceConnectionSchema.ext
 export type MemberAgentSourceConnection = z.infer<typeof memberAgentSourceConnectionSchema>
 
 /**
- * Who picked the connection a core source reads: the member, the admin's default, or automatically (the default most
- * members use, or the first allowed one the member already connected).
+ * Who picked the connection the calendar reads: the member, or automatically (the calendar app most members use, or
+ * the first one the member already connected).
  */
-export const AGENT_SOURCE_CHOSEN_BY = ["member", "admin", "auto"] as const
+export const AGENT_SOURCE_CHOSEN_BY = ["member", "auto"] as const
 export type AgentSourceChosenBy = (typeof AGENT_SOURCE_CHOSEN_BY)[number]
 
 /** One source as the member sees it: whether their agent reads it, why it can't, and what they told it. */
 export const memberAgentSourceSchema = z.object({
-  /** `calendar`, `email`, `chat`, or a connection id. */
+  /** `calendar`, or a connection id. */
   id: z.string(),
   kind: z.enum([...AGENT_CORE_SOURCES, "other"]),
-  /** "Calendar", "Team chat", "Granola". */
+  /** "Calendar", "Slack", "Granola". */
   name: z.string(),
   /**
-   * The connection it reads and whether the member's account is ready. Calendar, email and team chat read exactly one
-   * (none when the admin allowed none the member can use); another source reads its own connection.
+   * The connection it reads and whether the member's account is ready. The calendar reads exactly one (none when the
+   * organization has no calendar app the member can use); another source reads its own connection.
    */
   connections: z.array(memberAgentSourceConnectionSchema),
-  /** Calendar, email and team chat: the allowed connections the member can pick from. Empty for other sources. */
+  /** The calendar: the calendar apps the member can pick from. Empty for other sources. */
   options: z.array(memberAgentSourceConnectionSchema).default([]),
-  /** Calendar, email and team chat: who picked the connection it reads. Null for other sources. */
+  /** The calendar: who picked the connection it reads. Null for other sources. */
   chosenBy: z.enum(AGENT_SOURCE_CHOSEN_BY).nullable().default(null),
   /** The admin's choice: on for everyone and not allowed are locked; members choose is the member's switch. */
   policy: agentSourcePolicySchema,
@@ -810,7 +782,7 @@ export const memberAgentViewSchema = z.object({
   limits: memberAgentLimitsSchema.optional(),
   /** The member's recent changes, newest first: where each came from, and whether it was undone. */
   changes: z.array(memberAgentChangeSchema).optional(),
-  /** What the agent reads: calendar, email, team chat and every other connection it may read. */
+  /** What the agent reads: the calendar and every connection it may read. */
   sources: z.array(memberAgentSourceSchema).optional(),
   /** The member's agent in the Library. */
   link: z.string().optional(),
@@ -847,10 +819,10 @@ export const memberAgentInputSchema = z
     /** Hours inside the working day when only urgent messages go out; null removes it. */
     quietWindow: agentHourWindowSchema.nullable().optional(),
     /**
-     * What the agent reads, by source id or name ("Granola", "Linear", "Team chat"): on or off, an instruction in the
-     * member's own words (an empty string clears it), and for calendar, email or team chat which allowed connection to
-     * read (`connectionId`: "read my calendar from this connection"). The admin's policy decides which sources a member
-     * may change and which connections they may pick.
+     * What the agent reads, by source id or name ("Granola", "Linear", "Slack"): on or off, an instruction in the
+     * member's own words (an empty string clears it), and for the calendar which calendar app to read
+     * (`connectionId`: "read my calendar from this connection"). The admin's policy decides which sources a member
+     * may change.
      */
     sources: z.array(z.object({
       source: z.string().trim().min(1).max(120),
@@ -915,7 +887,12 @@ function metadataRecord(metadata: unknown): Record<string, unknown> {
 /** The saved policy, field by field: an unreadable field falls back to its default, never the whole set. */
 export function readWorkbotProactiveSettings(metadata: unknown): WorkbotProactiveSettings {
   const workbot = metadataRecord(metadata).workbot
-  const stored = isRecord(workbot) && isRecord(workbot.proactive) ? workbot.proactive : {}
+  return readStoredWorkbotProactiveSettings(isRecord(workbot) ? workbot.proactive : undefined)
+}
+
+/** A policy as it is stored (the organization's under `workbot.proactive`, or a team's own), read the same way. */
+export function readStoredWorkbotProactiveSettings(value: unknown): WorkbotProactiveSettings {
+  const stored = isRecord(value) ? value : {}
   const merged: Record<string, unknown> = { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS }
   for (const [key, schema] of Object.entries(workbotProactiveFieldsSchema.shape)) {
     if (key === "brief") continue

@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useState, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
 import { Cpu, RefreshCcw, Server } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -22,7 +22,9 @@ import {
   type DenEndpointSource,
 } from "@/app/lib/den-endpoint-sources";
 import { useOpencodeEngineControls } from "@/react-app/shell/opencode-engine-controls";
-import { isDesktopRuntime } from "@/app/utils";
+import { desktopBridge } from "@/app/lib/desktop";
+import { isDesktopRuntime, isElectronRuntime, isMacPlatform } from "@/app/utils";
+import { useDesktopFeature } from "../../session/status/use-desktop-feature";
 import { t } from "@/i18n";
 import { ControlPlaneUrlEditor } from "../cloud/control-plane-url-editor";
 import { usePlatform } from "../../../kernel/platform";
@@ -799,6 +801,8 @@ export function AdvancedDeveloperSection(props: AdvancedDeveloperSectionProps) {
         </LayoutSectionItemHeader>
       </LayoutSectionItem>
 
+      <ComputerUseRecordingItem />
+
       {isDesktopRuntime() && props.opencodeDevModeEnabled && props.developerMode ? (
         <LayoutSectionItem>
           <LayoutSectionItemHeader>
@@ -848,5 +852,52 @@ export function AdvancedDeveloperSection(props: AdvancedDeveloperSectionProps) {
         </LayoutSectionItem>
       ) : null}
     </LayoutSection>
+  );
+}
+
+/**
+ * Lets screen recordings show the agent's cursor, frame and pill on this Mac, for demos.
+ * Main keeps the choice until OpenWork quits; it applies to the next app the agent starts using.
+ */
+function ComputerUseRecordingItem() {
+  const shown = useDesktopFeature("computerUse") && isElectronRuntime() && isMacPlatform();
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!shown) return;
+    let current = true;
+    desktopBridge.computerRecordableOverlay()
+      .then((value) => { if (current) setEnabled(value); })
+      .catch(() => { if (current) setEnabled(false); });
+    return () => { current = false; };
+  }, [shown]);
+
+  if (!shown) return null;
+  const change = (next: boolean) => {
+    setError("");
+    desktopBridge.computerSetRecordableOverlay(next)
+      .then(setEnabled)
+      .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+  };
+  return (
+    <LayoutSectionItem>
+      <LayoutSectionItemHeader>
+        <LayoutSectionItemTitle>Show computer use in screen recordings</LayoutSectionItemTitle>
+        <LayoutSectionItemDescription>
+          The agent's cursor, frame and controls appear in screen recordings and screen sharing, for demos. Starts with the next app the agent uses and turns off when OpenWork quits. The agent's own screenshots never include them.
+        </LayoutSectionItemDescription>
+        <LayoutSectionItemHeaderActions>
+          <Switch
+            aria-label="Show computer use in screen recordings"
+            data-testid="settings-computer-recordable-overlay"
+            checked={enabled === true}
+            disabled={enabled === null}
+            onCheckedChange={change}
+          />
+        </LayoutSectionItemHeaderActions>
+      </LayoutSectionItemHeader>
+      {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}
+    </LayoutSectionItem>
   );
 }

@@ -3,6 +3,7 @@ import { create } from "zustand"
 import type { ComputerRequest } from "@openwork/types/desktop-ipc"
 
 import { desktopBridge } from "@/app/lib/desktop"
+import { useComputerSessionHistoryStore } from "@/components/chat/computer-session-history-store"
 import { isActiveWorkSessionStatus } from "../sidebar/utils"
 import { useDesktopFeature } from "../status/use-desktop-feature"
 
@@ -40,6 +41,7 @@ export function ComputerBridge() {
   const enabled = useDesktopFeature("computerUse")
   const remote = useDesktopFeature("remoteComputers")
   const standardCodeMode = useDesktopFeature("standardCodeMode")
+  const parallel = useDesktopFeature("parallelComputerUse")
   useEffect(() => {
     void desktopBridge.computerSetRemoteEnabled(enabled && remote).catch(() => {})
   }, [enabled, remote])
@@ -52,6 +54,12 @@ export function ComputerBridge() {
   useEffect(() => {
     void desktopBridge.computerSetStandardCodeMode(standardCodeMode).catch(() => {})
   }, [standardCodeMode])
+
+  // A chat's subagents work on its computer as part of it.
+  useEffect(() => {
+    void desktopBridge.computerSetParallelAgents(parallel).catch(() => {})
+    useComputerSessionHistoryStore.getState().setParallel(parallel)
+  }, [parallel])
 
   // The broker raises computer-use requests only while computer use is on, but the
   // built-in browser's sign-in confirmations arrive either way.

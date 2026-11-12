@@ -32,10 +32,6 @@ const BROWSER_DEFAULT_URL = "about:blank";
 // URL a user-initiated new tab (the "+" button / opening the browser panel)
 // lands on. The agent's programmatic path keeps BROWSER_DEFAULT_URL.
 const BROWSER_NEW_TAB_URL = "https://www.google.com";
-// Bound native page allocation across conversations. Refuse new work rather
-// than evicting a live document (unsaved input and CDP handles cannot be restored
-// from a URL). This is a tab bound, not a Chromium process or memory limit.
-const MAX_BROWSER_TABS = 12;
 const MAX_CLOSED_BROWSER_TABS = 20;
 const BROWSER_TARGET_RESOLVE_TIMEOUT_MS = 2500;
 const BROWSER_SECURITY_PREFERENCES = Object.freeze({
@@ -449,7 +445,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   function routeBlockedMainWindowNavigation(url) {
     if (!/^https?:\/\//i.test(String(url ?? ""))) return;
     const ownerSessionId = registry.visibleSessionId();
-    runDetachedTask("open linked browser page", () => openBrowserUrlForAutomation(url, "builtin", { ownerSessionId }));
+    // Promise callbacks still run inside Electron's native navigation event.
+    // Defer the whole routing operation, not just the main-window stop.
+    setImmediate(() => {
+      runDetachedTask("open linked browser page", () => openBrowserUrlForAutomation(url, "builtin", { ownerSessionId }));
+    });
   }
 
   function cdpBrowserUrl() {
@@ -484,10 +484,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     signal?.throwIfAborted();
     const tab = createBrowserTab("about:blank", { select: true, initializeBlank: false, deferBackground: true, ownerSessionId, automationProtected: true });
     tab.operation = true;
-    const stop = () => {
-      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop();
-      closeBrowserTab(tab.tabId);
+    let cleanupQueued = false;
+    const closeAfterNavigation = (error = undefined) => {
+      if (cleanupQueued) return;
+      cleanupQueued = true;
+      // Revoke the tab/control synchronously, before a retry can reuse them.
+      // Only native destruction waits for the navigation callback to unwind.
+      if (getBrowserTab(tab.tabId) === tab) closeBrowserTab(tab.tabId, false, error, { deferNativeClose: true });
     };
+    const stop = () => closeAfterNavigation(signal?.reason);
     signal?.addEventListener("abort", stop, { once: true });
     try {
       await beforeLoad?.(tab);
@@ -506,7 +511,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
     catch (error) {
       // Preserve the initiating failure when last-tab cleanup revokes control.
-      closeBrowserTab(tab.tabId, false, error);
+      closeAfterNavigation(error);
       throw error;
     }
     finally { signal?.removeEventListener("abort", stop); tab.operation = false; sendBrowserState(); }
@@ -988,12 +993,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   });
 
   function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, deferBackground = false, ownerSessionId = null, restoreTabId = null, automationProtected = false, forPerson = false, contentsOptions = /** @type {import("electron").WebContentsViewConstructorOptions} */ ({}) } = {}) {
-    // Check synchronously before creating a WebContentsView, including pending
-    // opens, popups, transcript links and the tab-strip button.
-    if (browserTabs.size >= MAX_BROWSER_TABS) {
-      throw new BrowserTaskError("tab_limit", `OpenWork has ${MAX_BROWSER_TABS} browser tabs open. Close an unused browser tab in any conversation, then try again.`);
-    }
-    if (!restoreTabId && registry.size() >= 100) throw new Error("OpenWork has 100 saved browser tabs. Close an unused tab, then try again.");
+    // Keep existing documents intact when opening a tab: never evict a page
+    // (and its unsaved input or automation handles) to make room for another.
     installBrowserSessionHooks();
     ensureWebMcpFramePolicy();
     const tabId = restoreTabId ?? createBrowserTabId();
@@ -1733,7 +1734,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return tab;
   }
 
-  function closeBrowserTab(tabId = registry.onScreenTabId(), preserve = false, reason = undefined) {
+  function closeBrowserTab(tabId = registry.onScreenTabId(), preserve = false, reason = undefined, { deferNativeClose = false } = {}) {
     const tab = getBrowserTab(tabId);
     if (!registry.has(tabId)) return null;
     taskHost.invalidate(tabId, { closed: true, reason });
@@ -1761,9 +1762,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (removed && !removed.ownerHasTabs) {
       sendToRenderer("openwork:browser:panel-closed", { ownerSessionId: removed.tab.ownerSessionId });
     }
-    try {
-      if (tab && !tab.view.webContents.isDestroyed()) tab.view.webContents.close({ waitForBeforeUnload: false });
-    } catch { /* already destroyed */ }
+    const closeContents = () => {
+      try {
+        if (tab && !tab.view.webContents.isDestroyed()) tab.view.webContents.close({ waitForBeforeUnload: false });
+      } catch { /* already destroyed */ }
+    };
+    if (deferNativeClose) setImmediate(closeContents);
+    else closeContents();
     releaseEmptyBackgroundWindow();
     sendBrowserState();
     return tabId;
@@ -2207,7 +2212,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     ipcMain.handle("openwork:browser:state", () => ({
       ...browserStatePayload(),
       nativeViews: browserNativeViews(),
-      tabLimit: MAX_BROWSER_TABS,
       backgroundWindowCount: Number(Boolean(backgroundWindow && !backgroundWindow.isDestroyed())),
       backgroundWindowVisible: Boolean(backgroundWindow && !backgroundWindow.isDestroyed() && backgroundWindow.isVisible()),
       popOutAboveOthers: Boolean(popOutWindow && !popOutWindow.isDestroyed() && popOutWindow.isAlwaysOnTop()),

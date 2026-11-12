@@ -54,12 +54,14 @@ const ADMIN = "adminRoute(): platform admin acting across tenants; no single ten
 
 export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   // app.use middleware entries (not endpoints)
-  support("ALL", "/*", "request.pipeline", "Global middleware stack (observability, request id, headers, access log, CORS, sessionMiddleware, audit request capture)."),
+  support("ALL", "/*", "request.pipeline", "Global middleware stack (observability, request id, headers, access log, CORS, sessionMiddleware, audit request capture, config token confinement)."),
   support("ALL", "/v1/*", "request.preclaim_scope", "preclaimScopeMiddleware: denies provisional agent users outside their bootstrap scope."),
   support("ALL", "/api/auth/scim/v2/*", "scim.diagnostics", "SCIM diagnostics middleware (timing logs only); concrete SCIM v2 routes are declared in ./org.ts."),
   support("ALL", "/api/auth/sso/saml2/callback/*", "sso.saml_callback.policy", "samlResponsePolicyMiddleware before better-auth; the endpoint itself is declared with the better-auth endpoints."),
   support("ALL", "/api/auth/sso/saml2/sp/acs/*", "sso.saml_acs.policy", "samlResponsePolicyMiddleware before better-auth ACS; the endpoint itself is declared with the better-auth endpoints."),
   support("ALL", "/v1/auth/desktop-handoff/exchange", "desktop_handoff.cors", "Reflecting CORS middleware for the grant exchange (only when !env.corsHandledByEdge)."),
+  support("ALL", "/mcp/public", "mcp_public.no_index", "noIndex middleware: marks the public App MCP surface as not to be indexed by search engines (header only); the App server route is declared with the MCP consumption transports."),
+  support("ALL", "/mcp/public/*", "mcp_public.no_index", "noIndex middleware: marks the public App MCP surface as not to be indexed by search engines (header only); the App server route is declared with the MCP consumption transports."),
 
   // app.fetch re-dispatch
   route("ALL", "/v1/orgs/:orgId/*", "proxy", "legacy_org.proxy", "request.proxy", "organization", "orgId", "delegatedRoute legacy org proxy re-dispatches through app.fetch; the destination route records."),
@@ -70,6 +72,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   mcp("ALL", "/mcp/agent/connections/:connectionId", "mcp_agent.connection.proxy"),
   mcp("ALL", "/mcp/agent/servers/:connectionId", "mcp_agent.connection.server"),
   mcp("ALL", "/mcp/admin", "mcp_admin.transport"),
+  mcp("ALL", "/mcp/public/apps/:appIdOrName", "mcp_public.app.server"),
   mcp("GET", "/mcp/.well-known/oauth-protected-resource", "mcp.protected_resource.read"),
   mcp("GET", "/mcp/agent/.well-known/oauth-protected-resource", "mcp_agent.protected_resource.read"),
   mcp("GET", "/mcp/admin/.well-known/oauth-protected-resource", "mcp_admin.protected_resource.read"),
@@ -94,6 +97,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   readOnly("/oauth/client-metadata.json", "discovery.oauth_client_metadata.read", "platform.discovery", "discovery_document", null),
   readOnly("/docs", "api_docs.read", "platform.discovery", "api_document", null),
   readOnly("/openapi.json", "api_docs.openapi.read", "platform.discovery", "api_document", null),
+  readOnly("/v1/config-blobs/schema/:formatVersion", "config_blob.schema.read", "platform.discovery", "api_document", null, "Public JSON Schema of the config blob format (envelope and area spec schemas); no organization, no flag, side-effect free."),
   readOnly("/v1/app-version", "app_version.read", "platform.discovery", "app_version", null),
   readOnly("/v1/orgs/sso/singleton", "auth.sso_singleton.read", "platform.discovery", "deployment", null),
   readOnly("/v1/auth/bootstrap/status", "auth.bootstrap.status.read", "platform.discovery", "deployment", null),
@@ -121,6 +125,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
 
   // Auth helpers
   platform("GET", "/v1/auth/login-options", "auth.login_options.read", "platform.auth", "login_options", null, "Public, bot-protected; reveals account sign-in methods."),
+  platform("GET", "/v1/auth/sso-options", "auth.sso_options.read", "platform.auth", "login_options", null, "Public, rate limited; lists an organization's enabled SSO identity providers for its /sso/<slug> page."),
   platform("GET", "/v1/orgs/sso/resolve", "auth.sso.resolve", "platform.auth", "login_options", null, "Public, bot-protected email -> SSO routing."),
   handler("GET", "/v1/orgs/invitations/preview", "tenant_read", "invitation.preview", "invitation.read", "invitation", "Public preview by invitation id/token. The token proves the invitation's organization: once the invitation is found the handler attributes the served read there (category read, off by default), actor unknown. The token is never recorded (no resource id). Unknown tokens (404) stay platform evidence."),
   platform("POST", "/v1/auth/bootstrap/verify", "auth.bootstrap.verify", "platform.auth", "deployment", null, "One-time deployment bootstrap code."),
@@ -136,6 +141,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   // Session-only user routes and org creation
   readOnly("/v1/me", "user.read", "platform.user", "user", null),
   userScoped("PATCH", "/v1/me/profile", "user.profile.update", "platform.user", "user", "audit/domain/account.ts", "Direct database update (no better-auth hook): the handler appends account.profile_updated (name before/after) to every organization where the user is an active member."),
+  platform("GET", "/v1/me/sso-sign-in", "user.sso_sign_in.list", "platform.user", "organization", null, "Lists the caller's member organizations with ready SSO and their sign-in URLs, for re-authentication; no tenant is chosen."),
   platform("GET", "/v1/me/invitations", "user.invitation.list", "platform.user", "invitation", null, "Lists pending invitations addressed to the caller's verified email; no tenant until one is accepted."),
   platform("GET", "/v1/me/orgs", "user.organization.list", "platform.user", "organization", null, "Lists the caller's memberships; may hydrate the session active org."),
   userScoped("POST", "/v1/me/active-organization", "session.active_organization.update", "platform.user", "auth_session", "audit/domain/sessions.ts", "The handler appends session.organization_entered in the destination organization only (membership verified); the previous organization is never recorded and an unchanged organization records nothing. Automatic active-organization repair (GET /v1/me/orgs, resolveUserOrganizationsMiddleware) is not a user switch and records nothing."),
@@ -145,6 +151,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
 
   // Scheduled maintenance (bearer DEN_MAINTENANCE_TOKEN; 404 when unset)
   platform("POST", "/internal/audit/usage/refresh", "audit.usage.refresh", "platform.maintenance", "audit_usage", null, "Called by the den-audit-usage cron (Helm CronJob, Render cron job). Recomputes every organization's audit_state totals from stored rows; no organization activity, so platform evidence only."),
+  platform("POST", "/internal/github/reconcile/run", "connector.github.reconcile.run", "platform.maintenance", "github_reconcile", null, "Called by the den-github-reconcile cron (Helm CronJob, Render cron job). Checks due GitHub connector targets for new commits across organizations and queues resyncs; each resulting sync records its own connector_sync.completed job outcome, so platform evidence only."),
 
   // Global platform admin
   platform("GET", "/v1/admin/services", "platform.service_readiness.read", "platform.admin", "service_readiness", null, `${ADMIN} Cached diagnostics; stale-while-revalidate schedules read-only outbound probes through bounded durable admission (not a pure metadata read). No credentials or upstream error bodies.`),
@@ -174,12 +181,13 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   platform("POST", "/v1/admin/admins", "platform.admin_allowlist.add", "platform.admin", "admin_allowlist", null, ADMIN),
   platform("DELETE", "/v1/admin/admins/:adminId", "platform.admin_allowlist.remove", "platform.admin", "admin_allowlist", "adminId", ADMIN),
   platform("GET", "/v1/admin/sandbox-orgs", "platform.sandbox_organization.list", "platform.admin", "sandbox_organization", null, `${ADMIN} Lists sandbox organizations; records sandboxes whose time ran out as closed before listing (Free Auto already stops at expiry).`),
-  platform("POST", "/v1/admin/sandbox-orgs", "platform.sandbox_organization.create", "platform.admin", "sandbox_organization", null, `${ADMIN} Creates a new organization owned by the admin, sets its plan to Enterprise until the sandbox ends, adds an AI Gateway provider (minting the sandbox's own capped OpenRouter key through OpenRouter's key API when configured; only its hash is stored), per-member OAuth connectors (with sandboxMicrosoft365, a Microsoft 365 connector registered with the sample work apps instead of Outlook, Calendar and Drive) and a join link. The organization did not exist before the request, so platform evidence only.`),
+  platform("POST", "/v1/admin/sandbox-orgs", "platform.sandbox_organization.create", "platform.admin", "sandbox_organization", null, `${ADMIN} Creates a new organization owned by the admin, sets its plan to Enterprise until the sandbox ends, adds an AI Gateway provider (minting the sandbox's own capped OpenRouter key through OpenRouter's key API when configured; only its hash is stored), per-member OAuth connectors (with sandboxMicrosoft365, a Microsoft 365 connector registered with the sample work apps instead of Outlook, Calendar and Drive; with sandboxSlack, a Slack connector and the Workbot Slack app installed with a sample bot token from the sample work apps) and a join link. The organization did not exist before the request, so platform evidence only.`),
   platform("POST", "/v1/admin/sandbox-orgs/:sandboxId/rotate-link", "platform.sandbox_organization.join_link.rotate", "platform.admin", "sandbox_organization", "sandboxId", `${ADMIN} Replaces the join token; the token is never recorded.`),
-  platform("POST", "/v1/admin/sandbox-orgs/:sandboxId/join-role", "platform.sandbox_organization.join_role.update", "platform.admin", "sandbox_organization", "sandboxId", `${ADMIN} Sets organization metadata sandboxJoinRole (member or admin) for people who join from now on; existing members keep their role.`),
+  platform("POST", "/v1/admin/sandbox-orgs/:sandboxId/join-role", "platform.sandbox_organization.join_role.update", "platform.admin", "sandbox_organization", "sandboxId", `${ADMIN} Sets organization metadata sandboxJoinRole (member, admin or super-admin) for people who join from now on; choosing admin or super-admin raises people who already joined with a lower role, and nobody is demoted.`),
   platform("POST", "/v1/admin/sandbox-orgs/:sandboxId/extend", "platform.sandbox_organization.extend", "platform.admin", "sandbox_organization", "sandboxId", `${ADMIN} Moves the end date and reopens the sandbox: joins and Free Auto resume (Free Auto follows the sandbox row), the sandbox's own OpenRouter key is re-enabled and the Enterprise plan is granted again with the new end date.`),
   platform("POST", "/v1/admin/sandbox-orgs/:sandboxId/credit", "platform.sandbox_organization.credit.update", "platform.admin", "sandbox_organization", "sandboxId", `${ADMIN} Sets the spending cap on the sandbox's own OpenRouter key through OpenRouter's key API; the key is never recorded.`),
   platform("POST", "/v1/admin/sandbox-orgs/:sandboxId/microsoft-365", "platform.sandbox_organization.microsoft_365.add", "platform.admin", "sandbox_organization", "sandboxId", `${ADMIN} Registers Den as a confidential OAuth client with the sandbox's sample work apps and adds a per-member Microsoft 365 connector in the sandbox organization that signs in there (sandboxMicrosoft365); the client secret is stored encrypted and never recorded.`),
+  platform("POST", "/v1/admin/sandbox-orgs/:sandboxId/slack", "platform.sandbox_organization.slack.add", "platform.admin", "sandbox_organization", "sandboxId", `${ADMIN} Registers a sample Slack app with the sandbox's sample work apps, adds a per-member Slack connector in the sandbox organization and installs the Workbot Slack app on it with the sample bot token (sandboxSlack); the token and signing secret are stored encrypted and never recorded.`),
   platform("POST", "/v1/admin/sandbox-orgs/:sandboxId/close", "platform.sandbox_organization.close", "platform.admin", "sandbox_organization", "sandboxId", `${ADMIN} Stops joins and Free Auto (Free Auto follows the sandbox row) for the sandbox organization, returns its plan to Free when the Enterprise plan is still the one the sandbox granted, and disables its own OpenRouter key; members and data are kept.`),
   handler("GET", "/v1/sandbox-join/preview", "tenant_read", "sandbox_organization.join.preview", "sandbox.join", "sandbox_organization", "Public preview by sandbox join token. The token proves the organization: the handler attributes the served read there, actor unknown. The token is never recorded. Unknown tokens (404) stay platform evidence."),
   platform("GET", "/v1/admin/features", "platform.feature.list", "platform.admin", "feature", null, ADMIN),

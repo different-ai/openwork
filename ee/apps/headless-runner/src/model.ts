@@ -1,5 +1,6 @@
+import { HEADLESS_SESSION_HEADER } from "@openwork/types/den/workbot-usage"
 import { z } from "zod"
-import type { HeadlessModelAccess, Message, ToolCall, ToolSpec } from "./types.js"
+import type { DesktopView, HeadlessModelAccess, Message, ToolCall, ToolSpec } from "./types.js"
 
 /** Constructed per run: never mutates the deployment adapter or retains another member's credentials. */
 export function createModelAdapter(access: HeadlessModelAccess, options: { maxOutputTokens: number; fetch?: typeof fetch }): ModelClient {
@@ -17,15 +18,22 @@ export type ModelRequest = {
   model: string
   apiKey: string
   signal: AbortSignal
+  /**
+   * The conversation the call is for, sent as a header so OpenWork's gateway can attribute the spend to Workbot
+   * (Den › Analytics › Workbot). The gateway never forwards it to the model provider; callers set it only for calls
+   * that go through the gateway.
+   */
+  sessionId?: string
   /** Streams the model's text as it is written. Without it the call is not streamed. */
   onText?: (delta: string) => void
   /** The streamed text so far is void: the call is being retried from the start. */
   onReset?: () => void
   /**
-   * The model started writing a call to this tool (streamed calls only), before its input is complete; again with the
-   * call's `description` once that is written, while the rest of its input still is.
+   * The model started writing a call to this tool (streamed calls only), before its input is complete; again each time
+   * more of what it is doing is known, while the rest of its input is still being written: the desktop `view` it works
+   * in (so a caller shows browser work as browser work from the start) and its `description`.
    */
-  onTool?: (name: string, description?: string) => void
+  onTool?: OnTool
   /**
    * Messages after which the provider may cache the request so far (Anthropic). Without them, the request is cached
    * up to its last message. The system prompt is always a cache point, so at most three are used.
@@ -91,6 +99,10 @@ export function describeProviderError(body: string, requestId: string | null): s
   // Provider messages don't carry keys, but never log one if a proxy echoes it.
   const redacted = text.replace(/\b(sk|ow_[a-z]+|key)[-_][A-Za-z0-9_-]{8,}/g, "[redacted]").replace(/\s+/g, " ").slice(0, 300)
   return requestId ? `${redacted} (request ${requestId})` : redacted
+}
+
+function sessionHeader(request: Pick<ModelRequest, "sessionId">): Record<string, string> {
+  return request.sessionId ? { [HEADLESS_SESSION_HEADER]: request.sessionId } : {}
 }
 
 type Fetch = typeof fetch
@@ -281,11 +293,14 @@ function parseArguments(raw: string): Pick<ToolCall, "input" | "inputError"> {
 /** A call's description comes before its other arguments (a script can run to 32,000 characters), so look no further. */
 const DESCRIPTION_SCAN_CHARS = 4_096
 
+/** Told when a tool call starts being written, then whenever its view or description becomes known. */
+export type OnTool = (name: string, description?: string, view?: DesktopView) => void
+
 /**
- * The top-level `description` of a tool call's arguments as streamed so far, once its value is complete; a nested
- * field of the same name never counts. Null until then, or when it isn't among the first arguments written.
+ * A top-level string argument of a tool call as streamed so far, once its value is complete; a nested field of the
+ * same name never counts. Null until then, or when it isn't among the first arguments written.
  */
-export function streamedDescription(json: string): string | null {
+function streamedString(json: string, wanted: string): string | null {
   if (json.length > DESCRIPTION_SCAN_CHARS) return null
   let depth = 0
   let expecting: "key" | "value" | null = null
@@ -299,7 +314,7 @@ export function streamedDescription(json: string): string | null {
       if (depth === 1 && expecting !== null) {
         let value: unknown
         try { value = JSON.parse(json.slice(index, end + 1)) } catch { return null }
-        if (expecting === "value" && key === "description") return typeof value === "string" && value.trim() ? value : null
+        if (expecting === "value" && key === wanted) return typeof value === "string" ? value : null
         if (expecting === "key") key = String(value)
         expecting = null
       }
@@ -312,6 +327,36 @@ export function streamedDescription(json: string): string | null {
     else if (depth === 1 && char === ",") expecting = "key"
   }
   return null
+}
+
+/** The top-level `description` of a tool call's arguments as streamed so far, once complete and not blank. */
+export function streamedDescription(json: string): string | null {
+  const value = streamedString(json, "description")
+  return value?.trim() ? value : null
+}
+
+/** The desktop `view` (browser or computer) of a tool call's arguments as streamed so far, once complete. */
+export function streamedView(json: string): DesktopView | null {
+  const value = streamedString(json, "view")
+  return value === "browser" || value === "computer" ? value : null
+}
+
+/**
+ * Follows one tool call's arguments as they stream and tells `onTool` each time its view or description becomes
+ * known, with everything known so far, so each report stands on its own. Silent once both are known.
+ */
+export function toolProgress(onTool: OnTool) {
+  let view: DesktopView | undefined
+  let description: string | undefined
+  return (name: string, json: string) => {
+    if (!name || (view && description)) return
+    const nextView = view ?? streamedView(json) ?? undefined
+    const nextDescription = description ?? streamedDescription(json) ?? undefined
+    if (nextView === view && nextDescription === description) return
+    view = nextView
+    description = nextDescription
+    onTool(name, description, view)
+  }
 }
 
 // ---------------------------------------------------------------- Anthropic
@@ -508,9 +553,9 @@ async function readAnthropicStream(
   response: Response,
   signal: AbortSignal,
   onText: (delta: string) => void,
-  onTool: (name: string, description?: string) => void = () => undefined,
+  onTool: OnTool = () => undefined,
 ): Promise<ModelStep> {
-  const blocks = new Map<number, { kind: "text"; text: string } | { kind: "tool"; id: string; name: string; json: string; described?: true } | { kind: "other" }>()
+  const blocks = new Map<number, { kind: "text"; text: string } | { kind: "tool"; id: string; name: string; json: string; progress: ReturnType<typeof toolProgress> } | { kind: "other" }>()
   const usage: Usage = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 }
   let stopped = false
   let stopReason: string | null | undefined
@@ -533,7 +578,7 @@ async function readAnthropicStream(
           block.type === "text"
             ? { kind: "text", text: "" }
             : block.type === "tool_use" && block.id && block.name
-              ? { kind: "tool", id: block.id, name: block.name, json: "" }
+              ? { kind: "tool", id: block.id, name: block.name, json: "", progress: toolProgress(onTool) }
               : { kind: "other" },
         )
         if (block.type === "tool_use" && block.name) onTool(block.name)
@@ -544,8 +589,7 @@ async function readAnthropicStream(
           onText(value.delta.text)
         } else if (block?.kind === "tool" && value.delta.partial_json) {
           block.json += value.delta.partial_json
-          const description = block.described ? null : streamedDescription(block.json)
-          if (description) { block.described = true; onTool(block.name, description) }
+          block.progress(block.name, block.json)
         }
       } else if (value.type === "message_delta") {
         stopReason = value.delta?.stop_reason ?? stopReason
@@ -590,7 +634,7 @@ export function anthropicModel(options: {
       fetch: options.fetch ?? fetch,
       sleep,
       url: `${options.baseUrl}/messages`,
-      headers: { "x-api-key": request.apiKey, "anthropic-version": "2023-06-01" },
+      headers: { "x-api-key": request.apiKey, "anthropic-version": "2023-06-01", ...sessionHeader(request) },
       signal: request.signal,
       body: {
         model: request.model,
@@ -792,10 +836,10 @@ async function readOpenAIStream(
   response: Response,
   signal: AbortSignal,
   onText: (delta: string) => void,
-  onTool: (name: string, description?: string) => void = () => undefined,
+  onTool: OnTool = () => undefined,
 ): Promise<ModelStep> {
   let text = ""
-  const calls = new Map<number, { id: string; name: string; args: string; described?: true }>()
+  const calls = new Map<number, { id: string; name: string; args: string; progress: ReturnType<typeof toolProgress> }>()
   const usage: Usage = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 }
   let finished = false
   let cutOff = false
@@ -811,7 +855,7 @@ async function readOpenAIStream(
         onText(choice.delta.content)
       }
       for (const part of choice?.delta?.tool_calls ?? []) {
-        const entry = calls.get(part.index) ?? { id: "", name: "", args: "" }
+        const entry = calls.get(part.index) ?? { id: "", name: "", args: "", progress: toolProgress(onTool) }
         if (part.id) entry.id = part.id
         if (part.function?.name) {
           if (!entry.name) onTool(part.function.name)
@@ -819,8 +863,7 @@ async function readOpenAIStream(
         }
         if (part.function?.arguments) {
           entry.args += part.function.arguments
-          const description = entry.described || !entry.name ? null : streamedDescription(entry.args)
-          if (description) { entry.described = true; onTool(entry.name, description) }
+          entry.progress(entry.name, entry.args)
         }
         calls.set(part.index, entry)
       }
@@ -855,7 +898,7 @@ export function openAIModel(options: { baseUrl: string; maxOutputTokens: number;
         fetch: options.fetch ?? fetch,
         sleep,
         url: `${options.baseUrl}/chat/completions`,
-        headers: { authorization: `Bearer ${request.apiKey}` },
+        headers: { authorization: `Bearer ${request.apiKey}`, ...sessionHeader(request) },
         signal: request.signal,
         body: {
           model: request.model,
@@ -988,6 +1031,9 @@ function responsesStep(result: z.infer<typeof responsesResult>): ModelStep {
   }, result.status === "incomplete" && result.incomplete_details?.reason === "max_output_tokens")
 }
 
+/** Why a Responses call failed: `code` in OpenAI's own events, `type` where a gateway passes a provider's error on. */
+const responsesError = z.object({ code: z.string().nullish().catch(undefined), type: z.string().nullish().catch(undefined), message: z.string().optional() }).loose()
+
 const responsesEvent = z
   .object({
     type: z.string(),
@@ -996,19 +1042,34 @@ const responsesEvent = z
     output_index: z.number().optional(),
     response: z.unknown().optional(),
     message: z.string().optional(),
+    code: z.string().nullish().catch(undefined),
+    error: responsesError.nullish().catch(undefined),
   })
   .loose()
+
+/**
+ * Failures that pass on their own: the provider had a problem or is busy, as Anthropic's `overloaded_error` and
+ * `api_error` are. Anything else (a refused prompt or image, a quota) would fail the same way again.
+ */
+const TRANSIENT_RESPONSES_ERRORS: ReadonlySet<string> = new Set([
+  "server_error",
+  "server_is_overloaded",
+  "overloaded",
+  "overloaded_error",
+  "rate_limit_exceeded",
+  "rate_limit_error",
+])
 
 /** Assembles a streamed Responses call into the same step a non-streamed call returns. */
 async function readResponsesStream(
   response: Response,
   signal: AbortSignal,
   onText: (delta: string) => void,
-  onTool: (name: string, description?: string) => void = () => undefined,
+  onTool: OnTool = () => undefined,
 ): Promise<ModelStep> {
   let final: z.infer<typeof responsesResult> | undefined
-  // Calls being written, by output position, until each has said what it is doing.
-  const calls = new Map<number, { name: string; args: string }>()
+  // Calls being written, by output position, until each has said where and what it is doing.
+  const calls = new Map<number, { name: string; args: string; progress: ReturnType<typeof toolProgress> }>()
   try {
     for await (const raw of sseData(response, signal)) {
       const event = responsesEvent.safeParse(raw)
@@ -1016,22 +1077,24 @@ async function readResponsesStream(
       const { type } = event.data
       if (type === "response.output_text.delta" && event.data.delta) onText(event.data.delta)
       else if (type === "response.output_item.added" && event.data.item?.type === "function_call" && event.data.item.name) {
-        if (event.data.output_index !== undefined) calls.set(event.data.output_index, { name: event.data.item.name, args: "" })
+        if (event.data.output_index !== undefined) calls.set(event.data.output_index, { name: event.data.item.name, args: "", progress: toolProgress(onTool) })
         onTool(event.data.item.name)
       } else if (type === "response.function_call_arguments.delta" && event.data.delta && event.data.output_index !== undefined) {
         const call = calls.get(event.data.output_index)
         if (!call) continue
         call.args += event.data.delta
-        const description = streamedDescription(call.args)
-        if (description) { calls.delete(event.data.output_index); onTool(call.name, description) }
+        call.progress(call.name, call.args)
       } else if (type === "response.completed" || type === "response.incomplete") {
         const parsed = responsesResult.safeParse(event.data.response)
         if (!parsed.success) throw new ModelError("model_bad_response", "Unexpected response from the AI gateway.", false)
         final = parsed.data
       } else if (type === "response.failed" || type === "error") {
-        const failed = z.object({ error: z.object({ message: z.string().optional() }).loose().nullable().optional() }).loose().safeParse(event.data.response)
-        const reason = (failed.success ? failed.data.error?.message : undefined) ?? event.data.message ?? "unknown error"
-        throw new ModelError("model_failed", `The model failed: ${reason.slice(0, 300)}`, false, undefined, reason.slice(0, 300))
+        const failed = z.object({ error: responsesError.nullish() }).loose().safeParse(event.data.response)
+        const error = (failed.success ? failed.data.error : undefined) ?? event.data.error
+        const reason = error?.message ?? event.data.message ?? "unknown error"
+        // The call is made again from the start, like a stream that ended early (withStreamRetries).
+        const transient = [error?.code, error?.type, event.data.code].some((kind) => typeof kind === "string" && TRANSIENT_RESPONSES_ERRORS.has(kind))
+        throw new ModelError(transient ? "model_stream_interrupted" : "model_failed", `The model failed: ${reason.slice(0, 300)}`, transient, undefined, reason.slice(0, 300))
       }
     }
   } catch (error) {
@@ -1050,7 +1113,7 @@ export function openAIResponsesModel(options: { baseUrl: string; maxOutputTokens
         fetch: options.fetch ?? fetch,
         sleep,
         url: `${options.baseUrl}/responses`,
-        headers: { authorization: `Bearer ${request.apiKey}` },
+        headers: { authorization: `Bearer ${request.apiKey}`, ...sessionHeader(request) },
         signal: request.signal,
         body: {
           model: request.model,

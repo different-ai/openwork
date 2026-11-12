@@ -9,7 +9,7 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
-import { ArrowLeft, CheckCheck, Cloud, FileText, Globe, Maximize2, MoreHorizontal, PanelRight, TextSearch, Undo2, X, Zap } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowLeft, Cloud, FileText, Globe, Maximize2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -60,7 +60,8 @@ import { WorkbenchPaneStatus } from "./workbench-pane-status";
 import { MainSidebarControls } from "../sidebar/sidebar-chrome";
 import { MobileChatActions, MobileChatNavigation } from "./mobile-chat-navigation";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
-import type { SessionSettleState } from "../sidebar/session-settle";
+import { captureSessionActionTarget, type SessionActionTarget } from "../sidebar/session-menu-actions";
+import type { SessionArchiveToggle } from "../sidebar/use-session-archive";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
 import { useSessionFindStore } from "../surface/find-store";
 import {
@@ -82,8 +83,8 @@ import { type SidePanelItem, useUiStateStore } from "../../../shell/ui-state-sto
 import type { SessionNumberShortcutsState } from "../../../shell/session-number-shortcuts";
 import { useBootOverlayVisible } from "../../../shell/boot-state";
 import {
-  OPEN_RENAME_SESSION_EVENT,
-  renameSessionIdFromEvent,
+  OPEN_SESSION_ACTION_EVENT,
+  sessionDialogRequestFromEvent,
 } from "../../../shell/session-actions-bus";
 
 import { isElectronRuntime, isMacPlatform } from "../../../../app/utils";
@@ -174,7 +175,6 @@ export type SessionPageSidebarProps = {
   selectedSessionId: string | null;
   developerMode: boolean;
   sessionStatusById: Record<string, string>;
-  settleWorkspaceIds?: ReadonlySet<string>;
   /** The Workspaces · Feed switch ships with `settledSessions`. */
   feedEnabled?: boolean;
   sessionAttentionLabelById?: Record<string, string>;
@@ -238,8 +238,8 @@ export type SessionPagePaneRuntime = {
 };
 
 export type SessionPageProps = {
-  /** Settle state of the open session; one toggle shared with the sidebar, palette and shortcut. */
-  currentSessionSettle?: SessionSettleState;
+  /** Archive state of the open session (ships with `settledSessions`); one toggle shared with the palette and shortcut. */
+  currentSessionArchive?: SessionArchiveToggle;
   sessionReferenceInventories?: readonly SessionReferenceInventory[];
   createWorkspaceSessionMetadataCallbacks?: (runtime: SessionMetadataRuntime) => SessionMetadataCallbacks;
   isSessionReferenceCurrent?: (reference: SessionReferenceIdentity) => boolean;
@@ -298,7 +298,7 @@ export type SessionPageProps = {
   safeStringify?: (value: unknown) => string;
   activeQuestion?: PendingQuestion | null;
   questionReplyBusy?: boolean;
-  respondQuestion?: (requestID: string, answers: string[][]) => void;
+  respondQuestion?: (requestID: string, answers: string[][] | null) => void;
   statusBar?: Partial<StatusBarOverrides>;
   notFoundMessage?: string | null;
   mainContentTakeover?: React.ReactNode;
@@ -311,9 +311,9 @@ export type SessionPageProps = {
   chatFirstBusy?: boolean;
   /** Workspace-scoped wiring for the empty-state hero's full composer. */
   newTaskComposer?: NewTaskComposerContext | null;
-  onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
-  onDeleteSession?: (sessionId: string) => Promise<void> | void;
-  onArchiveSession?: (sessionId: string, archived: boolean) => Promise<void> | void;
+  onRenameSession?: (sessionId: string, title: string, workspaceId: string) => Promise<void> | void;
+  onDeleteSession?: (sessionId: string, workspaceId: string) => Promise<void> | void;
+  onArchiveSession?: (sessionId: string, archived: boolean, workspaceId: string) => Promise<void> | void;
   archiveDisabledReason?: string;
   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
   /** Settings content rendered inside the right pane when the settings rail icon is active. */
@@ -537,7 +537,7 @@ export function SessionPage(props: SessionPageProps) {
   const [renameBusy, setRenameBusy] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const [sessionActionId, setSessionActionId] = useState<string | null>(null);
+  const [sessionActionTarget, setSessionActionTarget] = useState<SessionActionTarget | null>(null);
   const workspaceName =
     props.selectedWorkspaceDisplay.displayName?.trim() ||
     props.selectedWorkspaceDisplay.name?.trim() ||
@@ -1093,10 +1093,7 @@ export function SessionPage(props: SessionPageProps) {
   useEffect(() => {
     props.onSessionTabsChange?.(sessionTabs.filter((tab) => !tab.draftDestination));
   }, [sessionTabs, props.onSessionTabsChange]);
-  const sessionActionTitle = useMemo(
-    () => sessionTitleForId(props.sidebar.workspaceSessionGroups, sessionActionId),
-    [props.sidebar.workspaceSessionGroups, sessionActionId],
-  );
+  const sessionActionTitle = sessionActionTarget?.title ?? "";
   const providerCount = props.hasUsableModel ? 1 : props.providerConnectedIds.length;
   const messageCountVisible = props.selectedSessionId ? 1 : 0;
   const hasMainContentTakeover = Boolean(props.mainContentTakeover);
@@ -1223,14 +1220,13 @@ export function SessionPage(props: SessionPageProps) {
     !showWorkspaceSetupEmptyState &&
     !canRenderReactSurface;
   const findButtonSessionId = props.selectedSessionId;
-  const currentSessionSettle = props.currentSessionSettle;
-  const showSettleButton = Boolean(
-    findButtonSessionId && !props.primarySlot && !hasMainContentTakeover
-      && currentSessionSettle && (currentSessionSettle.settled || currentSessionSettle.canSettle),
+  const currentSessionArchive = props.currentSessionArchive;
+  const showArchiveButton = Boolean(
+    findButtonSessionId && !props.primarySlot && !hasMainContentTakeover && currentSessionArchive,
   );
-  const settleLabel = currentSessionSettle?.settled
-    ? t("session_management.unsettle_session")
-    : t("session_management.settle_session");
+  const archiveLabel = currentSessionArchive?.archived
+    ? t("session_management.unarchive_session")
+    : t("session_management.archive_session");
   const canGoBackInConversationHistory = !pendingConversationHistoryNavigation && canNavigateSelectedConversationHistory(
     conversationHistory,
     props.selectedWorkspaceId,
@@ -1394,36 +1390,54 @@ export function SessionPage(props: SessionPageProps) {
     setDeleteOpen(false);
     setRenameBusy(false);
     setDeleteBusy(false);
-    setSessionActionId(null);
-  }, [props.selectedSessionId]);
+    setSessionActionTarget(null);
+  }, [props.selectedSessionId, props.selectedWorkspaceId]);
 
-  const openRenameModal = (sessionId: string) => {
+  const openRenameModal = (sessionId: string, workspaceId: string) => {
     if (!props.onRenameSession) return;
-    setSessionActionId(sessionId);
-    setRenameTitle(sessionTitleForId(props.sidebar.workspaceSessionGroups, sessionId));
+    const target = captureSessionActionTarget(props.sidebar.workspaceSessionGroups, sessionId, workspaceId);
+    if (!target) return;
+    setSessionActionTarget(target);
+    setRenameTitle(target.title);
     setRenameOpen(true);
   };
 
-  const handleRenameSessionRequest = useEffectEvent((event: Event) => {
-    if (!props.onRenameSession) return;
-    const sessionId = renameSessionIdFromEvent(event);
-    if (sessionId) openRenameModal(sessionId);
+  const openDeleteModal = (sessionId: string, workspaceId: string) => {
+    if (!props.onDeleteSession) return;
+    const target = captureSessionActionTarget(props.sidebar.workspaceSessionGroups, sessionId, workspaceId);
+    if (!target) return;
+    setSessionActionTarget(target);
+    setDeleteOpen(true);
+  };
+
+  const openCreateGroupModal = (workspaceId: string) => {
+    if (!props.sidebar.workspaceSessionGroups.some((entry) => entry.workspace.id === workspaceId)) return;
+    setCreateGroupWorkspaceId(workspaceId);
+    setCreateGroupLabel("");
+    setCreateGroupOpen(true);
+  };
+
+  const handleSessionDialogRequest = useEffectEvent((event: Event) => {
+    const request = sessionDialogRequestFromEvent(event);
+    if (!request) return;
+    if (request.action === "create-group") openCreateGroupModal(request.workspaceId);
+    else if (request.action === "rename") openRenameModal(request.target.sessionId, request.target.workspaceId);
+    else openDeleteModal(request.target.sessionId, request.target.workspaceId);
   });
 
   useEffect(() => {
-    if (!props.onRenameSession) return;
-    const handler = (event: Event) => handleRenameSessionRequest(event);
-    window.addEventListener(OPEN_RENAME_SESSION_EVENT, handler);
-    return () => window.removeEventListener(OPEN_RENAME_SESSION_EVENT, handler);
-  }, [props.onRenameSession]);
+    const handler = (event: Event) => handleSessionDialogRequest(event);
+    window.addEventListener(OPEN_SESSION_ACTION_EVENT, handler);
+    return () => window.removeEventListener(OPEN_SESSION_ACTION_EVENT, handler);
+  }, []);
 
   const submitRename = async () => {
-    const sessionId = sessionActionId;
+    const target = sessionActionTarget;
     const nextTitle = renameTitle.trim();
-    if (!sessionId || !props.onRenameSession || !nextTitle || nextTitle === sessionActionTitle.trim()) return;
+    if (!target || !props.onRenameSession || !nextTitle || nextTitle === sessionActionTitle.trim()) return;
     setRenameBusy(true);
     try {
-      await props.onRenameSession(sessionId, nextTitle);
+      await props.onRenameSession(target.sessionId, nextTitle, target.workspaceId);
       setRenameOpen(false);
     } finally {
       setRenameBusy(false);
@@ -1431,11 +1445,11 @@ export function SessionPage(props: SessionPageProps) {
   };
 
   const confirmDelete = async () => {
-    const sessionId = sessionActionId;
-    if (!sessionId || !props.onDeleteSession) return;
+    const target = sessionActionTarget;
+    if (!target || !props.onDeleteSession) return;
     setDeleteBusy(true);
     try {
-      await props.onDeleteSession(sessionId);
+      await props.onDeleteSession(target.sessionId, target.workspaceId);
       setDeleteOpen(false);
     } finally {
       setDeleteBusy(false);
@@ -1487,7 +1501,6 @@ export function SessionPage(props: SessionPageProps) {
           selectedSessionId={props.sidebar.selectedSessionId}
           showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
           sessionStatusById={props.sidebar.sessionStatusById}
-          settleWorkspaceIds={props.sidebar.settleWorkspaceIds}
           feedEnabled={props.sidebar.feedEnabled}
           sessionAttentionLabelById={props.sidebar.sessionAttentionLabelById}
           sessionAttentionSourceById={props.sidebar.sessionAttentionSourceById}
@@ -1502,19 +1515,12 @@ export function SessionPage(props: SessionPageProps) {
           draftScope={props.newTaskComposer?.draftScope}
           onCreateSplitTaskInWorkspace={props.sidebar.onCreateSplitTaskInWorkspace}
           onOpenRenameSession={props.onRenameSession ? openRenameModal : undefined}
-          onOpenDeleteSession={props.onDeleteSession ? (sessionId) => {
-            setSessionActionId(sessionId);
-            setDeleteOpen(true);
-          } : undefined}
-          onArchiveSession={props.onArchiveSession ? (sessionId, archived) => {
-            void props.onArchiveSession?.(sessionId, archived);
+          onOpenDeleteSession={props.onDeleteSession ? openDeleteModal : undefined}
+          onArchiveSession={props.onArchiveSession ? (sessionId, archived, workspaceId) => {
+            void props.onArchiveSession?.(sessionId, archived, workspaceId);
           } : undefined}
           archiveDisabledReason={props.archiveDisabledReason}
-          onOpenCreateGroupModal={(workspaceId) => {
-            setCreateGroupWorkspaceId(workspaceId);
-            setCreateGroupLabel("");
-            setCreateGroupOpen(true);
-          }}
+          onOpenCreateGroupModal={openCreateGroupModal}
           onOpenRenameWorkspace={props.sidebar.onOpenRenameWorkspace}
           onRevealWorkspace={props.sidebar.onRevealWorkspace}
           onForgetWorkspace={props.sidebar.onForgetWorkspace}
@@ -1655,7 +1661,7 @@ export function SessionPage(props: SessionPageProps) {
                   <TooltipContent>Find in conversation ({isMacPlatform() ? "⌘F" : "Ctrl+F"})</TooltipContent>
                 </Tooltip>
               ) : null}
-              {showSettleButton && currentSessionSettle ? (
+              {showArchiveButton && currentSessionArchive ? (
                 <Tooltip>
                   <TooltipTrigger
                     render={
@@ -1663,16 +1669,16 @@ export function SessionPage(props: SessionPageProps) {
                         variant="ghost"
                         size="icon-sm"
                         className="hidden rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground lg:inline-flex"
-                        aria-label={settleLabel}
+                        aria-label={archiveLabel}
                         aria-keyshortcuts={isMacPlatform() ? "Meta+Shift+E" : "Control+Shift+E"}
-                        data-session-header-settle={currentSessionSettle.settled ? "settled" : "active"}
-                        onClick={currentSessionSettle.toggle}
+                        data-session-header-archive={currentSessionArchive.archived ? "archived" : "active"}
+                        onClick={currentSessionArchive.toggle}
                       >
-                        {currentSessionSettle.settled ? <Undo2 size={16} /> : <CheckCheck size={16} />}
+                        {currentSessionArchive.archived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
                       </Button>
                     }
                   />
-                  <TooltipContent>{settleLabel} ({isMacPlatform() ? "⌘⇧E" : "Ctrl+Shift+E"})</TooltipContent>
+                  <TooltipContent>{archiveLabel} ({isMacPlatform() ? "⌘⇧E" : "Ctrl+Shift+E"})</TooltipContent>
                 </Tooltip>
               ) : null}
               {showCloudSignIn ? (
@@ -1710,10 +1716,10 @@ export function SessionPage(props: SessionPageProps) {
                       Find in conversation
                     </DropdownMenuItem>
                   ) : null}
-                  {showSettleButton && currentSessionSettle ? (
-                    <DropdownMenuItem onClick={currentSessionSettle.toggle}>
-                      {currentSessionSettle.settled ? <Undo2 className="size-4" /> : <CheckCheck className="size-4" />}
-                      {settleLabel}
+                  {showArchiveButton && currentSessionArchive ? (
+                    <DropdownMenuItem onClick={currentSessionArchive.toggle}>
+                      {currentSessionArchive.archived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
+                      {archiveLabel}
                     </DropdownMenuItem>
                   ) : null}
                   <DropdownMenuItem onClick={openArtifactRailPane}>
@@ -1728,22 +1734,6 @@ export function SessionPage(props: SessionPageProps) {
                   ) : null}
                 </DropdownMenuContent>
               </DropdownMenu>
-              {props.developerMode ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="hidden lg:inline-flex"
-                  onClick={() => {
-                    try {
-                      window.localStorage.removeItem("openwork.acknowledgedProviders");
-                      window.localStorage.removeItem("openwork.orgOnboardingSeen");
-                    } catch {}
-                  }}
-                  title="Clears acknowledged providers + org onboarding so they trigger again"
-                >
-                  Reset notifications
-                </Button>
-              ) : null}
               {!isElectronRuntime() && computerUseFeature && remoteComputersFeature && props.openworkServerClient ? <CloudComputerControl client={props.openworkServerClient} /> : null}
               {computerUse && props.selectedSessionId ? <ComputerControl key={props.selectedSessionId} sessionId={props.selectedSessionId} /> : null}
               <Tooltip>
@@ -1927,7 +1917,7 @@ export function SessionPage(props: SessionPageProps) {
                             workspaceId={props.runtimeWorkspaceId!}
                             sessionId={props.selectedSessionId!}
                             archived={archivedInWorkspace(props.selectedWorkspaceId, props.selectedSessionId)}
-                            onRestoreSession={async () => { await props.onArchiveSession?.(props.selectedSessionId!, false); }}
+                            onRestoreSession={async () => { await props.onArchiveSession?.(props.selectedSessionId!, false, props.selectedWorkspaceId!); }}
                             isControlTarget={activeWorkbenchPane === "primary"}
                             chatPane={canRenderSplitSurface ? "primary" : undefined}
                             opencodeBaseUrl={reactSessionBaseUrl}
@@ -2012,7 +2002,7 @@ export function SessionPage(props: SessionPageProps) {
                                   sandboxBackend={splitPaneRuntime.sandboxBackend}
                                   sessionId={splitSession.sessionId}
                                   archived={archivedInWorkspace(splitSession.workspaceId, splitSession.sessionId)}
-                                  onRestoreSession={async () => { await props.onArchiveSession?.(splitSession.sessionId, false); }}
+                                  onRestoreSession={async () => { await props.onArchiveSession?.(splitSession.sessionId, false, splitSession.workspaceId); }}
                                   isControlTarget={activeWorkbenchPane === "secondary"}
                                   chatPane="secondary"
                                   opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}

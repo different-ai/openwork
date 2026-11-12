@@ -27,12 +27,32 @@ import {
   parseOrgListPayload,
   roleIncludesCanonicalRole,
   permissionLockReason,
+  type AdminReauthMinutes,
+  type MaxSessionLengthDays,
+  type SessionLengthHours,
 } from "../../_lib/den-org";
 import { bootOrgContextFor, shouldStartOrgBootRequests } from "../../_lib/org-boot-requests";
 import { consumeOrgSelectionRequest, shouldOpenOrgSelection } from "../../_lib/org-selection";
 import { restoreRememberedOrganization, setActiveOrganizationAndRemember } from "../../_lib/org-memory";
 import { ORG_SCOPE_HEADER, OrganizationNotFoundError, getRequestOrgScope, setRequestOrgScope } from "../../_lib/org-scope";
 import { SsoRequiredError, readSsoRequiredSignInPath, redirectToOrganizationSso } from "../../_lib/sso-required";
+
+/** PATCH /v1/org fields the dashboard sends; only what changed. */
+export type OrganizationSettingsUpdate = {
+  name?: string;
+  allowedEmailDomains?: string[] | null;
+  allowedDesktopVersions?: string[] | null;
+  requireSso?: boolean;
+  restrictDomainToSso?: boolean;
+  /** sessionSecuritySettings: Auth & Security › General. */
+  sessionLengthHours?: SessionLengthHours;
+  maxSessionLengthDays?: MaxSessionLengthDays;
+  adminReauthMinutes?: AdminReauthMinutes;
+  brandAppName?: string | null;
+  brandLogoUrl?: string | null;
+  brandIconUrl?: string | null;
+  brandAccentColor?: string | null;
+};
 
 type OrgDashboardContextValue = {
   orgSlug: string | null;
@@ -50,23 +70,30 @@ type OrgDashboardContextValue = {
   refreshOrgData: () => Promise<void>;
   createOrganization: (name: string) => Promise<void>;
   updateOrganizationName: (name: string) => Promise<void>;
-  updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; restrictDomainToSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) => Promise<void>;
+  updateOrganizationSettings: (input: OrganizationSettingsUpdate) => Promise<void>;
   deleteOrganization: () => Promise<void>;
   switchOrganization: (slug: string) => void;
   /** teamId (teamRoles): invite into a custom role by adding the pending member to its team. */
-  inviteMember: (input: { email: string; role: string; teamId?: string | null }) => Promise<void>;
+  /** Resolves to the invited person's pending member id, or null when the server didn't return one. */
+  inviteMember: (input: { email: string; role: string; teamId?: string | null }) => Promise<string | null>;
   startSeatCheckout: () => Promise<void>;
   cancelInvitation: (invitationId: string) => Promise<void>;
   /** The join link of a pending invitation; GET /v1/org never includes join tokens. */
   getInvitationLink: (invitationId: string) => Promise<string>;
   updateMemberRole: (memberId: string, role: string) => Promise<void>;
   removeMember: (memberId: string) => Promise<void>;
+  /** Turns OpenWork Web on or off for a member or pending invitation (webPerMember). */
+  setMemberOpenWorkWeb: (memberId: string, enabled: boolean) => Promise<void>;
   transferOwnership: (memberId: string) => Promise<void>;
-  createTeam: (input: { name: string; memberIds: string[] }) => Promise<void>;
+  /** Resolves to the new team's id, or null when the server didn't return one. */
+  createTeam: (input: { name: string; memberIds: string[] }) => Promise<string | null>;
   updateTeam: (teamId: string, input: { name?: string; memberIds?: string[]; grantsOrganizationAdmin?: boolean }) => Promise<void>;
   deleteTeam: (teamId: string) => Promise<void>;
-  runReauthableAction: (label: string, action: () => Promise<void>) => Promise<void>;
+  runReauthableAction: (label: string, action: () => Promise<void>, prompt?: ReauthPrompt) => Promise<void>;
 };
+
+/** What the re-sign-in dialog says, for actions that don't change workspace settings (a download). */
+export type ReauthPrompt = { title: string; description: string };
 
 type OrgSettingsCompletion = {
   message: string;
@@ -74,6 +101,7 @@ type OrgSettingsCompletion = {
 
 type PendingReauthMutation = {
   label: string;
+  prompt?: ReauthPrompt;
   action: () => Promise<void>;
   resolve: () => void;
   reject: (error: unknown) => void;
@@ -100,6 +128,16 @@ const OrgDashboardContext = createContext<OrgDashboardContextValue | null>(null)
 const ORG_SETTINGS_PATH = "/dashboard/org-settings";
 const ORG_SETTINGS_UPDATED_MESSAGE = "Workspace settings updated.";
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/** A string field of a response body, or null. */
+function stringField(value: unknown, key: string): string | null {
+  const field = isObject(value) ? value[key] : null;
+  return typeof field === "string" && field.length > 0 ? field : null;
+}
+
 export function OrgDashboardProvider({
   children,
 }: {
@@ -119,6 +157,7 @@ export function OrgDashboardProvider({
   const pendingReauthMutationsRef = useRef<PendingReauthMutation[]>([]);
   const pathnameRef = useRef(pathname);
   const [reauthDialogOpen, setReauthDialogOpen] = useState(false);
+  const [reauthPrompt, setReauthPrompt] = useState<ReauthPrompt | null>(null);
   // A full page load starts the workspace list and the active workspace's
   // details while the session check runs, instead of after it. The first load
   // consumes them; every later load (switches, refreshes, retries) asks again.
@@ -469,7 +508,13 @@ export function OrgDashboardProvider({
     }
   }
 
-  async function runReauthableAction(label: string, action: () => Promise<void>) {
+  /** Opens the re-sign-in dialog with the wording of the first action waiting on it. */
+  function openReauthDialog() {
+    setReauthPrompt(pendingReauthMutationsRef.current[0]?.prompt ?? null);
+    setReauthDialogOpen(true);
+  }
+
+  async function runReauthableAction(label: string, action: () => Promise<void>, prompt?: ReauthPrompt) {
     const organizationId = orgContext?.organization.id;
     const userId = user?.id;
     const scopedAction = async () => {
@@ -490,9 +535,9 @@ export function OrgDashboardProvider({
       await new Promise<void>((resolve, reject) => {
         pendingReauthMutationsRef.current = [
           ...pendingReauthMutationsRef.current,
-          { label, action: scopedAction, resolve, reject },
+          { label, prompt, action: scopedAction, resolve, reject },
         ];
-        setReauthDialogOpen(true);
+        openReauthDialog();
       });
     }
   }
@@ -566,7 +611,7 @@ export function OrgDashboardProvider({
           ...retryAfterReauth,
           ...queuedDuringRetry,
         ];
-        setReauthDialogOpen(true);
+        openReauthDialog();
         return;
       }
 
@@ -705,10 +750,10 @@ export function OrgDashboardProvider({
     await updateOrganizationSettings({ name: trimmed });
   }
 
-  async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; restrictDomainToSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) {
+  async function updateOrganizationSettings(input: OrganizationSettingsUpdate) {
     ensureCanManageSettings();
     const shouldPublishOrgSettingsCompletion = pathnameRef.current === ORG_SETTINGS_PATH;
-    const body: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; restrictDomainToSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null } = {};
+    const body: OrganizationSettingsUpdate = {};
     if (typeof input.name === "string") {
       const trimmed = input.name.trim();
       if (!trimmed) {
@@ -727,6 +772,15 @@ export function OrgDashboardProvider({
     }
     if (input.restrictDomainToSso !== undefined) {
       body.restrictDomainToSso = input.restrictDomainToSso;
+    }
+    if (input.sessionLengthHours !== undefined) {
+      body.sessionLengthHours = input.sessionLengthHours;
+    }
+    if (input.maxSessionLengthDays !== undefined) {
+      body.maxSessionLengthDays = input.maxSessionLengthDays;
+    }
+    if (input.adminReauthMinutes !== undefined) {
+      body.adminReauthMinutes = input.adminReauthMinutes;
     }
     if (input.brandAppName !== undefined) {
       body.brandAppName = input.brandAppName;
@@ -790,6 +844,7 @@ export function OrgDashboardProvider({
       throw new Error(permissionLockReason("teams.manage"));
     }
 
+    let invitedMemberId: string | null = null;
     await runMutation("invite-member", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
@@ -813,8 +868,9 @@ export function OrgDashboardProvider({
         }
         throw getRequestError(payload, response, `Failed to invite member (${response.status}).`);
       }
-
+      invitedMemberId = stringField(payload, "memberId");
     });
+    return invitedMemberId;
   }
 
   async function startSeatCheckout() {
@@ -946,6 +1002,25 @@ export function OrgDashboardProvider({
     });
   }
 
+  async function setMemberOpenWorkWeb(memberId: string, enabled: boolean) {
+    if (!getCurrentAccess().canStartSeatCheckout) {
+      throw new Error(permissionLockReason("billing.manage"));
+    }
+
+    await runMutation("member-openwork-web", async () => {
+      ensureActiveOrganizationSelected();
+      const { response, payload } = await requestJson(
+        `/v1/members/${encodeURIComponent(memberId)}/openwork-web`,
+        { method: "POST", body: JSON.stringify({ enabled }) },
+        12000,
+      );
+
+      if (!response.ok) {
+        throw getRequestError(payload, response, `Failed to update OpenWork Web (${response.status}).`);
+      }
+    });
+  }
+
   async function transferOwnership(memberId: string) {
     if (!getCurrentAccess().canTransferOwnership) {
       throw new Error("Only the workspace owner can transfer ownership.");
@@ -975,6 +1050,7 @@ export function OrgDashboardProvider({
       throw new Error(permissionLockReason("teams.manage"));
     }
 
+    let createdTeamId: string | null = null;
     await runMutation("create-team", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
@@ -989,7 +1065,9 @@ export function OrgDashboardProvider({
       if (!response.ok) {
         throw getRequestError(payload, response, `Failed to create team (${response.status}).`);
       }
+      createdTeamId = stringField(isObject(payload) ? payload.team : null, "id");
     });
+    return createdTeamId;
   }
 
   async function updateTeam(teamId: string, input: { name?: string; memberIds?: string[]; grantsOrganizationAdmin?: boolean }) {
@@ -1117,6 +1195,7 @@ export function OrgDashboardProvider({
     getInvitationLink,
     updateMemberRole,
     removeMember,
+    setMemberOpenWorkWeb,
     transferOwnership,
     createTeam,
     updateTeam,
@@ -1139,6 +1218,7 @@ export function OrgDashboardProvider({
         orgContext={orgContext}
         onCancel={cancelReauth}
         onVerified={retryReauthMutation}
+        {...(reauthPrompt ?? {})}
       />
     </OrgDashboardContext.Provider>
   );

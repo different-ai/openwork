@@ -62,7 +62,8 @@ function fixture(options = {}) {
     },
   };
   /** @type {import("@openwork/computer-use/computer-control").ComputerAdapter} */
-  const remote = { ...adapter, id: "vm", label: "VM", placement: "remote" };
+  const remote = { ...adapter, id: "vm", label: "VM", placement: "remote",
+    ...(options.remoteReadiness ? { readiness: options.remoteReadiness } : {}), ...(options.device !== undefined ? { device: options.device } : {}) };
   const control = createComputerControl({ adapters: options.remote ? [adapter, remote] : [adapter], readRemoteFeatureEnabled: options.authority, runProgram: options.runProgram, runScript: options.runScript, onTiming: options.onTiming, browserTask: options.browserTask, onRequest: (_sessionId, value) => { requests.push(value); }, movePolicy: options.movePolicy, idleMs: options.idleMs ?? 90_000, platform: options.platform, saveFolder: options.saveFolder });
   return { control, calls, requests, selected, emit: value => emit(value), disconnect: () => disconnect() };
 }
@@ -100,11 +101,17 @@ test("follow-ups and idle cleanup renew without approvals or replaying old input
   await f.control.endTurn({ sessionId: "chat" });
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} })).ok, true);
   await new Promise(resolve => setTimeout(resolve, 35));
+  const looks = f.calls.filter(name => name === "computer_observe").length;
   const result = await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "old", action: { type: "click", x: 1, y: 1 } } });
   assert.equal(payload(result).code, "observation_required");
   assert.equal(f.calls.filter(name => name === "computer_open_session").length, 3);
   assert.ok(!f.calls.includes("computer_act"));
   assert.deepEqual(f.selected, []);
+  // The refusal carries a look at the renewed window, so the next call can act on it.
+  const [, post, view] = result.content.map(part => JSON.parse(part.text));
+  assert.deepEqual(post, { post_observation: { ok: true }, actions_replayed: false, next: "act", note: "Nothing was sent. Act on this fresh observation." });
+  assert.equal(view.observation_id, "observation");
+  assert.equal(f.calls.filter(name => name === "computer_observe").length, looks + 1);
 });
 
 test("human takeover survives end-of-turn and idle cleanup until Continue", async t => {
@@ -252,6 +259,67 @@ test("Settings reads this computer without a chat and picks the computer every c
   assert.equal((await f.control.snapshot({ sessionId: "new-chat" })).targetId, "vm");
   await f.control.setRemoteEnabled(false);
   assert.equal((await f.control.status()).targetId, "local");
+});
+
+test("the devices snapshot lists only this computer while remote computers are off", async (t) => {
+  const probes = [];
+  const f = fixture({
+    remote: true, authority: async () => true, device: { provider: "freestyle", externalId: "vm-1" },
+    readiness: async () => { probes.push("local"); return { readiness: "ready", detail: "Ready", permissions: { accessibility: true, screenRecording: true } }; },
+    remoteReadiness: async () => { probes.push("vm"); return { readiness: "ready", detail: "Ready" }; },
+  });
+  t.after(() => f.control.reset(true));
+  // Computer use off: listed, but no helper is started to probe it.
+  assert.deepEqual(await f.control.devices(), {
+    enabled: false, remoteEnabled: false, selectedId: "local", permissions: null,
+    computers: [{ id: "local", label: "This computer", placement: "local", readiness: null, detail: null, provider: null, externalId: null }],
+  });
+  assert.deepEqual(probes, []);
+  await f.control.setFeatureEnabled(true);
+  assert.deepEqual(await f.control.devices(), {
+    enabled: true, remoteEnabled: false, selectedId: "local", permissions: { accessibility: true, screenRecording: true },
+    computers: [{ id: "local", label: "This computer", placement: "local", readiness: "ready", detail: null, provider: null, externalId: null }],
+  });
+  assert.deepEqual(probes, ["local"]);
+  assert.deepEqual(f.calls, []);
+});
+
+test("the devices snapshot names a configured VM and probes only this computer and the one chats use", async (t) => {
+  const probes = [];
+  const f = fixture({
+    remote: true, authority: async () => true, device: { provider: "freestyle", externalId: " vm-1 " },
+    readiness: async () => { probes.push("local"); return { readiness: "setup-required", detail: `  Screen Recording is off. ${"x".repeat(400)}` }; },
+    remoteReadiness: async () => { probes.push("vm"); return { readiness: "unavailable", detail: "The VM is stopped. Start it and try again." }; },
+  });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.setRemoteEnabled(true);
+  const unselected = await f.control.devices();
+  assert.equal(unselected.remoteEnabled, true);
+  assert.equal(unselected.selectedId, "local");
+  assert.equal(unselected.permissions, null);
+  assert.deepEqual(unselected.computers.map((computer) => computer.id), ["local", "vm"]);
+  const [local, vm] = unselected.computers;
+  assert.equal(local.readiness, "setup-required");
+  assert.equal(local.detail.length, 300);
+  assert.ok(local.detail.startsWith("Screen Recording is off."));
+  // A probe runs a command on the VM: one no chat uses is listed, never probed.
+  assert.deepEqual(vm, { id: "vm", label: "VM", placement: "remote", readiness: null, detail: null, provider: "freestyle", externalId: "vm-1" });
+  assert.deepEqual(probes, ["local"]);
+
+  await f.control.chooseComputer({ targetId: "vm" });
+  const selected = await f.control.devices();
+  assert.equal(selected.selectedId, "vm");
+  assert.deepEqual(selected.computers[1], { id: "vm", label: "VM", placement: "remote", readiness: "unavailable", detail: "The VM is stopped. Start it and try again.", provider: "freestyle", externalId: "vm-1" });
+  // The answers Settings just read are reused, not asked for again.
+  assert.deepEqual(probes, ["local", "vm"]);
+  assert.deepEqual(f.calls, []);
+});
+
+test("an adapter's device needs both a provider and the provider's id", () => {
+  for (const device of [{ provider: "freestyle" }, { provider: "", externalId: "vm-1" }, { provider: "freestyle", externalId: 7 }, "vm-1", null]) {
+    assert.throws(() => fixture({ remote: true, device }), /device needs a provider/);
+  }
 });
 
 test("a revoked VM rollout blocks the next tool before connecting", async (t) => {
@@ -466,6 +534,24 @@ test("without a screenshot choice the computer decides whether the settled view 
   assert.equal(postRead().include_image, false, "programs never receive a post-action image");
 });
 
+test("input the app gave no read-back for comes back with an image to check it by", async (t) => {
+  const seen = [];
+  let receipt = { ok: true, status: "dispatched", next: "observe", steps: [{ index: 0, action: "type", status: "dispatched", path: "raw_input_unverified" }] };
+  const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? text(receipt) : undefined });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit the flyer" } })).ok, true);
+  const act = (args, options) => { seen.length = 0; return f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", ...args } }, options); };
+  const postRead = () => seen.find((call) => call.name === "computer_observe")?.args;
+  await act({ action: { type: "type", text: "Come have coffee", target: "focused" } });
+  assert.equal(postRead().include_image, true, "raw_input_unverified asks for an image");
+  await act({ action: { type: "type", text: "Come have coffee", target: "focused" }, screenshot: false });
+  assert.equal(postRead().include_image, false, "the model's screenshot choice still holds");
+  receipt = { ...receipt, steps: [{ index: 0, action: "type", status: "dispatched", path: "targeted_input" }] };
+  await act({ action: { type: "type", text: "Come have coffee" } });
+  assert.equal(Object.hasOwn(postRead(), "include_image"), false, "verified input leaves the image to the computer");
+});
+
 test("an act refused before anything was sent returns a fresh observation instead of a retry", async (t) => {
   const seen = [];
   const unsent = { ok: false, status: "failed", completed: 0, may_have_acted: false, next: "observe" };
@@ -488,6 +574,14 @@ test("an act refused before anything was sent returns a fresh observation instea
   refusal = { ...unsent, code: "focus_required", message: "Observe a focused normal text field or control before using the keyboard." };
   await act({ action: { type: "key", key: "return" }, screenshot: false });
   assert.equal(seen[1]?.args.include_image, false, "the model's screenshot choice still holds");
+
+  // A refusal the helper gives before any step starts carries no step status: it gets a look too.
+  refusal = { ok: false, code: "observation_required", message: "A dialog opened or closed since the last observation. Observe again; nothing was sent.", next: "observe" };
+  await act({ action: { type: "press", ref: "e2" } });
+  assert.deepEqual(seen.map((call) => call.name), ["computer_act", "computer_observe"], "a dialog the last step opened is looked at in this call");
+  refusal = { ok: false, code: "protected_input", message: "Take over for this step.", next: "human_takeover" };
+  await act({ action: { type: "type", text: "x" } });
+  assert.deepEqual(seen.map((call) => call.name), ["computer_act"], "a refusal that hands over gets no look");
 
   refusal = { ...unsent, code: "scope_denied", next: "open_session" };
   await act({ action: { type: "click", x: 1, y: 1 } });
@@ -519,10 +613,11 @@ test("after an act the model gets only changed elements, while programs and open
   assert.equal(Object.hasOwn(seen.find((call) => call.name === "computer_open_session").args, "screenshot"), false);
 
   seen.length = 0;
-  const acted = await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", actions: [{ type: "press", ref: "e2" }, { type: "press", ref: "e3" }], screenshot: false, pacing: "wait_retry", retry_ms: 800 } });
+  const acted = await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", actions: [{ type: "press", ref: "e2" }, { type: "press", ref: "e3" }], screenshot: false, pacing: "wait_retry", retry_ms: 800, input: "real" } });
   const native = seen.find((call) => call.name === "computer_act").args;
   assert.equal(native.pacing, "wait_retry");
   assert.equal(native.retry_ms, 800);
+  assert.equal(native.input, "real", "the agent can ask for real input in any app");
   assert.equal(seen.find((call) => call.name === "computer_observe")?.args.menus, undefined, "menus are listed on open, not after every act");
   const changes = acted.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {}).find((value) => value.observation_id);
   assert.equal(changes.elements_listing, "changes");
@@ -630,9 +725,12 @@ test("organization ask shows every exact script, runs only on Run and never reme
   assert.deepEqual(asked.script, { app: "jxa", code: "first" }, "the person sees the exact full script");
   assert.equal(asked.standing, false);
   assert.deepEqual(ran, [], "nothing runs before the answer");
+  assert.deepEqual(f.control.pendingRequest({ sessionId: "chat" }), asked, "another surface reads the request the card shows");
+  assert.equal(f.control.pendingRequest({ sessionId: "never-used" }), null);
   await assert.rejects(f.control.answerRequest({ sessionId: "chat", answer: "allow", id: "another-request" }), /changed/);
   await f.control.answerRequest({ sessionId: "chat", answer: "dismiss", id: asked.id });
   assert.equal((await declined).error.code, "script_declined");
+  assert.equal(f.control.pendingRequest({ sessionId: "chat" }), null);
   for (const code of ["second", "third"]) {
     const pending = f.control.script({ sessionId: "chat", app: "jxa", code }, { approveEachScript: true });
     const request = await scriptRequest(f, code);
@@ -675,6 +773,21 @@ test("AppleScript and JXA run through osascript, and a missing Automation grant 
   assert.equal((await createComputerScripting({ platform: "linux", stateDir: "/tmp/unused", bridgeScript: "/bridge.py" })({ app: "applescript", code: "1", timeoutMs: 5_000 }, signal)).error.code, "script_unavailable");
 });
 
+test("A failed script always says why, and an app macOS quit says how to start it again", async () => {
+  const signal = new AbortController().signal;
+  const run = (stderr, status = 1) => createComputerScripting({ platform: "darwin", stateDir: "/tmp/unused", bridgeScript: "/bridge.py", spawn: fakeOsascript({ status, stderr }).spawn })
+    ({ app: "applescript", code: "tell application \"TextEdit\" to make new document", timeoutMs: 5_000 }, signal);
+  const quit = await run("30:105: execution error: TextEdit got an error: Application isn’t running. (-600)");
+  assert.equal(quit.ok, false);
+  assert.equal(quit.error.code, "app_not_running");
+  assert.match(quit.error.message, /Application isn’t running/, "macOS's own words stay");
+  assert.match(quit.error.message, /computer_open/);
+  const other = await run("12:20: syntax error: Expected end of line. (-2741)");
+  assert.equal(other.error.code, "script_error");
+  assert.match(other.error.message, /Expected end of line/);
+  assert.match((await run("", 2)).error.message, /status 2/, "even with nothing on stderr");
+});
+
 test("Blender scripts reach the bridge with its token, and an open Blender without the bridge is not relaunched", async (t) => {
   const stateDir = await mkdtemp(join(tmpdir(), "ow-script-"));
   t.after(() => rm(stateDir, { recursive: true, force: true }));
@@ -713,7 +826,9 @@ function parallelFixture(options = {}) {
   let connections = 0;
   /** The connect options each helper started with. */
   const started = [];
-  const windows = { blender: 11, photoshop: 12, notes: 13 };
+  /** Who each helper's cursor says is acting. */
+  const presences = [];
+  const windows = { blender: 11, photoshop: 12, notes: 13, maps: 14, powerpoint: 15 };
   /** Each app's helper's UI channel, to stand in for its pill. */
   const uis = {};
   /** @type {import("@openwork/computer-use/computer-control").ComputerAdapter} */
@@ -721,9 +836,10 @@ function parallelFixture(options = {}) {
     id: "local", label: "This Mac", placement: "local", parallel: true, protocol: COMPUTER_PROTOCOL,
     setup: async () => ({ setupId: "setup" }),
     readiness: async () => ({ readiness: "ready", detail: "Ready" }),
-    connect: async ({ onUi, onClose, background }) => {
+    connect: async ({ onUi, onClose, background, presence }) => {
       connections++;
       started.push({ background: background === true });
+      presences.push(presence);
       let app = "";
       return {
         callTool: async (name, args) => {
@@ -737,19 +853,20 @@ function parallelFixture(options = {}) {
               delivery: options.delivery?.(app) ?? "foreground" });
           }
           if (name === "computer_session_status") return text({ ok: true, state: "active" });
-          if (name === "computer_act") return text({ ok: true, status: "dispatched" });
+          if (name === "computer_act") return options.act?.(app, args) ?? text({ ok: true, status: "dispatched" });
           return text({ ok: true, ...(name === "computer_observe" ? { observation_id: `observation-${app}` } : {}) });
         },
         notifyUi: async (value) => {
           options.onNotify?.(app, value);
           if (value.action === "takeover") onUi({ kind: "state", id: `view-${app}`, phase: "paused", canContinue: true });
+          if (value.action === "resume") onUi({ kind: "state", id: `view-${app}`, phase: "working" });
         },
         close: async () => { events.push(`${app}:close`); onClose(); },
       };
     },
   };
-  const control = createComputerControl({ adapters: [adapter] });
-  return { control, events, started, connections: () => connections, ui: (app, value) => uis[app](value) };
+  const control = createComputerControl({ adapters: [adapter], ...options.control });
+  return { control, events, started, presences, connections: () => connections, ui: (app, value) => uis[app](value) };
 }
 const openApp = (control, sessionId, app, mode = "control", windowId) =>
   control.execute({ sessionId, name: "computer_open", args: { app_id: app, mode, purpose: `Work in ${app}`, ...(windowId ? { window_id: windowId } : {}) } });
@@ -800,6 +917,126 @@ test("the chat the person watches works in view, beside OpenWork, and other chat
   assert.deepEqual(notes.map(([app, value]) => [app, value.following]).sort(), [["blender", false], ["photoshop", false]]);
   assert.throws(() => f.control.follow({ sessionId: "chat", watching: "yes" }), /required/);
   assert.throws(() => f.control.follow({ sessionId: "chat", watching: true, beside: true }), /required/);
+});
+
+test("subagents follow along while the person watches their chat, taking turns at the keyboard there", async (t) => {
+  const opens = [];
+  const notes = [];
+  let hold = null;
+  const f = parallelFixture({ delivery: () => "background", onOpen: (args) => opens.push(args),
+    onNotify: (app, value) => { if (value.action === "watch") notes.push([app, value]); },
+    beforeTool: async (name, app) => { if (name === "computer_act" && app === "maps" && hold) await hold.promise; } });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  const agent = (sessionId, name, args) => f.control.execute({ sessionId, rootSessionId: "chat", name, args });
+  const open = (sessionId, app) => agent(sessionId, "computer_open", { app_id: app, mode: "control", purpose: `Work in ${app}` });
+  const act = (sessionId) => agent(sessionId, "computer_act", { observation_id: "observation", action: { type: "click", x: 1, y: 1 } });
+  const started = (app) => f.events.filter((event) => event === `${app}:computer_act:start`).length;
+  f.control.setParallelAgents(true);
+  f.control.follow({ sessionId: "chat", watching: true });
+  await open("maps-agent", "maps");
+  assert.deepEqual([opens[0].following, opens[0].beside], [true, true], "the watched chat's only app opens in view, beside OpenWork");
+  await open("slides-agent", "powerpoint");
+  assert.deepEqual([opens[1].following, opens[1].beside], [true, false], "with two agents' apps open, neither goes beside on its own");
+  assert.deepEqual(notes.find(([app]) => app === "maps")?.[1], { id: "view-maps", action: "watch", following: true, beside: false, stage_slot: 0, stage_count: 2 });
+  // In view, the agents take turns at the keyboard and pointer, one whole call at a time.
+  hold = deferred();
+  const first = act("maps-agent"); await settle();
+  const second = act("slides-agent"); await settle();
+  assert.equal(started("powerpoint"), 0, "the other agent waits for its turn");
+  hold.resolve(); await Promise.all([first, second]);
+  assert.ok(f.events.indexOf("maps:computer_act:end") < f.events.indexOf("powerpoint:computer_act:start"));
+  // Another thread selected: every agent's helper hears it, and they work in the background at the same time.
+  notes.length = 0;
+  f.control.follow({ sessionId: "chat", watching: false });
+  assert.deepEqual(notes.map(([app, value]) => [app, value.following]).sort(), [["maps", false], ["powerpoint", false]]);
+  hold = deferred();
+  const third = act("maps-agent"); await settle();
+  const fourth = act("slides-agent"); await settle();
+  assert.equal(started("powerpoint"), 2, "out of view, neither waits for the other");
+  hold.resolve(); await Promise.all([third, fourth]);
+});
+
+test("with parallel computer use off, watching the chat leaves its subagents in the background, as before", async (t) => {
+  const opens = [];
+  const f = parallelFixture({ onOpen: (args) => opens.push(args) }); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  f.control.follow({ sessionId: "chat", watching: true });
+  await f.control.execute({ sessionId: "maps-agent", rootSessionId: "chat", name: "computer_open", args: { app_id: "maps", mode: "control", purpose: "Find it" } });
+  assert.deepEqual([opens[0].following, opens[0].beside], [false, true]);
+});
+
+test("while the person watches, the chat's agents' windows share one stage that re-tiles as apps open and close", async (t) => {
+  const opens = [];
+  const notes = [];
+  const f = parallelFixture({ onOpen: (args) => opens.push(args), onNotify: (app, value) => { if (value.action === "watch") notes.push([app, value]); } });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  f.control.setParallelAgents(true);
+  const open = (sessionId, app) => f.control.execute({ sessionId, rootSessionId: "chat", name: "computer_open", args: { app_id: app, mode: "control", purpose: `Work in ${app}` } });
+  const stage = (value) => [value.stage_slot, value.stage_count];
+  const last = (app) => notes.filter(([name]) => name === app).at(-1)?.[1];
+  f.control.follow({ sessionId: "chat", watching: true });
+  await open("maps-agent", "maps");
+  assert.deepEqual([opens[0].beside, opens[0].stage_count], [true, 0], "one agent alone goes beside OpenWork");
+  await open("slides-agent", "powerpoint");
+  assert.deepEqual(stage(opens[1]), [1, 2]);
+  assert.deepEqual(stage(last("maps")), [0, 2], "the first agent's window moves to its tile");
+  await open("photo-agent", "photoshop");
+  assert.deepEqual(stage(opens[2]), [2, 3]);
+  assert.deepEqual([stage(last("maps")), stage(last("powerpoint"))], [[0, 3], [1, 3]]);
+  // An agent closes its app: the others re-tile.
+  await f.control.execute({ sessionId: "slides-agent", rootSessionId: "chat", name: "computer_close", args: {} });
+  assert.deepEqual([stage(last("maps")), stage(last("photoshop"))], [[0, 2], [1, 2]]);
+  // Out of view nothing is staged, so nothing moves.
+  f.control.follow({ sessionId: "chat", watching: false });
+  assert.deepEqual([last("maps").stage_count, last("photoshop").stage_count], [0, 0]);
+  // With parallel computer use off, no stage at all.
+  f.control.setParallelAgents(false);
+  f.control.follow({ sessionId: "maps-agent", watching: true });
+  assert.equal("stage_count" in last("maps"), false);
+});
+
+test("the chat's crew lists each subagent with its cursor, app, state, latest step and a live frame", async (t) => {
+  let hold = null;
+  const f = parallelFixture({ beforeTool: async (name, app) => { if (name === "computer_act" && app === "maps" && hold) await hold.promise; } });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  const agent = (sessionId, agentName, name, args) => f.control.execute({ sessionId, rootSessionId: "chat", agentName, name, args });
+  const act = (sessionId, agentName, intent) => agent(sessionId, agentName, "computer_act", { observation_id: "observation", action: { type: "click", x: 1, y: 1 }, intent });
+  assert.deepEqual(await f.control.crew({ sessionId: "chat" }), [], "nothing before any agent works");
+  f.control.setParallelAgents(true);
+  await agent("maps-agent", "Maps", "computer_open", { app_id: "maps", mode: "control", purpose: "Find the place" });
+  await agent("slides-agent", "Slides", "computer_open", { app_id: "powerpoint", mode: "control", purpose: "Title slide" });
+  await act("maps-agent", "Maps", "searching for the café");
+  const rows = (list) => list.map(({ name, app, state, intent }) => [name, app, state, intent]);
+  assert.deepEqual(rows(await f.control.crew({ sessionId: "chat" })), [["Maps", "maps", "working", "searching for the café"], ["Slides", "powerpoint", "working", null]]);
+  const [maps, slides] = await f.control.crew({ sessionId: "chat" });
+  assert.notEqual(maps.color, slides.color);
+  // In view, one agent waits for its turn at the keyboard while the other acts.
+  f.control.follow({ sessionId: "chat", watching: true });
+  hold = deferred();
+  const first = act("maps-agent", "Maps", "zooming in"); await settle();
+  const second = act("slides-agent", "Slides", "typing the title"); await settle();
+  assert.deepEqual((await f.control.crew({ sessionId: "chat" })).map((row) => row.state), ["working", "waiting"]);
+  hold.resolve(); await Promise.all([first, second]);
+  hold = null;
+  // A thumbnail: asking streams frames, and the newest one comes back.
+  await f.control.crew({ sessionId: "chat", thumbnails: true });
+  f.ui("maps", { kind: "frame", id: "view-maps", sequence: 1, capturedAt: 1, width: 4, height: 3, mimeType: "image/png", data: "iVBORw0KGgoAAAAA" });
+  const watched = await f.control.crew({ sessionId: "chat", thumbnails: true });
+  assert.deepEqual(watched[0].frame, { mimeType: "image/png", data: "iVBORw0KGgoAAAAA", width: 4, height: 3 });
+  assert.equal(watched[1].frame, undefined);
+  // Take over in the chat pauses every agent for the person.
+  await f.control.interact({ sessionId: "chat", id: "view-maps", action: "takeover" });
+  assert.deepEqual((await f.control.crew({ sessionId: "chat" })).map((row) => row.state), ["paused", "paused"]);
+  await f.control.interact({ sessionId: "chat", id: "view-maps", action: "resume" });
+  // An agent whose turn ended is done.
+  await f.control.endTurn({ sessionId: "slides-agent" });
+  assert.deepEqual((await f.control.crew({ sessionId: "chat" })).map((row) => row.state), ["working", "done"]);
+  assert.deepEqual(await f.control.crew({ sessionId: "maps-agent" }), [], "a subagent's own thread has no crew");
+  f.control.setParallelAgents(false);
+  assert.deepEqual(await f.control.crew({ sessionId: "chat" }), [], "nothing with parallel computer use off");
 });
 
 test("a computer that is not This Mac gets no follow-along arguments", async (t) => {
@@ -882,6 +1119,94 @@ test("end of turn, takeover and Stop cover every app in the chat", async (t) => 
   await settle();
   assert.equal(f.events.filter((event) => event === "photoshop:close").length, 2);
   assert.equal(payload(await look(f.control, "chat", "native-photoshop")).code, "not_allowed");
+});
+
+test("subagents work in their chat's computer: one folder, one Stop and Take over, their own apps", async (t) => {
+  const f = parallelFixture({
+    control: { platform: "darwin", saveFolder: async (sessionId) => `/Users/me/Downloads/OpenWork/${sessionId}` },
+    act: (app, args) => args.action?.type === "save_image" ? text({ ok: true, status: "dispatched", path: "file_saved", saved_file: { path: args.action.path, bytes: 42 } }) : undefined,
+  });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  f.control.setParallelAgents(true);
+  // The bridge names each subagent's chat; the model never does.
+  const agent = (sessionId, name, args) => f.control.execute({ sessionId, rootSessionId: "chat", name, args });
+  const open = (sessionId, app) => agent(sessionId, "computer_open", { app_id: app, mode: "control", purpose: `Work in ${app}` });
+  const notes = (result) => Object.assign({}, ...result.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {}));
+  const [maps, slides] = await Promise.all([open("maps-agent", "maps"), open("slides-agent", "powerpoint")]);
+  assert.equal(notes(maps).session_id, "native-maps");
+  assert.equal(notes(slides).session_id, "native-powerpoint");
+  assert.equal(f.connections(), 2, "each subagent has its own app session and helper");
+  for (const opened of [maps, slides]) assert.equal(notes(opened).save_folder, "/Users/me/Downloads/OpenWork/chat", "both save in the chat's folder");
+  assert.equal(payload(await agent("slides-agent", "computer_observe", { session_id: "native-maps" })).code, "session_unknown", "a subagent never drives another's app");
+  assert.equal(f.control.chatOf({ sessionId: "maps-agent" }), "chat");
+  // What a subagent saves, its chat can open from its own card.
+  const image = "/Users/me/Downloads/OpenWork/chat/place.png";
+  assert.equal(payload(await agent("maps-agent", "computer_act", { observation_id: "observation", action: { type: "save_image", path: image } })).path, "file_saved");
+  assert.ok(f.control.savedFile({ sessionId: "chat", path: image }) && f.control.savedFile({ sessionId: "maps-agent", path: image }));
+  assert.equal(f.control.savedFile({ sessionId: "slides-agent", path: image }), false);
+  // The chat's Computer view shows its subagents' apps, and Take over there pauses every agent.
+  assert.ok(["view-maps", "view-powerpoint"].includes((await f.control.presentation({ sessionId: "chat", visible: true })).id));
+  await f.control.interact({ sessionId: "chat", id: "view-maps", action: "takeover" });
+  assert.equal(payload(await agent("slides-agent", "computer_act", { observation_id: "observation", action: { type: "click", x: 1, y: 1 } })).code, "session_paused");
+  assert.equal(payload(await openApp(f.control, "chat", "notes")).code, "session_paused", "the chat itself waits too");
+  assert.equal((await f.control.presentation({ sessionId: "chat", visible: true })).id, "view-maps", "the chat's view shows the app the person took");
+  await f.control.interact({ sessionId: "chat", id: "view-maps", action: "resume" });
+  assert.equal(payload(await agent("slides-agent", "computer_act", { observation_id: "observation", action: { type: "click", x: 1, y: 1 } })).status, "dispatched");
+  // Stop in the chat ends every subagent's apps, and holds for subagents that start later in the turn.
+  await f.control.halt({ sessionId: "chat" });
+  assert.ok(f.events.includes("maps:close") && f.events.includes("powerpoint:close"));
+  assert.equal(payload(await agent("slides-agent", "computer_observe", {})).code, "not_allowed");
+  assert.equal(payload(await open("late-agent", "notes")).code, "not_allowed");
+  // The chat's next turn turns it back on for them.
+  await f.control.endTurn({ sessionId: "chat" });
+  assert.equal(notes(await open("maps-agent", "maps")).ok, true);
+});
+
+test("with parallel computer use off, a subagent is its own chat, as before", async (t) => {
+  const f = parallelFixture({ control: { platform: "darwin", saveFolder: async (sessionId) => `/Users/me/Downloads/OpenWork/${sessionId}` } });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  const open = (sessionId, app) => f.control.execute({ sessionId, rootSessionId: "chat", name: "computer_open", args: { app_id: app, mode: "control", purpose: `Work in ${app}` } });
+  const folder = (result) => Object.assign({}, ...result.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {})).save_folder;
+  assert.equal(folder(await open("maps-agent", "maps")), "/Users/me/Downloads/OpenWork/maps-agent", "its own folder");
+  assert.equal(f.control.chatOf({ sessionId: "maps-agent" }), "maps-agent");
+  await f.control.halt({ sessionId: "chat" });
+  assert.equal(payload(await f.control.execute({ sessionId: "maps-agent", rootSessionId: "chat", name: "computer_observe", args: {} })).observation_id, "observation-maps", "the chat's Stop does not reach it");
+  // Turned on later, the link counts from the next call (after the stopped chat's next turn).
+  await f.control.endTurn({ sessionId: "chat" });
+  f.control.setParallelAgents(true);
+  assert.equal(folder(await open("slides-agent", "powerpoint")), "/Users/me/Downloads/OpenWork/chat");
+});
+
+test("each subagent's cursor has its own name and a color that stays its own, and the chat keeps OpenWork's", async (t) => {
+  const openwork = { name: "OpenWork", color: "#4585f2" };
+  const f = parallelFixture({ control: { presence: openwork } }); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  f.control.setParallelAgents(true);
+  const open = (sessionId, app, extra = {}) => f.control.execute({ sessionId, ...extra, name: "computer_open", args: { app_id: app, mode: "control", purpose: `Work in ${app}` } });
+  await open("chat", "notes");
+  await Promise.all([open("maps-agent", "maps", { rootSessionId: "chat", agentName: "  Maps\n  " }), open("slides-agent", "powerpoint", { rootSessionId: "chat", agentName: "general" })]);
+  await open("unnamed-agent", "photoshop", { rootSessionId: "chat" });
+  const [chat, maps, slides, unnamed] = f.presences;
+  assert.deepEqual(chat, openwork, "the chat itself stays OpenWork");
+  assert.equal(maps.name, "Maps");
+  assert.equal(slides.name, "general", "without a description, the agent's name");
+  assert.equal(unnamed.name, "Agent 3");
+  assert.equal(new Set([openwork.color, maps.color, slides.color, unnamed.color]).size, 4, "every agent has a color of its own");
+  for (const presence of [maps, slides, unnamed]) assert.match(presence.color, /^#[0-9a-f]{6}$/);
+  // A later helper for the same subagent, after its turn ends, keeps its name and color; a later name never renames it.
+  await f.control.endTurn({ sessionId: "maps-agent" });
+  await f.control.execute({ sessionId: "maps-agent", rootSessionId: "chat", agentName: "Renamed", name: "computer_observe", args: {} });
+  assert.deepEqual(f.presences.at(-1), maps);
+});
+
+test("with parallel computer use off, every helper shows the one presence, as before", async (t) => {
+  const openwork = { name: "OpenWork", color: "#4585f2" };
+  const f = parallelFixture({ control: { presence: openwork } }); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "maps-agent", rootSessionId: "chat", agentName: "Maps", name: "computer_open", args: { app_id: "maps", mode: "control", purpose: "Find it" } });
+  assert.deepEqual(f.presences, [openwork]);
 });
 
 test("a computer that is not parallel keeps one app per chat", async (t) => {
@@ -1321,18 +1646,22 @@ test("the agent saves what it sees as an image under the same file rule as save_
 /** A Mac helper with an Open panel in front: it asks before showing the panel, and picks the file once its path is approved. */
 function openPanelFixture(options = {}) {
   const seen = [];
+  // As the helper does, a panel once allowed stays allowed until it closes; picking a file closes it.
+  let open = false, allowed = false;
   const f = fixture({ seen, platform: "darwin", ...options, toolResult: (name) => {
     const args = seen.at(-1).args;
-    const looks = seen.filter((call) => call.name === "computer_observe").length;
-    if (name === "computer_observe" && looks > 1 && args.file_panel_access !== 31) {
-      return text({ ok: false, code: "file_panel_approval_required", app: "Photoshop", panel_id: 31, dispatched: false, next: "observe" });
+    if (name === "computer_observe" && open && !allowed) {
+      if (args.file_panel_access !== 31) return text({ ok: false, code: "file_panel_approval_required", app: "Photoshop", panel_id: 31, dispatched: false, next: "observe" });
+      allowed = true;
     }
     if (name !== "computer_act") return undefined;
-    return text(JSON.stringify(args.file_approval) === JSON.stringify([args.action.path])
-      ? { ok: true, status: "dispatched", path: "file_chosen" }
+    const chosen = JSON.stringify(args.file_approval) === JSON.stringify([args.action.path]);
+    if (chosen) open = false;
+    return text(chosen ? { ok: true, status: "dispatched", path: "file_chosen" }
       : { ok: false, code: "files_approval_required", files: [args.action.path], open: true, app: "Photoshop", dispatched: false, next: "observe" });
   } });
-  const look = () => f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} });
+  // Each explicit look is at a panel the app has just opened.
+  const look = () => { open = true; allowed = false; return f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} }); };
   const pick = (path) => f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "open_in_panel", path } } });
   const cards = () => f.requests.filter((request) => request?.reason === "files");
   const acts = () => seen.filter((call) => call.name === "computer_act").map((call) => call.args.file_approval ?? null);
@@ -1343,6 +1672,46 @@ function openPanelFixture(options = {}) {
   const answer = async (count, reply) => f.control.answerRequest({ sessionId: "chat", answer: reply, id: (await card(count)).id });
   return { ...f, look, pick, cards, acts, card, answer };
 }
+/** A Mac helper whose next act opens a Save panel: looks after it ask first, as the helper does for any file panel. */
+function savePanelFixture(movePolicy) {
+  const seen = [];
+  let opened = false;
+  const f = fixture({ seen, platform: "darwin", movePolicy, toolResult: (name) => {
+    const args = seen.at(-1).args;
+    if (name === "computer_act") { opened = true; return text({ ok: true, status: "dispatched", completed: 1, next: "observe", steps: [{ index: 0, action: "key", status: "dispatched", path: "menu_for_shortcut" }] }); }
+    if (name === "computer_observe" && opened && args.file_panel_access !== 31) {
+      return text({ ok: false, code: "file_panel_approval_required", app: "TextEdit", panel_id: 31, dispatched: false, next: "observe" });
+    }
+    return undefined;
+  } });
+  const looks = () => seen.filter((call) => call.name === "computer_observe").map((call) => call.args.file_panel_access ?? null);
+  const save = () => f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "key", key: "s", modifiers: ["command"] } } });
+  const open = () => f.control.setFeatureEnabled(true).then(() => f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Save the letter" } }));
+  return { ...f, looks, save, open };
+}
+
+test("a Save panel the agent's own step opened is shown in that step's receipt, with no second look", async (t) => {
+  const asked = [];
+  const f = savePanelFixture(async (input) => { asked.push(input); return { effect: "allow" }; }); t.after(() => f.control.reset(true));
+  await f.open();
+  const before = f.looks().length;
+  const parts = (await f.save()).content.map((part) => JSON.parse(part.text));
+  assert.deepEqual(parts[1], { post_observation: { ok: true }, actions_replayed: false }, "the panel is looked at in the same call");
+  assert.deepEqual(f.looks().slice(before), [null, 31], "the second look carries the panel the organization's rule allowed");
+  assert.deepEqual(asked, [{ kind: "computer_files", sessionId: "chat" }]);
+  assert.deepEqual(f.requests.filter((request) => request?.reason === "files"), [], "by default nothing asks");
+});
+
+test("an organization that blocks file panels still keeps the agent out of one its step opened", async (t) => {
+  const f = savePanelFixture(async () => ({ effect: "deny", message: "Blocked here." })); t.after(() => f.control.reset(true));
+  await f.open();
+  const before = f.looks().length;
+  const parts = (await f.save()).content.map((part) => JSON.parse(part.text));
+  assert.equal(parts[1].post_observation.code, "file_panel_approval_required");
+  assert.equal(parts.length, 2, "no view of the panel");
+  assert.deepEqual(f.looks().slice(before), [null], "never looked at with access");
+});
+
 const openForPlacing = (f) => f.control.setFeatureEnabled(true).then(() => f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Place the map" } }));
 
 test("an Open panel is looked through and a file picked in it without a card by default", async (t) => {

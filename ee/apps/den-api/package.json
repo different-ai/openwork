@@ -8,6 +8,7 @@
   "scripts": {
     "audit:pilot": "tsx --conditions=development scripts/audit-pilot.ts",
     "audit:coverage": "tsx --conditions=development scripts/check-audit-route-coverage.ts",
+    "config-blobs:coverage": "tsx --conditions=development scripts/check-config-blob-coverage.ts",
     "dev": "pnpm run build:workspace-dependencies && OPENWORK_DEV_MODE=1 OPENWORK_DEN_DEVELOPMENT_CONDITIONS_REEXEC=1 NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx watch src/main.ts",
     "dev:local": "pnpm run build:workspace-dependencies && OPENWORK_DEV_MODE=1 OPENWORK_DEN_DEVELOPMENT_CONDITIONS_REEXEC=1 NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" PORT=${DEN_API_PORT:-8790} tsx watch src/main.ts",
     "build": "node ./scripts/build.mjs",
@@ -25,7 +26,7 @@
     "typecheck": "pnpm --filter @openwork/mcp-apps build && tsc -p tsconfig.json --noEmit",
     "test": "node --conditions=development --import tsx --test test/*.test.ts",
     "test:api": "node --conditions=development --import tsx --test test/api/*.api.test.ts",
-    "test:api:security": "node --conditions=development --import tsx --test test/api/admin-security.api.test.ts test/api/audit-secrets.api.test.ts test/api/auth-rate-limits.api.test.ts test/api/feature-outcomes.api.test.ts test/api/ga-shared-roles.api.test.ts test/api/gateway-keys.api.test.ts test/api/mcp-oauth.api.test.ts test/api/mcp-policy.api.test.ts test/api/me-invitations.api.test.ts test/api/member-api-keys.api.test.ts test/api/member-features.api.test.ts test/api/oauth-token-rate-limit.api.test.ts test/api/session-token-hashing.api.test.ts test/api/skill-access.api.test.ts test/api/tenant-isolation.api.test.ts test/api/workbot-settings-permissions.api.test.ts",
+    "test:api:security": "node --conditions=development --import tsx --test test/api/admin-security.api.test.ts test/api/audit-secrets.api.test.ts test/api/auth-rate-limits.api.test.ts test/api/computer-disconnect.api.test.ts test/api/feature-outcomes.api.test.ts test/api/ga-shared-roles.api.test.ts test/api/gateway-keys.api.test.ts test/api/gateway-api-keys.api.test.ts test/api/mcp-oauth.api.test.ts test/api/mcp-policy.api.test.ts test/api/me-invitations.api.test.ts test/api/member-api-keys.api.test.ts test/api/member-features.api.test.ts test/api/remote-devices.api.test.ts test/api/remote-access-off.api.test.ts test/api/remote-session-access.api.test.ts test/api/oauth-token-rate-limit.api.test.ts test/api/session-token-hashing.api.test.ts test/api/skill-access.api.test.ts test/api/tenant-isolation.api.test.ts test/api/workbot-settings-permissions.api.test.ts",
     "test:api:shard": "node --conditions=development --import tsx --test --test-shard=${DEN_API_TEST_SHARD:-1/1} test/api/*.api.test.ts"
   },
   "dependencies": {
@@ -85,7 +86,7 @@
     "dotenv": "^16.4.5",
     "effect": "4.0.6",
     "esbuild": "catalog:",
-    "fast-xml-parser": "5.8.0",
+    "fast-xml-parser": "5.12.0",
     "hono": "4.13.11",
     "hono-openapi": "^1.3.0",
     "htmlparser2": "8.0.2",

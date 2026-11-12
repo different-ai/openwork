@@ -8,7 +8,7 @@ The retired `engineV2ForceUpgrade` setting remains ignored.
 
 ## Upstream owns migration
 
-OpenWork bundles vanilla OpenCode **2.2.0**, without a migration patch. It starts
+OpenWork bundles vanilla OpenCode **2.2.6**, without a migration patch. It starts
 the normal v2 server directly with `OPENCODE_DB` pointing at the selected history
 database. Upstream converts v1 tables in place on startup, retains the original
 v1 tables, and owns the `kv` / `migration.v1-v2` cursor and completion marker.

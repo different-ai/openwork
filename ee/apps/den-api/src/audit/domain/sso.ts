@@ -9,12 +9,12 @@ import { auditChangeEvent, auditText, auditTime, organizationParent, targetResou
 // A re-registration replaces the IdP configuration: recorded as the opaque
 // "configuration" marker, never its contents.
 
-export type SsoConnectionAuditRow = Pick<typeof SsoConnectionTable.$inferSelect, "id" | "providerId" | "kind" | "issuer" | "domain" | "status" | "signInPath" | "testStatus" | "lastTestedAt" | "createdAt">
+export type SsoConnectionAuditRow = Pick<typeof SsoConnectionTable.$inferSelect, "id" | "providerId" | "name" | "kind" | "issuer" | "domain" | "status" | "signInPath" | "testStatus" | "lastTestedAt" | "createdAt">
 export type SsoProviderAuditRow = Pick<typeof SsoProviderTable.$inferSelect, "domainVerified">
 
 export function serializeSsoConnection(row: SsoConnectionAuditRow, provider: SsoProviderAuditRow | null): AuditSnapshot {
   return {
-    id: row.id, providerId: auditText(row.providerId), kind: auditText(row.kind, 16), issuer: auditText(row.issuer, 2048), domain: auditText(row.domain),
+    id: row.id, providerId: auditText(row.providerId), name: auditText(row.name, 120), kind: auditText(row.kind, 16), issuer: auditText(row.issuer, 2048), domain: auditText(row.domain),
     status: auditText(row.status, 32), signInPath: auditText(row.signInPath, 2048), testStatus: auditText(row.testStatus, 32),
     lastTestedAt: auditTime(row.lastTestedAt), domainVerified: provider ? provider.domainVerified : null, createdAt: auditTime(row.createdAt),
   }
@@ -44,4 +44,12 @@ export function ssoConnectionStatusEvent(organizationId: string, before: SsoConn
 
 export function ssoConnectionDeletedEvent(organizationId: string, before: SsoConnectionAuditState): AuditChangeEventInput | null {
   return auditChangeEvent({ action: "sso_connection.deleted", resources: resources(organizationId, before.connection), before: serializeSsoConnection(before.connection, before.provider), after: null })
+}
+
+/** multipleSsoConnections: a connection's display name changed (its provider is untouched). */
+export function ssoConnectionRenamedEvent(organizationId: string, before: SsoConnectionAuditState, after: SsoConnectionAuditState): AuditChangeEventInput | null {
+  return auditChangeEvent({
+    action: "sso_connection.renamed", resources: resources(organizationId, after.connection),
+    before: serializeSsoConnection(before.connection, before.provider), after: serializeSsoConnection(after.connection, after.provider),
+  })
 }

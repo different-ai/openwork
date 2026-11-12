@@ -121,11 +121,14 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
   async function listModels(key: string): Promise<string[]> {
     const body = await request("/v1/models", key)
     if (!isRecord(body) || !Array.isArray(body.data)) throw new LiteLlmError("bad_response", "LiteLLM /v1/models returned an unexpected shape.")
-    return [...new Set(body.data.flatMap((entry) => {
+    const ids = [...new Set(body.data.flatMap((entry) => {
       const id = isRecord(entry) ? readString(entry.id) : null
       // Wildcard routes (openai/*) are not callable model ids.
       return id && !id.includes("*") ? [id] : []
     }))].sort()
+    const { modelIds, dropped } = dedupeLiteLlmModelIds(ids)
+    if (dropped.length) console.warn("litellm_case_duplicate_models_dropped", { dropped })
+    return modelIds
   }
 
   /** Public per-model facts. Best-effort: older proxies or locked-down keys may refuse it. */
@@ -285,6 +288,23 @@ export function liteLlmModelConfig(id: string, info: JsonRecord | undefined): Js
   if (Array.isArray(info.supported_openai_params)) config.temperature = info.supported_openai_params.includes("temperature")
   config.modalities = { input: info.supports_vision === true ? ["text", "image"] : ["text"], output: ["text"] }
   return config
+}
+
+/**
+ * gateway_provider_models.model_id compares case-insensitively (MySQL default
+ * collation), so IDs differing only by case cannot both be stored. Keeps the
+ * first ID per case-insensitive key and reports the rest.
+ */
+export function dedupeLiteLlmModelIds(ids: readonly string[]): { modelIds: string[]; dropped: string[] } {
+  const seen = new Set<string>()
+  const modelIds: string[] = []
+  const dropped: string[] = []
+  for (const id of ids) {
+    const key = id.toLowerCase()
+    if (seen.has(key)) dropped.push(id)
+    else { seen.add(key); modelIds.push(id) }
+  }
+  return { modelIds, dropped }
 }
 
 /** Chat-capable models with their configs. Embedding, image and audio models are left out. */

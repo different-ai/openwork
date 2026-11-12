@@ -34,9 +34,12 @@ const authorized = request => {
   const expected = Buffer.from(`Bearer ${secret}`);
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 };
+// Only the image's helper on this computer sends requests. Viewers reach this port from outside, and computers made
+// from one snapshot start with the same secret, so the secret alone never admits a caller from another machine.
+const local = request => request.socket.remoteAddress === "127.0.0.1" && request.headers.host === "127.0.0.1:6080";
 const viewerScript = "/usr/local/share/openwork-desktop/vnc-stdio.py";
 const server = createServer(async (request, response) => {
-  if (request.method !== "POST" || !authorized(request)) return json(response, 404, { error: "not_found" });
+  if (request.method !== "POST" || !local(request) || !authorized(request)) return json(response, 404, { error: "not_found" });
   const viewerGeneration = tickets.generation;
   try {
     let raw = "";

@@ -53,6 +53,7 @@ const INF = "inference.configuration"
 const IP = "inference_provider.configuration"
 const IPO = "inference_provider.member_oauth"
 const LITELLM = "Organization's LiteLLM proxy (admin API: key creation/deletion in issued mode)"
+const CUSTOM = "Organization's custom OpenAI-compatible provider (GET /models)"
 const MA = "models_analytics.reporting"
 const LLM = "llm_provider.configuration"
 const LLMC = "llm_provider.member_credential"
@@ -236,6 +237,7 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
 
   // Inference providers (reads, member OAuth, uncovered mutations)
   read("/v1/inference-providers", "inference_provider.list", IP, res("provider")),
+  read("/v1/inference-providers/device-share-options", "inference_provider.device_share_options.read", IP, res("provider"), "Read-only organization-scoped sharing permission and catalog eligibility. No device or upstream credentials."),
   read("/v1/inference-providers/inventory/revision", "inference_provider.inventory.revision", IP, res("provider"), "Read-only opaque member-scoped inventory revision."),
   read("/v1/inference-providers/inventory/events", "inference_provider.inventory.watch", IP, res("provider"), "SSE opaque revisions only. Session, membership and rollout revalidated from the database every two seconds; fail closed on revocation or unavailable checks."),
   read("/v1/inference-providers/model-management", "inference_provider.model_management.list", IP, res("provider")),
@@ -265,6 +267,12 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   handlerRoute("tenant_change", "POST", "/v1/inference-providers/oauth/browser-litellm-key", "inference_provider.member_oauth.browser_litellm_key", IPO, res("provider_credential"), { notes: "Public route. Attributed (attributeMemberOAuthEntry) like browser-start once the live signed session cookie matches the entry's initiating user and the provider/set binding and litellm feature are rechecked; before key verification and the credential write that consumes the entry." }),
   handlerRoute("tenant_external", "POST", "/v1/inference-providers/oauth/browser-litellm-check", "inference_provider.member_oauth.browser_litellm_check", IPO, res("provider_credential"), { external: LITELLM, notes: "Public route. Attributed like browser-litellm-key once the cookie user matches the entry and the provider/set binding and litellm feature are rechecked; before LiteLLM key creation for that member." }),
 
+  // Custom OpenAI-compatible providers (gatewayCustomProviders feature; not covered by the provider emitter, see providerUncoveredRoutes)
+  external("POST", "/v1/inference-providers/custom/discover-models", "inference_provider.custom.discover_models", IP, res("provider"), CUSTOM, "Calls GET {baseUrl}/models with the caller-supplied key, or the saved key for the saved address's origin only; no local write."),
+  external("POST", "/v1/inference-providers/custom/test-connection", "inference_provider.custom.connection.test", IP, res("provider"), "AI Gateway (one test prompt to the custom provider)", "Sends the caller-supplied key, or the saved key for the saved address's origin only, and the unsaved model settings through AI Gateway; no local write and no usage recorded."),
+  change("POST", "/v1/inference-providers/custom", "inference_provider.custom.create", IP, res("provider"), "Creates the provider, its models, default group, organization credential set (write-only key) and grants locally; no call to the provider."),
+  change("PATCH", "/v1/inference-providers/:inferenceProviderId/custom", "inference_provider.custom.update", IP, res("provider", "inferenceProviderId"), "Updates name, address, models and/or replaces the write-only organization key locally; no call to the provider."),
+
   // Models analytics
   route("tenant_signal", "POST", "/v1/inference/analytics/events", "models_analytics.events.report", MA, res("models_analytics_event"), "org_context", { notes: "Desktop task metadata for the caller's own OpenWork Models calls; dropped unless the organization opted in. High volume." }),
 
@@ -275,6 +283,7 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   read("/v1/telemetry/analytics", "telemetry.analytics.read", "telemetry.adoption", res("telemetry_event"), "Aggregates only."),
 
   // Library usage
+  read("/v1/workbot-usage", "workbot_usage.read", "workbot_usage.reporting", res("workbot_usage_day"), "Aggregates only: Workbot's model requests, tokens and cost over the last 30 UTC days by day, by where it ran, by model and by member (name and email of current members). Never a conversation id or content."),
   read("/v1/library-usage", "library_usage.breakdown.read", "library_usage.reporting", res("capability_usage_event"), "Aggregates only: use, failure, distinct member and per-source counts grouped by item, member id and UTC day; member ids, never names or content."),
   read("/v1/library-usage/:kind", "library_usage.read", "library_usage.reporting", res("capability_usage_event"), "Aggregates only: per skill, plugin or connector use counts, failure counts, distinct member counts and last use; no member identities."),
 

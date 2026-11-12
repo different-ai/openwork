@@ -9,6 +9,8 @@ export const RemoteSessionCommandTable = mysqlTable(
     owner_member_id: denTypeIdColumn("member", "owner_member_id").notNull(),
     created_by_user_id: denTypeIdColumn("user", "created_by_user_id").notNull(),
     status: mysqlEnum("status", ["pending", "claimed", "delivered", "failed", "expired"]).notNull(),
+    /** `create` starts a session; `attach` reaches one that already exists on the computer. */
+    kind: varchar("kind", { length: 32 }).$type<"create" | "attach">().notNull().default("create"),
     title: varchar("title", { length: 120 }).notNull(),
     prompt: text("prompt"),
     model_provider_id: varchar("model_provider_id", { length: 160 }),
@@ -19,6 +21,8 @@ export const RemoteSessionCommandTable = mysqlTable(
     target_computer_id: varchar("target_computer_id", { length: 160 }),
     /** Workspace on that computer the session must be created in. */
     target_workspace_id: varchar("target_workspace_id", { length: 240 }),
+    /** Attach commands only: the session on that computer to reach. */
+    target_session_id: varchar("target_session_id", { length: 240 }),
     expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
     claimed_by_runner_id: varchar("claimed_by_runner_id", { length: 160 }),
     claimed_at: timestamp("claimed_at", { fsp: 3 }),

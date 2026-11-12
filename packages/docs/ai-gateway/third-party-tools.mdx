@@ -1,0 +1,82 @@
+---
+title: "AI Gateway API keys"
+description: "Let members create their own AI Gateway API keys to use your organization's models from 3rd party tools and harnesses, and manage those keys."
+keywords: ["API key", "AI Gateway API key", "3rd party tools", "harness", "allow 3rd party tools", "revoke key", "key expiry"]
+---
+
+With an AI Gateway API key, members can use the models your organization gives
+them from other tools: coding agents, CLIs, eval harnesses or their own scripts.
+Requests go through AI Gateway like any other: a key only reaches the models its
+owner is allowed, and its usage counts toward that person's limit.
+
+## Turn it on
+
+An admin has to allow it first:
+
+1. In OpenWork Cloud, open **AI Gateway** and select the **API Keys** tab.
+2. At the top, turn on **Allow 3rd party tools & harnesses**.
+
+Changing it needs the **Edit organization settings** permission. Owners and
+admins have it by default.
+
+Members then create keys for themselves; admins don't create keys for other
+people. Until someone has a key, the tab explains this and offers **Create your
+own key now**, which opens **My Library › Models** with the new key form ready.
+
+Turning it off stops every member's key right away. The keys stay listed on the
+tab, marked as not valid, and work again when it's turned back on.
+
+## Create a key
+
+1. Open **My Library** and select the **Models** tab.
+2. Under **API keys for 3rd party tools**, select **Create key**.
+3. Give the key a name, for example the tool and computer you'll use it on
+   (`Claude Code on my laptop`).
+4. Choose when it expires: in 7 days, 30 days, 90 days (the default), 1 year, or
+   never.
+5. Select **Create key**, then copy the key.
+
+The key is shown once. OpenWork only keeps a fingerprint of it, so it can't be
+shown again. If you lose it, revoke it and create a new one.
+
+The same section shows the **OpenAI base URL** and **Anthropic base URL** to
+point a tool at. Send the key as `Authorization: Bearer <key>` or
+`x-api-key: <key>`.
+
+[Smart Routers](/ai-gateway/auto-model-routing) that apply to you work through
+your key too. In Cursor, Claude Code and Codex they're listed as
+`openwork/smart-<router name>-<4 characters>`; other OpenAI compatible tools
+call them as `openwork-smart-<router id>` on `/chat/completions`.
+
+## Manage your keys
+
+**My Library › Models** lists your keys with their name, the first characters of
+the key, when each expires and when it was last used.
+
+- **Use one key per tool.** Revoking one then doesn't break the others, and
+  **Last used** tells you which tools are still active.
+- **Prefer keys that expire.** An expired key stops working and shows
+  **Expired** in red. Create a new one to replace it, then revoke the old one.
+- **Revoke keys you don't use.** Open the key's menu and select **Revoke**.
+  Tools using it stop working on their next request. This can't be undone.
+
+Each person can have up to 20 keys that haven't expired.
+
+## For admins
+
+**AI Gateway › API Keys** has the **Allow 3rd party tools & harnesses** switch
+at the top, then every key in the organization: its name, the member it belongs
+to, when it was created, when it expires and when it was last used.
+
+- Seeing the tab needs the **View Gateway providers** permission.
+- Revoking someone else's key needs **Manage Gateway providers**.
+- When someone leaves the organization, their keys are revoked with the rest of
+  their access.
+- While the switch is off, the keys are still listed with a notice that they
+  are currently not valid.
+
+## When a key stops working
+
+A tool gets `401 invalid_api_key` when its key was revoked, has expired, or 3rd
+party tools are turned off for your organization. Check the key in **My Library
+› Models**.

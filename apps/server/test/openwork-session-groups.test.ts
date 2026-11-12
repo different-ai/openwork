@@ -55,15 +55,31 @@ function fakeHost(state: State, sessions: string[]) {
   return { transport, writes };
 }
 
-async function call(transport: OpenworkReadTransport, tool: "openwork_query" | "openwork_execute", id: string, args: Record<string, unknown>) {
+async function call(transport: OpenworkReadTransport, tool: "openwork_query" | "openwork_execute", id: string, args: Record<string, unknown>, context: { sessionID?: string } = {}) {
   const plugin = await OpenWorkExtensionsPreview();
   try {
-    const raw = await openworkReadTransport.run(transport, () => plugin.tool[tool].execute({ id, args }, {}));
+    const raw = await openworkReadTransport.run(transport, () => plugin.tool[tool].execute({ id, args }, context));
     return JSON.parse(String(raw));
   } finally {
     await plugin.dispose?.();
   }
 }
+
+test("with several workspaces, listing groups defaults to the calling chat's workspace", async () => {
+  const { transport } = fakeHost({ groups: [{ id: "g1", label: "Settled" }], assignments: {} }, ["s1"]);
+  const several: OpenworkReadTransport = { ...transport, get: async (path) => {
+    if (path === "/workspaces") return { items: [{ id: "ws0", name: "Other" }, { id: "ws1", name: "Enterprise" }] };
+    return transport.get(path);
+  } };
+
+  const listed = await call(several, "openwork_query", "session.group.list", {}, { sessionID: "s1" });
+  assert.equal(listed.ok, true);
+  assert.equal(listed.result.workspace, "Enterprise");
+  assert.deepEqual(listed.result.groups.map((group: { label: string }) => group.label), ["Settled"]);
+
+  const unknown = await call(several, "openwork_query", "session.group.list", {});
+  assert.match(unknown.result?.error ?? unknown.error, /pass workspaceId/, "with no calling chat to go by, it still asks which workspace");
+});
 
 test("groups are created, listed and changed without the desktop window", async () => {
   const state: State = { groups: [{ id: "g1", label: "In progress" }], assignments: { s1: "g1", gone: "g1" } };

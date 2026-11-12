@@ -33,6 +33,7 @@ import { createNativeContextMenus } from "./context-menu.mjs";
 import { createNativeDictation, createSpeechDictation } from "./native-dictation.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
+import { deferBrowserStop } from "@openwork/computer-use/browser-navigation";
 import { createComputerControl } from "@openwork/computer-use/computer-control";
 import { createComputerAgentPermissions } from "./computer-agent-permissions.mjs";
 import { createBrowserUploadGrantStore, createBrowserUploadPermissions } from "./browser-upload-permissions.mjs";
@@ -60,7 +61,7 @@ import {
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
-import { chatOutputFolder, listChatOutputFiles, openChatWorkspaceFile, opensFromChatOutput, resolveChatFilePath, resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
+import { chatOutputFolder, listChatOutputFiles, openChatWorkspaceFile, opensFromChatOutput, readChatOutputImage, resolveChatFilePath, resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
 import { createOpenWithApplications, installedApplicationCommand } from "./open-with-applications.mjs";
 const openWithApplications = createOpenWithApplications();
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
@@ -71,6 +72,7 @@ import {
   createLinuxDesktopIntegration,
 } from "./linux-desktop-integration.mjs";
 import { automationRunnerDisabledReason, createComputerDescriber, createDesktopAutomationRunner, normalizeRunnerBaseUrl } from "./automation-runner.mjs";
+import { createComputerRequestAnswers } from "./session-runner-computer-requests.mjs";
 import { applyDesktopEngineForcePolicy } from "./engine-force-policy.mjs";
 import {
   desktopActivationRequired,
@@ -224,6 +226,8 @@ let browserPanel = null;
 const COMPUTER_POPOUT_NAME = /^openwork-computer-view-\d+$/;
 
 // Keep each chat's chosen computer in app data outside the workspace.
+// Advanced settings switch for demos; lasts until OpenWork quits. The launch variable turns it on at start.
+let computerRecordableOverlay = process.env.OPENWORK_COMPUTER_USE_RECORDABLE_OVERLAY === "1";
 const computerTargetsPath = () => path.join(app.getPath("userData"), "computer-use-targets.json");
 // The System Settings entry macOS lists for computer use: the helper's own
 // bundle, which takes responsibility for itself so grants never restart OpenWork.
@@ -275,6 +279,7 @@ const computerControl = createComputerControl({
       directory: path.join(app.getPath("userData"), "computer-use"),
     }),
     permissionEntry: async () => (await readComputerPermissionEntry()).name,
+    recordableOverlay: () => computerRecordableOverlay,
     onSetupReturn: async () => {
       const window = await createMainWindow();
       if (window.isMinimized()) window.restore();
@@ -350,6 +355,9 @@ function computerPolicyDenied(message) {
   return { ok: false, error: { code: "organization_policy_denied", message } };
 }
 
+/** The chat a call belongs to: a subagent's is the chat that started it, as the trusted bridge reports. */
+const computerChatOf = (args) => computerControl.parallelAgents() && typeof args?.rootSessionId === "string" && args.rootSessionId ? args.rootSessionId : args?.sessionId;
+
 /** @param {string} sessionId */
 async function checkComputerPermission(sessionId) {
   const decision = await computerAgentPermissions.check({ kind: "computer", sessionId });
@@ -371,14 +379,14 @@ const uiControlServer = createUiControlServer({
   browserTask: (args, options) => browserPanel?.browserTask(args, options) ?? { ok: false, code: "browser_unavailable" },
   computerTask: async (args, options) => {
     if (!["computer_status", "computer_close"].includes(args?.name)) {
-      const denied = await checkComputerPermission(args?.sessionId);
+      const denied = await checkComputerPermission(computerChatOf(args));
       if (denied) return denied;
     }
     return computerControl.execute(args, options);
   },
   computerProgram: async (args, options) => {
     if (args?.surface === "computer") {
-      const denied = await checkComputerPermission(args?.sessionId);
+      const denied = await checkComputerPermission(computerChatOf(args));
       if (denied) return denied;
     }
     return computerControl.program(args, options);
@@ -389,6 +397,7 @@ const uiControlServer = createUiControlServer({
     return computerControl.script(args, { ...options, approveEachScript: decision.effect === "ask" });
   },
   computerEnabled: () => computerControl.featureEnabled(),
+  computerParallel: () => computerControl.parallelAgents(),
   agentQuestionsEnabled: () => agentQuestionsEnabled,
 });
 
@@ -1568,6 +1577,20 @@ const legacyRunnerBaseUrls = [
     : null,
   `${DEFAULT_DEN_BASE_URL}/api/den`,
 ].map((value) => normalizeRunnerBaseUrl(value)).filter(Boolean);
+// One name for this computer: its runner inventory and its entry in the organization's devices list agree.
+const describeThisComputer = createComputerDescriber({
+  platform: process.platform,
+  appVersion: resolveAppVersion(app),
+  hostname: () => os.hostname(),
+  readComputerName: () => new Promise((resolve, reject) => {
+    execFile("/usr/sbin/scutil", ["--get", "ComputerName"], { timeout: 2_000 }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(String(stdout));
+    });
+  }),
+});
+/** The id the renderer last registered this install's runner with; Den names this desktop's device by it. */
+let registeredRunnerId = null;
 const automationRunnerDisabledBy = automationRunnerDisabledReason(process.env);
 if (automationRunnerDisabledBy) {
   console.info(`[automation-runner] disabled by ${automationRunnerDisabledBy}; renderer runner configuration will be ignored`);
@@ -1580,6 +1603,9 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
   getJournalRoot: () => path.join(app.getPath("userData"), "session-runner"),
   // Start remote-session tasks as soon as Den announces them (Den's remoteSessionPush feature).
   remoteSessionPush: true,
+  // A task started from another computer reports the computer-use approval it waits on,
+  // so the person can answer it where they are instead of coming to this computer.
+  computerRequests: createComputerRequestAnswers(computerControl),
   getLocalRuntime: async () => {
     const server = await runtimeManager.openworkServerInfo();
     return { baseUrl: server.baseUrl, token: server.clientToken ?? server.ownerToken };
@@ -1588,21 +1614,12 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
     getServerInfo: () => runtimeManager.openworkServerInfo(),
   }),
   // Remote-session callers choose a computer by this label, then a workspace and model.
-  describeComputer: createComputerDescriber({
-    platform: process.platform,
-    appVersion: resolveAppVersion(app),
-    hostname: () => os.hostname(),
-    readComputerName: () => new Promise((resolve, reject) => {
-      execFile("/usr/sbin/scutil", ["--get", "ComputerName"], { timeout: 2_000 }, (error, stdout) => {
-        if (error) reject(error);
-        else resolve(String(stdout));
-      });
-    }),
-  }),
+  describeComputer: describeThisComputer,
   log: (state) => console.info(`[automation-runner] ${state}`),
-  onCredentialRejected: () => {
+  // `reason` tells a disconnected computer (wait for a new sign-in) from a credential to replace now.
+  onCredentialRejected: (rejection) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.webContents.send(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT);
+    mainWindow.webContents.send(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT, rejection);
   },
 });
 
@@ -2165,9 +2182,23 @@ const desktopCommandHandlers = {
       assertComputerSender(event);
       return computerControl.snapshot({ sessionId: String(sessionId ?? "") });
   },
+  "computerCrew": async (event, sessionId, thumbnails) => {
+      assertComputerSender(event);
+      return computerControl.crew({ sessionId: String(sessionId ?? ""), thumbnails: thumbnails === true });
+  },
   "computerStatus": async (event) => {
       assertComputerSender(event);
       return computerControl.status();
+  },
+  "computerDevices": async (event) => {
+      assertComputerSender(event);
+      return computerControl.devices();
+  },
+  "desktopDeviceIdentity": async (event) => {
+      assertComputerSender(event);
+      let osVersion = null;
+      try { osVersion = String(process.getSystemVersion?.() || os.release()).trim() || null; } catch { /* unnamed system */ }
+      return { installId: registeredRunnerId, ...await describeThisComputer(), osVersion, arch: process.arch };
   },
   "computerPresentation": async (event, sessionId, visible) => {
       assertComputerSender(event);
@@ -2216,15 +2247,22 @@ const desktopCommandHandlers = {
       if (!file) return { ok: true, action: "unavailable" };
       // Also a file in the chat's own output folder, however the chat made it.
       const launch = input?.reveal !== true && ((computerControl.savedFile({ sessionId, path: target }) && lstatSync(target).isFile())
-        || await opensFromChatOutput(chatOutputFolder(app.getPath("downloads"), sessionId), target));
+        || await opensFromChatOutput(chatOutputFolder(app.getPath("downloads"), computerControl.chatOf({ sessionId })), target));
       if (!launch) { shell.showItemInFolder(file); return { ok: true, action: "revealed" }; }
       const error = await shell.openPath(target);
       return error?.trim() ? { ok: false, error } : { ok: true, action: "opened" };
   },
   "computerChatFiles": async (event, input) => {
       assertComputerSender(event);
-      const folder = chatOutputFolder(app.getPath("downloads"), String(input?.sessionId ?? ""));
+      // A subagent saves in the folder of the chat that started it.
+      const folder = chatOutputFolder(app.getPath("downloads"), computerControl.chatOf({ sessionId: String(input?.sessionId ?? "") }));
       return { files: folder ? await listChatOutputFiles(folder) : [] };
+  },
+  "computerChatImage": async (event, input) => {
+      assertComputerSender(event);
+      // An image the chat shows in its reply: only one saved in this chat's own output folder.
+      const folder = chatOutputFolder(app.getPath("downloads"), computerControl.chatOf({ sessionId: String(input?.sessionId ?? "") }));
+      return readChatOutputImage(folder, String(input?.path ?? ""), { home: app.getPath("home") });
   },
   "computerListFileGrants": async (event) => {
       assertComputerSender(event);
@@ -2251,6 +2289,19 @@ const desktopCommandHandlers = {
   "computerSetStandardCodeMode": async (event, enabled) => {
       assertComputerSender(event);
       return computerControl.setStandardCodeMode(enabled === true);
+  },
+  "computerSetParallelAgents": async (event, enabled) => {
+      assertComputerSender(event);
+      return computerControl.setParallelAgents(enabled === true);
+  },
+  "computerRecordableOverlay": async (event) => {
+      assertComputerSender(event);
+      return computerRecordableOverlay;
+  },
+  "computerSetRecordableOverlay": async (event, enabled) => {
+      assertComputerSender(event);
+      computerRecordableOverlay = enabled === true;
+      return computerRecordableOverlay;
   },
   // Compatibility for older renderers; background delivery now follows computerUse.
   "computerSetBackgroundEnabled": async (event) => {
@@ -2365,6 +2416,8 @@ const desktopCommandHandlers = {
       return runtimeManager.openworkServerInfo();
   },
   "automationRunnerConfigure": async (event, ...args) => {
+      const runnerId = typeof args[0]?.runnerId === "string" ? args[0].runnerId.trim() : "";
+      registeredRunnerId = runnerId || null;
       return desktopAutomationRunner.configure(args[0] ?? null);
   },
   "openworkServerRestart": async (event, ...args) => {
@@ -3032,19 +3085,17 @@ async function createMainWindowInner() {
   // to replace the entire workspace UI with the website, with no way back
   // (#2000). Catch those at `did-start-navigation`, cancel the load, and
   // reroute the URL into a built-in browser tab instead.
+  let mainNavigationRevision = 0;
   mainWindow.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
     if (!isMainFrame || isInPlace) return;
+    const revision = ++mainNavigationRevision;
     if (browserPanel.isMainWindowAllowedNavigation(url)) return;
-    // Stopping inside this event aborts the main process for navigations the
-    // PDF viewer starts (`chrome.tabs.update` on a link click), so cancel the
-    // load on the next tick instead.
-    setImmediate(() => {
-      try {
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.stop();
-      } catch {
-        // best effort — routing below still gives the user a way back
-      }
-    });
+    // Capture the originating contents: the window may be replaced before
+    // Chromium has unwound its navigation callback. Never stop its successor.
+    const contents = mainWindow.webContents;
+    const previousUrl = contents.getURL();
+    deferBrowserStop(contents, () => mainWindow?.webContents === contents
+      && mainNavigationRevision === revision && contents.getURL() === previousUrl);
     routeBlockedNavigationOnce(url);
   });
 
@@ -3087,6 +3138,25 @@ ipcMain.handle("openwork:shell:relaunch", async () => {
   app.quit();
 });
 ipcMain.handle("openwork:system:architecture", async () => resolveArchitectureInfo());
+
+// What its owner's other devices can do on this computer: nothing, start
+// tasks, or also open sessions started here (Settings > Devices). The choice
+// is kept per organization. Only the app's own page may read or change it.
+function assertSessionAccessSender(event) {
+  assertDesktopActivation();
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+    throw new Error("Session access is managed from the main OpenWork window.");
+  }
+}
+ipcMain.handle("openwork:remote-session-access:get", async (event) => {
+  assertSessionAccessSender(event);
+  return desktopAutomationRunner.getSessionAccess();
+});
+ipcMain.handle("openwork:remote-session-access:set", async (event, mode) => {
+  assertSessionAccessSender(event);
+  if (mode !== "off" && mode !== "created" && mode !== "all") throw new Error("Choose what other devices can do on this computer.");
+  return desktopAutomationRunner.setSessionAccess(mode);
+});
 
 // ── Terminal IPC ────────────────────────────────────────────────────────
 ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {

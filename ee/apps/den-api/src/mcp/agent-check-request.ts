@@ -9,11 +9,11 @@ import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { AGENT_CHECK_REQUEST_WHY_MAX, resolveAgentBrief } from "@openwork/types/den/workbot-proactive"
 import { z } from "zod"
 import { AUDIT_UNAVAILABLE_TOOL_MESSAGE, AuditUnavailableError, runMcpServiceAction, serviceAuditResourceId, type McpAuditPrincipal } from "../audit/mcp-service-audit.js"
-import { agentBriefAllowed, proactiveAllowed, readProactiveSettings } from "../workbot-proactive/access.js"
+import { agentBriefAllowed, proactiveAllowed } from "../workbot-proactive/access.js"
 import { memberRhythm } from "../workbot-proactive/brief.js"
 import { memberLimits } from "../workbot-proactive/preferences.js"
 import { changeAgentCheckRequests } from "../workbot-proactive/repository.js"
-import { readAgentTemplate } from "../workbot-proactive/template.js"
+import { resolveMemberAgentPolicy } from "../workbot/team-settings.js"
 import { agentReadAllowlist } from "./agent-read-sources.js"
 
 /**
@@ -55,8 +55,9 @@ export async function requestAgentCheck(input: { organizationId: DenTypeId<"orga
     return { ok: false, text: "Extra checks aren't on for this member." }
   }
   const now = input.now ?? Date.now()
-  const settings = await readProactiveSettings(input.organizationId)
-  const brief = resolveAgentBrief(settings, await readAgentTemplate(input.organizationId))
+  // The member's own policy (their team's, else the organization's): the same rhythm and limits their checks follow.
+  const { settings, template } = await resolveMemberAgentPolicy({ organizationId: input.organizationId, memberId: input.memberId, userId: input.userId })
+  const brief = resolveAgentBrief(settings, template)
   return changeAgentCheckRequests(input.memberId, (row, state) => {
     if (!row) return { requests: null, result: { ok: false, text: "This member has no agent yet." } }
     const timeZone = isValidTimeZone(row.timeZone) ? row.timeZone : "UTC"

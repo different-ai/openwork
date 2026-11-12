@@ -677,7 +677,6 @@ function extraPathEntries() {
       path.join(home, ".bun", "bin"),
       path.join(home, ".cargo", "bin"),
       path.join(home, ".pyenv", "shims"),
-      path.join(home, ".local", "bin"),
     );
   }
 
@@ -693,7 +692,6 @@ function extraPathEntries() {
       path.join(home, ".bun", "bin"),
       path.join(home, ".cargo", "bin"),
       path.join(home, ".pyenv", "shims"),
-      path.join(home, ".local", "bin"),
     );
   }
 
@@ -707,7 +705,9 @@ function extraPathEntries() {
     );
   }
 
-  return candidates.filter((entry) => entry && isDirectory(entry));
+  // Tools installed while OpenWork is open (Claude Code's installer creates ~/.local/bin) are found without a
+  // restart only when their folder is already on PATH, so this one is listed before it exists.
+  return [...candidates.filter((entry) => entry && isDirectory(entry)), path.join(home, ".local", "bin")];
 }
 
 function enrichedPath(sidecarDirs, currentPath) {

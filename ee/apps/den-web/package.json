@@ -44,7 +44,8 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "recharts": "3.10.1",
-    "zod": "^4.6.6"
+    "zod": "^4.6.6",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",

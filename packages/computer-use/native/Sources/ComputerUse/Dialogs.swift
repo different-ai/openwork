@@ -28,6 +28,19 @@ extension AppIdentity {
         return owner > 0 ? owner : nil
     }
 
+    /// The panel process macOS runs for `pid`'s open Save or Open panel, if it runs one.
+    static func filePanelService(for pid: pid_t) -> pid_t? {
+        NSRunningApplication.runningApplications(withBundleIdentifier: filePanelService)
+            .map(\.processIdentifier).first { responsible(for: $0) == pid }
+    }
+    /// The panel processes that may take the keys of `pid`'s open panel: the one macOS names as
+    /// working for it, or, when it names none, every one running. Keys reach one only while the
+    /// app is in front, which real input checks before each event.
+    static func filePanelServices(for pid: pid_t) -> Set<pid_t> {
+        if let service = filePanelService(for: pid) { return [service] }
+        return Set(NSRunningApplication.runningApplications(withBundleIdentifier: filePanelService).map(\.processIdentifier))
+    }
+
     /// The panel process is not a regular app, so `resolve` never returns it.
     /// It is reachable only as a dialog over a window a session already controls.
     static func filePanel(pid: pid_t) -> AppIdentity? {
@@ -96,11 +109,28 @@ enum DialogRules {
 
     /// A panel for choosing files: the system panel process, or a dialog with a
     /// file browser whose default button hands files over.
-    static func isFilePanel(bundleID: String, roles: Set<String>, defaultButton: String?) -> Bool {
-        if bundleID == AppIdentity.filePanelService { return true }
+    /// `buttons` are the dialog's button titles, for a panel whose default button macOS does not
+    /// name (Keynote's Insert panel, while nothing is selected). `remote` says macOS's panel process
+    /// runs for the app: a sandboxed app's own Open and Save panels are drawn there.
+    /// `saveField`: the dialog has a Save sheet's name field, as a Save sheet shown collapsed (no file
+    /// list, such as TextEdit's "Keep this new document?") does.
+    static func isFilePanel(bundleID: String, roles: Set<String>, defaultButton: String?, buttons: Set<String> = [], remote: Bool = false, saveField: Bool = false) -> Bool {
+        if bundleID == AppIdentity.filePanelService || saveField { return true }
         if roles.contains("AXBrowser") { return true }
-        guard let title = defaultButton?.lowercased() else { return false }
-        return roles.contains("AXOutline") && fileConfirmTitles.contains(title)
+        guard roles.contains("AXOutline") else { return false }
+        if remote { return true }
+        let titles = (defaultButton.map { [$0] } ?? []) + buttons
+        return titles.contains { fileConfirmTitles.contains($0.trimmingCharacters(in: .whitespaces).lowercased()) }
+    }
+    /// The source list down a file panel's side, whose selection is a place, not a file.
+    static func isSidebar(description: String?, identifier: String?) -> Bool {
+        [description, identifier].contains { $0?.lowercased().contains("sidebar") == true || $0?.lowercased().contains("source list") == true }
+    }
+    /// The button that hands a file panel's choice over or saves, for a panel whose default
+    /// button macOS does not name: the one titled as a file panel's confirmation.
+    static func confirmButton(_ titles: [String], save: Bool) -> Int? {
+        let wanted = save ? ["save", "export"] : Array(fileConfirmTitles)
+        return titles.firstIndex { wanted.contains($0.trimmingCharacters(in: .whitespaces).lowercased()) }
     }
 
     /// Whether this step would hand the panel's selection to the app.
@@ -127,6 +157,19 @@ enum SaveRules {
 /// through accessibility and read it back, then Return. Save and Open steps both use it.
 enum PanelGoTo {
     enum Failure: Equatable { case noField, notTaken }
+    /// The Save As name field (AppKit's identifier names "save") and the search field never take a Go To path.
+    static func candidate(identifier: String?, subrole: String?) -> Bool {
+        identifier?.lowercased().contains("save") != true && subrole != "AXSearchField"
+    }
+    /// How the Go To field is opened, in order until one does. Command-Shift-G first; a save sheet
+    /// shown collapsed (QuickTime's) may ignore it, so it is expanded and its name field focused
+    /// before trying again; last, a "/" typed into the name field opens Go To as it does for a person.
+    enum Way: Equatable { case shortcut, expanded, slashInName }
+    static func ways(save: Bool) -> [Way] { save ? [.shortcut, .expanded, .slashInName] : [.shortcut, .shortcut] }
+    static func open<Field>(_ ways: [Way], attempt: (Way) async throws -> Field?) async throws -> Field? {
+        for way in ways { if let field = try await attempt(way) { return field } }
+        return nil
+    }
     static func enter<Field>(_ path: String, open: () async throws -> Field?, set: (Field, String) -> Bool,
                              value: (Field) -> String?, submit: (Field) async throws -> Void) async throws -> Failure? {
         guard let field = try await open() else { return .noField }
@@ -139,6 +182,8 @@ enum PanelGoTo {
 /// Open-style panels (Open, Place, Insert, Attach): the step that picks a file reads back what
 /// it chose and what the app did with it.
 enum OpenPanelRules {
+    /// How long open_in_panel waits for a panel that is still opening.
+    static let wait: TimeInterval = 2
     /// A panel that hands a file to the app: a file panel with no Save name field, whose
     /// default button opens or places what is selected.
     static func isOpenPanel(kind: DialogTarget.Kind?, saveField: Bool, defaultButton: String?) -> Bool {
@@ -190,6 +235,28 @@ extension MacAccessibility {
             (attribute(element, kAXRoleAttribute) as? String) == "AXTextField"
                 && (attribute(element, kAXIdentifierAttribute) as? String)?.lowercased().contains("save") == true
         }
+    }
+
+    /// Expands a save sheet shown collapsed (no file browser), by its disclosure button; false when
+    /// there is none or it is already expanded.
+    func expandSavePanel(_ dialog: WindowTarget) -> Bool {
+        guard let button = firstElement(in: dialog.element, where: { (attribute($0, kAXRoleAttribute) as? String) == "AXDisclosureTriangle" }),
+              (attribute(button, kAXValueAttribute) as? NSNumber)?.intValue == 0 else { return false }
+        return AXUIElementPerformAction(button, kAXPressAction as CFString) == .success
+    }
+
+    /// The app's focused window when it is a file panel that is a window of its own rather than a
+    /// sheet: apps that run an Open or Place panel modally give it a standard window's subrole.
+    func focusedFilePanel(than target: WindowTarget, app: AppIdentity) async -> DialogTarget? {
+        guard let focused = elementAttribute(AXUIElementCreateApplication(app.pid), kAXFocusedWindowAttribute), !CFEqual(focused, target.element),
+              let found = await windowTarget(for: focused, pid: app.pid), isFilePanel(found, app: app) else { return nil }
+        return DialogTarget(target: found, app: app, kind: .filePanel)
+    }
+
+    /// A field that can be a panel's Go To field: not its Save As name field, not its search field.
+    func isGoToCandidate(_ field: AXUIElement) -> Bool {
+        PanelGoTo.candidate(identifier: attribute(field, kAXIdentifierAttribute) as? String,
+            subrole: attribute(field, kAXSubroleAttribute) as? String)
     }
 
     /// The text field that has the keyboard in `pid`: after Command-Shift-G, the panel's Go To field.
@@ -305,8 +372,13 @@ extension MacAccessibility {
         return info.contains { ($0[kCGWindowOwnerPID as String] as? Int32) == app.pid && ($0[kCGWindowIsOnscreen as String] as? Bool) == true }
     }
 
+    /// The panel's default button, or, where macOS names none, its button titled as a file panel's
+    /// confirmation (Insert, Open, Save).
     func defaultButton(_ dialog: WindowTarget) -> AXUIElement? {
-        elementAttribute(dialog.element, kAXDefaultButtonAttribute)
+        if let named = elementAttribute(dialog.element, kAXDefaultButtonAttribute) { return named }
+        let buttons = elements(in: dialog.element) { (attribute($0, kAXRoleAttribute) as? String) == "AXButton" }
+        let titles = buttons.map { attribute($0, kAXTitleAttribute) as? String ?? "" }
+        return DialogRules.confirmButton(titles, save: saveNameField(dialog) != nil).map { buttons[$0] }
     }
 
     /// The names a file panel would hand over: its selected rows, or the name field of a save panel.
@@ -317,7 +389,10 @@ extension MacAccessibility {
         while let (element, depth) = pending.popLast(), visited < 400 {
             visited += 1
             let role = attribute(element, kAXRoleAttribute) as? String
+            // The panel's sidebar (Recents, Downloads) keeps a selection of its own: never a file.
             if ["AXOutline", "AXTable", "AXList", "AXBrowser"].contains(role ?? ""),
+               !DialogRules.isSidebar(description: attribute(element, kAXDescriptionAttribute) as? String,
+                                      identifier: attribute(element, kAXIdentifierAttribute) as? String),
                let rows = attribute(element, kAXSelectedRowsAttribute) as? [AXUIElement] {
                 names += rows.prefix(DialogRules.maxApprovedFiles + 1).compactMap(rowName)
             }
@@ -332,10 +407,12 @@ extension MacAccessibility {
         return Array(names.prefix(DialogRules.maxApprovedFiles + 1))
     }
 
+    /// The row's first text in column order: its name, never its date or size column.
     private func rowName(_ row: AXUIElement) -> String? {
         var pending = [row]
         var visited = 0
-        while let element = pending.popLast(), visited < 40 {
+        while !pending.isEmpty, visited < 40 {
+            let element = pending.removeFirst()
             visited += 1
             for name in [kAXValueAttribute, kAXTitleAttribute] {
                 if let text = attribute(element, name) as? String, !text.isEmpty { return String(text.prefix(255)) }
@@ -347,16 +424,21 @@ extension MacAccessibility {
 
     private func isFilePanel(_ dialog: WindowTarget, app: AppIdentity) -> Bool {
         var roles: Set<String> = []
+        var buttons: Set<String> = []
         var pending: [(AXUIElement, Int)] = [(dialog.element, 0)]
         var visited = 0
         while let (element, depth) = pending.popLast(), visited < 300 {
             visited += 1
-            if let role = attribute(element, kAXRoleAttribute) as? String { roles.insert(role) }
+            if let role = attribute(element, kAXRoleAttribute) as? String {
+                roles.insert(role)
+                if role == "AXButton", let title = attribute(element, kAXTitleAttribute) as? String { buttons.insert(title) }
+            }
             guard depth < 8, let children = attribute(element, kAXChildrenAttribute) as? [AXUIElement] else { continue }
             pending += children.map { ($0, depth + 1) }
         }
-        let title = defaultButton(dialog).flatMap { attribute($0, kAXTitleAttribute) as? String }
-        return DialogRules.isFilePanel(bundleID: app.bundleID, roles: roles, defaultButton: title)
+        let title = elementAttribute(dialog.element, kAXDefaultButtonAttribute).flatMap { attribute($0, kAXTitleAttribute) as? String }
+        return DialogRules.isFilePanel(bundleID: app.bundleID, roles: roles, defaultButton: title, buttons: buttons,
+            remote: AppIdentity.filePanelService(for: app.pid) != nil, saveField: saveNameField(dialog) != nil)
     }
 
     /// The on-screen window of `element`, matched by frame as `windows` does.

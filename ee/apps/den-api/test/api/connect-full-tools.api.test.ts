@@ -84,6 +84,12 @@ async function toolNames(token: string, options: Parameters<typeof rpc>[3] = {})
   return list(field(listed.result, "tools")).map((tool) => String(tool.name))
 }
 
+/** Only the full view lists connection_status; both views list search_capabilities. */
+async function searchView(token: string, options: Parameters<typeof rpc>[3] = {}): Promise<boolean> {
+  const names = await toolNames(token, options)
+  return names.includes("search_capabilities") && !names.includes("connection_status")
+}
+
 function resultText(result: unknown): string {
   return list(field(result, "content")).map((part) => String(part.text ?? "")).join("\n")
 }
@@ -111,8 +117,8 @@ test("one flag switches Claude Code off, on and off at the unchanged URL, while 
     assert.ok(rollout.status < 300, summary(rollout))
     const names = await toolNames(rileyToken, claude)
     assert.equal(names.includes("status_board.read_status"), enabled, names.join(","))
-    assert.equal(names.includes("search_capabilities"), !enabled)
-    assert.equal(names.includes("execute_capability"), !enabled)
+    // Both views search: the full view for what has no tool of its own.
+    assert.ok(names.includes("search_capabilities") && names.includes("execute_capability"), names.join(","))
     assert.ok(!names.includes("status_board.reset_status"), "disabled tools stay hidden")
     assert.ok((await toolNames(rileyToken)).includes("search_capabilities"), "legacy probes stay compatible")
     const own = await toolNames(rileyToken, desktop)
@@ -126,7 +132,7 @@ test("one flag switches Claude Code off, on and off at the unchanged URL, while 
     assert.notEqual(field(direct.result, "isError"), true, JSON.stringify(direct))
     assert.equal(resultText(direct.result), PROOF)
     assert.ok((await toolNames(rileyToken, { ...desktop, query: "?tools=full" })).includes("status_board.read_status"), "OpenWork can opt in explicitly")
-    assert.ok((await toolNames(rileyToken, { ...claude, query: "?tools=search" })).includes("search_capabilities"))
+    assert.ok(await searchView(rileyToken, { ...claude, query: "?tools=search" }))
     assert.ok(!(await toolNames(samToken, claude)).some((name) => name.startsWith("status_board.")))
     for (const [token, name] of [[samToken, "status_board.read_status"], [rileyToken, "status_board.reset_status"]]) {
       const denied = await rpc(token, "tools/call", { name, arguments: {} }, claude)
@@ -149,7 +155,7 @@ test("the existing member allowlist controls tools and schemas, and cannot bypas
     const allowed = await change(true)
     assert.equal(allowed.status, 200, summary(allowed))
     assert.ok((await toolNames(rileyToken, options)).includes("status_board.read_status"))
-    assert.ok((await toolNames(samToken, options)).includes("search_capabilities"), "a member override never enables peers")
+    assert.ok(await searchView(samToken, options), "a member override never enables peers")
     // Even legacy clients use the same member-resolved flag for their schemas.
     const schemaProperties = async (token: string) => {
       const listed = await rpc(token, "tools/list", {})
@@ -160,15 +166,15 @@ test("the existing member allowlist controls tools and schemas, and cannot bypas
     assert.equal(await schemaProperties(samToken), undefined)
     const kill = await killed(true)
     assert.equal(kill.status, 200, summary(kill))
-    assert.ok((await toolNames(rileyToken, { ...options, query: "?tools=full" })).includes("search_capabilities"))
+    assert.ok(await searchView(rileyToken, { ...options, query: "?tools=full" }))
     assert.equal(await schemaProperties(rileyToken), undefined)
     assert.equal((await killed(false)).status, 200)
     assert.equal((await change(null)).status, 200)
-    assert.ok((await toolNames(rileyToken, options)).includes("search_capabilities"), "reset inherits the org's disabled flag")
+    assert.ok(await searchView(rileyToken, options), "reset inherits the org's disabled flag")
     assert.equal((await den.setFeature(orgId, "connectStandardTools", true)).status, 200)
     assert.equal((await change(false)).status, 200)
-    assert.ok((await toolNames(rileyToken, options)).includes("search_capabilities"))
-    assert.ok(!(await toolNames(samToken, options)).includes("search_capabilities"), "explicit member off does not disable peers")
+    assert.ok(await searchView(rileyToken, options))
+    assert.ok(!(await searchView(samToken, options)), "explicit member off does not disable peers")
   } finally {
     assert.equal((await killed(false)).status, 200)
     assert.equal((await change(null)).status, 200)
@@ -225,14 +231,23 @@ test("with the flag on, the full view lists only granted, enabled tools and runs
   const claude = await toolNames(rileyToken, { clientInfo: { name: "claude-code", version: "2" } })
   assert.ok(claude.includes("status_board.read_status"), claude.join(","))
   assert.ok(!claude.includes("status_board.reset_status"), "a tool the policy disables is never listed")
-  assert.ok(!claude.includes("search_capabilities") && !claude.includes("execute_capability"))
   assert.ok(claude.includes("connection_status") && claude.includes("get_skill"))
-  // OpenWork's own role-gated API stays in the search view, except the key request connection cards name.
+  // OpenWork's own role-gated API has no tools, except the key request connection cards name: it stays in search.
   assert.deepEqual(claude.filter((name) => name.startsWith("den.")), ["den.postMcpConnectionsCredentialPrompt"])
-  assert.ok((await toolNames(rileyToken, { clientInfo: { name: "cursor", version: "1" } })).includes("search_capabilities"))
-  assert.ok((await toolNames(rileyToken)).includes("search_capabilities"))
+  assert.ok(claude.includes("search_capabilities") && claude.includes("execute_capability"), claude.join(","))
+  const fullView = { clientInfo: { name: "claude-code", version: "2" } }
+  const matchNames = (result: unknown) => list(field(result, "structuredContent", "matches")).map((entry) => String(entry.name))
+  const ownOperations = await rpc(rileyToken, "tools/call", { name: "search_capabilities", arguments: { query: "list organization members", type: "api" } }, fullView)
+  assert.ok(matchNames(ownOperations.result).length > 0, JSON.stringify(ownOperations))
+  // Search leaves out what is a tool, except when the person asks to connect.
+  const searched = await rpc(rileyToken, "tools/call", { name: "search_capabilities", arguments: { query: "status page" } }, fullView)
+  assert.deepEqual(matchNames(searched.result).filter((name) => name.startsWith(`mcp:${connectionId}:`)), [], JSON.stringify(searched))
+  const connect = await rpc(rileyToken, "tools/call", { name: "search_capabilities", arguments: { query: "status board", intent: "connect" } }, fullView)
+  assert.ok(matchNames(connect.result).some((name) => name.startsWith(`mcp:${connectionId}:`)), JSON.stringify(connect))
+  assert.ok(await searchView(rileyToken, { clientInfo: { name: "cursor", version: "1" } }))
+  assert.ok(await searchView(rileyToken))
   assert.deepEqual(await toolNames(rileyToken, { query: "?tools=full" }), claude)
-  assert.ok((await toolNames(rileyToken, { query: "?tools=search", clientInfo: { name: "claude-code", version: "2" } })).includes("search_capabilities"))
+  assert.ok(await searchView(rileyToken, { query: "?tools=search", clientInfo: { name: "claude-code", version: "2" } }))
   const again = await toolNames(rileyToken, { clientInfo: { name: "claude-code", version: "2" } })
   assert.deepEqual(again, claude, "the same request lists the same tools in the same order")
 

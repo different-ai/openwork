@@ -32,6 +32,7 @@ export const snapshot = (input: Partial<SlackRunSnapshot> = {}): SlackRunSnapsho
   lastAssistantText: "",
   steps: [],
   assistantTexts: [],
+  assistantWorked: [],
   tasks: [],
   ...input,
 })

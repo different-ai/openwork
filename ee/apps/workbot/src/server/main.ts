@@ -1,14 +1,13 @@
 import { createServer } from "node:http"
-import { dirname, join, relative } from "node:path"
+import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { getRequestListener } from "@hono/node-server"
-import { serveStatic } from "@hono/node-server/serve-static"
+import { registerClientFiles } from "./static-cache.js"
 import { Hono } from "hono"
-import { routePath } from "hono/route"
 import { createAuth, type AppEnv } from "./auth.js"
 import { loadConfig } from "./config.js"
-import { createDen, WorkbotTurnAccessError } from "./den.js"
-import { closeErrorReporting, initErrorReporting, reportError } from "./error-reporting.js"
+import { createDen } from "./den.js"
+import { closeErrorReporting, initErrorReporting } from "./error-reporting.js"
 import { registerWorkbotRoutes } from "./routes.js"
 import { registerReadinessRoute } from "./readiness.js"
 
@@ -23,13 +22,10 @@ app.use("*", async (c, next) => {
   c.header("X-Content-Type-Options", "nosniff")
   c.header("Referrer-Policy", "strict-origin-when-cross-origin")
   c.header("X-Frame-Options", "DENY")
+  // Nothing here belongs in a search index (Google: block indexing with the X-Robots-Tag response header).
+  c.header("X-Robots-Tag", "noindex, nofollow, noarchive")
 })
-app.onError((error, c) => {
-  if (error instanceof WorkbotTurnAccessError) return error.response()
-  console.error("[workbot] request failed", { path: c.req.path, error: error.message })
-  reportError("route_error", error, { route: routePath(c), method: c.req.method })
-  return c.json({ error: "internal_error" }, 500)
-})
+app.onError(auth.onError)
 app.get("/healthz", (c) => c.json({ ok: true }))
 registerReadinessRoute(app, config)
 auth.register(app)
@@ -56,11 +52,7 @@ if (config.dev) {
     else vite.middlewares(request, response)
   })
 } else {
-  const root = relative(process.cwd(), clientDir) || "."
-  app.use("/assets/*", serveStatic({ root, onFound: (_path, c) => c.header("Cache-Control", "public, max-age=31536000, immutable") }))
-  app.use("*", serveStatic({ root }))
-  // Any other page path is the app itself.
-  app.get("*", serveStatic({ root, path: "index.html", onFound: (_path, c) => c.header("Cache-Control", "no-cache") }))
+  registerClientFiles(app, clientDir)
   server = createServer(getRequestListener(app.fetch))
 }
 

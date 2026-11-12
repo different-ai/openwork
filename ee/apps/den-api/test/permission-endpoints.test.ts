@@ -15,9 +15,14 @@ import {
   type PermissionStatus,
 } from "../src/permissions/set-edits.ts"
 
-function editor(keys: readonly PermissionKey[], options: { isOwner?: boolean; isAdmin?: boolean } = {}): PermissionEditor {
+function editor(keys: readonly PermissionKey[], options: { isOwner?: boolean; isAdmin?: boolean; isSuperAdmin?: boolean } = {}): PermissionEditor {
   const held = new Set(keys)
-  return { isOwner: options.isOwner ?? false, isAdmin: options.isAdmin ?? false, has: (key) => held.has(key) }
+  return {
+    isOwner: options.isOwner ?? false,
+    isSuperAdmin: options.isSuperAdmin ?? false,
+    isAdmin: options.isAdmin ?? options.isSuperAdmin ?? false,
+    has: (key) => held.has(key),
+  }
 }
 
 const OWNER = editor([], { isOwner: true })
@@ -193,6 +198,32 @@ test("edit: re-allowing a shipped default in its default set doesn't require hol
   assert.deepEqual(member, { ok: false, problem: { error: "permission_not_held", keys: [notMemberDefault] } })
 })
 
+test("edit: only the owner and super-admins can change Super admin permissions", () => {
+  assert.ok(KEY_A)
+  const change = { defaultKey: "super-admin" as const, current: states({ [OWNER_ONLY_KEY]: "allow" }), changes: [{ key: OWNER_ONLY_KEY, status: "deny" as const }] }
+  const admin = planPermissionSetEdit({ ...change, editor: editor([...PERMISSION_KEYS], { isAdmin: true }) })
+  assert.deepEqual(admin, { ok: false, problem: { error: "super_admin_permissions_require_super_admin", keys: [OWNER_ONLY_KEY] } })
+  assert.match(permissionEditProblemMessage({ error: "super_admin_permissions_require_super_admin", keys: [OWNER_ONLY_KEY] }), /owner and super admins/)
+  const superAdmin = planPermissionSetEdit({ ...change, editor: editor(["permissions.manage"], { isSuperAdmin: true }) })
+  assert.deepEqual(superAdmin, { ok: true, changes: [{ key: OWNER_ONLY_KEY, status: "deny" }] })
+  assert.deepEqual(planPermissionSetEdit({ ...change, editor: OWNER }), { ok: true, changes: [{ key: OWNER_ONLY_KEY, status: "deny" }] })
+})
+
+test("edit: every key is a shipped default in Super admin, so super-admins can restore one they removed", () => {
+  const restore = planPermissionSetEdit({
+    defaultKey: "super-admin",
+    current: states({ [OWNER_ONLY_KEY]: "deny" }),
+    changes: [{ key: OWNER_ONLY_KEY, status: "allow" }],
+    editor: editor(["permissions.manage"], { isSuperAdmin: true }),
+  })
+  assert.deepEqual(restore, { ok: true, changes: [{ key: OWNER_ONLY_KEY, status: "allow" }] })
+})
+
+test("edit: super-admins only turn on team permissions they hold", () => {
+  const plan = planPermissionSetEdit({ defaultKey: null, current: new Map(), changes: [{ key: OWNER_ONLY_KEY, status: "allow" }], editor: editor([], { isSuperAdmin: true }) })
+  assert.deepEqual(plan, { ok: false, problem: { error: "permission_not_held", keys: [OWNER_ONLY_KEY] } })
+})
+
 test("create: only allow rows are planned and the editor must hold each", () => {
   assert.ok(KEY_A && KEY_B && KEY_C)
   const plan = planPermissionSetCreate({
@@ -271,4 +302,11 @@ test("source labels", () => {
     "Support Permissions (via Support team)",
   )
   assert.equal(permissionSourceLabel({ kind: "code_default", set: "admin" }), "Admin permissions (default)")
+  assert.equal(permissionSourceLabel({ kind: "code_default", set: "member" }), "Member permissions (default)")
+  assert.equal(permissionSourceLabel({ kind: "super_admin" }), "Super admin role")
+  assert.equal(permissionSourceLabel({ kind: "code_default", set: "super-admin" }), "Super admin permissions (default)")
+  assert.equal(
+    permissionSourceLabel({ kind: "super_admin_default", setId: "pms_4", setName: "Super admin permissions" }),
+    "Super admin permissions (super admin role)",
+  )
 })

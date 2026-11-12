@@ -24,6 +24,16 @@ struct Presence {
     }
 }
 
+/// Overlays stay out of screen capture unless `OPENWORK_COMPUTER_USE_RECORDABLE_OVERLAY=1`
+/// asks for them in recordings (demos). The agent's own screenshots capture only the
+/// selected window, so the overlay never reaches them either way.
+enum OverlayCapture {
+    static let variable = "OPENWORK_COMPUTER_USE_RECORDABLE_OVERLAY"
+    static var sharingType: NSWindow.SharingType {
+        ProcessInfo.processInfo.environment[variable] == "1" ? .readOnly : .none
+    }
+}
+
 /// How the agent's cursor travels between inputs: like a hand, not a ruler. Short hops
 /// are quick and long ones take a little longer (Fitts's law), it eases into its target
 /// instead of overshooting, and it bows slightly off the straight line.
@@ -112,6 +122,9 @@ final class AgentCursor {
     private let enabled = SessionControls.embedded
         || ProcessInfo.processInfo.environment["OPENWORK_COMPUTER_USE_PRESENCE"] != nil
     private var window: NSWindow?
+    /// The presence overlay ignores the mouse, so real pointer input passes through it.
+    /// The pill takes clicks and is not listed.
+    var passThroughWindows: Set<CGWindowID> { window.map { [CGWindowID($0.windowNumber)] } ?? [] }
     private var badge: NSPanel?
     private var pill: PresencePill?
     private let outline = CAShapeLayer()
@@ -143,7 +156,6 @@ final class AgentCursor {
     private var windowID: CGWindowID = 0
     /// Background sessions: presence sits just above the selected window, so a
     /// window the person brings in front of it also covers the agent's cursor.
-    private var layered = false
     private var appName = ""
     private var paused = false
     private var canContinue = false
@@ -176,12 +188,12 @@ final class AgentCursor {
 
     // MARK: Session lifecycle
 
-    func begin(windowFrame frame: CGRect, windowID id: CGWindowID, appName name: String, layered: Bool = false, purpose: String? = nil) {
+    func begin(windowFrame frame: CGRect, windowID id: CGWindowID, appName name: String, purpose: String? = nil) {
         guard enabled else { return }
         generation += 1
         let fresh = window == nil
         paused = false; canContinue = false; narration = nil; hidden = false; strokeLag = nil; acted = false; lastReaction = nil
-        windowID = id; appName = name; self.layered = layered
+        windowID = id; appName = name
         goal = purpose.flatMap(Self.goalLabel)
         if fresh { build() }
         window?.alphaValue = 1; badge?.alphaValue = 1
@@ -268,7 +280,7 @@ final class AgentCursor {
                 self.drawTrail(fading: false)
             }
         }
-        if phase == .down || (phase == .dispatched && screenPoint != nil && !["scroll", "type", "key", "set_value", "press", "menu"].contains(action)) {
+        if phase == .down || (phase == .dispatched && screenPoint != nil && !["scroll", "type", "key", "set_value", "enter_value", "focus", "press", "menu"].contains(action)) {
             // Aim, then click: the ripple lands when the cursor arrives.
             let press = CAKeyframeAnimation(keyPath: "transform.scale")
             press.values = [1, 0.8, 1]; press.duration = 0.22
@@ -280,7 +292,7 @@ final class AgentCursor {
         }
         scheduleThinking()
         guard phase != .up, phase != .move || action == "move" else { return }
-        let typing = action == "type" || action == "set_value"
+        let typing = ["type", "set_value", "enter_value"].contains(action)
         say(narration ?? Self.verb(action), busy: typing, hold: 1.6)
     }
 
@@ -473,7 +485,8 @@ final class AgentCursor {
         case "click": return "clicking"
         case "double_click": return "double-clicking"
         case "triple_click": return "selecting"
-        case "type", "set_value": return "typing"
+        case "type", "set_value", "enter_value": return "typing"
+        case "focus": return "focusing"
         case "key": return "shortcut"
         case "scroll": return "scrolling"
         case "drag": return "dragging"
@@ -491,7 +504,7 @@ final class AgentCursor {
         let window = NSWindow(contentRect: screen, styleMask: .borderless, backing: .buffered, defer: false)
         window.isOpaque = false; window.backgroundColor = .clear; window.hasShadow = false
         window.ignoresMouseEvents = true
-        window.sharingType = .none
+        window.sharingType = OverlayCapture.sharingType
         window.level = .statusBar
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         window.isReleasedWhenClosed = false
@@ -736,23 +749,20 @@ final class AgentCursor {
 
     // MARK: Window tracking
 
-    func layer(_ layered: Bool) {
-        guard enabled, self.layered != layered else { return }
-        self.layered = layered
-        order()
-    }
-
+    /// The outline, trail and cursor ride right above the selected window, among the app windows:
+    /// a window in front of it, OpenWork's included, covers them as it covers the window itself.
+    /// The Take over pill stays above everything, so the person can always reach it.
     private func order() {
         guard let window else { return }
-        window.level = layered ? .normal : .statusBar
-        if layered { window.order(.above, relativeTo: Int(windowID)) } else { window.orderFrontRegardless() }
+        window.level = .normal
+        window.order(.above, relativeTo: Int(windowID))
     }
 
     /// Follows the window when the person moves it, and hides with it.
     private func track() {
         guard window != nil, windowID != 0 else { return }
         // Windows the person raises go above presence; keep it right above the selected one.
-        if layered { order() }
+        order()
         let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]])?.first
         let onScreen = info?[kCGWindowIsOnscreen as String] as? Bool ?? false
         let bounds = (info?[kCGWindowBounds as String] as? [String: Any]).flatMap { CGRect(dictionaryRepresentation: $0 as CFDictionary) }
@@ -808,7 +818,7 @@ final class AgentCursor {
     private func buildPill() {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 80, height: 26), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
-        panel.sharingType = .none
+        panel.sharingType = OverlayCapture.sharingType
         panel.level = .statusBar
         panel.hidesOnDeactivate = false
         panel.becomesKeyOnlyIfNeeded = true

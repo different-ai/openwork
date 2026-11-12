@@ -19,19 +19,24 @@ for (const [key, value] of Object.entries(nativeHttp)) {
 const { OpenworkControlProvider } = await import("../src/react-app/shell/control/control-provider");
 const { useSessionControlActions } = await import("../src/react-app/domains/session/control/session-control-actions");
 const { useSessionModelStore } = await import("../src/react-app/domains/session/surface/session-model-store");
+const { useSessionManagementStore } = await import("../src/react-app/domains/session/sidebar/session-management-store");
 const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 afterAll(async () => { Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct); await GlobalRegistrator.unregister(); });
 
-async function mount(options: { archived?: boolean; busy?: boolean; v1?: boolean; deny?: boolean; wrongReadback?: boolean } = {}) {
+async function mount(options: { archived?: boolean; busy?: boolean; v1?: boolean; deny?: boolean; wrongReadback?: boolean; disconnected?: boolean; status?: string } = {}) {
   useSessionModelStore.getState().setModel("ses_target", { providerID: "rebind", modelID: "model-a" });
+  useSessionManagementStore.setState({ pinnedIds: [], unreadIds: [] });
   const writes: unknown[] = [];
+  const renames: Array<{ path: string; method: string; authorization: string | null; body: unknown }> = [];
+  const reloadedWorkspaces: string[] = [];
   let model = { providerID: "rebind", id: "model-a", variant: "default" };
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const path = new URL(request.url).pathname;
     if (path === "/experimental/engine-v2-preview/status") return NativeResponse.json({ enabled: !options.v1, running: !options.v1, chatRouting: !options.v1, mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [] });
+    if (path.endsWith("/api/info")) return NativeResponse.json({ data: { version: "2.1.0" } });
     if (path.endsWith("/api/model/default")) return NativeResponse.json({ data: {} });
     if (path.endsWith("/api/model")) return NativeResponse.json({ data: [{ id: "model-a", providerID: "rebind", name: "Model A" }, { id: "model-b", providerID: "rebind", name: "Model B" }] });
     if (path.endsWith("/api/provider")) return NativeResponse.json({ data: [{ id: "rebind", name: "Recovery witness" }] });
@@ -46,6 +51,11 @@ async function mount(options: { archived?: boolean; busy?: boolean; v1?: boolean
       }
       return NativeResponse.json({ data: {} });
     }
+    if (request.method === "PATCH" && path.endsWith("/api/session/ses_target")) {
+      renames.push({ path, method: request.method, authorization: request.headers.get("authorization"), body: await request.json() });
+      if (options.deny) return NativeResponse.json({ message: "Rename denied" }, { status: 403 });
+      return NativeResponse.json({ data: { id: "ses_target", title: "Revised task", location: { directory: "/tmp/two" } } });
+    }
     if (path.endsWith("/api/session/ses_target")) return NativeResponse.json({ data: {
       id: "ses_target", location: { directory: "/tmp/two" }, model, time: { archived: options.archived ? 123 : 0 },
     } });
@@ -55,15 +65,17 @@ async function mount(options: { archived?: boolean; busy?: boolean; v1?: boolean
   const baseUrl = `http://127.0.0.1:${server.port}`;
   const client = createOpenworkServerClient({ baseUrl, token: "fixture" });
   const workspaces: RouteWorkspace[] = ["one", "two"].map(id => ({ id, name: id, displayNameResolved: id, path: `/tmp/${id}`, preset: "starter", workspaceType: "local" }));
-  const endpointForWorkspace = (workspace: RouteWorkspace | null | undefined): ResolvedWorkspaceEndpoint | null => workspace ? {
-    baseUrl, token: "fixture", workspaceId: workspace.id, isRemote: false, client,
+  const endpointForWorkspace = (workspace: RouteWorkspace | null | undefined): ResolvedWorkspaceEndpoint | null => workspace && !options.disconnected ? {
+    baseUrl, token: `fixture-${workspace.id}`, workspaceId: workspace.id, isRemote: false, client,
     mountedBaseUrl: `${baseUrl}/workspace/${workspace.id}`, opencodeBaseUrl: `${baseUrl}/workspace/${workspace.id}/opencode`,
   } : null;
   function Register() {
     useSessionControlActions({ workspaces, selectedWorkspaceId: "one", selectedWorkspaceRoot: "/tmp/one", selectedSessionId: null,
-      sessionsByWorkspaceId: { two: [{ id: "ses_target" }] }, canCreateTask: false, openworkClient: client, opencodeClient: null, endpointForWorkspace,
+      sessionsByWorkspaceId: { two: [{ id: "ses_target", time: { updated: 1_700_000_000, archived: options.archived ? 123 : 0 } }] }, canCreateTask: false,
+      sessionStatusById: options.status ? { ses_target: options.status } : undefined, openworkClient: client, opencodeClient: null, endpointForWorkspace,
       navigateToSession: () => { throw new Error("Must not navigate"); }, navigateToSessionRoot: () => { throw new Error("Must not navigate"); },
-      createTaskInWorkspace: () => null, openModelPicker: () => { throw new Error("Must not open picker"); }, refreshRouteState: () => {}, archiveSession: async () => ({ kind: "done" }),
+      createTaskInWorkspace: () => null, openModelPicker: () => { throw new Error("Must not open picker"); }, refreshRouteState: () => {},
+      reloadWorkspaceSessions: async (workspaceId) => { reloadedWorkspaces.push(workspaceId); }, archiveSession: async () => ({ kind: "done" }),
     });
     return null;
   }
@@ -73,11 +85,19 @@ async function mount(options: { archived?: boolean; busy?: boolean; v1?: boolean
   cleanups.push(async () => { await act(async () => root.unmount()); host.remove(); });
   const api = window.__openworkControl;
   if (!api) throw new Error("Missing isolated control rail");
-  return { writes, run: async (extra: Record<string, unknown> = {}) => {
+  const command = async (id: string, args: Record<string, unknown>) => {
     let response: Awaited<ReturnType<typeof api.command>> | undefined;
-    await act(async () => { response = await api.command({ id: "session.set_model", args: { sessionId: "ses_target", providerId: "rebind", modelId: "model-b", ...extra } }); });
+    await act(async () => { response = await api.command({ id, args, origin: { sessionId: "ses_requester" } }); });
     return response;
-  } };
+  };
+  const query = async (id: string, args: Record<string, unknown>) => {
+    let response: Awaited<ReturnType<typeof api.query>> | undefined;
+    await act(async () => { response = await api.query({ id, args }); });
+    return response;
+  };
+  return { writes, renames, reloadedWorkspaces, command, query, run: (extra: Record<string, unknown> = {}) => command("session.set_model", {
+    sessionId: "ses_target", providerId: "rebind", modelId: "model-b", ...extra,
+  }) };
 }
 
 test("nonselected v2 workspace routes to its native engine and normalizes the default effort", async () => {
@@ -110,4 +130,69 @@ test("a successful endpoint response still requires matching persisted readback"
   const fixture = await mount({ wrongReadback: true });
   expect(await fixture.run()).toMatchObject({ ok: false, error: expect.stringContaining("readback") });
   expect(useSessionModelStore.getState().bySessionId.ses_target?.model.modelID).toBe("model-a");
+});
+
+test("rename uses the nonselected workspace's native endpoint and token without a selected client", async () => {
+  const fixture = await mount();
+  expect(await fixture.command("session.rename", { sessionId: "ses_target", title: "Revised task" })).toMatchObject({
+    ok: true, result: { ok: true, sessionId: "ses_target", title: "Revised task" },
+  });
+  expect(fixture.renames).toEqual([{
+    path: "/workspace/two/opencode2/api/session/ses_target", method: "PATCH", authorization: "Bearer fixture-two", body: { title: "Revised task" },
+  }]);
+  expect(fixture.reloadedWorkspaces).toEqual(["two"]);
+  expect(fixture.writes).toEqual([]);
+});
+
+test("rename refuses a missing session instead of falling back to the selected workspace", async () => {
+  const fixture = await mount();
+  expect(await fixture.command("session.rename", { sessionId: "ses_missing", title: "Revised task" })).toMatchObject({
+    ok: false, error: expect.stringContaining("not found"),
+  });
+  expect(fixture.renames).toEqual([]);
+});
+
+test("rename does not claim success when the target endpoint rejects the update", async () => {
+  const fixture = await mount({ deny: true });
+  expect(await fixture.command("session.rename", { sessionId: "ses_target", title: "Revised task" })).toMatchObject({
+    ok: false, error: expect.stringContaining("Rename denied"),
+  });
+});
+
+test("rename refuses a disconnected target workspace", async () => {
+  const fixture = await mount({ disconnected: true });
+  expect(await fixture.command("session.rename", { sessionId: "ses_target", title: "Revised task" })).toMatchObject({
+    ok: false, error: expect.stringContaining("not connected"),
+  });
+  expect(fixture.renames).toEqual([]);
+});
+
+test("pin toggles the requested active session without engine writes or navigation", async () => {
+  const fixture = await mount();
+  expect(await fixture.command("session.pin", { sessionId: "ses_target" })).toMatchObject({ ok: true, result: { pinned: true } });
+  expect(useSessionManagementStore.getState().pinnedIds).toEqual(["ses_target"]);
+  expect(await fixture.command("session.pin", { sessionId: "ses_target" })).toMatchObject({ ok: true, result: { pinned: false } });
+  expect(useSessionManagementStore.getState().pinnedIds).toEqual([]);
+  expect(fixture.writes).toEqual([]);
+  expect(fixture.renames).toEqual([]);
+});
+
+test("pin rejects missing and archived targets but stale pins can still be removed", async () => {
+  const fixture = await mount({ archived: true });
+  expect(await fixture.command("session.pin", { sessionId: "ses_missing" })).toMatchObject({ ok: false, error: expect.stringContaining("not found") });
+  expect(await fixture.command("session.pin", { sessionId: "ses_target" })).toMatchObject({ ok: false, error: expect.stringContaining("Unarchive") });
+  expect(useSessionManagementStore.getState().pinnedIds).toEqual([]);
+  await act(async () => { useSessionManagementStore.setState({ pinnedIds: ["ses_missing", "ses_target"] }); });
+  expect(await fixture.command("session.pin", { sessionId: "ses_missing" })).toMatchObject({ ok: true, result: { pinned: false } });
+  expect(await fixture.command("session.pin", { sessionId: "ses_target" })).toMatchObject({ ok: true, result: { pinned: false } });
+  expect(useSessionManagementStore.getState().pinnedIds).toEqual([]);
+});
+
+test("session.settle is gone: archive replaces it", async () => {
+  const fixture = await mount();
+  expect(await fixture.command("session.settle", { sessionId: "ses_target", settled: true })).toMatchObject({ ok: false });
+  const listed = await fixture.query("session.list_sessions", {});
+  expect(listed).toMatchObject({ ok: true, result: [{ sessionId: "ses_target" }] });
+  expect(JSON.stringify(listed)).not.toContain("settled");
+  expect(fixture.writes).toEqual([]);
 });

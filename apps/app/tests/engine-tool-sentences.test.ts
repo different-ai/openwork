@@ -43,3 +43,23 @@ test("the native skill tool names the skill a person would recognize", () => {
   expect(skillDisplayName({ name: "release" })).toBe("release")
   expect(skillDisplayName(undefined)).toBe("")
 })
+
+test("a connection action listed as its own Connect tool reads like the same action run through execute_capability", () => {
+  const past = (toolName: string, connectionName: string | undefined, input: Record<string, unknown> = {}) =>
+    getCapabilityCallSentence(call(toolName, input), { includeQuery: true, connectionName }).past
+
+  expect(past("openwork-cloud_linear_list_issues", "Linear")).toBe("Listed issues · Linear")
+  expect(past("openwork-cloud_linear_2_list_issues", "Linear")).toBe("Listed issues · Linear")
+  expect(past("openwork-cloud_slack_slack_send_message", "Slack")).toBe("Sent message · Slack")
+  expect(past("openwork-cloud_plain_getThreadDetails", "Plain")).toBe("Fetched thread details · Plain")
+  expect(past("openwork-cloud_notion_notion-search", "Notion", { query: "roadmap" })).toBe("Searched Notion for “roadmap”")
+  expect(past("openwork-cloud_google_workspace_getCapabilitiesGoogleWorkspaceCalendarEvents", "Google Workspace"))
+    .toBe("Fetched calendar events · Google Workspace")
+  expect(past("openwork-cloud_google_workspace_postCapabilitiesGoogleWorkspaceGmailDrafts", "Google Workspace"))
+    .toBe("Created gmail drafts · Google Workspace")
+
+  // Without a connector the label still never shows the engine's tool prefix.
+  for (const name of [undefined, "OpenWork Cloud"]) {
+    expect(past("openwork-cloud_linear_list_issues", name)).not.toMatch(/openwork-cloud/i)
+  }
+})

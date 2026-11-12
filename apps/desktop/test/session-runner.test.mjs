@@ -8,8 +8,9 @@ import { test } from "node:test"
 import { createHeadlessThreadClient } from "@openwork/headless-threads"
 import { createSessionRunner, emptyJournal } from "@openwork/remote-sessions"
 import { createDesktopSessionAdapter } from "../electron/session-runner-adapter.mjs"
+import { computerRequestPending, createComputerRequestAnswers } from "../electron/session-runner-computer-requests.mjs"
 import { createDesktopSessionJournal, desktopSessionRunnerPartition } from "../electron/session-runner-journal.mjs"
-import { createDesktopAutomationRunner } from "../electron/automation-runner.mjs"
+import { createDesktopAutomationRunner, watchRemoteSession } from "../electron/automation-runner.mjs"
 import { stageRuntimeNodeModules } from "../scripts/prepare-runtime-node-modules.mjs"
 
 const account = { organizationId: "org_fixture", memberId: "member_fixture", runnerId: "runner_fixture" }
@@ -39,9 +40,19 @@ async function eventually(predicate, message = "condition was not reached") {
   assert.fail(message)
 }
 
+/** Runners started by the test in progress; tests in this file run one at a time. */
+const startedRunners = []
+const started = (runner) => { startedRunners.push(runner); return runner }
+
 async function privateDirectory(t) {
   const root = await mkdtemp(join(tmpdir(), "openwork-session-runner-"))
-  t.after(() => rm(root, { recursive: true, force: true }))
+  // Hooks run in the order they were added, and one that throws skips the rest: a runner still
+  // writing its journal made this removal fail, and was then never stopped. Stop them first; the
+  // retries cover a write that was already on its way.
+  t.after(async () => {
+    for (const runner of startedRunners.splice(0)) runner.stop()
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 })
+  })
   return root
 }
 
@@ -57,6 +68,7 @@ function nativeFixture() {
   let pendingForm = false
   let routing = "v2"
   let autoReply = false
+  let replyContent = null
   let loseCreateResponse = false
   let localToken = "local-credential"
   const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
@@ -84,14 +96,23 @@ function nativeFixture() {
     }
     if (path === "/session/active") return response({ data: active ? { [sessionId]: { type: "running" } } : {} })
     if (path === `/session/${sessionId}`) return response({ data: { id: sessionId, metadata: sessionMetadata, title: "Remote fixture", model: { providerID: "fixture", id: "fixture-model" } } })
-    if (path === `/session/${sessionId}/message`) return response({ data: [...messages].reverse() })
+    if (path === `/session/${sessionId}/message`) {
+      // Native pages run newest first, bounded by limit, continued by cursor.
+      const newest = [...messages].reverse()
+      const start = Number(url.searchParams.get("cursor") ?? 0)
+      const limit = Number(url.searchParams.get("limit") ?? newest.length)
+      const end = start + limit
+      return response({ data: newest.slice(start, end), ...(end < newest.length ? { cursor: { next: String(end) } } : {}) })
+    }
     if (path === `/session/${sessionId}/model`) return response({ data: {} })
     if (path === `/session/${sessionId}/prompt`) {
       if (!messages.some((message) => message.id === body.id && body.id)) {
         messages.push({ id: body.id ?? `msg_legacy${messages.length}`, role: "user", text: body.text })
         active = true
         if (autoReply) {
-          messages.push({ id: `msg_reply${messages.length}`, role: "assistant", text: "fixture reply" })
+          messages.push(replyContent
+            ? { id: `msg_reply${messages.length}`, role: "assistant", content: replyContent }
+            : { id: `msg_reply${messages.length}`, role: "assistant", text: "fixture reply" })
           active = false
         }
       }
@@ -121,7 +142,7 @@ function nativeFixture() {
     calls, messages, fetchImpl, getLocalRuntime: async () => ({ baseUrl: "http://localhost:8787", token: localToken }),
     get created() { return created }, get sessionId() { return sessionId }, get interrupts() { return interrupts },
     set pendingPermission(value) { pendingPermission = value }, set pendingForm(value) { pendingForm = value }, set routing(value) { routing = value },
-    set active(value) { active = value }, set autoReply(value) { autoReply = value },
+    set active(value) { active = value }, set autoReply(value) { autoReply = value }, set replyContent(value) { replyContent = value },
     set loseCreateResponse(value) { loseCreateResponse = value }, set localToken(value) { localToken = value },
   }
 }
@@ -154,13 +175,13 @@ function runnerFixture(native, assignment = command()) {
 }
 
 function desktopRunner(native, den, root) {
-  return createDesktopAutomationRunner({
+  return started(createDesktopAutomationRunner({
     fetchImpl: den.fetchImpl, getLocalRuntime: native.getLocalRuntime, getJournalRoot: () => root,
     remoteSessionFirstTurnWindowMs: 0,
     remoteSessionWatch: { fastPollMs: 10, slowPollMs: 10 },
     remoteSessionRequestPoll: { pollMs: 10 },
     waitBeforeReconnect: (_ms, signal) => new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true })),
-  })
+  }))
 }
 
 function configure(runner, capabilities, nonce = "first", selectedAccount = account) {
@@ -350,6 +371,161 @@ test("a v1 question and permission reply on the workspace's own reply routes", a
     ["/workspace/workspace_fixture/opencode/permission/per_v1/reply", { reply: "reject" }],
     ["/workspace/workspace_fixture/opencode/question/que_v1/reply", { answers: [["Short", "A custom note"]] }],
   ])
+})
+
+test("a helper's permission holds the task: it is reported and the reply goes to the helper", async () => {
+  const calls = []
+  let asked = true
+  const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
+  const client = createHeadlessThreadClient({
+    baseUrl: "http://localhost:8787", token: "fixture-token", workspaceId: "workspace_fixture", engine: "v2",
+    fetch: async (input, init = {}) => {
+      const url = new URL(String(input))
+      const path = url.pathname.replace("/workspace/workspace_fixture/opencode2/api", "")
+      calls.push({ path, method: init.method ?? "GET", body: init.body ? JSON.parse(init.body) : null })
+      if (path === "/session" && url.searchParams.get("parentID") === "ses_task") {
+        // An engine that ignores the filter lists unrelated sessions too.
+        return response({ data: [{ id: "ses_helper", parentID: "ses_task" }, { id: "ses_done", parentID: "ses_task" }, { id: "ses_unrelated" }] })
+      }
+      if (path === "/session") return response({ data: [] })
+      if (path === "/session/active") return response({ data: { ses_task: { type: "running" }, ses_helper: { type: "running" } } })
+      if (path === "/session/ses_helper/permission") return response({ data: asked ? [{ id: "per_helper", action: "bash", resources: ["pnpm build"] }] : [] })
+      if (path === "/session/ses_helper/permission/per_helper/reply") { asked = false; return response({}) }
+      if (path.endsWith("/permission") || path.endsWith("/form")) return response({ data: [] })
+      return response({ message: "unexpected" }, 404)
+    },
+  })
+  assert.deepEqual(await client.getThreadPending("ses_task"), { kind: "permission", requestId: "per_helper", title: "Run a command", detail: "", command: "pnpm build" })
+  assert.equal(await client.getThreadWaitingFor("ses_task"), "permission")
+  assert.equal(calls.some((call) => call.path.startsWith("/session/ses_done/") || call.path.startsWith("/session/ses_unrelated/")), false,
+    "only helpers that still run are read")
+  await client.answerThread("ses_task", { kind: "permission", requestId: "per_helper", decision: "once" })
+  assert.deepEqual(calls.filter((call) => call.method === "POST").map((call) => [call.path, call.body]),
+    [["/session/ses_helper/permission/per_helper/reply", { decision: "once", reply: "once" }]])
+  assert.equal(await client.getThreadPending("ses_task"), null)
+})
+
+test("a v1 helper's question is the task's, another session's is not", async () => {
+  const calls = []
+  const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
+  const client = createHeadlessThreadClient({
+    baseUrl: "http://localhost:8787", token: "fixture-token", workspaceId: "workspace_fixture", engine: "v1",
+    fetch: async (input, init = {}) => {
+      const url = new URL(String(input))
+      calls.push({ path: url.pathname, method: init.method ?? "GET", body: init.body ? JSON.parse(init.body) : null })
+      if (url.pathname.endsWith("/opencode/permission")) return response([{ id: "per_other", sessionID: "ses_other", permission: "bash", patterns: ["rm"] }])
+      if (url.pathname.endsWith("/opencode/question")) return response([{ id: "que_helper", sessionID: "ses_nested", questions: [{ question: "Which file?", options: [{ label: "notes.md" }] }] }])
+      if (url.pathname.endsWith("/opencode/session/ses_nested")) return response({ id: "ses_nested", parentID: "ses_helper" })
+      if (url.pathname.endsWith("/opencode/session/ses_helper")) return response({ id: "ses_helper", parentID: "ses_v1" })
+      if (url.pathname.endsWith("/opencode/session/ses_other")) return response({ id: "ses_other" })
+      if (url.pathname.endsWith("/opencode/question/que_helper/reply")) return response(true)
+      return response({ message: "unexpected" }, 404)
+    },
+  })
+  assert.equal((await client.getThreadPending("ses_v1"))?.requestId, "que_helper")
+  await client.answerThread("ses_v1", { kind: "question", requestId: "que_helper", answers: [["notes.md"]] })
+  assert.equal(calls.filter((call) => call.path.includes("/opencode/session/")).length, 3, "each session's parent is read once")
+  assert.equal(calls.at(-1).path, "/workspace/workspace_fixture/opencode/question/que_helper/reply")
+})
+
+test("a form's yes/no, number, hidden and conditional fields are answered in their own types", async () => {
+  const replies = []
+  let form = {
+    id: "frm_deploy", sessionID: "ses_task", title: "Deploy", fields: [
+      { key: "token", type: "string", hidden: true, default: "preset-token" },
+      { key: "confirm", type: "boolean", title: "Deploy now?" },
+      { key: "replicas", type: "integer", title: "Replicas", description: "How many replicas?", minimum: 1, maximum: 5 },
+      { key: "region", type: "string", title: "Region", options: [{ label: "Europe", value: "eu" }, { label: "Asia", value: "ap" }], custom: false,
+        when: [{ key: "confirm", op: "eq", value: true }] },
+      { key: "reason", type: "string", title: "Why not?", when: [{ key: "confirm", op: "neq", value: true }] },
+    ],
+  }
+  const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
+  const client = createHeadlessThreadClient({
+    baseUrl: "http://localhost:8787", token: "fixture-token", workspaceId: "workspace_fixture", engine: "v2",
+    fetch: async (input, init = {}) => {
+      const path = new URL(String(input)).pathname.replace("/workspace/workspace_fixture/opencode2/api", "")
+      if (path === "/session/ses_task/form") return response({ data: [form] })
+      if (path === "/session/ses_task/permission") return response({ data: [] })
+      if (path.endsWith("/reply")) { replies.push([path, JSON.parse(init.body)]); return response({}) }
+      return response({ message: "unexpected" }, 404)
+    },
+  })
+  const pending = await client.getThreadPending("ses_task")
+  assert.deepEqual(pending.questions.map((question) => [question.header, question.options.map((option) => option.label), question.custom]), [
+    ["Deploy now?", ["Yes", "No"], false],
+    ["Replicas", [], true],
+    ["Region", ["Europe", "Asia"], false],
+    ["Why not?", [], true],
+  ], "a hidden field is not asked")
+  const answer = (answers) => client.answerThread("ses_task", { kind: "question", requestId: "frm_deploy", answers })
+  await assert.rejects(answer([["Maybe"], ["3"], ["Europe"], ["n/a"]]), { code: "invalid_answer" })
+  await assert.rejects(answer([["Yes"], ["three"], ["Europe"], ["n/a"]]), { code: "invalid_answer", message: "Question 2 takes a number." })
+  await assert.rejects(answer([["Yes"], ["2.5"], ["Europe"], ["n/a"]]), { code: "invalid_answer", message: "Question 2 takes a whole number." })
+  await assert.rejects(answer([["Yes"], ["9"], ["Europe"], ["n/a"]]), { code: "invalid_answer", message: "Question 2 must be at most 5." })
+  assert.deepEqual(replies, [], "an answer that does not fit sends nothing")
+  await answer([["Yes"], ["3"], ["Europe"], ["n/a"]])
+  await answer([["No"], ["1"], ["Asia"], ["Too early"]])
+  assert.deepEqual(replies, [
+    ["/session/ses_task/form/frm_deploy/reply", { answer: { token: "preset-token", confirm: true, replicas: 3, region: "eu" } }],
+    ["/session/ses_task/form/frm_deploy/reply", { answer: { token: "preset-token", confirm: false, replicas: 1, reason: "Too early" } }],
+  ], "a field that does not apply is left out")
+
+  form = { id: "frm_sign_in", sessionID: "ses_task", title: "Sign in", fields: [{ key: "open", type: "external", url: "https://example.com/authorize", title: "Sign in to Example" }] }
+  assert.deepEqual(await client.getThreadPending("ses_task"), { kind: "question", requestId: "frm_sign_in", questions: [{
+    header: "Sign in to Example", question: "This step opens a link, so it can't be answered from here.", options: [], multiple: false, custom: false,
+  }] })
+  await assert.rejects(client.answerThread("ses_task", { kind: "question", requestId: "frm_sign_in", answers: [["done"]] }), { code: "invalid_answer" })
+  assert.equal(replies.length, 2)
+})
+
+test("a computer-use approval on this computer is reported and answered once from the other one", async () => {
+  const native = nativeFixture()
+  const answers = []
+  let request = { id: "req_script", reason: "script", computer: "This Mac", placement: "local", standing: false, script: { app: "jxa", code: "Application('Notes').activate()" } }
+  const control = {
+    pendingRequest: ({ sessionId }) => sessionId === native.sessionId ? request : null,
+    answerRequest: async (input) => { answers.push(input); request = null },
+  }
+  const adapter = createDesktopSessionAdapter({ ...native, computerRequests: createComputerRequestAnswers(control) })
+  const signal = new AbortController().signal
+  const receipt = await adapter.create(command(), signal)
+  await adapter.send(receipt, { prompt: "first turn", messageId: "msg_firstturn", model: null }, signal)
+  native.active = true
+  const pending = { kind: "permission", requestId: "req_script", title: "Run a JavaScript for Automation script",
+    detail: "It runs on that computer as you and can change your files and apps.", command: "Application('Notes').activate()" }
+  const waiting = await adapter.observe(receipt, signal)
+  assert.equal(waiting.status, "waiting")
+  assert.equal(waiting.waitingFor, "permission")
+  assert.deepEqual(waiting.pending, pending)
+  assert.deepEqual((await adapter.read(receipt, { from: "end", cursor: null, limit: 5 }, signal)).pending, pending)
+  await assert.rejects(adapter.answer(receipt, { kind: "permission", requestId: "req_old", decision: "once" }, signal), { code: "stale_request" })
+  assert.deepEqual(answers, [], "an answer to another request approves nothing")
+  await adapter.answer(receipt, { kind: "permission", requestId: "req_script", decision: "once" }, signal)
+  assert.deepEqual(answers, [{ sessionId: receipt.sessionId, answer: "allow", id: "req_script" }])
+  assert.equal((await adapter.observe(receipt, signal)).pending, null)
+
+  request = { id: "req_setup", reason: "setup", computer: "This Mac", placement: "local" }
+  assert.equal((await adapter.observe(receipt, signal)).pending.title, "Set up computer use")
+  await assert.rejects(adapter.answer(receipt, { kind: "permission", requestId: "req_setup", decision: "once" }, signal), { code: "invalid_answer" })
+  await adapter.answer(receipt, { kind: "permission", requestId: "req_setup", decision: "reject" }, signal)
+  assert.deepEqual(answers.at(-1), { sessionId: receipt.sessionId, answer: "dismiss", id: "req_setup" })
+})
+
+test("a computer-use approval is shown whole or not approved from afar", () => {
+  const base = { id: "req", computer: "This Mac", placement: "local" }
+  assert.deepEqual(computerRequestPending({ ...base, reason: "files", files: { app: "example.com", names: ["/Users/me/a.pdf", "/Users/me/b\u202Etxt.exe"] } }), {
+    pending: { kind: "permission", requestId: "req", title: "Give 2 files to example.com",
+      detail: "The agent chose them on that computer. example.com can upload what it receives. It has 1 hidden character, shown as <U+…>. Don't approve it unless you expected that.",
+      command: "/Users/me/a.pdf\n/Users/me/b<U+202E>txt.exe" },
+    allow: true,
+  })
+  assert.deepEqual(computerRequestPending({ ...base, reason: "credential", credential: { site: "https://accounts.example.com" } }).pending.command, "https://accounts.example.com")
+  assert.equal(computerRequestPending({ ...base, reason: "credential", standing: false, credential: { app: "Notes", appId: "com.example.notes" } }).pending.command, "Notes (com.example.notes)")
+  const long = computerRequestPending({ ...base, reason: "script", script: { app: "applescript", code: "x".repeat(2001) } })
+  assert.equal(long.allow, false)
+  assert.equal(long.pending.command, undefined)
+  assert.equal(computerRequestPending({ ...base, reason: "setup" }).allow, false)
 })
 
 test("native stop compares the current turn; restart probes the original owning engine", async () => {
@@ -544,7 +720,8 @@ test("scheduled Automation execution stays independent with a recovery-capable t
   native.autoReply = true
   const den = runnerFixture(native, {
     kind: "automation_run", runId: "run_fixture", automationName: "Fixture schedule", attempt: 1,
-    instructions: "scheduled turn", model: { providerId: "fixture", modelId: "fixture-model" }, timeoutMs: 10_000,
+    // Den sends a model without a variant as `variant: null`.
+    instructions: "scheduled turn", model: { providerId: "fixture", modelId: "fixture-model", variant: null }, timeoutMs: 10_000,
     workspaceId: "workspace_fixture",
   })
   // Scheduled runs preflight their model's availability before creation.
@@ -559,8 +736,51 @@ test("scheduled Automation execution stays independent with a recovery-capable t
   const complete = den.calls.find((call) => call.path === "/v1/automation-runs/run_fixture/complete")
   assert.equal(complete.body.status, "succeeded")
   assert.equal(native.calls.find((call) => call.path.endsWith("/prompt")).body.id, undefined)
+  // The engine only accepts a string variant, so a missing one is left out.
+  const modelCalls = native.calls.filter((call) => call.body?.model)
+  assert.ok(modelCalls.some((call) => call.path.endsWith("/model")))
+  for (const call of modelCalls) assert.deepEqual(call.body.model, { providerID: "fixture", id: "fixture-model" })
   const disk = JSON.parse(await readFile(join(root, desktopSessionRunnerPartition(denBaseUrl, account), "journal.json"), "utf8").catch(() => "{\"commands\":[],\"requests\":[]}"))
   assert.deepEqual(disk.commands, [])
+})
+
+test("a desktop Automation that could not use a connection fails and names it", async (t) => {
+  const root = await privateDirectory(t)
+  const native = nativeFixture()
+  native.autoReply = true
+  // What OpenWork Cloud returns when a capability call needs the owner to reconnect.
+  const connectionStatus = {
+    version: 1, kind: "connection_action", source: "openwork-cloud", layer: "mcp_connection",
+    connectionId: "mcp_gmail", connectionName: "Gmail", authType: "oauth", credentialMode: "per_member",
+    state: "reauth_required", errorCode: "invalid_grant", message: "Gmail rejected the saved sign-in.", actor: "member",
+    action: { type: "reconnect", label: "Reconnect Gmail", surface: "openwork_your_connections", retry: "search_capabilities", url: "https://den.invalid/dashboard/your-connections?connectionId=mcp_gmail" },
+  }
+  native.replyContent = [
+    { type: "tool", name: "openwork-cloud_execute_capability", callID: "call_gmail", state: { status: "error", input: {}, error: { type: "unknown", message: JSON.stringify({ error: "connection_required", connectionStatus }) } } },
+    { type: "text", text: "I could not send the summary because Gmail needs to be reconnected." },
+  ]
+  const den = runnerFixture(native, {
+    kind: "automation_run", runId: "run_fixture", automationName: "Fixture schedule", attempt: 1,
+    instructions: "scheduled turn", model: { providerId: "fixture", modelId: "fixture-model" }, timeoutMs: 10_000,
+    workspaceId: "workspace_fixture",
+  })
+  const originalFetch = den.fetchImpl
+  den.fetchImpl = async (input, init) => String(input).endsWith("/opencode2/api/model")
+    ? new Response(JSON.stringify({ data: [{ providerID: "fixture", id: "fixture-model" }] }), { status: 200 })
+    : originalFetch(input, init)
+  const runner = desktopRunner(native, den, root)
+  t.after(() => runner.stop())
+  configure(runner, recoveryCapabilities)
+  await eventually(() => den.calls.some((call) => call.path === "/v1/automation-runs/run_fixture/complete"))
+  const complete = den.calls.find((call) => call.path === "/v1/automation-runs/run_fixture/complete")
+  assert.equal(complete.body.status, "failed")
+  assert.equal(complete.body.error.code, "connection_action_required")
+  assert.match(complete.body.error.message, /Reconnect Gmail in OpenWork/)
+  assert.equal(complete.body.resultSummary, "I could not send the summary because Gmail needs to be reconnected.")
+  assert.equal("connectionBlocker" in complete.body, false)
+  const warning = den.calls.find((call) => call.path === "/v1/automation-runs/run_fixture/events" && call.body.type === "warning")
+  assert.equal(warning?.body.payload.connectionName, "Gmail")
+  assert.equal(warning?.body.payload.connectionId, "mcp_gmail")
 })
 
 test("an engine policy the local server cannot take yet never stops the runner from finding work", async (t) => {
@@ -574,14 +794,14 @@ test("an engine policy the local server cannot take yet never stops the runner f
     return new Response(JSON.stringify({ ...(await response.json()), enginePolicy: { upgrade: true } }), { status: response.status })
   }
   const policies = []
-  const runner = createDesktopAutomationRunner({
+  const runner = started(createDesktopAutomationRunner({
     fetchImpl, getLocalRuntime: native.getLocalRuntime, getJournalRoot: () => root,
     remoteSessionFirstTurnWindowMs: 0,
     remoteSessionWatch: { fastPollMs: 10, slowPollMs: 10 },
     remoteSessionRequestPoll: { pollMs: 10 },
     waitBeforeReconnect: (_ms, signal) => new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true })),
     onEnginePolicy: async (policy) => { policies.push(policy); throw new Error("OpenWork engine policy service unavailable") },
-  })
+  }))
   t.after(() => runner.stop())
   configure(runner, legacyCapabilities)
   await eventually(() => den.calls.some((call) => call.path.endsWith("/complete")))
@@ -607,4 +827,59 @@ test("native observation reports the step the current turn ran last, only while 
   const done = await adapter.observe(receipt, signal)
   assert.equal(done.status, "idle")
   assert.equal(done.latestStep, null)
+})
+
+test("a finished long turn reports idle even after its own message left the bounded tail", async () => {
+  // Production: a 246-message remote session finished, but its first user message fell outside the last 200,
+  // so every observation said "running" for the rest of the night.
+  const native = nativeFixture()
+  const adapter = createDesktopSessionAdapter(native)
+  const signal = new AbortController().signal
+  const receipt = await adapter.create(command(), signal)
+  await adapter.send(receipt, { prompt: "open the PRs", messageId: "msg_longturn", model: null }, signal)
+  for (let index = 0; index < 240; index += 1) native.messages.push({ id: `msg_step${index}`, role: "assistant", text: `step ${index}` })
+  native.messages.push({ id: "msg_final", role: "assistant", text: "All PRs merged." })
+  native.active = false
+  const done = await adapter.observe(receipt, signal)
+  assert.equal(done.status, "idle")
+  assert.equal(done.finalText, "All PRs merged.")
+  // Seen once is enough: later observations read only the tail.
+  const reads = native.calls.length
+  const again = await adapter.observe(receipt, signal)
+  assert.equal(again.status, "idle")
+  assert.equal(native.calls.slice(reads).filter((call) => call.path.endsWith("/message")).length, 1)
+})
+
+test("a follow-up not yet in the session is still running, even on a long session", async () => {
+  const native = nativeFixture()
+  const adapter = createDesktopSessionAdapter(native)
+  const signal = new AbortController().signal
+  const receipt = await adapter.create(command(), signal)
+  for (let index = 0; index < 240; index += 1) native.messages.push({ id: `msg_old${index}`, role: index === 0 ? "user" : "assistant", text: `old ${index}` })
+  await adapter.send(receipt, { prompt: "one more thing", messageId: "msg_followup", model: null }, signal)
+  native.messages.pop()
+  native.active = false
+  const pending = await adapter.observe(receipt, signal)
+  assert.equal(pending.status, "running")
+  assert.equal(pending.finalText, undefined)
+})
+
+test("the released watcher also reports a finished long follow-up as idle", async () => {
+  const native = nativeFixture()
+  const adapter = createDesktopSessionAdapter(native)
+  const signal = new AbortController().signal
+  const receipt = await adapter.create(command(), signal)
+  native.messages.push({ id: "msg_turn", role: "user", text: "open the PRs" })
+  for (let index = 0; index < 240; index += 1) native.messages.push({ id: `msg_work${index}`, role: "assistant", text: `step ${index}` })
+  native.messages.push({ id: "msg_answer", role: "assistant", text: "Merged." })
+  native.active = false
+  const reports = []
+  const outcome = await watchRemoteSession({
+    sessionId: receipt.sessionId, workspaceId: receipt.workspaceId, turn: { messageId: "msg_turn", previousUserMessageId: null },
+    getLocalRuntime: native.getLocalRuntime, fetchImpl: native.fetchImpl, signal,
+    timing: { fastPollMs: 1, slowPollMs: 1, maxMs: 2_000 },
+    report: async (body) => { reports.push(body); return true },
+  })
+  assert.equal(outcome, "idle")
+  assert.equal(reports.at(-1).finalText, "Merged.")
 })

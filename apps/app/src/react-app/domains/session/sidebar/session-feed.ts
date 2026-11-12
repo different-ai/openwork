@@ -1,10 +1,11 @@
-// The Feed view of the sidebar: every workspace's sessions in one list, newest
-// first, with settled ones in a shelf at the bottom. Sessions waiting on the
-// person stay in their normal place (the row itself shows they need you) and
-// never settle.
+// The Feed view of the sidebar: every workspace's sessions in one list, the
+// last one interacted with first. A session the person drags to another spot
+// stays there until it has new activity, which brings it back to the top.
+// Sessions waiting on the person stay in their normal place (the row itself
+// shows they need you). Archived sessions live in their own shelf.
 import type { WorkspaceSessionGroup } from "../../../../app/types";
-import type { FeedFolder, FeedGroupBy, FeedSortBy, SessionSettleEntry, WorkspaceGroupState } from "./session-management-store";
-import { filterSettledSessions, sessionActivityAt, sessionCreatedAt } from "./session-settle";
+import type { FeedFolder, FeedGroupBy, FeedPlacement, FeedSortBy, WorkspaceGroupState } from "./session-management-store";
+import { sessionCreatedAt, sessionLastActivityAt } from "./session-activity";
 import {
   getRootSessions,
   isActiveWorkSessionStatus,
@@ -34,17 +35,18 @@ export type FeedFolderShelf = FeedFolder & {
 export type SessionFeed = {
   folders: FeedFolderShelf[];
   sections: { section: FeedSection; entries: FeedEntry[] }[];
-  settled: FeedEntry[];
+  /** The time each listed session sorts at, so a drop can place a session between two others. */
+  sortKeyById: ReadonlyMap<string, number>;
+  /** Rows can be dragged to a new spot (sorted by last activity, not creation). */
+  reorderable: boolean;
 };
 
 export type SessionFeedContext = {
   pinnedIds: ReadonlySet<string>;
   unreadIds: ReadonlySet<string>;
-  settledById: Record<string, SessionSettleEntry>;
+  workedAtById: Readonly<Record<string, number>>;
+  placementById: Readonly<Record<string, FeedPlacement>>;
   statusById: Record<string, string> | undefined;
-  /** Workspaces that can settle (OpenCode v2 with the feature on). */
-  settleWorkspaceIds: ReadonlySet<string> | undefined;
-  autoSettleDays: number;
   now: number;
   feedFolders: readonly FeedFolder[];
   groupsByWorkspace: Readonly<Record<string, WorkspaceGroupState>>;
@@ -52,10 +54,30 @@ export type SessionFeedContext = {
   sortBy: FeedSortBy;
 };
 
+/**
+ * Where a session sorts in the Feed by last activity: its dragged spot until it
+ * has activity newer than the drag, then its last activity.
+ */
+export function feedActivityKey(
+  session: SessionListItem,
+  workedAt: number | undefined,
+  placement: FeedPlacement | undefined,
+): number {
+  const activityAt = sessionLastActivityAt(session, workedAt);
+  return placement && placement.at >= activityAt ? placement.key : activityAt;
+}
+
+/** The sort key for a session dropped between `above` and `below` (either may be missing). */
+export function feedKeyBetween(above: number | undefined, below: number | undefined): number {
+  if (above !== undefined && below !== undefined) return (above + below) / 2;
+  if (above !== undefined) return above - 1;
+  if (below !== undefined) return below + 1;
+  return Date.now();
+}
+
 /** Pinned sessions stay in the Pinned section, so the feed leaves them out. */
 export function buildSessionFeed(groups: readonly WorkspaceSessionGroup[], context: SessionFeedContext): SessionFeed {
-  const active: FeedEntry[] = [];
-  const settled: FeedEntry[] = [];
+  const listed: FeedEntry[] = [];
   // Pinned folders are sticky: a session filed there stays until it is moved.
   const folders = context.feedFolders.flatMap((folder): FeedFolderShelf[] => {
     const label = context.groupsByWorkspace[folder.workspaceId]?.groups.find((group) => group.id === folder.groupId)?.label;
@@ -66,30 +88,27 @@ export function buildSessionFeed(groups: readonly WorkspaceSessionGroup[], conte
     return groupId ? folders.find((folder) => folder.workspaceId === workspaceId && folder.groupId === groupId) : undefined;
   };
   for (const group of groups) {
-    const unfiled = getRootSessions(partitionArchivedSessions(group.sessions).active)
+    const roots = getRootSessions(partitionArchivedSessions(group.sessions).active)
       .filter((session) => !context.pinnedIds.has(session.id));
-    const roots = unfiled.filter((session) => {
+    for (const session of roots) {
       const folder = folderFor(group.workspace.id, session.id);
-      if (!folder) return true;
-      folder.entries.push({ group, session });
-      return false;
-    });
-    const settledIds = context.settleWorkspaceIds?.has(group.workspace.id)
-      ? new Set(filterSettledSessions(roots, {
-        settledById: context.settledById,
-        statusById: context.statusById,
-        pinnedIds: context.pinnedIds,
-        unreadIds: context.unreadIds,
-        autoSettleDays: context.autoSettleDays,
-        now: context.now,
-      }).map((session) => session.id))
-      : new Set<string>();
-    for (const session of roots) (settledIds.has(session.id) ? settled : active).push({ group, session });
+      (folder ? folder.entries : listed).push({ group, session });
+    }
   }
-  const timeOf = context.sortBy === "created" ? sessionCreatedAt : sessionActivityAt;
+  const reorderable = context.sortBy === "activity";
+  const sortKeyById = new Map<string, number>();
+  const timeOf = (session: SessionListItem) => {
+    let key = sortKeyById.get(session.id);
+    if (key === undefined) {
+      key = reorderable
+        ? feedActivityKey(session, context.workedAtById[session.id], context.placementById[session.id])
+        : sessionCreatedAt(session);
+      sortKeyById.set(session.id, key);
+    }
+    return key;
+  };
   const newestFirst = (a: FeedEntry, b: FeedEntry) => timeOf(b.session) - timeOf(a.session);
-  active.sort(newestFirst);
-  settled.sort(newestFirst);
+  listed.sort(newestFirst);
   for (const folder of folders) {
     folder.entries.sort(newestFirst);
     const ids = folder.entries.map((entry) => entry.session.id);
@@ -115,9 +134,9 @@ export function buildSessionFeed(groups: readonly WorkspaceSessionGroup[], conte
     return at >= today ? "today" : at >= today - DAY_MS ? "yesterday" : "earlier";
   };
   const bySection = new Map(SECTION_ORDER[context.groupBy].map((section): [FeedSection, FeedEntry[]] => [section, []]));
-  for (const entry of active) bySection.get(sectionOf(entry))?.push(entry);
+  for (const entry of listed) bySection.get(sectionOf(entry))?.push(entry);
   const sections = [...bySection]
     .filter(([, entries]) => entries.length > 0)
     .map(([section, entries]) => ({ section, entries }));
-  return { folders, sections, settled };
+  return { folders, sections, sortKeyById, reorderable };
 }

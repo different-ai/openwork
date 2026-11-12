@@ -2,6 +2,7 @@ import { cloudComputerCall, cloudComputerFor, cloudComputerJson, startCloudCompu
 import { createV2SessionHomes, nativeSession, nativeSessionDirectory } from "./opencode-v2-session-home.js";
 import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./cloud-mcp-v2.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
+import { readHostResponse } from "./host-response.js";
 import { createTaskRecovery, setTaskRecovery } from "./task-recovery.js";
 import { managedPolicyActionSchema } from "./managed-policy-rules.js";
 import { enterEngineMutation, withEngineSwitchFence } from "./engine-switch-fence.js";
@@ -72,6 +73,8 @@ import {
 import { deleteSkill, listSkills, renderSkillContentForResponse, upsertSkill } from "./skills.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
+import { createClaudeCodeLogin } from "./claude-code-login.js";
+import { inheritedEngineEnv } from "./managed-opencode-v2.js";
 import { opencodeConfigApiError } from "./opencode-config-error.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
@@ -109,6 +112,7 @@ import {
 } from "./workspace-export-safety.js";
 import { serve, type ServeResult } from "./serve-node.js";
 import { serveStaticUi } from "./static-ui.js";
+import { withSseHeartbeat } from "./sse-heartbeat.js";
 import { isAllowedHost } from "./allowed-hosts.js";
 import { externalFetch, loopbackFetch, transferResponseBody } from "./server-fetch.js";
 import { registerCoreRoutes } from "./routes/core.js";
@@ -173,6 +177,8 @@ import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeO
 import { findManagedEngineWorkspace, hasExternalOpencode, managedEngineRootWorkspace } from "./workspaces.js";
 import { startThreadApprovalReplayer, type ThreadApprovalReplayer } from "./thread-approvals.js";
 import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
+import { shareDeviceProvider } from "./device-provider-share.js";
+import { readLocalProviderApiKeys } from "./opencode-v2-local-auth.js";
 import { createEngineV2Preview, shouldSyncLiveProviderOwnerTransition, type EngineV2Preview } from "./engine-v2-preview.js";
 import { MACHINE_PROVIDER_TEMPLATE_OWNERSHIP, providerConfigFingerprint } from "./provider-config-templates.js";
 import pkg from "../package.json" with { type: "json" };
@@ -840,12 +846,7 @@ export async function startServer(
     });
     if (approvedDriveFile) attachApprovedDriveUpload(request, approvedDriveFile);
     const response = await serverOptions.fetch(request);
-    const payload: unknown = await response.json();
-    if (!response.ok) {
-      const message = payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string" ? `: ${payload.message}` : "";
-      throw new Error(`OpenWork request failed (${response.status})${message}`);
-    }
-    return payload;
+    return readHostResponse(response);
   };
   const engineV2Preview: EngineV2Preview = createEngineV2Preview({ config, env, deferStart: true,
     autoUpgradeIdle: async () => (await describeV1EngineActivity(config)).verdict === "idle",
@@ -1453,6 +1454,20 @@ async function forwardOpencodeV2Request(input: {
 
   const withoutPrefix = input.proxyPath.slice("/opencode2".length);
   const forwardedPath = withoutPrefix || "/";
+  const decodedPath = decodeURIComponent(forwardedPath);
+  // Native credential reads include secret values. The renderer may remove a
+  // Claude Code connection reference, but never list or write credentials.
+  const credentialDelete = method === "DELETE" ? /^\/api\/credential\/([^/]+)$/.exec(decodedPath) : null;
+  if (/^\/api\/(?:experimental\/)?credential(?:\/|$)/.test(decodedPath) && !credentialDelete) {
+    throw new ApiError(403, "engine_credentials_private", "Provider credentials are private");
+  }
+  if (!readRequest && /^\/api\/integration\/claude-agent(?:\/|$)/.test(decodedPath)) {
+    const body: unknown = await input.request.clone().json().catch(() => null);
+    if (method !== "POST" || decodedPath !== "/api/integration/claude-agent/connect/external"
+      || !isRecord(body) || body.methodID !== "claude-login" || Object.keys(body).length !== 1) {
+      throw new ApiError(400, "invalid_provider_connection", "Use the Claude Code login to connect Claude Agent");
+    }
+  }
   // Runtime provider configuration contains server-owned credentials. The
   // renderer uses the catalog/status APIs; it must not read or mutate this file.
   if (/^\/api\/(?:experimental\/)?config(?:\/|$)/.test(decodeURIComponent(forwardedPath))) {
@@ -1508,6 +1523,16 @@ async function forwardOpencodeV2Request(input: {
     if (!result.ok) throw new ApiError(result.status, "session_unavailable", "Conversation could not be read");
     return result.json();
   };
+  if (credentialDelete) {
+    // Use the public integration projection, not GET /credential. Other
+    // providers' keys and tokens must not be readable or removable here.
+    const integration = await readNative("/api/integration/claude-agent");
+    const claude = isRecord(integration) && isRecord(integration.data) ? integration.data : null;
+    const connections = claude?.id === "claude-agent" && Array.isArray(claude.connections) ? claude.connections : [];
+    const owned = connections.some((connection) => isRecord(connection) && connection.type === "credential"
+      && connection.method === "external" && connection.id === credentialDelete[1]);
+    if (!owned) throw new ApiError(403, "engine_credentials_private", "Only Claude Code connection references can be removed here");
+  }
   const homes = createV2SessionHomes(input.config, readNative);
   const expectedHome = await homes.canonical(input.workspace.path);
   const sessionMatch = forwardedPath.match(/^\/api\/(?:experimental\/)?session\/([^/]+)(?:\/|$)/);
@@ -1698,7 +1723,10 @@ async function forwardOpencodeV2Request(input: {
     const responseHeaders = new Headers(response.headers);
     responseHeaders.delete("content-length");
     responseHeaders.delete("content-encoding");
-    return sanitizeProxyResponse(new Response(scopedBody, { status: response.status, headers: responseHeaders }));
+    // Only this home's events pass the filter, so an idle workspace sends
+    // nothing, and the app reopens a stream that stays silent for 30 seconds.
+    const liveBody = withSseHeartbeat(scopedBody, engineEventStreamHeartbeatIntervalMs());
+    return sanitizeProxyResponse(new Response(liveBody, { status: response.status, headers: responseHeaders }));
   }
   const pendingKind = /^\/api\/form\/?$/.test(forwardedPath) ? "form"
     : /^\/api\/permission\/request\/?$/.test(forwardedPath) ? "permission" : undefined;
@@ -2802,6 +2830,8 @@ function createRoutes(
   anonymousInference: AnonymousInferenceService,
 ): Route[] {
   const routes: Route[] = [];
+  // The login runs with what the engine's own `claude` gets: OS paths, never this server's credentials.
+  const claudeCodeLogin = createClaudeCodeLogin({ env: inheritedEngineEnv(undefined) });
   addRoute(routes, "GET", "/anonymous-inference/status", "client", async () =>
     jsonResponse(await anonymousInference.status()));
   for (const action of ["preflight", "refresh"]) {
@@ -3380,6 +3410,25 @@ function createRoutes(
     return jsonResponse({ provider: runtimeProviderMap(runtime) });
   });
 
+  // Host only: Claude Code opens its browser sign-in on the computer this
+  // server runs on, so a remote viewer can never start one here.
+  const claudeCodeLoginStatus = (state: ReturnType<typeof claudeCodeLogin.state>) => {
+    const response = jsonResponse({ ...state, installed: claudeCodeLogin.installed() });
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  };
+  addRoute(routes, "GET", "/claude-code/sign-in", "host-token", async () => claudeCodeLoginStatus(claudeCodeLogin.state()));
+  addRoute(routes, "POST", "/claude-code/sign-in", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    if (!isRecord(body) || (body.force !== undefined && typeof body.force !== "boolean") || Object.keys(body).some((key) => key !== "force")) {
+      throw new ApiError(400, "invalid_payload", "Only force is accepted");
+    }
+    await managedDesktopPolicy(config).assert("provider", { providerID: "claude-agent" });
+    return claudeCodeLoginStatus(claudeCodeLogin.start({ force: body.force === true }));
+  });
+  addRoute(routes, "DELETE", "/claude-code/sign-in", "host-token", async () => claudeCodeLoginStatus(claudeCodeLogin.cancel()));
+
   // The host that owns this instance's lifecycle asks before stopping or
   // restarting it. Counts only; no session content leaves the instance.
   addRoute(routes, "GET", "/runtime/activity", "host-token", async () => {
@@ -3459,6 +3508,38 @@ function createRoutes(
       throw new ApiError(400, "invalid_payload", "Only the active orgId and optional credentialSetId are accepted");
     }
     return jsonResponse(await cloudProviderSync.startProviderOAuth(ctx.params.id, body.orgId, body.credentialSetId));
+  });
+
+  // Den feature shareDeviceProvider: the person confirmed in the app; the key
+  // goes from this computer's credential store straight to the Den it is
+  // signed in to, never through the app's window (device-provider-share.ts).
+  addRoute(routes, "POST", "/cloud-provider-sync/device-providers/:id/share", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const origin = ctx.request.headers.get("origin");
+    if (origin && origin !== new URL(ctx.request.url).origin && !config.corsOrigins.includes("*") && !config.corsOrigins.includes(origin)) {
+      throw new ApiError(403, "invalid_origin", "This origin cannot share a provider");
+    }
+    if (ctx.request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") {
+      throw new ApiError(415, "invalid_content_type", "A JSON request is required");
+    }
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.orgId !== "string" || (body.token !== undefined && (typeof body.token !== "string" || !body.token.trim())) || Object.keys(body).some((key) => key !== "orgId" && key !== "token")) {
+      throw new ApiError(400, "invalid_payload", "Only the active orgId and an optional freshly verified token are accepted");
+    }
+    const session = cloudProviderSync.currentSession();
+    if (!session) throw new ApiError(401, "no_session", "Sign in to OpenWork first");
+    if (session.orgId !== body.orgId) throw new ApiError(403, "organization_mismatch", "The active organization changed");
+    return jsonResponse(await shareDeviceProvider({
+      session,
+      // The share service verifies this belongs to the same account, before reading a key.
+      verifiedToken: typeof body.token === "string" ? body.token.trim() : undefined,
+      providerId: ctx.params.id,
+      isCurrentSession: () => {
+        const current = cloudProviderSync.currentSession();
+        return current?.baseUrl === session.baseUrl && current.orgId === session.orgId && current.token === session.token;
+      },
+      readApiKey: async (providerId) => (await readLocalProviderApiKeys()).get(providerId) ?? null,
+    }));
   });
 
   addRoute(routes, "POST", "/experimental/session-stop-fence/check", "client", async (ctx) => {

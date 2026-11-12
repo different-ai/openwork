@@ -11,8 +11,6 @@ export type SidebarContextValue = {
   developerMode: boolean;
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
-  /** Workspaces on OpenCode v2, the only engine settling ships for. */
-  settleWorkspaceIds?: ReadonlySet<string>;
   /** The Feed view and its pinned folders ship with `settledSessions`. */
   feedEnabled?: boolean;
   /** Why a row needs the person when a delegated child, not the session itself, is asking. */
@@ -27,9 +25,9 @@ export type SidebarContextValue = {
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void | (() => void);
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
   onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
-  onOpenRenameSession?: (sessionId: string) => void;
-  onOpenDeleteSession?: (sessionId: string) => void;
-  onArchiveSession?: (sessionId: string, archived: boolean) => void;
+  onOpenRenameSession?: (sessionId: string, workspaceId: string) => void;
+  onOpenDeleteSession?: (sessionId: string, workspaceId: string) => void;
+  onArchiveSession?: (sessionId: string, archived: boolean, workspaceId: string) => void;
   archiveDisabledReason?: string;
   onOpenCreateGroupModal?: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;

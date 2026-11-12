@@ -1,8 +1,9 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, ne, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectorAccountTable,
   ConnectorInstanceTable,
   ConnectorSyncEventTable,
+  ConnectorTargetReconcileTable,
   ConnectorTargetTable,
   MemberTable,
 } from "@openwork-ee/den-db/schema"
@@ -20,14 +21,11 @@ import {
 } from "../routes/org/plugin-system/github-app.js"
 import { executeGithubConnectorSyncEvent } from "../routes/org/plugin-system/store.js"
 import {
-  claimGithubReconcileState,
-  GITHUB_RECONCILE_STATE_KEY,
-  githubReconcileDueAtMs,
-  githubReconcileRevision,
+  githubReconcileRevisionAt,
   GithubReconcilePermanentError,
+  LEGACY_GITHUB_RECONCILE_STATE_KEY,
   nextGithubReconcileState,
-  readGithubReconcileState,
-  selectGithubReconcileCandidates,
+  readLegacyGithubReconcileState,
   type GithubReconcileState,
 } from "./github-reconcile-state.js"
 import { isTransientGithubSyncError } from "./github-sync-retry.js"
@@ -316,76 +314,210 @@ async function recordConnectorSyncCompleted(connectorSyncEventId: (typeof Connec
   }
 }
 
-function githubTargetConfig(target: typeof ConnectorTargetTable.$inferSelect) {
-  const targetConfig = isRecord(target.targetConfigJson) ? target.targetConfigJson : {}
-  const repositoryFullName = typeof targetConfig.repositoryFullName === "string"
-    ? targetConfig.repositoryFullName.trim()
-    : target.remoteId.trim()
-  const branch = typeof targetConfig.branch === "string"
-    ? targetConfig.branch.trim()
-    : target.externalTargetRef?.trim() ?? ""
-  const discoveryCache = isRecord(targetConfig.githubDiscoveryCache)
-    ? targetConfig.githubDiscoveryCache
-    : null
-  const cachedSourceRevisionRef = discoveryCache && typeof discoveryCache.sourceRevisionRef === "string"
-    ? discoveryCache.sourceRevisionRef
-    : null
-  return { branch, cachedSourceRevisionRef, repositoryFullName }
+// A run claims a due target by moving its next probe this far ahead, so a run
+// that stops mid-probe (deploy, crash, timeout) leaves it due again shortly.
+export const GITHUB_RECONCILE_PROBE_LEASE_MS = 10 * 60_000
+// New targets get a reconcile row in pages of this size.
+export const GITHUB_RECONCILE_SEED_LIMIT = 200
+const GITHUB_RECONCILE_SEED_MAX_PAGES = 10
+const GITHUB_RECONCILE_RESUME_LIMIT = 200
+
+type ConnectorTargetId = (typeof ConnectorTargetTable.$inferSelect)["id"]
+type JsonConfigColumn = typeof ConnectorTargetTable.targetConfigJson | typeof ConnectorInstanceTable.instanceConfigJson
+
+function jsonString(column: JsonConfigColumn, path: string) {
+  return sql<string | null>`case when json_type(json_extract(${column}, ${path})) = 'STRING' then json_unquote(json_extract(${column}, ${path})) end`
 }
 
-function githubInstallationId(
-  instance: typeof ConnectorInstanceTable.$inferSelect,
-  account: typeof ConnectorAccountTable.$inferSelect,
-) {
-  const instanceConfig = isRecord(instance.instanceConfigJson) ? instance.instanceConfigJson : null
-  return instanceConfig && typeof instanceConfig.installationId === "number"
-    ? instanceConfig.installationId
-    : Number(account.remoteId)
+function jsonNumberText(column: JsonConfigColumn, path: string) {
+  return sql<string | null>`case when json_type(json_extract(${column}, ${path})) in ('INTEGER', 'UNSIGNED INTEGER', 'DOUBLE', 'DECIMAL') then cast(json_extract(${column}, ${path}) as char) end`
 }
 
-type GithubReconcileRow = {
-  account: typeof ConnectorAccountTable.$inferSelect
-  instance: typeof ConnectorInstanceTable.$inferSelect
-  target: typeof ConnectorTargetTable.$inferSelect
+/**
+ * Gives GitHub targets without a reconcile row one, in pages read from the
+ * (connector_type, created_at, id) index. Only the page's own targets are read
+ * for the state earlier releases kept in their config, by primary key, so no
+ * query ever sorts target configs.
+ */
+async function seedGithubReconcileRows(now: Date) {
+  let seeded = 0
+  for (let page = 0; page < GITHUB_RECONCILE_SEED_MAX_PAGES; page += 1) {
+    const missing = await db.$primary
+      .select({ id: ConnectorTargetTable.id })
+      .from(ConnectorTargetTable)
+      .leftJoin(ConnectorTargetReconcileTable, eq(ConnectorTargetReconcileTable.connectorTargetId, ConnectorTargetTable.id))
+      .where(and(
+        eq(ConnectorTargetTable.connectorType, "github"),
+        isNull(ConnectorTargetReconcileTable.connectorTargetId),
+      ))
+      .orderBy(asc(ConnectorTargetTable.createdAt), asc(ConnectorTargetTable.id))
+      .limit(GITHUB_RECONCILE_SEED_LIMIT)
+    if (missing.length === 0) break
+
+    const targets = await db.$primary
+      .select({
+        id: ConnectorTargetTable.id,
+        legacyState: sql<string | null>`cast(json_extract(${ConnectorTargetTable.targetConfigJson}, ${`$.${LEGACY_GITHUB_RECONCILE_STATE_KEY}`}) as char)`,
+        organizationId: ConnectorTargetTable.organizationId,
+      })
+      .from(ConnectorTargetTable)
+      .where(inArray(ConnectorTargetTable.id, missing.map((row) => row.id)))
+    if (targets.length > 0) {
+      await db.insert(ConnectorTargetReconcileTable).values(targets.map((target) => {
+        const legacy = readLegacyGithubReconcileState(target.legacyState)
+        return {
+          connectorTargetId: target.id,
+          connectorType: "github" as const,
+          error: legacy?.error ?? null,
+          failureCount: legacy?.failureCount ?? 0,
+          lastProbedAt: legacy?.lastProbedAt ?? null,
+          nextProbeAt: legacy ? legacy.nextProbeAt : now,
+          organizationId: target.organizationId,
+          pausedRevisionAt: legacy?.pausedRevisionAt ?? null,
+          status: legacy?.status ?? "ok",
+        }
+      })).onDuplicateKeyUpdate({ set: { connectorTargetId: sql`${ConnectorTargetReconcileTable.connectorTargetId}` } })
+      seeded += targets.length
+    }
+    if (missing.length < GITHUB_RECONCILE_SEED_LIMIT) break
+  }
+  return seeded
+}
+
+/** Makes paused targets due again once their connector changed after the pause. */
+async function resumeEditedGithubReconcileTargets(now: Date) {
+  const edited = await db
+    .select({ id: ConnectorTargetReconcileTable.connectorTargetId })
+    .from(ConnectorTargetReconcileTable)
+    .innerJoin(ConnectorTargetTable, eq(ConnectorTargetTable.id, ConnectorTargetReconcileTable.connectorTargetId))
+    .innerJoin(ConnectorInstanceTable, eq(ConnectorInstanceTable.id, ConnectorTargetTable.connectorInstanceId))
+    .innerJoin(ConnectorAccountTable, eq(ConnectorAccountTable.id, ConnectorInstanceTable.connectorAccountId))
+    .where(and(
+      eq(ConnectorTargetReconcileTable.connectorType, "github"),
+      eq(ConnectorTargetReconcileTable.status, "paused"),
+      isNull(ConnectorTargetReconcileTable.nextProbeAt),
+      or(
+        isNull(ConnectorTargetReconcileTable.pausedRevisionAt),
+        gt(ConnectorTargetTable.updatedAt, ConnectorTargetReconcileTable.pausedRevisionAt),
+        gt(ConnectorInstanceTable.updatedAt, ConnectorTargetReconcileTable.pausedRevisionAt),
+        gt(ConnectorAccountTable.updatedAt, ConnectorTargetReconcileTable.pausedRevisionAt),
+      ),
+    ))
+    .limit(GITHUB_RECONCILE_RESUME_LIMIT)
+  if (edited.length === 0) return 0
+  const result: unknown = await db.update(ConnectorTargetReconcileTable).set({ nextProbeAt: now }).where(and(
+    inArray(ConnectorTargetReconcileTable.connectorTargetId, edited.map((row) => row.id)),
+    eq(ConnectorTargetReconcileTable.status, "paused"),
+    isNull(ConnectorTargetReconcileTable.nextProbeAt),
+  ))
+  return affectedRowCount(result)
+}
+
+type GithubReconcileTarget = {
+  accountUpdatedAt: Date
+  branch: string
+  cachedSourceRevisionRef: string | null
+  createdByOrgMembershipId: (typeof ConnectorInstanceTable.$inferSelect)["createdByOrgMembershipId"]
+  installationId: number
+  instanceId: (typeof ConnectorInstanceTable.$inferSelect)["id"]
+  instanceUpdatedAt: Date
+  organizationId: (typeof ConnectorInstanceTable.$inferSelect)["organizationId"]
+  remoteId: string
+  repositoryFullName: string
+  targetId: ConnectorTargetId
+  targetUpdatedAt: Date
+}
+
+/**
+ * The fields a probe needs, for one page of targets: config values are read
+ * with json_extract, never whole configs. Targets whose connector is no longer
+ * active come back as ineligible; deleted ones do not come back.
+ */
+async function loadGithubReconcileTargets(targetIds: ConnectorTargetId[]) {
+  const rows = await db
+    .select({
+      accountOrganizationId: ConnectorAccountTable.organizationId,
+      accountRemoteId: ConnectorAccountTable.remoteId,
+      accountStatus: ConnectorAccountTable.status,
+      accountType: ConnectorAccountTable.connectorType,
+      accountUpdatedAt: ConnectorAccountTable.updatedAt,
+      branch: jsonString(ConnectorTargetTable.targetConfigJson, "$.branch"),
+      cachedSourceRevisionRef: jsonString(ConnectorTargetTable.targetConfigJson, "$.githubDiscoveryCache.sourceRevisionRef"),
+      createdByOrgMembershipId: ConnectorInstanceTable.createdByOrgMembershipId,
+      externalTargetRef: ConnectorTargetTable.externalTargetRef,
+      installationId: jsonNumberText(ConnectorInstanceTable.instanceConfigJson, "$.installationId"),
+      instanceId: ConnectorInstanceTable.id,
+      instanceOrganizationId: ConnectorInstanceTable.organizationId,
+      instanceStatus: ConnectorInstanceTable.status,
+      instanceType: ConnectorInstanceTable.connectorType,
+      instanceUpdatedAt: ConnectorInstanceTable.updatedAt,
+      remoteId: ConnectorTargetTable.remoteId,
+      repositoryFullName: jsonString(ConnectorTargetTable.targetConfigJson, "$.repositoryFullName"),
+      targetId: ConnectorTargetTable.id,
+      targetOrganizationId: ConnectorTargetTable.organizationId,
+      targetType: ConnectorTargetTable.connectorType,
+      targetUpdatedAt: ConnectorTargetTable.updatedAt,
+    })
+    .from(ConnectorTargetTable)
+    .innerJoin(ConnectorInstanceTable, eq(ConnectorTargetTable.connectorInstanceId, ConnectorInstanceTable.id))
+    .innerJoin(ConnectorAccountTable, eq(ConnectorInstanceTable.connectorAccountId, ConnectorAccountTable.id))
+    .where(inArray(ConnectorTargetTable.id, targetIds))
+
+  const eligible = new Map<ConnectorTargetId, GithubReconcileTarget>()
+  const ineligible = new Set<ConnectorTargetId>()
+  for (const row of rows) {
+    const active = row.targetType === "github"
+      && row.instanceType === "github"
+      && row.accountType === "github"
+      && row.instanceStatus === "active"
+      && row.accountStatus === "active"
+      && row.targetOrganizationId === row.instanceOrganizationId
+      && row.accountOrganizationId === row.instanceOrganizationId
+    if (!active) {
+      ineligible.add(row.targetId)
+      continue
+    }
+    eligible.set(row.targetId, {
+      accountUpdatedAt: row.accountUpdatedAt,
+      branch: row.branch !== null ? row.branch.trim() : row.externalTargetRef?.trim() ?? "",
+      cachedSourceRevisionRef: row.cachedSourceRevisionRef,
+      createdByOrgMembershipId: row.createdByOrgMembershipId,
+      installationId: row.installationId !== null ? Number(row.installationId) : Number(row.accountRemoteId),
+      instanceId: row.instanceId,
+      instanceUpdatedAt: row.instanceUpdatedAt,
+      organizationId: row.instanceOrganizationId,
+      remoteId: row.remoteId,
+      repositoryFullName: row.repositoryFullName !== null ? row.repositoryFullName.trim() : row.remoteId.trim(),
+      targetId: row.targetId,
+      targetUpdatedAt: row.targetUpdatedAt,
+    })
+  }
+  return { eligible, ineligible }
 }
 
 /** Connector creators who are still joined members of the connector's organization. */
-async function activeConnectorCreatorKeys(instances: Array<typeof ConnectorInstanceTable.$inferSelect>) {
-  if (instances.length === 0) return new Set<string>()
+async function activeConnectorCreatorKeys(targets: GithubReconcileTarget[]) {
+  if (targets.length === 0) return new Set<string>()
   const rows = await db
     .select({ id: MemberTable.id, organizationId: MemberTable.organizationId })
     .from(MemberTable)
     .where(and(
-      inArray(MemberTable.id, instances.map((instance) => instance.createdByOrgMembershipId)),
+      inArray(MemberTable.id, targets.map((target) => target.createdByOrgMembershipId)),
       isNull(MemberTable.removedAt),
       isNotNull(MemberTable.userId),
     ))
   return new Set(rows.map((row) => `${row.organizationId}:${row.id}`))
 }
 
-/**
- * Stores a target's reconcile state without moving updated_at, which keeps
- * marking a person's edit. With expectedLastProbedAt the write lands only if no
- * other replica has probed the target since this one read it.
- */
-async function writeGithubReconcileState(input: {
-  expectedLastProbedAt?: string | null
-  state: GithubReconcileState
-  targetId: (typeof ConnectorTargetTable.$inferSelect)["id"]
-}) {
-  const storedLastProbedAt = sql`json_unquote(json_extract(${ConnectorTargetTable.targetConfigJson}, ${sql.raw(`'$.${GITHUB_RECONCILE_STATE_KEY}.lastProbedAt'`)}))`
-  const result: unknown = await db.update(ConnectorTargetTable).set({
-    targetConfigJson: sql`json_set(${ConnectorTargetTable.targetConfigJson}, ${sql.raw(`'$.${GITHUB_RECONCILE_STATE_KEY}'`)}, cast(${JSON.stringify(input.state)} as json))`,
-    updatedAt: sql`${ConnectorTargetTable.updatedAt}`,
-  }).where(and(
-    eq(ConnectorTargetTable.id, input.targetId),
-    input.expectedLastProbedAt === undefined
-      ? undefined
-      : input.expectedLastProbedAt === null
-        ? sql`${storedLastProbedAt} is null`
-        : sql`${storedLastProbedAt} = ${input.expectedLastProbedAt}`,
-  ))
-  return changedRows(result)
+async function writeGithubReconcileState(targetId: ConnectorTargetId, state: GithubReconcileState) {
+  await db.update(ConnectorTargetReconcileTable).set({
+    error: state.error,
+    failureCount: state.failureCount,
+    lastProbedAt: state.lastProbedAt,
+    nextProbeAt: state.nextProbeAt,
+    pausedRevisionAt: state.pausedRevisionAt,
+    status: state.status,
+  }).where(eq(ConnectorTargetReconcileTable.connectorTargetId, targetId))
 }
 
 /**
@@ -393,56 +525,54 @@ async function writeGithubReconcileState(input: {
  * When the last sync of that head already failed, its error comes back so the
  * target backs off instead of queueing the same failing sync on every probe.
  */
-async function probeGithubConnectorTarget(row: GithubReconcileRow, activeCreatorKeys: ReadonlySet<string>) {
-  const targetConfig = githubTargetConfig(row.target)
-  const installationId = githubInstallationId(row.instance, row.account)
-  if (!targetConfig.repositoryFullName || !targetConfig.branch || !Number.isFinite(installationId) || installationId <= 0) {
+async function probeGithubConnectorTarget(target: GithubReconcileTarget, activeCreatorKeys: ReadonlySet<string>) {
+  if (!target.repositoryFullName || !target.branch || !Number.isFinite(target.installationId) || target.installationId <= 0) {
     throw new GithubReconcilePermanentError("GitHub connector target is missing repository, branch, or installation metadata.")
   }
   // Syncs import as the connector's creator, so without them every sync fails.
-  if (!activeCreatorKeys.has(`${row.instance.organizationId}:${row.instance.createdByOrgMembershipId}`)) {
+  if (!activeCreatorKeys.has(`${target.organizationId}:${target.createdByOrgMembershipId}`)) {
     throw new GithubReconcilePermanentError("Connector creator member not found.")
   }
 
   const headSha = await getGithubRepositoryHeadSha({
-    branch: targetConfig.branch,
+    branch: target.branch,
     config: getGithubConnectorAppConfig(env.githubConnectorApp),
-    installationId,
-    repositoryFullName: targetConfig.repositoryFullName,
+    installationId: target.installationId,
+    repositoryFullName: target.repositoryFullName,
   })
   const completedEvents = await db
     .select({ sourceRevisionRef: ConnectorSyncEventTable.sourceRevisionRef })
     .from(ConnectorSyncEventTable)
     .where(and(
-      eq(ConnectorSyncEventTable.connectorTargetId, row.target.id),
+      eq(ConnectorSyncEventTable.connectorTargetId, target.targetId),
       eq(ConnectorSyncEventTable.status, "completed"),
     ))
     .orderBy(desc(ConnectorSyncEventTable.startedAt), desc(ConnectorSyncEventTable.id))
     .limit(1)
   const previousSourceRevisionRef = completedEvents[0]
     ? completedEvents[0].sourceRevisionRef
-    : targetConfig.cachedSourceRevisionRef
+    : target.cachedSourceRevisionRef
   if (headSha === previousSourceRevisionRef) return { enqueued: false, failedSyncError: null }
 
   const [failedAtHead] = await db
     .select({ summaryJson: ConnectorSyncEventTable.summaryJson })
     .from(ConnectorSyncEventTable)
     .where(and(
-      eq(ConnectorSyncEventTable.connectorTargetId, row.target.id),
+      eq(ConnectorSyncEventTable.connectorTargetId, target.targetId),
       eq(ConnectorSyncEventTable.status, "failed"),
       eq(ConnectorSyncEventTable.sourceRevisionRef, headSha),
     ))
     .orderBy(desc(ConnectorSyncEventTable.startedAt), desc(ConnectorSyncEventTable.id))
     .limit(1)
   await db.insert(ConnectorSyncEventTable).values({
-    connectorInstanceId: row.instance.id,
-    connectorTargetId: row.target.id,
+    connectorInstanceId: target.instanceId,
+    connectorTargetId: target.targetId,
     connectorType: "github",
     eventType: "manual_resync",
     externalEventRef: null,
     id: createDenTypeId("connectorSyncEvent"),
-    organizationId: row.instance.organizationId,
-    remoteId: row.target.remoteId,
+    organizationId: target.organizationId,
+    remoteId: target.remoteId,
     sourceRevisionRef: headSha,
     startedAt: new Date(),
     status: "queued",
@@ -457,16 +587,15 @@ async function probeGithubConnectorTarget(row: GithubReconcileRow, activeCreator
 /** One log line when a target starts failing, is paused again after an edit, or recovers. */
 function logGithubReconcileChange(
   connectorTargetId: string,
-  previous: GithubReconcileState | null,
+  previousStatus: GithubReconcileState["status"],
   next: GithubReconcileState,
 ) {
-  const previousStatus = previous?.status ?? "ok"
-  if (next.status === previousStatus && next.pausedRevision === (previous?.pausedRevision ?? null)) return
+  if (next.status === previousStatus && next.status !== "paused") return
   const fields = {
     connector_target_id: connectorTargetId,
     error: next.error,
     failure_count: next.failureCount,
-    next_probe_at: next.status === "paused" ? null : next.nextProbeAt,
+    next_probe_at: next.nextProbeAt?.toISOString() ?? null,
     previous_status: previousStatus,
     status: next.status,
   }
@@ -474,97 +603,168 @@ function logGithubReconcileChange(
   else logger.warn("github connector reconciliation state changed", fields)
 }
 
-/**
- * Every replica runs this loop, so the probe state lives on the target (see
- * github-reconcile-state.ts): a target is probed once per min-age across the
- * fleet, failures back off, and permanent failures wait for an edit.
- */
-export async function reconcileGithubConnectorTargets(now = new Date()) {
-  const targets = await db
-    .select({
-      account: ConnectorAccountTable,
-      instance: ConnectorInstanceTable,
-      target: ConnectorTargetTable,
-    })
-    .from(ConnectorTargetTable)
-    .innerJoin(ConnectorInstanceTable, eq(ConnectorTargetTable.connectorInstanceId, ConnectorInstanceTable.id))
-    .innerJoin(ConnectorAccountTable, eq(ConnectorInstanceTable.connectorAccountId, ConnectorAccountTable.id))
-    .where(and(
-      eq(ConnectorTargetTable.connectorType, "github"),
-      eq(ConnectorTargetTable.organizationId, ConnectorInstanceTable.organizationId),
-      eq(ConnectorInstanceTable.connectorType, "github"),
-      eq(ConnectorInstanceTable.status, "active"),
-      eq(ConnectorAccountTable.organizationId, ConnectorInstanceTable.organizationId),
-      eq(ConnectorAccountTable.connectorType, "github"),
-      eq(ConnectorAccountTable.status, "active"),
-    ))
-    .orderBy(asc(ConnectorTargetTable.createdAt), asc(ConnectorTargetTable.id))
-
-  const activeTargetIds = await connectorTargetIdsWithStatuses(
-    targets.map((row) => row.target.id),
-    ACTIVE_GITHUB_SYNC_EVENT_STATUSES,
-  )
-  const candidates = targets
-    .filter((row) => !activeTargetIds.has(row.target.id))
-    .map((row) => ({
-      ...row,
-      revision: githubReconcileRevision({
-        accountUpdatedAt: row.account.updatedAt,
-        instanceUpdatedAt: row.instance.updatedAt,
-        targetUpdatedAt: row.target.updatedAt,
-      }),
-      state: readGithubReconcileState(row.target.targetConfigJson),
-    }))
-
-  const minAgeMs = env.githubSync.reconcileMinAgeMs
-  const selectedTargetIds = selectGithubReconcileCandidates({
-    batchSize: env.githubSync.reconcileBatchSize,
-    now,
-    targets: candidates.map((candidate) => ({
-      createdAtMs: candidate.target.createdAt.getTime(),
-      dueAtMs: githubReconcileDueAtMs(candidate.state, candidate.revision),
-      targetId: candidate.target.id,
-    })),
+async function forEachWithConcurrency<T>(items: T[], concurrency: number, run: (item: T) => Promise<void>) {
+  let next = 0
+  const workers = Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, async () => {
+    while (next < items.length) {
+      const item = items[next]
+      next += 1
+      await run(item)
+    }
   })
-  const selected = selectedTargetIds.flatMap((targetId) => candidates.filter((candidate) => candidate.target.id === targetId))
-  const activeCreatorKeys = await activeConnectorCreatorKeys(selected.map((candidate) => candidate.instance))
+  await Promise.all(workers)
+}
 
-  let enqueued = 0
-  let probed = 0
-  for (const candidate of selected) {
-    const claimed = await writeGithubReconcileState({
-      expectedLastProbedAt: candidate.state?.lastProbedAt ?? null,
-      state: claimGithubReconcileState({ minAgeMs, now, previous: candidate.state }),
-      targetId: candidate.target.id,
+export type GithubReconcileRunOptions = {
+  batchSize?: number
+  maxBatches?: number
+  /** Stops starting new batches after this long; a batch already started finishes. */
+  budgetMs?: number
+  probeConcurrency?: number
+}
+
+export type GithubReconcileRunSummary = {
+  seeded: number
+  resumed: number
+  batches: number
+  claimed: number
+  probed: number
+  enqueued: number
+  skippedSyncing: number
+  removed: number
+  hasMore: boolean
+}
+
+type GithubReconcileBatchTotals = Pick<GithubReconcileRunSummary, "claimed" | "probed" | "enqueued" | "skippedSyncing" | "removed">
+
+/**
+ * One page of due targets: read from the (connector_type, next_probe_at)
+ * index, claimed, and probed a few at a time. Every row read is moved out of
+ * the due range, whether it is probed, skipped or removed, so the next page
+ * reads the next targets.
+ */
+async function reconcileGithubBatch(now: Date, batchSize: number, probeConcurrency: number, totals: GithubReconcileBatchTotals) {
+  // Primary: a lagging replica would hand back rows this run already claimed.
+  const due = await db.$primary
+    .select({
+      failureCount: ConnectorTargetReconcileTable.failureCount,
+      id: ConnectorTargetReconcileTable.connectorTargetId,
+      nextProbeAt: ConnectorTargetReconcileTable.nextProbeAt,
+      status: ConnectorTargetReconcileTable.status,
     })
-    if (!claimed) continue
-    probed += 1
+    .from(ConnectorTargetReconcileTable)
+    .where(and(
+      eq(ConnectorTargetReconcileTable.connectorType, "github"),
+      lte(ConnectorTargetReconcileTable.nextProbeAt, now),
+    ))
+    .orderBy(asc(ConnectorTargetReconcileTable.nextProbeAt), asc(ConnectorTargetReconcileTable.connectorTargetId))
+    .limit(batchSize)
 
+  const leaseUntil = new Date(now.getTime() + GITHUB_RECONCILE_PROBE_LEASE_MS)
+  const claimed: typeof due = []
+  for (const row of due) {
+    if (!row.nextProbeAt) continue
+    const result: unknown = await db.update(ConnectorTargetReconcileTable).set({ nextProbeAt: leaseUntil }).where(and(
+      eq(ConnectorTargetReconcileTable.connectorTargetId, row.id),
+      eq(ConnectorTargetReconcileTable.nextProbeAt, row.nextProbeAt),
+    ))
+    if (changedRows(result)) claimed.push(row)
+  }
+  totals.claimed += claimed.length
+  if (claimed.length === 0) return due.length
+
+  const claimedIds = claimed.map((row) => row.id)
+  const [{ eligible, ineligible }, syncingIds] = await Promise.all([
+    loadGithubReconcileTargets(claimedIds),
+    connectorTargetIdsWithStatuses(claimedIds, ACTIVE_GITHUB_SYNC_EVENT_STATUSES),
+  ])
+
+  const gone = claimedIds.filter((id) => !eligible.has(id) && !ineligible.has(id))
+  if (gone.length > 0) {
+    await db.delete(ConnectorTargetReconcileTable).where(inArray(ConnectorTargetReconcileTable.connectorTargetId, gone))
+    totals.removed += gone.length
+  }
+  // An inactive connector is checked again after the usual interval.
+  const minAgeMs = env.githubSync.reconcileMinAgeMs
+  if (ineligible.size > 0) {
+    await db.update(ConnectorTargetReconcileTable)
+      .set({ nextProbeAt: new Date(now.getTime() + minAgeMs) })
+      .where(inArray(ConnectorTargetReconcileTable.connectorTargetId, [...ineligible]))
+  }
+
+  // A target that is already syncing keeps its lease and is checked once it passes.
+  totals.skippedSyncing += claimed.filter((row) => eligible.has(row.id) && syncingIds.has(row.id)).length
+  const toProbe = claimed.flatMap((row) => {
+    const target = eligible.get(row.id)
+    return target && !syncingIds.has(row.id) ? [{ previous: row, target }] : []
+  })
+  const activeCreatorKeys = await activeConnectorCreatorKeys(toProbe.map((entry) => entry.target))
+
+  await forEachWithConcurrency(toProbe, probeConcurrency, async ({ previous, target }) => {
+    totals.probed += 1
     let failure: { error: unknown } | undefined
     try {
-      const probe = await probeGithubConnectorTarget(candidate, activeCreatorKeys)
-      if (probe.enqueued) enqueued += 1
+      const probe = await probeGithubConnectorTarget(target, activeCreatorKeys)
+      if (probe.enqueued) totals.enqueued += 1
       if (probe.failedSyncError) failure = { error: new Error(probe.failedSyncError) }
     } catch (error) {
       failure = { error }
     }
-    const next = nextGithubReconcileState({ failure, minAgeMs, now, previous: candidate.state, revision: candidate.revision })
-    await writeGithubReconcileState({ state: next, targetId: candidate.target.id })
-    logGithubReconcileChange(candidate.target.id, candidate.state, next)
+    const next = nextGithubReconcileState({
+      failure,
+      minAgeMs,
+      now,
+      previous,
+      revisionAt: githubReconcileRevisionAt(target),
+    })
+    await writeGithubReconcileState(target.targetId, next)
+    logGithubReconcileChange(target.targetId, previous.status, next)
+  })
+  return due.length
+}
+
+/**
+ * Checks due GitHub targets against their branch heads and queues a resync for
+ * the ones that moved. Run by a scheduled caller of POST
+ * /internal/github/reconcile/run; overlapping runs are safe, since each target
+ * is claimed by one run. Reads due targets in pages from connector_target_reconcile until
+ * none are due, maxBatches pages were read, or budgetMs passed.
+ */
+export async function reconcileGithubConnectorTargets(now = new Date(), options: GithubReconcileRunOptions = {}): Promise<GithubReconcileRunSummary> {
+  const startedAtMs = Date.now()
+  const batchSize = Math.max(1, Math.floor(options.batchSize ?? env.githubSync.reconcileBatchSize))
+  const maxBatches = Math.max(1, Math.floor(options.maxBatches ?? env.githubSync.reconcileMaxBatches))
+  const budgetMs = options.budgetMs ?? env.githubSync.reconcileRunBudgetMs
+  const probeConcurrency = Math.max(1, Math.floor(options.probeConcurrency ?? env.githubSync.reconcileProbeConcurrency))
+
+  const seeded = await seedGithubReconcileRows(now)
+  const resumed = await resumeEditedGithubReconcileTargets(now)
+
+  const totals: GithubReconcileBatchTotals = { claimed: 0, enqueued: 0, probed: 0, removed: 0, skippedSyncing: 0 }
+  let batches = 0
+  let hasMore = false
+  while (true) {
+    const read = await reconcileGithubBatch(now, batchSize, probeConcurrency, totals)
+    batches += 1
+    hasMore = read === batchSize
+    if (!hasMore || batches >= maxBatches || Date.now() - startedAtMs >= budgetMs) break
   }
 
-  return { checked: selectedTargetIds.length, enqueued, probed }
+  const summary = { seeded, resumed, batches, ...totals, hasMore }
+  if (summary.claimed > 0 || seeded > 0 || resumed > 0 || hasMore) {
+    logger.info("github connector reconciliation run", { ...summary, duration_ms: Date.now() - startedAtMs })
+  }
+  return summary
 }
 
 let workerTickRunning = false
 let workerTickPromise: Promise<void> | null = null
-let reconcileRunning = false
-let reconcilePromise: Promise<void> | null = null
 
-export function startGithubSyncWorker(
-  workerIntervalMs = env.githubSync.workerIntervalMs,
-  reconcileIntervalMs = env.githubSync.reconcileIntervalMs,
-) {
+/**
+ * Polls the sync queue every few seconds on every replica. The reconcile does
+ * not run here: a scheduled caller runs it through POST /internal/github/reconcile/run.
+ */
+export function startGithubSyncWorker(workerIntervalMs = env.githubSync.workerIntervalMs) {
   const runWorkerTick = () => {
     if (workerTickRunning) return
     workerTickRunning = true
@@ -579,39 +779,15 @@ export function startGithubSyncWorker(
         workerTickPromise = null
       })
   }
-  const runReconcile = () => {
-    if (reconcileRunning) return
-    reconcileRunning = true
-    reconcilePromise = reconcileGithubConnectorTargets()
-      .then(() => undefined)
-      .catch((error) => {
-        logger.error("github sync reconciliation loop failed", { error })
-        captureException(error, { component: "github_sync_worker_reconcile" })
-      })
-      .finally(() => {
-        reconcileRunning = false
-        reconcilePromise = null
-      })
-  }
 
   const workerTimer = Number.isFinite(workerIntervalMs) && workerIntervalMs > 0
     ? setInterval(runWorkerTick, workerIntervalMs)
     : null
-  const reconcileTimer = Number.isFinite(reconcileIntervalMs) && reconcileIntervalMs > 0
-    ? setInterval(runReconcile, reconcileIntervalMs)
-    : null
-  const reconcileInitialTimer = reconcileTimer
-    ? setTimeout(runReconcile, Math.floor(Math.random() * Math.min(reconcileIntervalMs, 60_000)))
-    : null
   workerTimer?.unref()
-  reconcileTimer?.unref()
-  reconcileInitialTimer?.unref()
   if (workerTimer) runWorkerTick()
 
   return async () => {
     if (workerTimer) clearInterval(workerTimer)
-    if (reconcileTimer) clearInterval(reconcileTimer)
-    if (reconcileInitialTimer) clearTimeout(reconcileInitialTimer)
-    await Promise.all([workerTickPromise, reconcilePromise])
+    await workerTickPromise
   }
 }

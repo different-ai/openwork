@@ -8,7 +8,8 @@ import {
   type AgentConnectionToolsView,
   type WorkbotProactiveView,
 } from "@openwork/types/den/workbot-proactive";
-import { automaticToolsChange, ConnectionToolsDisclosure, readToolsLine, toolChoiceChange, toolsSummary } from "./workbot-agent-tools";
+import { automaticToolsChange, ConnectionToolsButton,
+  ConnectionToolsDisclosure, readToolsLine, toolChoiceChange, toolsSummary } from "./workbot-agent-tools";
 import { withToolOverrides } from "./workbot-proactive-data";
 import { connectionCount, otherPolicy, WorkbotProactiveSources } from "./workbot-proactive-sources";
 
@@ -25,17 +26,14 @@ const briefOn: WorkbotProactiveView = {
   slackReady: true,
   runnerReady: true,
   sourceConnections: {
-    calendar: [{ id: "google-workspace", name: "Google Calendar", url: "https://google.com", connectedMembers: 4 }],
-    email: [{ id: "google-workspace", name: "Gmail", url: "https://google.com", connectedMembers: 4 }],
-    chat: [{ id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp", connectedMembers: null }],
+    calendar: [{ id: "google-workspace", name: "Google Workspace", url: "https://google.com", connectedMembers: 4 }],
     other: [google, desk, ledger],
     all: [
-      { id: "google-workspace", name: "Google Workspace", url: "https://google.com", native: true, slots: ["calendar", "email", "other"], connectedMembers: 4 },
-      { id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp", native: false, slots: ["calendar", "email", "chat", "other"], connectedMembers: null },
-      { ...desk, slots: ["calendar", "email", "chat", "other"], connectedMembers: null },
-      { ...ledger, slots: ["calendar", "email", "chat", "other"], connectedMembers: null },
+      { id: "google-workspace", name: "Google Workspace", url: "https://google.com", native: true, slots: ["calendar", "other"], connectedMembers: 4 },
+      { id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp", native: false, slots: ["other"], connectedMembers: null },
+      { ...desk, slots: ["other"], connectedMembers: null },
+      { ...ledger, slots: ["other"], connectedMembers: null },
     ],
-    defaults: { calendar: "google-workspace", email: "google-workspace", chat: "emc_slack" },
   },
   brief: { checkEveryHours: 2, dailyCap: 4, extraChecksPerDay: 3, text: DEFAULT_AGENT_BRIEF, carriedOver: [], defaultText: DEFAULT_AGENT_BRIEF },
 };
@@ -57,9 +55,9 @@ function text(html: string) {
   return html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/\s+/g, " ");
 }
 
-test("with the brief, Other context lists every connection with its policy and a count, and nothing to add or remove", () => {
+test("with the brief, Connectors lists every connection with its policy and a count, and nothing to add or remove", () => {
   const html = renderToStaticMarkup(<WorkbotProactiveSources view={briefOn} canManage saving={false} onChange={() => undefined} />);
-  assert.match(text(html), /Other context 3 connections/);
+  assert.match(text(html), /3 connections\. Read only\./);
   for (const entry of [google, desk, ledger]) assert.match(html, new RegExp(`data-testid="workbot-source-other-${entry.id}" data-policy="${entry.policy}"`));
   assert.doesNotMatch(html, /workbot-source-add-other/, "no Add source: every connection is already here");
   assert.doesNotMatch(text(html), /Remove/, "not allowed is how an admin leaves one out (P4: it stays listed)");
@@ -97,7 +95,7 @@ test("the summary says why the tools aren't known; Den's own provider points to 
     { name: "listDriveFiles", title: null, description: "List Drive files", allowed: true, reason: "native_read", override: null, locked: false },
     { name: "createDriveFile", title: null, description: null, allowed: false, reason: "native_write", override: null, locked: true },
   ] }} failed={false} name={google.name} connectionId={google.id} connectHref="/x" disabled={false} onChange={() => undefined} />);
-  assert.match(text(native), /Calendar, mail and chat are read under their own sources\./);
+  assert.match(text(native), /The calendar is read under its own setting\./);
   const connect = renderToStaticMarkup(<ConnectionToolsDisclosure view={{ ...deskTools, status: "needs_connection", tools: [], readTools: 0 }} failed={false} name={desk.name} connectionId={desk.id} connectHref="/library/connectors/emc_desk" disabled={false} onChange={() => undefined} />);
   assert.match(connect, /href="\/library\/connectors\/emc_desk"[^>]*>Connect Lumen Support Desk</);
 });
@@ -112,4 +110,13 @@ test("a switch saves the admin's choice; it shows at once, and a locked tool nev
   const html = renderToStaticMarkup(<ConnectionToolsDisclosure view={shown} failed={false} name={desk.name} connectionId={desk.id} connectHref="/x" disabled={false} onChange={() => undefined} />);
   assert.match(text(html), /Use automatic choices/);
   assert.match(text(html), /get_ticket Turned off by an admin/);
+});
+
+test("Manage tools: the row keeps the count and one button; the tools stay out of the page until it is opened", () => {
+  const html = renderToStaticMarkup(<ConnectionToolsButton view={deskTools} failed={false} name={desk.name} connectionId={desk.id} connectHref="/library/connectors/emc_desk" disabled={false} onChange={() => undefined} />);
+  assert.match(text(html), /2 read tools/);
+  assert.doesNotMatch(text(html), /Manage tools/, "the count is the link");
+  assert.match(html, /aria-label="Manage tools for Lumen Support Desk: 2 read tools"/);
+  assert.doesNotMatch(html, /<details/);
+  assert.doesNotMatch(html, /workbot-agent-tool-list_tickets/, "closed: no tool rows in the page");
 });

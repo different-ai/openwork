@@ -2,7 +2,7 @@
 
 import { Dialog } from "@base-ui/react/dialog";
 import { Tooltip } from "@base-ui/react/tooltip";
-import { Download, FileText, Paperclip, Trash2, X } from "lucide-react";
+import { Download, Paperclip, Plug, Trash2, X } from "lucide-react";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { workbotHost, useRetainedSurface } from "./host";
 import {
@@ -16,13 +16,13 @@ import {
 } from "./data";
 import { OpenFileContext } from "./open-file";
 import { dayLabel } from "./format";
+import { isImage } from "./images";
 import type { Upload } from "./composer-state";
 export type { Upload } from "./composer-state";
+export { isImage } from "./images";
 
 /** Files in Workbot (Paper v5: screens 5–8). */
 
-const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-export const isImage = (mediaType: string) => IMAGE_TYPES.has(mediaType);
 
 export function formatSize(bytes: number) {
   if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
@@ -86,14 +86,28 @@ function Thumbnail({ src, className }: { src: string | null; className: string }
   );
 }
 
-/** A connected app's logo, bare (no tile), for headers, step lines and chips. */
-export function AppMark({ name, size = 12 }: { name: string; size?: number }) {
+/**
+ * The same brand candidates for Apps, headers and connector step lines; a fixed tile only in the Apps list. Without a
+ * logo: a quiet dot, the name's first letter (lists of apps), or a plug (a connected app with no logo to find).
+ * `site` ("exa.ai", from Den) finds a logo when the name alone doesn't.
+ */
+export function AppMark({ name, size = 12, fallback = "dot", iconCandidates, tile = false, site }: {
+  name: string; size?: number; fallback?: "dot" | "letter" | "plug"; iconCandidates?: readonly string[]; tile?: boolean; site?: string;
+}) {
+  const candidates = useMemo(() => iconCandidates ?? workbotHost().appIcons(name, site), [iconCandidates, name, site]);
+  // Reset the failed-candidate index when a different app (or fresh metadata) occupies this row.
+  const mark = <AppMarkImage key={`${name}:${candidates.join("|")}`} name={name} size={size} fallback={fallback} candidates={candidates} />;
+  return tile ? <span aria-hidden className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-[7px] bg-[var(--wb-surface)] shadow-[0_0_0_1px_var(--wb-ring)]">{mark}</span> : mark;
+}
+
+function AppMarkImage({ name, size, fallback, candidates }: { name: string; size: number; fallback: "dot" | "letter" | "plug"; candidates: readonly string[] }) {
   const [failed, setFailed] = useState(0);
-  const candidates = useMemo(() => workbotHost().appIcons(name), [name]);
   const src = candidates[failed];
+  if (!src && fallback === "letter") return <span aria-hidden className="grid shrink-0 place-items-center font-semibold text-[var(--wb-muted)]" style={{ width: size, height: size, fontSize: Math.round(size * 0.6) }} data-workbot-app-letter>{name.trim().charAt(0).toUpperCase() || "?"}</span>;
+  if (!src && fallback === "plug") return <Plug size={size} strokeWidth={1.75} aria-hidden className="shrink-0 text-[var(--wb-muted)]" />;
   if (!src) return <span aria-hidden className="rounded-full bg-[var(--wb-disabled)]" style={{ width: size - 4, height: size - 4 }} />;
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={src} alt="" width={size} height={size} onError={() => setFailed((count) => count + 1)} className="shrink-0 object-contain" />;
+  return <img src={src} alt="" width={size} height={size} referrerPolicy="no-referrer" onError={() => setFailed((count) => count + 1)} className="shrink-0 object-contain" style={{ width: size, height: size }} />;
 }
 
 // ---------------------------------------------------------------- uploads
@@ -294,10 +308,11 @@ export function FilesButton({ open, onOpen }: { open: boolean; onOpen: () => voi
       type="button"
       onClick={onOpen}
       aria-pressed={open}
-      className={`flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium leading-4 transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${open ? "bg-[var(--wb-chip)] text-[var(--wb-text)]" : "text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)]"}`}
+      aria-label="Files"
+      className={`flex h-8 items-center gap-1.5 rounded-full px-2 sm:px-3 text-[13px] font-medium leading-4 transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${open ? "bg-[var(--wb-chip)] text-[var(--wb-text)]" : "text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)]"}`}
     >
-      <FileText size={15} strokeWidth={1.75} aria-hidden />
-      Files
+      <Paperclip size={15} strokeWidth={1.75} aria-hidden />
+      <span className={workbotHost().centeredProfile ? "hidden sm:inline" : undefined}>Files</span>
     </button>
   );
 }
@@ -342,49 +357,63 @@ function FileRow({ file, assistantName, onOpen }: { file: WorkbotFile; assistant
 /** Everything kept, newest first (Paper v5, screen 7). */
 export function FilesPanel({ open, onClose, assistantName, onOpenFile }: { open: boolean; onClose: () => void; assistantName: string; onOpenFile: (file: WorkbotFile) => void }) {
   const surface = useRetainedSurface(open);
-  const files = useWorkbotFiles(surface.open);
-  const list = files.data?.files ?? [];
-  const total = list.reduce((sum, file) => sum + file.size, 0);
   return (
     <Dialog.Root open={surface.open} onOpenChange={(next) => { if (!surface.blocked && !next) onClose(); }}>
       <Dialog.Portal {...surface.portal}>
-        <Dialog.Popup className="workbot fixed inset-y-0 right-0 z-50 flex w-full max-w-[400px] flex-col bg-[var(--wb-surface)] shadow-[var(--wb-sheet-shadow)] outline-none transition-transform duration-200 ease-out data-[ending-style]:translate-x-full data-[starting-style]:translate-x-full motion-reduce:transition-none">
+        <Dialog.Popup className="workbot fixed inset-y-0 right-0 z-50 flex w-full max-w-[400px] flex-col bg-[var(--wb-surface)] shadow-[var(--wb-sheet-shadow)] outline-none workbot-sheet-motion transition-transform data-[ending-style]:translate-x-full data-[starting-style]:translate-x-full motion-reduce:transition-none">
           <div className="flex h-15 shrink-0 items-center justify-between border-b border-[var(--wb-hairline)] pl-6 pr-4">
             <Dialog.Title className="text-[15px] font-semibold leading-[18px] tracking-[-0.01em] text-[var(--wb-text)]">Files</Dialog.Title>
             <Dialog.Close aria-label="Close" className="grid h-8 w-8 place-items-center rounded-full text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
               <X size={14} strokeWidth={2} aria-hidden />
             </Dialog.Close>
           </div>
-          <div className="flex-1 overflow-y-auto pb-2 pl-5 pr-4 pt-2">
-            {files.isPending ? (
-              <ul aria-busy="true">
-                {[0, 1, 2].map((index) => (
-                  <li key={index} className="flex h-14 items-center gap-3 border-b border-[var(--wb-row-line)] pl-1">
-                    <span className="h-9 w-8 rounded-[7px] bg-[var(--wb-chip)]" />
-                    <span className="flex flex-col gap-1.5"><span className="h-3 w-40 rounded bg-[var(--wb-chip)]" /><span className="h-3 w-24 rounded bg-[var(--wb-chip)]" /></span>
-                  </li>
-                ))}
-              </ul>
-            ) : files.isError ? (
-              <p className="px-1 py-4 text-[13px] text-[var(--wb-muted)]">
-                Couldn&apos;t load your files.{" "}
-                <button type="button" onClick={() => void files.refetch()} className="font-medium text-[var(--wb-text)] underline underline-offset-2">Try again</button>
-              </p>
-            ) : list.length === 0 ? (
-              <p className="px-1 py-4 text-[13px] leading-5 text-[var(--wb-muted)]">Files you send {assistantName}, and files it makes for you, are kept here.</p>
-            ) : (
-              <ul>{list.map((file) => <FileRow key={file.id} file={file} assistantName={assistantName} onOpen={onOpenFile} />)}</ul>
-            )}
-          </div>
-          {list.length > 0 ? (
-            <div className="flex h-[52px] shrink-0 items-center justify-between border-t border-[var(--wb-hairline)] px-6 text-[12px] leading-4 text-[var(--wb-muted)]">
-              <span>{list.length} {list.length === 1 ? "file" : "files"} · {formatSize(total)}</span>
-              <span>Kept until you delete them</span>
-            </div>
-          ) : null}
+          <FilesList enabled={surface.open} assistantName={assistantName} onOpenFile={onOpenFile} />
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+/**
+ * Files the person sent and files Workbot made, newest first, with how many and how much they take. The Files panel
+ * and the Files tab of Workbot's profile (`workbotProfileNav`) show the same list.
+ */
+export function FilesList({ enabled, assistantName, onOpenFile, framed = true }: { enabled: boolean; assistantName: string; onOpenFile: (file: WorkbotFile) => void; /** The panel's footer; the profile tab shows the count above the list instead. */ framed?: boolean }) {
+  const files = useWorkbotFiles(enabled);
+  const list = files.data?.files ?? [];
+  const total = list.reduce((sum, file) => sum + file.size, 0);
+  const summary = `${list.length} ${list.length === 1 ? "file" : "files"}, ${formatSize(total)}`;
+  return (
+    <>
+      <div className={framed ? "flex-1 overflow-y-auto pb-2 pl-5 pr-4 pt-2" : "flex flex-col px-5 pt-1"} data-workbot-files-list>
+        {!framed && list.length > 0 ? <p className="pb-1 text-[12px] leading-4 text-[var(--wb-muted)]">{summary}. Kept until you delete them.</p> : null}
+        {files.isPending ? (
+          <ul aria-busy="true">
+            {[0, 1, 2].map((index) => (
+              <li key={index} className="flex h-14 items-center gap-3 border-b border-[var(--wb-row-line)] pl-1">
+                <span className="h-9 w-8 rounded-[7px] bg-[var(--wb-chip)]" />
+                <span className="flex flex-col gap-1.5"><span className="h-3 w-40 rounded bg-[var(--wb-chip)]" /><span className="h-3 w-24 rounded bg-[var(--wb-chip)]" /></span>
+              </li>
+            ))}
+          </ul>
+        ) : files.isError ? (
+          <p className="px-1 py-4 text-[13px] text-[var(--wb-muted)]">
+            Couldn&apos;t load your files.{" "}
+            <button type="button" onClick={() => void files.refetch()} className="font-medium text-[var(--wb-text)] underline underline-offset-2">Try again</button>
+          </p>
+        ) : list.length === 0 ? (
+          <p className="px-1 py-4 text-[13px] leading-5 text-[var(--wb-muted)]">Files you send {assistantName}, and files it makes for you, are kept here.</p>
+        ) : (
+          <ul>{list.map((file) => <FileRow key={file.id} file={file} assistantName={assistantName} onOpen={onOpenFile} />)}</ul>
+        )}
+      </div>
+      {framed && list.length > 0 ? (
+        <div className="flex h-[52px] shrink-0 items-center justify-between border-t border-[var(--wb-hairline)] px-6 text-[12px] leading-4 text-[var(--wb-muted)]">
+          <span>{list.length} {list.length === 1 ? "file" : "files"} · {formatSize(total)}</span>
+          <span>Kept until you delete them</span>
+        </div>
+      ) : null}
+    </>
   );
 }
 

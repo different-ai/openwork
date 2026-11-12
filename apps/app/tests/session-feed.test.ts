@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { WorkspaceSessionGroup } from "../src/app/types";
-import { buildSessionFeed, type SessionFeedContext } from "../src/react-app/domains/session/sidebar/session-feed";
+import { buildSessionFeed, feedKeyBetween, type SessionFeedContext } from "../src/react-app/domains/session/sidebar/session-feed";
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = new Date(2026, 9, 29, 15, 0).getTime();
@@ -20,10 +20,9 @@ function feed(groups: WorkspaceSessionGroup[], overrides: Partial<SessionFeedCon
   return buildSessionFeed(groups, {
     pinnedIds: new Set(),
     unreadIds: new Set(),
-    settledById: {},
+    workedAtById: {},
+    placementById: {},
     statusById: {},
-    settleWorkspaceIds: new Set(["lounge", "flow"]),
-    autoSettleDays: 3,
     now: NOW,
     feedFolders: [],
     groupsByWorkspace: {},
@@ -50,17 +49,22 @@ describe("sidebar feed", () => {
   ];
 
   const all = (result: ReturnType<typeof feed>) =>
-    ids([...result.sections.flatMap((section) => section.entries), ...result.settled]);
+    ids(result.sections.flatMap((section) => section.entries));
 
-  test("merges every workspace, newest first, by day", () => {
+  test("merges every workspace, last active first, by day, with nothing set aside as settled", () => {
     const result = feed(groups);
     expect(result).not.toHaveProperty("needsYou");
+    expect(result).not.toHaveProperty("settled");
     expect(sections(result)).toEqual([
       "today:today-new,today-old",
       "yesterday:yesterday",
-      "earlier:approval,earlier",
+      "earlier:approval,earlier,idle-week",
     ]);
-    expect(ids(result.settled)).toEqual(["idle-week"]);
+  });
+
+  test("archived sessions leave the feed", () => {
+    const result = feed([group("lounge", [session("kept", NOW - 60_000), session("filed", NOW, { time: { created: NOW, updated: NOW, archived: NOW } })])]);
+    expect(all(result)).toEqual(["kept"]);
   });
 
   test("a waiting session stays in its normal day section, listed once", () => {
@@ -68,22 +72,9 @@ describe("sidebar feed", () => {
     expect(sections(result)).toEqual([
       "today:today-new,today-old",
       "yesterday:yesterday",
-      "earlier:approval,earlier",
-    ]);
-    expect(all(result).filter((id) => id === "approval")).toHaveLength(1);
-  });
-
-  test("a waiting session never settles, even when idle or settled by hand", () => {
-    const result = feed(groups, {
-      statusById: { "idle-week": "waiting", approval: "waiting" },
-      settledById: { approval: { settledThrough: NOW } },
-    });
-    expect(result.settled).toEqual([]);
-    expect(sections(result)).toEqual([
-      "today:today-new,today-old",
-      "yesterday:yesterday",
       "earlier:approval,earlier,idle-week",
     ]);
+    expect(all(result).filter((id) => id === "approval")).toHaveLength(1);
   });
 
   test("leaves out pinned and sub-agent sessions", () => {
@@ -95,12 +86,6 @@ describe("sidebar feed", () => {
   test("a pinned session that is waiting stays in Pinned, out of the feed", () => {
     const result = feed(groups, { pinnedIds: new Set(["approval"]), statusById: { approval: "waiting" } });
     expect(all(result)).not.toContain("approval");
-  });
-
-  test("workspaces that cannot settle keep every session active", () => {
-    const result = feed(groups, { settleWorkspaceIds: new Set(["flow"]) });
-    expect(result.settled).toEqual([]);
-    expect(ids(result.sections.find((section) => section.section === "earlier")?.entries ?? [])).toContain("idle-week");
   });
 
   test("pinned folders keep their sessions, even with new activity, and flag what needs you", () => {
@@ -141,13 +126,24 @@ describe("sidebar feed", () => {
     });
     expect(sections(result)).toEqual([
       "active:yesterday,approval,earlier",
-      "inactive:today-new,today-old",
+      "inactive:today-new,today-old,idle-week",
     ]);
   });
 
   test("lists everything in one section when not grouped, waiting sessions included", () => {
     expect(sections(feed(groups, { groupBy: "none", statusById: { approval: "waiting" } }))).toEqual([
-      "all:today-new,today-old,yesterday,approval,earlier",
+      "all:today-new,today-old,yesterday,approval,earlier,idle-week",
+    ]);
+  });
+
+  test("a session worked on today shows in Today even when the engine kept its old time", () => {
+    // OpenCode v2 does not move time.updated when a message is sent; the
+    // sidebar records work starting and finishing on this device instead.
+    const result = feed(groups, { workedAtById: { yesterday: NOW - 30_000, earlier: MIDNIGHT - 120_000 } });
+    expect(sections(result)).toEqual([
+      "today:yesterday,today-new,today-old",
+      "yesterday:earlier",
+      "earlier:approval,idle-week",
     ]);
   });
 
@@ -165,5 +161,38 @@ describe("sidebar feed", () => {
       "yesterday:made-yesterday",
       "earlier:old-but-busy",
     ]);
+  });
+
+  test("a dragged session keeps its spot until it has newer activity, then returns to the top", () => {
+    // Dragged below today-old at NOW: placed between today-old and the next row.
+    const key = feedKeyBetween(MIDNIGHT + 60_000, undefined);
+    const placed = feed(groups, { placementById: { "today-new": { key, at: NOW } } });
+    expect(sections(placed)[0]).toBe("today:today-old,today-new");
+    expect(placed.sortKeyById.get("today-new")).toBe(key);
+    // New work after the drag wins over the dragged spot.
+    const worked = feed(groups, { placementById: { "today-new": { key, at: NOW - 120_000 } }, workedAtById: { "today-new": NOW - 60_000 } });
+    expect(sections(worked)[0]).toBe("today:today-new,today-old");
+  });
+
+  test("a session dragged between days moves into that day", () => {
+    const key = feedKeyBetween(MIDNIGHT - 2 * DAY, NOW - 7 * DAY);
+    const result = feed(groups, { placementById: { "today-old": { key, at: NOW } } });
+    expect(sections(result)).toEqual([
+      "today:today-new",
+      "yesterday:yesterday",
+      "earlier:approval,earlier,today-old,idle-week",
+    ]);
+  });
+
+  test("sorted by creation, dragged spots are ignored and rows do not reorder", () => {
+    const result = feed(groups, { sortBy: "created", placementById: { "today-new": { key: 0, at: NOW } } });
+    expect(result.reorderable).toBe(false);
+    expect(sections(result)[0]).toBe("today:today-new,today-old");
+  });
+
+  test("a drop between two rows sorts between them; at either end it sorts just past the neighbour", () => {
+    expect(feedKeyBetween(300, 100)).toBe(200);
+    expect(feedKeyBetween(300, undefined)).toBe(299);
+    expect(feedKeyBetween(undefined, 100)).toBe(101);
   });
 });

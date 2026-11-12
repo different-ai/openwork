@@ -2,15 +2,27 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { ArrowUpRight, BarChart3, Blocks, ScrollText } from "lucide-react";
+import { ArrowUpRight, BarChart3, Blocks, Bot, ScrollText } from "lucide-react";
 import { DenButton } from "../../../_components/ui/button";
-import { underlineTabClassName } from "../../../_components/ui/tabs";
+import { UnseenDot, underlineTabClassName } from "../../../_components/ui/tabs";
 import { DenPageHeader } from "../../../_components/ui/page-header";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { ItemPanel, ItemRowsSkeleton } from "../../_components/item-list";
-import { getAnalyticsRoute, getLibraryUsageRoute, getWorkflowRunsRoute } from "../../../_lib/den-org";
+import { getAnalyticsRoute, getLibraryUsageRoute, getWorkbotUsageRoute, getWorkflowRunsRoute, orgFeatureEnabled } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useLibraryUsageAvailable } from "../library-usage/use-library-usage";
+import { useFeatureIntroUnseen, type FeatureIntroKey } from "../feature-intros";
+
+type AnalyticsView = "adoption" | "library" | "workbot" | "workflows";
+type AnalyticsViewLink = { id: AnalyticsView; label: string; href: string; icon: typeof BarChart3 };
+
+/** Each view's feature intro, for its quiet "not viewed yet" dot (DESIGN.md I9). Workbot has none. */
+const ANALYTICS_VIEW_INTROS: Record<AnalyticsView, FeatureIntroKey | null> = {
+  adoption: "analytics",
+  library: "analytics.library",
+  workbot: null,
+  workflows: "analytics.workflow-runs",
+};
 
 export const analyticsSurfaceClass = "analytics-surface rounded-2xl border border-[#e3e7ee] bg-white";
 /** Same content inset as DashboardPageTemplate; header ownership stays separate. */
@@ -24,15 +36,22 @@ export const analyticsPageClass = "mx-auto grid w-full max-w-[860px] gap-6 p-4 s
  * between views.
  */
 export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }: {
-  orgSlug?: string | null; active: "adoption" | "library" | "workflows";
+  orgSlug?: string | null; active: AnalyticsView;
   title: string; action?: ReactNode; caption?: ReactNode;
 }) {
   const { orgContext } = useOrgDashboard();
   const libraryUsage = useLibraryUsageAvailable();
+  const introUnseen = useFeatureIntroUnseen();
+  const adoption: AnalyticsViewLink = { id: "adoption", label: "Usage & adoption", href: getAnalyticsRoute(orgSlug), icon: BarChart3 };
+  const library: AnalyticsViewLink = { id: "library", label: "Plugins & connectors", href: getLibraryUsageRoute(orgSlug), icon: Blocks };
+  // What Workbot spends on models, for the people who can see usage, where Workbot is available.
+  const workbot: AnalyticsViewLink = { id: "workbot", label: "Workbot", href: getWorkbotUsageRoute(orgSlug), icon: Bot };
+  const workflows: AnalyticsViewLink = { id: "workflows", label: "Workflow Runs", href: getWorkflowRunsRoute(orgSlug), icon: ScrollText };
   const pages = [
-    { id: "adoption", label: "Usage & adoption", href: getAnalyticsRoute(orgSlug), icon: BarChart3 },
-    ...(libraryUsage ? [{ id: "library", label: "Plugins & connectors", href: getLibraryUsageRoute(orgSlug), icon: Blocks }] : []),
-    ...(orgContext?.capabilities.workflows && orgContext.entitlements.analytics ? [{ id: "workflows", label: "Workflow Runs", href: getWorkflowRunsRoute(orgSlug), icon: ScrollText }] : []),
+    adoption,
+    ...(libraryUsage ? [library] : []),
+    ...(libraryUsage && orgContext?.capabilities.workbot && orgFeatureEnabled(orgContext, "workbotUsageAnalytics") ? [workbot] : []),
+    ...(orgContext?.capabilities.workflows && orgContext.entitlements.analytics ? [workflows] : []),
   ];
   return <header className="grid gap-5">
     <p className="text-xs font-medium text-[#637291]">Analytics</p>
@@ -49,6 +68,7 @@ export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }:
       {pages.map(({ id, label, href, icon: Icon }) => <Link key={id} href={href} aria-current={active === id ? "page" : undefined}
         className={`-mb-px focus-visible:outline-offset-4 ${underlineTabClassName(active === id)}`}>
         <Icon className="h-4 w-4" aria-hidden="true" />{label}
+        {active !== id && introUnseen(ANALYTICS_VIEW_INTROS[id]) ? <UnseenDot /> : null}
       </Link>)}
     </nav>
   </header>;

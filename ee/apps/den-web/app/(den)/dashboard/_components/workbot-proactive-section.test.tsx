@@ -1,11 +1,29 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { DEFAULT_AGENT_BRIEF, DEFAULT_AGENT_TEMPLATE, DEFAULT_WORKBOT_PROACTIVE_SETTINGS, type AgentResponsibility, type WorkbotProactiveView } from "@openwork/types/den/workbot-proactive";
+import {
+  DEFAULT_AGENT_BRIEF,
+  DEFAULT_AGENT_TEMPLATE,
+  DEFAULT_WORKBOT_PROACTIVE_SETTINGS,
+  mergeAgentTemplate,
+  mergeWorkbotProactiveSettings,
+  type AgentResponsibility,
+  type WorkbotProactiveView,
+} from "@openwork/types/den/workbot-proactive";
+import {
+  agentPolicyPath,
+  agentPolicyQueryKey,
+  agentPolicyRestoreChange,
+  AGENTS_SWITCH_LABEL,
+  agentToolsPath,
+  agentToolsQueryKey,
+  agentToolsRootQueryKey,
+  type AgentPolicyScope,
+} from "./workbot-agent-scope";
 import { WorkbotProactivePanel } from "./workbot-proactive-section";
 import { previewTime } from "./workbot-proactive-preview";
 import { WorkbotProactiveHealthTable } from "./workbot-proactive-health";
-import { addSourceChange, addableTo, allowAppChange, coreAppRows, makeDefaultChange, removeSourceChange, WorkbotProactiveSources } from "./workbot-proactive-sources";
+import { addConnectionChange, addableConnections, AgentCalendarPolicy, calendarStateLine, filterConnections, listedConnections, otherConnectionAdded, otherConnectionsRestLine, removeConnectionChange, WorkbotProactiveSources } from "./workbot-proactive-sources";
 
 const ready: WorkbotProactiveView = {
   settings: { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS, enabled: true },
@@ -13,20 +31,17 @@ const ready: WorkbotProactiveView = {
   slackReady: true,
   runnerReady: true,
   sourceConnections: {
-    calendar: [{ id: "google-workspace", name: "Google Calendar", url: "https://google.com", connectedMembers: 4 }],
-    email: [{ id: "google-workspace", name: "Gmail", url: "https://google.com", connectedMembers: 4 }],
-    chat: [{ id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp", connectedMembers: null }],
+    calendar: [{ id: "google-workspace", name: "Google Workspace", url: "https://google.com", connectedMembers: 4 }],
     other: [
       { id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp" },
       { id: "emc_tracker", name: "Issue tracker", url: "https://mcp.linear.app/mcp" },
     ],
     all: [
-      { id: "google-workspace", name: "Google Workspace", url: "https://google.com", native: true, slots: ["calendar", "email"], connectedMembers: 4 },
-      { id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp", native: false, slots: ["calendar", "email", "chat", "other"], connectedMembers: null },
-      { id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp", native: false, slots: ["calendar", "email", "chat", "other"], connectedMembers: null },
-      { id: "emc_tracker", name: "Issue tracker", url: "https://mcp.linear.app/mcp", native: false, slots: ["calendar", "email", "chat", "other"], connectedMembers: null },
+      { id: "google-workspace", name: "Google Workspace", url: "https://google.com", native: true, slots: ["calendar"], connectedMembers: 4 },
+      { id: "emc_slack", name: "Slack", url: "https://mcp.slack.com/mcp", native: false, slots: ["other"], connectedMembers: null },
+      { id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp", native: false, slots: ["other"], connectedMembers: null },
+      { id: "emc_tracker", name: "Issue tracker", url: "https://mcp.linear.app/mcp", native: false, slots: ["other"], connectedMembers: null },
     ],
-    defaults: { calendar: "google-workspace", email: "google-workspace", chat: "emc_slack" },
   },
 };
 
@@ -47,11 +62,11 @@ function switchFor(html: string, label: string) {
 
 test("every setting is one labelled row with its current value, and nothing explains the page", () => {
   const view = text(render());
-  for (const label of ["Agents for everyone", "Send messages to", "Morning brief", "Meeting prep", "Calendar changes", "Waiting on you", "Instructions for every agent", "Working hours", "Daily limit", "Members start", "Preview"]) {
+  for (const label of ["Proactive Mode", "Send messages to", "Morning brief", "Meeting prep", "Calendar changes", "Waiting on you", "Instructions for every agent", "Working hours", "Daily limit", "Members start", "Preview"]) {
     assert.ok(view.includes(label), label);
   }
   for (const value of ["A DM from Workbot", "15 min before", "Version 1", "Weekdays", "8 AM", "7 PM", "3 per person", "Opted in"]) assert.ok(view.includes(value), value);
-  assert.match(switchFor(render(), "Agents for everyone") ?? "", /aria-checked="true"/);
+  assert.match(switchFor(render(), "Proactive Mode") ?? "", /aria-checked="true"/);
   assert.match(switchFor(render(), "Waiting on you") ?? "", /aria-checked="true"/);
   assert.doesNotMatch(view, /Needs|first\./, "no lock when everything is ready");
 });
@@ -72,7 +87,7 @@ test("without the Slack app the switch is locked with the reason and where to fi
   assert.match(text(html), /Needs the Slack app\. Set it up in Connectors/);
   assert.match(text(html), /Needs the Slack app first\./);
   assert.match(html, /href="\/dashboard\/mcp-connections"/);
-  assert.match(switchFor(html, "Agents for everyone") ?? "", /disabled=""/);
+  assert.match(switchFor(html, "Proactive Mode") ?? "", /disabled=""/);
 });
 
 test("with nowhere to send messages the switch says to choose a destination first", () => {
@@ -84,14 +99,14 @@ test("with nowhere to send messages the switch says to choose a destination firs
 test("without the headless runner the switch says who can fix it", () => {
   const html = render({ ...ready, settings: { ...ready.settings, enabled: false }, runnerReady: false });
   assert.match(text(html), /Needs the headless runner\. Ask your deployment administrator\./);
-  assert.match(switchFor(html, "Agents for everyone") ?? "", /disabled=""/);
+  assert.match(switchFor(html, "Proactive Mode") ?? "", /disabled=""/);
 });
 
 test("a turned-off responsibility hides its own options, and viewers see every value but can't change any", () => {
   const off = text(render({ ...ready, template: { ...ready.template, responsibilities: { ...ready.template.responsibilities, meeting_prep: false } } }));
   assert.doesNotMatch(off, /15 min before/);
   const html = render(ready, { canManage: false });
-  for (const label of ["Agents for everyone", "Calendar changes", "Morning brief"]) assert.match(switchFor(html, label) ?? "", /disabled=""/, label);
+  for (const label of ["Proactive Mode", "Calendar changes", "Morning brief"]) assert.match(switchFor(html, label) ?? "", /disabled=""/, label);
   assert.ok(text(html).includes("15 min before"));
 });
 
@@ -120,115 +135,56 @@ function withSources(view: WorkbotProactiveView, change: Partial<WorkbotProactiv
   return { ...view, settings: { ...view.settings, sources: { ...view.settings.sources, ...change } } };
 }
 
-const legacy = { id: "google-workspace", name: "Google Workspace", url: "https://google.com", connectedMembers: 2 };
-const personal = { id: "gws_personal", name: "Google Workspace - Personal", url: "https://google.com", connectedMembers: 0 };
-const microsoft = { id: "m365_main", name: "Microsoft 365", url: "https://microsoft.com", connectedMembers: 9 };
+test("the calendar is one picklist with what it reads through, and nothing to pick", () => {
+  const calendar = (view: WorkbotProactiveView, disabled = false) => renderToStaticMarkup(<AgentCalendarPolicy view={view} disabled={disabled} onChange={() => undefined} />);
+  const html = calendar(ready);
+  assert.match(html, /data-testid="workbot-source-calendar" data-policy="everyone"/);
+  assert.ok(text(html).includes("On for everyone"), "the choice in use");
+  assert.ok(text(calendar(withSources(ready, { calendar: "members" }))).includes("Members choose"));
+  assert.doesNotMatch(text(html), /Add app|Set as default|Remove|Default/);
+  assert.match(calendar(ready, true), /disabled=""/);
+  assert.match(calendar(withSources(ready, { calendar: "off" })), /data-policy="off"/);
 
-/** Google Workspace and Microsoft 365 both serve calendar and email; Microsoft 365 is the default most members use. */
-const twoApps: WorkbotProactiveView = { ...ready, sourceConnections: {
-  calendar: [legacy, microsoft], email: [legacy, microsoft], chat: [microsoft], other: [],
-  all: [
-    { ...legacy, native: true, slots: ["calendar", "email"] },
-    { ...microsoft, native: true, slots: ["calendar", "email", "chat"] },
-    { id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp", native: false, slots: ["calendar", "email", "chat", "other"], connectedMembers: null },
-  ],
-  defaults: { calendar: microsoft.id, email: microsoft.id, chat: microsoft.id },
-} };
+  assert.equal(calendarStateLine(ready), "Uses Google Workspace");
+  const microsoft = { id: "m365_main", name: "Microsoft 365", url: "https://microsoft.com", connectedMembers: 9 };
+  const connections = ready.sourceConnections!;
+  assert.equal(calendarStateLine({ ...ready, sourceConnections: { ...connections, calendar: [...connections.calendar, microsoft] } }), "Uses Google Workspace or Microsoft 365");
+  assert.equal(calendarStateLine({ ...ready, sourceConnections: { ...connections, calendar: [] } }), "No calendar app connected");
+  assert.equal(calendarStateLine({ ...ready, sourceConnections: null }), "Uses Google Calendar or Outlook", "without View connections: what it reads through, not the organization's connections");
+  assert.equal(calendarStateLine(withSources(ready, { calendar: "off" })), "Agents don't read it");
+});
 
-test("what agents read: each category with what members use, its apps, Add source, and Other context with each connection's policy", () => {
+test("connectors: each connection agents read with its own policy and Remove, no Calendar, Email or Team chat rows", () => {
   const html = sources();
   const view = text(html);
-  assert.match(view, /What agents read/);
-  assert.match(row(html, "workbot-source-calendar"), /Calendar Everyone uses Google Workspace On for everyone/);
-  assert.match(row(html, "workbot-source-calendar-google-workspace"), /Google Workspace Default 4 connected/);
-  assert.match(switchFor(html, "Allow Google Workspace") ?? "", /aria-checked="true"/);
-  assert.match(row(html, "workbot-source-chat-emc_slack"), /Slack Default/);
-  assert.doesNotMatch(row(html, "workbot-source-chat-emc_slack"), /connected/, "a shared connection: no member count");
-  assert.match(html, /aria-label="Add source to Calendar"/);
-  assert.match(html, /aria-label="Add source to Other context"/);
-  assert.match(row(html, "workbot-source-other-emc_notes"), /Meeting notes Members choose Remove/);
-  assert.match(row(html, "workbot-source-other-emc_tracker"), /Issue tracker Members choose Remove/);
+  assert.match(view, /Connectors/);
+  for (const gone of ["What agents read", "Other context", "Calendar", "Email", "Team chat", "Add app", "Set as default"]) assert.ok(!view.includes(gone), gone);
+  assert.doesNotMatch(html, /aria-label="About/, "no tooltips: the rows explain themselves");
+  assert.match(row(html, "workbot-source-other-emc_notes"), /Meeting notes .*Members choose.* Remove/);
+  assert.match(row(html, "workbot-source-other-emc_tracker"), /Issue tracker/);
+  assert.match(view, /Add connector/);
   assert.match(view, /Read only\. Agents never send, edit or delete through these\./);
+  assert.match(row(sources(withSources(ready, { connections: { emc_tracker: "off" } })), "workbot-source-other-emc_tracker"), /Not allowed/);
 });
 
-test("what agents read: with two apps allowed, members pick; the default has a badge and its switch waits for another default", () => {
-  const html = sources(twoApps);
-  const calendar = row(html, "workbot-source-calendar");
-  assert.match(calendar, /Calendar Members use Google Workspace or Microsoft 365 On for everyone/);
-  assert.match(row(html, "workbot-source-calendar-m365_main"), /Microsoft 365 Default 9 connected/);
-  assert.match(row(html, "workbot-source-calendar-google-workspace"), /Google Workspace 2 connected Make default/);
-  assert.doesNotMatch(row(html, "workbot-source-calendar-m365_main"), /Make default/, "the default isn't offered as default again");
-  assert.match(html, /aria-label="Make Google Workspace the default for Calendar"/);
-  const defaultSwitch = /data-testid="workbot-source-calendar-m365_main"[\s\S]*?<button[^>]*role="switch"[^>]*>/.exec(html)?.[0] ?? "";
-  assert.match(defaultSwitch, /aria-label="Allow Microsoft 365"/);
-  assert.match(defaultSwitch, /disabled=""/, "choose another default before turning the default off");
-  const otherSwitch = /data-testid="workbot-source-calendar-google-workspace"[\s\S]*?<button[^>]*role="switch"[^>]*>/.exec(html)?.[0] ?? "";
-  assert.doesNotMatch(otherSwitch, /disabled=""/);
-  assert.deepEqual(makeDefaultChange("calendar", legacy.id), { coreDefaults: { calendar: legacy.id } });
-  assert.deepEqual(allowAppChange(twoApps, "calendar", legacy.id, false), { coreConnections: { calendar: [microsoft.id] } }, "an explicit list without Google");
-  const onlyMicrosoft = withSources(twoApps, { coreConnections: { calendar: [microsoft.id] } });
-  assert.match(row(sources(onlyMicrosoft), "workbot-source-calendar"), /Everyone uses Microsoft 365/);
-  assert.match(switchFor(sources(onlyMicrosoft), "Allow Google Workspace") ?? "", /aria-checked="false"/, "a disallowed app keeps its row, switched off");
-  assert.deepEqual(allowAppChange(onlyMicrosoft, "calendar", legacy.id, true), { coreConnections: { calendar: null } }, "every app that serves it again: back to automatic");
-  const adminDefault = withSources(twoApps, { coreDefaults: { calendar: legacy.id } });
-  assert.deepEqual(coreAppRows(adminDefault, "calendar").map((entry) => [entry.option.id, entry.isDefault]), [[legacy.id, true], [microsoft.id, false]], "the admin's default wins over the automatic one at once");
-  assert.match(row(sources(withSources(twoApps, { coreConnections: { calendar: [] } })), "workbot-source-calendar"), /No apps allowed/);
+test("connectors: Add connector lists the ones agents can read that aren't listed yet, and adds or removes one at once", () => {
+  assert.deepEqual(listedConnections(ready).map((option) => option.id), ["emc_notes", "emc_tracker"]);
+  assert.deepEqual(addableConnections(ready).map((option) => option.id), ["emc_slack"], "Google Workspace serves the calendar only before the brief");
+  assert.deepEqual(addConnectionChange(ready, "emc_slack"), { otherConnections: ["emc_notes", "emc_tracker", "emc_slack"] });
+  assert.deepEqual(removeConnectionChange(ready, "emc_tracker"), { otherConnections: ["emc_notes"], connections: { emc_tracker: null } });
+  const picked = withSources(ready, { otherConnections: ["emc_tracker"] });
+  assert.deepEqual(listedConnections(picked).map((option) => option.id), ["emc_tracker"]);
+  assert.deepEqual(addableConnections(picked).map((option) => option.id), ["emc_slack", "emc_notes"]);
+  assert.match(text(sources(withSources(ready, { otherConnections: [] }))), /No connectors/);
 });
 
-test("what agents read: a category header shows a generic icon, never an app logo", () => {
-  const html = sources(twoApps);
-  for (const kind of ["calendar", "email", "chat"]) {
-    const header = new RegExp(`data-testid="workbot-source-${kind}"[\\s\\S]*?data-testid="workbot-category-state-${kind}"`).exec(html)?.[0] ?? "";
-    assert.ok(header.length > 0, kind);
-    assert.doesNotMatch(header, /<img/, `${kind}: no app logo on the category`);
-    assert.match(header, /<svg/, `${kind}: its generic icon`);
-  }
-  assert.match(/data-testid="workbot-source-calendar-m365_main"[\s\S]*?<\/div>/.exec(html)?.[0] ?? "", /<img|<svg/, "each app row has its logo");
-});
-
-test("what agents read: a legacy and a newer Google Workspace are both listed and allowed one at a time", () => {
-  const two: WorkbotProactiveView = { ...ready, sourceConnections: {
-    calendar: [legacy, personal], email: [legacy, personal], chat: [], other: [],
-    all: [
-      { ...legacy, native: true, slots: ["calendar", "email"] },
-      { ...personal, native: true, slots: ["calendar", "email"] },
-    ],
-    defaults: { calendar: legacy.id, email: legacy.id, chat: null },
-  } };
-  const html = sources(two);
-  assert.match(row(html, "workbot-source-calendar-google-workspace"), /Google Workspace Default 2 connected/);
-  assert.match(row(html, "workbot-source-calendar-gws_personal"), /Google Workspace - Personal 0 connected Make default/);
-  assert.deepEqual(allowAppChange(two, "calendar", personal.id, false), { coreConnections: { calendar: [legacy.id] } }, "Calendar only");
-  assert.deepEqual(removeSourceChange(two, "calendar", legacy.id), { coreConnections: { calendar: [personal.id] } });
-  assert.match(text(sources({ ...two, sourceConnections: two.sourceConnections && { ...two.sourceConnections, calendar: [], email: [], chat: [] } })), /Team chat No apps allowed On for everyone/);
-});
-
-test("what agents read: Add source lists every connection not already there, and adds it at once", () => {
-  assert.deepEqual(addableTo(ready, "calendar").map((option) => option.id), ["emc_slack", "emc_notes", "emc_tracker"]);
-  assert.deepEqual(addableTo(ready, "chat").map((option) => option.id), ["emc_notes", "emc_tracker"], "Google can't serve team chat");
-  assert.deepEqual(addableTo(ready, "other").map((option) => option.id), ["emc_slack"]);
-  assert.deepEqual(addSourceChange(ready, "email", "emc_notes"), { coreConnections: { email: ["google-workspace", "emc_notes"] } });
-  const added = withSources(ready, { coreConnections: { calendar: ["google-workspace", "emc_notes"] } });
-  assert.match(row(sources(added), "workbot-source-calendar-emc_notes"), /Meeting notes Read on checks; no early meeting alerts Make default/, "only Google's calendar wakes the agent early");
-  assert.deepEqual(addableTo(added, "calendar").map((option) => option.id), ["emc_slack", "emc_tracker"], "an app with a row there isn't offered again");
-  assert.deepEqual(allowAppChange(added, "calendar", "emc_notes", false), { coreConnections: { calendar: null } }, "stopping the added one: back to what serves it");
-  assert.deepEqual(removeSourceChange(ready, "other", "emc_notes"), { otherConnections: ["emc_tracker"], connections: { emc_notes: null } });
-});
-
-test("what agents read: locked for people who can't manage it, and without View connections", () => {
+test("connectors: locked for people who can't manage it, and without View connections", () => {
   const locked = sources(ready, false);
   const buttons = locked.match(/<button[^>]*>/g) ?? [];
-  assert.ok(buttons.length > 0 && buttons.every((button) => /disabled=""/.test(button)), "every choice, switch, Make default, Remove and Add source are locked without Manage");
-  const policy = withSources(ready, { email: "members", chat: "off", connections: { emc_tracker: "off" } });
-  const html = sources(policy);
-  assert.match(row(html, "workbot-source-email"), /Members choose/);
-  assert.match(row(html, "workbot-source-chat"), /Team chat Agents don't read it Not allowed/);
-  assert.doesNotMatch(html, /workbot-source-chat-emc_slack/, "no app rows while it's not allowed");
-  assert.match(row(html, "workbot-source-other-emc_tracker"), /Not allowed/);
+  assert.ok(buttons.length > 0 && buttons.every((button) => /disabled=""/.test(button)), "every choice, Remove and Add connector are locked without Manage");
   const hidden = text(sources({ ...ready, sourceConnections: null }));
-  assert.match(hidden, /Calendar Google Calendar or Outlook On for everyone/, "without View connections: what each source reads through, not the organization's connections");
-  assert.match(hidden, /Sources: Needs the “.+” permission\./);
-  assert.doesNotMatch(hidden, /Meeting notes|Issue tracker|Add source/);
+  assert.match(hidden, /Connectors: Needs the “.+” permission\./);
+  assert.doesNotMatch(hidden, /Meeting notes|Issue tracker|Add connector/);
 });
 
 // ---- Your agent's brief (workbotAgentBrief) -------------------------------------------------------------------------
@@ -239,7 +195,7 @@ const briefOn: WorkbotProactiveView = { ...ready, brief: briefSettings };
 test("with the brief: one rhythm, the daily limit, extra checks and what to tell people replace the message types", () => {
   const html = render(briefOn);
   const view = text(html);
-  for (const label of ["Agents for everyone", "Send messages to", "Check", "Messages per person per day", "Extra checks agents may ask for", "Members start", "What to tell people", "Preview"]) assert.ok(view.includes(label), label);
+  for (const label of ["Proactive Mode", "Send messages to", "Check", "Messages per person per day", "Extra checks agents may ask for", "Members start", "What to tell people", "Preview"]) assert.ok(view.includes(label), label);
   for (const value of ["Every 2 hours", "8 AM", "7 PM", "Weekdays", "3 a day", "Reset to default", "From your earlier settings."]) assert.ok(view.includes(value), value);
   for (const gone of ["Morning brief", "Meeting prep", "Calendar changes", "Waiting on you", "15 min before", "Instructions for every agent", "Version 1"]) assert.ok(!view.includes(gone), gone);
   assert.match(html, /Don&#x27;t send meeting prep\.<\/textarea>/);
@@ -257,4 +213,218 @@ test("with the brief, health is one row of checks on the rhythm", () => {
   const html = renderToStaticMarkup(<WorkbotProactiveHealthTable health={{ days: 7, members: 5, responsibilities: [], rhythm: { checks: 120, quiet: 96, sent: 31 } }} />);
   assert.match(text(html), /All members 120 80% 31/);
   assert.doesNotMatch(text(html), /Muted by/);
+});
+
+// ---- Everyone's policy, or one team's (workbotTeamSettings) ---------------------------------------------------------
+
+const everyoneScope: AgentPolicyScope = { kind: "everyone" };
+const supportScope: AgentPolicyScope = { kind: "team", teamId: "team/a" };
+
+test("Everyone's policy keeps the organization's routes and keys; a team's has its own under them", () => {
+  assert.equal(agentPolicyPath(everyoneScope), "/v1/org/workbot-settings/proactive");
+  assert.equal(agentToolsPath(everyoneScope, "emc notes"), "/v1/org/workbot-settings/proactive/sources/emc%20notes/tools");
+  assert.deepEqual(agentPolicyQueryKey("org_1", everyoneScope), ["org-workbot-proactive", "org_1"]);
+  assert.deepEqual(agentToolsQueryKey("org_1", "emc_notes", everyoneScope), ["org-workbot-agent-tools", "org_1", "emc_notes"]);
+
+  assert.equal(agentPolicyPath(supportScope), "/v1/org/workbot-settings/teams/team%2Fa/agent");
+  assert.equal(agentToolsPath(supportScope, "emc notes"), "/v1/org/workbot-settings/teams/team%2Fa/agent/sources/emc%20notes/tools");
+  const teamKey = agentPolicyQueryKey("org_1", supportScope);
+  const teamToolsKey = agentToolsQueryKey("org_1", "emc_notes", supportScope);
+  assert.deepEqual(teamKey, ["org-workbot-proactive", "org_1", "teams", "team/a"]);
+  assert.deepEqual(teamToolsKey, ["org-workbot-agent-tools", "org_1", "emc_notes", "teams", "team/a"]);
+  // A change to Everyone's policy refreshes everything under its key: the teams that follow it too.
+  assert.deepEqual(teamKey.slice(0, 2), agentPolicyQueryKey("org_1", everyoneScope));
+  assert.deepEqual(teamToolsKey.slice(0, 3), agentToolsQueryKey("org_1", "emc_notes", everyoneScope));
+  assert.deepEqual(teamToolsKey.slice(0, 2), agentToolsRootQueryKey("org_1"));
+  assert.notDeepEqual(agentPolicyQueryKey("org_1", { kind: "team", teamId: "team_b" }), teamKey);
+});
+
+test("a team's panel has the same rows and the same switch as Everyone's", () => {
+  assert.equal(AGENTS_SWITCH_LABEL, "Proactive Mode");
+  for (const view of [ready, briefOn]) {
+    const html = renderToStaticMarkup(
+      <WorkbotProactivePanel view={view} canManage saving={false} onChange={() => undefined} connectorsHref="/dashboard/mcp-connections" scope={supportScope} />,
+    );
+    assert.match(switchFor(html, "Proactive Mode") ?? "", /aria-checked="true"/);
+    assert.equal(text(html), text(render(view)));
+  }
+});
+
+test("Undo for Use Everyone's saves the team's policy back as a change to Everyone's", () => {
+  const everyone: WorkbotProactiveView = {
+    ...briefOn,
+    settings: {
+      ...ready.settings,
+      enabled: false,
+      sources: {
+        calendar: "everyone",
+        otherConnections: ["emc_notes"],
+        connections: { emc_notes: "everyone", emc_tracker: "off" },
+        toolOverrides: { emc_notes: { search: "allow", remove: "deny" }, emc_tracker: { list: "allow" } },
+      },
+      brief: { dailyCap: 6 },
+    },
+    brief: { ...briefSettings, dailyCap: 6, carriedOver: ["checkEveryHours", "extraChecksPerDay", "text"] },
+  };
+  const team: WorkbotProactiveView = {
+    ...briefOn,
+    settings: {
+      ...ready.settings,
+      enabled: true,
+      workingDays: "everyday",
+      startHour: 9,
+      endHour: 17,
+      dailyCap: 5,
+      membersStart: "opted_out",
+      sources: {
+        calendar: "members",
+        otherConnections: ["emc_notes", "emc_tracker"],
+        connections: { emc_notes: "off" },
+        toolOverrides: { emc_notes: { search: "deny", read: "allow" } },
+      },
+      brief: { checkEveryHours: 3, text: "Only tell people about customers." },
+    },
+    template: { ...ready.template, responsibilities: { ...ready.template.responsibilities, meeting_prep: false }, instructions: "Ignore newsletters.", version: 4, versionId: "cov_team" },
+    brief: { ...briefSettings, checkEveryHours: 3, dailyCap: 5, text: "Only tell people about customers.", carriedOver: ["dailyCap", "extraChecksPerDay"] },
+  };
+
+  const change = agentPolicyRestoreChange(team, everyone);
+  // Only what differs is sent for sources: null takes away what Everyone has and the team didn't.
+  assert.deepEqual(change.sources, {
+    calendar: "members",
+    otherConnections: ["emc_notes", "emc_tracker"],
+    connections: { emc_notes: "off", emc_tracker: null },
+    toolOverrides: { emc_notes: { search: "deny", remove: null, read: "allow" }, emc_tracker: null },
+  });
+  // The team's first save starts from Everyone's policy: the change on top of it is the team's policy again.
+  const restored = mergeWorkbotProactiveSettings(everyone.settings, change);
+  assert.deepEqual(restored, { ...team.settings, brief: { checkEveryHours: 3, dailyCap: 5, text: "Only tell people about customers." } });
+  assert.deepEqual(mergeAgentTemplate(everyone.template, change), { responsibilities: team.template.responsibilities, instructions: "Ignore newsletters." });
+
+  // The same policy as Everyone's still makes it the team's own, and sends nothing the server could refuse.
+  const same = agentPolicyRestoreChange(everyone, everyone);
+  assert.deepEqual(same.sources, { calendar: "everyone" });
+  assert.equal(same.enabled, false);
+  // With the brief off the server refuses `brief`, so it is left out.
+  assert.equal(agentPolicyRestoreChange(ready, ready).brief, undefined);
+  assert.deepEqual(agentPolicyRestoreChange(everyone, everyone).brief, { dailyCap: 6 });
+});
+
+// ---- Grouped rows (workbotSettingsTabs) ---------------------------------------------------------------------------
+
+function renderGrouped(view: WorkbotProactiveView) {
+  return renderToStaticMarkup(
+    <WorkbotProactivePanel view={view} canManage saving={false} onChange={() => undefined} connectorsHref="/dashboard/mcp-connections" grouped />,
+  );
+}
+
+test("grouped: yes or no settings are switches, the schedule is one row per setting, and only rows that need explaining have help", () => {
+  const html = renderGrouped(briefOn);
+  const view = text(html);
+  for (const label of ["Proactive Mode", "On for members by default", "Messages", "Send messages in Slack", "Daily message limit", "Schedule", "Check for updates", "Working hours", "Working days", "Extra checks", "Agent instructions", "Edit", "Example message", "Want me to draft a reply?"]) assert.ok(view.includes(label), label);
+  assert.doesNotMatch(html, /<textarea/, "the instructions are text until Edit is clicked");
+  for (const gone of ["Send messages to", "Nowhere yet", "Members start", "Must opt in", "Messages per person per day", "Extra checks agents may ask for", "What to tell people", "Preview"]) assert.ok(!view.includes(gone), gone);
+  assert.match(switchFor(html, "Send messages in Slack") ?? "", /aria-checked="true"/);
+  assert.match(switchFor(html, "On for members by default") ?? "", /aria-checked="true"/);
+  for (const about of ["On for members by default", "Extra checks", "Example message"]) assert.ok(html.includes(`aria-label="About ${about}"`), about);
+  for (const plain of ["Proactive Mode", "Send messages in Slack", "Daily message limit", "Check for updates", "Working hours", "Working days", "Agent instructions"]) assert.ok(!html.includes(`aria-label="About ${plain}"`), plain);
+});
+
+test("the send check is one switch, off until an admin turns it on, in both layouts, and absent while its feature is off", () => {
+  const label = "Check each message before sending";
+  for (const layout of [render, renderGrouped]) {
+    assert.ok(!text(layout(briefOn)).includes(label), "no row while the server doesn't offer it");
+    const offered = layout({ ...briefOn, sendCheck: { ready: true } });
+    assert.match(switchFor(offered, label) ?? "", /aria-checked="false"/);
+    assert.doesNotMatch(switchFor(offered, label) ?? "", /disabled=""/);
+    assert.match(switchFor(layout({ ...briefOn, settings: { ...briefOn.settings, sendCheck: true }, sendCheck: { ready: true } }), label) ?? "", /aria-checked="true"/);
+  }
+  assert.ok(renderGrouped({ ...briefOn, sendCheck: { ready: true } }).includes(`aria-label="About ${label}"`), "the grouped row explains itself");
+});
+
+test("where the deployment can't run the send check, its switch is locked with who can fix it, but can still be turned off", () => {
+  const label = "Check each message before sending";
+  for (const layout of [render, renderGrouped]) {
+    const locked = layout({ ...briefOn, sendCheck: { ready: false } });
+    assert.match(switchFor(locked, label) ?? "", /disabled=""/);
+    assert.ok(text(locked).includes("Not set up on this deployment. Ask your deployment administrator."));
+    const on = layout({ ...briefOn, settings: { ...briefOn.settings, sendCheck: true }, sendCheck: { ready: false } });
+    assert.doesNotMatch(switchFor(on, label) ?? "", /disabled=""/);
+  }
+});
+
+test("the check gate is one switch, off until an admin turns it on, in both layouts, and absent while its feature is off", () => {
+  const label = "Skip checks when nothing new arrived";
+  for (const layout of [render, renderGrouped]) {
+    assert.ok(!text(layout(briefOn)).includes(label), "no row while the server doesn't offer it");
+    const offered = layout({ ...briefOn, checkGate: { model: false } });
+    assert.match(switchFor(offered, label) ?? "", /aria-checked="false"/);
+    assert.doesNotMatch(switchFor(offered, label) ?? "", /disabled=""/);
+    assert.match(switchFor(layout({ ...briefOn, settings: { ...briefOn.settings, checkGate: true }, checkGate: { model: true } }), label) ?? "", /aria-checked="true"/);
+  }
+  assert.ok(renderGrouped({ ...briefOn, checkGate: { model: true } }).includes(`aria-label="About ${label}"`), "the grouped row explains itself");
+});
+
+test("each threshold is a select shown only while its switch is on: the default, the saved choice, or one set through the API", () => {
+  const gate = "Skip only when the chance new mail matters is at most";
+  const send = "Hold a message only when at least this sure";
+  /** The value a row's select shows: the closed field reads as its selected option. */
+  const selected = (html: string, testId: string) => new RegExp(`data-testid="${testId}"[\\s\\S]*?title="(\\d+%)"`).exec(html)?.[1] ?? null;
+  const offered = { ...briefOn, checkGate: { model: true }, sendCheck: { ready: true } };
+  for (const layout of [render, renderGrouped]) {
+    const off = text(layout(offered));
+    assert.ok(!off.includes(gate) && !off.includes(send), "no threshold rows while the switches are off");
+    const on = layout({ ...offered, settings: { ...offered.settings, checkGate: true, sendCheck: true } });
+    assert.ok(text(on).includes(gate) && text(on).includes(send));
+    assert.deepEqual([selected(on, "workbot-agent-check-gate-threshold"), selected(on, "workbot-agent-send-check-threshold")], ["20%", "80%"], "the defaults");
+    const tuned = layout({ ...offered, settings: { ...offered.settings, checkGate: true, checkGateThreshold: 0.4, sendCheck: true, sendCheckThreshold: 0.65 } });
+    assert.deepEqual([selected(tuned, "workbot-agent-check-gate-threshold"), selected(tuned, "workbot-agent-send-check-threshold")], ["40%", "65%"], "saved, including one off the list");
+  }
+});
+
+test("Undo for Use Everyone's carries the team's check gate choice only while the server offers it", () => {
+  const team = { ...briefOn, settings: { ...briefOn.settings, checkGate: true } };
+  assert.equal(agentPolicyRestoreChange({ ...team, checkGate: { model: true } }, briefOn).checkGate, true);
+  assert.equal("checkGate" in agentPolicyRestoreChange(team, briefOn), false);
+  const tuned = agentPolicyRestoreChange({ ...team, settings: { ...team.settings, checkGateThreshold: 0.3, sendCheck: true, sendCheckThreshold: 0.9 }, checkGate: { model: true }, sendCheck: { ready: true } }, briefOn);
+  assert.deepEqual([tuned.checkGateThreshold, tuned.sendCheck, tuned.sendCheckThreshold], [0.3, true, 0.9]);
+});
+
+test("grouped: with messages going nowhere and members opting in themselves, both switches are off", () => {
+  const html = renderGrouped({ ...briefOn, settings: { ...briefOn.settings, enabled: false, destination: null, membersStart: "opted_out" } });
+  assert.match(switchFor(html, "Send messages in Slack") ?? "", /aria-checked="false"/);
+  assert.match(switchFor(html, "On for members by default") ?? "", /aria-checked="false"/);
+  assert.ok(text(html).includes("Turn on Send messages in Slack first."));
+});
+
+test("grouped rows need the brief: without it the message types stay as they are", () => {
+  assert.ok(text(renderGrouped(ready)).includes("Send messages to"));
+});
+
+test("filtering connections matches part of a name, whatever its case", () => {
+  const list = [{ name: "Google Workspace" }, { name: "Granola" }, { name: "Stripe" }];
+  assert.deepEqual(filterConnections(list, " gr ").map((entry) => entry.name), ["Granola"]);
+  assert.deepEqual(filterConnections(list, "G").map((entry) => entry.name), ["Google Workspace", "Granola"]);
+  assert.equal(filterConnections(list, "").length, 3);
+});
+
+test("connectors in a tab, with the brief: only added connections are listed; the rest are behind Add connector", () => {
+  const notes = { id: "emc_notes", name: "Meeting notes", url: "https://mcp.granola.ai/mcp" };
+  const tracker = { id: "emc_tracker", name: "Issue tracker", url: "https://mcp.linear.app/mcp" };
+  const view = { ...briefOn, settings: { ...briefOn.settings, sources: { ...briefOn.settings.sources, connections: { [notes.id]: "everyone" as const } } } };
+  assert.equal(otherConnectionAdded(view, notes), true);
+  assert.equal(otherConnectionAdded(view, tracker), false);
+  assert.equal(otherConnectionAdded(view, { ...tracker, policy: "off" }), true, "one the server holds back stays listed");
+  const html = renderToStaticMarkup(<WorkbotProactiveSources view={view} canManage saving={false} onChange={() => undefined} help heading={false} />);
+  assert.match(html, /data-testid="workbot-source-other-emc_notes"/);
+  assert.doesNotMatch(html, /data-testid="workbot-source-other-emc_tracker"/);
+  assert.doesNotMatch(html, /aria-label="About/, "no tooltips");
+  assert.doesNotMatch(html, /<h2/, "the tab already says Connectors");
+  const shown = text(html);
+  assert.ok(shown.includes("Add connector"));
+  assert.ok(shown.includes("1 other connection is up to each member."));
+  assert.ok(shown.includes("2 connections. Read only."));
+  assert.equal(otherConnectionsRestLine(58), "58 other connections are up to each member.");
+  const none = renderToStaticMarkup(<WorkbotProactiveSources view={briefOn} canManage saving={false} onChange={() => undefined} help heading={false} />);
+  assert.ok(text(none).includes("No connectors added"));
 });

@@ -115,9 +115,10 @@ export function googleWorkspaceCloudRequired(cloudHealth: CloudMcpHealth | null)
   return {
     ok: false,
     error: "use_openwork_cloud",
-    message: "Local Google Workspace actions are retired. Use Google Workspace through OpenWork Cloud Connect only. Discover the capability with search_capabilities, then call execute_capability with the exact returned name. If Cloud reports a connection or authorization requirement, relay its exact next action; local credentials cannot be used.",
+    message: "Local Google Workspace actions are retired. Use Google Workspace through OpenWork Cloud Connect only: call its Google Workspace tool for this action, or when Connect lists none, discover the capability with search_capabilities and call execute_capability with the exact returned name. If Cloud reports a connection or authorization requirement, relay its exact next action; local credentials cannot be used.",
     nextAction: cloudHealth?.usable
-      ? { tool: "search_capabilities", arguments: { query: "Google Workspace" } }
+      // Connect lists Google Workspace actions as tools for some organizations and behind search for others.
+      ? { recommendedAction: "Use OpenWork Cloud Connect's Google Workspace tools." }
       : failure
         ? { code: failure.code, stage: failure.stage, recommendedAction: failure.recommendedAction }
         : { recommendedAction: "Open Settings > Library > Connections to check your Cloud connections, or Settings > Debug to diagnose OpenWork Cloud agent access for this workspace." },

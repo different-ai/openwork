@@ -687,6 +687,94 @@ describe("session reading position", () => {
     expect(readPersistedSessionScrollState()[sessionScrollKey("a", "owner-a")].geometry?.page).toEqual(page);
   });
 
+  test.each(["older", "newer"])("a passive browser scroll into a reserved %s gap demands history without claiming navigation", async (direction) => {
+    const load = mock(async () => {});
+    const cancelRestore = mock(() => {});
+    const pages = { version: {}, hasOlder: direction === "older", hasNewer: direction === "newer", loading: false, failed: false, load, cancelRestore };
+    const view = fixture("owner-a", { historyPages: pages, windowReady: true });
+    view.layout.complete = false;
+    view.layout.height = 3000;
+    if (direction === "older") for (const message of view.layout.messages) message.top += 2000;
+    view.layout.placeholders = [{ id: direction === "older" ? "history-prefix" : "history-suffix", before: "first",
+      top: direction === "older" ? 0 : 1000, height: 2000 }];
+    useSessionScrollStore.getState().setManualScroll(sessionScrollKey("a", "owner-a"), direction === "older" ? 2325 : 325,
+      null, { messageId: "reading", offset: -25 });
+    await view.render();
+    expect(load).not.toHaveBeenCalled();
+    const navigation = mock(() => {});
+    view.container.addEventListener(SESSION_SCROLL_NAVIGATION_EVENT, navigation);
+    // Chromium can scroll the last clicked viewport for a BODY-targeted End/Home
+    // key. No keydown reaches this container and there is no recent wheel gesture.
+    view.scroll(direction === "older" ? 100 : 2600);
+    expect(load.mock.calls).toEqual([[direction]]);
+    expect(state("a", "owner-a").mode).toBe("manual");
+    expect(navigation).not.toHaveBeenCalled();
+    expect(cancelRestore).not.toHaveBeenCalled();
+    await act(async () => { await Promise.resolve(); runFrames(); view.resize(); runFrames(); });
+    // A loader that resolves without advancing must not start a retry loop.
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([true, false])("a visible history gap keeps paging after delayed settlement (DOM commits first: %s)", async (commitFirst) => {
+    let finish = () => {};
+    const load = mock(() => new Promise<void>(resolve => { finish = resolve; }));
+    const pages = { version: {}, hasOlder: false, hasNewer: true, loading: false, failed: false, load };
+    const view = fixture("owner-a", { historyPages: pages, windowReady: true });
+    view.layout.complete = false;
+    view.layout.height = 3000;
+    view.layout.placeholders = [{ id: "history-suffix", before: "first", top: 1000, height: 2000 }];
+    useSessionScrollStore.getState().setManualScroll(sessionScrollKey("a", "owner-a"), 325, null, { messageId: "reading", offset: -25 });
+    await view.render();
+    view.scroll(2600);
+    expect(load.mock.calls).toEqual([["newer"]]);
+    pages.loading = true;
+    await view.render();
+    now += 1000;
+    const commitPage = async () => {
+      pages.version = {};
+      view.layout.messages.push({ id: "bridge", top: 1000, height: 1000 });
+      view.layout.placeholders[0] = { id: "history-suffix", before: "first", top: 2000, height: 1000 };
+      await view.render();
+    };
+    if (commitFirst) await commitPage();
+    await act(async () => { finish(); await Promise.resolve(); runFrames(); });
+    expect(load).toHaveBeenCalledTimes(1);
+    if (!commitFirst) await commitPage();
+    pages.loading = false;
+    await view.render();
+    runFrames();
+    expect(load.mock.calls).toEqual([["newer"], ["newer"]]);
+    pages.hasNewer = false;
+    pages.version = {};
+    view.layout.placeholders = [];
+    view.layout.messages.push({ id: "covered", top: 2000, height: 1000 });
+    await view.render();
+    await act(async () => { finish(); await Promise.resolve(); runFrames(); view.resize(); });
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(view.container.scrollTop).toBe(2600);
+  });
+
+  test("passive history-gap recovery waits for readable geometry and does not retry failed pages", async () => {
+    const load = mock(async () => {});
+    const pages = { version: {}, hasOlder: false, hasNewer: true, loading: false, failed: false, load };
+    const view = fixture("owner-a", { historyPages: pages, windowReady: true });
+    view.layout.complete = false;
+    view.layout.height = 3000;
+    view.layout.placeholders = [{ id: "history-suffix", before: "first", top: 1000, height: 2000 }];
+    useSessionScrollStore.getState().setManualScroll(sessionScrollKey("a", "owner-a"), 325, null, { messageId: "reading", offset: -25 });
+    await view.render();
+    view.resize();
+    expect(load).not.toHaveBeenCalled();
+    view.layout.transcriptHidden = true;
+    view.scroll(2600);
+    expect(load).not.toHaveBeenCalled();
+    view.layout.transcriptHidden = false;
+    pages.failed = true;
+    view.resize();
+    view.scroll(2500);
+    expect(load).not.toHaveBeenCalled();
+  });
+
   test("a saved middle window demands newer data near its loaded end rather than making its suffix sticky", async () => {
     const load = mock(async () => {});
     const pages = { version: {}, hasOlder: false, hasNewer: true, loading: false, failed: false, load };

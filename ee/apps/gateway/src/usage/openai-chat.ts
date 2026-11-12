@@ -17,6 +17,8 @@ function applyEvent(target: ParsedUsage, event: unknown) {
   target.outputTokens = readNumber(usage.completion_tokens)
   target.totalTokens = readNumber(usage.total_tokens)
   target.cacheReadTokens = promptDetails ? readNumber(promptDetails.cached_tokens) : null
+  // Claude cache writes, also inside prompt_tokens: OpenRouter's detail, else LiteLLM's Anthropic field.
+  target.cacheWriteTokens = (promptDetails ? readNumber(promptDetails.cache_write_tokens) : null) ?? readNumber(usage.cache_creation_input_tokens)
   target.reasoningTokens = completionDetails ? readNumber(completionDetails.reasoning_tokens) : null
   target.costUsd = readNumber(usage.cost)
   target.found = hasUsage(target)

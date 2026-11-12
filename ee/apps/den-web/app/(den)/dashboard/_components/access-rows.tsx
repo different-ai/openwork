@@ -163,6 +163,7 @@ export function AddPicker({ kind, options, disabled, onAdd }: {
     <Popover.Root open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
       <Popover.Trigger
         disabled={disabled}
+        data-testid={`access-add-${kind}`}
         className="inline-flex h-8 items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 text-[12px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <Plus className="h-3.5 w-3.5" aria-hidden />
@@ -198,6 +199,7 @@ export function AddPicker({ kind, options, disabled, onAdd }: {
                     type="button"
                     role="option"
                     aria-selected={isSelected}
+                    data-testid={`access-add-${kind}-option-${option.id}`}
                     onClick={() => setSelected((current) => isSelected ? current.filter((id) => id !== option.id) : [...current, option.id])}
                     className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-gray-50"
                   >
@@ -217,6 +219,7 @@ export function AddPicker({ kind, options, disabled, onAdd }: {
               <DenButton
                 size="sm"
                 disabled={chosen.length === 0}
+                data-testid={`access-add-${kind}-confirm`}
                 onClick={() => {
                   onAdd(chosen.map((option) => option.id));
                   close();

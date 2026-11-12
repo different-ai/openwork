@@ -66,8 +66,9 @@ jobs:
             for (const [name, value] of Object.entries(selection)) core.setOutput(name, String(value))
             core.info(`Selected quick checks: ${JSON.stringify(selection)}`)
 
-  # Source-only guards: CI selection and policy, outbound access, and the
-  # feature registry with its Helm chart. No workspace install.
+  # Source-only guards: CI selection and policy, outbound access, the feature
+  # registry with its Helm chart, and the imports production Node loads from
+  # TypeScript source. No workspace install.
   quick-static:
     name: Static CI, outbound access and feature registry
     runs-on: ubuntu-latest
@@ -79,24 +80,13 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24.22.1
-      - name: Test CI selection, fork and Warden policy, CodeQL scope and timing
+      - name: Test CI selection, fork policy, CodeQL scope and timing
         run: >-
           node --test
           .github/scripts/alpha-macos.test.mjs
           .github/scripts/alpha-windows.test.mjs
           .github/scripts/contributor-pr.test.mjs
           .github/scripts/contributor-screen.test.mjs
-          .github/scripts/warden-check.test.mjs
-          .github/scripts/warden-advisory.test.mjs
-          .github/scripts/warden-report.test.mjs
-          .github/scripts/warden-fast.test.mjs
-          .github/scripts/warden-sweep.test.mjs
-          .github/scripts/warden-generate.test.mjs
-          .github/scripts/warden-ci.test.mjs
-          .github/scripts/warden-ci-plan.test.mjs
-          .warden/tests/ui-skills.test.mjs
-          .github/scripts/warden-fixer.test.mjs
-          .github/scripts/warden-model-proxy.test.mjs
           .github/scripts/evidence-presentation.test.mjs
           .github/scripts/evidence-preview-card.test.mjs
           .github/scripts/setup-browser.test.mjs
@@ -110,12 +100,14 @@ jobs:
           .github/scripts/typecheck-shipped.test.mjs
           .github/scripts/docs-validation.test.mjs
           .github/scripts/ee-image-inputs.test.mjs
+          .github/scripts/managed-stable-release.test.mjs
           .github/scripts/render-build-filters.test.mjs
           .github/scripts/runtime-scope.test.mjs
           .github/scripts/build-boundaries-native.test.mjs
           .github/scripts/build-boundaries-codeql.test.mjs
           scripts/ci/codeql-config.test.mjs
           scripts/ci/check-codeql-results.test.mjs
+          scripts/den-db-migrate-target.test.mjs
       - name: Check outbound access manifest
         run: node scripts/check-outbound-access.mjs
       - name: Setup pnpm
@@ -129,8 +121,16 @@ jobs:
         with:
           path: ~/.cache/pnpm/lockfile-verified.jsonl
           key: ${{ runner.os }}-pnpm-lockfile-verified-${{ hashFiles('pnpm-lock.yaml', 'evals/pnpm-lock.yaml', 'pnpm-workspace.yaml', 'evals/pnpm-workspace.yaml') }}
-      - name: Install the feature registry's dependencies
-        run: pnpm install --frozen-lockfile --prefer-offline --filter "@openwork/features"
+      # The root's dependencies bring the TypeScript parser the import check reads source with.
+      - name: Install the feature registry's and the root's dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline --filter "@openwork/features" --filter "@different-ai/openwork-workspace"
+      # Den API and the Gateway load workspace packages from TypeScript source
+      # in production Node, which resolves less than tsx, bundlers and the
+      # typecheck do. Without this, such an import first fails their deploy.
+      - name: Check the imports Node loads from source in production
+        run: |
+          node --test scripts/check-node-source-imports.test.mjs
+          node scripts/check-node-source-imports.mjs
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
       - name: Test the feature resolver

@@ -635,6 +635,37 @@ curl -fsS -X POST -H "Authorization: Bearer $DEN_MAINTENANCE_TOKEN" \
 
 Render-only verification: `bash packaging/helm/openwork-ee/tests/den-audit-usage.sh`.
 
+## GitHub connector reconcile
+
+GitHub connectors sync on push webhooks. As a backstop for missed webhooks,
+den-api also checks each GitHub connector's branch head every few hours and
+queues a resync when it moved. Each run reads due connectors in small pages from
+an index, so it stays cheap however many connectors exist.
+
+The check runs only when something calls den-api's
+`POST /internal/github/reconcile/run`; den-api does not run it on its own. Turn
+on the CronJob to call it every five minutes. Without it, pushes still sync
+through webhooks, but a push whose webhook never arrived is not picked up until
+the next one:
+
+```yaml
+denApi:
+  githubReconcile:
+    enabled: true
+secret:
+  values:
+    maintenanceToken: "<random 32+ character string>"
+```
+
+It uses the same maintenance token as the audit usage refresh: the chart Secret,
+or `tokenSecret` and `tokenKey` under either `denApi.githubReconcile` or
+`denApi.auditUsage` (set them in one place, or the same in both).
+`schedule` (default `*/5 * * * *`) and `timeZone` (default `Etc/UTC`) are
+configurable. A run is safe to overlap with another: each connector is
+claimed by one run.
+
+Render-only verification: `bash packaging/helm/openwork-ee/tests/den-github-reconcile.sh`.
+
 ## Custom CA certificates
 
 For higher-level planning across desktop, sidecar, Den, and MySQL trust
@@ -1211,6 +1242,30 @@ config:
 This disables SSRF protection for external MCP connection URLs. Enable it only
 on a deployment where Den's network position and the set of people who can add
 MCP connections are both trusted.
+
+### Config import secrets from environment variables
+
+When config import and export (`configBlobs`) is on, an imported config file
+can ask Den API to fill a secret from one of its own environment variables
+(`{ "$secret": "…", "env": "OPENWORK_IMPORT_ANTHROPIC_KEY" }`). Only variables
+whose names start with `OPENWORK_IMPORT_` can ever be read, and none is allowed
+until you list them, by exact name or with a trailing `*` prefix that itself
+starts with `OPENWORK_IMPORT_`:
+
+```yaml
+denApi:
+  env:
+    DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST: "OPENWORK_IMPORT_*"
+```
+
+Provide the variables themselves to the Den API container as well (from a
+Secret you manage; `denApi.env` writes plain values into the pod spec, so keep
+it for test keys). Entries outside the `OPENWORK_IMPORT_` namespace (an exact
+name such as `DATABASE_URL`, a bare `*`, or a prefix such as `D*` or
+`OPENWORK_*`) are ignored and logged as a warning when Den API starts. Den API's
+own settings (`DATABASE_*`, `DEN_*`, `BETTER_AUTH_*` and other credentials it
+reads) are refused even if listed, so they can never be read this way. Cloud
+deployments ignore the allowlist.
 
 ## Migrations
 

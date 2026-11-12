@@ -83,6 +83,10 @@ test("each AI Gateway provider asks for the credential it actually uses; LiteLLM
   assert.deepEqual(gatewayCredentialShape("google-vertex", ["GOOGLE_VERTEX_PROJECT"]), { kind: "gcp_service_account" })
   assert.deepEqual(gatewayCredentialShape("azure", ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"]), { kind: "api_key_map", envNames: ["AZURE_API_KEY"] })
   assert.equal(gatewayCredentialShape("litellm", ["LITELLM_API_KEY"]), null)
+  // Custom OpenAI-compatible providers take one API key, never a key map, sent to the saved address.
+  assert.deepEqual(gatewayCredentialShape("openwork-custom", ["OPENWORK_CUSTOM_API_KEY"]), { kind: "api_key" })
+  assert.deepEqual(gatewayCredentialShape("openwork-custom", ["OPENWORK_CUSTOM_API_KEY", "OPENWORK_CUSTOM_ORG"]), { kind: "api_key" })
+  assert.equal(gatewayUpstreamDestination("openwork-custom", { npm: "@ai-sdk/openai-compatible" }, { upstreamBaseUrl: "https://api.acme.example/v1" }), credentialPromptDestination("https://api.acme.example/v1"))
   const prompt = gatewayProviderCredentialPrompt({ inferenceProviderId: "ipr_1", credentialSetId: "gcs_1", name: "Team Bedrock", destination: null, shape: { kind: "aws_keys" } })
   assert.deepEqual(prompt.target, { type: "gateway_provider_credential", inferenceProviderId: "ipr_1", credentialSetId: "gcs_1", credentialKind: "aws_keys" })
   // Field lists are fixed by kind; a prompt cannot carry values or arbitrary fields.
@@ -103,5 +107,38 @@ test("agents and API keys never send secrets", async () => {
     assert.ok(start > 0, route)
     const block = source.slice(start, source.indexOf("async (c)", start))
     assert.match(block, /refuseMachineSecrets\(/, `missing guard on ${route.split("\n")[0]}`)
+    // Only the admin per-member write is a provisioning route open to API keys.
+    const provisioning = route.startsWith('"/v1/llm-providers/:llmProviderId/member-credentials/:orgMembershipId"')
+    assert.equal(/allowApiKeys:\s*true/.test(block), provisioning, `API key opt-in on ${route.split("\n")[0]}`)
+  }
+  assert.equal(source.match(/allowApiKeys:\s*true/g)?.length, 1, "only one llm-provider route lets API keys send a key")
+})
+
+test("a provisioning route takes a key from an API key but never from the agent", async () => {
+  const { Hono } = await import("hono")
+  const { refuseMachineSecrets } = await import("../src/middleware/refuse-machine-secrets.js")
+  type Caller = "person" | "agent" | "apiKey"
+  function app(allowApiKeys: boolean) {
+    const server = new Hono<{ Variables: { session: { id: string } | null; apiKey: { id: string } | null } }>()
+    server.use(async (c, next) => {
+      const caller = c.req.header("x-caller") as Caller
+      c.set("session", caller === "agent" ? { id: "mcp_internal" } : caller === "person" ? { id: "ses_person" } : null)
+      c.set("apiKey", caller === "apiKey" ? { id: "apk_script" } : null)
+      await next()
+    })
+    // @ts-expect-error the test app carries only the variables the guard reads
+    server.put("/", refuseMachineSecrets(["apiKey", "apiKeys"], { allowApiKeys }), (c) => c.json({ ok: true }))
+    return server
+  }
+  async function send(allowApiKeys: boolean, caller: Caller) {
+    const response = await app(allowApiKeys).request("/", { method: "PUT", headers: { "content-type": "application/json", "x-caller": caller }, body: JSON.stringify({ apiKey: sentinel }) })
+    return { status: response.status, text: await response.text() }
+  }
+  for (const caller of ["person", "agent", "apiKey"] as const) {
+    const strict = await send(false, caller)
+    assert.equal(strict.status, caller === "person" ? 200 : 400, `strict route, ${caller}`)
+    const provisioning = await send(true, caller)
+    assert.equal(provisioning.status, caller === "agent" ? 400 : 200, `provisioning route, ${caller}`)
+    for (const seen of [strict.text, provisioning.text]) assert.equal(seen.includes(sentinel), false)
   }
 })

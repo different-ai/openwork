@@ -12,6 +12,7 @@ import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
 import { readFreeInferenceConfig } from "@openwork/types/den/inference"
 import { parseFeatureEnvironment } from "@openwork/features"
+import { partitionConfigSecretEnvAllowlist } from "./config-blobs/env-secrets.js"
 
 export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
 
@@ -53,9 +54,11 @@ const EnvSchema = z.object({
   GITHUB_SYNC_WORKER_INTERVAL_MS: z.string().optional(),
   GITHUB_SYNC_RETRY_BASE_MS: z.string().optional(),
   GITHUB_SYNC_MAX_ATTEMPTS: z.string().optional(),
-  GITHUB_RECONCILE_INTERVAL_MS: z.string().optional(),
   GITHUB_RECONCILE_BATCH_SIZE: z.string().optional(),
   GITHUB_RECONCILE_MIN_AGE_MS: z.string().optional(),
+  GITHUB_RECONCILE_MAX_BATCHES: z.string().optional(),
+  GITHUB_RECONCILE_RUN_BUDGET_MS: z.string().optional(),
+  GITHUB_RECONCILE_PROBE_CONCURRENCY: z.string().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
@@ -82,11 +85,13 @@ const EnvSchema = z.object({
   OPENWORK_DEV_MODE: z.string().optional(),
   DEN_BOTID_PROTECTION_ENABLED: z.string().optional(),
   DEN_ALLOW_PRIVATE_MCP_URLS: z.string().optional(),
+  DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST: z.string().optional(),
   DEN_DIAGNOSTICS_ORIGIN: z.string().optional(),
   DEN_DIAGNOSTICS_BEARER_TOKEN: z.string().optional(),
   DEN_MAINTENANCE_TOKEN: z.string().optional(),
   DEN_HEADLESS_RUNNER_TOKEN: z.string().optional(),
   DEN_HEADLESS_RUNNER_CALLBACK_TOKEN: z.string().optional(),
+  DEN_AGENT_EVALUATION_API_KEY: z.string().optional(),
   DEN_GATEWAY_KEY: z.string().optional(),
   DEN_GATEWAY_ORIGIN: z.string().optional(),
   DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
@@ -584,6 +589,13 @@ for (const problem of featureEnvironment.problems) {
 const corsHandledByEdge = parseBooleanFlag(parsed.DEN_CORS_HANDLED_BY_EDGE ?? "false")
 const openworkWebEnabled = parseBooleanFlag(parsed.DEN_OPENWORK_WEB_ENABLED ?? "false")
 
+// Config-blob `env` secrets: only `OPENWORK_IMPORT_` names can be allowlisted
+// (config-blobs/env-secrets.ts). Other entries are dropped, with a warning.
+const configSecretEnvAllowlist = partitionConfigSecretEnvAllowlist(splitCsv(parsed.DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST))
+for (const { entry, problem } of configSecretEnvAllowlist.ignored) {
+  console.warn(`[config-blobs] DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST entry "${entry}" is ignored: ${problem}`)
+}
+
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
 const port = Number(parsed.PORT ?? "8790")
 const botIdProtectionEnabled = (parsed.DEN_BOTID_PROTECTION_ENABLED ?? "0").trim() === "1"
@@ -750,12 +762,22 @@ export const env = {
   devMode,
   botIdProtectionEnabled,
   allowPrivateMcpUrls,
+  configBlobs: {
+    // Environment variables a config-blob import may read for a `$secret`
+    // (`env` decision). Self-hosted only; empty means none. Comma-separated
+    // names, a trailing `*` matches a prefix (`OPENWORK_IMPORT_*`). Only
+    // entries inside the `OPENWORK_IMPORT_` namespace are kept.
+    secretEnvAllowlist: configSecretEnvAllowlist.allowed,
+  },
   diagnostics: {
     origin: diagnosticsOrigin,
     bearerToken: diagnosticsBearerToken,
   },
   maintenanceToken,
   headlessRunnerCallbackToken,
+  // Vercel AI Gateway key for the evaluation model behind Your agent's check gate and send check. Unset: the gate
+  // skips a check only when nothing arrived, and the send check never runs.
+  agentEvaluationApiKey: optionalString(parsed.DEN_AGENT_EVALUATION_API_KEY),
   gatewayKey: optionalString(parsed.DEN_GATEWAY_KEY),
   gatewayOrigin: normalizeOptionalHttpsOrigin("DEN_GATEWAY_ORIGIN", parsed.DEN_GATEWAY_ORIGIN),
   planGatingEnabled,
@@ -800,9 +822,13 @@ export const env = {
     workerIntervalMs: Number(parsed.GITHUB_SYNC_WORKER_INTERVAL_MS ?? "5000"),
     retryBaseMs: Number(parsed.GITHUB_SYNC_RETRY_BASE_MS ?? "30000"),
     maxAttempts: Number(parsed.GITHUB_SYNC_MAX_ATTEMPTS ?? "5"),
-    reconcileIntervalMs: Number(parsed.GITHUB_RECONCILE_INTERVAL_MS ?? "900000"),
     reconcileBatchSize: Number(parsed.GITHUB_RECONCILE_BATCH_SIZE ?? "25"),
     reconcileMinAgeMs: Number(parsed.GITHUB_RECONCILE_MIN_AGE_MS ?? "21600000"),
+    // One reconcile run reads at most maxBatches pages of batchSize due targets,
+    // and starts no new page after budgetMs.
+    reconcileMaxBatches: Number(parsed.GITHUB_RECONCILE_MAX_BATCHES ?? "20"),
+    reconcileRunBudgetMs: Number(parsed.GITHUB_RECONCILE_RUN_BUDGET_MS ?? "45000"),
+    reconcileProbeConcurrency: Number(parsed.GITHUB_RECONCILE_PROBE_CONCURRENCY ?? "4"),
   },
   google: {
     clientId: optionalString(parsed.GOOGLE_CLIENT_ID),

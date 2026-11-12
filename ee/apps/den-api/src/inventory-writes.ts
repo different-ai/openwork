@@ -50,13 +50,14 @@ export const INVENTORY_IRRELEVANT_TABLES: ReadonlySet<string> = new Set([
   // Usage metering.
   "gateway_request_logs", "gateway_usage_audit", "gateway_usage_bucket", "gateway_usage_bucket_charge",
   "gateway_usage_consumption_event", "gateway_usage_rollups", "gateway_usage_tracking", "gateway_usage_subject",
-  "gateway_rollup_lock", "inference_org_usage_buckets", "inference_usage_ledger_bucket_charges",
+  "gateway_rollup_lock", "workbot_usage_day", "inference_org_usage_buckets", "inference_usage_ledger_bucket_charges",
   "inference_usage_ledger_entries", "inference_free_usage", "inference_free_usage_buckets",
   "anonymous_inference_identities", "anonymous_inference_rate_buckets", "anonymous_inference_usage",
   "anonymous_inference_usage_buckets",
   "free_auto_limit_events", "free_auto_purchases",
   // Runs, runner presence and remote sessions.
   "automation_runner", "automation_runner_notification", "automation_run", "automation_run_event", "workflow_run",
+  "computer_disconnection",
   "remote_session_command", "remote_session_request", "daytona_sandbox", "cloud_runtime_instance",
   "managed_deployment_event", "managed_deployment_health", "managed_deployment_run",
   "connector_sync_event", "scim_sync_event",

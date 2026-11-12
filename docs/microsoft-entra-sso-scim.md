@@ -10,11 +10,11 @@ wraps them with organization-scoped OpenWork routes and policy:
 
 | Area | OpenWork surface | Runtime behavior |
 |---|---|---|
-| SSO management | `/dashboard/sso`, `/v1/sso`, `/v1/sso/saml`, `/v1/sso/oidc` | One SSO connection per organization. Owners and security admins can create or replace it. |
+| SSO management | `/dashboard/auth-security?tab=sso` (`/dashboard/sso` with `authSecuritySettings` off, and redirects there when on), `/v1/sso`, `/v1/sso/saml`, `/v1/sso/oidc` | One SSO connection per organization. Owners and security admins can create or replace it. |
 | SAML callback | `/api/auth/sso/saml2/sp/acs/openwork-sso-<org-id>` | Better Auth consumes the response after OpenWork validates SAML response policy. |
 | SAML metadata | `/api/auth/sso/saml2/sp/metadata?providerId=openwork-sso-<org-id>` | Generated after the SAML connection is saved in OpenWork. |
 | SSO sign-in | `/sso/<org-slug>` | Starts SP-initiated SSO for one organization and redirects to Entra. |
-| SCIM management | `/dashboard/scim`, `/v1/scim`, `/v1/scim/token` | Owners and security admins create or rotate an org-scoped SCIM bearer token. |
+| SCIM management | `/dashboard/auth-security?tab=scim` (`/dashboard/scim` with `authSecuritySettings` off, and redirects there when on), `/v1/scim`, `/v1/scim/token` | Owners and security admins create or rotate an org-scoped SCIM bearer token. |
 | SCIM provisioning | `/api/auth/scim/v2` | Supports SCIM user provisioning, updates, and deprovisioning. |
 
 OpenWork enforces these SAML security settings for organization SSO:
@@ -81,7 +81,8 @@ ACS URL before SAML can be fully tested.
    - **Login URL**. Use this as OpenWork **SAML Entry Point**.
    - **Certificate (Base64)**. Paste the PEM certificate into OpenWork
      **IdP Certificate**.
-3. In OpenWork, open **Dashboard** -> **SSO** and choose **SAML**.
+3. In OpenWork, open **Settings** -> **Auth & Security** -> **Single sign-on (SSO)**
+   (older versions: **Settings** -> **SSO**) and choose **SAML**.
 4. Fill the OpenWork fields:
    - **IdP Issuer URL**: the Entra **Microsoft Entra Identifier**. This is
      the IdP issuer, not the Entra app's Identifier / Entity ID.
@@ -133,7 +134,8 @@ For the OpenWork Labs test tenant, the OpenWork SAML fields are:
 
 ## Configure SCIM user and group provisioning
 
-1. In OpenWork, open **Dashboard** -> **SCIM**.
+1. In OpenWork, open **Settings** -> **Auth & Security** -> **User provisioning (SCIM)**
+   (older versions: **Settings** -> **SCIM**).
 2. Copy the **SCIM base URL**.
 3. Create or rotate the connector token and copy the bearer token immediately.
    OpenWork only shows it after creation or rotation.

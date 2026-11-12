@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { claudeCodeSignInSchema, parseClaudeAgentIntegrationList } from "./claude-agent";
 import type { McpStatusMap } from "../types";
 import type { ConnectionActionIntent } from "@openwork/types/connection-action-app";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
@@ -1640,6 +1641,27 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
   return {
     baseUrl,
+    claudeAgentIntegration: async (workspaceId: string) => {
+      // Listing initializes the native built-in plugin catalog. An item GET can
+      // return IntegrationNotFoundError on a fresh engine before this read.
+      return parseClaudeAgentIntegrationList(await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/integration`, { token, timeoutMs: timeouts.config }));
+    },
+    connectClaudeAgent: (workspaceId: string) => requestJson<void>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/integration/claude-agent/connect/external`, {
+      token, method: "POST", body: { methodID: "claude-login" }, timeoutMs: timeouts.config,
+    }),
+    removeClaudeAgentConnection: (workspaceId: string, credentialId: string) => requestJson<void>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/credential/${encodeURIComponent(credentialId)}`, {
+      token, method: "DELETE", timeoutMs: timeouts.config,
+    }),
+    /** Only the desktop app that started this server holds the host token its sign-in route asks for. */
+    canSignInToClaudeCode: Boolean(hostToken),
+    /**
+     * Starts, reads or cancels Claude Code's own sign-in on the server's computer. A Claude Code that is already
+     * signed in answers `signed_in` without opening the browser, unless `force` asks for a fresh sign-in.
+     */
+    claudeCodeSignIn: async (action: "start" | "status" | "cancel", options?: { force?: boolean }) => claudeCodeSignInSchema.parse(await requestJson<unknown>(baseUrl, "/claude-code/sign-in", {
+      hostToken, method: action === "start" ? "POST" : action === "cancel" ? "DELETE" : "GET", timeoutMs: timeouts.config,
+      ...(action === "start" ? { body: { force: options?.force === true } } : {}),
+    })),
     cloudComputerStatus: () => requestJson<{ ready: boolean; paused: boolean; busy: boolean; sessionId: string | null }>(baseUrl, "/cloud-computer/status", { token, timeoutMs: 15_000 }),
     cloudComputerFrame: () => requestJson<{ dataUrl: string; width: number; height: number; screenWidth: number; screenHeight: number; generation: number }>(baseUrl, "/cloud-computer/frame", { token, timeoutMs: 15_000 }),
     cloudComputerInteract: (body: Record<string, unknown>) => requestJson<unknown>(baseUrl, "/cloud-computer/interact", { token, method: "POST", body, timeoutMs: 15_000 }),
@@ -1678,6 +1700,20 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       requestJson<GatewayDesktopOauthStartResponse>(baseUrl, `/cloud-provider-sync/providers/${encodeURIComponent(providerId)}/oauth/start`, {
         hostToken, signal, method: "POST", body: { orgId, ...(credentialSetId !== undefined ? { credentialSetId } : {}) } satisfies GatewayDesktopOauthStartRequest, timeoutMs: timeouts.config,
       }),
+    /**
+     * Den feature shareDeviceProvider: after the person confirms, this server sends
+     * the key it holds for `providerId` to their organization. The key is never
+     * read by or returned to the app. `token` is a freshly verified sign-in, when
+     * Den asked for one.
+     */
+    shareDeviceProvider: async (providerId: string, orgId: string, token?: string): Promise<{ inferenceProviderId: string; name: string }> => {
+      const payload = await requestJson<unknown>(baseUrl, `/cloud-provider-sync/device-providers/${encodeURIComponent(providerId)}/share`, {
+        hostToken, method: "POST", body: { orgId, ...(token ? { token } : {}) }, timeoutMs: timeouts.cloudMcpReconcile,
+      });
+      const shared = z.object({ inferenceProviderId: z.string().min(1), name: z.string() }).safeParse(payload);
+      if (!shared.success) throw new OpenworkServerError(502, "share_unconfirmed", "OpenWork did not confirm the share. Check AI Providers before trying again.");
+      return shared.data;
+    },
     runCloudProviderSyncNow: async (reason?: string, signal?: AbortSignal) =>
       parseCloudProviderSyncRun(await requestJson<unknown>(baseUrl, "/cloud-provider-sync/run", {
         hostToken,

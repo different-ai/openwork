@@ -94,6 +94,7 @@
               "start-here/connect-your-stack/openwork-vs-opencode-models",
               "start-here/connect-your-stack/using-opencode-zen-go-models",
               "start-here/connect-your-stack/add-anthropic-api-key",
+              "start-here/connect-your-stack/sign-in-with-your-anthropic-subscription",
               "start-here/connect-your-stack/add-a-custom-llm",
               "start-here/connect-your-stack/use-local-models",
               "start-here/connect-your-stack/use-gemini-and-vertex-ai"
@@ -106,7 +107,8 @@
               "start-here/do-work-with-it/use-desktop-apps",
               "start-here/do-work-with-it/cross-chat-memory",
               "start-here/do-work-with-it/work-with-excel-workbooks",
-              "start-here/do-work-with-it/workflows"
+              "start-here/do-work-with-it/workflows",
+              "start-here/do-work-with-it/automations"
             ]
           },
           {
@@ -114,6 +116,27 @@
             "pages": [
               "cloud/run-in-the-cloud/open-cloud-in-browser",
               "cloud/run-in-the-cloud/shared-workspace"
+            ]
+          },
+          {
+            "group": "My Library",
+            "pages": [
+              "my-library/overview",
+              "my-library/models-and-keys",
+              "my-library/share"
+            ]
+          },
+          {
+            "group": "Workbot",
+            "pages": [
+              "workbot/overview",
+              "workbot/my-bot"
+            ]
+          },
+          {
+            "group": "Maintenance",
+            "pages": [
+              "desktop-app/maintenance/back-up-conversation-history"
             ]
           },
           {
@@ -134,6 +157,12 @@
             "group": "OpenCode — ready",
             "pages": [
               "model-context-protocol/opencode-plugin"
+            ]
+          },
+          {
+            "group": "Native integrations",
+            "pages": [
+              "integrations/native-integrations"
             ]
           }
         ]
@@ -165,6 +194,14 @@
             "group": "Overview",
             "pages": [
               "ai-gateway/overview",
+              "ai-gateway/openwork-models",
+              "ai-gateway/users-and-teams",
+              "ai-gateway/third-party-tools",
+              "ai-gateway/cursor",
+              "ai-gateway/claude-code",
+              "ai-gateway/claude-desktop",
+              "ai-gateway/codex",
+              "ai-gateway/codex-desktop",
               "ai-gateway/provider-support",
               "ai-gateway/compare-litellm-bifrost",
               "ai-gateway/litellm",
@@ -180,12 +217,14 @@
             "pages": [
               "cloud/share-with-your-team/managed-llm-provider",
               "cloud/share-with-your-team/custom-llm-provider",
-              "cloud/share-with-your-team/per-member-llm-credentials"
+              "cloud/share-with-your-team/per-member-llm-credentials",
+              "cloud/share-with-your-team/truefoundry-per-member-keys"
             ]
           },
           {
             "group": "Usage and cost",
             "pages": [
+              "ai-gateway/usage-dashboard",
               "ai-gateway/counting-usage",
               "ai-gateway/token-costs",
               "ai-gateway/limits",
@@ -223,15 +262,21 @@
           {
             "group": "Connections",
             "pages": [
+              "cloud/share-with-your-team/connectors",
+              "cloud/share-with-your-team/connect-your-own-account",
               "cloud/share-with-your-team/shared-mcp-connections",
               "cloud/share-with-your-team/microsoft-365",
               "cloud/share-with-your-team/google-cloud-cli",
-              "cloud/share-with-your-team/mcp-server-compatibility"
+              "cloud/share-with-your-team/mcp-server-compatibility",
+              "cloud/share-with-your-team/tool-tester"
             ]
           },
           {
             "group": "Share skills and plugins",
             "pages": [
+              "cloud/share-with-your-team/plugins",
+              "cloud/share-with-your-team/plugin-agents-commands-hooks",
+              "cloud/share-with-your-team/github-sources",
               "model-context-protocol/agent-plugins",
               "cloud/share-with-your-team/collections",
               "start-here/do-work-with-it/publish-and-copy-a-skill",
@@ -261,6 +306,8 @@
           {
             "group": "SSO and SCIM",
             "pages": [
+              "cloud/auth-and-security",
+              "cloud/sso-oidc",
               "cloud/sso-google-workspace",
               "cloud/scim-google-workspace",
               "cloud/sso-okta",
@@ -275,8 +322,23 @@
               "cloud/share-with-your-team/desktop-policies",
               "cloud/share-with-your-team/agent-permissions",
               "cloud/share-with-your-team/team-prompt-cards",
+              "cloud/share-with-your-team/prompts",
               "cloud/security-and-operations",
               "cloud/enterprise"
+            ]
+          },
+          {
+            "group": "Observability",
+            "pages": [
+              "cloud/analytics",
+              "cloud/audit-logs"
+            ]
+          },
+          {
+            "group": "Organization settings",
+            "pages": [
+              "cloud/billing",
+              "cloud/api-keys"
             ]
           }
         ]
@@ -298,6 +360,7 @@
               "self-host/deploy-to-your-cloud/aws",
               "self-host/deploy-to-your-cloud/azure",
               "self-host/deploy-to-your-cloud/google-cloud",
+              "self-host/deploy-to-your-cloud/managed-installer",
               "self-host/deploy-to-your-cloud/first-administrator"
             ]
           },
@@ -317,6 +380,7 @@
               "self-host/gateway",
               "self-host/gateway-upgrade",
               "self-host/declarative-configuration",
+              "self-host/export-import-configuration",
               "start-here/installer-delivery",
               "start-here/on-prem-branding",
               "start-here/github-connector-helm"
@@ -408,7 +472,7 @@
     },
     {
       "source": "/sso",
-      "destination": "/cloud/get-started"
+      "destination": "/cloud/auth-and-security"
     }
   ],
   "errors": {

@@ -2,9 +2,7 @@
 
 How OpenWork UI is designed. Agents read this before building or reviewing any
 user-facing surface (`apps/app`, `apps/desktop`, `ee/apps/den-web`, MCP Apps,
-generated artifact views). The optional `.warden/skills/design-spec-review` skill
-can review the numbered rules below locally. Automated Warden reviews focus on
-security and confidentiality.
+generated artifact views).
 
 ## Who we design for
 
@@ -19,10 +17,11 @@ advanced options discoverable but quiet.
 - **P1 · Show state, don't explain the UI.** A surface reports what is true
   ("Verified 2 min ago", "Blocked by your team", "Not posted") instead of
   describing itself. Count the sentences in the first viewport; if a sentence
-  explains the interface rather than reporting state, delete it.
+  explains the interface rather than reporting state, delete it. Exception:
+  feature intros (I1–I10) explain what a feature is *for*.
 - **P2 · Title *or* description, never both.** Pages, cards, rows, dialogs,
   settings groups get one or the other. Detail lives in a tooltip, an
-  expandable row, or nowhere.
+  expandable row, or nowhere. Exception: feature intros (I3).
 - **P3 · Progressive disclosure.** Default surface = the decision the user is
   here to make. Advanced, rare, or diagnostic detail goes behind a labeled
   collapsed row ("Technical details", "Blocked patterns") — label only, no
@@ -54,7 +53,8 @@ advanced options discoverable but quiet.
   message, row, or document stays put), and add a visible intermediate state
   only when it needs a decision or recovery. Interstitials such as
   "Creating…", "Preparing…", or setup screens invented from implementation
-  steps are defects.
+  steps are defects. A feature intro is not an interstitial: it is the page's
+  empty state (I1).
 
 ## Structure
 
@@ -111,7 +111,8 @@ advanced options discoverable but quiet.
 Every data-bearing surface designs, and the PR shows, these states where they
 apply: loading (layout-matching skeleton, not "Loading…" text), empty,
 error, blocked/locked, offline or "couldn't verify" (show the last known
-state and when it was confirmed), and success. Never rely on model text alone
+state and when it was confirmed), and success. In Den, the empty state of a
+page, sub-page or tab *is* its feature intro (I1). Never rely on model text alone
 to communicate system status. Loading preserves the destination layout: the
 object appears where it will live, then fills in.
 
@@ -149,6 +150,57 @@ Tokens live in `apps/app/src/app/index.css`, `styles/colors.css`,
   `outline: none` without a replacement focus ring, gray text on colored
   backgrounds, decorative badges/chips soup.
 
+## Feature intros (onboarding and info)
+
+Every Den page, sub-page and tab explains itself while it has nothing set up.
+These rules apply only to feature intros, and override P1, P2 and P11 there.
+Everywhere else the normal rules hold.
+
+- **I1 · Required, and the default empty state.** Every sidebar page,
+  sub-page and tab ships with a feature intro. It replaces the page's empty
+  state; a page-local "No items yet" is a defect. An intro shows while its
+  feature is not set up and cannot be permanently hidden until it is.
+- **I2 · Size follows setup state.** Nothing in the section set up → full
+  screen. A tab or sub-page not set up while the section is → info box, max
+  600px wide, where the list would be. Page partly set up (e.g. providers but
+  no smart router) → banner at the top, max 300px tall, with the page below.
+  Fully set up → nothing, until the person asks with `?`.
+- **I3 · Fixed anatomy.** Full screen: icon, title, one-line value, short
+  paragraph (≤ 3 sentences) or ≤ 4 highlights, one primary action, "Read the
+  docs" (left); live example (right, ~40%). Box: title, one line, ≤ 3
+  highlights, action, docs link. Banner: one line, action, docs link,
+  dismiss. Title *and* description are allowed here.
+- **I4 · Explain value, not the interface.** Say what the feature does for
+  the person and their team ("Give your whole team models without sharing
+  keys"), never how to operate the screen ("Click the button below to…").
+- **I5 · One action that leads straight to the work.** The primary action
+  goes directly to the create form or the setup step ("Add your first AI
+  provider" → provider form). No intermediate pages, no "Learn more" as the
+  primary action. Verb-first (C1), no "→" (C7).
+- **I6 · The action reflects who and what.** Pick the action from the
+  person's permissions and what the org already has: first admin "Add your
+  first AI provider"; after someone else set it up "See your providers · Set
+  up by {name}"; no permission → locked, with why and who can change it (P4,
+  C5). Never offer an action the person cannot complete.
+- **I7 · Live example with sample data.** The graphic is a small, real,
+  non-interactive render of the feature built from our own components with
+  sample data, labelled "Example". No static illustrations, mascots, stock
+  art, screenshots or video. It follows V1–V7: flat (S1), tokens only, no
+  gradients or glass (V7), no sparkle/robot icons (V5), service logos for
+  services. Reduced motion: static.
+- **I8 · Always reachable, never pushed.** Every intro has "Read the docs".
+  The `?` button in the top bar reopens the current page's intro at any time.
+  Intros never open over another page, never auto-navigate (S5) and never
+  block the sidebar or top bar.
+- **I9 · Quiet unseen markers.** A tab or sidebar item whose intro the person
+  hasn't seen gets a small neutral dot (V2), not amber or red. Viewing it
+  clears the dot for 30 days; a set-up feature never shows one. A dismissed
+  banner stays hidden for 30 days.
+- **I10 · Registered and tracked.** Intros come from the shared registry
+  (keyed by route + tab) and record seen / dismissed / action clicked per
+  member, so they can be versioned and shown again. No one-off intro markup in
+  a page.
+
 ## Chat, tool calls and MCP Apps
 
 - **T1** A turn's steps read as one rail: leading slot (connector logo, file
@@ -175,8 +227,12 @@ Tokens live in `apps/app/src/app/index.css`, `styles/colors.css`,
       (P5).
 - [ ] Menus and popovers fit the window when opened near each edge and from
       an empty chat, and close on an outside press and `esc` (S7).
-- [ ] No surface has both a title and a description (P2).
-- [ ] No explanatory sentences in the default viewport (P1).
+- [ ] No surface has both a title and a description (P2), except feature
+      intros (I3).
+- [ ] No explanatory sentences in the default viewport (P1), except feature
+      intros (I4).
+- [ ] New Den pages, sub-pages and tabs register a feature intro as their
+      empty state, with a live sample-data example and a docs link (I1–I10).
 - [ ] Blocked/locked states visible with reason and owner (P4, C5).
 - [ ] Company/service references use logos; no generic icons outside nav
       (V5).

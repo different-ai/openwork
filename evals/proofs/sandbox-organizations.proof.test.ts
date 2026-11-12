@@ -51,15 +51,15 @@ test("a platform admin creates a sandbox organization from /admin and people who
     await anonymous.screenshot();
   });
 
-  await step("Avery opens the link, sees what the sandbox includes and joins as an admin", async () => {
+  await step("Avery opens the link, sees what the sandbox includes and joins as a super admin", async () => {
     await avery.navigate(joinLink);
     await avery.see({ testId: "join-sandbox-connectors" }, { text: /Outlook, Calendar, Drive, Jira, Confluence/, timeoutMs: 30_000 });
     await avery.screenshot();
     await avery.click({ testId: "join-sandbox-submit" });
     await avery.see({ testId: "join-org-success" }, { timeoutMs: 30_000 });
     const membership = await world.membership("avery", organizationId);
-    evidence.recordAssertionEvidence("Joining makes Avery an admin of the sandbox, never its owner", `status=${membership.status}; role=${membership.role}`, membership.status === 200 && membership.role === "admin");
-    expect(membership.role).toBe("admin");
+    evidence.recordAssertionEvidence("Joining makes Avery a super admin of the sandbox, never its owner", `status=${membership.status}; role=${membership.role}`, membership.status === 200 && membership.role === "super-admin");
+    expect(membership.role).toBe("super-admin");
     await avery.screenshot();
   });
 

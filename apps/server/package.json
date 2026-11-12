@@ -18,13 +18,13 @@
     "publish:npm": "pnpm build && pnpm build:npm-bundle && pnpm build:web-ui && node scripts/build-opencode-plugin-deps.mjs && node scripts/publish-npm.mjs",
     "start": "bun dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:readiness": "bun test test/agent-permission-tools.test.ts test/opencode-stop-fence.test.ts test/opencode-v2-mcp-readiness.test.ts test/openwork-mcp-results-v2.test.ts test/openwork-session-groups.test.ts test/openwork-session-questions.test.ts test/openwork-affordance-args.test.ts test/session-read-detail.test.ts test/opencode-v2-drive-upload-approval.test.ts test/approved-drive-upload.test.ts test/cloud-drive-uploads.test.ts test/drive-resumable-upload.test.ts test/opencode-v2-instructions.test.ts test/opencode-v2-tool-schemas.test.ts test/opencode-v2-website-tools.test.ts test/openwork-context-computer-gate-v2.test.ts test/computer-listing-files.test.ts test/opencode-v2-background-questions.test.ts test/cloud-provider-sync-prompts.test.ts test/engine-v2-mcp-mapping.test.ts test/engine-v2-mcp-reconciliation.test.ts && pnpm test:drive-upload-stop",
+    "test:readiness": "bun test test/agent-permission-tools.test.ts test/opencode-stop-fence.test.ts test/opencode-v2-mcp-readiness.test.ts test/openwork-mcp-results-v2.test.ts test/cloud-mcp-native-health.test.ts test/openwork-session-groups.test.ts test/openwork-session-questions.test.ts test/openwork-affordance-args.test.ts test/session-read-detail.test.ts test/opencode-v2-drive-upload-approval.test.ts test/approved-drive-upload.test.ts test/cloud-drive-uploads.test.ts test/drive-resumable-upload.test.ts test/opencode-v2-instructions.test.ts test/opencode-v2-tool-schemas.test.ts test/opencode-v2-website-tools.test.ts test/openwork-context-computer-gate-v2.test.ts test/computer-listing-files.test.ts test/opencode-v2-background-questions.test.ts test/cloud-provider-sync-prompts.test.ts test/engine-v2-mcp-mapping.test.ts test/engine-v2-mcp-reconciliation.test.ts test/sse-heartbeat.test.ts && pnpm test:drive-upload-stop",
     "test:drive-upload-stop": "node --conditions=development --import tsx --test test/drive-upload-stop.test.ts",
     "test:drive-upload-duration": "node --conditions=development --import tsx --test test/drive-upload-duration.test.ts",
     "test:drive-upload-session-native": "node --conditions=development --import tsx --test test/drive-upload-session-approval-native.test.ts",
     "test:fresh-install-engine": "bun test test/engine-fresh-install-default.test.ts test/managed-opencode-foreign-storage.test.ts",
     "test:live-provider-sync": "bun test test/live-provider-sync.test.ts",
-    "test:history-migration": "bun test test/opencode-history.test.ts test/upstream-history-startup.test.ts",
+    "test:history-migration": "bun test test/opencode-history.test.ts",
     "prepublishOnly": "pnpm build:npm-bundle"
   },
   "files": [

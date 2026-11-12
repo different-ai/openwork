@@ -194,8 +194,10 @@ export async function approveOrganizationWebOrigin(input: {
   organizationId: OrganizationId
   origin: string
   createdByOrgMemberId: MemberId
+  /** Reuse a known-free id (config-blob imports reuse source ids). Routes omit it. */
+  id?: OrganizationWebOriginId
 }, capture: AuditChangeCapture | null = null): Promise<ApproveOrganizationWebOriginResult> {
-  const id = createDenTypeId("organizationWebOrigin")
+  const id = input.id ?? createDenTypeId("organizationWebOrigin")
   const createdAt = new Date()
 
   let outcome: "created" | "already_approved" | "limit_reached"
@@ -227,6 +229,8 @@ export async function approveOrganizationWebOrigin(input: {
     })
   } catch (error) {
     if (!isDuplicateEntry(error)) throw error
+    // A reused id (config-blob import) taken in the meantime is not "already approved": try once more with a new id.
+    if (input.id) return approveOrganizationWebOrigin({ organizationId: input.organizationId, origin: input.origin, createdByOrgMemberId: input.createdByOrgMemberId }, capture)
     outcome = "already_approved"
   }
 

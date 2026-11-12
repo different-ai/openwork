@@ -22,7 +22,8 @@ export const REQUIRED_JOBS = {
 // PR quick-check selection: the Den API auth and permission tests run when
 // Den API inputs change. Typecheck and static checks always run.
 export const QUICK_CHECKS = ["den_quick"];
-const SNAPSHOT = "ee/apps/gateway/src/models/base.json";
+// The Update Models workflow refreshes both snapshots (models.dev v1 and v2) together.
+const SNAPSHOTS = new Set(["ee/apps/gateway/src/models/base.json", "ee/apps/gateway/src/models/base-v2.json"]);
 const STATUSES = new Set(["added", "modified", "removed", "renamed", "copied", "changed", "unchanged"]);
 const objectId = (value) => typeof value === "string" && /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i.test(value) && !/^0+$/.test(value);
 const safePath = (value) => typeof value === "string" && value.length > 0
@@ -56,9 +57,9 @@ export function classifyCiChanges({ eventName, files }, isAffected) {
 
   // Push diffs are --no-renames paths. A deleted snapshot fails validation
   // instead of silently passing a fast lane.
-  const snapshotOnly = changes.length === 1 && changes[0].filename === SNAPSHOT
-    && !changes[0].previous_filename
-    && (changes[0].status === "modified" || changes[0].status === undefined);
+  const snapshotOnly = changes.length > 0 && changes.every((change) => SNAPSHOTS.has(change.filename)
+    && !change.previous_filename
+    && (change.status === "modified" || change.status === undefined));
   if (snapshotOnly) return { lane: "snapshot", core: false, den_api: false, snapshot: true, docs: false };
 
   const paths = [...new Set(changes.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean)))];

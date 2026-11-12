@@ -5,6 +5,7 @@ import {
   MemberTable,
   OrganizationTable,
   SandboxOrganizationTable,
+  SlackAssistantInstallationTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
@@ -36,6 +37,7 @@ import { getInvitationOrigin } from "./routes/org/shared.js"
 import { organizationFeatureEnabled } from "./features.js"
 import { addSandboxMicrosoft365, SANDBOX_MICROSOFT_APP_KEYS, SANDBOX_MICROSOFT_EXTERNAL_KEY, SandboxMicrosoftUnavailableError } from "./sandbox-microsoft-365.js"
 import { getExternalMcpConnectionByExternalKey } from "./capability-sources/external-mcp-connections.js"
+import { addSandboxSlack, SANDBOX_SLACK_EXTERNAL_KEY, SandboxSlackUnavailableError } from "./sandbox-slack.js"
 
 type UserId = DenTypeId<"user">
 type SandboxRow = typeof SandboxOrganizationTable.$inferSelect
@@ -45,7 +47,10 @@ const createJoinToken = customAlphabet("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcd
 
 export class SandboxInputError extends Error {}
 
-/** Organization metadata key holding what joiners become; missing means admin (sandboxes are for trying everything). */
+/**
+ * Organization metadata key holding what joiners become (member, admin or super-admin). New sandboxes store
+ * super-admin; a missing value means admin, what sandboxes created before then did.
+ */
 const SANDBOX_JOIN_ROLE_KEY = "sandboxJoinRole"
 /** Organization metadata key holding the end date of the Enterprise grant the sandbox made. */
 const SANDBOX_PLAN_ENDS_KEY = "sandboxPlanEndsAt"
@@ -59,7 +64,15 @@ function metadataRecord(metadata: unknown): Record<string, unknown> {
 }
 
 function readJoinRole(metadata: unknown): SandboxJoinRole {
-  return metadataRecord(metadata)[SANDBOX_JOIN_ROLE_KEY] === "member" ? "member" : "admin"
+  const stored = metadataRecord(metadata)[SANDBOX_JOIN_ROLE_KEY]
+  return stored === "member" || stored === "super-admin" ? stored : "admin"
+}
+
+/** Stored roles below each join role, which joining or choosing that role raises to it. Owners are never touched. */
+const ROLES_BELOW_JOIN_ROLE: Record<SandboxJoinRole, string[]> = {
+  member: [],
+  admin: ["member"],
+  "super-admin": ["member", "admin"],
 }
 
 function readPlanTier(metadata: unknown): NonNullable<Sandbox["planTier"]> {
@@ -122,16 +135,21 @@ async function writeJoinRole(organizationId: DenTypeId<"organization">, joinRole
   await updateOrganizationMetadata(organizationId, current => ({ ...current, [SANDBOX_JOIN_ROLE_KEY]: joinRole }))
 }
 
-/** Makes people who joined as members admins, through the normal role change (audit, caches, key rotation). */
-async function promoteJoinedMembers(organizationId: DenTypeId<"organization">, onlyUserId?: DenTypeId<"user">) {
+/**
+ * Raises people who joined with a lower role to the join role (members to admin; members and admins to super-admin),
+ * through the normal role change (audit, caches, key rotation). Never demotes and never touches the owner.
+ */
+async function promoteJoinedMembers(organizationId: DenTypeId<"organization">, joinRole: SandboxJoinRole, onlyUserId?: DenTypeId<"user">) {
+  const lower = ROLES_BELOW_JOIN_ROLE[joinRole]
+  if (lower.length === 0) return
   const members = await db.select({ id: MemberTable.id }).from(MemberTable).where(and(
     eq(MemberTable.organizationId, organizationId),
-    eq(MemberTable.role, "member"),
+    inArray(MemberTable.role, lower),
     isNull(MemberTable.removedAt),
     isNotNull(MemberTable.joinedAt),
     ...(onlyUserId ? [eq(MemberTable.userId, onlyUserId)] : []),
   ))
-  for (const member of members) await updateOrganizationMemberRole({ organizationId, memberId: member.id, nextRole: "admin" })
+  for (const member of members) await updateOrganizationMemberRole({ organizationId, memberId: member.id, nextRole: joinRole })
 }
 
 export function sandboxJoinLink(token: string) {
@@ -172,6 +190,10 @@ async function serialize(rows: SandboxRow[], now = new Date()): Promise<Sandbox[
   const microsoftRows = await db.select({ organizationId: ExternalMcpConnectionTable.organizationId }).from(ExternalMcpConnectionTable)
     .where(and(inArray(ExternalMcpConnectionTable.organizationId, ids), eq(ExternalMcpConnectionTable.externalKey, SANDBOX_MICROSOFT_EXTERNAL_KEY)))
   const withMicrosoft = new Set(microsoftRows.map(row => row.organizationId))
+  const slackRows = await db.$primary.select({ organizationId: ExternalMcpConnectionTable.organizationId }).from(ExternalMcpConnectionTable)
+    .innerJoin(SlackAssistantInstallationTable, eq(SlackAssistantInstallationTable.connectionId, ExternalMcpConnectionTable.id))
+    .where(and(inArray(ExternalMcpConnectionTable.organizationId, ids), eq(ExternalMcpConnectionTable.externalKey, SANDBOX_SLACK_EXTERNAL_KEY)))
+  const withSlack = new Set(slackRows.map(row => row.organizationId))
   // What is left on each open sandbox's own key, read live from OpenRouter (null when it cannot be reached).
   const credit = new Map(await Promise.all(rows.map(async row => {
     const live = row.modelKeyHash && sandboxState(row, now) === "open" && env.openRouterManagementApiKey ? await readSandboxModelKey(row.modelKeyHash) : null
@@ -188,6 +210,7 @@ async function serialize(rows: SandboxRow[], now = new Date()): Promise<Sandbox[
     connectorBaseUrl: row.connectorBaseUrl,
     connectorCount: connectorCount.get(row.organizationId) ?? 0,
     sampleMicrosoft365: withMicrosoft.has(row.organizationId),
+    sampleSlack: withSlack.has(row.organizationId),
     modelProviderCount: providerCount.get(row.organizationId) ?? 0,
     planTier: readPlanTier(org.get(row.organizationId)?.metadata),
     modelCredit: row.modelKeyHash && row.modelCreditUsd !== null ? { limitUsd: row.modelCreditUsd, remainingUsd: credit.get(row.id) ?? null } : null,
@@ -248,6 +271,9 @@ export async function getSandbox(id: DenTypeId<"sandboxOrganization">): Promise<
  * With `sandboxMicrosoft365` on, Outlook, Calendar and Drive come as one Microsoft 365 connector signed in at the
  * workplace (so Workbot's chat, Calendar, Documents and first hello can read them); `callbackBaseUrl` is Den's public
  * API address the workplace sends people back to. If the workplace can't offer it, the separate connectors are used.
+ *
+ * With `sandboxSlack` on, the sandbox also gets the workplace's sample Slack with the Workbot Slack app installed
+ * (sandbox-slack.ts), so Proactive Mode can message people there. If the workplace can't offer it, it is left out.
  */
 export async function createSandbox(actor: UserId, input: SandboxCreateInput, options: { callbackBaseUrl?: string | null } = {}): Promise<Sandbox> {
   const connectors = input.connectorBaseUrl ? sandboxConnectorUrls(input.connectorBaseUrl) : []
@@ -267,7 +293,7 @@ export async function createSandbox(actor: UserId, input: SandboxCreateInput, op
     id, organizationId, joinToken: createJoinToken(), connectorBaseUrl: input.connectorBaseUrl,
     memberLimit: input.memberLimit, expiresAt, createdByUserId: actor,
   })
-  await writeJoinRole(organizationId, input.joinRole ?? "admin")
+  await writeJoinRole(organizationId, input.joinRole ?? "super-admin")
   await setSandboxPlan(organizationId, input.memberLimit, expiresAt)
   if (input.allowedEmailDomains.length > 0) {
     await db.update(OrganizationTable).set({ allowedEmailDomains: [...new Set(input.allowedEmailDomains)] }).where(eq(OrganizationTable.id, organizationId))
@@ -307,6 +333,11 @@ export async function createSandbox(actor: UserId, input: SandboxCreateInput, op
         access: { orgWide: true, memberIds: [], teamIds: [] },
       })
     }
+  }
+  if (input.connectorBaseUrl && await organizationFeatureEnabled(organizationId, "sandboxSlack")) {
+    await addSandboxSlack({ organizationId, ownerMemberId: owner.id, workplaceUrl: input.connectorBaseUrl }).catch((error: unknown) => {
+      appLogger.error("sandbox slack failed", { organization_id: organizationId, error: error instanceof Error ? error.message : "unknown" })
+    })
   }
 
   const created = await getSandbox(id)
@@ -352,12 +383,15 @@ export async function deleteSandboxModelKeyForOrganization(organizationId: DenTy
   })
 }
 
-/** Changes what people who join become. Choosing admin also makes everyone who already joined an admin; choosing member demotes nobody. */
+/**
+ * Changes what people who join become. Choosing admin or super-admin also raises everyone who already joined with a
+ * lower role to it; choosing a lower role demotes nobody.
+ */
 export async function setSandboxJoinRole(id: DenTypeId<"sandboxOrganization">, joinRole: SandboxJoinRole) {
   const [row] = await db.select({ organizationId: SandboxOrganizationTable.organizationId }).from(SandboxOrganizationTable).where(eq(SandboxOrganizationTable.id, id)).limit(1)
   if (!row) return null
   await writeJoinRole(row.organizationId, joinRole)
-  if (joinRole === "admin") await promoteJoinedMembers(row.organizationId)
+  await promoteJoinedMembers(row.organizationId, joinRole)
   return getSandbox(id)
 }
 
@@ -427,7 +461,7 @@ export type SandboxJoinResult =
   | { status: "domain_not_allowed"; allowedEmailDomains: string[] }
 
 /**
- * Joins the signed-in person with the sandbox's join role (member unless an admin chose admin; never owner). Idempotent for existing members. The sandbox row is
+ * Joins the signed-in person with the sandbox's join role (super-admin for new sandboxes, or what a platform admin chose; never owner). Idempotent for existing members. The sandbox row is
  * locked while seats are counted and the membership is written, so concurrent joins cannot exceed the seat limit.
  */
 export async function joinSandbox(input: { token: string; userId: string; email: string; emailVerified: boolean }): Promise<SandboxJoinResult> {
@@ -453,15 +487,15 @@ export async function joinSandbox(input: { token: string; userId: string; email:
     if (members.filter(member => member.removedAt === null).length >= row.memberLimit) return { status: "full" }
 
     const memberId = createDenTypeId("member")
-    // Members by default; an admin chose "admin" for this sandbox. Never owner.
+    // The sandbox's join role: super-admin unless a platform admin chose admin or member. Never owner.
     await tx.insert(MemberTable).values({ id: memberId, organizationId: row.organizationId, userId, role: readJoinRole(org.metadata), joinedAt: new Date() })
     return { status: "added", organizationId: row.organizationId, memberId }
   })
   if (result.status === "expired") await closeExpiredSandboxes()
   if (result.status === "joined" && result.alreadyMember) {
-    // Someone who joined as a member before the sandbox became admin-joining is promoted when they open the link again.
+    // Someone who joined with a lower role before the sandbox's join role was raised is promoted when they open the link again.
     const [org] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, result.organizationId)).limit(1)
-    if (org && readJoinRole(org.metadata) === "admin") await promoteJoinedMembers(result.organizationId, userId)
+    if (org) await promoteJoinedMembers(result.organizationId, readJoinRole(org.metadata), userId)
   }
   if (result.status !== "added") return result
   // Same effects as any other join, after the membership commits: caches, billing quantities and the member's gateway key.
@@ -514,6 +548,28 @@ export async function addMicrosoft365ToSandbox(id: DenTypeId<"sandboxOrganizatio
     await addSandboxMicrosoft365({ organizationId: row.organizationId, ownerMemberId: owner.id, workplaceUrl: row.connectorBaseUrl, callbackBaseUrl })
   } catch (error) {
     if (error instanceof SandboxMicrosoftUnavailableError) throw new SandboxInputError(error.message)
+    throw error
+  }
+  return getSandbox(id)
+}
+
+/**
+ * Adds the sample Slack (connector and Workbot Slack app) to an existing open sandbox, one created before
+ * `sandboxSlack` was on for it. Does nothing when it is already there.
+ */
+export async function addSlackToSandbox(id: DenTypeId<"sandboxOrganization">) {
+  const [row] = await db.select().from(SandboxOrganizationTable).where(eq(SandboxOrganizationTable.id, id)).limit(1)
+  if (!row) return null
+  if (sandboxState(row) !== "open") throw new SandboxInputError("Reopen this sandbox first.")
+  if (!row.connectorBaseUrl) throw new SandboxInputError("This sandbox has no sample work apps address.")
+  if (!await organizationFeatureEnabled(row.organizationId, "sandboxSlack")) throw new SandboxInputError("Turn on Sandboxes: sample Slack for this organization first.")
+  const [owner] = await db.select({ id: MemberTable.id }).from(MemberTable)
+    .where(and(eq(MemberTable.organizationId, row.organizationId), eq(MemberTable.userId, row.createdByUserId), isNull(MemberTable.removedAt))).limit(1)
+  if (!owner) throw new SandboxInputError("The sandbox's creator is no longer a member.")
+  try {
+    await addSandboxSlack({ organizationId: row.organizationId, ownerMemberId: owner.id, workplaceUrl: row.connectorBaseUrl })
+  } catch (error) {
+    if (error instanceof SandboxSlackUnavailableError) throw new SandboxInputError(error.message)
     throw error
   }
   return getSandbox(id)

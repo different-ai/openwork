@@ -8,6 +8,7 @@ import {
 } from "@openwork/types/den/managed-deployments";
 import { AlertTriangle, CheckCircle2, CircleDashed, Copy, ExternalLink, LockKeyhole, X, XCircle } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
 import { z } from "zod";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
@@ -19,6 +20,7 @@ import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-fl
 import { getOrgAccessFlags, orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ConfirmDialog } from "./item-list";
+import { useFeatureIntro } from "../_features/feature-intros";
 import { deploymentStatus, providerName, readinessMessage, type DeploymentTone, type ProviderReadiness } from "./managed-deployments-state";
 export { deploymentStatus } from "./managed-deployments-state";
 
@@ -213,6 +215,37 @@ export function ManagedDeploymentsScreen() {
     }
   }
 
+  // With `featureIntros` on: full screen while the organization has no deployment (DESIGN.md I1, I2).
+  const intro = useFeatureIntro(
+    "deployments",
+    enabled && access.canViewDeployments && !loading && !error && configuration ? { deployments: deployments.length, cloudReady: available } : null,
+  );
+
+  // Feature intro action (DESIGN.md I5): ?new=1 opens Create deployment once, then leaves the address.
+  const searchParams = useSearchParams();
+  const newRequested = searchParams.get("new") === "1";
+  useEffect(() => {
+    if (!newRequested || loading) return;
+    if (enabled && access.canManageDeployments && available) { setActionError(null); setDialogOpen(true); }
+    const url = new URL(window.location.href);
+    url.searchParams.delete("new");
+    window.history.replaceState(null, "", url);
+  }, [newRequested, loading, enabled, access.canManageDeployments, available]);
+
+  const createDialog = (
+    <CreateDeploymentDialog open={dialogOpen} onOpenChange={setDialogOpen} configuration={configuration} runReauthableAction={runReauthableAction}
+      onCreated={(item) => { replace(item); setSelectedId(item.id); setLaunch(null); setDialogOpen(false); }} />
+  );
+
+  if (intro.size === "fullscreen") {
+    return (
+      <section className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-6 p-4 sm:p-6" data-testid="managed-deployments-screen">
+        {intro.element}
+        {createDialog}
+      </section>
+    );
+  }
+
   const locked = !enabled ? "Deployments aren't turned on for this workspace. Ask your OpenWork contact to enable them."
     : !access.canViewDeployments ? permissionLockReason("deployments.view") : null;
   const canCreate = Boolean(!locked && available && access.canManageDeployments);
@@ -267,8 +300,7 @@ export function ManagedDeploymentsScreen() {
         description: `This removes the deployment record and its pending approval from this workspace. ${providerName(deploymentToRemove.provider)} resources and charges are unchanged. This cannot be undone.`,
         action: "Remove",
       } : null} onConfirm={async () => { if (deploymentToRemove) await remove(deploymentToRemove); }} onClose={() => setDeploymentToRemove(null)} />
-      <CreateDeploymentDialog open={dialogOpen} onOpenChange={setDialogOpen} configuration={configuration} runReauthableAction={runReauthableAction}
-        onCreated={(item) => { replace(item); setSelectedId(item.id); setLaunch(null); setDialogOpen(false); }} />
+      {createDialog}
     </section>
   );
 }

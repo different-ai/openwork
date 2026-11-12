@@ -712,6 +712,13 @@ export function createGatewayApp(options: GatewayAppOptions = {}) {
   const cache = new Map<string, ReadyCacheEntry>()
   const app = new Hono()
 
+  // Nothing here belongs in a search index (Google: block indexing with the X-Robots-Tag response header).
+  // A WebSocket upgrade is left as it is: it is not a document, and its response cannot be rebuilt.
+  app.use("*", async (c, next) => {
+    await next()
+    if (c.res.status !== 101) c.header("X-Robots-Tag", "noindex, nofollow, noarchive")
+  })
+
   app.use("*", async (c, next) => {
     const startedAtMs = Date.now()
     await next()

@@ -5,6 +5,7 @@ import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenTable, type DenTableColumn } from "../../_components/ui/table";
+import { AGENT_HEALTH_ANCHOR } from "./workbot-agent-scope";
 import { useWorkbotProactiveHealth } from "./workbot-proactive-data";
 
 /**
@@ -56,7 +57,7 @@ export function WorkbotProactiveHealthTable({ health }: { health: WorkbotProacti
 export function WorkbotProactiveHealthSection({ orgId }: { orgId: string }) {
   const query = useWorkbotProactiveHealth(orgId, Boolean(orgId));
   return (
-    <section aria-label="Last 7 days" className="grid gap-2" data-section="workbot-proactive-health">
+    <section id={AGENT_HEALTH_ANCHOR} aria-label="Last 7 days" className="grid scroll-mt-6 gap-2" data-section="workbot-proactive-health">
       <h2 className="px-1 text-[13px] font-medium text-gray-500">Last 7 days</h2>
       {query.isError ? (
         <DenNotice

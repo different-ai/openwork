@@ -10,8 +10,10 @@ import type { MemberPermissions } from "./effective.js"
  * The owner bypasses all of these:
  * - Nobody may change their own role.
  * - Making someone a super-admin, or changing or removing a super-admin, needs
- *   the owner or a super-admin. A super-admin holds every permission, so this
- *   is the "you can't grant what you don't hold" rule made explicit.
+ *   the owner or a super-admin. Super-admins share the Super admin default
+ *   set, so a super-admin granting the role already holds what it gives.
+ * - Super-admins are not exempt from "you can't grant what you don't hold":
+ *   their keys come from the (editable) Super admin set like anyone else's.
  * - Making someone an admin needs the caller to be an effective admin and to
  *   hold every key in the Admin default set (you can't grant what you don't
  *   hold). Only a member who already holds the admin role directly is exempt: a direct admin role outlives removal from
@@ -25,8 +27,10 @@ import type { MemberPermissions } from "./effective.js"
 export type RoleAssignmentCaller = Pick<MemberPermissions, "isOwner" | "isSuperAdmin" | "isAdmin" | "has">
 
 /**
- * Owner-level authority over roles and permissions: the owner or a
- * super-admin. Deleting the organization and transferring ownership are
+ * Owner-level authority over the role hierarchy: the owner or a super-admin
+ * may make, change and remove super-admins and admins. It does not imply
+ * holding any permission key; hold checks use `has`, and only the owner
+ * bypasses them. Deleting the organization and transferring ownership are
  * owner-only role checks elsewhere and never use this.
  */
 export function hasOwnerAuthority(held: Pick<MemberPermissions, "isOwner" | "isSuperAdmin">): boolean {
@@ -79,22 +83,23 @@ export function adminGrantDenial(
   caller: Pick<MemberPermissions, "isOwner" | "isSuperAdmin" | "isAdmin" | "has">,
   adminDefaultKeys: Iterable<PermissionKey>,
 ): PermissionKey | "requires_admin" | null {
-  if (hasOwnerAuthority(caller)) return null
+  if (caller.isOwner) return null
   if (!caller.isAdmin) return "requires_admin"
   return firstMissingPermission(caller, adminDefaultKeys)
 }
 
-/** The first key (in sorted order) the caller lacks, or null when they hold all of them. The owner and super-admins hold everything. */
-export function firstMissingPermission(held: Pick<MemberPermissions, "isOwner" | "isSuperAdmin" | "has">, keys: Iterable<PermissionKey>): PermissionKey | null {
-  if (hasOwnerAuthority(held)) return null
+/** The first key (in sorted order) the caller lacks, or null when they hold all of them. The owner holds everything. */
+export function firstMissingPermission(held: Pick<MemberPermissions, "isOwner" | "has">, keys: Iterable<PermissionKey>): PermissionKey | null {
+  if (held.isOwner) return null
   const sorted = [...new Set(keys)].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
   return sorted.find((key) => !held.has(key)) ?? null
 }
 
 /** Whether deciding needs the organization's Admin default keys (so callers skip the read otherwise). */
 export function roleAssignmentNeedsAdminDefaultKeys(input: RoleAssignmentInput): boolean {
-  if (hasOwnerAuthority(input.caller)) return false
-  if (input.nextIsSuperAdmin || input.target?.isDirectSuperAdmin) return false
+  if (input.caller.isOwner) return false
+  // Only owner authority may touch super-admins; anyone else is denied before keys matter.
+  if ((input.nextIsSuperAdmin || input.target?.isDirectSuperAdmin) && !hasOwnerAuthority(input.caller)) return false
   if (input.target && input.target.memberId === input.callerMemberId) return false
   return input.nextIsAdmin && !(input.target?.isDirectAdmin ?? false)
 }

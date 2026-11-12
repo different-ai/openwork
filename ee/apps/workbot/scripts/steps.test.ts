@@ -28,6 +28,11 @@ test("browser work is its own step that narrates what it does and links the page
   const steps = turn?.parts.flatMap((part) => (part.kind === "steps" ? part.steps : [])) ?? []
   assert.deepEqual(steps.map((step) => [step.label, step.surface ?? null, step.status]), [["Using the browser", "browser", "running"], ["Using my computer", null, "running"]])
   const [browser, computer] = steps
+  assert.equal(browser?.reason, "The browser action couldn't finish.", "a later call still running must not erase the earlier failure")
+  assert.equal(computer?.reason, undefined)
+  // Once a later browser call works, Workbot got past the failed one: the step no longer reads as failed.
+  const [recovered] = buildWorkbotTurns({ ...snapshot, messages: [...snapshot.messages, { messageId: "wb_listings", role: "tool", callId: "c4", name: "desktop", isError: false, createdAt: 160 }] })
+  assert.equal(recovered?.parts.flatMap((part) => (part.kind === "steps" ? part.steps : [])).find((step) => step.surface === "browser")?.reason, undefined)
   // Plain words for each call, its own description first; never the typed value or a non-web address.
   assert.deepEqual(browser?.updates, ["Opening example-homes.test/search/2-bed", "Filling in the form", "Working in the browser", "Comparing prices on Example Homes"])
   assert.equal(JSON.stringify(turn).includes("private value"), false)
@@ -79,10 +84,57 @@ test("the browser and background-then-screen nudges are only given when the comp
   assert.equal(workbotInstructions(base).includes("check it in your browser"), false)
   assert.ok(workbotInstructions({ ...base, browser: true }).includes("check it in your browser"))
   // Getting it done in the background, and the screen only when it helps, are taught only when there is a screen.
-  for (const rule of ["get it done in the background", "only when it helps", "keep work they want to watch"]) {
+  for (const rule of ["get it done in the background", "only when the work needs them", "keep work they want to watch"]) {
     assert.equal(workbotInstructions(base).includes(rule), false)
     assert.ok(workbotInstructions({ ...base, browser: true }).includes(rule))
   }
+})
+
+test("browser task acknowledgment and tap-only previews do not depend on presentation flags", () => {
+  const input = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false, browser: true }
+  const instructions = workbotInstructions(input)
+  assert.ok(instructions.includes("before any tool call"))
+  assert.ok(instructions.includes("The person alone opens the full browser by tapping Open preview"))
+  assert.ok(instructions.includes("never opens its full view"))
+  assert.equal(instructions.includes("It appears in their chat only when you pass show: true"), false)
+})
+
+test("an app Workbot builds is handed over as a card to open beside the chat, never as a download", () => {
+  const instructions = workbotInstructions({ name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false })
+  for (const rule of ["shows as a card under your reply", "as one .html file, hand it over in the same reply", "Never tell them to download it", "before a result says it was added to their Files"]) {
+    assert.ok(instructions.includes(rule), rule)
+  }
+})
+
+test("an App built in OpenWork shows among a reply's outputs, once, and only with workbotApps", () => {
+  const app = { id: "cob_01kq8z0000000000000000000a", title: "Hello World Wave" }
+  const call = (id: string, name: string) => ({ id, name, input: {} })
+  const snapshot = {
+    status: "idle", finalAssistantText: "", hasEarlier: false,
+    turns: [{ messageId: "wb_app", status: "completed", createdAt: 100, updatedAt: 200, error: null }],
+    messages: [
+      { messageId: "wb_app", role: "user", text: "Make a hello world app" },
+      { messageId: "wb_app", role: "assistant", text: "", createdAt: 110, toolCalls: [call("c1", "create_app"), call("c2", "update_app"), call("c3", "create_app")] },
+      { messageId: "wb_app", role: "tool", callId: "c1", name: "create_app", isError: false, createdAt: 120, app },
+      { messageId: "wb_app", role: "tool", callId: "c2", name: "update_app", isError: false, createdAt: 130, app: { ...app, title: "Hello World Wave 2.0" } },
+      { messageId: "wb_app", role: "tool", callId: "c3", name: "create_app", isError: true, createdAt: 140, app: { id: "cob_01kq8z0000000000000000000b", title: "Failed" } },
+      { messageId: "wb_app", role: "assistant", text: "Your app is ready.", createdAt: 150, toolCalls: [] },
+    ],
+  } satisfies RunnerSnapshot
+  const [off] = buildWorkbotTurns(snapshot)
+  assert.deepEqual(off?.outputs, [], "off: the reply is as before")
+  const [on] = buildWorkbotTurns(snapshot, new Map(), new Map(), { apps: true })
+  assert.deepEqual(on?.outputs, [{ id: `app:${app.id}`, name: "Hello World Wave 2.0", mediaType: "application/vnd.openwork.app", size: 0, updatedAt: 130 }])
+
+  const base = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false }
+  assert.equal(workbotInstructions(base).includes("OpenWork's App tools"), false)
+  assert.equal(workbotInstructions({ ...base, apps: false }), workbotInstructions(base))
+  const taught = workbotInstructions({ ...base, apps: true })
+  // With Apps on, a file is no longer the only way to make an app: the file rule stops saying to build one as a page.
+  assert.ok(workbotInstructions(base).includes("So build an app, a page or a game as one .html file"))
+  assert.equal(taught.includes("build an app, a page or a game"), false)
+  assert.ok(taught.includes("So make a web page as one .html file, hand it over in the same reply"))
+  for (const rule of ["chosen by what they need", "something they keep and come back to", "a one-off such as a mock-up", "Call the first an App and the second a page", "never say it opened in a sidebar or a tab"]) assert.ok(taught.includes(rule), rule)
 })
 
 test("Drive PDFs and Office files are pulled onto the computer only when there is one, and only with workbotDriveFiles", () => {

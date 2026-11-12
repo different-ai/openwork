@@ -3,44 +3,10 @@
 import { FileText, Plug, SquareTerminal } from "lucide-react";
 import { preload } from "react-dom";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
-import { apexDomain, brandIconCandidates } from "../../_lib/brand-icon";
+import { brandHintFor } from "@openwork/types/connector-brand";
+import { brandIconCandidates } from "../../_lib/brand-icon";
 
-type BrandHint = { simpleIconSlug?: string; serviceUrl?: string };
-
-/** Well-known services, by display name, so a server on any address still shows its real logo. */
-const BRAND_BY_NAME: Record<string, BrandHint> = {
-  asana: { simpleIconSlug: "asana" },
-  confluence: { simpleIconSlug: "confluence" },
-  figma: { simpleIconSlug: "figma" },
-  github: { simpleIconSlug: "github" },
-  gmail: { simpleIconSlug: "gmail" },
-  "google calendar": { simpleIconSlug: "googlecalendar" },
-  "google drive": { simpleIconSlug: "googledrive" },
-  "google workspace": { serviceUrl: "https://google.com" },
-  granola: { simpleIconSlug: "granola" },
-  hubspot: { simpleIconSlug: "hubspot" },
-  jira: { simpleIconSlug: "jira" },
-  linear: { serviceUrl: "https://linear.app" },
-  "microsoft 365": { serviceUrl: "https://microsoft.com" },
-  notion: { serviceUrl: "https://notion.com" },
-  salesforce: { simpleIconSlug: "salesforce" },
-  sentry: { serviceUrl: "https://sentry.io" },
-  slack: { serviceUrl: "https://slack.com" },
-  stripe: { serviceUrl: "https://stripe.com" },
-  zendesk: { simpleIconSlug: "zendesk" },
-};
-
-function isPublicServiceUrl(url: string | null | undefined): boolean {
-  const apex = apexDomain(url);
-  if (!apex) return false;
-  return apex.includes(".") && !/^(localhost|\d+\.\d+)$/.test(apex) && !apex.endsWith(".test") && !apex.endsWith(".local");
-}
-
-export function brandHintFor(name: string, url?: string | null): BrandHint {
-  const known = BRAND_BY_NAME[name.trim().toLowerCase()];
-  if (known) return known;
-  return isPublicServiceUrl(url) && url ? { serviceUrl: url } : {};
-}
+export { brandHintFor } from "@openwork/types/connector-brand";
 
 /** Starts downloading the logo a ConnectorLogo would show, before its row renders. */
 export function preloadConnectorLogo(name: string, url?: string | null) {

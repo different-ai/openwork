@@ -18,6 +18,7 @@ import {
 } from "../../react-app/domains/session/surface/model-removal-inventory";
 export type { ModelRemovalInventory } from "../../react-app/domains/session/surface/model-removal-inventory";
 import { activationStateSchema, type ActivationEventRequest, type ActivationState } from "@openwork/types/den/activation";
+import { deviceShareOptionsSchema, type DeviceShareOptions } from "@openwork/types/den/device-provider-share";
 import {
   remoteSessionStatusResultSchema,
   type RemoteSessionStatusRequest,
@@ -41,6 +42,19 @@ import type {
 import { generatedArtifactViewSchema, savedAppDetailSchema, savedAppSummarySchema, type SaveApp, type WorkflowDetail } from "@openwork/types/workflows";
 import { canScheduleWorkflow, type WorkflowAccessRole } from "./workflow-run-access";
 import { gatewayUsageStatusSchema, gatewayUsageResetRequestSchema } from "@openwork/types/den/gateway-usage-limits";
+import {
+  remoteDeviceDesktopReportResponseSchema,
+  remoteDeviceDetailResponseSchema,
+  remoteDeviceDisconnectResponseSchema,
+  remoteDeviceListResponseSchema,
+  remoteDeviceResponseSchema,
+  type RemoteDevice,
+  type RemoteDeviceDesktopReport,
+  type RemoteDeviceDesktopReportResponse,
+  type RemoteDeviceDetailResponse,
+  type RemoteDeviceDisconnectResponse,
+  type RemoteDeviceRegisterRequest,
+} from "@openwork/types/den/remote-devices";
 
 // Re-export the shared schema under the local alias so React consumers
 // (e.g. the cloud domain's desktop-config provider) can import it alongside
@@ -452,6 +466,12 @@ export type DenOpenWorkWebAccessSource = "subscription" | "complimentary" | null
 export type DenOpenWorkWebAccess = {
   hasAccess: boolean;
   accessSource: DenOpenWorkWebAccessSource;
+  /**
+   * Whether the signed-in member may use the organization's Web. False when
+   * an admin chose who gets Web and left this member out. Older Den
+   * deployments omit it, which means the same as hasAccess.
+   */
+  memberHasAccess: boolean;
 };
 
 type DenAuthResult = {
@@ -523,6 +543,8 @@ type RawJsonResponse<T> = {
   ok: boolean;
   status: number;
   json: T | null;
+  /** The response's `Retry-After`, when it names whole seconds. */
+  retryAfterSeconds?: number;
 };
 
 /** Den serves GET /v1/resolved-plugins for at most this many plugins per request. */
@@ -532,6 +554,8 @@ export class DenApiError extends Error {
   status: number;
   code: string;
   details?: unknown;
+  /** How long the server asked the caller to wait (`Retry-After`), on a 429. */
+  retryAfterSeconds?: number;
 
   constructor(status: number, code: string, message: string, details?: unknown) {
     super(message);
@@ -2864,6 +2888,7 @@ export function parseDenOpenWorkWebAccess(payload: unknown): DenOpenWorkWebAcces
   return {
     hasAccess: web.hasAccess,
     accessSource,
+    memberHasAccess: web.hasAccess && web.memberHasAccess !== false,
   };
 }
 
@@ -3018,7 +3043,8 @@ async function requestJsonRaw<T>(
     } catch {
       json = null;
     }
-    return { ok: response.ok, status: response.status, json };
+    const retryAfter = response.ok ? "" : response.headers?.get("Retry-After")?.trim() ?? "";
+    return { ok: response.ok, status: response.status, json, ...(/^\d{1,6}$/.test(retryAfter) ? { retryAfterSeconds: Number(retryAfter) } : {}) };
   };
   return options.unobserved ? send() : observeDenRequest(send);
 }
@@ -3033,7 +3059,9 @@ async function requestJson<T>(
     const payload = raw.json;
     const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
     const message = getErrorMessage(payload, `Request failed with ${raw.status}.`);
-    throw new DenApiError(raw.status, code, message, isRecord(payload) ? payload.details : undefined);
+    const error = new DenApiError(raw.status, code, message, isRecord(payload) ? payload.details : undefined);
+    if (raw.retryAfterSeconds !== undefined) error.retryAfterSeconds = raw.retryAfterSeconds;
+    throw error;
   }
   return raw.json as T;
 }
@@ -3263,6 +3291,60 @@ export function createDenClient(options: {
       }
     },
 
+    /** The computers the member can reach through OpenWork (feature `remoteDevices`). */
+    async listRemoteDevices(orgId: string): Promise<RemoteDevice[]> {
+      return remoteDeviceListResponseSchema.parse(await requestJson<unknown>(baseUrls, "/v1/remote-devices", {
+        method: "GET", token, organizationId: orgId,
+      })).devices;
+    },
+
+    /** One computer with its 20 most recent events, newest first. */
+    async getRemoteDevice(orgId: string, deviceId: string): Promise<RemoteDeviceDetailResponse> {
+      return remoteDeviceDetailResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}`, {
+        method: "GET", token, organizationId: orgId,
+      }));
+    },
+
+    /** Adds a virtual computer by hand. 409 `remote_device_exists`; 403 when `shared` needs a permission the member lacks. */
+    async registerRemoteDevice(orgId: string, input: RemoteDeviceRegisterRequest): Promise<RemoteDevice> {
+      return remoteDeviceResponseSchema.parse(await requestJson<unknown>(baseUrls, "/v1/remote-devices", {
+        method: "POST", token, organizationId: orgId, body: input,
+      })).device;
+    },
+
+    async renameRemoteDevice(orgId: string, deviceId: string, label: string): Promise<RemoteDevice> {
+      return remoteDeviceResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}`, {
+        method: "PATCH", token, organizationId: orgId, body: { label },
+      })).device;
+    },
+
+    /**
+     * Disconnects one of the member's own signed-in desktops: it takes no tasks and shares no
+     * sessions until someone signs in on it again. `signedOut` says whether OpenWork there was signed out too.
+     */
+    async disconnectRemoteDevice(orgId: string, deviceId: string): Promise<RemoteDeviceDisconnectResponse> {
+      return remoteDeviceDisconnectResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}/disconnect`, {
+        method: "POST", token, organizationId: orgId, body: {},
+      }));
+    },
+
+    /** Takes a computer off the list. The computer itself keeps running. */
+    async removeRemoteDevice(orgId: string, deviceId: string): Promise<void> {
+      await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}`, {
+        method: "DELETE", token, organizationId: orgId,
+      });
+    },
+
+    /**
+     * This desktop reports itself and how its computer use is doing. A background
+     * heartbeat: a 429 carries `retryAfterSeconds`, and no failure is a connection problem.
+     */
+    async reportThisComputer(orgId: string, report: RemoteDeviceDesktopReport): Promise<RemoteDeviceDesktopReportResponse> {
+      return remoteDeviceDesktopReportResponseSchema.parse(await requestJson<unknown>(baseUrls, "/v1/remote-devices/this-computer", {
+        method: "PUT", token, organizationId: orgId, body: report, unobserved: true,
+      }));
+    },
+
     /** Reports registry features the member just used (POST /v1/org/feature-usage); Den keeps only keys that are on for them. */
     async reportFeatureUsage(orgId: string, features: readonly string[]): Promise<void> {
       await requestJson<unknown>(baseUrls, "/v1/org/feature-usage", { method: "POST", token, organizationId: orgId, body: { features }, unobserved: true });
@@ -3398,7 +3480,7 @@ export function createDenClient(options: {
       // negotiation pattern so a newer hosted client never calls the Web billing
       // route on an older Den deployment that does not advertise the contract.
       if (capabilities?.openworkWeb !== true) {
-        return { hasAccess: false, accessSource: null };
+        return { hasAccess: false, accessSource: null, memberHasAccess: false };
       }
 
       const payload = await requestJson<unknown>(baseUrls, "/v1/billing/web", {
@@ -3463,6 +3545,27 @@ export function createDenClient(options: {
         return getDenOrgGatewayProviders(payload);
       } catch (error) {
         if (!options.requireCompleteInventory && error instanceof DenApiError && [404, 405, 501].includes(error.status)) return [];
+        throw error;
+      }
+    },
+
+    /**
+     * What the caller may share from this device with the organization (feature
+     * shareDeviceProvider). null when the feature is off or Den predates it, so
+     * the app offers nothing. Never carries a key.
+     */
+    async getDeviceShareOptions(orgId: string, providerIds: readonly string[]): Promise<DeviceShareOptions | null> {
+      try {
+        const payload = await requestJson<unknown>(baseUrls, `/v1/inference-providers/device-share-options?providerIds=${encodeURIComponent(providerIds.join(","))}`, {
+          method: "GET",
+          token,
+          organizationId: orgId,
+          cache: "no-store",
+        });
+        const options = deviceShareOptionsSchema.safeParse(payload);
+        return options.success ? options.data : null;
+      } catch (error) {
+        if (error instanceof DenApiError && [400, 404, 405, 501].includes(error.status)) return null;
         throw error;
       }
     },

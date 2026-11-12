@@ -18,11 +18,28 @@ type OrganizationId = typeof MemberTable.$inferSelect.organizationId
 type OrganizationMemberId = typeof MemberTable.$inferSelect.id
 type ApiKeyId = typeof AuthApiKeyTable.$inferSelect.id
 
+/** `standard`: acts as its member everywhere. `config`: a config token (feature `configBlobs`), see config-blobs/token.ts. */
+export const DEN_API_KEY_TYPES = ["standard", "config"] as const
+export type DenApiKeyType = (typeof DEN_API_KEY_TYPES)[number]
+
+/**
+ * Config token scopes. Stored in the Better Auth `apikey.permissions` column the
+ * way the apiKey plugin expects (a JSON Record<resource, actions[]>):
+ * `config:export` + `config:submit` is `{"config":["export","submit"]}`.
+ */
+export const CONFIG_TOKEN_SCOPES = ["config:export", "config:submit", "config:apply"] as const
+export type ConfigTokenScope = (typeof CONFIG_TOKEN_SCOPES)[number]
+const CONFIG_TOKEN_PERMISSION_RESOURCE = "config"
+
 export type DenApiKeyMetadata = {
   organizationId: OrganizationId
   orgMembershipId: OrganizationMemberId
   issuedByUserId: UserId
   issuedByOrgMembershipId: OrganizationMemberId
+  /** Absent on keys issued before key types existed: those are `standard`. */
+  type?: DenApiKeyType
+  /** Config tokens only: area keys (or `prefix.*`) the token may touch; absent = every area. */
+  areas?: string[]
 }
 
 export type DenApiKeySession = {
@@ -30,6 +47,12 @@ export type DenApiKeySession = {
   configId: string
   referenceId: string
   metadata: DenApiKeyMetadata | null
+  /** `config` only when the metadata says so and the key holds at least one config scope. */
+  type: DenApiKeyType
+  /** Config scopes from `apikey.permissions`; always empty for standard keys. */
+  configScopes: ConfigTokenScope[]
+  /** Config tokens: the area limit, or null for every area. Always null for standard keys. */
+  configAreas: string[] | null
 }
 
 export type OrganizationApiKeySummary = {
@@ -46,6 +69,9 @@ export type OrganizationApiKeySummary = {
   expiresAt: Date | null
   createdAt: Date
   updatedAt: Date
+  type: DenApiKeyType
+  scopes: ConfigTokenScope[]
+  areas: string[] | null
   owner: {
     userId: UserId
     memberId: OrganizationMemberId
@@ -83,12 +109,57 @@ function parseApiKeyMetadata(value: unknown): DenApiKeyMetadata | null {
     return null
   }
 
+  const type: DenApiKeyType = parsed.type === "config" ? "config" : "standard"
+  const areas = Array.isArray(parsed.areas) ? parsed.areas.filter((area): area is string => typeof area === "string") : null
+
   return {
     organizationId: organizationId as OrganizationId,
     orgMembershipId: orgMembershipId as OrganizationMemberId,
     issuedByUserId: issuedByUserId as UserId,
     issuedByOrgMembershipId: issuedByOrgMembershipId as OrganizationMemberId,
+    ...(type === "config" ? { type } : {}),
+    ...(type === "config" && areas ? { areas } : {}),
   }
+}
+
+function isConfigTokenScope(value: string): value is ConfigTokenScope {
+  return (CONFIG_TOKEN_SCOPES as readonly string[]).includes(value)
+}
+
+/** Better Auth `permissions` value for these config scopes: `{"config":["export",...]}`. */
+export function configTokenPermissions(scopes: readonly ConfigTokenScope[]): Record<string, string[]> {
+  const actions = CONFIG_TOKEN_SCOPES.filter((scope) => scopes.includes(scope)).map((scope) => scope.slice(CONFIG_TOKEN_PERMISSION_RESOURCE.length + 1))
+  return { [CONFIG_TOKEN_PERMISSION_RESOURCE]: actions }
+}
+
+/** Reads config scopes back from the stored `apikey.permissions` JSON; unknown actions are ignored. */
+export function parseConfigTokenScopes(value: unknown): ConfigTokenScope[] {
+  let parsed: unknown = value
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value)
+    } catch {
+      return []
+    }
+  }
+  if (!isRecord(parsed)) return []
+  const actions = parsed[CONFIG_TOKEN_PERMISSION_RESOURCE]
+  if (!Array.isArray(actions)) return []
+  const scopes = new Set<ConfigTokenScope>()
+  for (const action of actions) {
+    if (typeof action !== "string") continue
+    const scope = `${CONFIG_TOKEN_PERMISSION_RESOURCE}:${action}`
+    if (isConfigTokenScope(scope)) scopes.add(scope)
+  }
+  return CONFIG_TOKEN_SCOPES.filter((scope) => scopes.has(scope))
+}
+
+/** Key type, scopes and area limit from the stored metadata and permissions (both must agree for a config token). */
+export function resolveApiKeyKind(metadata: DenApiKeyMetadata | null, permissions: unknown): { type: DenApiKeyType; scopes: ConfigTokenScope[]; areas: string[] | null } {
+  if (metadata?.type !== "config") return { type: "standard", scopes: [], areas: null }
+  const scopes = parseConfigTokenScopes(permissions)
+  if (scopes.length === 0) return { type: "standard", scopes: [], areas: null }
+  return { type: "config", scopes, areas: metadata.areas ?? null }
 }
 
 export function buildOrganizationApiKeyMetadata(input: {
@@ -96,12 +167,16 @@ export function buildOrganizationApiKeyMetadata(input: {
   orgMembershipId: OrganizationMemberId
   issuedByUserId: UserId
   issuedByOrgMembershipId: OrganizationMemberId
+  /** Config tokens: `type: "config"`, with an optional area limit. */
+  config?: { areas: string[] | null }
 }): DenApiKeyMetadata {
   return {
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
     issuedByUserId: input.issuedByUserId,
     issuedByOrgMembershipId: input.issuedByOrgMembershipId,
+    ...(input.config ? { type: "config" as const } : {}),
+    ...(input.config?.areas ? { areas: [...input.config.areas] } : {}),
   }
 }
 
@@ -121,6 +196,7 @@ export async function getApiKeySessionById(apiKeyId: string): Promise<DenApiKeyS
       configId: AuthApiKeyTable.configId,
       referenceId: AuthApiKeyTable.referenceId,
       metadata: AuthApiKeyTable.metadata,
+      permissions: AuthApiKeyTable.permissions,
     })
     .from(AuthApiKeyTable)
     .where(eq(AuthApiKeyTable.id, apiKeyId))
@@ -131,11 +207,16 @@ export async function getApiKeySessionById(apiKeyId: string): Promise<DenApiKeyS
     return null
   }
 
+  const metadata = parseApiKeyMetadata(row.metadata)
+  const kind = resolveApiKeyKind(metadata, row.permissions)
   return {
     id: row.id,
     configId: row.configId,
     referenceId: row.referenceId,
-    metadata: parseApiKeyMetadata(row.metadata),
+    metadata,
+    type: kind.type,
+    configScopes: kind.scopes,
+    configAreas: kind.areas,
   }
 }
 
@@ -175,6 +256,7 @@ export async function listOrganizationApiKeys(organizationId: OrganizationId): P
         return null
       }
 
+      const kind = resolveApiKeyKind(metadata, apiKey.permissions)
       return {
         id: apiKey.id,
         configId: apiKey.configId,
@@ -189,6 +271,9 @@ export async function listOrganizationApiKeys(organizationId: OrganizationId): P
         expiresAt: apiKey.expiresAt,
         createdAt: apiKey.createdAt,
         updatedAt: apiKey.updatedAt,
+        type: kind.type,
+        scopes: kind.scopes,
+        areas: kind.areas,
         owner: {
           userId: owner.userId,
           memberId: owner.memberId,
@@ -286,7 +371,8 @@ export async function deleteOrganizationApiKey(input: {
     const scope = and(eq(AuthApiKeyTable.id, input.apiKeyId), eq(AuthApiKeyTable.referenceId, apiKey.owner.userId))
     const [row] = capture ? await tx.select(apiKeyAuditColumns).from(AuthApiKeyTable).where(scope).limit(1).for("update") : []
     await tx.delete(AuthApiKeyTable).where(scope)
-    return row ? appendDomainChanges(tx, capture, [apiKeyDeletedEvent(input.organizationId, row, { userId: apiKey.owner.userId, memberId: apiKey.owner.memberId })]) : []
+    const kind = apiKey.type === "config" ? { type: "config" as const, scopes: apiKey.scopes, areas: apiKey.areas } : null
+    return row ? appendDomainChanges(tx, capture, [apiKeyDeletedEvent(input.organizationId, row, { userId: apiKey.owner.userId, memberId: apiKey.owner.memberId }, kind)]) : []
   })
 
   return { ...apiKey, auditEventIds }

@@ -69,7 +69,7 @@ async function newestSessionId(session: Session) {
 /** ARRANGE ONLY: this session came back from the organization's SSO (what the SSO callback records). */
 async function arrangeSsoSession(session: Session, orgId: string, providerId: string) {
   await sql(
-    "INSERT INTO session_sso_authentication (session_id, user_id, organization_id, sso_provider_id) VALUES (?, ?, ?, ?)",
+    "INSERT INTO session_sso_proof (session_id, user_id, organization_id, sso_provider_id, authenticated_at) VALUES (?, ?, ?, ?, NOW(3))",
     [await newestSessionId(session), session.userId, orgId, providerId],
   )
 }
@@ -179,6 +179,9 @@ test("flag on, Require SSO: the person still signs in and uses other organizatio
   assert.equal(preflight.status, 200, summary(preflight))
   assert.equal(field(preflight.body, "requireSso"), false)
   assert.equal(field(preflight.body, "method"), "password")
+  // SSO is still one of the options, and the organization itself requires it.
+  assert.match(String(field(preflight.body, "signInUrl")), /\/sso\//)
+  assert.equal(field(preflight.body, "ssoRequired"), true)
 
   const signIn = await den.signIn(both.email)
   assert.equal(signIn.status, 200, summary(signIn))
@@ -245,6 +248,7 @@ test("restricting the domain needs the flag, and brings back sign-in-wide SSO fo
   assert.equal(preflight.status, 200, summary(preflight))
   assert.equal(field(preflight.body, "method"), "sso")
   assert.equal(field(preflight.body, "requireSso"), true)
+  assert.match(String(field(preflight.body, "signInUrl")), /\/sso\//)
 
   const signIn = await den.signIn(both.email)
   assert.equal(signIn.status, 403, summary(signIn))
@@ -265,4 +269,44 @@ test("flag on: only an admin signed in through the organization's SSO can requir
   await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: true })
   await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: false })
   await setFlag(ssoOrgId, false)
+})
+
+test("re-authentication lists the person's SSO organizations, with SSO offered (not only required) once the flag is on", async () => {
+  const signIns = async (session: Session) => {
+    const response = await den.request(session.token, "GET", "/v1/me/sso-sign-in")
+    assert.equal(response.status, 200, summary(response))
+    const organizations = field(response.body, "organizations")
+    assert.ok(Array.isArray(organizations), summary(response))
+    return organizations
+  }
+  await setFlag(ssoOrgId, true)
+  await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: false })
+  const bothSession = await passwordSession(both)
+
+  // Not signed in: the email preflight offers the domain's SSO as one option
+  // next to the usual method, so the sign-in page does not redirect.
+  const preflight = await den.request(null, "GET", `/v1/orgs/sso/resolve?email=${encodeURIComponent(both.email)}`)
+  assert.equal(preflight.status, 200, summary(preflight))
+  assert.equal(field(preflight.body, "requireSso"), false)
+  assert.equal(field(preflight.body, "method"), "password")
+  assert.equal(field(preflight.body, "ssoRequired"), false)
+  assert.match(String(field(preflight.body, "signInUrl")), /\/sso\//)
+
+  // Signed in: the person's own SSO organizations.
+  const offered = await signIns(bothSession)
+  assert.equal(offered.length, 1, "only the SSO organization, never the one without SSO")
+  assert.equal(field(offered[0], "organizationId"), ssoOrgId)
+  assert.equal(field(offered[0], "ssoOnly"), false)
+  assert.match(String(field(offered[0], "signInUrl")), /\/sso\//)
+
+  await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: true })
+  assert.equal(field((await signIns(ssoAdmin))[0], "ssoOnly"), true)
+  await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: false })
+
+  // Flag off: members must use SSO.
+  await setFlag(ssoOrgId, false)
+  assert.equal(field((await signIns(ssoAdmin))[0], "ssoOnly"), true)
+
+  assert.deepEqual(await signIns(otherOwner), [], "a person without SSO organizations gets none")
+  assert.equal((await den.request(null, "GET", "/v1/me/sso-sign-in")).status, 401)
 })

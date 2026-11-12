@@ -1,48 +1,15 @@
+import { connectorIconCandidates } from "@openwork/types/connector-brand"
+
 /**
- * Logos for the apps Workbot uses, by name: the same choices Den makes (its bundled icons, served from Den's
- * site, then Simple Icons, then the site's favicon). The page tries them in order and falls back to a letter.
+ * The same brand resolver as Den's connector catalog and Workbot's Apps response. This also supplies the small
+ * marks in chat connector lines (e.g. Searching Exa), so known brands don't depend on one host's separate name map.
+ * Bundled images live on Den's configured origin; older hosts without it can still use CDN/favicon candidates.
  */
-type Hint = { slug?: string; site?: string }
-
-const BY_NAME: Record<string, Hint> = {
-  asana: { slug: "asana" },
-  confluence: { slug: "confluence" },
-  figma: { slug: "figma" },
-  github: { slug: "github" },
-  gmail: { slug: "gmail" },
-  "google calendar": { slug: "googlecalendar" },
-  "google drive": { slug: "googledrive" },
-  "google workspace": { site: "google.com" },
-  granola: { slug: "granola" },
-  hubspot: { slug: "hubspot" },
-  jira: { slug: "jira" },
-  linear: { site: "linear.app" },
-  "microsoft 365": { site: "microsoft.com" },
-  notion: { site: "notion.com" },
-  salesforce: { slug: "salesforce" },
-  sentry: { site: "sentry.io" },
-  slack: { site: "slack.com" },
-  stripe: { site: "stripe.com" },
-  zendesk: { slug: "zendesk" },
-}
-
-/** Icons Den bundles (no third-party request), by site. */
-const DEN_ICONS: Record<string, string> = {
-  "notion.com": "/integrations/notion.svg",
-  "linear.app": "/integrations/linear.svg",
-  "slack.com": "/integrations/slack.svg",
-  "stripe.com": "/integrations/stripe.svg",
-  "sentry.io": "/integrations/sentry.svg",
-  "google.com": "/integrations/google.svg",
-}
-
-export function appIconCandidates(name: string, denUrl: string | null): string[] {
-  const hint = BY_NAME[name.trim().toLowerCase()]
-  if (!hint) return []
-  const candidates: string[] = []
-  const bundled = hint.site ? DEN_ICONS[hint.site] : undefined
-  if (bundled && denUrl) candidates.push(`${denUrl}${bundled}`)
-  if (hint.slug) candidates.push(`https://cdn.simpleicons.org/${encodeURIComponent(hint.slug)}`)
-  if (hint.site) candidates.push(`https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(hint.site)}`)
-  return candidates
+export function appIconCandidates(name: string, denUrl: string | null, site?: string): string[] {
+  // A connection's website host from Den ("exa.ai") finds a brand its name alone doesn't ("Search").
+  const url = site && /^[a-z0-9.-]{3,80}$/i.test(site) ? `https://${site.toLowerCase()}` : undefined
+  return connectorIconCandidates({ name, url }).flatMap((src) => {
+    if (!src.startsWith("/")) return [src]
+    return denUrl ? [new URL(src, denUrl).href] : []
+  })
 }

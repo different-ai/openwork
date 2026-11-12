@@ -7,7 +7,7 @@ import { z } from "zod"
 import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
 import { invitationCanceledEvent, invitationSavedEvent } from "../../audit/domain/invitations.js"
 import { appendDomainChanges, finishLegacyAuditAction } from "../../audit/domain/legacy.js"
-import { addAuditRequestResource, auditChangeCapture } from "../../audit/request-capture.js"
+import { addAuditRequestResource, auditChangeCapture, type AuditChangeCapture } from "../../audit/request-capture.js"
 import { getScimManagedTeamIds } from "../../scim-groups.js"
 import { db } from "../../db.js"
 import { invitationBillingUrl } from "../../agent-links.js"
@@ -26,6 +26,7 @@ import { planLimitReachedMessage } from "../../organization-plan.js"
 import { seatPlanQuoteSchema } from "@openwork/types/den/billing-plans"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import { organizationInviteEmailProps } from "../../invitation-email.js"
+import type { ResourceActionContext, ResourceOrganizationContext } from "./declarative.js"
 import type { OrgRouteVariables } from "./shared.js"
 import {
   buildInvitationLink,
@@ -56,6 +57,7 @@ const invitationResponseSchema = z.object({
   role: z.string(),
   expiresAt: z.string().datetime(),
   inviteToken: z.string(),
+  memberId: denTypeIdSchema("member").nullable().describe("The invited person's pending membership, for giving them a role before they join (PUT /v1/members/:memberId/permission-set). Null when the invitation has none."),
 }).meta({ ref: "InvitationResponse" })
 
 const invitationLinkResponseSchema = z.object({
@@ -106,6 +108,9 @@ const invitationNotPendingSchema = z.object({
 type InvitationId = typeof InvitationTable.$inferSelect.id
 
 const orgInvitationParamsSchema = idParamSchema("invitationId", "invitation")
+
+type InvitationActionContext = ResourceActionContext
+type InvitationActor = Pick<NonNullable<OrgRouteVariables["user"]>, "id" | "name" | "email">
 
 type InvitationRoleValidation =
   | { ok: true; role: string }
@@ -214,31 +219,23 @@ async function validateInvitationRole(c: PermissionRouteContext, input: {
   return { ok: true, role: roleValue }
 }
 
-export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
-  app.post(
-    "/v1/invitations",
-    describeRoute({
-      tags: ["Invitations"],
-      summary: "Create organization invitation",
-      description: "Creates or refreshes a pending organization invitation for an email address and sends the invite email. Returns 502 when the invitation row is persisted but the configured email provider failed to send; the client should surface the error and give the user a retry affordance. Returns 402 with billingUrl when a Free workspace has used its free users: give the user billingUrl to start seat billing, then invite again. Returns 409 org_limit_reached when a Team or Enterprise plan set by OpenWork is full: OpenWork must add seats.",
-      responses: {
-        200: jsonResponse("Existing invitation refreshed successfully.", invitationResponseSchema),
-        201: jsonResponse("Invitation created successfully.", invitationResponseSchema),
-        400: jsonResponse("The invitation request body or path parameters were invalid.", invalidRequestSchema),
-        401: jsonResponse("The caller must be signed in to invite organization members.", unauthorizedSchema),
-        402: jsonResponse("A seat subscription is required before inviting more members. The body includes billingUrl, where an owner starts seat billing.", invitePaymentRequiredSchema),
-        403: jsonResponse("The caller needs the Invite people permission and a recent sign-in. Inviting with a role other than member also needs Change member roles, and with Permissions on inviting an admin needs every Admin permission; reusing an invitation with Admin team access needs Manage Admin teams.", forbiddenSchema),
-        404: jsonResponse("The organization could not be found.", notFoundSchema),
-        409: jsonResponse("The email address is outside this workspace's allowed domains, or the plan OpenWork set for this workspace has no room for another user.", z.union([inviteEmailDomainNotAllowedSchema, inviteOrgLimitReachedSchema])),
-        502: jsonResponse("The invitation was saved but the email provider rejected or failed to deliver it. Retry by submitting the same email again.", invitationEmailFailedSchema),
-      },
-    }),
-    orgPermissionRoute("invitations.manage"),
-    jsonValidator(inviteMemberSchema),
-    async (c) => {
-    const payload = c.get("organizationContext")
-    const user = c.get("user")
-    const input = c.req.valid("json")
+export type CreateInvitationInput = z.infer<typeof inviteMemberSchema>
+
+/**
+ * POST /v1/invitations, callable with an in-process route context
+ * (config-blob imports, src/config-blobs/areas/members-people.ts).
+ * `sendEmail: false` saves the invitation without sending the invite email
+ * (silent invitations for migrations); `memberId` reuses a known-free id for a
+ * new placeholder member. Routes pass neither.
+ */
+export async function createInvitationAction(
+  c: InvitationActionContext,
+  payload: ResourceOrganizationContext,
+  user: InvitationActor,
+  input: CreateInvitationInput,
+  capture: AuditChangeCapture | null,
+  options: { onSaved?: (invitationId: InvitationId) => void; sendEmail?: boolean; memberId?: typeof MemberTable.$inferSelect.id } = {},
+) {
 
     const email = input.email.trim().toLowerCase()
     if (!isEmailAllowedForOrganization(payload.organization.allowedEmailDomains, email)) {
@@ -277,8 +274,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     }
     const assignedRole = assignableRole.role
 
-    const capture = auditChangeCapture(c)
-    const invitationWrite = await db.transaction(async (tx) => {
+        const invitationWrite = await db.transaction(async (tx) => {
       await tx
         .select({ id: OrganizationTable.id })
         .from(OrganizationTable)
@@ -425,7 +421,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
           expiresAt,
         })
 
-        const memberId = createDenTypeId("member")
+        const memberId = options.memberId ?? createDenTypeId("member")
         await tx.insert(MemberTable).values({
           id: memberId,
           organizationId: payload.organization.id,
@@ -537,7 +533,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       reactivatesExpiredInvitation,
       refreshed,
     } = invitationWrite
-    addAuditRequestResource(c, { type: "invitation", id: invitationId })
+    options.onSaved?.(invitationId)
 
     // A new pending invitation, or a resent expired one, counts as a user again.
     const billingMemberId = createdOrgMemberId ?? (reactivatesExpiredInvitation ? invitationOrgMemberId : null)
@@ -559,6 +555,10 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         expiresAt: expiresAt.toISOString(),
       },
     }, auditEventIds)
+
+    if (options.sendEmail === false) {
+      return c.json({ invitationId, email, role: assignedRole, expiresAt, inviteToken, memberId: invitationOrgMemberId }, refreshed ? 200 : 201)
+    }
 
     try {
       await sendEmail({
@@ -602,38 +602,18 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       throw error
     }
 
-    return c.json({ invitationId, email, role: assignedRole, expiresAt, inviteToken }, refreshed ? 200 : 201)
-    },
-  )
+    return c.json({ invitationId, email, role: assignedRole, expiresAt, inviteToken, memberId: invitationOrgMemberId }, refreshed ? 200 : 201)
+}
 
-  app.post(
-    "/v1/invitations/:invitationId/cancel",
-    describeRoute({
-      tags: ["Invitations"],
-      summary: "Cancel organization invitation",
-      description: "Cancels a pending organization invitation so the invite link can no longer be used.",
-      responses: {
-        200: jsonResponse("Invitation cancelled successfully.", successSchema),
-        400: jsonResponse("The invitation cancellation path parameters were invalid.", invalidRequestSchema),
-        401: jsonResponse("The caller must be signed in to cancel invitations.", unauthorizedSchema),
-        403: jsonResponse("The caller needs the Invite people permission and a recent sign-in; invitations with Admin team access also need Manage Admin teams.", forbiddenSchema),
-        404: jsonResponse("The invitation or organization could not be found.", notFoundSchema),
-        409: jsonResponse("The invitation is no longer pending and cannot be canceled.", invitationNotPendingSchema),
-      },
-    }),
-    orgPermissionRoute("invitations.manage"),
-    paramValidator(orgInvitationParamsSchema),
-    async (c) => {
-    const payload = c.get("organizationContext")
-    const params = c.req.valid("param")
+/** POST /v1/invitations/:invitationId/cancel, callable with an in-process route context (config-blob imports). */
+export async function cancelInvitationAction(c: InvitationActionContext, payload: ResourceOrganizationContext, rawInvitationId: string, capture: AuditChangeCapture | null) {
     let invitationId: InvitationId
     try {
-      invitationId = normalizeDenTypeId("invitation", params.invitationId)
+      invitationId = normalizeDenTypeId("invitation", rawInvitationId)
     } catch {
       return c.json({ error: "invitation_not_found" }, 404)
     }
 
-    const capture = auditChangeCapture(c)
     const cancellation = await withOrganizationTeamMutation(payload.organization.id, async (tx) => {
       const invitationRows = await tx
         .select({
@@ -734,7 +714,52 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     }, cancellation.auditEventIds)
 
     return c.json({ success: true })
-    },
+}
+
+export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  app.post(
+    "/v1/invitations",
+    describeRoute({
+      tags: ["Invitations"],
+      summary: "Create organization invitation",
+      description: "Creates or refreshes a pending organization invitation for an email address and sends the invite email. Returns 502 when the invitation row is persisted but the configured email provider failed to send; the client should surface the error and give the user a retry affordance. Returns 402 with billingUrl when a Free workspace has used its free users: give the user billingUrl to start seat billing, then invite again. Returns 409 org_limit_reached when a Team or Enterprise plan set by OpenWork is full: OpenWork must add seats.",
+      responses: {
+        200: jsonResponse("Existing invitation refreshed successfully.", invitationResponseSchema),
+        201: jsonResponse("Invitation created successfully.", invitationResponseSchema),
+        400: jsonResponse("The invitation request body or path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to invite organization members.", unauthorizedSchema),
+        402: jsonResponse("A seat subscription is required before inviting more members. The body includes billingUrl, where an owner starts seat billing.", invitePaymentRequiredSchema),
+        403: jsonResponse("The caller needs the Invite people permission and a recent sign-in. Inviting with a role other than member also needs Change member roles, and with Permissions on inviting an admin needs every Admin permission; reusing an invitation with Admin team access needs Manage Admin teams.", forbiddenSchema),
+        404: jsonResponse("The organization could not be found.", notFoundSchema),
+        409: jsonResponse("The email address is outside this workspace's allowed domains, or the plan OpenWork set for this workspace has no room for another user.", z.union([inviteEmailDomainNotAllowedSchema, inviteOrgLimitReachedSchema])),
+        502: jsonResponse("The invitation was saved but the email provider rejected or failed to deliver it. Retry by submitting the same email again.", invitationEmailFailedSchema),
+      },
+    }),
+    orgPermissionRoute("invitations.manage"),
+    jsonValidator(inviteMemberSchema),
+    async (c) => createInvitationAction(c, c.get("organizationContext"), c.get("user"), c.req.valid("json"), auditChangeCapture(c), {
+      onSaved: (invitationId) => addAuditRequestResource(c, { type: "invitation", id: invitationId }),
+    }),
+  )
+
+  app.post(
+    "/v1/invitations/:invitationId/cancel",
+    describeRoute({
+      tags: ["Invitations"],
+      summary: "Cancel organization invitation",
+      description: "Cancels a pending organization invitation so the invite link can no longer be used.",
+      responses: {
+        200: jsonResponse("Invitation cancelled successfully.", successSchema),
+        400: jsonResponse("The invitation cancellation path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to cancel invitations.", unauthorizedSchema),
+        403: jsonResponse("The caller needs the Invite people permission and a recent sign-in; invitations with Admin team access also need Manage Admin teams.", forbiddenSchema),
+        404: jsonResponse("The invitation or organization could not be found.", notFoundSchema),
+        409: jsonResponse("The invitation is no longer pending and cannot be canceled.", invitationNotPendingSchema),
+      },
+    }),
+    orgPermissionRoute("invitations.manage"),
+    paramValidator(orgInvitationParamsSchema),
+    async (c) => cancelInvitationAction(c, c.get("organizationContext"), c.req.valid("param").invitationId, auditChangeCapture(c)),
   )
 
   app.get(

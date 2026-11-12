@@ -1,0 +1,102 @@
+---
+title: "GitHub Sources"
+description: "Connect GitHub, add the repositories that hold your team's plugins, and keep OpenWork plugins in step with them."
+keywords: ["GitHub", "sources", "sync sources", "connect GitHub", "add a repository", "sync", "Claude-compatible plugins", "marketplace.json", "plugin.json", "auto-import"]
+---
+
+If your team already keeps plugins in GitHub, connect the repository once and
+OpenWork turns them into plugins. When someone pushes a change, the plugins in
+OpenWork update on their own.
+
+Use this for plugins your team maintains. To copy a public plugin once, use
+[Import from GitHub](/cloud/share-with-your-team/plugins#import-a-plugin-from-github)
+instead.
+
+## Before you start
+
+- Connecting GitHub and adding repositories needs the **Manage sync sources**
+  permission. Organization owners and admins have it by default.
+- You need permission to install a GitHub App on the GitHub account or
+  organization that owns the repositories.
+- The repository needs a Claude-compatible plugin or marketplace:
+  `.claude-plugin/plugin.json` or `.claude-plugin/marketplace.json`.
+
+<Note>
+Self-hosting OpenWork? Your operator must set up the GitHub App first. See
+[GitHub connector for Helm](/start-here/github-connector-helm).
+</Note>
+
+## Open Sources
+
+**Sources** is a tab in the plugin directory. To get there:
+
+- Open **Settings › Advanced** and select the **Collections** tab. Before you
+  have any Collections, click **Open Sources**.
+- Or open **Manage › Plugins** and add `?view=sources` to the address.
+
+## Connect GitHub
+
+1. On **Sources**, find **GitHub** and click **Connect**.
+2. GitHub opens. Install the OpenWork GitHub App and choose the repositories it
+   can read: all of them, or only the ones you select.
+3. GitHub sends you back to OpenWork, which finishes the connection.
+
+The account shows up on **Sources** with who added it. To connect another GitHub
+account or organization, click **Connect another**.
+
+OpenWork asks GitHub only to read repository metadata and contents, and to get
+notified when they change.
+
+## Add a repository
+
+1. Under the connected account, click **Add new repo**.
+2. Pick one of the repositories the GitHub App can read, and click **Start
+   discovery**.
+3. OpenWork looks for plugins. It shows **Claude Plugin Detected**, **Claude
+   Marketplace Detected**, or **Agent Plugin Detected**, and what each plugin
+   contains: skills, agents, commands, hooks, MCP servers and more.
+4. Select the plugins you want and click **Create plugins and mappings**.
+
+A repository you don't see in the list isn't shared with the GitHub App. Change
+the app's repository access in GitHub, then try again.
+
+If OpenWork says **No Claude-compatible plugins detected**, add
+`.claude-plugin/plugin.json` or `.claude-plugin/marketplace.json` to the
+repository.
+
+## Share the plugins
+
+After the import, check who can use each new plugin. Open it in **Manage ›
+Plugins** and set **Who can use it**, or give people access through a
+[Collection](/cloud/share-with-your-team/collections). See
+[Choose who can use it](/cloud/share-with-your-team/plugins#choose-who-can-use-it).
+
+## Keep in sync
+
+When a connected repository changes, OpenWork updates its plugins on its own.
+People who can use them get the new version.
+
+To manage a repository, click it under the account on **Sources**:
+
+- **Sync now**: check the repository right away.
+- **Re-run discovery**: pick plugins again, for example after adding a new one.
+- **Auto-import new plugins**: when new plugins appear on future pushes,
+  OpenWork discovers and imports them automatically.
+- **Imported plugins**: what OpenWork has brought in from this repository.
+
+## Remove a repository or account
+
+- **Remove this repository** (on the repository's page) deletes everything
+  OpenWork imported from it. The GitHub connection stays.
+- Removing a GitHub account from **Sources** deletes its repositories and every
+  plugin and Collection created from them.
+
+Either way, the GitHub App stays installed on GitHub. Uninstall it in your
+GitHub settings if you also want to revoke its access.
+
+## Related
+
+- [Manage plugins](/cloud/share-with-your-team/plugins)
+- [Agents, commands, and hooks](/cloud/share-with-your-team/plugin-agents-commands-hooks)
+- [Collections](/cloud/share-with-your-team/collections)
+- [GitHub connector for Helm](/start-here/github-connector-helm) (self-hosted)

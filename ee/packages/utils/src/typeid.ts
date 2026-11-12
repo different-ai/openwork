@@ -111,6 +111,7 @@ export const idTypesMapNameToPrefix = {
   inferenceRequestLog: "irl",
   inferenceUsageRollup: "iur",
   gatewayKey: "gky",
+  gatewayApiKey: "gak",
   gatewayModelGroup: "gmg",
   gatewayModelGroupModel: "gmm",
   gatewayCredentialSet: "gcs",
@@ -124,6 +125,7 @@ export const idTypesMapNameToPrefix = {
   permissionSet: "pms",
   permissionSetPermission: "psp",
   permissionSetTeam: "pst",
+  permissionSetMember: "psm",
   capabilityUsageEvent: "cue",
   capabilityUsageRollup: "cur",
   agentPermissionPolicy: "agp",
@@ -141,6 +143,16 @@ export const idTypesMapNameToPrefix = {
   sandboxOrganization: "sbx",
   mcpRegistrationStatus: "mrs",
   mcpRegistrationEvent: "mre",
+  featureIntroState: "fis",
+  configChangeRequest: "ccr",
+  configBlobAlias: "cba",
+  configBlobExport: "cbe",
+  configApplyRun: "car",
+  denInstance: "dni",
+  workbotTeamSetting: "wts",
+  workbotUsageDay: "wud",
+  remoteDevice: "rdv",
+  remoteDeviceEvent: "rde",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

@@ -9,11 +9,14 @@ import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, i
 import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
 import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import { isLiteLlmProviderId, liteLlmSpendTrackingEnabled } from "@openwork-ee/utils/litellm-catalog"
+import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { fixedModelPricing, readModelPrice, type PricingCatalog } from "./pricing.js"
 import { GATEWAY_REQUEST_MODEL_HEADER, GATEWAY_GRANT_HEADER, type GatewayRequestOutcome, type GatewayRequestProtocol } from "@openwork/types/den/gateway"
+import { HEADLESS_SESSION_HEADER, parseHeadlessSessionHeader } from "@openwork/types/den/workbot-usage"
 import type { Context, Hono } from "hono"
 import { sanitizeIncomingHeaders } from "./inference-reporting.js"
 import type { InferenceReporter } from "./inference-reporting.js"
+import type { GatewayContext } from "./middleware/gateway-auth.js"
 import type { InferenceAuthVariables } from "./middleware/inference-auth.js"
 import type { OrganizationVariables } from "./middleware/org-context.js"
 import { bedrockMantleService, bedrockService, signAwsRequest } from "./credentials/aws-sigv4.js"
@@ -39,6 +42,7 @@ import type { AuthHeader, ProtocolFamily } from "./protocols.js"
 import { accessibleGatewayModels, listGatewayModels, loadGatewayAccessFromDb, loadMemberGatewayAccessFromDb, sameGatewaySelection, selectGatewayGrant } from "./provider-access.js"
 import type { GatewayGrantSelection, LoadGatewayAccess, LoadMemberGatewayAccess } from "./provider-access.js"
 import { hasAlternateModelSelection } from "./model-selection.js"
+import { applyClaudePromptCache } from "./prompt-cache.js"
 import { loadProviderCatalogFromFile } from "./provider-catalog.js"
 import type { CatalogProvider, ProviderCatalog } from "./provider-catalog.js"
 import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provider-credentials.js"
@@ -66,10 +70,14 @@ import { createOpenAiResponsesSseUsageParser, parseOpenAiResponsesJsonUsage } fr
 import { createJsonBodyUsageParser, emptyUsage } from "./usage/shared.js"
 import type { ParsedUsage, UsageParser } from "./usage/shared.js"
 import { autoRouterIdFromModel } from "@openwork/types/den/auto-router"
-import { loadAutoRouterConfigFromDb, type LoadAutoRouterConfig } from "./auto-router/config.js"
-import { handleAutoRequest } from "./auto-router/handler.js"
+import { loadAutoRouterConfigFromDb, loadMemberAutoRoutersFromDb, type LoadAutoRouterConfig, type LoadMemberAutoRouters } from "./auto-router/config.js"
+import { handleAutoRequest, type AutoRouterDependencies } from "./auto-router/handler.js"
+import { smartToolRouters, type SmartToolDependencies } from "./smart-tools.js"
 import { createJevClient, type AskJev } from "./auto-router/jev.js"
 import { createDbReasoningStore, type ReasoningStore } from "./auto-router/reasoning-store.js"
+import { cursorApiPaths, cursorModels, cursorModelsPath, cursorPathPrefix, handleCursorChat, listCursorModels, type CursorApi } from "./cursor.js"
+import { codexModelsPath, codexPathPrefix, codexResponsesPath, handleCodexResponses, listCodexModels } from "./codex.js"
+import { claudeCodeCountTokens, claudeCodeCountTokensPath, claudeCodeError, claudeCodeMessagesPath, claudeCodeModelsPath, claudeCodePathPrefix, handleClaudeCodeMessages, listClaudeCodeModels } from "./claude-code.js"
 
 export type { GatewayCredential, GatewayProvider } from "./provider-credentials.js"
 
@@ -99,10 +107,14 @@ export type GatewayDependencies = {
   now: () => Date
   /** Smart Model Router (feature `autoRouter`): a member's router, and Jev. */
   loadAutoRouterConfig: LoadAutoRouterConfig
+  /** The Smart Routers that apply to a member, for the 3rd party tool endpoints' model lists. */
+  loadMemberAutoRouters: LoadMemberAutoRouters
   askJev: AskJev
   autoRouterReasoning: ReasoningStore
   /** Whether a TypeSafe key is configured; without one Smart is off. */
   autoRouterRoutingConfigured: boolean
+  /** Whether the Cursor, Claude Code and Codex endpoints (feature `gatewayMemberApiKeys`) are on for an organization. */
+  toolEndpointsEnabled: (organizationId: string) => Promise<boolean>
 }
 
 export type GatewayRouteDependencies =
@@ -213,11 +225,20 @@ function displayProviderName(providerId: string) {
   return knownNames[providerId.toLowerCase()] ?? providerId.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
+function providerDisplayName(provider: GatewayProvider) {
+  const name = provider.provider_config.name
+  if (isGatewayCustomProviderId(provider.provider_id) && typeof name === "string" && name.trim()) return name.trim()
+  return displayProviderName(provider.provider_id)
+}
+
 function readBaseUrl(provider: GatewayProvider, catalog: CatalogProvider | null, family: ProtocolFamily) {
   // Revalidate persisted overrides at runtime; self-hosted origins require an
   // explicit operator allowlist even when den-api accepted the configuration.
   const override = provider.settings.upstreamBaseUrl
   if (typeof override === "string" && override) return override
+  // A custom provider's only address is its saved one, checked on every request
+  // by resolveUpstream and the egress transport (public HTTPS or allowlisted).
+  if (isGatewayCustomProviderId(provider.provider_id)) return null
   const config = provider.provider_config
   const options = isJsonObject(config.options) ? config.options : null
   if (options && typeof options.baseURL === "string" && options.baseURL) return options.baseURL
@@ -368,6 +389,8 @@ function unsupportedGatewayPayload(body: JsonObject, family: ProtocolFamily, pro
               if (typeof tool.name !== "string" || !isJsonObject(tool.input_schema)) return "resource"
               break
             default:
+              // A Responses namespace only groups client-executed tools.
+              if (tool.type === "namespace" && Array.isArray(tool.tools) && tool.tools.every((inner) => isJsonObject(inner) && (inner.type === "function" || inner.type === "custom"))) break
               if (tool.type !== "function" && tool.type !== "custom") return "resource"
           }
         }
@@ -488,6 +511,8 @@ function rewriteSelectedModel(prepared: PreparedRequest, upstream: ResolvedUpstr
     }
     modified = true
   }
+  // The same aliases stop clients from marking Claude prompt-cache breakpoints.
+  if (applyClaudePromptCache(json, upstream.protocol, model)) modified = true
   if (upstream.protocol === "openai_chat" && upstream.family !== "mistral" && json.stream === true) {
     json.stream_options = { ...(isJsonObject(json.stream_options) ? json.stream_options : {}), include_usage: true }
     modified = true
@@ -797,6 +822,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     catalog: input.catalog ?? loadProviderCatalogFromFile(),
     now: input.now ?? (() => new Date()),
     loadAutoRouterConfig: input.loadAutoRouterConfig ?? loadAutoRouterConfigFromDb,
+    loadMemberAutoRouters: input.loadMemberAutoRouters ?? loadMemberAutoRoutersFromDb,
     askJev: input.askJev ?? createJevClient({
       apiKey: env.autoRouter.typesafeApiKey ?? null,
       baseUrl: env.autoRouter.typesafeBaseUrl,
@@ -806,6 +832,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }),
     autoRouterReasoning: input.autoRouterReasoning ?? createDbReasoningStore(),
     autoRouterRoutingConfigured: input.autoRouterRoutingConfigured ?? Boolean(env.autoRouter.typesafeApiKey),
+    toolEndpointsEnabled: input.toolEndpointsEnabled ?? (async (organizationId) => (await import("./keys.js")).toolEndpointsEnabled(organizationId)),
   }
 
   // `target` is set by the provider-less routes, which pick the provider from the model alias.
@@ -884,6 +911,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         accessGrantId: loggedSelection?.row.grant.id ?? null,
         requestBytes: state.requestBytes,
         gatewayUsage,
+        headlessSession: parseHeadlessSessionHeader(c.req.header(HEADLESS_SESSION_HEADER)),
         signal: request.signal,
         startedAt,
         pricing: requestPricing,
@@ -954,6 +982,10 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     if (isLiteLlmProviderId(provider.provider_id)) {
       spendTracking = liteLlmSpendTrackingEnabled(selection.row.credentialSet.credential_mode)
       const price = spendTracking && selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
+      requestPricing = price && selection.upstreamModel ? fixedModelPricing(provider.provider_id, selection.upstreamModel, price) : undefined
+    } else if (isGatewayCustomProviderId(provider.provider_id)) {
+      // Custom models are not in the models.dev snapshot: price from the saved model's cost, else record usage unpriced.
+      const price = selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
       requestPricing = price && selection.upstreamModel ? fixedModelPricing(provider.provider_id, selection.upstreamModel, price) : undefined
     }
     rewriteSelectedModel(prepared, resolved, selection.upstreamModel)
@@ -1194,7 +1226,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         const result = genericProviderAuthError({
           status: upstream.status,
           providerId: provider.id,
-          providerName: displayProviderName(provider.provider_id),
+          providerName: providerDisplayName(provider),
           credentialMode: selection.row.credentialSet.credential_mode,
           requestId: openworkRequestId,
         })
@@ -1229,13 +1261,170 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     })
   }
 
+  /** What the Smart Model Router needs for one request. */
+  function autoDependencies(c: Context<GatewayEnv>, identity: GatewayContext): AutoRouterDependencies {
+    return {
+      loadConfig: dependencies.loadAutoRouterConfig,
+      loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
+      catalog: dependencies.catalog,
+      askJev: dependencies.askJev,
+      reasoningStore: dependencies.autoRouterReasoning,
+      routingConfigured: dependencies.autoRouterRoutingConfigured,
+      forward: (target) => handleGatewayRequest(c, target),
+      onJevError: (error) => console.warn("[gateway] Smart Model Router could not ask Jev; using the fallback model", {
+        openworkRequestId: c.get("openworkRequestId"),
+        organizationId: identity.organizationId,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    }
+  }
+
+  /** Smart Routers on the 3rd party tool endpoints: listed, and run through the Smart Model Router. */
+  function smartTools(c: Context<GatewayEnv>, identity: GatewayContext): SmartToolDependencies {
+    return {
+      routingConfigured: dependencies.autoRouterRoutingConfigured,
+      loadMemberAutoRouters: dependencies.loadMemberAutoRouters,
+      route: ({ request, body, routerId }) => handleAutoRequest({ request, body, routerId, identity, dependencies: autoDependencies(c, identity) }),
+    }
+  }
+
   // Models keys fall through to the OpenWork Models handler registered after this one.
   api.get(gatewayModelsPath, async (c, next) => {
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return next()
     c.header("cache-control", "no-store")
-    return c.json(listGatewayModels(await dependencies.loadMemberGatewayAccess(identity)))
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
+    // Smart Routers are listed for the API keys members paste into tools; the desktop and other
+    // OpenWork clients learn them from Den. Either key can call them on POST /api/v1/chat/completions.
+    const routers = identity.keySource === "api_key" ? await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity)) : []
+    return c.json(listGatewayModels(rows, routers))
   })
+  // Cursor (feature `gatewayMemberApiKeys`): every model as Chat Completions under names a person can type.
+  const cursorOff = () => gatewayError(404, "not_found", "The Cursor endpoint is not available for this organization.")
+  api.get(cursorModelsPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
+    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return cursorOff()
+    c.header("cache-control", "no-store")
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
+    return c.json(listCursorModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
+  })
+  const cursorChat = async (c: Context<GatewayEnv>, api: CursorApi) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
+    const requestId = c.get("openworkRequestId")
+    const finish = (response: Response) => { response.headers.set("x-openwork-request-id", requestId); return response }
+    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return finish(cursorOff())
+    let body: unknown
+    try {
+      body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await readBoundedBody(c.req.raw)))
+    } catch (error) {
+      if (error instanceof RequestBodyLimitError) return finish(gatewayError(413, "request_too_large", "Could not read the request body within gateway limits."))
+      return finish(gatewayError(400, "invalid_json", "The request body must be JSON with a model field."))
+    }
+    if (!isJsonObject(body)) return finish(gatewayError(400, "invalid_json", "The request body must be JSON with a model field."))
+    return finish(await handleCursorChat({
+      request: c.req.raw,
+      body,
+      api,
+      identity,
+      dependencies: {
+        loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
+        catalog: dependencies.catalog,
+        reasoningStore: dependencies.autoRouterReasoning,
+        forward: (target) => handleGatewayRequest(c, target),
+        smart: smartTools(c, identity),
+      },
+    }))
+  }
+  for (const [path, cursorApi] of Object.entries(cursorApiPaths)) api.post(path, (c) => cursorChat(c, cursorApi))
+  api.all(`${cursorPathPrefix}/*`, (c) => gatewayError(404, "not_found", `Unsupported Cursor route: ${c.req.method} ${c.req.path}.`))
+  // Claude Code (feature `gatewayMemberApiKeys`): every model as Anthropic Messages, under names a person can set.
+  const claudeCodeOff = () => claudeCodeError(404, "not_found_error", "The Claude Code endpoint is not available for this organization.")
+  api.get(claudeCodeModelsPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
+    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return claudeCodeOff()
+    c.header("cache-control", "no-store")
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
+    return c.json(listClaudeCodeModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
+  })
+  const claudeCodeBody = async (c: Context<GatewayEnv>): Promise<JsonObject | Response> => {
+    try {
+      const body: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await readBoundedBody(c.req.raw)))
+      return isJsonObject(body) ? body : claudeCodeError(400, "invalid_request_error", "The request body must be a JSON object.")
+    } catch (error) {
+      if (error instanceof RequestBodyLimitError) return claudeCodeError(413, "request_too_large", "The request is larger than the gateway accepts.")
+      return claudeCodeError(400, "invalid_request_error", "The request body must be JSON.")
+    }
+  }
+  api.post(claudeCodeCountTokensPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
+    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return claudeCodeOff()
+    const body = await claudeCodeBody(c)
+    return body instanceof Response ? body : c.json(claudeCodeCountTokens(body))
+  })
+  api.post(claudeCodeMessagesPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
+    const requestId = c.get("openworkRequestId")
+    const finish = (response: Response) => { response.headers.set("x-openwork-request-id", requestId); return response }
+    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return finish(claudeCodeOff())
+    const body = await claudeCodeBody(c)
+    if (body instanceof Response) return finish(body)
+    return finish(await handleClaudeCodeMessages({
+      request: c.req.raw,
+      body,
+      identity,
+      dependencies: {
+        loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
+        catalog: dependencies.catalog,
+        reasoningStore: dependencies.autoRouterReasoning,
+        forward: (target) => handleGatewayRequest(c, target),
+        smart: smartTools(c, identity),
+      },
+    }))
+  })
+  api.all(`${claudeCodePathPrefix}/*`, (c) => claudeCodeError(404, "not_found_error", `Unsupported Claude Code route: ${c.req.method} ${c.req.path}.`))
+  // Codex CLI (feature `gatewayMemberApiKeys`): every model as the Responses API, with Codex's own model catalog.
+  const codexOff = () => gatewayError(404, "not_found", "The Codex endpoint is not available for this organization.")
+  api.get(codexModelsPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
+    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return codexOff()
+    c.header("cache-control", "no-store")
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
+    return c.json(listCodexModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
+  })
+  api.post(codexResponsesPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
+    const requestId = c.get("openworkRequestId")
+    const finish = (response: Response) => { response.headers.set("x-openwork-request-id", requestId); return response }
+    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return finish(codexOff())
+    let body: unknown
+    try {
+      body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await readBoundedBody(c.req.raw)))
+    } catch (error) {
+      if (error instanceof RequestBodyLimitError) return finish(gatewayError(413, "request_too_large", "Could not read the request body within gateway limits."))
+      return finish(gatewayError(400, "invalid_json", "The request body must be JSON with a model field."))
+    }
+    if (!isJsonObject(body)) return finish(gatewayError(400, "invalid_json", "The request body must be JSON with a model field."))
+    return finish(await handleCodexResponses({
+      request: c.req.raw,
+      body,
+      identity,
+      dependencies: {
+        loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
+        catalog: dependencies.catalog,
+        reasoningStore: dependencies.autoRouterReasoning,
+        forward: (target) => handleGatewayRequest(c, target),
+        smart: smartTools(c, identity),
+      },
+    }))
+  })
+  api.all(`${codexPathPrefix}/*`, (c) => gatewayError(404, "not_found", `Unsupported Codex route: ${c.req.method} ${c.req.path}.`))
   // Provider-less invocation: the body's gwm_ alias names the provider. Models keys fall through.
   for (const [path, endpoint] of Object.entries(gatewayModelEndpoints)) {
     api.post(path, async (c, next) => {
@@ -1253,20 +1442,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
             body: auto.body,
             routerId: auto.routerId,
             identity,
-            dependencies: {
-              loadConfig: dependencies.loadAutoRouterConfig,
-              loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
-              catalog: dependencies.catalog,
-              askJev: dependencies.askJev,
-              reasoningStore: dependencies.autoRouterReasoning,
-              routingConfigured: dependencies.autoRouterRoutingConfigured,
-              forward: (target) => handleGatewayRequest(c, target),
-              onJevError: (error) => console.warn("[gateway] Smart Model Router could not ask Jev; using the fallback model", {
-                openworkRequestId: c.get("openworkRequestId"),
-                organizationId: identity.organizationId,
-                error: error instanceof Error ? error.message : String(error),
-              }),
-            },
+            dependencies: autoDependencies(c, identity),
           })
           response.headers.set("x-openwork-request-id", c.get("openworkRequestId"))
           return response

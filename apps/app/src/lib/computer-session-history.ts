@@ -220,16 +220,17 @@ export type ComputerFolderFile = { path: string; bytes: number; modifiedAt: numb
  * What the card hands back: each file a step saved (`file_saved`), plus each file in the
  * chat's output folder that changed between the session's first step and `until` (the end
  * of its turn; null while it runs), whether an app, a script or a shell command made it.
- * Each once, newest first.
+ * `since`, the turn's start, reaches back to files the chat's subagents saved there before
+ * its own first step. Each once, newest first.
  */
-export function computerHandedBackFiles(history: ComputerSessionHistory, folder: readonly ComputerFolderFile[], until: number | null): ComputerSavedFile[] {
+export function computerHandedBackFiles(history: ComputerSessionHistory, folder: readonly ComputerFolderFile[], until: number | null, since: number | null = null): ComputerSavedFile[] {
   const times = history.parts.flatMap(part => {
     const time = part.callProviderMetadata?.openwork?.toolStartedAt
     return typeof time === "number" && Number.isFinite(time) ? [time] : []
   })
   if (!times.length || !folder.length) return history.savedFiles
   // File times are whole seconds on some disks; the last copy can land just after the turn ends.
-  const from = Math.min(...times) - 1000
+  const from = Math.min(...times, ...(since === null ? [] : [since])) - 1000
   const to = until === null ? Infinity : until + 5000
   const at = new Map<string, number>()
   for (const part of history.parts) {

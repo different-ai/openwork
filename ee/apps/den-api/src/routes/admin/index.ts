@@ -16,6 +16,7 @@ import {
   HeadlessResumeRevocationTable,
   ExternalIdentityTable,
   SessionSsoAuthenticationTable,
+  SessionSsoProofTable,
   InvitationTable,
   InferenceOrgLimitPolicyTable,
   InferenceOrgUsageBucketTable,
@@ -103,6 +104,7 @@ import { isOngoingOpenWorkWebSubscriptionStatus, organizationHasOngoingOpenWorkW
 import { FREE_ORG_SEAT_COUNT } from "../../billing-quantities.js"
 import { getBillingQuantitiesForOrganizations, getOrganizationBillingQuantities } from "../../billing-users.js"
 import { unlessResumeTableMissing } from "../../headless-runner/resume-grant-revocation.js"
+import { removeMemberWorkbotComputersInBackground } from "../../workbot/member-computers.js"
 import { buildAdminPageInfo, normalizeAdminPageRequest, sanitizeAdminSearchForLike, type AdminPageRequest } from "./scale-performance.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
@@ -1769,6 +1771,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         await unlessResumeTableMissing("headless_resume_revocation", () => tx.delete(HeadlessResumeRevocationTable).where(eq(HeadlessResumeRevocationTable.userId, userId)))
         await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.userId, userId))
         await tx.delete(SessionSsoAuthenticationTable).where(eq(SessionSsoAuthenticationTable.userId, userId))
+        await tx.delete(SessionSsoProofTable).where(eq(SessionSsoProofTable.userId, userId))
         await tx.delete(ScimSyncEventTable).where(eq(ScimSyncEventTable.userId, userId))
         if (membershipRows.length > 0) {
           await tx.delete(ConnectedAccountTable).where(inArray(
@@ -1811,6 +1814,9 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       await Promise.all(organizationIds.map((organizationId) => cache.org.deleteMembers(organizationId)))
       for (const organizationId of organizationIds) {
         await syncOrganizationBillingQuantities({ organizationId })
+      }
+      for (const membership of activeMembershipRows) {
+        removeMemberWorkbotComputersInBackground({ organizationId: membership.organizationId, memberId: membership.id })
       }
 
       return c.json({ ok: true, user: { id: targetUser.id, email: targetUser.email } })

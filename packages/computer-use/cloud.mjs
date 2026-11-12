@@ -118,13 +118,13 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
             },
             browser: async (operation, args, signal) => {
               assertActive();
-              const result = await browser.request({ sessionId: body.sessionId, operation, args }, { signal });
+              const result = await browser.request({ sessionId: body.sessionId, operation, args }, { signal, recovery: body.browserRecovery === true });
               assertActive(); return result;
             },
           }, signal, options);
         }
         if (path === "/browser/task") {
-          const result = await browser.request(body, { signal: current.signal });
+          const result = await browser.request(body, { signal: current.signal, recovery: body.browserRecovery === true });
           assertActive();
           return result;
         }

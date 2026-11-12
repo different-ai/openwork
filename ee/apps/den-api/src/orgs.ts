@@ -22,6 +22,7 @@ import {
   ScimUserTombstoneTable,
   SsoConnectionTable,
   SsoProviderTable,
+  PermissionSetMemberTable,
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
@@ -74,6 +75,7 @@ import type { PermissionDatabase } from "@openwork-ee/den-db/permissions"
 import type { PermissionKey } from "@openwork/types/den/permissions"
 import { appLogger } from "./observability/logger.js"
 import { isSingleOrgOwnerEmailEligible, resolveSingleOrgMembershipRole } from "./single-org-policy.js"
+import type { AdminReauthMinutes, MaxSessionLengthDays, SessionLengthHours } from "./session-security-settings.js"
 
 const logger = appLogger.child({ component: "organizations" })
 
@@ -223,6 +225,8 @@ export type OrganizationContext = {
     createdAt: Date
     joinedAt: Date | null
     isOwner: boolean
+    /** Whether this member has OpenWork Web (see MemberTable.openworkWeb). */
+    openworkWeb: boolean
   }
 }
 
@@ -242,6 +246,7 @@ export type OrganizationDirectory = {
     createdAt: Date
     joinedAt: Date | null
     isOwner: boolean
+    openworkWeb: boolean
     user: {
       id: UserId | MemberId
       email: string
@@ -1316,6 +1321,9 @@ export async function updateOrganizationSettings(input: {
   allowedDesktopVersions?: readonly string[] | null
   requireSso?: boolean
   restrictDomainToSso?: boolean
+  sessionLengthHours?: SessionLengthHours
+  maxSessionLengthDays?: MaxSessionLengthDays
+  adminReauthMinutes?: AdminReauthMinutes
   brandAppName?: string | null
   brandLogoUrl?: string | null
   brandIconUrl?: string | null
@@ -1336,7 +1344,7 @@ export async function updateOrganizationSettings(input: {
     if (input.allowedEmailDomains !== undefined) {
       updates.allowedEmailDomains = normalizeAllowedEmailDomains(input.allowedEmailDomains).domains
     }
-    if (input.allowedDesktopVersions !== undefined || input.requireSso !== undefined || input.restrictDomainToSso !== undefined || input.brandAppName !== undefined || input.brandLogoUrl !== undefined || input.brandIconUrl !== undefined || input.brandLogoAsset !== undefined || input.brandIconAsset !== undefined || input.brandAccentColor !== undefined) {
+    if (input.allowedDesktopVersions !== undefined || input.requireSso !== undefined || input.restrictDomainToSso !== undefined || input.sessionLengthHours !== undefined || input.maxSessionLengthDays !== undefined || input.adminReauthMinutes !== undefined || input.brandAppName !== undefined || input.brandLogoUrl !== undefined || input.brandIconUrl !== undefined || input.brandLogoAsset !== undefined || input.brandIconAsset !== undefined || input.brandAccentColor !== undefined) {
       const rows = await tx
         .select({ metadata: OrganizationTable.metadata })
         .from(OrganizationTable)
@@ -1367,6 +1375,18 @@ export async function updateOrganizationSettings(input: {
 
       if (input.restrictDomainToSso !== undefined) {
         nextMetadata.restrictDomainToSso = input.restrictDomainToSso
+      }
+
+      if (input.sessionLengthHours !== undefined) {
+        nextMetadata.sessionLengthHours = input.sessionLengthHours
+      }
+
+      if (input.maxSessionLengthDays !== undefined) {
+        nextMetadata.maxSessionLengthDays = input.maxSessionLengthDays
+      }
+
+      if (input.adminReauthMinutes !== undefined) {
+        nextMetadata.adminReauthMinutes = input.adminReauthMinutes
       }
 
       if (input.brandAppName !== undefined) {
@@ -1621,6 +1641,7 @@ export async function getOrganizationContextForUser(input: {
       createdAt: currentMember.createdAt,
       joinedAt: currentMember.joinedAt,
       isOwner: roleIncludesOwner(currentMember.role),
+      openworkWeb: currentMember.openworkWeb,
     },
   } satisfies OrganizationContext
 }
@@ -2159,6 +2180,16 @@ export async function removeOrganizationMember(input: {
     await tx
       .delete(TeamMemberTable)
       .where(eq(TeamMemberTable.orgMembershipId, member.id))
+
+    // A role given to the person directly ends with their membership, so it
+    // can't come back if they are invited again.
+    await tx.update(PermissionSetMemberTable)
+      .set({ removedAt: new Date() })
+      .where(and(
+        eq(PermissionSetMemberTable.organizationId, input.organizationId),
+        eq(PermissionSetMemberTable.orgMembershipId, member.id),
+        isNull(PermissionSetMemberTable.removedAt),
+      ))
 
     await tx.update(ScimGroupMemberTable)
       .set({ userId: null, orgMembershipId: null, teamMemberId: null, updatedAt: new Date() })

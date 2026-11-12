@@ -6,7 +6,7 @@ import { env } from "../../env.js"
 import { adminRoute, jsonValidator } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { resolvePublicOrigin } from "../../capability-sources/generic-oauth.js"
-import { addMicrosoft365ToSandbox, closeSandbox, createSandbox, extendSandbox, listSandboxes, rotateSandboxLink, SandboxInputError, sandboxDefaults, setSandboxCredit, setSandboxJoinRole } from "../../sandbox-organizations.js"
+import { addMicrosoft365ToSandbox, addSlackToSandbox, closeSandbox, createSandbox, extendSandbox, listSandboxes, rotateSandboxLink, SandboxInputError, sandboxDefaults, setSandboxCredit, setSandboxJoinRole } from "../../sandbox-organizations.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const base = "/v1/admin/sandbox-orgs"
@@ -25,7 +25,7 @@ export function registerAdminSandboxOrganizationRoutes<T extends { Variables: Au
     return c.json({ enabled: true, sandboxes: await listSandboxes(), defaults: sandboxDefaults() })
   })
 
-  app.post(base, describeRoute({ tags: ["Admin"], summary: "Create a sandbox organization", description: "Creates an organization owned by the calling admin on the Enterprise plan until the sandbox ends, with included models, AI Gateway models for everyone (the sandbox's own OpenRouter key capped at creditUsd when the deployment mints them), Free Auto until the sandbox closes or expires, one per-person OAuth connector for each fictional workplace app, and a join link that joins people as members until the sandbox ends. Platform administrators only.", responses: { 200: jsonResponse("Sandbox created.", sandboxCreatedSchema), ...errors } }), adminRoute(), jsonValidator(sandboxCreateInputSchema), async c => {
+  app.post(base, describeRoute({ tags: ["Admin"], summary: "Create a sandbox organization", description: "Creates an organization owned by the calling admin on the Enterprise plan until the sandbox ends, with included models, AI Gateway models for everyone (the sandbox's own OpenRouter key capped at creditUsd when the deployment mints them), Free Auto until the sandbox closes or expires, one per-person OAuth connector for each fictional workplace app, and a join link that, until the sandbox ends, makes people who join super admins unless joinRole chooses admin or member. Platform administrators only.", responses: { 200: jsonResponse("Sandbox created.", sandboxCreatedSchema), ...errors } }), adminRoute(), jsonValidator(sandboxCreateInputSchema), async c => {
     if (env.features.deployment !== "cloud") return c.json(disabled, 404)
     try {
       const sandbox = await createSandbox(normalizeDenTypeId("user", c.get("user").id), c.req.valid("json"), { callbackBaseUrl: resolvePublicOrigin(c.req.raw, env.apiPublicUrl) })
@@ -46,7 +46,7 @@ export function registerAdminSandboxOrganizationRoutes<T extends { Variables: Au
     return sandbox ? c.json({ sandbox }) : c.json({ error: "not_found", message: "Sandbox not found." }, 404)
   })
 
-  app.post(`${base}/:sandboxId/join-role`, updated("Choose what people who join become", "Sets whether people who join with the link from now on become members or admins. People who already joined keep their role; change it on the organization's Members page. Platform administrators only."), adminRoute(), jsonValidator(sandboxJoinRoleInputSchema), async c => {
+  app.post(`${base}/:sandboxId/join-role`, updated("Choose what people who join become", "Sets whether people who join with the link from now on become members, admins or super admins. Choosing admins or super admins also raises people who already joined with a lower role; choosing a lower role demotes nobody (change it on the organization's Members page). Platform administrators only."), adminRoute(), jsonValidator(sandboxJoinRoleInputSchema), async c => {
     if (env.features.deployment !== "cloud") return c.json(disabled, 404)
     const id = c.req.param("sandboxId")
     if (!isDenTypeId("sandboxOrganization", id)) return c.json({ error: "invalid_request", message: "Invalid sandbox id." }, 400)
@@ -81,6 +81,19 @@ export function registerAdminSandboxOrganizationRoutes<T extends { Variables: Au
     if (!isDenTypeId("sandboxOrganization", id)) return c.json({ error: "invalid_request", message: "Invalid sandbox id." }, 400)
     try {
       const sandbox = await addMicrosoft365ToSandbox(normalizeDenTypeId("sandboxOrganization", id), resolvePublicOrigin(c.req.raw, env.apiPublicUrl))
+      return sandbox ? c.json({ sandbox }) : c.json({ error: "not_found", message: "Sandbox not found." }, 404)
+    } catch (error) {
+      if (error instanceof SandboxInputError) return c.json({ error: "invalid_request", message: error.message }, 400)
+      throw error
+    }
+  })
+
+  app.post(`${base}/:sandboxId/slack`, updated("Add sample Slack to a sandbox", "Adds a per-person Slack connector at the sandbox's sample work apps and installs the Workbot Slack app against it with a sample bot token, so Proactive Mode can be turned on and each member's agent messages arrive on their sample Slack page. Needs an open sandbox with a sample work apps address and Sandboxes: sample Slack (sandboxSlack) on for its organization. Does nothing when it is already there. Platform administrators only."), adminRoute(), async c => {
+    if (env.features.deployment !== "cloud") return c.json(disabled, 404)
+    const id = c.req.param("sandboxId")
+    if (!isDenTypeId("sandboxOrganization", id)) return c.json({ error: "invalid_request", message: "Invalid sandbox id." }, 400)
+    try {
+      const sandbox = await addSlackToSandbox(normalizeDenTypeId("sandboxOrganization", id))
       return sandbox ? c.json({ sandbox }) : c.json({ error: "not_found", message: "Sandbox not found." }, 404)
     } catch (error) {
       if (error instanceof SandboxInputError) return c.json({ error: "invalid_request", message: error.message }, 400)

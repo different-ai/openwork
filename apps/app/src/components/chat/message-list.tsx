@@ -90,7 +90,8 @@ import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge"
 import { AttachmentFileChip, ComposerBadgeChip, ComposerPillChip, PastedTextChip } from "@/components/chat/composer-pill"
 import { agentBadge, fileMentionBadge } from "@/react-app/domains/session/surface/composer/composer-chips"
 import { isChatAttachmentUrl } from "@/react-app/domains/session/sync/attachment-file-part"
-import { readComposerPill, splitComposerPillText } from "@/react-app/domains/session/surface/composer/composer-pills"
+import { splitComposerPillText } from "@/react-app/domains/session/surface/composer/composer-pills"
+import { composerDraftFromSentParts, sentTextPartToken } from "@/react-app/domains/session/surface/composer/sent-message-tokens"
 import { Image } from "@/components/ui/image"
 import {
   Message,
@@ -159,6 +160,7 @@ import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, 
 import type { AnyToolPart } from "@/lib/tool-aggregate"
 import { collectComputerSessionHistory, withoutComputerHistory, type ComputerSessionHistory as ComputerHistory } from "@/lib/computer-session-history"
 import { ComputerSessionHistory, desktopSavedFileActions } from "./computer-session-history"
+import { ComputerCrewCard, useComputerCrew } from "./computer-crew"
 import { useComputerSessionHistoryStore } from "./computer-session-history-store"
 import { useSteadyLiveTurnStore } from "./steady-live-turn-store"
 import { resolveConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
@@ -754,35 +756,26 @@ type UserMessageProps = {
   isStreaming: boolean
 }
 
-function isPastedTextPart(part: UIMessage["parts"][number]) {
-  if (part.type !== "text") return false
-  const metadata = part.providerMetadata?.opencode
-  return Boolean(metadata && typeof metadata === "object" && "pastedText" in metadata && metadata.pastedText === true)
-}
-
 function fileBytes(part: FileUIPart) {
   const metadata = part.providerMetadata?.opencode
   const bytes = metadata && typeof metadata === "object" && "bytes" in metadata ? metadata.bytes : undefined
   return typeof bytes === "number" ? bytes : undefined
 }
 
-/** Agent and file mentions keep their composer badge in the sent message. */
-function textPartMentionBadge(part: UIMessage["parts"][number]) {
-  if (part.type !== "text") return null
-  const metadata = part.providerMetadata?.opencode
-  if (!metadata || typeof metadata !== "object") return null
-  if ("agentMention" in metadata && typeof metadata.agentMention === "string") return agentBadge(metadata.agentMention)
-  if ("fileMention" in metadata && typeof metadata.fileMention === "string") return fileMentionBadge(metadata.fileMention)
-  return null
-}
-
-/** The pill a sent text part was tagged with in the composer, if any. */
-function textPartComposerPill(part: UIMessage["parts"][number]) {
-  if (part.type !== "text") return null
-  const metadata = part.providerMetadata?.opencode
-  return metadata && typeof metadata === "object" && "composerPill" in metadata
-    ? readComposerPill(metadata.composerPill)
-    : null
+/** The chip a sent text part is drawn as: the same one the composer drew. */
+function renderSentTokenChip(part: UIMessage["parts"][number], key: string) {
+  const token = sentTextPartToken(part)
+  if (!token) return null
+  switch (token.kind) {
+    case "pill":
+      return <ComposerPillChip key={key} pill={token.pill} />
+    case "pasted":
+      return part.type === "text" ? <PastedTextChip key={key} text={part.text} /> : null
+    case "agent":
+      return <ComposerBadgeChip key={key} badge={agentBadge(token.name)} />
+    case "file":
+      return <ComposerBadgeChip key={key} badge={fileMentionBadge(token.path)} />
+  }
 }
 
 function renderPlainTextWithSearchHighlights(text: string, highlightQuery: string | undefined, keyPrefix: string) {
@@ -996,6 +989,11 @@ const UserMessage = React.memo(
       onOpenTarget(target)
     }
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
+    // Edit puts every chip back in the composer as the same chip.
+    const editMessage = () => {
+      const draft = composerDraftFromSentParts(message.parts)
+      onEditUserMessage(message.id, draft.text, draft)
+    }
     const inlineParts = React.useMemo(
       () => message.parts.filter((part) => (part.type === "text" && Boolean(part.text)) || isFileUIPart(part)),
       [message.parts],
@@ -1005,7 +1003,7 @@ const UserMessage = React.memo(
     const menuActions: MenuAction[] = []
     if (messageText) menuActions.push(
       { type: "item", id: "copy", label: "Copy", icon: <Copy className="size-4" />, onSelect: () => navigator.clipboard.writeText(messageText) },
-      { type: "item", id: "edit", label: "Edit message", icon: <Pencil className="size-4" />, disabled: readOnly || Boolean(wall), onSelect: () => onEditUserMessage(message.id, messageText) },
+      { type: "item", id: "edit", label: "Edit message", icon: <Pencil className="size-4" />, disabled: readOnly || Boolean(wall), onSelect: editMessage },
     )
     if (!wall) menuActions.push(
       { type: "item", id: "revert", label: "Revert", icon: <Undo2 className="size-4" />, disabled: readOnly, onSelect: () => onRevertToUserMessage(message.id) },
@@ -1036,11 +1034,8 @@ const UserMessage = React.memo(
                     onClick={openLink}
                   >
                     {inlineParts.map((part, index) => {
-                      const pill = textPartComposerPill(part)
-                      if (pill) return <ComposerPillChip key={`pill-${index}`} pill={pill} />
-                      if (part.type === "text" && isPastedTextPart(part)) return <PastedTextChip key={`pasted-${index}`} text={part.text} />
-                      const mention = textPartMentionBadge(part)
-                      if (mention) return <ComposerBadgeChip key={`mention-${index}`} badge={mention} />
+                      const chip = renderSentTokenChip(part, `chip-${index}`)
+                      if (chip) return chip
                       if (part.type === "text") {
                         return (
                           <span key={`text-${index}`} className="whitespace-pre-wrap">
@@ -1082,7 +1077,7 @@ const UserMessage = React.memo(
                           size="icon"
                           aria-label="Edit message"
                           disabled={readOnly}
-                          onClick={() => onEditUserMessage(message.id, messageText)}
+                          onClick={editMessage}
                         >
                           <Pencil />
                         </Button>
@@ -1224,10 +1219,12 @@ const LoadingMessage = React.memo(({ elapsedSeconds, starting, backgroundShells 
           >
             <span aria-hidden="true"> · </span>
             <span className="sr-only">{t("session.reply_model_live_prefix")}</span>
-            <span className="inline-flex items-center gap-1 align-[-2px]">
-              {model.providerId ? <span aria-hidden="true" className="flex size-3 shrink-0 items-center justify-center"><ProviderIcon providerId={model.providerId} size={12} /></span> : null}
-              <span>{model.label}</span>
-            </span>
+            {/* The name is plain text on the line's own baseline, level with
+                "Working"; only the logo is nudged, to sit centered on the
+                capitals. Boxing the pair took its baseline from the logo: the
+                name dropped a pixel and the line grew once the model was known. */}
+            {model.providerId ? <span aria-hidden="true" data-working-model-logo="" className="mr-1 inline-flex size-3 items-center justify-center align-[-0.125em]"><ProviderIcon providerId={model.providerId} size={12} /></span> : null}
+            {model.label}
           </span>
         ) : null}
       </div>
@@ -1397,56 +1394,6 @@ function getRenderableMessage(message: UIMessage) {
 }
 
 /**
- * Running steps only ever grow. When a finished step folds its live detail
- * before the next step's row arrives, the area briefly got shorter and the
- * chat jumped; holding the tallest height seen during the run keeps it still.
- * The hold ends when the turn folds or the App panel replaces these steps.
- */
-function LiveSteps({ children, active }: { children: React.ReactNode; active: boolean }) {
-  const ref = React.useRef<HTMLDivElement>(null)
-  React.useLayoutEffect(() => {
-    const element = ref.current
-    if (!element) return
-    // The hold only protects a running turn from the engine's own shrinks.
-    // A finished turn, or a group the person collapsed, may get shorter.
-    if (!active || typeof ResizeObserver === "undefined") {
-      element.style.minHeight = ""
-      return
-    }
-    let tallest = 0
-    const hold = () => {
-      element.style.minHeight = ""
-      const height = element.getBoundingClientRect().height
-      if (height > tallest) tallest = height
-      element.style.minHeight = `${tallest}px`
-    }
-    const release = () => {
-      tallest = 0
-      element.style.minHeight = ""
-    }
-    hold()
-    const observer = new ResizeObserver(hold)
-    for (const child of element.children) observer.observe(child)
-    const mutations = new MutationObserver(() => {
-      observer.disconnect()
-      for (const child of element.children) observer.observe(child)
-      hold()
-    })
-    mutations.observe(element, { childList: true })
-    element.addEventListener("pointerdown", release)
-    element.addEventListener("keydown", release)
-    return () => {
-      observer.disconnect()
-      mutations.disconnect()
-      element.removeEventListener("pointerdown", release)
-      element.removeEventListener("keydown", release)
-      element.style.minHeight = ""
-    }
-  }, [active])
-  return <div ref={ref} data-live-steps="" className="flex flex-col gap-2">{children}</div>
-}
-
-/**
  * steadyLiveTurn: while a turn runs, the chat never gets shorter. When the
  * live turn shrinks (a step folds its detail before the next row arrives) the
  * room it gave up moves here, to the very end of the list, below the Working
@@ -1455,6 +1402,11 @@ function LiveSteps({ children, active }: { children: React.ReactNode; active: bo
  * Measured from the last turn's top, so history placeholders swapping above
  * do not count. A shrink the person causes (collapsing a row) is not held.
  * Released when the turn ends, where the steps fold anyway.
+ *
+ * The reserve never empties the screen. A message the person sends starts a
+ * new last group with nothing held below it: inheriting the earlier turn's
+ * room pushed the new message up out of sight over blank space. And at most
+ * half the view is held, so the turn's latest row always stays on screen.
  */
 function LiveTurnReserve({ active }: { active: boolean }) {
   const ref = React.useRef<HTMLDivElement>(null)
@@ -1464,7 +1416,7 @@ function LiveTurnReserve({ active }: { active: boolean }) {
     if (!spacer || !list) return
     spacer.style.height = ""
     if (!active || typeof ResizeObserver === "undefined") return
-    let anchor: Element | null = null
+    let anchor: string | null = null
     let tallest = 0
     let releaseUntil = 0
     const measure = () => {
@@ -1474,13 +1426,17 @@ function LiveTurnReserve({ active }: { active: boolean }) {
       if (!last || last.hasAttribute("data-thread-placeholder")) return
       const box = spacer.getBoundingClientRect()
       const span = box.top - last.getBoundingClientRect().top
-      // A new last group (a follow-up mid-run) keeps the room already reserved.
-      if (last !== anchor) {
-        tallest = anchor ? span + box.height : span
-        anchor = last
+      // A new last group (a message just sent) starts with nothing held below
+      // it, so it lands at the bottom instead of rising over blank space. The
+      // same group remounting keeps its room.
+      const group = last.getAttribute("data-thread-group")
+      if (group !== anchor) {
+        tallest = span
+        anchor = group
       }
       tallest = performance.now() < releaseUntil ? span : Math.max(tallest, span)
-      const reserve = Math.max(0, tallest - span)
+      const view = list.closest("[data-thread-scroll]")?.clientHeight || window.innerHeight
+      const reserve = Math.min(Math.max(0, tallest - span), view / 2)
       if (Math.abs(reserve - box.height) > 0.5) spacer.style.height = reserve > 0 ? `${reserve}px` : ""
     }
     const release = () => { releaseUntil = performance.now() + 500 }
@@ -1613,11 +1569,19 @@ function MessageGroup({
   const computerHistoryEnabled = useComputerSessionHistoryStore(state => state.enabled)
   const computerHistory = React.useMemo(() => computerHistoryEnabled ? collectComputerSessionHistory(items.map(item => item.message), { thinking: showThinking }) : null, [computerHistoryEnabled, items, showThinking])
   const computerWorking = useComputerSessionHistoryStore(state => Boolean(state.working[sessionId]))
+  const parallelComputer = useComputerSessionHistoryStore(state => state.parallel)
+  // The newest turn's card lists the chat's agents on its computer; a row opens that agent's live view.
+  const crewMembers = useComputerCrew(sessionId, parallelComputer && isLastGroup && isElectronRuntime() && !readOnly)
+  const crew = React.useMemo(() => crewMembers.length ? { members: crewMembers, onOpen: (member: { sessionId: string }) => {
+    const history = useComputerSessionHistoryStore.getState()
+    history.setAgent(sessionId, member.sessionId)
+    history.setWatching(sessionId, true)
+  } } : undefined, [crewMembers, sessionId])
   const savedFileActions = React.useMemo(() => isElectronRuntime() && !readOnly ? desktopSavedFileActions(sessionId) : undefined, [readOnly, sessionId])
   const watchingComputer = useComputerSessionHistoryStore(state => Boolean(state.watching[sessionId]))
   // steadyLiveTurn: a running turn keeps its parts in arrival order (no
-  // steps/answer split until it finishes) and the list reserves room at its end
-  // (LiveTurnReserve) instead of holding the steps area open.
+  // steps/answer split until it finishes) and reserves room only at the list's
+  // end (LiveTurnReserve). With the flag off, neither area reserves height.
   const steadyLiveTurn = useSteadyLiveTurnStore(state => state.enabled)
   // The skill this turn produced stays in view as its result, even when the
   // steps fold; later updates and shares change this card, not add another.
@@ -1844,11 +1808,11 @@ function MessageGroup({
             </div>
           </CompletedStepRun>
         ) : (
-          <LiveSteps active={isLiveGroup && !panelLive && !steadyLiveTurn}>
-            {/* The App panel replaces ordinary steps. Release their held height
-                as they fold away, otherwise an empty rail pushes the panel down. */}
+          <div data-live-steps="" className="flex flex-col gap-2">
+            {/* Do not hold folded tool content open. Scroll stabilization belongs
+                to LiveTurnReserve, behind steadyLiveTurn, below the Working line. */}
             {renderItems(stepItems, 0, panelLive)}
-          </LiveSteps>
+          </div>
         )
       ) : null}
       {creationRuns.map(run => <Message key={`creation-${run.id}`} className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10"><AppBuilderStep run={run} startedAt={getMessageCreated(items[0]!.message)} completedAt={getMessageCompleted(lastItem.message)} activity={run === creationRuns.at(-1) ? panelActivity : null} active={creationLive && (run === creationRuns.at(-1) || Boolean(run.preparation && isToolPartInFlight(run.preparation)) || run.builds.some(isToolPartInFlight))} /></Message>)}
@@ -1863,7 +1827,11 @@ function MessageGroup({
         <ComputerSessionHistory key={computerHistory.id} history={computerHistory} active={isLiveGroup && parentActive} renderAction={part => <ToolMessage part={part} />}
           live={computerWorking && isLastGroup ? { watching: watchingComputer, onWatch: watching => useComputerSessionHistoryStore.getState().setWatching(sessionId, watching) } : undefined}
           fileActions={savedFileActions}
-          turnEndedAt={isLiveGroup && parentActive ? null : getMessageCompleted(lastItem.message)} />
+          turnEndedAt={isLiveGroup && parentActive ? null : getMessageCompleted(lastItem.message)}
+          turnStartedAt={parallelComputer ? getMessageCreated(items[0]!.message) ?? null : null}
+          crew={crew} />
+      </Message> : crew ? <Message className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
+        <ComputerCrewCard members={crew.members} onOpen={crew.onOpen} />
       </Message> : null}
       {groupSkillCards.length > 0 ? (
         <div data-created-skills="" className="mx-auto mt-1 flex w-full max-w-3xl flex-col gap-2 px-2 md:px-10">

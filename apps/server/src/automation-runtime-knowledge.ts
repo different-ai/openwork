@@ -19,7 +19,7 @@ export function automationRuntimeKnowledge(runtimeProvider = process.env.DEN_RUN
   }
   return [
     ...shared,
-    "This chat is running in OpenWork Desktop. For new recurring work, use openwork_execute id automation.propose so the person can review and create it in the app. Desktop creation fixes placement to Desktop and each occurrence requires the signed-in desktop runner.",
-    "Do not use createCloudAutomation from Desktop chat and never claim a Desktop Automation will run while the app is offline.",
+    "This chat is running in OpenWork Desktop. For new recurring work, use openwork_execute id automation.propose so the person can review and create it in the app. The card lets them choose where it runs when both are available: Desktop (each occurrence requires the signed-in desktop runner) or Cloud (headless in OpenWork Cloud, runs while this computer is off).",
+    "When the person asks for Cloud, or for work that must run while their computer is off, pass executionTarget \"cloud\" in the proposal; calendar schedules always need Cloud. Do not tell them Desktop chat can only make Desktop Automations. Still propose rather than calling createCloudAutomation directly from Desktop chat, and never claim a Desktop Automation will run while the app is offline.",
   ].map((line) => `- ${line}`).join("\n");
 }

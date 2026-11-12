@@ -14,7 +14,9 @@ import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider"
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { filterEntitledModelOptions } from "../../connections/provider-auth/provider-policy";
 import { filterCloudManagedModelOptions } from "../../connections/provider-auth/assigned-model-options";
+import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
+import { isActiveWorkSessionStatus, isNeedsAttentionSessionStatus } from "../sidebar/utils";
 import { useSessionModelStore } from "../surface/session-model-store";
 import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../sidebar/use-session-archive";
 import { useSessionActivityStore } from "../status/session-activity-store";
@@ -36,12 +38,15 @@ type UseSessionControlActionsInput = {
   openworkClient: OpenworkServerClient | null;
   opencodeClient: ReturnType<typeof createClient> | null;
   archiveDisabledReason?: string;
+  /** The sidebar's session status, including background work and pending requests. */
+  sessionStatusById?: Readonly<Record<string, string>>;
   endpointForWorkspace: (workspace: SessionControlWorkspace | null | undefined) => ResolvedWorkspaceEndpoint | null;
   navigateToSession: (sessionId: string) => void;
   navigateToSessionRoot: () => void;
   createTaskInWorkspace: (workspaceId: string) => Promise<string | null> | string | null;
   openModelPicker: () => void;
   refreshRouteState: () => Promise<unknown> | unknown;
+  reloadWorkspaceSessions: (workspaceId: string) => Promise<void>;
   archiveSession: (sessionId: string, archived: boolean, options?: ArchiveSessionOptions) => Promise<ArchiveSessionOutcome>;
 };
 
@@ -82,10 +87,11 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     openworkClient,
     opencodeClient,
     archiveDisabledReason,
+    sessionStatusById,
     refreshRouteState,
+    reloadWorkspaceSessions,
     selectedSessionId,
     selectedWorkspaceId,
-    selectedWorkspaceRoot,
     sessionsByWorkspaceId,
     workspaces,
     archiveSession,
@@ -186,7 +192,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
         },
       });
     },
-  }), [endpointForWorkspace, pinnedIds, sessionsByWorkspaceId, workspaceModels, workspaces]);
+  }), [endpointForWorkspace, pinnedIds, sessionStatusById, sessionsByWorkspaceId, workspaceModels, workspaces]);
   useControlAction(listSessionsControlAction);
 
   const openSessionControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -236,24 +242,25 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       { name: "sessionId", type: "string", required: true, description: "Session ID from session.list_sessions." },
       { name: "title", type: "string", required: true, description: "New session title." },
     ],
-    disabled: !opencodeClient,
     execute: async (args) => {
       const sessionId = stringArg(args, "sessionId");
       const title = stringArg(args, "title");
       if (!sessionId) return { ok: false, error: "sessionId is required" };
       if (!title) return { ok: false, error: "title is required" };
-      if (!opencodeClient) return { ok: false, error: "OpenCode client is not connected" };
 
       const targetWorkspace = findSessionWorkspace(workspaces, sessionsByWorkspaceId, sessionId);
-      await opencodeClient.session.update({
-        sessionID: sessionId,
-        title,
-        directory: targetWorkspace?.path || selectedWorkspaceRoot || undefined,
-      });
-      await refreshRouteState();
+      if (!targetWorkspace) return { ok: false, error: "Session was not found in the current session list" };
+      const endpoint = endpointForWorkspace(targetWorkspace);
+      if (!endpoint) return { ok: false, error: "Workspace runtime is not connected" };
+      const engine = await routeSessionEndpoint(endpoint);
+      const client = isOpencodeV2BaseUrl(engine.opencodeBaseUrl)
+        ? createClientV2(engine.opencodeBaseUrl, targetWorkspace.path, { token: engine.token })
+        : createClient(engine.opencodeBaseUrl, targetWorkspace.path, { mode: "openwork", token: engine.token });
+      unwrap(await client.session.update({ sessionID: sessionId, title, directory: targetWorkspace.path }));
+      await reloadWorkspaceSessions(targetWorkspace.id);
       return { ok: true, sessionId, title };
     },
-  }), [opencodeClient, refreshRouteState, selectedWorkspaceRoot, sessionsByWorkspaceId, workspaces]);
+  }), [endpointForWorkspace, reloadWorkspaceSessions, sessionsByWorkspaceId, workspaces]);
   useControlAction(renameSessionControlAction);
 
   const deleteSessionControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -411,18 +418,24 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const pinControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.pin",
     label: "Pin or unpin a session",
-    description: "Toggle pin on a session. Pinned sessions appear in a global section at the top of the sidebar.",
+    description: "Toggle pin on a loaded, unarchived session. Pinned sessions appear at the top of the sidebar. An existing pin can always be removed, including a stale pin.",
     sideEffect: "mutation",
     requiresArgs: true,
     args: [{ name: "sessionId", type: "string", required: true, description: "Session ID to pin/unpin." }],
     execute: (args) => {
       const sessionId = stringArg(args, "sessionId");
       if (!sessionId) return { ok: false, error: "sessionId is required" };
+      if (!store.getState().pinnedIds.includes(sessionId)) {
+        const workspace = findSessionWorkspace(workspaces, sessionsByWorkspaceId, sessionId);
+        const session = workspace && sessionsByWorkspaceId[workspace.id]?.find(session => session.id === sessionId);
+        if (!session) return { ok: false, error: "Session was not found in the current session list" };
+        if ((session.time?.archived ?? 0) > 0) return { ok: false, error: "Archived sessions cannot be pinned. Unarchive the session first." };
+      }
       store.getState().togglePin(sessionId);
       const pinned = store.getState().pinnedIds.includes(sessionId);
       return { ok: true, sessionId, pinned };
     },
-  }), []);
+  }), [sessionsByWorkspaceId, workspaces]);
   useControlAction(pinControlAction);
 
   const archiveControlAction = useMemo<OpenworkControlAction>(() => ({
