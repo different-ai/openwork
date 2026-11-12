@@ -76,7 +76,7 @@ export async function subscribe(thread: EventThread, originalScopes: readonly st
       return same
     }
     if (existing.length >= 10) throw new EventAccessError("This chat already has ten active subscriptions. Unsubscribe one first.")
-    const value = { id, organizationId: thread.organizationId, userId: thread.userId, memberId: thread.memberId, sessionId: thread.sessionId, connectionId: normalizeDenTypeId("externalMcpConnection", input.connectionId), name: input.name, arguments: argumentsJson, instruction: input.instruction, secret: `whsec_${randomBytes(32).toString("base64")}`, callbackUrl: `${publicOrigin()}/v1/mcp-events/webhooks/${id}`, remoteId: null, model: thread.model, scopes, status: "pending", expiresAt, createdAt: now }
+    const value = { id, organizationId: thread.organizationId, userId: thread.userId, memberId: thread.memberId, sessionId: thread.sessionId, connectionId: normalizeDenTypeId("externalMcpConnection", input.connectionId), name: input.name, arguments: argumentsJson, instruction: input.instruction, secret: `whsec_${randomBytes(32).toString("base64")}`, callbackUrl: `${publicOrigin()}/v1/mcp-events/webhooks/${id}`, remoteId: null, cursor: null, incomplete: false, model: thread.model, scopes, status: "pending", expiresAt, createdAt: now }
     await tx.insert(Subscription).values(value)
     return value
   })
