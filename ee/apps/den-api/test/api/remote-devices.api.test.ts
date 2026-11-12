@@ -99,6 +99,7 @@ test("a desktop reports itself, and what changes afterwards is recorded once", a
   // A signed-in desktop would only report itself back, so it is disconnected, not removed.
   assert.deepEqual([listed.canRemove, listed.canDisconnect, listed.disconnectedAt], [false, true, null])
   assert.equal(listed.computerId, null, "a desktop without a runner takes no remote tasks")
+  assert.equal(listed.remoteAccess, null, "so there is nothing other devices may do there")
 
   // The same report again changes nothing and records nothing.
   assert.equal((await asMember("PUT", "/v1/remote-devices/this-computer", desktopReport())).status, 200)
@@ -151,6 +152,8 @@ test("the desktop and its runner are one computer, and a desktop that only regis
   assert.match(macbook?.computerId ?? "", /^rnr_[a-f0-9]{64}$/)
   const studio = devices.find((device) => device.id !== macbook?.id)
   assert.deepEqual([studio?.kind, studio?.label, studio?.availability, studio?.appVersion, studio?.computerId], ["desktop", "Mac", "online", "1.2.0", null])
+  // The desktop that takes remote tasks says what other devices may do there; the one that takes none says nothing.
+  assert.deepEqual([macbook?.remoteAccess, studio?.remoteAccess], [{ effective: "created", chosen: false, reason: null }, null])
   // Listing again copies nothing twice.
   assert.equal(devicesOf(await asMember("GET", "/v1/remote-devices")).length, 2)
 
@@ -336,6 +339,7 @@ test("Workbot lists the same computers and reports what happens to its own", asy
   assert.deepEqual(before.map((device) => device.id).sort(), devicesOf(await asMember("GET", "/v1/remote-devices")).map((device) => device.id).sort())
   assert.ok(before.filter((device) => device.access === "shared").every((device) => !device.canRename && !device.canRemove), "Workbot never manages shared computers")
   assert.ok(before.every((device) => device.disconnectedAt === null && typeof device.canDisconnect === "boolean"), "the same fields as the member's own list")
+  assert.deepEqual(before.map((device) => [device.id, device.remoteAccess]).sort(), devicesOf(await asMember("GET", "/v1/remote-devices")).map((device) => [device.id, device.remoteAccess]).sort())
 
   assert.equal((await report({ event: "viewer_opened", view: "computer" })).status, 204)
   const computer = devicesOf(await den.request(token, "GET", "/v1/workbot/devices")).find((device) => device.provider === "workbot")
@@ -436,6 +440,8 @@ test("owners and regular org admins inspect all members and shared computers, ne
     const macbook = page.devices.find((device) => device.label === "Milo's MacBook Pro")!
     assert.ok(macbook)
     assert.deepEqual([macbook.owner?.email, macbook.shared, macbook.availability], [member.email, false, "online"])
+    assert.deepEqual(macbook.remoteAccess, { effective: "created", chosen: false, reason: null })
+    assert.ok(page.devices.filter((device) => device.kind === "vm" || device.computerId === null).every((device) => device.remoteAccess === null), "only a desktop that takes tasks says anything about remote access")
     // Both hold Disconnect team computers: a live desktop is disconnected, never just removed.
     assert.deepEqual([macbook.owner?.former, macbook.disconnectedAt, macbook.canDisconnect, macbook.canRemove], [false, null, true, false])
     const sandbox = page.devices.find((device) => device.label === "Mac sandbox")

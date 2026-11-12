@@ -56,7 +56,6 @@ export type FeatureIntroKey =
   | "web"
   | "computers"
   | "my-computers"
-  | "my-sessions"
   | "desktop-policies"
   | "deployments"
   | "org-settings"

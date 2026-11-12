@@ -8,7 +8,6 @@ import {
   LibraryBig,
   LockKeyhole,
   MessageCircle,
-  MessagesSquare,
   MonitorSmartphone,
   ScrollText,
   Server,
@@ -39,7 +38,6 @@ import {
   getMcpConnectionsRoute,
   getMembersRoute,
   getMyComputersRoute,
-  getMySessionsRoute,
   getOrgSettingsRoute,
   getPermissionsRoute,
   getPluginsRoute,
@@ -102,8 +100,6 @@ export type BuildDashboardNavSectionsInput = {
   desktopPolicyScreenRemoved?: boolean;
   /** My Computers for every member and the team inventory for admins; remoteDevices is off by default. */
   remoteDevices?: boolean;
-  /** My Sessions for every member; remoteSessionAccess is off by default. */
-  remoteSessionAccess?: boolean;
   /** Workbot's settings are on Members › Teams › Everyone for this viewer, so Manage has no Workbot entry. */
   workbotSettingsInTeams?: boolean;
   /** Explicit server capability, independent of organization role permissions. */
@@ -129,7 +125,6 @@ export function buildDashboardNavSections({
   managedDeployments = false,
   desktopPolicyScreenRemoved = false,
   remoteDevices = false,
-  remoteSessionAccess = false,
   workbotSettingsInTeams = false,
   canManageDeploymentServices = false,
   workbotEntry = { kind: "open" },
@@ -163,10 +158,6 @@ export function buildDashboardNavSections({
     // Every member sees their own and shared computers; the team-wide list is Manage › Computers.
     ...(remoteDevices && orgSlug
       ? [{ href: getMyComputersRoute(orgSlug), label: "My Computers", icon: MonitorSmartphone, testId: "dashboard-nav-my-computers" }]
-      : []),
-    // The member's own sessions on those computers; what each computer lets other devices reach is chosen there.
-    ...(remoteSessionAccess && orgSlug
-      ? [{ href: getMySessionsRoute(orgSlug), label: "My Sessions", icon: MessagesSquare, testId: "dashboard-nav-my-sessions" }]
       : []),
     ...(showWeb
       ? [{ href: orgSlug ? getWebRoute(orgSlug) : "#", label: "OpenWork Web", icon: Globe }]
@@ -270,7 +261,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Billing: ["plan", "invoice", "payment"],
   Config: ["export", "import", "backup", "json", "copy settings", "change requests", "revert"],
   "Bring Your Own Keys (Legacy)": ["llm", "provider", "byok", "api key"],
-  Computers: ["devices", "team computers", "desktop", "virtual computers", "inventory", "owners"],
+  Computers: ["devices", "team computers", "desktop", "virtual computers", "inventory", "owners", "remote access", "other devices"],
   Connectors: ["mcp", "integrations", "servers", "connect"],
   "Desktop policies": ["policy", "mdm", "lock", "desktop"],
   Deployments: ["aws", "self-hosted", "byoc", "install", "health", "status"],
@@ -282,8 +273,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Models: ["llm", "provider", "byok", "api key"],
   Permissions: ["access", "roles", "teams", "admin", "rbac"],
   "My Automations": ["schedule", "recurring", "tasks"],
-  "My Computers": ["devices", "my devices", "laptop", "desktop", "virtual computers", "workbot computer"],
-  "My Sessions": ["tasks", "remote sessions", "follow up", "answer", "permission", "question", "needs you"],
+  "My Computers": ["devices", "my devices", "laptop", "desktop", "virtual computers", "workbot computer", "remote access", "other devices", "tasks"],
   "My bot": ["agent", "my agent", "morning brief", "meeting prep", "proactive", "notifications"],
   "My Library": ["skills", "plugins", "connections"],
   "OpenWork Models": ["llm", "provider", "managed", "inference"],

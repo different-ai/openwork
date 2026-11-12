@@ -3139,8 +3139,9 @@ ipcMain.handle("openwork:shell:relaunch", async () => {
 });
 ipcMain.handle("openwork:system:architecture", async () => resolveArchitectureInfo());
 
-// Which of this computer's sessions its owner's other devices can reach
-// (Settings > Devices). Only the app's own page may read or change it.
+// What its owner's other devices can do on this computer: nothing, start
+// tasks, or also open sessions started here (Settings > Devices). The choice
+// is kept per organization. Only the app's own page may read or change it.
 function assertSessionAccessSender(event) {
   assertDesktopActivation();
   if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
@@ -3153,7 +3154,7 @@ ipcMain.handle("openwork:remote-session-access:get", async (event) => {
 });
 ipcMain.handle("openwork:remote-session-access:set", async (event, mode) => {
   assertSessionAccessSender(event);
-  if (mode !== "created" && mode !== "all") throw new Error("Choose which sessions other devices can reach.");
+  if (mode !== "off" && mode !== "created" && mode !== "all") throw new Error("Choose what other devices can do on this computer.");
   return desktopAutomationRunner.setSessionAccess(mode);
 });
 

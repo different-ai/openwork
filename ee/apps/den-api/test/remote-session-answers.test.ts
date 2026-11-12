@@ -44,6 +44,8 @@ function desktopDeps(options: { answerCapable?: boolean; accessCapable?: boolean
     getOpenWorkWebAccess: async () => { throw new Error("A registered desktop answer must not read Web access") },
     resolveRuntime: async () => { throw new Error("A desktop session must never fall back to Cloud") },
     linkDesktopCommand: undefined,
+    // The organization uses no access settings: a computer takes tasks unless its owner said otherwise.
+    sessionAccess: async () => ({ enabled: false, optIn: false, devices: false, ceiling: "created" }),
     commandStore: { ...DEFAULT_REMOTE_SESSION_DEPS.commandStore, findDesktopSession: async (scope) => {
       // Owner-only: the lookup is scoped to the caller, so another member never resolves this session.
       return scope.createdByUserId === userId && scope.sessionId === session.sessionId ? session : null

@@ -15,7 +15,7 @@ import type {
   AutomationListItem,
   AutomationRepository,
 } from "@openwork/automations"
-import { REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY, REMOTE_SESSION_ONLY_RUNNER_CAPABILITY } from "@openwork/types/automations"
+import { REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY, REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY, REMOTE_SESSION_ONLY_RUNNER_CAPABILITY } from "@openwork/types/automations"
 import type {
   Automation,
   AutomationAction,
@@ -90,6 +90,9 @@ export function automationRunnerRowId(input: { organizationId: string; ownerMemb
 export function automationRunnerComputerIds(input: { organizationId: string; ownerMemberId: string; runnerId: string }) {
   return [automationRunnerRowId(input), input.runnerId]
 }
+
+/** What Den keeps of a runner's session report: see remote-sessions/access.ts for what is kept from whom. */
+export type StoredRunnerSessionReport = { access: RemoteSessionAccessMode | null; sessions: RunnerReportedSession[] }
 
 /** Who holds the lease of a run a desktop claimed: its owner and the install's own id. */
 export function automationDesktopLeaseOwner(input: { ownerMemberId: string; runnerId: string }) {
@@ -1059,13 +1062,18 @@ export class DenAutomationRepository implements AutomationRepository {
     const ownerMemberId = normalizeMemberId(input.ownerMemberId)
     const id = automationRunnerRowId(input)
     const signIn = { install_id: input.runnerId, auth_session_id: input.authSessionId ? normalizeDenTypeId("session", input.authSessionId) : null }
+    const existing = await db.$primary.select({
+      organizationId: AutomationRunnerTable.organization_id, ownerMemberId: AutomationRunnerTable.owner_member_id, capabilities: AutomationRunnerTable.capabilities,
+    }).from(AutomationRunnerTable).where(eq(AutomationRunnerTable.id, id)).limit(1)
     // An app that does not understand session access only ever allows sessions
     // started remotely: whatever a newer app reported from this install is dropped.
-    const sessionReport = input.capabilities.includes(REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY)
+    // An app that just gained the owner's choice has not said yet whether they made one:
+    // what an earlier app reported by itself must not pass for it.
+    const choice = input.capabilities.includes(REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY)
+    const gainedChoice = choice && existing[0]?.capabilities?.includes(REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY) !== true
+    const sessionReport = (input.capabilities.includes(REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY) || choice) && !gainedChoice
       ? {}
       : { session_access: null, sessions: null, sessions_updated_at: null }
-    const existing = await db.$primary.select({ organizationId: AutomationRunnerTable.organization_id, ownerMemberId: AutomationRunnerTable.owner_member_id })
-      .from(AutomationRunnerTable).where(eq(AutomationRunnerTable.id, id)).limit(1)
     // The row id hashes its own scope, so this only trips on a row that took
     // the id under the old install-id keying for someone else.
     if (existing[0] && (
@@ -1181,15 +1189,14 @@ export class DenAutomationRepository implements AutomationRepository {
 
   /**
    * Stores what the runner says about its sessions: the access in force there
-   * and, while that is `all`, the sessions it has. Returns false when the
-   * runner has no row, so it must register again first.
+   * (null from an app whose owner can choose and has not) and, while that is
+   * `all`, the sessions it has. Returns false when the runner has no row, so
+   * it must register again first.
    */
-  async saveDesktopRunnerSessions(input: {
+  async saveDesktopRunnerSessions(input: StoredRunnerSessionReport & {
     organizationId: string
     ownerMemberId: string
     runnerId: string
-    access: RemoteSessionAccessMode
-    sessions: RunnerReportedSession[]
     now: number
   }): Promise<boolean> {
     const now = new Date(input.now)

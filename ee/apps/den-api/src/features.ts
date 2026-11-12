@@ -1,6 +1,7 @@
 import {
   readFeatures,
   readOrganizationFeatureOverridesForMany,
+  readOrganizationMemberFeatureOverrides,
   setFeatureRollout,
   setMemberFeatureOverrides,
   setOrganizationFeatureOverrides,
@@ -67,6 +68,27 @@ export async function getOrganizationFeatures(organizationId: string, options: R
 
 export async function organizationFeatureEnabled(organizationId: string, key: FeatureKey, options: ReadOptions = {}): Promise<boolean> {
   return (await getOrganizationFeatures(organizationId, options))[key]
+}
+
+/**
+ * Effective features for each active member of one organization who has
+ * overrides of their own, and for everyone else: one cached read and one
+ * batched read, however many members are asked about.
+ */
+export async function getOrganizationFeaturesByMember(organizationId: string): Promise<{ organization: FeatureMap; forMember(memberId: string): FeatureMap }> {
+  const id = normalizeDenTypeId("organization", organizationId)
+  const [{ rollouts, overrides }, memberOverrides] = await Promise.all([
+    cache.features.state(id),
+    readOrganizationMemberFeatureOverrides(db, id),
+  ])
+  const organization = resolveFeatures({ ...env.features, rollouts, overrides })
+  return {
+    organization,
+    forMember(memberId) {
+      const own = memberOverrides.get(normalizeDenTypeId("member", memberId))
+      return own ? resolveFeatures({ ...env.features, rollouts, overrides, memberOverrides: own }) : organization
+    },
+  }
 }
 
 /**
@@ -139,6 +161,22 @@ export function requireFeature(key: FeatureKey): MiddlewareHandler<{ Variables: 
     if (!payload.features[key]) return c.json({ error: "feature_disabled", feature: key }, 404)
     // A request through a gated route is a use of the feature, for /admin.
     markFeaturesUsed({ organizationId: payload.organization.id, memberId: payload.currentMember.id, keys: [key] })
+    await next()
+  }
+}
+
+/**
+ * The same guard for a route that belongs to several features: it exists while
+ * any of them is on, and answers 404 `feature_disabled` naming the first
+ * otherwise. Every one that is on counts as used.
+ */
+export function requireAnyFeature(keys: readonly [FeatureKey, ...FeatureKey[]]): MiddlewareHandler<{ Variables: Partial<OrganizationContextVariables> }> {
+  return async (c, next) => {
+    const payload = c.get("organizationContext")
+    if (!payload) return c.json({ error: "organization_not_found" }, 404)
+    const used = keys.filter((key) => payload.features[key])
+    if (used.length === 0) return c.json({ error: "feature_disabled", feature: keys[0] }, 404)
+    markFeaturesUsed({ organizationId: payload.organization.id, memberId: payload.currentMember.id, keys: used })
     await next()
   }
 }

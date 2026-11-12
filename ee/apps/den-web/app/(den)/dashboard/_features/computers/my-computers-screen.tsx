@@ -4,9 +4,7 @@ import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { LockKeyhole } from "lucide-react";
-import type { RemoteSessionAccessMode } from "@openwork/types/automations";
-import { remoteDeviceTypeLabel, type RemoteDevice, type RemoteDeviceEvent } from "@openwork/types/den/remote-devices";
-import type { MemberSessionComputer } from "@openwork/types/den/remote-sessions";
+import { remoteDeviceTypeLabel, type RemoteDevice, type RemoteDeviceAccess, type RemoteDeviceEvent } from "@openwork/types/den/remote-devices";
 import { DenButton } from "../../../_components/ui/button";
 import { DenPageHeader } from "../../../_components/ui/page-header";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
@@ -14,14 +12,13 @@ import { getComputersRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../.
 import { useDenToast } from "../../_components/den-toast";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { FeatureIntroGate } from "../feature-intros/feature-intro-gate";
-import { useMySessionComputers } from "../sessions/sessions-data";
-import { ACCESS_LABELS, computerAccessNote } from "../sessions/sessions-model";
 import { AddComputerDialog, ComputerMenu, type ComputerActionSet } from "./computer-action-controls";
 import { disconnectOwnConfirm, disconnectedLine, myComputerActions, removeConfirm } from "./computer-actions";
 import { StatusDot, TimeAgo, focusRing, hairline, secondaryText } from "./computer-parts";
-import { LANE, ListRow, RowLaneLabel, RowList, RowListHeader, RowListSkeleton, StatusLane, TimeLane, VersionLane, computerIcon } from "./computer-rows";
+import { LANE, ListRow, RemoteAccessBelow, RemoteAccessLane, RowLaneLabel, RowList, RowListHeader, RowListSkeleton, StatusLane, TimeLane, VersionLane, computerIcon } from "./computer-rows";
 import { SHARED_COMPUTER_LABEL, computerStatus, computersStateLine, duplicateNameNotes, type DeviceTone } from "./computers-format";
 import { ComputersPageHeader, SecondLine } from "./computers-screen";
+import { REMOTE_ACCESS_LABEL, remoteAccessChangeHint, remoteAccessNote, remoteAccessValue } from "./remote-access";
 import { disconnectMyComputer, myComputersQueryKey, removeMyComputer, renameMyComputer, useMyComputerActivity, useMyComputers } from "./my-computers-data";
 
 const EVENT_TONE: Record<RemoteDeviceEvent["level"], DeviceTone> = { info: "neutral", warning: "warning", error: "danger" };
@@ -40,15 +37,20 @@ export function MyComputerActivity({ events, now }: { events: readonly RemoteDev
 }
 
 /**
- * What this account's other devices can reach on one computer, as My Sessions
- * says it, with the same note about why and where to change it. Read-only.
+ * An open row's remote access: what other devices can do on this computer,
+ * why when something other than the owner's choice decides it, and where to
+ * change it. Read-only: the owner chooses on the computer itself. Nothing
+ * for a computer that takes no tasks this way.
  */
-export function MyComputerAccessLine({ computer, ceiling }: { computer: Pick<MemberSessionComputer, "supportsAccess" | "access" | "effectiveAccess">; ceiling: RemoteSessionAccessMode }) {
-  const note = computerAccessNote(computer, ceiling);
-  return <p className="mb-3 max-w-2xl text-[13px]" data-testid="my-computer-access">
-    <span className={secondaryText}>Other devices can reach: </span>{ACCESS_LABELS[computer.effectiveAccess]}
-    {note ? <span className={`block text-[12px] leading-4 ${secondaryText}`}>{note}</span> : null}
-  </p>;
+export function MyComputerRemoteAccess({ access }: { access: RemoteDeviceAccess | null }) {
+  if (!access) return null;
+  const note = remoteAccessNote(access, "owner");
+  const hint = remoteAccessChangeHint(access);
+  return <div className="mb-3 max-w-2xl text-[13px]" data-testid="my-computer-access" data-remote-access={access.effective}>
+    <p><span className={secondaryText}>{REMOTE_ACCESS_LABEL}: </span>{remoteAccessValue(access)}</p>
+    {note ? <p className={`text-[12px] leading-4 ${secondaryText}`}>{note}</p> : null}
+    {hint ? <p className={`text-[12px] leading-4 ${secondaryText}`}>{hint}</p> : null}
+  </div>;
 }
 
 /** How many of a member's computers answer right now. A disconnected one never does. */
@@ -67,8 +69,11 @@ export function MyComputerRows({ devices, now, openId, onToggle, action, detail 
   detail: (device: RemoteDevice) => ReactNode;
 }) {
   const notes = duplicateNameNotes(devices, (device) => device.access, now);
+  // The lane is there once any computer says what other devices can do on it; an older API says it for none.
+  const remoteAccess = devices.some((device) => device.remoteAccess);
   return <RowList label="My computers" header={<RowListHeader lead="Computer" menu chevron>
     <RowLaneLabel lane={LANE.status}>Status</RowLaneLabel>
+    {remoteAccess ? <RowLaneLabel lane={LANE.remoteAccess}>{REMOTE_ACCESS_LABEL}</RowLaneLabel> : null}
     <RowLaneLabel lane={LANE.time}>Last contact</RowLaneLabel>
     <RowLaneLabel lane={LANE.version}>App version</RowLaneLabel>
   </RowListHeader>}>
@@ -79,9 +84,11 @@ export function MyComputerRows({ devices, now, openId, onToggle, action, detail 
         toggle={{ expanded: open, controls: `my-computer-activity-${device.id}`, onToggle: () => onToggle(device.id) }}
         lanes={<>
           <StatusLane {...computerStatus(device)} />
+          {remoteAccess ? <RemoteAccessLane access={device.remoteAccess} /> : null}
           <TimeLane lane={LANE.time} iso={device.lastSeenAt} now={now} />
           <VersionLane lane={LANE.version} version={device.appVersion} />
         </>}
+        below={<RemoteAccessBelow access={device.remoteAccess} />}
         action={action(device) ?? null}>
         {open ? detail(device) : null}
       </ListRow>;
@@ -96,12 +103,10 @@ function Activity({ orgId, memberId, deviceId }: { orgId: string; memberId: stri
   return <MyComputerActivity events={activity.data} now={Date.now()} />;
 }
 
-/** An open row: what other devices can reach there, when My Sessions lists this computer, then its recent activity. */
-function OpenComputer({ orgId, memberId, device, sessionAccess }: { orgId: string; memberId: string; device: RemoteDevice; sessionAccess: boolean }) {
-  const sessions = useMySessionComputers(orgId, memberId, sessionAccess && Boolean(device.computerId));
-  const computer = device.computerId ? sessions.data?.computers.find((entry) => entry.computerId === device.computerId) : undefined;
+/** An open row: what other devices can do on this computer, then its recent activity. */
+function OpenComputer({ orgId, memberId, device }: { orgId: string; memberId: string; device: RemoteDevice }) {
   return <>
-    {computer && sessions.data ? <MyComputerAccessLine computer={computer} ceiling={sessions.data.ceiling} /> : null}
+    <MyComputerRemoteAccess access={device.remoteAccess} />
     <Activity orgId={orgId} memberId={memberId} deviceId={device.id} />
   </>;
 }
@@ -129,7 +134,6 @@ export function MyComputersScreen() {
     </p>
   </section>;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
-  const sessionAccess = orgFeatureEnabled(orgContext, "remoteSessionAccess");
   const devices = query.data ?? [];
   const now = Date.now();
   const refresh = () => queryClient.invalidateQueries({ queryKey: myComputersQueryKey(orgId, memberId) });
@@ -167,7 +171,7 @@ export function MyComputersScreen() {
         {!query.data ? query.isPending ? <RowListSkeleton rows={3} /> : null
           : devices.length ? <MyComputerRows devices={devices} now={now} openId={openId} onToggle={(id) => setOpenId((current) => current === id ? "" : id)}
               action={(device) => <ComputerMenu set={actionsFor(device)} idPrefix="my-computer" id={device.id} />}
-              detail={(device) => <OpenComputer orgId={orgId} memberId={memberId} device={device} sessionAccess={sessionAccess} />} />
+              detail={(device) => <OpenComputer orgId={orgId} memberId={memberId} device={device} />} />
             : <p className={`border-y ${hairline} py-6 text-[13px] ${secondaryText}`}>No computers yet. Sign in to OpenWork on a computer with this organization and it appears here.</p>}
       </div>
       {access.canViewComputers ? <p className={`mt-4 text-[12px] leading-4 ${secondaryText}`}>

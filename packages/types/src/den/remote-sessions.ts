@@ -28,7 +28,7 @@ import {
 export const ORGANIZATION_REMOTE_SESSION_SETTINGS_KEY = "remoteSessions"
 
 export const organizationRemoteSessionSettingsSchema = z.object({
-  /** The widest access a member may choose for their own computers. */
+  /** The widest access a member may choose for their own computers. `off`: nobody's computer takes anything from other devices. */
   access: remoteSessionAccessModeSchema,
 }).meta({ ref: "OrganizationRemoteSessionSettings" })
 export type OrganizationRemoteSessionSettings = z.infer<typeof organizationRemoteSessionSettingsSchema>
@@ -56,7 +56,8 @@ function metadataRecord(metadata: unknown): Record<string, unknown> | null {
 /** Anything missing or unreadable is the narrow default, never the wide one. */
 export function readOrganizationRemoteSessionSettings(metadata: unknown): OrganizationRemoteSessionSettings {
   const stored = metadataRecord(metadata)?.[ORGANIZATION_REMOTE_SESSION_SETTINGS_KEY]
-  const access: RemoteSessionAccessMode = isRecord(stored) && stored.access === "all" ? "all" : "created"
+  const value = isRecord(stored) ? stored.access : undefined
+  const access: RemoteSessionAccessMode = value === "all" || value === "off" ? value : "created"
   return { access }
 }
 
@@ -72,6 +73,10 @@ export const organizationRemoteSessionSettingsResponseSchema = z.object({
   settings: organizationRemoteSessionSettingsSchema,
   /** Whether the caller may change it (organization owners and admins). */
   canEdit: z.boolean(),
+  /** `all` can be chosen: the organization has feature `remoteSessionAccess`. Absent from older servers, where it always could. */
+  allowsAll: z.boolean().default(true),
+  /** A computer whose owner has not chosen takes nothing (feature `remoteTasksOptIn`). Absent from older servers. */
+  optIn: z.boolean().default(false),
 }).meta({ ref: "OrganizationRemoteSessionSettingsResponse" })
 export type OrganizationRemoteSessionSettingsResponse = z.infer<typeof organizationRemoteSessionSettingsResponseSchema>
 
@@ -89,8 +94,14 @@ export const memberSessionComputerSchema = z.object({
   lastSeenAt: timestampSchema.nullable(),
   /** The app on this computer understands session access; older apps only ever allow `created`. */
   supportsAccess: z.boolean(),
-  /** What the owner chose there, as last reported; `created` until it reports. */
+  /**
+   * What applies there before the organization's ceiling: the owner's choice
+   * as last reported, or, until they choose, `off` with the organization's
+   * opt-in and `created` without it.
+   */
   access: remoteSessionAccessModeSchema,
+  /** The owner has chosen on that computer. False: `access` is only the default. Absent from older servers. */
+  chosen: z.boolean().default(true),
   /** The choice capped by the organization's ceiling: what applies right now. */
   effectiveAccess: remoteSessionAccessModeSchema,
   /** When the computer last reported its sessions; null if it never did. */
@@ -140,6 +151,8 @@ export const MEMBER_SESSION_LIST_LIMIT = 200
 export const memberSessionListResponseSchema = z.object({
   /** The organization's ceiling. */
   ceiling: remoteSessionAccessModeSchema,
+  /** A computer whose owner has not chosen takes nothing. Absent from older servers. */
+  optIn: z.boolean().default(false),
   computers: z.array(memberSessionComputerSchema),
   sessions: z.array(memberSessionSchema).max(MEMBER_SESSION_LIST_LIMIT),
 }).meta({ ref: "MemberSessionListResponse" })
@@ -178,3 +191,10 @@ export const REMOTE_SESSION_ATTACH_ERROR_CODES = [
   "session_unavailable",
 ] as const
 export type RemoteSessionAttachErrorCode = (typeof REMOTE_SESSION_ATTACH_ERROR_CODES)[number]
+
+/**
+ * What a caller is told, with HTTP 409 and not retryable, when the computer
+ * takes nothing from other devices: its owner chose `off`, has not chosen yet
+ * under the organization's opt-in, or the organization's ceiling is `off`.
+ */
+export const REMOTE_ACCESS_OFF_ERROR = "remote_access_off"

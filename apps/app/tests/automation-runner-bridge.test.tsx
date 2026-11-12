@@ -125,27 +125,38 @@ async function registerAgainst(input: { automations: boolean; refused: number })
   return { attempts, configurations }
 }
 
-test("the runner registers for session access first", async () => {
+const accessAndChoice = ["remote_session_access_v1", "remote_session_choice_v1"]
+
+test("the runner registers for the owner's choice and session access first, within the capability limit", async () => {
   const withAutomations = await registerAgainst({ automations: true, refused: 0 })
-  expect(withAutomations.attempts).toEqual([[...answerSet, "remote_session_access_v1"]])
+  expect(withAutomations.attempts).toEqual([[...answerSet, ...accessAndChoice]])
+  expect(withAutomations.attempts[0]).toHaveLength(7)
   expect(withAutomations.configurations.at(-1)).toMatchObject({ token: "token-1" })
 })
 
-test("a session-only runner registers for session access first", async () => {
+test("a session-only runner registers for the owner's choice and session access first, within the capability limit", async () => {
   const sessionOnly = await registerAgainst({ automations: false, refused: 0 })
-  expect(sessionOnly.attempts).toEqual([[...sessionOnlySet, "remote_session_answer_v1", "remote_session_access_v1"]])
+  expect(sessionOnly.attempts).toEqual([[...sessionOnlySet, "remote_session_answer_v1", ...accessAndChoice]])
+  expect(sessionOnly.attempts[0]).toHaveLength(7)
   expect(sessionOnly.configurations.at(-1)).toMatchObject({ token: "token-1" })
 })
 
+test("a Den from before the owner's choice still registers the runner for session access", async () => {
+  const before = await registerAgainst({ automations: true, refused: 1 })
+  expect(before.attempts).toEqual([[...answerSet, ...accessAndChoice], [...answerSet, "remote_session_access_v1"]])
+  expect(before.configurations.at(-1)).toMatchObject({ token: "token-2" })
+})
+
 test("a released Den that refuses six capabilities still registers the runner with the sets it accepts today", async () => {
-  const released = await registerAgainst({ automations: true, refused: 1 })
-  expect(released.attempts).toEqual([[...answerSet, "remote_session_access_v1"], answerSet])
-  expect(released.configurations.at(-1)).toMatchObject({ token: "token-2" })
+  const released = await registerAgainst({ automations: true, refused: 2 })
+  expect(released.attempts).toEqual([[...answerSet, ...accessAndChoice], [...answerSet, "remote_session_access_v1"], answerSet])
+  expect(released.configurations.at(-1)).toMatchObject({ token: "token-3" })
 })
 
 test("an older Den steps down through every earlier capability set in order", async () => {
-  const older = await registerAgainst({ automations: true, refused: 5 })
+  const older = await registerAgainst({ automations: true, refused: 6 })
   expect(older.attempts).toEqual([
+    [...answerSet, ...accessAndChoice],
     [...answerSet, "remote_session_access_v1"],
     answerSet,
     answerSet.slice(0, 4),
@@ -153,17 +164,18 @@ test("an older Den steps down through every earlier capability set in order", as
     answerSet.slice(0, 2),
     answerSet.slice(0, 1),
   ])
-  expect(older.configurations.at(-1)).toMatchObject({ token: "token-6" })
+  expect(older.configurations.at(-1)).toMatchObject({ token: "token-7" })
 })
 
 test("a released Den registers a session-only runner with the sets it accepts today", async () => {
-  const released = await registerAgainst({ automations: false, refused: 2 })
+  const released = await registerAgainst({ automations: false, refused: 3 })
   expect(released.attempts).toEqual([
+    [...sessionOnlySet, "remote_session_answer_v1", ...accessAndChoice],
     [...sessionOnlySet, "remote_session_answer_v1", "remote_session_access_v1"],
     [...sessionOnlySet, "remote_session_answer_v1"],
     sessionOnlySet,
   ])
-  expect(released.configurations.at(-1)).toMatchObject({ token: "token-3" })
+  expect(released.configurations.at(-1)).toMatchObject({ token: "token-4" })
 })
 
 const DISCONNECTED_RETRY_MS = 5 * 60_000

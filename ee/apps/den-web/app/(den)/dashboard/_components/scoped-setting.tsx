@@ -76,14 +76,20 @@ export function UseEveryonesButton({ settingLabel, disabled = false, onClick }: 
   );
 }
 
-/** After a row saved on change: what is now true, and the way back. */
-export function SavedUndoLine({ message, pending = false, onUndo }: { message: string; pending?: boolean; onUndo: () => void }) {
+/**
+ * After a row saved on change: what is now true, and the way back. Leave
+ * `onUndo` out when the previous value can no longer be chosen: the line then
+ * only says what is true, rather than offering an Undo that cannot succeed.
+ */
+export function SavedUndoLine({ message, pending = false, onUndo }: { message: string; pending?: boolean; onUndo?: () => void }) {
   return (
-    <div role="status" className="flex items-center justify-between gap-3 px-1 text-[13px] text-gray-600">
+    <div role="status" className="flex min-h-8 items-center justify-between gap-3 px-1 text-[13px] text-gray-600">
       <span className="min-w-0 [overflow-wrap:anywhere]">{message}</span>
-      <DenButton variant="ghost" size="xs" loading={pending} onClick={onUndo}>
-        Undo
-      </DenButton>
+      {onUndo ? (
+        <DenButton variant="ghost" size="xs" loading={pending} onClick={onUndo}>
+          Undo
+        </DenButton>
+      ) : null}
     </div>
   );
 }

@@ -35,7 +35,7 @@ const runner = createSessionRunner({
   transport,
   now: Date.now, // optional
   operationTimeoutMs: 15_000, // optional; applies per native/transport operation
-  sessionAccess: () => ownerChoice(), // optional; "created" (default) or "all", asked every time
+  sessionAccess: () => ownerChoice(), // optional; "off", "created" (default) or "all", asked every time
 })
 
 await runner.accept(command, signal)  // Promise<Complete>
@@ -77,16 +77,17 @@ Adapters can throw `new SessionRunnerError(code, safeUserMessage)` for a **defin
 
 ### Session access and attach
 
-A remote caller reaches a session only through a delivered command in this journal. `sessionAccess: () => "created" | "all"` is the owner's choice of which sessions a command may cover:
+A remote caller reaches a session only through a delivered command in this journal. `sessionAccess: () => "off" | "created" | "all"` is the owner's choice of what may reach the computer and which sessions a command may cover:
 
+- `"off"`: nothing reaches this computer. No task is started, no session is read, continued, stopped or answered, and nothing is reported. See [Off](#off).
 - `"created"` (the default): only sessions a `remote_session_create` command started. Nothing else on the computer can be reached.
 - `"all"`: a `remote_session_attach` command may also record a receipt for a session that already exists on the computer. Once delivered, that session is read, sent to, stopped, answered and observed exactly like a created one.
 
 The core asks `sessionAccess()` every time it matters and never remembers the answer, so a change applies at once:
 
 - **Accepting an attach.** Unless the choice is `"all"`, the command fails with `session_access_denied` and the adapter is not called. It also fails with `attach_unsupported` (adapter without `attach`), `session_already_attached` (the `remote_session_create` command that started the session still holds it, so the caller keeps using that command; a failed creation holds nothing, even when it kept its receipt), `invalid_receipt` (the adapter answered for another session or workspace), `expired`, or the adapter's own definitive error such as `session_unavailable`. A failed attach stays failed for that command ID; attaching again takes a new command. No prompt is ever sent for an attach: its `prompt` and `model` must be null.
-- **After the attach.** Every request (read, send, stop, answer) to an attached session fails with `session_access_denied` before any native call while the choice is not `"all"`, including a request that was journaled earlier and is being replayed. A reply that was already dispatched before the change reports `ambiguous_answer` instead. The session is not observed and nothing about it is reported, queued reports included. Returning to `"all"` restores the session without a new attach.
-- **Created sessions** are never affected by the choice.
+- **After the attach.** Every request (read, send, stop, answer) to an attached session fails with `session_access_denied` before any native call while the choice is `"created"`, including a request that was journaled earlier and is being replayed. A reply or a send that was already dispatched before the change reports `ambiguous_answer` or `ambiguous_send` instead. The session is not observed and nothing about it is reported, queued reports included. Returning to `"all"` restores the session without a new attach.
+- **Created sessions** are not affected by the choice between `"created"` and `"all"`.
 
 An attach is journaled before the native lookup and goes from prepared straight to delivered or failed, so only a delivered attach holds a receipt.
 
@@ -99,6 +100,22 @@ An attach is journaled before the native lookup and goes from prepared straight 
 From then on the earlier command is like any command the journal never held: its requests fail with `unknown_receipt` and nothing is reported for it. A new attach that does not deliver (refused by the owner's choice, expired, session gone, wrong receipt) supersedes nothing and leaves the earlier entry exactly as it was. Supersession follows the order commands were accepted, so of two interrupted attaches the later one ends up holding the session.
 
 A core that predates attach does not know the command kind: it rejects a journal that holds an attach entry as invalid and fails closed, like any other unreadable journal, until a core that knows it loads the journal again.
+
+### Off
+
+While `sessionAccess()` is `"off"` the adapter is never called and no progress is reported. The choice is asked again before every native call and every report, so it also stops work that was already under way:
+
+- **A new command** is journaled and fails with `remote_access_off` ("This computer doesn't take tasks from other devices."), a create and an attach alike. Nothing native happens: no session is created, no prompt is sent, no session is looked up. The refusal is that command's result and is acknowledged like any other; it stays refused after the owner allows tasks again, and a new task takes a new command.
+- **A command that was accepted earlier but not finished** gets no further native call:
+  - still prepared, replay-safe creation: fails with `remote_access_off`; an interrupted at-most-once creation is `ambiguous_creation` as always, since a session may exist;
+  - session created, first prompt not sent: the prompt is never sent. The command fails with `remote_access_off` and keeps its receipt, like a rejected first prompt, so the session stays inspectable on the computer and can be attached later;
+  - first prompt's send intent already saved: fails with `ambiguous_send`, because the prompt may have landed, and is never sent again.
+- **Every request** (read, send, stop, answer, dismiss), new or replayed, to a created or an attached session fails with `remote_access_off` ("This computer no longer takes anything from other devices.") before any native call. A send or reply that was already dispatched reports `ambiguous_send` or `ambiguous_answer` instead and is not tried again. Requests for a command the journal does not hold get the same `remote_access_off` while off.
+- **No session is observed and nothing is reported.** A report that was queued stays on the computer.
+
+Leaving `"off"` needs no new command: sessions created earlier are read, continued and observed again through their delivered commands, and queued reports go out. Attached sessions come back only with `"all"`. A command or request that was refused keeps its refusal.
+
+Completion and request acknowledgements, including the refusals above, are still delivered while off: they tell the caller what happened to its own command, not anything about a session.
 
 ### Questions and permissions
 
@@ -130,7 +147,7 @@ Recovery windows:
 4. **Delivered:** keep observing its stored receipt across reconnect, restart and token rotation. Progress is saved before reporting and unchanged reports are not reposted. Terminal entries are still observed, so later local/followup activity is discoverable.
 5. **Requests:** persist intent, pinned send/stop identity, and then the result before HTTP acknowledgement. Pending reads replay safely, idempotent sends keep their stable ID, and stops retain their original guard. At-most-once followup intents recover as inspectable `ambiguous_send` without native replay. Their new-turn evidence is applied atomically with the failure so an old answer cannot become the new result; explicit reads and guarded stops of the delivered receipt remain available. Pending mutating requests for a session are ordered. Unknown send outcomes suppress stale-turn observations; once a send result is durably saved, progress can be reported even if its request acknowledgement is offline. Request acknowledgements do not reset progress or participate in observation ordering.
 
-Native effects check expiry again immediately before dispatch. Expiry never discards an already queued acknowledgement or stops monitoring delivered receipts. Only exact local delivered `(commandId, workspaceId, sessionId)` receipts can be read/sent/stopped/answered; foreign sessions fail with `unknown_receipt` without invoking the adapter, and an attached session additionally needs the owner's choice to be `"all"` at that moment. Proven duplicate send IDs still retained in this journal return `alreadyPresent` without resetting a newer turn.
+Native effects check expiry again immediately before dispatch. Expiry never discards an already queued acknowledgement or stops monitoring delivered receipts. Only exact local delivered `(commandId, workspaceId, sessionId)` receipts can be read/sent/stopped/answered; foreign sessions fail with `unknown_receipt` without invoking the adapter, nothing is reachable while the owner's choice is `"off"`, and an attached session additionally needs it to be `"all"` at that moment. Proven duplicate send IDs still retained in this journal return `alreadyPresent` without resetting a newer turn.
 
 Progress is a **latest-state** outbox: accepting a new turn supersedes old queued/reported progress. A followup's pre-send baseline is saved in its request intent, then applied to the command atomically with its successful result; a proven native rejection leaves the last accepted turn/watch intact. An expired uncertain send conservatively retains its prepared turn evidence. Command/request acknowledgement bodies are never coalesced or overwritten.
 
@@ -142,7 +159,7 @@ A journal retains at most **256 commands and 256 requests**. Admission at capaci
 
 - only fully acknowledged **expired** requests can be removed (preserves replayable stop guards);
 - only fully acknowledged **expired terminal** commands with no queued progress or retained request references can be removed;
-- an expired, acknowledged attach whose session the owner no longer allows counts as terminal whatever its last report: it has no watch to keep;
+- an expired, acknowledged attach whose session the owner no longer allows (`"created"` or `"off"`) counts as terminal whatever its last report: it has no watch to keep. A created session is never pruned because of `"off"`: its watch resumes when access is back;
 - active/waiting watches, unexpired deduplication evidence, uncertain/pending effects, and all queued acknowledgements are kept.
 
 A pruned command no longer has a progress watch or authorized receipt. Expired replay after pruning cannot create/send/stop another session. Do not delete storage as a substitute for pruning. Absolute bounds make observation affordable without a timer or unbounded watcher registry.

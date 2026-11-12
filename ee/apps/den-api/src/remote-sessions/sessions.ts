@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto"
 import { desktopRunnerConnected } from "@openwork/automations"
-import {
-  REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY,
-  type RunnerReportedSession,
-} from "@openwork/types/automations"
+import type { RunnerReportedSession } from "@openwork/types/automations"
 import {
   MEMBER_SESSION_LIST_LIMIT,
   type MemberSession,
@@ -14,7 +11,7 @@ import {
 import { automationRunnerComputerIds } from "../automations/repository.js"
 import type { RemoteSessionDesktopRecord } from "../mcp/remote-session-capabilities.js"
 import { commandProjection } from "../mcp/remote-session-status.js"
-import { computerSessionAccess, type ComputerSessionAccess, type RemoteSessionAccessPolicy } from "./access.js"
+import { computerSessionAccess, runnerAccessCapabilities, type ComputerSessionAccess, type RemoteSessionAccessPolicy } from "./access.js"
 import type { RemoteSessionCommand } from "./commands.js"
 import { sessionTimestampIso } from "./timestamps.js"
 
@@ -44,10 +41,7 @@ export function computerOnline(computer: RemoteSessionDesktopRecord, now: number
 }
 
 export function sessionAccessOf(computer: RemoteSessionDesktopRecord, policy: RemoteSessionAccessPolicy): ComputerSessionAccess {
-  return computerSessionAccess({
-    supportsAccess: computer.capabilities?.includes(REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY) === true,
-    reported: computer.sessionAccess ?? null,
-  }, policy)
+  return computerSessionAccess({ ...runnerAccessCapabilities(computer.capabilities), reported: computer.sessionAccess ?? null }, policy)
 }
 
 /** The computer a command ran on or waits for, among the member's computers; null when it is no longer registered. */
@@ -91,8 +85,7 @@ export function attachableSessions(
   covered: ReadonlySet<string>,
 ): AttachableSession[] {
   return computers.flatMap((computer) => {
-    const access = sessionAccessOf(computer, policy)
-    if (!access.supportsAccess || access.effectiveAccess !== "all") return []
+    if (sessionAccessOf(computer, policy).effectiveAccess !== "all") return []
     return (computer.sessions ?? [])
       .filter((session) => !covered.has(sessionKey(computer.computerId, session.workspaceId, session.sessionId)))
       .map((session) => ({ computer, session }))
@@ -110,6 +103,8 @@ function commandSession(
   policy: RemoteSessionAccessPolicy,
 ): MemberSession | null {
   const computer = commandComputer(command, computers)
+  // Nothing reaches a computer that is off; its sessions are listed again once it is allowed.
+  if (computer && sessionAccessOf(computer, policy).effectiveAccess === "off") return null
   const projection = commandProjection(command)
   const identity = {
     key: `command:${command.id}`,
@@ -213,6 +208,7 @@ export function memberSessionList(input: {
   }
   return {
     ceiling: policy.ceiling,
+    optIn: policy.optIn,
     computers: memberSessionComputers(computers, policy, input.now),
     sessions: sessions.sort(newestFirst).slice(0, MEMBER_SESSION_LIST_LIMIT),
   }

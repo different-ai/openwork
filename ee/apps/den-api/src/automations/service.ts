@@ -19,14 +19,13 @@ import type {
   AutomationScheduleKind,
   CreateAutomationDefinition,
   DesktopRunnerInventory,
-  RunnerSessionReport,
   UpdateAutomation,
 } from "@openwork/types/automations"
 import { env } from "../env.js"
 import { isActiveAutomationOwner, resolveAutomationModelAccess } from "./authority.js"
 import { runnerStanding } from "../computer-disconnect.js"
 import { shouldApplyAutomationModelAccessFailure } from "./model-attention-rollout.js"
-import { automationDesktopLeaseOwner, automationRepository, runWorkspaceId } from "./repository.js"
+import { automationDesktopLeaseOwner, automationRepository, runWorkspaceId, type StoredRunnerSessionReport } from "./repository.js"
 import { recordAutomationRunCompleted, recordAutomationRunStarted } from "./audit.js"
 import { validateWorkflowAutomationAction } from "../workflows.js"
 import type { CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
@@ -697,12 +696,13 @@ export class AutomationService {
   }
 
   /** False when the runner has no registration to attach the report to. */
-  saveDesktopRunnerSessions(scope: DesktopRunnerScope, report: RunnerSessionReport) {
+  saveDesktopRunnerSessions(scope: DesktopRunnerScope, report: StoredRunnerSessionReport) {
     return automationRepository.saveDesktopRunnerSessions({
       organizationId: scope.organizationId,
       ownerMemberId: scope.ownerMemberId,
       runnerId: scope.runnerId,
-      ...report,
+      access: report.access,
+      sessions: report.sessions,
       now: Date.now(),
     })
   }

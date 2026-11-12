@@ -52,6 +52,23 @@ members.
 
 ![Devices in Workbot](workbot-devices.png)
 
+## What other devices can do on a computer
+
+A signed-in desktop can take tasks from its owner's other devices, Workbot and
+agents working for them. Who decides:
+
+- **Its owner**, per computer, in **Desktop → Settings → Devices**: Nothing,
+  Start tasks here, or (with `remoteSessionAccess`) also open sessions started
+  there.
+- **The organization**, on **Manage → Computers → Remote access**: Off for
+  everyone, start tasks, or the wider choice. The narrower of the two applies
+  and the computer enforces it.
+- With [`remoteTasksOptIn`](../remote-tasks-opt-in/README.md) a computer takes
+  nothing until its owner allows it.
+
+**My Computers** shows what applies on each computer and why; a computer's
+detail on **Manage → Computers** shows the same for admins.
+
 ## Disconnecting a computer
 
 A signed-in desktop can be **disconnected**: by its owner from any of their

@@ -14,9 +14,10 @@ export interface SessionRunnerOptions {
   now?: () => number
   operationTimeoutMs?: number
   /**
-   * The owner's current choice; defaults to "created". Asked again for every attach, for every
-   * request to an attached session and for every observation of one, and never remembered: the
-   * owner can change it at any moment. Sessions that were created remotely are unaffected.
+   * The owner's current choice; defaults to "created". Asked again before every native call and
+   * every report, and never remembered: the owner can change it at any moment. "off" stops
+   * everything; otherwise sessions that were created remotely are unaffected and an attached
+   * one needs "all".
    */
   sessionAccess?: () => SessionAccess
 }
@@ -38,6 +39,9 @@ function unknownReceipt(): SessionError {
 function accessRevoked(): SessionError {
   return failure("session_access_denied", "This computer no longer allows sessions that were started on it.")
 }
+function tasksOff(): SessionError {
+  return failure("remote_access_off", "This computer doesn't take tasks from other devices.")
+}
 function staleRequest(error: unknown): boolean { return error instanceof SessionRunnerError && error.code === "stale_request" }
 function same(a: unknown, b: unknown): boolean { return JSON.stringify(a) === JSON.stringify(b) }
 function sameProgress(a: Progress | null, b: Progress): boolean {
@@ -55,6 +59,12 @@ export function createSessionRunner(options: SessionRunnerOptions): SessionRunne
   const sessionAccess = options.sessionAccess ?? (() => "created")
   /** An attached session is reachable only while the owner allows all sessions. */
   const revoked = (entry: CommandEntry) => entry.command.kind === "remote_session_attach" && sessionAccess() !== "all"
+  /** Why nothing may reach a command's session right now, or null: the owner takes nothing, or no longer allows an attached session. */
+  const closed = (entry: CommandEntry | undefined): SessionError | null => {
+    const access = sessionAccess()
+    if (access === "off") return failure("remote_access_off", "This computer no longer takes anything from other devices.")
+    return entry?.command.kind === "remote_session_attach" && access !== "all" ? accessRevoked() : null
+  }
   const creation = adapter.creation ?? "at_most_once"
   if (creation !== "idempotent" && creation !== "at_most_once") throw new SessionRunnerError("invalid_data", "Invalid adapter creation capability.")
   // An attach has no native effect, so an interrupted one is replayed whatever the creation capability.
@@ -151,7 +161,12 @@ export function createSessionRunner(options: SessionRunnerOptions): SessionRunne
     throwIfAborted(signal)
     try {
       if (value.expiresAt <= now()) throw new SessionRunnerError("expired", "The command expired before the session could be attached.")
-      if (sessionAccess() !== "all") throw new SessionRunnerError("session_access_denied", "This computer only allows sessions that were started remotely.")
+      const access = sessionAccess()
+      if (access === "off") {
+        const { code, message } = tasksOff()
+        throw new SessionRunnerError(code, message)
+      }
+      if (access !== "all") throw new SessionRunnerError("session_access_denied", "This computer only allows sessions that were started remotely.")
       const attach = adapter.attach
       if (!attach) throw new SessionRunnerError("attach_unsupported", "This computer can't attach to a session that was started on it.")
       // A session its remote creation still holds stays with that command; a failed creation holds nothing.
@@ -207,6 +222,10 @@ export function createSessionRunner(options: SessionRunnerOptions): SessionRunne
         status: "failed", error: failure("expired", "The command expired before creation could be attempted or safely replayed.") } })
       return
     }
+    if (sessionAccess() === "off") {
+      await saveCommand({ ...entry, phase: "failed", completion: { status: "failed", error: tasksOff() } })
+      return
+    }
     try {
       const receipt = parseReceipt(await local(signal, s => adapter.create(structuredClone(value), s)))
       if (entry.command.workspaceId && receipt.workspaceId !== entry.command.workspaceId) {
@@ -237,6 +256,13 @@ export function createSessionRunner(options: SessionRunnerOptions): SessionRunne
       await saveCommand({ ...e, phase: "failed", completion })
       return completion
     }
+    if (sessionAccess() === "off") {
+      // An unfinished command gets no further native call while the owner takes nothing. Its session, if one was
+      // created, keeps its receipt; a first prompt whose send intent was already saved may have landed.
+      const completion: Complete = { status: "failed", error: e.turn && e.receipt ? ambiguousSend(e.receipt) : tasksOff() }
+      await saveCommand({ ...e, phase: "failed", completion })
+      return completion
+    }
     if (!e.receipt) throw new SessionRunnerError("ambiguous_creation", "A missing creation receipt cannot be replayed.")
     if (e.command.prompt !== null) {
       if (!e.turn) {
@@ -248,7 +274,7 @@ export function createSessionRunner(options: SessionRunnerOptions): SessionRunne
       }
       try {
         throwIfAborted(signal)
-        if (e.command.expiresAt <= now()) return deliver(id, signal)
+        if (e.command.expiresAt <= now() || sessionAccess() === "off") return deliver(id, signal)
         const result = parseSendResult(await local(signal, s => adapter.send(structuredClone(e.receipt!), {
           prompt: e.command.prompt!, messageId: e.promptMessageId!, model: structuredClone(e.command.model),
         }, s)))
@@ -287,6 +313,7 @@ export function createSessionRunner(options: SessionRunnerOptions): SessionRunne
     let completion: RequestComplete
     let applyTurn = false
     const c = knownReceipt(e)
+    const refusal = closed(c)
     if (e.request.action === "send" && e.turn && !canReplaySend(e)) {
       completion = { status: "failed", error: ambiguousSend(e.request) }
       applyTurn = true
@@ -296,12 +323,14 @@ export function createSessionRunner(options: SessionRunnerOptions): SessionRunne
       // An interrupted send may already have been accepted, even though it can no longer be retried.
       applyTurn = e.turn !== null
     }
-    else if (!c?.receipt) completion = { status: "failed", error: unknownReceipt() }
-    else if (revoked(c)) {
+    else if (refusal) {
       // Like expiry, this ends the request without another native call, though an interrupted reply or send may have landed.
-      completion = { status: "failed", error: e.request.action === "answer" && e.messageId !== null ? ambiguousAnswer() : accessRevoked() }
+      completion = { status: "failed", error: e.request.action === "answer" && e.messageId !== null ? ambiguousAnswer()
+        : e.request.action === "send" && e.turn !== null ? ambiguousSend(e.request) : refusal }
       applyTurn = e.turn !== null
-    } else {
+    }
+    else if (!c?.receipt) completion = { status: "failed", error: unknownReceipt() }
+    else {
       const earlier = state().requests.slice(0, state().requests.findIndex(r => r.request.requestId === id))
         .some(r => r.request.commandId === e.request.commandId && r.request.action !== "read" && r.completion === null)
       if (earlier && e.request.action !== "read") throw new SessionRunnerError("request_in_progress", "An earlier native control request must be reconciled first.")
@@ -321,7 +350,8 @@ export function createSessionRunner(options: SessionRunnerOptions): SessionRunne
             e = request(id)
           }
           throwIfAborted(signal)
-          if (e.request.expiresAt <= now()) return performRequest(id, signal)
+          // The owner's choice is asked again after the baseline read: a send whose intent is saved is never dispatched once access is gone.
+          if (e.request.expiresAt <= now() || closed(c)) return performRequest(id, signal)
           const result = parseSendResult(await local(signal, s => adapter.send(structuredClone(c.receipt!), {
             ...structuredClone(input), messageId: e.messageId!,
           }, s)))
@@ -342,6 +372,7 @@ export function createSessionRunner(options: SessionRunnerOptions): SessionRunne
               e = request(id)
             }
             throwIfAborted(signal)
+            if (closed(c)) return performRequest(id, signal)
             try {
               await local(signal, s => answer.call(adapter, structuredClone(c.receipt!), structuredClone(input), s))
               completion = { status: "done", outcome: { action: "answer", result: { requestId: input.requestId, alreadyAnswered: false } } }
@@ -387,6 +418,8 @@ export function createSessionRunner(options: SessionRunnerOptions): SessionRunne
   }
 
   async function flushProgress(id: string, progress: Progress, signal: AbortSignal): Promise<boolean> {
+    // Nothing about a session leaves the computer while its owner does not allow it; a queued report waits.
+    if (closed(command(id))) return false
     try { await local(signal, s => transport.report(id, structuredClone(progress), s)) }
     catch (error) {
       if (signal.aborted) throw error
@@ -401,14 +434,13 @@ export function createSessionRunner(options: SessionRunnerOptions): SessionRunne
   async function watch(id: string, signal: AbortSignal): Promise<void> {
     let e = command(id)
     if (e.phase !== "delivered" || !e.receipt || !e.completionAcknowledged) return
-    // Nothing about an attached session leaves the computer while its owner does not allow it, queued reports included.
-    if (revoked(e)) return
     // An uncertain send cannot expose the previous turn's answer. A saved send result need not wait for HTTP acknowledgement.
     if (state().requests.some(r => r.request.commandId === id && r.request.action === "send" && r.completion === null)) return
     if (e.progress) {
       if (!await flushProgress(id, e.progress, signal)) return // Next poll obtains a genuinely new observation.
       e = command(id)
     }
+    if (closed(e)) return
     let progress = parseProgress(await local(signal, s => adapter.observe(structuredClone(e.receipt!), s)))
     let turn = e.turn
     if (turn) {
@@ -472,8 +504,8 @@ export function createSessionRunner(options: SessionRunnerOptions): SessionRunne
           if (state().requests.length >= MAX_REQUEST_ENTRIES) throw new SessionRunnerError("journal_full", "Prune acknowledged requests before accepting more work.")
           const c = state().commands.find(c => c.command.commandId === value.commandId && c.phase === "delivered"
             && c.receipt?.sessionId === value.sessionId && c.receipt.workspaceId === value.workspaceId)
-          let completion: RequestComplete | null = !c ? { status: "failed", error: unknownReceipt() }
-            : revoked(c) ? { status: "failed", error: accessRevoked() } : null
+          const refusal = closed(c) ?? (c ? null : unknownReceipt())
+          let completion: RequestComplete | null = refusal ? { status: "failed", error: refusal } : null
           if (c && completion === null && value.action === "answer") {
             // A second Den request for an already answered native request is a duplicate, not a new reply.
             const prior = state().requests.find(r => r.request.commandId === value.commandId && r.request.action === "answer"
