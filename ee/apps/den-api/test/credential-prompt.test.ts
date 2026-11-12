@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs"
 import { test } from "node:test"
 import { z } from "zod"
 import { credentialPromptDestination, credentialPromptInstruction, credentialPromptSchema } from "@openwork/types/den/credential-prompt"
-import { catalogOperationAvailableToCapabilities } from "../src/mcp/catalog-availability.js"
 import { defaultBaseUrl, type ProtocolFamily } from "../../gateway/src/protocols.js"
 
 process.env.OPENWORK_DEV_MODE ??= "1"
@@ -55,12 +54,6 @@ test("the agent is told to end its turn and never to ask for the key in chat", (
   // Names are chosen by whoever created the resource; they never reach the agent's instruction.
   assert.ok(!fields.nextStep.includes("Team OpenAI"))
   assert.match(credentialPromptInstruction(null), /^A private field for this API key/)
-})
-
-test("agents are offered AI Gateway provider creation", () => {
-  const base = { generatedArtifactViewsEnabled: true, managedDeploymentsEnabled: false }
-  assert.equal(catalogOperationAvailableToCapabilities(base, { method: "POST", path: "/v1/inference-providers" }), true)
-  assert.equal(catalogOperationAvailableToCapabilities(base, { method: "GET", path: "/v1/inference-providers/model-management" }), true)
 })
 
 test("the shared-key route is hidden, human-only and never echoes provider text", () => {

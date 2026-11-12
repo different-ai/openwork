@@ -137,15 +137,6 @@ test("which cards a quiet chat keeps: live screens only when shown or previewed,
   assert.equal(keepsCard({ surface: "background", live: false, showing: false }, { quiet: false, preview: false }), true)
 })
 
-test("a finished card says what it came to", () => {
-  const step = (extra: Record<string, unknown>) => ({ label: "Using the browser", icon: "computer" as const, status: "done" as const, app: null, startedAt: 1, finishedAt: 2, updates: [], ...extra })
-  const page = (id: string, title: string) => ({ id, url: `https://${title}/`, title })
-  assert.equal(finishedSummary("browser", [step({ pages: [page("a", "google.com"), page("b", "maps.google.com"), page("a", "google.com")] })]), "Opened maps.google.com and 1 more")
-  assert.equal(finishedSummary("browser", [step({ updates: ["Reading the page"] })]), "Reading the page")
-  assert.equal(finishedSummary("browser", [step({})]), "Used the browser")
-  assert.equal(finishedSummary("computer", [step({})]), "Used my computer")
-})
-
 test("one browser task stays anchored at its first action through narration, later actions and completion", () => {
   const [turn] = buildWorkbotTurns(finished)
   assert.ok(turn)

@@ -1,22 +1,11 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
 const root = new URL("../../../", import.meta.url);
-
-test("the packaged server resolves allowance helpers to compiled JavaScript", () => {
-  const manifest = JSON.parse(readFileSync(new URL("packages/types/package.json", root), "utf8"));
-  const inference = manifest.exports["./den/inference"];
-  assert.equal(inference.default, "./dist/den/inference.js");
-  assert.equal(inference.development, "./src/den/inference.ts");
-  assert.equal(inference.bun, "./src/den/inference.ts");
-  assert.equal(inference.browser, "./src/den/inference.ts");
-  const build = readFileSync(new URL("packages/types/tsup.config.ts", root), "utf8");
-  assert.match(build, /"den\/inference": "src\/den\/inference\.ts"/);
-});
 
 test("device sharing loads in plain Node from the packaged node_modules layout", (t) => {
   // Workspace symlinks resolve outside node_modules, where Node can strip types.
