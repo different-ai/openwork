@@ -4245,6 +4245,7 @@ export function SessionRoute() {
         reloadBusy: reloadCoordinator.reloadBusy,
         reloadError: reloadCoordinator.reloadError,
         openWorkConnectState: sessionMcpMaintenance,
+        onOpenDiagnostics: () => handleOpenSettings(developerMode ? "/settings/debug" : "/settings/advanced/agent-access"),
       }}
       notFoundMessage={activityRouteActive ? null : gatedRouteNotFoundMessage}
       mainContentTakeover={
