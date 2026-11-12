@@ -1,4 +1,5 @@
 import { prepareOpencodeV2 } from "./prepare-opencode-v2.mjs";
+import { downloadWithRetry } from "./download-with-retry.mjs";
 import { spawnSync } from "child_process";
 import { createHash } from "crypto";
 import {
@@ -264,11 +265,13 @@ if (shouldDownloadOpencode) {
 
   mkdirSync(extractDir, { recursive: true });
 
+  // Retry only the download, never archive extraction or later signing.
+  await downloadWithRetry(opencodeUrl, archivePath);
+
   if (process.platform === "win32") {
     const psQuote = (value) => `'${value.replace(/'/g, "''")}'`;
     const psScript = [
       "$ErrorActionPreference = 'Stop'",
-      `Invoke-WebRequest -Uri ${psQuote(opencodeUrl)} -OutFile ${psQuote(archivePath)}`,
       `Expand-Archive -Path ${psQuote(archivePath)} -DestinationPath ${psQuote(extractDir)} -Force`,
     ].join("; ");
 
@@ -280,13 +283,6 @@ if (shouldDownloadOpencode) {
       process.exit(result.status ?? 1);
     }
   } else {
-    const downloadResult = spawnSync("curl", ["-fsSL", "-o", archivePath, opencodeUrl], {
-      stdio: "inherit",
-    });
-    if (downloadResult.status !== 0) {
-      process.exit(downloadResult.status ?? 1);
-    }
-
     mkdirSync(extractDir, { recursive: true });
 
     if (opencodeAsset.endsWith(".zip")) {

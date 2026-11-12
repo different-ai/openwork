@@ -105,7 +105,10 @@ function verifyRuntimeDependencies(context) {
 // node_modules. Fail the package unless every export is compiled JavaScript.
 function verifyCompiledTypes(appAsarPath, packagedFiles) {
   const packageRoot = "node_modules/@openwork/types";
-  const manifest = JSON.parse(asar.extractFile(appAsarPath, `${packageRoot}/package.json`).toString("utf8"));
+  // ASAR's reader traverses with the host path separator, unlike the normalized
+  // forward-slash entries used for the checks below.
+  const manifestPath = path.join("node_modules", "@openwork", "types", "package.json");
+  const manifest = JSON.parse(asar.extractFile(appAsarPath, manifestPath).toString("utf8"));
   const unloadable = Object.entries(manifest.exports).filter(([, target]) =>
     typeof target !== "string" || !target.endsWith(".js") || !packagedFiles.has(`/${packageRoot}/${target.replace(/^\.\//, "")}`));
   if (unloadable.length > 0) {
@@ -206,5 +209,6 @@ async function afterPack(context) {
 
 module.exports = afterPack;
 module.exports.default = afterPack;
+module.exports.verifyCompiledTypes = verifyCompiledTypes;
 module.exports.normalizeAsarEntryPath = normalizeAsarEntryPath;
 module.exports.canonicalizeSidecars = canonicalizeSidecars;

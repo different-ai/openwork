@@ -42,8 +42,7 @@ runs:
         }
         'SIGN_WINDOWS=true' | Out-File -FilePath $env:GITHUB_ENV -Append
         "WINDOWS_PRESERVED_SIGNATURES=$env:RUNNER_TEMP\windows-preserved-signatures.jsonl" | Out-File -FilePath $env:GITHUB_ENV -Append
-        # Same module version used by azure/artifact-signing-action v2.
-        Install-Module -Name ArtifactSigning -RequiredVersion 0.1.8 -Force -Repository PSGallery
+        & "$env:GITHUB_WORKSPACE/scripts/release/install-windows-signing-module.ps1"
 
     - name: Azure login with GitHub OIDC
       uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1

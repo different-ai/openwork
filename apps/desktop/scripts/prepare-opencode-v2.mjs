@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { downloadWithRetry } from "./download-with-retry.mjs";
 import artifacts from "../../server/src/opencode-v2-artifacts.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
@@ -12,7 +13,7 @@ export function opencodeV2ArtifactKey(target) {
   return `${platform}-${arch}${platform === "linux" && target.includes("musl") ? "-musl" : ""}`;
 }
 
-export async function prepareOpencodeV2(sidecarDir, target) {
+export async function prepareOpencodeV2(sidecarDir, target, { download = downloadWithRetry } = {}) {
   if (artifacts.version !== constants.opencodeV2Version) throw new Error("OpenCode v2 artifact pin does not match constants.json");
   const key = opencodeV2ArtifactKey(target);
   const artifact = artifacts.platforms[key];
@@ -32,7 +33,7 @@ export async function prepareOpencodeV2(sidecarDir, target) {
   try {
     const archive = join(staging, "binary.tgz");
     // Use the same system download transport as the v1 sidecar preparation.
-    execFileSync(process.platform === "win32" ? "curl.exe" : "curl", ["--fail", "--silent", "--show-error", "--connect-timeout", "20", "--max-time", "300", "--retry", "2", "--retry-all-errors", "--retry-max-time", "600", "--output", archive, artifact.url]);
+    await download(artifact.url, archive);
     const bytes = await readFile(archive);
     if (`sha512-${createHash("sha512").update(bytes).digest("base64")}` !== artifact.integrity) throw new Error("OpenCode v2 archive integrity mismatch");
     // Relative paths: Windows release jobs run from Git Bash, whose GNU tar reads

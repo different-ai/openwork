@@ -1,0 +1,47 @@
+name: Alpha failure alerts
+
+on:
+  workflow_run:
+    workflows: [Alpha Channels (macOS arm64 + Windows x64)]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+# Serialize state reads, Slack delivery and state uploads. GitHub may replace a
+# pending concurrency run; this is an observer, not a lossless event queue.
+concurrency:
+  group: alpha-failure-alerts
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    if: >-
+      github.repository == 'different-ai/openwork' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # workflow_run checks out trusted default-branch code, never the failed SHA.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - name: Notify the release channel of new alpha failures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_RELEASE_CHANNEL_ID: ${{ vars.SLACK_RELEASE_CHANNEL_ID }}
+        run: node .github/scripts/notify-alpha.mjs
+      - name: Preserve alpha failure state
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: alpha-alert-state-${{ github.event.workflow_run.workflow_id }}
+          path: alpha-alert-state/state.json
+          retention-days: 90
+          if-no-files-found: error
