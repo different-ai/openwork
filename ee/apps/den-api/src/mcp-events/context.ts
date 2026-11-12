@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, lt } from "@openwork-ee/den-db/drizzle"
+import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
 import { McpEventTurnTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { workbotOwner } from "@openwork-ee/headless-protocol/workbot-routing"
@@ -17,7 +17,6 @@ export class EventAccessError extends Error {}
 
 export async function bindEventTurn(input: { tokenId: string; organizationId: string; userId: string; memberId?: string; sessionId?: string; model?: string; readOnly?: boolean; expiresAt: Date }) {
   if (input.readOnly || !input.memberId || !input.sessionId || !input.model || !await organizationFeatureEnabled(input.organizationId, "mcpThreadEvents", { userId: input.userId })) return
-  await db.delete(McpEventTurnTable).where(lt(McpEventTurnTable.expiresAt, new Date()))
   await db.insert(McpEventTurnTable).values({
     tokenId: normalizeDenTypeId("oauthAccessToken", input.tokenId),
     organizationId: normalizeDenTypeId("organization", input.organizationId), userId: normalizeDenTypeId("user", input.userId),

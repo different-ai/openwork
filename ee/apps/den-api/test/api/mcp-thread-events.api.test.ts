@@ -30,7 +30,7 @@ const runner = await startFakeHttpServer((request, raw, response) => {
   const saved = messageId ? turns.get(messageId) : null
   response.end(JSON.stringify({ turns: saved ? [{ messageId, status: "queued", model: saved.model }] : [], messages: [], finalAssistantText: "", status: "idle" }))
 })
-const den = await bootDen({ env: { ...gatewayFixtureEnv, DEN_WORKBOT_URL: "http://localhost:3020", DEN_HEADLESS_RUNNER_URL: runner.url, DEN_HEADLESS_RUNNER_TOKEN: "fixture-runner-token-at-least-thirty-two-characters", DEN_AUDIT_SELF_HOSTED_ENABLED: "true" } })
+const den = await bootDen({ env: { ...gatewayFixtureEnv, LINEAR_API_KEY: "", DEN_WORKBOT_URL: "http://localhost:3020", DEN_HEADLESS_RUNNER_URL: runner.url, DEN_HEADLESS_RUNNER_TOKEN: "fixture-runner-token-at-least-thirty-two-characters", DEN_AUDIT_SELF_HOSTED_ENABLED: "true" } })
 const subscriptions = new Map<string, { url: string; secret: string; name: string }>()
 let subscribed = 0
 let unsubscribed = 0
@@ -131,7 +131,7 @@ test("subscribe verifies pending callback and deduplicates repeated intent; auth
   assert.equal((await callback(remoteId, event("first"), "v1,bad")).status, 401)
   const received = await Promise.all(Array.from({ length: 4 }, () => callback(remoteId, event("first"))))
   for (const result of received) assert.equal(result.status, 202, summary(result))
-  assert.equal(await dispatchMcpEvent(), true)
+  assert.deepEqual((await Promise.all([dispatchMcpEvent(), dispatchMcpEvent()])).sort(), [false, true], "replicas share the receipt lease")
   assert.equal(await dispatchMcpEvent(), false)
   assert.equal(turns.size, 1)
   const delivered = [...turns.values()][0]
@@ -185,4 +185,29 @@ test("flag off rejects callbacks and stops pending work; namespaced discovery ca
   assert.equal((await callback(remoteId, event("after-stop"))).status, 410)
   assert.equal(await dispatchMcpEvent(), false)
   assert.equal(turns.size, before)
+})
+
+
+test("revoked connection access stops accepted events before a new turn", async () => {
+  const next = await den.callMcpTool(token, "subscribe_mcp_event", input)
+  assert.equal(next.isError, false, next.raw)
+  remoteId = `remote-${subscribed}`
+  assert.equal((await callback(remoteId, event("before-revocation"))).status, 202)
+  const before = turns.size
+  const access = await den.as(org.owner, org.orgId)("PUT", `/v1/mcp-connections/${connectionId}/access`, { access: { orgWide: false, memberIds: [member.memberId], teamIds: [] } })
+  assert.equal(access.status, 200, summary(access))
+  assert.equal((await callback(remoteId, event("after-revocation"))).status, 410)
+  assert.equal(await dispatchMcpEvent(), true)
+  assert.equal(turns.size, before)
+})
+
+test("organization deletion removes subscription secrets, receipts and turn bindings", async () => {
+  const deleted = await den.as(org.owner, org.orgId)("DELETE", "/v1/org", { confirmation: "Events fixture workspace" })
+  assert.equal(deleted.status, 200, summary(deleted))
+  if (!("getConnection" in client)) throw new Error("needs MySQL mode")
+  for (const table of ["mcp_event_turn", "mcp_event_subscription", "mcp_event_receipt"]) {
+    const [rows] = await client.query(`SELECT COUNT(*) AS remaining FROM ${table} WHERE organization_id = ?`, [org.orgId])
+    assert.ok(Array.isArray(rows))
+    assert.equal(field(rows[0], "remaining"), 0, table)
+  }
 })

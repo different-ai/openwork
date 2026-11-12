@@ -1,6 +1,7 @@
 import { and, asc, eq, gt, inArray, lt, lte, sql } from "@openwork-ee/den-db/drizzle"
-import { McpEventReceiptTable as Receipt, McpEventSubscriptionTable as Subscription } from "@openwork-ee/den-db/schema"
+import { McpEventReceiptTable as Receipt, McpEventSubscriptionTable as Subscription, McpEventTurnTable as Turn } from "@openwork-ee/den-db/schema"
 import { db } from "../db.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { eventMessageId, type McpEvent } from "./protocol.js"
 
 export type EventSubscription = typeof Subscription.$inferSelect
@@ -52,7 +53,29 @@ export async function retryEvent(id: string, attempts: number) {
 }
 export async function pruneEvents() {
   const before = new Date(Date.now() - RECEIPT_RETENTION_MS)
+  await db.delete(Turn).where(lt(Turn.expiresAt, new Date()))
   await db.update(Subscription).set({ status: "expired" }).where(and(inArray(Subscription.status, ["pending", "active"]), lt(Subscription.expiresAt, new Date())))
   await db.delete(Receipt).where(lt(Receipt.createdAt, before))
   await db.delete(Subscription).where(lt(Subscription.expiresAt, before))
+}
+
+/**
+ * Unsubscribe and flag changes serialize with the bounded runner handoff. Once cancellation returns,
+ * no pending receipt can enqueue a new turn; a turn already accepted follows the runner's Stop control.
+ * The idempotent message id covers a network success followed by a transaction/response failure.
+ */
+export async function handOffEvent(receiptId: string, subscription: EventSubscription, send: () => Promise<void>) {
+  return db.transaction(async (tx) => {
+    // Lock order matches stopSubscription: subscription, then receipt.
+    const [watch] = await tx.select({ status: Subscription.status, expiresAt: Subscription.expiresAt }).from(Subscription).where(eq(Subscription.id, subscription.id)).for("update").limit(1)
+    const [receipt] = await tx.select({ status: Receipt.status }).from(Receipt).where(eq(Receipt.id, receiptId)).for("update").limit(1)
+    if (!receipt || receipt.status !== "pending") return false
+    if (!watch || watch.status !== "active" || watch.expiresAt.getTime() <= Date.now() || !await organizationFeatureEnabled(subscription.organizationId, "mcpThreadEvents", { userId: subscription.userId, database: tx, lock: "share" })) {
+      await tx.update(Receipt).set({ status: "skipped", payload: null }).where(eq(Receipt.id, receiptId))
+      return false
+    }
+    await send()
+    await tx.update(Receipt).set({ status: "delivered", payload: null }).where(eq(Receipt.id, receiptId))
+    return true
+  })
 }

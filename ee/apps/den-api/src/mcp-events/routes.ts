@@ -4,7 +4,7 @@ import { z } from "zod"
 import { jsonResponse } from "../openapi.js"
 import { signedWebhookRoute } from "../middleware/index.js"
 import { attributeAuditRequest, auditServiceAttribution } from "../audit/request-capture.js"
-import { eventAccess } from "./context.js"
+import { eventAccess, EventAccessError } from "./context.js"
 import { acceptEvent, findSubscription } from "./repository.js"
 import { receiveMcpEvent } from "./receiver.js"
 
@@ -22,7 +22,7 @@ export function registerMcpEventRoutes<T extends Env>(app: Hono<T>) {
   }), signedWebhookRoute, (c) => receiveMcpEvent(c.req.raw, c.req.param("subscriptionId"), {
     find: (id) => /^[a-f0-9]{48}$/.test(id) ? findSubscription(id) : Promise.resolve(null),
     enabled: async (subscription) => {
-      try { return (await eventAccess(subscription, subscription.scopes)).connections.some((connection) => connection.id === subscription.connectionId) } catch { return false }
+      try { return (await eventAccess(subscription, subscription.scopes)).connections.some((connection) => connection.id === subscription.connectionId) } catch (error) { if (error instanceof EventAccessError) return false; throw error }
     },
     accept: async (subscription, event) => {
       const audited = await attributeAuditRequest(c, { organizationId: subscription.organizationId, ...auditServiceAttribution("mcp_event", subscription.connectionId) })

@@ -43,11 +43,13 @@ export const auditServiceActionDeclarations = [
   },
   {
     action: "mcp_event.subscribe", kind: "mcp_event.subscription", class: "tenant_external", resource: { type: "mcp_event_subscription", idFrom: null }, origin: "mcp",
+    external: "connected MCP server (events/subscribe)",
     tools: ["subscribe_mcp_event"], callSites: ["src/mcp-events/tools.ts:subscribe"],
     notes: `Thread-bound finite webhook subscription; callback secret and filters are never audit fields. ${MCP_PRINCIPAL}`,
   },
   {
     action: "mcp_event.unsubscribe", kind: "mcp_event.subscription", class: "tenant_external", resource: { type: "mcp_event_subscription", idFrom: null }, origin: "mcp",
+    external: "connected MCP server (events/unsubscribe)",
     tools: ["unsubscribe_mcp_event"], callSites: ["src/mcp-events/tools.ts:unsubscribe"],
     notes: `Local cancellation precedes best-effort remote unsubscribe. ${MCP_PRINCIPAL}`,
   },
