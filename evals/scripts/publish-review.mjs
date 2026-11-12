@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { publishReviewPr } from "../packages/test-artifacts/src/publish-pr.ts";
 import { readTestRunDirectory } from "../packages/test-artifacts/src/scan.ts";
 import { designDigest } from "../packages/test-artifacts/src/review.ts";
-import { changedFiles, proofArtifactsForAttempt, selectProof } from "../../.github/scripts/pr-proof.mjs";
+import { changedFiles, proofArtifactsForAttempt, selectProofForEvent } from "../../.github/scripts/pr-proof.mjs";
 import { association, authorEvidenceNotice, producers, sameRepo, validId } from "../../.github/scripts/evidence-association.mjs";
 
 function gh(args) {
@@ -48,7 +48,7 @@ export async function publishCompletedEvidence({ repo, runId, runAttempt }, depe
   }
   let selection;
   try {
-    selection = selectProof(files);
+    selection = selectProofForEvent(files, source.event);
   } catch {
     return skip("current PR changed-file listing is unsafe");
   }

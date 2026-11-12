@@ -79,6 +79,12 @@ export function selectProof(files, coreJourneys = everyCoreJourney()) {
   return { specs };
 }
 
+// Dispatches run only secret-free lanes; the protected core job never starts.
+export function selectProofForEvent(files, eventName) {
+  const { specs } = selectProof(files);
+  return { specs: eventName === "workflow_dispatch" ? specs.filter(spec => !CORE_SPECS.includes(spec)) : specs };
+}
+
 export function proofLanes(allSpecs, { event, current, repo, actor, triggeringActor }, tagged = () => false) {
   // Forks and Dependabot cannot reach the Freestyle credential; they skip the
   // core journeys instead of failing selection. A changed checkpoint spec still fails below.
