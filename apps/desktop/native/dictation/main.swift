@@ -9,6 +9,7 @@ import Speech
 // stdout: one JSON object per line.
 //   {"type":"ready"}                       listening started
 //   {"type":"result","segments":[...]}     whole transcript so far, last segment still revisable
+//   {"type":"level","level":0...1}         microphone amplitude, at most 20 Hz
 //   {"type":"error","code":"..."}          Web Speech style error code
 //   {"type":"end"}                         final result sent, exiting
 // stdin: "stop" flushes the final words and ends; EOF cancels.
@@ -52,12 +53,27 @@ final class Dictation {
 
   func start() throws {
     let input = engine.inputNode
+    // Install the recognition request before accepting the first audio buffer.
+    begin()
+    var lastLevelAt: TimeInterval = 0
     input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { [weak self] buffer, _ in
       self?.request?.append(buffer)
+      let now = ProcessInfo.processInfo.systemUptime
+      guard now - lastLevelAt >= 0.05, buffer.frameLength > 0,
+            let samples = buffer.floatChannelData?[0] else { return }
+      lastLevelAt = now
+      var energy: Float = 0
+      for index in 0..<Int(buffer.frameLength) { energy += samples[index] * samples[index] }
+      let rms = sqrt(energy / Float(buffer.frameLength))
+      let decibels = 20 * log10(max(rms, 0.000001))
+      let level = min(1, max(0, (decibels + 60) / 48))
+      DispatchQueue.main.async {
+        guard let self, !self.stopping, !self.finished else { return }
+        emit(["type": "level", "level": level])
+      }
     }
     engine.prepare()
     try engine.start()
-    begin()
     emit(["type": "ready"])
   }
 
@@ -69,6 +85,10 @@ final class Dictation {
     request.requiresOnDeviceRecognition = true
     request.addsPunctuation = true
     request.taskHint = .dictation
+    // Short, app-specific vocabulary improves recognition without rewriting
+    // the user's meaning or sending a prompt to a language model.
+    request.contextualStrings = ["OpenWork", "OpenCode", "Codex", "Claude", "GitHub",
+      "TypeScript", "JavaScript", "OAuth", "API", "JSON", "localhost", "pull request"]
     self.request = request
     echo = ""
     startedAt = Date()
@@ -122,8 +142,14 @@ final class Dictation {
     engine.stop()
     engine.inputNode.removeTap(onBus: 0)
     request?.endAudio()
-    // Inside the composer's 1.5 s stop window, so the last words still land.
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in self?.finish() }
+    task?.finish()
+    // Allow the final correction and punctuation to arrive. The renderer has a
+    // longer watchdog; return the captured words if the speech service stalls.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+      guard let self, !self.finished else { return }
+      emit(["type": "error", "code": "finalization-timeout"])
+      self.finish()
+    }
   }
 
   func finish() {

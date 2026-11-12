@@ -110,7 +110,7 @@ test("a host recognizer replaces system dictation, keeps words across pauses, an
   }
 });
 
-test("a host recognizer that fails before listening falls back to system dictation", async () => {
+test.each([false, true])("a failed host recognizer respects the local-only boundary (local: %s)", async local => {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
@@ -130,7 +130,7 @@ test("a host recognizer that fails before listening falls back to system dictati
   }
   function Harness() {
     controller = useNativeDictation({ enabled: true, text: "Draft", onText: () => {}, selection: () => ({ start: 5, end: 5 }), focusInput: () => {},
-      startNative: async () => { launches++; return { ok: true } }, recognition: OfflineRecognition, recognitionTitle: "Dictate message · Windows" });
+      startNative: async () => { launches++; return { ok: true } }, recognition: OfflineRecognition, recognitionTitle: "Dictate message · Windows", deferTranscript: local });
     return <output>{controller.title}</output>;
   }
   try {
@@ -138,13 +138,69 @@ test("a host recognizer that fails before listening falls back to system dictati
     expect(container.textContent).toBe("Dictate message · Windows");
     await act(async () => { await controller?.toggle() });
     await act(async () => { await Promise.resolve() });
-    expect(launches).toBe(1);
-    expect(controller?.error).toBe(null);
-    expect(controller?.nativeMode).toBe(true);
+    expect(launches).toBe(local ? 0 : 1);
+    if (local) expect(controller?.error).toContain("Local dictation couldn’t start");
+    else expect(controller?.error).toBe(null);
+    expect(controller?.nativeMode).toBe(!local);
   } finally {
     await act(async () => { root.unmount() });
     container.remove();
     if (agent) Object.defineProperty(window.navigator, "userAgent", agent);
     else Reflect.deleteProperty(window.navigator, "userAgent");
+  }
+});
+
+test("local recording keeps revisions hidden, accepts final words, and cancels on edits or revocation", async () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  let controller: ReturnType<typeof useNativeDictation> | undefined;
+  let recognizer: LocalRecognition | undefined;
+  class LocalRecognition {
+    lang = ""; continuous = false; interimResults = false; aborted = false;
+    onstart: (() => void) | null = null;
+    onend: (() => void) | null = null;
+    onerror: ((event: { error: string }) => void) | null = null;
+    onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null = null;
+    onlevel: ((level: number) => void) | null = null;
+    constructor() { recognizer = this }
+    start() { this.onstart?.() }
+    stop() {}
+    abort() { this.aborted = true }
+    say(text: string) { this.onresult?.({ results: [[{ transcript: text }]] }) }
+  }
+  function Harness({ enabled = true }: { enabled?: boolean }) {
+    const [text, setText] = useState("Draft");
+    controller = useNativeDictation({ enabled, text, onText: setText, selection: () => ({ start: text.length, end: text.length }),
+      focusInput: () => {}, recognition: LocalRecognition, deferTranscript: true });
+    return <output>{text}</output>;
+  }
+  try {
+    await act(async () => { root.render(<Harness />) });
+    await act(async () => { await controller?.toggle() });
+    await act(async () => { recognizer?.say("the weak"); recognizer?.onlevel?.(0.75) });
+    expect(container.textContent).toBe("Draft");
+    expect(controller?.buffering).toBe(true);
+    expect(controller?.meter.getSnapshot()).toEqual([0.75]);
+    await act(async () => { root.render(<Harness />) });
+    expect(controller?.state).toBe("listening");
+    await act(async () => { await controller?.toggle() });
+    await act(async () => { recognizer?.say("the week."); recognizer?.onend?.() });
+    expect(container.textContent).toBe("Draft the week.");
+    expect(controller?.buffering).toBe(false);
+    await act(async () => { await controller?.toggle() });
+    await act(async () => { recognizer?.say("discard me"); controller?.edit("My correction") });
+    expect(recognizer?.aborted).toBe(true);
+    await act(async () => { recognizer?.say("late"); recognizer?.onend?.() });
+    expect(container.textContent).toBe("My correction");
+    await act(async () => { await controller?.toggle() });
+    await act(async () => { recognizer?.say("do not publish"); root.render(<Harness enabled={false} />) });
+    expect(recognizer?.aborted).toBe(true);
+    await act(async () => { recognizer?.say("late"); recognizer?.onend?.() });
+    expect(container.textContent).toBe("My correction");
+    expect(controller?.active).toBe(false);
+  } finally {
+    await act(async () => { root.unmount() });
+    container.remove();
   }
 });

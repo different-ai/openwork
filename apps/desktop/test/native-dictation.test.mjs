@@ -155,3 +155,11 @@ test("helper events outside the known shapes are dropped", () => {
   assert.deepEqual(helperEvent('{"type":"end","extra":true}'), { type: "end" });
   assert.deepEqual(helperEvent('{"type":"error","code":"not-allowed"}'), { type: "error", code: "not-allowed" });
 });
+
+test("microphone levels cross the bridge only as finite normalized amplitudes", () => {
+  assert.deepEqual(helperEvent('{"type":"level","level":0.4,"audio":"discard"}'), { type: "level", level: 0.4 });
+  for (const level of [-1, 1.01, "0.4", null]) {
+    assert.equal(helperEvent(JSON.stringify({ type: "level", level })), null);
+  }
+  assert.equal(helperEvent('{"type":"level","level":1e400}'), null);
+});

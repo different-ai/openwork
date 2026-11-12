@@ -18,7 +18,7 @@ export function useDesktopSpeechDictation() {
     staleTime: Infinity,
     retry: false,
   });
-  return query.data ? { recognition: DesktopSpeechRecognition, recognitionTitle: titles[query.data] } : {};
+  return query.data ? { recognition: DesktopSpeechRecognition, recognitionTitle: titles[query.data], deferTranscript: query.data === "local" } : {};
 }
 
 /** Web Speech-shaped adapter over the desktop recognizer, so the composer's
@@ -31,6 +31,7 @@ export class DesktopSpeechRecognition implements BrowserSpeechRecognition {
   onend: BrowserSpeechRecognition["onend"] = null;
   onerror: BrowserSpeechRecognition["onerror"] = null;
   onresult: BrowserSpeechRecognition["onresult"] = null;
+  onlevel: BrowserSpeechRecognition["onlevel"] = null;
   private readonly id = crypto.randomUUID();
   private unsubscribe: (() => void) | null = null;
 
@@ -63,6 +64,7 @@ export class DesktopSpeechRecognition implements BrowserSpeechRecognition {
   private receive(event: SpeechDictationEvent) {
     if (event.id !== this.id || !this.unsubscribe) return;
     if (event.type === "ready") this.onstart?.();
+    else if (event.type === "level") this.onlevel?.(event.level);
     else if (event.type === "result") this.onresult?.({ results: event.segments.map(transcript => [{ transcript }]) });
     else if (event.type === "error") this.onerror?.({ error: event.code });
     else { this.close(); this.onend?.() }

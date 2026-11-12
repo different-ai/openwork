@@ -6,6 +6,8 @@ export interface BrowserSpeechRecognition {
   onend: (() => void) | null
   onerror: ((event: { error: string }) => void) | null
   onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
+  /** Optional host-provided microphone meter; browsers need no second stream. */
+  onlevel?: ((level: number) => void) | null
   start(): void
   stop(): void
   abort(): void
@@ -22,6 +24,7 @@ export function browserSpeechConstructor(): BrowserSpeechConstructor | undefined
   return window.SpeechRecognition ?? window.webkitSpeechRecognition
 }
 function speechError(error: string) {
+  if (error === "finalization-timeout") return "Dictation took too long to finish. Review the captured words before sending."
   if (error === "not-allowed" || error === "service-not-allowed") return "Allow microphone access in your browser."
   if (error === "audio-capture") return "Connect a microphone and try again."
   if (error === "no-speech") return "No speech detected. Try again."
@@ -35,6 +38,8 @@ export function createBrowserDictation(options: {
   text: string
   selection: { start: number; end: number }
   language: string
+  deferTranscript?: boolean
+  onLevel?(level: number): void
   onText(text: string): void
   onState(state: "starting" | "listening" | "stopping" | "idle"): void
   onError(message: string): void
@@ -45,14 +50,27 @@ export function createBrowserDictation(options: {
   const before = options.text.slice(0, start)
   const after = options.text.slice(end)
   let latest = options.text
+  let displayed = options.text
   let live = true
+  let stopping = false
   let timer: ReturnType<typeof setTimeout> | undefined
-  const endSession = () => { live = false; clearTimeout(timer); options.onState("idle") }
+  const publish = () => {
+    if (displayed === latest) return
+    displayed = latest
+    options.onText(latest)
+  }
+  const endSession = (keep = true) => {
+    live = false
+    clearTimeout(timer)
+    if (keep) publish()
+    options.onState("idle")
+  }
   recognition.lang = options.language
   recognition.continuous = true
   recognition.interimResults = true
   recognition.onstart = () => { if (live) options.onState("listening") }
   recognition.onend = () => { if (live) endSession() }
+  recognition.onlevel = level => { if (live && !stopping && Number.isFinite(level)) options.onLevel?.(Math.max(0, Math.min(1, level))) }
   recognition.onerror = event => {
     if (!live) return
     if (event.error !== "aborted") options.onError(speechError(event.error))
@@ -66,11 +84,11 @@ export function createBrowserDictation(options: {
       if (transcript && part && !/\s$/.test(transcript) && !/^[\s.,!?;:]/.test(part)) transcript += " "
       transcript += part
     }
-    if (!transcript) { latest = options.text; options.onText(latest); return }
+    if (!transcript) { latest = options.text; if (!options.deferTranscript) publish(); return }
     const left = before && !/\s$/.test(before) && !/^[\s.,!?;:]/.test(transcript) ? " " : ""
     const right = after && !/^[\s.,!?;:]/.test(after) && !/\s$/.test(transcript) ? " " : ""
     latest = before + left + transcript + right + after
-    options.onText(latest)
+    if (!options.deferTranscript) publish()
   }
   function commit() {
     if (live) {
@@ -80,17 +98,26 @@ export function createBrowserDictation(options: {
     return latest
   }
   return {
-    text: () => latest,
+    text: () => displayed,
     start() {
       options.onState("starting")
       try { recognition.start() }
       catch { options.onError("Couldn’t start dictation. Check microphone access."); endSession() }
     },
     stop() {
-      if (!live) return
+      if (!live || stopping) return
+      stopping = true
       options.onState("stopping")
-      timer = setTimeout(commit, 1500)
+      timer = setTimeout(() => {
+        if (options.deferTranscript) options.onError("Dictation took too long to finish. Review the captured words before sending.")
+        commit()
+      }, options.deferTranscript ? 6000 : 1500)
       try { recognition.stop() } catch { commit() }
+    },
+    cancel() {
+      if (!live) return
+      endSession(false)
+      try { recognition.abort() } catch { /* Already ended. */ }
     },
     commit,
   }

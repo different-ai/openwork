@@ -8,14 +8,17 @@ self-hosted deployments. Enable through the existing Features controls in
 
 A plain microphone icon sits beside Send in OpenWork and Workbot. There is
 no circular mic background, extra help panel, onboarding copy or review row.
-An original waveform with two offset crests appears inline during dictation.
-It responds to words arriving in the draft, settles between updates and
-respects reduced-motion preferences. The existing draft stays editable.
+On macOS with the bundled on-device recognizer, a microphone waveform appears
+while recording and the completed transcript appears after Stop. Cancel or
+Escape discards that recording. Existing text stays editable. See
+[local dictation](features/local-dictation/README.md) for the interaction and
+verification limits. Other recognizers retain the compact text-activity indicator.
 
 | Surface | Dictation |
 | --- | --- |
-| OpenWork desktop on macOS | Opens macOS Dictation in the focused editor through AppKit; native controls own listening and Stop |
-| OpenWork desktop on Windows | Opens Windows voice typing with its native Win+H chord; native controls own listening and Stop |
+| OpenWork desktop on macOS with the speech helper | Apple on-device recognition, audio-level waveform, Stop to review, Cancel to discard |
+| macOS builds without the speech helper | Opens macOS Dictation in the focused editor through AppKit; native controls own listening and Stop |
+| OpenWork desktop on Windows | Bundled Windows online speech recognition with live text; falls back to native Win+H voice typing if unavailable |
 | Workbot and OpenWork in a supported browser | Starts the browser's SpeechRecognition implementation, showing live interim words directly in the draft; the mic stops dictation |
 | Browser without speech recognition | Keeps the mic visible with its unavailable reason or native keyboard shortcut in its title; normal typing remains available |
 
@@ -27,7 +30,8 @@ and stops that recognition session. Late recognition results cannot refill
 the next draft. Typing an edit also stops the session so speech cannot
 overwrite the person's changes. Speech never sends a message by itself.
 
-The waveform marks dictation mode rather than measuring audio amplitude.
+The macOS waveform measures amplitude from the existing recognition audio tap.
+Other waveforms mark dictation mode rather than measuring audio amplitude.
 Browser capture state follows recognition start/end events; native desktop
 listening remains visible in the operating system's own controls. Native
 Dictation uses the system's configured language; browser recognition uses
@@ -38,7 +42,9 @@ accessible alert. There are no automatic capture retries.
 ## Privacy and rollout
 
 The app installs no speech model and calls no application-owned transcription
-endpoint. Desktop dictation is processed by the OS; browser recognition is
+endpoint. The bundled macOS helper requires on-device recognition and does not
+fall back to a network-backed service when it cannot start. Windows speech
+recognition is online. Browser recognition is
 processed by the browser's implementation and may use its online speech
 service. This is not an offline guarantee. The app stores no audio and the
 waveform opens no second microphone stream. Only the resulting text enters
@@ -47,8 +53,8 @@ remains required.
 
 The server resolves the registry flag for the current organization. Missing
 flags are off. Signed-out OpenWork follows the deployment flag. Disabling
-it aborts browser capture and pending desktop launches without deleting
-text or attachments. An already-open native dictation panel remains under
+it aborts capture and pending desktop launches without deleting existing
+text or attachments; any unrevealed local recording is discarded. An already-open native dictation panel remains under
 the person's OS controls. Workbot refreshes enabled feature state every minute.
 
 Desktop launches require the focused trusted main frame. Windows rechecks

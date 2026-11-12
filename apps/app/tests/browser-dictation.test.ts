@@ -16,6 +16,38 @@ class Recognition implements BrowserSpeechRecognition {
   words(...transcripts: string[]) { this.onresult?.({ results: transcripts.map(transcript => [{ transcript }]) }) }
 }
 
+test("buffered dictation reveals only the completed correction and preserves surrounding text", () => {
+  const recognition = new Recognition();
+  const changes: string[] = [];
+  const owner = createBrowserDictation({ recognition, text: "Ask Friday tomorrow", selection: { start: 4, end: 10 },
+    language: "en-US", deferTranscript: true, onText: text => changes.push(text), onState: () => {}, onError: () => {} });
+  owner.start();
+  recognition.words("the weak");
+  expect(changes).toEqual([]);
+  expect(owner.text()).toBe("Ask Friday tomorrow");
+  owner.stop();
+  recognition.words("the week.");
+  expect(changes).toEqual([]);
+  recognition.onend?.();
+  expect(changes).toEqual(["Ask the week. tomorrow"]);
+  recognition.words("late words");
+  expect(changes).toHaveLength(1);
+});
+
+test("cancel discards buffered speech and fences late results without touching the draft", () => {
+  const recognition = new Recognition();
+  const changes: string[] = [];
+  const owner = createBrowserDictation({ recognition, text: "Keep this", selection: { start: 9, end: 9 },
+    language: "en-US", deferTranscript: true, onText: text => changes.push(text), onState: () => {}, onError: () => {} });
+  owner.start();
+  recognition.words("discard this");
+  owner.cancel();
+  recognition.words("late words");
+  recognition.onend?.();
+  expect(changes).toEqual([]);
+  expect(recognition.aborted).toBe(1);
+});
+
 test("interim speech replaces a selection and revisions never duplicate earlier words", () => {
   const recognition = new Recognition();
   let text = "Ask about Friday tomorrow";

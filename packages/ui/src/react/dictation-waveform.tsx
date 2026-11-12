@@ -7,7 +7,7 @@ const heights = [3, 5, 9, 17, 22, 14, 7, 4, 8, 15, 20, 11, 5, 3]
 
 /** A dictation-mode indicator, not a microphone meter. It responds only to
  * changes in the editable draft; the OS does not expose its listening state. */
-export function DictationWaveform({ text, className }: { text: string; className?: string }) {
+export function DictationWaveform({ text, levels, className }: { text: string; levels?: readonly number[]; className?: string }) {
   const previous = useRef(text)
   const [active, setActive] = useState(false)
   useEffect(() => {
@@ -17,6 +17,16 @@ export function DictationWaveform({ text, className }: { text: string; className
     const timer = setTimeout(() => setActive(false), 450)
     return () => clearTimeout(timer)
   }, [text])
+
+  if (levels) return <span role="img" aria-label="Microphone level" data-dictation-waveform className={className}>
+    <svg viewBox="0 0 240 32" preserveAspectRatio="none" width="100%" height="100%" aria-hidden="true">
+      {Array.from({ length: 48 }, (_, index) => {
+        const level = levels[index - (48 - levels.length)] ?? 0
+        const height = 2 + Math.max(0, Math.min(1, level)) * 28
+        return <rect key={index} x={1 + index * 5} y={16 - height / 2} width="2" height={height} rx="1" fill="currentColor" />
+      })}
+    </svg>
+  </span>
 
   return <span role="img" aria-label="Dictation mode" title="Dictation mode. Your system controls the microphone."
     data-dictation-waveform data-text-active={active} className={className}>

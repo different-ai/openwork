@@ -59,7 +59,7 @@ import { startNativeDictation } from "./start-native-dictation";
 import { useDesktopSpeechDictation } from "./desktop-speech-dictation";
 import { markFeatureUsed } from "@/app/lib/den";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
-import { NativeDictationControl } from "./native-dictation-control";
+import { NativeDictationControl, NativeDictationRecording } from "./native-dictation-control";
 import { useSessionReferencesMaybe, type SessionReferenceCandidate } from "@/components/chat/session-reference-context";
 import { formatRelativeTime } from "@/app/utils";
 import { filterSessionReferenceCandidates } from "./session-reference-search";
@@ -381,6 +381,8 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
 
   // Editor submit (Enter, or Cmd/Ctrl+Enter when `queue` is set).
   const handleEditorSubmit = useCallback((options: { queue: boolean }) => {
+    // Enter finishes a recording for review; a second, deliberate action sends.
+    if (dictation.buffering) { void dictation.toggle(); return; }
     const current = prepareVoiceSubmission();
     const action = resolveComposerSubmit({
       hasContent: current.draft.trim().length > 0 || current.attachments.length > 0,
@@ -396,7 +398,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (action === "send") void current.onSend();
     else if (action === "steer") void current.onSteer();
     else if (action === "queue") void current.onQueue();
-  }, [props.childConversation, props.busy, props.disabled, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
+  }, [dictation, props.childConversation, props.busy, props.disabled, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
 
   const showStop = props.busy && !props.editing;
 
@@ -1130,6 +1132,12 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (event.key === "Enter" && imeActive) {
       return;
     }
+    if (event.key === "Enter" && !event.shiftKey && dictation.buffering) {
+      event.preventDefault();
+      event.stopPropagation();
+      void dictation.toggle();
+      return;
+    }
     // Tab in the empty message box takes the suggested follow-up as the draft,
     // to edit or send. Elsewhere in the composer Tab still moves focus.
     if (
@@ -1147,6 +1155,12 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     // Escape can still close menus. First press arms a confirmation prompt
     // for 3s; a second Escape within that window stops the agent.
     const anyMenuOpen = agentMenuOpen || toolMenuOpen || props.modelPickerOpen || Boolean(activeMenu);
+    if (event.key === "Escape" && dictation.buffering && !anyMenuOpen) {
+      event.preventDefault();
+      event.stopPropagation();
+      dictation.cancel();
+      return;
+    }
     if (event.key === "Escape" && props.busy && !props.childConversation && !anyMenuOpen) {
       event.preventDefault();
       if (props.stopping) return;
@@ -1471,6 +1485,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
           ) : null}
 
           <div className="px-4 pt-3 pb-2">
+            <NativeDictationRecording dictation={dictation} />
             {/* Editor */}
             <LexicalPromptEditor
               ref={editorRef}
@@ -1691,7 +1706,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                 {nativeDictationEnabled ? <NativeDictationControl dictation={dictation} disabled={props.disabled} text={props.draft} /> : null}
                 <ComposerSendButton
                   mode={props.stopping ? "stopping" : showStop ? "stop" : props.submissionPreparing ? "preparing" : "send"}
-                  ready={canSend && !props.disabled}
+                  ready={canSend && !props.disabled && !dictation.buffering}
                   onPointerDown={(event) => {
                     // Preserve focus until submission succeeds; rejected sends keep the keyboard.
                     if (event.pointerType === "touch" && window.matchMedia("(max-width: 1023px)").matches) event.preventDefault();
@@ -1699,14 +1714,14 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   onClick={
                     showStop
                       ? () => void props.onStop()
-                      : !canSend || props.submissionPreparing
+                      : !canSend || props.submissionPreparing || dictation.buffering
                         ? undefined
                         : () => void prepareVoiceSubmission().onSend()
                   }
                   disabled={
                     props.disabled
                     || Boolean(props.stopping)
-                    || (!showStop && (!canSend || Boolean(props.submissionPreparing)))
+                    || (!showStop && (!canSend || Boolean(props.submissionPreparing) || dictation.buffering))
                   }
                   label={
                     props.stopping
