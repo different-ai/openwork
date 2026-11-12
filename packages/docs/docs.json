@@ -205,6 +205,7 @@
               "ai-gateway/provider-support",
               "ai-gateway/compare-litellm-bifrost",
               "ai-gateway/litellm",
+              "ai-gateway/truefoundry",
               "ai-gateway/how-requests-flow",
               "ai-gateway/auto-model-routing",
               "ai-gateway/google-agent-platform",

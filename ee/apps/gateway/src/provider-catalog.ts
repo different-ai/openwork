@@ -3,6 +3,7 @@
 // npm/api/env per provider id. The gateway classifies protocols from `npm`.
 import { BEDROCK_MANTLE_PROVIDER_ID, bedrockMantleApiPathsFromCatalog, withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
 import { withLiteLlmProvider } from "@openwork-ee/utils/litellm-catalog"
+import { withTrueFoundryProvider } from "@openwork-ee/utils/truefoundry-catalog"
 import { MICROSOFT_FOUNDRY_PROVIDER_ID, withMicrosoftFoundryProvider } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { GATEWAY_CUSTOM_PROVIDER_ID, GATEWAY_CUSTOM_PROVIDER_NPM } from "@openwork/types/den/gateway-custom-providers"
 import { readProviderCatalog } from "./models/catalog.js"
@@ -48,8 +49,8 @@ export function createProviderCatalog(raw: unknown): ProviderCatalog {
   const providers = new Map<string, CatalogProvider>()
   if (isRecord(raw)) {
     // Same derivation as Den's catalog, so both see one amazon-bedrock-mantle and
-    // one microsoft-foundry provider, and one synthetic, modelless litellm provider.
-    for (const [id, value] of Object.entries(withLiteLlmProvider(withMicrosoftFoundryProvider(withBedrockMantleProvider(raw))))) {
+    // one microsoft-foundry provider, and synthetic, modelless litellm and truefoundry providers.
+    for (const [id, value] of Object.entries(withTrueFoundryProvider(withLiteLlmProvider(withMicrosoftFoundryProvider(withBedrockMantleProvider(raw)))))) {
       const provider = readCatalogProvider(value)
       if (!provider) continue
       providers.set(id, id === BEDROCK_MANTLE_PROVIDER_ID ? { ...provider, modelApiPaths: bedrockMantleApiPathsFromCatalog(raw) }

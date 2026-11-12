@@ -8,7 +8,7 @@ function provider(): GatewayAccessProvider {
     id: "provider", providerId: "openai", name: "OpenAI", status: "active", modelIds: [],
     credentialMode: "org", updatedAt: null, providerConfig: {}, catalogWarning: null,
     settings: {}, access: null, credentials: null, oauthClientId: null,
-    hasOauthClientSecret: false, oauthCallbackUrl: null, authorizationRequests: [], litellm: null, custom: null,
+    hasOauthClientSecret: false, oauthCallbackUrl: null, authorizationRequests: [], litellm: null, truefoundry: null, custom: null,
     // Deliberately caller-specific: these must not influence the preview.
     models: [{ id: "caller-only", name: "Caller only", config: {} }], credentialStatus: "ready",
     modelGroups: [

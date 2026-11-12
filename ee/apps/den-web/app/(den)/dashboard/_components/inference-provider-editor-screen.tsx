@@ -28,6 +28,8 @@ import {
   isAmazonBedrockNpm, isAwsRegion, isGoogleVertexNpm, isMicrosoftTenantId, isSupportedGatewayNpm, MEMBER_SIGN_IN_DOC_URLS, trimAwsSso, type AwsKeysInput, type AwsSsoInput,
 } from "./inference-provider-request";
 import { LITELLM_PROVIDER_ID } from "./litellm-provider-data";
+import { TRUEFOUNDRY_PROVIDER_ID } from "./truefoundry-provider-data";
+import { TrueFoundryProviderScreen } from "./truefoundry-provider-screen";
 import { LiteLlmProviderScreen } from "./litellm-provider-screen";
 import { CustomProviderManageScreen } from "./custom-provider-manage-screen";
 import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers";
@@ -130,7 +132,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     setDetail(null);
     setCatalogError(null);
     // LiteLLM and custom provider models come from the organization's own provider, not the shared catalog.
-    if (!orgId || !providerId || providerId === LITELLM_PROVIDER_ID || isGatewayCustomProviderId(providerId)) { setCatalogBusy(false); return; }
+    if (!orgId || !providerId || providerId === LITELLM_PROVIDER_ID || providerId === TRUEFOUNDRY_PROVIDER_ID || isGatewayCustomProviderId(providerId)) { setCatalogBusy(false); return; }
     let cancelled = false;
     setCatalogBusy(true);
     void requestLlmProviderCatalogDetail(orgId, providerId)
@@ -353,6 +355,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     );
   }
   if (provider?.providerId === LITELLM_PROVIDER_ID) return <LiteLlmProviderScreen provider={provider} reload={reload} embedded={embedded} />;
+  if (provider?.providerId === TRUEFOUNDRY_PROVIDER_ID) return <TrueFoundryProviderScreen provider={provider} reload={reload} embedded={embedded} />;
   if (provider && isGatewayCustomProviderId(provider.providerId)) return <CustomProviderManageScreen key={provider.id} provider={provider} reload={reload} embedded={embedded} />;
 
   const teams = orgContext?.teams ?? [];

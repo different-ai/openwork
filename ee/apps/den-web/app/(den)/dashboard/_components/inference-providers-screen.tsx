@@ -25,6 +25,7 @@ import { describeGatewayAccess, type DenInferenceProvider } from "./inference-pr
 import { getProviderDocUrl, getProviderIconSlug } from "./llm-provider-data";
 import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers";
 import { LITELLM_DOC_URL, liteLlmAccessGroupId } from "./litellm-provider-data";
+import { TRUEFOUNDRY_DOC_URL, trueFoundryAccessGroupId } from "./truefoundry-provider-data";
 
 const MUTED = "text-[color:var(--dls-text-secondary)]";
 
@@ -63,8 +64,8 @@ function modelsLabel(provider: DenInferenceProvider) {
 
 function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; orgSlug: string | null }) {
   const { orgContext } = useOrgDashboard();
-  // LiteLLM per-person keys add automatic member grants; only the access group says who may use it.
-  const accessGroupId = provider.litellm ? liteLlmAccessGroupId(provider) : null;
+  // LiteLLM and TrueFoundry per-person keys add automatic member grants; only the access group says who may use it.
+  const accessGroupId = provider.litellm ? liteLlmAccessGroupId(provider) : provider.truefoundry ? trueFoundryAccessGroupId(provider) : null;
   const audience = describeGatewayAccess(accessGroupId ? { ...provider, accessGrants: (provider.accessGrants ?? []).filter((grant) => grant.modelGroupId === accessGroupId) } : provider, {
     organization: null,
     teamName: (teamId) => orgContext?.teams.find((team) => team.id === teamId)?.name,
@@ -72,13 +73,17 @@ function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; or
   });
   const nobody = audience === "No one has access yet";
   const litellm = provider.litellm;
+  const truefoundry = provider.truefoundry;
+  const syncError = litellm?.lastSyncError ?? truefoundry?.lastSyncError ?? null;
   const customProvider = isGatewayCustomProviderId(provider.providerId);
   // Per-person LiteLLM keys are ready once the admin key syncs; each person adds their own key.
-  const keyReady = litellm ? litellm.hasSyncKey && (litellm.mode === "member" || provider.credentialStatus === "ready") : provider.credentialStatus === "ready";
-  const ready = provider.status === "active" && keyReady && !litellm?.lastSyncError && !nobody;
+  // TrueFoundry is ready once its admin key is saved; OpenWork creates each person's key.
+  const keyReady = litellm ? litellm.hasSyncKey && (litellm.mode === "member" || provider.credentialStatus === "ready")
+    : truefoundry ? truefoundry.hasAdminKey : provider.credentialStatus === "ready";
+  const ready = provider.status === "active" && keyReady && !syncError && !nobody;
   const status: RowStatus = provider.status === "disabled"
     ? { label: "Off", tone: "neutral" }
-    : litellm?.lastSyncError
+    : syncError
       ? { label: "Sync failed", tone: "warning" }
       : !keyReady
       ? { label: "Add a key", tone: "warning" }
@@ -91,7 +96,7 @@ function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; or
       lead={<DenBrandMark
         name={customProvider ? provider.name : provider.providerId}
         simpleIconSlug={customProvider ? undefined : getProviderIconSlug(provider.providerId)}
-        serviceUrl={customProvider ? null : litellm ? LITELLM_DOC_URL : getProviderDocUrl(provider.providerConfig)}
+        serviceUrl={customProvider ? null : litellm ? LITELLM_DOC_URL : truefoundry ? TRUEFOUNDRY_DOC_URL : getProviderDocUrl(provider.providerConfig)}
         className="size-8 shrink-0 rounded-lg"
         imageClassName="h-4 w-4"
       />}

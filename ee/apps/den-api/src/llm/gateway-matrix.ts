@@ -6,6 +6,7 @@ import { createGatewayModelAlias, gatewayAudienceKey } from "@openwork-ee/utils/
 import { inferenceCredentialEnvNames, isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
 import { isAwsRegion, vertexPublisherBase } from "@openwork-ee/utils/inference-egress"
 import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
+import { isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
 import { MICROSOFT_FOUNDRY_PROVIDER_ID, isMicrosoftFoundryResourceName } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { parseGatewayProviderSecret, type GatewayAccessGrant, type GatewayAccessGrantWrite, type GatewayCredentialSet, type GatewayCredentialSetPatch, type GatewayModelGroup, type GatewayModelGroupPatch, type GatewayProviderDetails, type GatewayProviderSummary, type GatewayUsableModel } from "@openwork/types/den/gateway"
 import { loadProviderAudit, providerAuditMutation, providerSystemAuditContext, recordProviderAttempt, type ProviderAuditCapture } from "../audit/provider.js"
@@ -16,6 +17,7 @@ import { bedrockSettingsError, isAwsGatewayNpm, buildGatewayModelConfig, buildGa
 import { gatewayMemberSignInMethod, memberSignInConfigurationError, memberSignInCredentialKind, memberSignInCredentialUsable, memberSignInExtraneousFields, readAwsSsoSettings, sameMemberSignInConfiguration } from "./gateway-member-sign-in.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
 import { liteLlmCatalogProvider, liteLlmStatus, readLiteLlmSettings } from "./litellm-settings.js"
+import { trueFoundryCatalogProvider, trueFoundryStatus } from "./truefoundry-settings.js"
 import { customCatalogProvider, customProviderStatus } from "./gateway-custom-provider.js"
 import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { getModelsDevProvider, type ModelsDevProvider } from "./models-dev.js"
@@ -54,11 +56,13 @@ export function validateGatewaySettings(config: Record<string, unknown>, setting
 
 /**
  * Catalogs stored on the provider row instead of models.dev: LiteLLM's last
- * sync (settings.litellm) and a custom provider's own models (settings.custom).
+ * sync (settings.litellm), TrueFoundry's (settings.truefoundry) and a custom
+ * provider's own models (settings.custom).
  * Null for models.dev providers.
  */
 export function storedProviderCatalog(provider: Pick<GatewayProvider, "provider_id" | "name" | "settings">): ModelsDevProvider | null {
   if (isLiteLlmProviderId(provider.provider_id)) return liteLlmCatalogProvider(provider)
+  if (isTrueFoundryProviderId(provider.provider_id)) return trueFoundryCatalogProvider(provider)
   // Unreadable custom settings give no catalog (never an empty one that would prune the models).
   if (isGatewayCustomProviderId(provider.provider_id)) return customCatalogProvider(provider)
   return null
@@ -66,7 +70,7 @@ export function storedProviderCatalog(provider: Pick<GatewayProvider, "provider_
 
 /** Providers whose catalog is stored on the row: never looked up in models.dev. */
 export function hasStoredProviderCatalog(providerId: string): boolean {
-  return isLiteLlmProviderId(providerId) || isGatewayCustomProviderId(providerId)
+  return isLiteLlmProviderId(providerId) || isTrueFoundryProviderId(providerId) || isGatewayCustomProviderId(providerId)
 }
 
 /**
@@ -79,6 +83,7 @@ export async function trustedProviderCatalog(provider: Pick<GatewayProvider, "pr
 
 export async function gatewayCatalog(providerId: string, modelIds: string[]) {
   if (isLiteLlmProviderId(providerId)) throw new GatewayWriteError(400, "litellm_setup_required", "Create LiteLLM providers with POST /v1/inference-providers/litellm so OpenWork can sync their models.")
+  if (isTrueFoundryProviderId(providerId)) throw new GatewayWriteError(400, "truefoundry_setup_required", "Create TrueFoundry providers with POST /v1/inference-providers/truefoundry so OpenWork can sync their models and create each person's key.")
   if (isGatewayCustomProviderId(providerId)) throw new GatewayWriteError(400, "custom_setup_required", "A person adds custom OpenAI-compatible providers in OpenWork (AI Gateway, Add a provider, Another provider), where the address, key and models are tested privately. Agents and this route can't create them; the API is POST /v1/inference-providers/custom.")
   const catalog = await getModelsDevProvider(providerId)
   if (!catalog) throw new GatewayWriteError(404, "provider_not_found")
@@ -413,6 +418,8 @@ export async function writeGatewaySet(
   const awsSso = input.awsSso === undefined ? mode === "org" ? null : existing?.aws_sso ?? null : input.awsSso === null ? null : readAwsSsoSettings(input.awsSso)
   if (input.awsSso && !awsSso) throw new GatewayWriteError(400, "invalid_aws_sso", "Enter the AWS access portal URL, IAM Identity Center region, 12-digit AWS account ID and permission set name.")
   const signIn = { oauth_client_id: clientId, oauth_client_secret: clientSecret, oauth_tenant_id: tenantId, aws_sso: awsSso }
+  // TrueFoundry providers hold one member set OpenWork fills with each person's token; it is never edited by hand.
+  if (isTrueFoundryProviderId(provider.provider_id)) throw new GatewayWriteError(400, "truefoundry_managed", "OpenWork manages this TrueFoundry provider's credentials. Replace the admin key with PATCH /v1/inference-providers/{inferenceProviderId}/truefoundry.")
   // Custom OpenAI-compatible providers hold exactly one organization API key (no key maps, no per-member sign-in).
   if (isGatewayCustomProviderId(provider.provider_id)) {
     if (mode !== "org") throw new GatewayWriteError(400, "unsupported_credential_mode", "Custom providers use one organization API key. Per-member sign-in isn't available for them.")
@@ -660,7 +667,8 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
     const subject = set.credential_mode === "org" ? "org" : memberId
     const token = credentials.find(({ credential: row }) => row.credential_set_id === set.id && row.subject === subject
       && row.org_membership_id === (set.credential_mode === "org" ? null : memberId) && row.status === "active")?.credential
-    const litellm = isLiteLlmProviderId(provider.provider_id)
+    // LiteLLM and TrueFoundry member sets hold one API key per person.
+    const litellm = isLiteLlmProviderId(provider.provider_id) || isTrueFoundryProviderId(provider.provider_id)
     const method = gatewayMemberSignInMethod(provider.provider_id)
     const configured = set.credential_mode === "member" ? litellm || Boolean(method && !memberSignInConfigurationError(method, set)) : Boolean(token)
     let usable = false
@@ -688,7 +696,7 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   })
   // LiteLLM keys created by OpenWork need nothing from the person once any key exists.
   const liteLlmSettings = isLiteLlmProviderId(provider.provider_id) ? readLiteLlmSettings(provider.settings) : null
-  const issuedReady = liteLlmSettings?.mode === "member" && liteLlmSettings.keySource === "issued"
+  const issuedReady = (isTrueFoundryProviderId(provider.provider_id) || liteLlmSettings?.mode === "member" && liteLlmSettings.keySource === "issued")
     && credentials.some(({ credential }) => credential.org_membership_id === memberId && credential.status === "active")
   const authorizationRequests = setSummaries.filter((set) => !issuedReady && set.credentialMode === "member" && set.credentialStatus === "member_auth_required" && grants.some((grant) => grant.credential_set_id === set.id))
     .map((set) => {
@@ -742,13 +750,15 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
     modelIds: (modelsByGroupId.get(group.id) ?? []).map((model) => model.model_id) }))
   const status = await liteLlmStatus(provider, options.primary)
   const litellm = status && !identities ? { ...status, baseUrl: null, attention: [] } : status
+  const tfStatus = await trueFoundryStatus(provider, options.primary)
+  const truefoundry = tfStatus && !identities ? { ...tfStatus, controlPlaneUrl: null, gatewayBaseUrl: null, attention: [] } : tfStatus
   const settings = publicProviderSettings(provider.settings)
   if (!identities) delete settings.upstreamBaseUrl
   // Custom providers: the address and model settings, for people who may manage them (like settings.upstreamBaseUrl).
   const orgSetIds = new Set(sets.filter((set) => set.credential_mode === "org" && set.status === "active").map((set) => set.id))
   const custom = identities ? customProviderStatus(provider, credentials.some(({ credential }) => orgSetIds.has(credential.credential_set_id)
     && credential.subject === "org" && credential.org_membership_id === null && credential.status === "active")) : undefined
-  return { ...summary, ...(litellm ? { litellm } : {}), ...(custom ? { custom } : {}), settings, modelGroups, credentialSets: setSummaries, accessGrants: access.map(gatewayGrantSummary), oauthCallbackUrl: `${baseUrl}/v1/inference-providers/oauth/callback`,
+  return { ...summary, ...(litellm ? { litellm } : {}), ...(truefoundry ? { truefoundry } : {}), ...(custom ? { custom } : {}), settings, modelGroups, credentialSets: setSummaries, accessGrants: access.map(gatewayGrantSummary), oauthCallbackUrl: `${baseUrl}/v1/inference-providers/oauth/callback`,
     ...(identities
       ? { credentials: credentials.map(({ credential, memberName, memberEmail }) => ({ id: credential.id, credentialSetId: credential.credential_set_id, subject: credential.subject, orgMembershipId: credential.org_membership_id, memberName, memberEmail, kind: credential.kind, status: credential.status, expiresAt: credential.expires_at?.toISOString() ?? null })) }
       : { credentialCounts: {

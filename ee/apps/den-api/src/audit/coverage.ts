@@ -45,6 +45,11 @@ export const providerUncoveredRoutes = [
   "PUT /v1/inference-providers/:inferenceProviderId/litellm/member-key",
   "POST /v1/inference-providers/oauth/browser-litellm-key",
   "POST /v1/inference-providers/oauth/browser-litellm-check",
+  // TrueFoundry setup, sync and member token creation: request evidence only (routes/integrations.ts).
+  "POST /v1/inference-providers/truefoundry",
+  "POST /v1/inference-providers/:inferenceProviderId/truefoundry/sync",
+  "PATCH /v1/inference-providers/:inferenceProviderId/truefoundry",
+  "POST /v1/inference-providers/oauth/browser-truefoundry-check",
   // Custom OpenAI-compatible providers: request evidence only (routes/integrations.ts).
   "POST /v1/inference-providers/custom/discover-models",
   "POST /v1/inference-providers/custom/test-connection",

@@ -48,6 +48,7 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   gateway_provider_credentials: { reason: "secret", note: "written through ai-gateway.providers $secret placeholders" },
   gateway_provider_oauth_states: { reason: "runtime" },
   gateway_litellm_issued_keys: { reason: "secret", note: "keys issued in an organization's LiteLLM proxy" },
+  gateway_truefoundry_users: { reason: "secret", note: "people matched in an organization's TrueFoundry tenant and the tokens OpenWork created for them" },
   gateway_keys: { reason: "personal", note: "member gateway keys" },
   gateway_api_keys: { reason: "personal", note: "API keys members create for 3rd party tools; only a digest is stored" },
   gateway_request_logs: { reason: "runtime" },

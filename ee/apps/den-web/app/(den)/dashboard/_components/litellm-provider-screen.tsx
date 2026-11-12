@@ -32,16 +32,16 @@ const CARD_TITLE = "text-[13px] font-medium text-gray-900";
 const LABEL = "mt-3 block text-[12px] font-medium text-gray-700";
 const ROW = "flex min-h-10 items-center gap-3 py-2 text-[13px]";
 
-type Audience = GatewayAccessGrantWrite["audience"];
-type AccessValue = { allMembers: boolean; memberIds: string[]; teamIds: string[] };
+export type Audience = GatewayAccessGrantWrite["audience"];
+export type AccessValue = { allMembers: boolean; memberIds: string[]; teamIds: string[] };
 
 function Mark({ size = "md" }: { size?: "sm" | "md" }) {
   return <DenBrandMark name="LiteLLM" serviceUrl={LITELLM_DOC_URL} className={size === "sm" ? "h-7 w-7 rounded-[7px]" : "h-8 w-8 rounded-[8px]"} imageClassName={size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4"} />;
 }
 
-/** People and teams picker shared by setup and the saved provider. */
-function AccessList({ title, value, onAdd, onRemove, onEveryone, busy }: {
-  title: string; value: AccessValue; busy: boolean;
+/** People and teams picker shared by setup and the saved provider (LiteLLM and TrueFoundry). */
+export function AccessList({ title, value, onAdd, onRemove, onEveryone, busy, idPrefix = "litellm" }: {
+  title: string; value: AccessValue; busy: boolean; idPrefix?: string;
   onAdd: (audience: Audience) => void; onRemove: (audience: Audience) => void; onEveryone: (checked: boolean) => void;
 }) {
   const { orgContext } = useOrgDashboard();
@@ -51,19 +51,19 @@ function AccessList({ title, value, onAdd, onRemove, onEveryone, busy }: {
   const teamOptions = teams.filter((team) => !value.teamIds.includes(team.id)).map((team) => ({ value: team.id, label: team.name, description: `${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}` }));
   const memberOptions = members.filter((member) => !value.memberIds.includes(member.id)).map((member) => ({ value: member.id, label: member.user.name, description: member.user.email }));
   return (
-    <section className={`${CARD} mt-3`} aria-labelledby="litellm-access-heading">
-      <h2 id="litellm-access-heading" className={CARD_TITLE}>{title}</h2>
+    <section className={`${CARD} mt-3`} aria-labelledby={`${idPrefix}-access-heading`}>
+      <h2 id={`${idPrefix}-access-heading`} className={CARD_TITLE}>{title}</h2>
       <div className={`${ROW} mt-1`}>
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500"><Globe className="h-4 w-4" aria-hidden="true" strokeWidth={1.5} /></span>
         <span className="min-w-0 flex-1 font-medium text-gray-900">Everyone in the organization</span>
-        <DenSwitch checked={value.allMembers} disabled={busy} aria-label="Everyone in the organization" testId="litellm-access-everyone" onChange={onEveryone} />
+        <DenSwitch checked={value.allMembers} disabled={busy} aria-label="Everyone in the organization" testId={`${idPrefix}-access-everyone`} onChange={onEveryone} />
       </div>
       {!value.allMembers && (value.teamIds.length || value.memberIds.length) ? (
         <ul className="divide-y divide-gray-100 border-t border-gray-100">
           {value.teamIds.map((teamId) => {
             const team = teams.find((entry) => entry.id === teamId);
             return (
-              <li key={teamId} className={ROW} data-testid="litellm-access-row">
+              <li key={teamId} className={ROW} data-testid={`${idPrefix}-access-row`}>
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500"><Users className="h-4 w-4" aria-hidden="true" strokeWidth={1.5} /></span>
                 <span className="min-w-0 flex-1 text-gray-900">{team?.name ?? "Team"}</span>
                 <DenButton size="sm" variant="ghost" disabled={busy} onClick={() => onRemove({ type: "team", teamId })}>Remove</DenButton>
@@ -73,7 +73,7 @@ function AccessList({ title, value, onAdd, onRemove, onEveryone, busy }: {
           {value.memberIds.map((memberId) => {
             const member = members.find((entry) => entry.id === memberId);
             return (
-              <li key={memberId} className={ROW} data-testid="litellm-access-row">
+              <li key={memberId} className={ROW} data-testid={`${idPrefix}-access-row`}>
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500"><User className="h-4 w-4" aria-hidden="true" strokeWidth={1.5} /></span>
                 <span className="min-w-0 flex-1"><span className="block text-gray-900">{member?.user.name ?? "Person"}</span><span className="block text-[12px] text-gray-500">{member?.user.email ?? ""}</span></span>
                 <DenButton size="sm" variant="ghost" disabled={busy} onClick={() => onRemove({ type: "member", memberId })}>Remove</DenButton>
@@ -99,11 +99,11 @@ function AccessList({ title, value, onAdd, onRemove, onEveryone, busy }: {
   );
 }
 
-function addAudience(value: AccessValue, audience: Audience): AccessValue {
+export function addAudience(value: AccessValue, audience: Audience): AccessValue {
   if (audience.type === "organization") return { allMembers: true, memberIds: [], teamIds: [] };
   return audience.type === "team" ? { ...value, teamIds: [...new Set([...value.teamIds, audience.teamId])] } : { ...value, memberIds: [...new Set([...value.memberIds, audience.memberId])] };
 }
-function removeAudience(value: AccessValue, audience: Audience): AccessValue {
+export function removeAudience(value: AccessValue, audience: Audience): AccessValue {
   if (audience.type === "organization") return { ...value, allMembers: false };
   return audience.type === "team" ? { ...value, teamIds: value.teamIds.filter((id) => id !== audience.teamId) } : { ...value, memberIds: value.memberIds.filter((id) => id !== audience.memberId) };
 }
