@@ -115,6 +115,7 @@ export const PluginTable = mysqlTable(
     index("plugin_organization_id").on(table.organizationId),
     index("plugin_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("plugin_status").on(table.status),
+    index("plugin_status_created_at").on(table.status, table.createdAt),
     index("plugin_name").on(table.name),
     index("plugin_directory_page").on(table.organizationId, table.status, table.updatedAt, table.id),
   ],
@@ -140,6 +141,7 @@ export const MarketplaceTable = mysqlTable(
     index("marketplace_organization_id").on(table.organizationId),
     index("marketplace_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("marketplace_status").on(table.status),
+    index("marketplace_status_created_at").on(table.status, table.createdAt, table.name),
     index("marketplace_name").on(table.name),
   ],
 )

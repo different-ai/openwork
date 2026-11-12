@@ -1359,6 +1359,13 @@
       "when": 1794417781063,
       "tag": "0194_computer_disconnect",
       "breakpoints": true
+    },
+    {
+      "idx": 195,
+      "version": "5",
+      "when": 1794515541119,
+      "tag": "0195_control_center_catalog_indexes",
+      "breakpoints": true
     }
   ]
 }

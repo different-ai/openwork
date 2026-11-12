@@ -1,4 +1,4 @@
-import { sql } from "@openwork-ee/den-db/drizzle"
+import { sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import {
   CONTROL_CENTER_CAPABILITY_TRACKING_STARTED,
   CONTROL_CENTER_RANGE_DAYS,
@@ -352,6 +352,13 @@ export async function computeSharing({ now, rows }: MetricContext): Promise<Metr
   const today = dayKey(now)
   const from = later(CONTROL_CENTER_CAPABILITY_TRACKING_STARTED, addDays(today, -89))
   const fromTime = new Date(dayTime(from))
+  const catalogSince = ago(now, 90)
+  // Preserve the catalog's UTC day comparison within its rolling 90-day window.
+  const catalogDayCutoff = (days: number) => new Date(Math.ceil(ago(now, days + 1).getTime() / DAY_MS) * DAY_MS)
+  const catalogCounts = (createdAt: SQL) => sql`
+    COUNT(CASE WHEN ${createdAt} >= ${catalogDayCutoff(7)} THEN 1 END) AS \`7d\`,
+    COUNT(CASE WHEN ${createdAt} >= ${catalogDayCutoff(30)} THEN 1 END) AS \`30d\`,
+    COUNT(*) AS \`90d\``
   const teams = await readTeamOrganizations(rows)
   // Raw events are deleted as the gateway folds them into daily rollups, so the two never overlap.
   const uses = await rows(sql`${SELECT} u.day AS day, u.organization_id AS org, u.org_membership_id AS member, u.kind AS kind,
@@ -373,9 +380,13 @@ export async function computeSharing({ now, rows }: MetricContext): Promise<Metr
       g.org_wide AS org_wide, g.team_id AS team, g.org_membership_id AS grantee
     FROM config_object co LEFT JOIN config_object_access_grant g ON g.config_object_id = co.id AND g.removed_at IS NULL
     WHERE co.object_type = 'skill' AND co.status = 'active' AND co.deleted_at IS NULL AND NOT ${isBuiltInSkill("co.id")}`)
-  // The plugin-created count query is disabled: it returned 100k+ rows and failed every run.
-  // Talk to Omar before bringing it back.
-  const marketplaces = await rows(sql`${SELECT} mk.created_at AS created FROM marketplace mk WHERE mk.status = 'active' AND mk.created_at >= ${ago(now, 90)} AND mk.name NOT IN (${BUILT_IN_MARKETPLACES})`)
+  // Each catalog query returns one row even when the window contains more than 100k records.
+  const [plugins] = await rows(sql`${SELECT} ${catalogCounts(sql`p.created_at`)}
+    FROM plugin p
+    WHERE p.status = 'active' AND p.created_at >= ${catalogSince} AND NOT ${isBuiltInPlugin("p.id")}`)
+  const [marketplaces] = await rows(sql`${SELECT} ${catalogCounts(sql`mk.created_at`)}
+    FROM marketplace mk
+    WHERE mk.status = 'active' AND mk.created_at >= ${catalogSince} AND mk.name NOT IN (${BUILT_IN_MARKETPLACES})`)
   const skillRecords = new Map<string, { org: string; creator: string; createdDay: string | null; grants: { orgWide: boolean; teamId: string | null; memberId: string | null }[] }>()
   for (const row of skills) {
     const id = String(row.id)
@@ -432,11 +443,6 @@ export async function computeSharing({ now, rows }: MetricContext): Promise<Metr
       connector.errors += row.errors
       connectors.set(name, connector)
     }
-    const rangeStart = ago(now, CONTROL_CENTER_RANGE_DAYS[range]).getTime()
-    const createdInRange = (value: unknown) => {
-      const day = toDay(value)
-      return day !== null && dayTime(day) >= rangeStart - DAY_MS
-    }
     return {
       weekly,
       skills: {
@@ -454,9 +460,9 @@ export async function computeSharing({ now, rows }: MetricContext): Promise<Metr
         .sort((a, b) => b.people - a.people || b.calls - a.calls)
         .slice(0, 10),
       catalog: {
-        // Disabled; see the note on the queries above. The UI shows a notice instead of this number.
-        plugins: 0,
-        marketplaces: marketplaces.filter((row) => createdInRange(row.created)).length,
+        plugins: num(plugins?.[range]),
+        marketplaces: num(marketplaces?.[range]),
+        pluginsCounted: true,
       },
     }
   })
