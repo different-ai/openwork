@@ -1,5 +1,11 @@
 /** @jsxImportSource react */
 import { useChatEngineClient } from "@/react-app/domains/models/use-chat-engine-client";
+import { cloudMcpModelContext } from "@/react-app/domains/connections/cloud-mcp-model-context";
+import { orgDefaultModelForEngine } from "@/react-app/domains/models/org-default-model";
+import { useSessionModelStore } from "@/react-app/domains/session/surface/session-model-store";
+import { useWorkspaceDefaultModel, workspaceModelScope } from "@/react-app/kernel/model-config";
+import { useWorkspaceModelProfile } from "@/react-app/kernel/use-workspace-model-default";
+import { useProviderListQuery } from "@/react-app/infra/provider-list-query";
 import { useAutoAccess } from "@/react-app/domains/cloud/auto-access-ui";
 import { freeAutoSwitchedOff } from "@/app/lib/inference-access";
 import { openNewSessionDraft } from "@/react-app/domains/session/chat/new-session-destination";
@@ -20,7 +26,6 @@ import {
   isLoopbackOpenworkServerUrl,
   readOpenworkServerSettings,
   type OpenworkCloudMcpHealth,
-  type OpenworkCloudMcpProviderModelContext,
   type OpenworkServerCapabilities,
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
@@ -1254,11 +1259,32 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     cloudProvidersEnabled: cloudSession.isSignedIn,
     importedProviders: providerAuthSnapshot.importedCloudProviders,
   });
-  const currentCloudMcpModel = useMemo<OpenworkCloudMcpProviderModelContext | null>(() => {
-    const provider = local.prefs.defaultModel?.providerID.trim() ?? "";
-    const model = local.prefs.defaultModel?.modelID.trim() ?? "";
-    return provider && model ? { provider, model } : null;
-  }, [local.prefs.defaultModel]);
+  const modelProfileId = useWorkspaceModelProfile();
+  const workspaceDefault = useWorkspaceDefaultModel(workspaceModelScope({
+    profileId: modelProfileId,
+    workspaceId: runtimeWorkspaceId ?? "",
+    opencodeBaseUrl: chatEngine.baseUrl,
+    localRuntime: isDesktopRuntime(),
+  }));
+  // Settings can retain the navigation state after a workspace switch. Never
+  // diagnose the new workspace using the originating workspace's conversation.
+  const connectSessionId = navigationWorkspaceId === selectedWorkspaceId ? navigationSessionId : null;
+  const connectSessionModel = useSessionModelStore((state) =>
+    connectSessionId ? state.bySessionId[connectSessionId]?.model ?? null : null);
+  const providerListQuery = useProviderListQuery({
+    client: chatEngine.client,
+    baseUrl: chatEngine.baseUrl,
+    directory: selectedWorkspaceRoot || undefined,
+  });
+  const orgModel = useMemo(() => orgDefaultModelForEngine(desktopConfig.config.defaultModel, chatEngine.baseUrl),
+    [desktopConfig.config.defaultModel, chatEngine.baseUrl]);
+  const currentCloudMcpModel = useMemo(() => cloudMcpModelContext({
+    sessionModel: connectSessionModel,
+    workspaceModel: workspaceDefault?.model,
+    orgModel,
+    globalModel: local.prefs.defaultModel,
+    providerList: providerListQuery.isError ? undefined : providerListQuery.data,
+  }), [connectSessionModel, workspaceDefault, orgModel, local.prefs.defaultModel, providerListQuery.data, providerListQuery.isError]);
   const refreshCloudMcpHealth = useCallback(async () => {
     const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
     const workspaceId = runtimeWorkspaceId?.trim() ?? "";
@@ -2705,7 +2731,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             agentAccess={{
               client: selectedWorkspaceEndpoint?.client ?? openworkClient,
               workspaceId: runtimeWorkspaceId,
-              currentModel: currentCloudMcpModel,
+              currentModel: currentCloudMcpModel ?? null,
               onHealthChange: handleCloudMcpHealthChange,
             }}
             agentContextDiagnostics={{

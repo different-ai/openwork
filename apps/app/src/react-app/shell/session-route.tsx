@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { cloudMcpModelContext } from "@/react-app/domains/connections/cloud-mcp-model-context";
 import { freeAutoSwitchedOff, modelForNewTask, openComposerModelPickerEvent } from "@/app/lib/inference-access";
 import { useAutoAccess, useObservedAutoAccessSnapshot } from "@/react-app/domains/cloud/auto-access-ui";
 import { newSessionDraftSlot, newSessionDraftOwnerKey, openNewSessionDraft } from "@/react-app/domains/session/chat/new-session-destination";
@@ -698,12 +699,26 @@ export function SessionRoute() {
     })) return;
     void refreshRouteState({ supersede: true });
   }, [cloudWorkspace.gatewayMode, cloudWorkspace.viewModel.variant, cloudWorkspace.visible, refreshRouteState]);
-  const cloudMcpProviderModel = useMemo(() => local.prefs.defaultModel
-    ? {
-        provider: local.prefs.defaultModel.providerID,
-        model: local.prefs.defaultModel.modelID,
-      }
-    : undefined, [local.prefs.defaultModel?.modelID, local.prefs.defaultModel?.providerID]);
+  const providerListQuery = useProviderListQuery({
+    client: opencodeClient,
+    baseUrl: opencodeBaseUrl,
+    directory: selectedWorkspaceRoot || undefined,
+  });
+  const connectSessionId = useWorkbenchStore((state) => selectedSessionId && state.focusedPane === "secondary"
+    && state.secondary?.workspaceId === selectedWorkspaceId
+    ? state.secondary.sessionId
+    : selectedSessionId);
+  const connectSessionModel = useSessionModelStore((state) =>
+    connectSessionId ? state.bySessionId[connectSessionId]?.model ?? null : null);
+  const connectOrgModel = useMemo(() => orgDefaultModelForEngine(orgConfiguredDefaultModel, opencodeBaseUrl),
+    [orgConfiguredDefaultModel, opencodeBaseUrl]);
+  const cloudMcpProviderModel = useMemo(() => cloudMcpModelContext({
+    sessionModel: connectSessionModel,
+    workspaceModel: workspaceDefault?.model,
+    orgModel: connectOrgModel,
+    globalModel: local.prefs.defaultModel,
+    providerList: providerListQuery.isError ? undefined : providerListQuery.data,
+  }), [connectSessionModel, workspaceDefault, connectOrgModel, local.prefs.defaultModel, providerListQuery.data, providerListQuery.isError]);
   const sessionMcpMaintenance = useSessionMcpMaintenance({
     cloudSignedIn: denAuth.isSignedIn,
     cloudAuthStatus: denAuth.status,
@@ -1000,11 +1015,6 @@ export function SessionRoute() {
   }));
 
   const mcpConnectedCount = useMcpConnectedCount(opencodeClient, selectedWorkspaceRoot);
-  const providerListQuery = useProviderListQuery({
-    client: opencodeClient,
-    baseUrl: opencodeBaseUrl,
-    directory: selectedWorkspaceRoot || undefined,
-  });
   const automationCatalog = useMemo(
     () => providerListQuery.data === undefined || providerListQuery.isError
       ? undefined
@@ -1649,12 +1659,12 @@ export function SessionRoute() {
   }, [engineReloadVersion, opencodeClient]);
 
   const handleOpenSettings = useCallback((route = "/settings/general", workspaceId = sidebarActiveWorkspaceId) => {
-    const sessionId = workspaceId === sidebarActiveWorkspaceId ? selectedSessionId : null;
+    const sessionId = workspaceId === sidebarActiveWorkspaceId ? connectSessionId : null;
     const tab = route.replace(/^\/settings\/?/, "").replace(/^\/+|\/+$/g, "") || "general";
     const target = workspaceId ? workspaceSettingsRoute(workspaceId, tab) : route;
     writeActiveWorkspaceId(workspaceId || null);
     navigate(target, { state: { workspaceId, sessionId } });
-  }, [navigate, selectedSessionId, sidebarActiveWorkspaceId]);
+  }, [navigate, connectSessionId, sidebarActiveWorkspaceId]);
 
   const handleOpenExtensions = useCallback((path = "", workspaceId = sidebarActiveWorkspaceId) => {
     const sessionId = workspaceId === sidebarActiveWorkspaceId ? selectedSessionId : null;
