@@ -40,6 +40,7 @@ import type {
   DesktopCommandInvokers,
   DesktopCommandName,
   DesktopCommandResult,
+  DesktopFetchInit,
   DesktopFetchResult,
   EvalRelaunchResult,
   NukeManifestPreview,
@@ -427,6 +428,10 @@ async function runCancellableDesktopTransfer<T>(
   }
 }
 
+export type DesktopFetchRequestInit = RequestInit & {
+  cancellable?: boolean;
+};
+
 type DesktopFetchMainOptions = {
   timeoutMs?: number;
   agentContextDiagnosticsDeadlineAtMs?: number;
@@ -434,7 +439,7 @@ type DesktopFetchMainOptions = {
 
 async function desktopFetchThroughMain(
   input: RequestInfo | URL,
-  init?: RequestInit,
+  init?: DesktopFetchRequestInit,
   options: DesktopFetchMainOptions = {},
 ): Promise<Response> {
   // Extract method/headers/body from either a Request object or the (input, init)
@@ -471,12 +476,18 @@ async function desktopFetchThroughMain(
   // command POSTs keep their distinct admission/unknown-outcome contract.
   const cancellable = ["GET", "PATCH"].includes(requestMethod)
     || (requestMethod === "POST" && /\/session\/[^/]+\/abort$/.test(new URL(url).pathname))
-    || isPermissionReplyRequest(url, { method: requestMethod });
+    || isPermissionReplyRequest(url, { method: requestMethod })
+    || init?.cancellable === true;
   const signal = cancellable && diagnosticsDeadlineAtMs === undefined
     ? init?.signal === undefined ? (input instanceof Request ? input.signal : undefined) : init.signal
     : undefined;
   const transferId = signal ? desktopTransferId() : undefined;
-  const fetchResponse = () => invokeElectronHelper("__fetch", url, {
+  const fetchInit: DesktopFetchInit = {
+    // Only forward explicit refusal. Existing callers keep their transport defaults.
+    ...((init?.redirect ?? (input instanceof Request ? input.redirect : undefined)) === "error"
+      ? { redirect: "error" satisfies RequestRedirect }
+      : {}),
+    cancellable,
     transferId,
     method,
     headers,
@@ -485,7 +496,8 @@ async function desktopFetchThroughMain(
     agentContextDiagnostics: diagnosticsDeadlineAtMs === undefined
       ? undefined
       : { deadlineAtMs: diagnosticsDeadlineAtMs },
-  });
+  };
+  const fetchResponse = () => invokeElectronHelper("__fetch", url, fetchInit);
   let result: DesktopFetchResult;
   try {
     result = transferId && signal
@@ -516,7 +528,7 @@ export const desktopFetch: typeof globalThis.fetch = async (input, init) => {
   return desktopFetchThroughMain(input, init);
 };
 
-export async function desktopFetchViaMain(input: RequestInfo | URL, init?: RequestInit, timeoutMs?: number): Promise<Response> {
+export async function desktopFetchViaMain(input: RequestInfo | URL, init?: DesktopFetchRequestInit, timeoutMs?: number): Promise<Response> {
   return desktopFetchThroughMain(input, init, { timeoutMs });
 }
 
