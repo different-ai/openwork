@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { association } from "./publish-review.mjs";
+import { association, authorEvidenceNotice } from "../../.github/scripts/evidence-association.mjs";
+
+test("author evidence uses only the API run's validated starter, with actor fallback", () => {
+  const label = "Author evidence: these tests run the PR's own code. Not a CI verification or merge gate.";
+  assert.equal(authorEvidenceNotice({ triggering_actor: { login: "api-user" }, actor: { login: "original" }, artifacts: [{ login: "artifact" }] }), `Started by @api-user. ${label}`);
+  assert.equal(authorEvidenceNotice({ actor: { login: "original" } }), `Started by @original. ${label}`);
+  for (const login of [undefined, "", "-bad", "bad-", "bad--login", "a".repeat(40), "@team", "<img>", "x\ntext", "x\n", "x\r", 42])
+    assert.equal(authorEvidenceNotice({ triggering_actor: { login }, artifacts: [{ login: "artifact" }] }), label);
+});
 
 const repo = "example/repo";
 const repository = { id: 1, full_name: repo, owner: { login: "example" }, name: "repo" };

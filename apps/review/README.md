@@ -108,11 +108,12 @@ For a completed hand-started run, it uses GitHub's API to find exactly one open
 same-repository PR with the run's branch and head SHA; forks and ambiguous or
 missing matches are skipped. Dispatch inputs and artifacts never establish identity.
 Existing pull-request runs remain supported. It re-reads the current PR file list,
-derives the same selection, and accepts exactly one artifact per selected spec and run attempt. Every test record must
-name that spec and the current PR SHA. Records from all selected specs are
-combined into one report with one section per test. Downloaded PR artifacts are
-data and are never imported or executed. Unrelated evidence, unexpected proof
-artifacts, stale heads or attempts, and missing or duplicate records are refused.
+derives the same selection, and accepts exactly one artifact per selected spec and
+run attempt. Every test record must name that spec and the current PR SHA. Records
+from all selected specs are combined into one report with one section per test.
+Downloaded PR artifacts are data and are never imported or executed. Unrelated
+evidence, unexpected proof artifacts, stale heads or attempts, and missing or
+duplicate records are refused.
 
 Candidate publisher and review-app checks live in the PR-only
 `Evidence review candidate checks` workflow. It has no publishing secret or

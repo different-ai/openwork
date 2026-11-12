@@ -16,6 +16,7 @@ on:
       - evals/worlds/*review*.ts
       - .github/scripts/pr-proof*.mjs
       - .github/scripts/internal-proof-contributor*.mjs
+      - .github/scripts/evidence-association.mjs
       - .github/scripts/evidence-presentation*.mjs
       - .github/scripts/evidence-preview-card*.mjs
       - .github/actions/setup-browser/**
