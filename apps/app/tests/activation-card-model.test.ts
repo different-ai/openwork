@@ -4,6 +4,7 @@ import { createActivationCache } from "../src/react-app/domains/cloud/activation
 import type { ActivationState } from "@openwork/types/den/activation"
 import {
   activationCardModel,
+  activationHiddenStorageKey,
   createActivationReporter,
   draftUsesSkill,
   shouldReportActivationEvent,
@@ -116,4 +117,13 @@ test("the reporter sends one event per step at a time, per organization, and swa
   fail = true
   expect(await report({ key: "org_a" }, "use_skill")).toBe(false)
   expect(sent).toEqual(["org_a:first_response", "org_b:first_response", "org_a:use_skill"])
+})
+
+test("Hide setup removes the card entirely, even after Den counts it dismissed", () => {
+  expect(activationCardModel(state(["first_response"]), { hidden: true })).toEqual({ presentation: "hidden" })
+  expect(activationCardModel(state(["first_response"], { dismissed: true }), { hidden: true })).toEqual({ presentation: "hidden" })
+  expect(activationCardModel(state(["first_response"]), { hidden: false })).toMatchObject({ presentation: "full" })
+  const key = (principalId: string, organizationId = "org_a") => activationHiddenStorageKey({ origin: "https://den.example", organizationId, principalId })
+  expect(key("member_a")).not.toBe(key("member_b"))
+  expect(key("member_a")).not.toBe(key("member_a", "org_b"))
 })

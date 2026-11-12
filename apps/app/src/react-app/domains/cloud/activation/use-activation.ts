@@ -5,7 +5,7 @@ import { createDenClient, denOriginComparisonKey } from "@/app/lib/den";
 import { readGatewayUsageScope, subscribeGatewayUsageScope } from "@/app/lib/gateway-usage-scope";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useDenAuth } from "../den-auth-provider";
-import { createActivationReporter, draftUsesSkill } from "./activation-model";
+import { activationHiddenStorageKey, createActivationReporter, draftUsesSkill } from "./activation-model";
 import { createActivationCache } from "./activation-cache";
 
 /**
@@ -53,8 +53,41 @@ export function useActivation() {
     pendingFirstAnswer = null;
     void reportActivationEvent("first_response", durationMs);
   }, [state, prefixKey]);
-  return { state, refetch: query.refetch };
+  const denOrigin = denOriginComparisonKey(scope.baseUrl);
+  const hiddenKey = authorized && denOrigin && organizationId && principalId
+    ? activationHiddenStorageKey({ origin: denOrigin, organizationId, principalId })
+    : null;
+  const hidden = useSyncExternalStore(subscribeHidden, () => readHidden(hiddenKey), () => false);
+  const hide = () => {
+    if (!hiddenKey) return;
+    writeHidden(hiddenKey);
+    // Also tell Den, so other surfaces stop offering the full checklist.
+    void reportActivationEvent("dismiss");
+  };
+  return { state, hidden, hide, refetch: query.refetch };
 }
+
+const hiddenListeners = new Set<() => void>();
+
+function subscribeHidden(listener: () => void) {
+  hiddenListeners.add(listener);
+  return () => { hiddenListeners.delete(listener); };
+}
+
+function readHidden(key: string | null): boolean {
+  if (!key) return false;
+  if (hiddenOverrides.has(key)) return true;
+  try { return window.localStorage.getItem(key) === "1"; } catch { return false; }
+}
+
+function writeHidden(key: string) {
+  try { window.localStorage.setItem(key, "1"); } catch { /* storage unavailable: hidden for this run only */ }
+  hiddenOverrides.add(key);
+  for (const listener of hiddenListeners) listener();
+}
+
+/** Keeps Hide setup working for this run even when storage is unavailable. */
+const hiddenOverrides = new Set<string>();
 
 type ReporterScope = DenScope & { key: string; source: DenScope; queryKey: readonly unknown[] };
 
