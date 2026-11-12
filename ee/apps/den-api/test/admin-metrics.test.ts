@@ -263,7 +263,7 @@ test("a metric runs its queries one at a time and a failed query stops the rest"
   }
 })
 
-test("sharing leaves built-in skills out in SQL and fits the snapshot schema", async () => {
+test("sharing excludes built-ins and reads bounded catalog counts for each range", async () => {
   const { store, snapshots } = memoryStore()
   const now = new Date("2026-11-02T12:00:00.000Z")
   const statements: string[] = []
@@ -279,20 +279,39 @@ test("sharing leaves built-in skills out in SQL and fits the snapshot schema", a
       { id: "co_1", org: "org_team", creator: "m1", created: "2026-11-01 09:00:00.000", org_wide: "1", team: null, grantee: null },
       { id: "co_2", org: "org_team", creator: "m1", created: "2026-11-01 09:00:00.000", org_wide: null, team: null, grantee: null },
     ],
-    marketplaces: [{ created: "2026-11-01 09:00:00.000" }],
+    plugins: [{ "7d": "2", "30d": "5", "90d": "9" }],
+    marketplaces: [{ "7d": "1", "30d": "3", "90d": "4" }],
   }
   const rows = async (query: SQL) => {
-    const statement = query.toQuery({ escapeName: (name) => name, escapeParam: () => "?", escapeString: (text) => text }).sql
+    const { sql: statement, params } = query.toQuery({ escapeName: (name) => name, escapeParam: () => "?", escapeString: (text) => text })
     statements.push(statement)
     if (statement.includes("FROM member m")) return results.teams
     if (statement.includes("FROM capability_usage_rollups r")) return results.uses
     if (statement.includes("FROM config_object co")) return results.skills
-    if (statement.includes("FROM marketplace mk")) return results.marketplaces
+    if (statement.includes("FROM plugin p") || statement.includes("FROM marketplace mk")) {
+      assert.match(statement, /COUNT\(CASE WHEN .*created_at >= \? THEN 1 END\) AS `7d`/)
+      assert.match(statement, /COUNT\(CASE WHEN .*created_at >= \? THEN 1 END\) AS `30d`/)
+      assert.match(statement, /COUNT\(\*\) AS `90d`/)
+      assert.deepEqual(params.filter((value) => value instanceof Date), [
+        new Date("2026-10-26T00:00:00.000Z"),
+        new Date("2026-10-03T00:00:00.000Z"),
+        new Date("2026-08-04T12:00:00.000Z"),
+      ])
+      if (statement.includes("FROM plugin p")) {
+        assert.match(statement, /p.status = 'active'.*AND NOT EXISTS \(SELECT 1 FROM marketplace_plugin/)
+        return results.plugins
+      }
+      assert.match(statement, /mk.status = 'active'.*AND mk.name NOT IN/)
+      return results.marketplaces
+    }
     // Listing the built-in ids is over the database's 100k row limit.
     throw new Error(`Row count exceeded 100000: ${statement}`)
   }
   assert.equal(await refreshMetric("sharing", { store, context: { now, rows }, owner: "a", intervals }), "refreshed", snapshots.get("sharing:7d")?.error ?? undefined)
-  assert.equal(statements.length, 4)
+  assert.equal(statements.length, 5)
+  assert.deepEqual((await readControlCenter("7d", { store, now, intervals })).sections.sharing.data?.catalog, { plugins: 2, marketplaces: 1, pluginsCounted: true })
+  assert.deepEqual((await readControlCenter("30d", { store, now, intervals })).sections.sharing.data?.catalog, { plugins: 5, marketplaces: 3, pluginsCounted: true })
+  assert.deepEqual((await readControlCenter("90d", { store, now, intervals })).sections.sharing.data?.catalog, { plugins: 9, marketplaces: 4, pluginsCounted: true })
   assert.match(statements.find((statement) => statement.includes("FROM config_object co")) ?? "", /NOT EXISTS \(SELECT 1 FROM plugin_config_object/)
   const payload = snapshots.get("sharing:7d")?.payload as { skills: Record<string, number>; mcp: Record<string, number>; connectors: { name: string; errors: number }[]; weekly: { skillUses: number }[] }
   assert.deepEqual(
