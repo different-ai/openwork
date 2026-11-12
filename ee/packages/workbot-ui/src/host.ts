@@ -93,6 +93,11 @@ export type WorkbotHost = {
    */
   quietCalendar?: boolean
   /**
+   * The calm chat look: a labelled sidebar, Workbot's name and status as one pill, a narrower column, replies as plain
+   * text, and compact browser and file cards (`workbotCalmChat`). Looks only; off when unset.
+   */
+  calmChat?: boolean
+  /**
    * The Devices page: the computers the person can reach through OpenWork (their own desktops, Workbot's cloud
    * computers, registered virtual computers), read-only (`remoteDevices`). Off when unset.
    */
@@ -139,6 +144,11 @@ export function computerViews(host: WorkbotHost): Array<"browser" | "computer"> 
 export function computerTabLabel(host: WorkbotHost): "Browser" | "Computer" {
   const views = computerViews(host);
   return views.length === 1 && views[0] === "browser" ? "Browser" : "Computer";
+}
+
+/** The calm chat look is on (`calmChat`). False before a host is set, so shared pieces render their usual look. */
+export function calmChat(): boolean {
+  return current?.calmChat === true
 }
 
 export function workbotHost(): WorkbotHost {

@@ -8,6 +8,7 @@ import Speech
 @available(macOS 26.0, *)
 @MainActor
 final class AnalyzerDictation: DictationSession {
+  private let locale: Locale
   private let transcriber: SpeechTranscriber
   private let analyzer: SpeechAnalyzer
   private let engine = AVAudioEngine()
@@ -26,9 +27,10 @@ final class AnalyzerDictation: DictationSession {
   private var finished = false
 
   init(locale: Locale) {
-    // Show tentative words while retaining the model's full-context final pass.
-    // fastResults is intentionally absent: Send waits for finalized results.
-    transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [])
+    self.locale = locale
+    // Favor live typing latency. Apple's smaller context window can trade some
+    // accuracy for speed; tentative words remain revisable and Send finalizes.
+    transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults, .fastResults], attributeOptions: [])
     analyzer = SpeechAnalyzer(modules: [transcriber])
   }
 
@@ -41,7 +43,14 @@ final class AnalyzerDictation: DictationSession {
       do {
         try Task.checkCancellation()
         guard !finished else { return }
-        if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+        // Each short-lived helper must reserve the locale before checking it:
+        // unreserved, already-downloaded assets otherwise report .supported.
+        try await AssetInventory.reserve(locale: locale)
+        let assetStatus = await AssetInventory.status(forModules: [transcriber])
+        try Task.checkCancellation()
+        guard !finished else { return }
+        if assetStatus != .installed,
+           let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
           try Task.checkCancellation()
           guard !finished else { return }
           installation = request
@@ -107,6 +116,9 @@ final class AnalyzerDictation: DictationSession {
                 guard let buffer = AVAudioPCMBuffer(pcmFormat: nativeFormat, frameCapacity: 4096) else { throw DictationAudioError.copyFailed }
                 try audioFile.read(into: buffer)
                 try enqueue(converter.convert(buffer))
+                // File acceptance checks follow the audio clock so first-word
+                // latency measures live input rather than end-of-file flushing.
+                Thread.sleep(forTimeInterval: Double(buffer.frameLength) / nativeFormat.sampleRate)
               }
               try enqueue(converter.finish())
               input.continuation.finish()
@@ -125,7 +137,7 @@ final class AnalyzerDictation: DictationSession {
               catch { DispatchQueue.main.async { self.finish(error: "audio-capture") } }
             }
             let now = ProcessInfo.processInfo.systemUptime
-            if now - lastLevelAt >= 0.05 {
+            if now - lastLevelAt >= 1.0 / 30 {
               lastLevelAt = now
               let level = dictationAudioLevel(buffer)
               DispatchQueue.main.async {

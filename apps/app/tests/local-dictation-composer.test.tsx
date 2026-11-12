@@ -200,11 +200,14 @@ test("model download shows measured progress, resets on retry and ignores late u
     await start();
     expect(progress()?.getAttribute("aria-label")).toBe("Downloading speech model");
     expect(progress()?.hasAttribute("aria-valuenow")).toBe(false);
-    for (const value of [0, 0.29, 0.42, 1]) {
+    for (const value of [0, 0.29, 0.42]) {
       await act(async () => { latest?.onstatus?.("installing", value) });
       expect(progress()?.getAttribute("aria-valuenow")).toBe(String(Math.round(value * 100)));
       expect(progress()?.textContent).toContain(`${Math.round(value * 100)}%`);
     }
+    await act(async () => { latest?.onstatus?.("installing", 1) });
+    expect(progress()).toBeNull();
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("Starting dictation");
     const cancelled = latest;
     await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Cancel dictation"]')?.click() });
     await act(async () => { cancelled?.onstatus?.("installing", 0.8) });

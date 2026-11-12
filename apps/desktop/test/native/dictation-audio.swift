@@ -56,6 +56,10 @@ import Foundation
     audio.frameLength = 1024
     for index in 0..<1024 { audio.floatChannelData![0][index] = 0 }
     precondition(dictationAudioLevel(audio) == 0)
+    for index in 0..<1024 { audio.floatChannelData![0][index] = 0.004 }
+    precondition(dictationAudioLevel(audio) == 0, "Quiet room noise must not animate the microphone meter")
+    for index in 0..<1024 { audio.floatChannelData![0][index] = 0.03 }
+    precondition(dictationAudioLevel(audio) > 0, "Quiet speech must still register on the meter")
     for index in 0..<1024 { audio.floatChannelData![0][index] = 0.5 }
     precondition(dictationAudioLevel(audio) == 1)
     print("PASS: 24/44.1/48 kHz stereo conversion, owned buffers, final samples, silence and level bounds")

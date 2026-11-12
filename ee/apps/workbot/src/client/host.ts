@@ -50,6 +50,8 @@ export const meSchema = z.object({
   profileComputers: z.boolean().default(false),
   /** Quiet calendar (`workbotQuietCalendar`); absent means off. */
   quietCalendar: z.boolean().default(false),
+  /** Calm chat look (`workbotCalmChat`); absent means off. */
+  calmChat: z.boolean().default(false),
   /** The Devices page (`remoteDevices`, while Workbot is on); absent means off. */
   devices: z.boolean().default(false),
   denUrl: z.string().nullable(),
@@ -189,6 +191,7 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     profileNav: me.profileNav,
     profileComputers: me.profileComputers,
     quietCalendar: me.quietCalendar,
+    calmChat: me.calmChat,
     devices: me.devices,
     account: me.accountMenu ? { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace } : undefined,
     identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
