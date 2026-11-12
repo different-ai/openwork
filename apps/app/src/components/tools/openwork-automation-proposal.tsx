@@ -13,7 +13,14 @@ import { createDenClient, readDenSettings } from "@/app/lib/den"
 import { Button } from "@/components/ui/button"
 import { Tool } from "@/components/ui/tool"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
-import { automationCreationPlacement, useAutomationDeploymentEnabled } from "@/react-app/domains/automations/automation-availability"
+import type { AutomationExecutionTarget } from "@openwork/types/automations"
+import { isDesktopRuntime } from "@/app/lib/runtime-env"
+import {
+  automationCreationPlacement,
+  useAutomationDeploymentEnabled,
+  useDesktopAutomationsEnabled,
+} from "@/react-app/domains/automations/automation-availability"
+import { automationPlacementChoices, resolveAutomationPlacement } from "@/react-app/domains/automations/automation-placement"
 import { formatAutomationSchedule } from "@/react-app/domains/automations/automation-format"
 import {
   automationModelOptions,
@@ -61,16 +68,35 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
   const navigate = useNavigate()
   const denAuth = useDenAuth()
   const automationsEnabled = useAutomationDeploymentEnabled()
-  const placement = automationCreationPlacement()
+  const desktopAllowed = useDesktopAutomationsEnabled()
   const workspaceContext = useWorkspaceMaybe()
   const [created, setCreated] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [picked, setPicked] = useState<AutomationExecutionTarget | null>(null)
 
   const proposal = part.state === "output-available" ? parseAutomationProposal(part.output) : null
   const settings = readDenSettings()
   const token = settings.authToken?.trim() ?? ""
   const organizationId = settings.activeOrgId?.trim() ?? ""
   const signedIn = denAuth.isSignedIn && Boolean(token) && Boolean(organizationId)
+  // Offer the same places the Automations page does: this desktop and, when Den
+  // says Cloud can run agent Automations for this member, the cloud. An older
+  // Den answers null and the runtime's fixed placement stays.
+  const targetsQuery = useQuery({
+    queryKey: ["den", "automations", organizationId, "execution-targets"],
+    queryFn: () => createDenClient({ baseUrl: settings.baseUrl, token }).listAutomationRunners(organizationId),
+    enabled: automationsEnabled && signedIn && !created,
+    retry: false,
+  })
+  const placementChoices = automationPlacementChoices({ targets: targetsQuery.data, desktopRuntime: isDesktopRuntime(), desktopAllowed })
+  // Meetings-based schedules only run in the cloud, so they start there.
+  const suggested: AutomationExecutionTarget = proposal?.schedule.kind === "calendar"
+    ? "cloud"
+    : proposal?.executionTarget ?? automationCreationPlacement()
+  // Without an answer from Den, keep the runtime's own placement rather than guess.
+  const placement = placementChoices.length > 0
+    ? resolveAutomationPlacement(picked ?? suggested, placementChoices)
+    : automationCreationPlacement()
   const providersQuery = useQuery({
     queryKey: ["den", "automations", organizationId, "models"],
     queryFn: () => createDenClient({ baseUrl: settings.baseUrl, token }).listOrgLlmProviders(organizationId),
@@ -116,11 +142,11 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
       : modelLookupFailed
         ? "Model availability could not be checked. Try again before creating this Automation."
         : proposal.schedule.kind === "calendar" && placement !== "cloud"
-          ? "Automations that run around meetings run in OpenWork Cloud, which this desktop does not create. Create it from OpenWork Web or Cloud Chat."
+          ? "Automations that run around meetings run in OpenWork Cloud, which isn't available for your account yet."
           : null
 
   const create = async () => {
-    if (!automationsEnabled || blocker || !resolved || resolved.resolution === "unavailable") return
+    if (!automationsEnabled || targetsQuery.isLoading || blocker || !resolved || resolved.resolution === "unavailable") return
     setBusy(true)
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token })
@@ -186,6 +212,26 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
           {pinnedWorkspaceId && placement === "desktop" ? <p className="text-xs text-dls-secondary" data-automation-pinned-workspace={pinnedWorkspaceId}>Runs in this workspace</p> : null}
         </div>
         <p className="whitespace-pre-wrap text-sm text-dls-secondary">{proposal.instructions}</p>
+        {!created && placementChoices.length > 1 ? (
+          <div className="flex items-center gap-2" role="radiogroup" aria-label="Where it runs" data-automation-placement-choice={placement}>
+            <span className="text-xs text-dls-secondary">Runs on</span>
+            {placementChoices.map((choice) => (
+              <Button
+                key={choice}
+                type="button"
+                size="sm"
+                variant={placement === choice ? "secondary" : "ghost"}
+                role="radio"
+                aria-checked={placement === choice}
+                disabled={busy || (choice === "desktop" && proposal.schedule.kind === "calendar")}
+                data-automation-placement={choice}
+                onClick={() => setPicked(choice)}
+              >
+                {choice === "cloud" ? "OpenWork Cloud" : "This computer"}
+              </Button>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div className="flex items-center justify-between gap-3 border-t border-dls-border px-4 py-3">
@@ -208,7 +254,7 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
             type="button"
             size="sm"
             className="shrink-0"
-            disabled={busy || blocker !== null || !resolved || resolved.resolution === "unavailable"}
+            disabled={busy || targetsQuery.isLoading || blocker !== null || !resolved || resolved.resolution === "unavailable"}
             data-create-automation
             onClick={() => void create()}
           >
