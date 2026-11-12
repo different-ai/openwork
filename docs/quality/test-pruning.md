@@ -55,6 +55,7 @@ runtime comparison has been made.
 | `ee/apps/den-api/test/last-sign-in-method.test.ts` | One source-text/retired-flag case | Remember/forget decisions, scoped cookie writes and expiration |
 | `ee/apps/den-web/app/(den)/_lib/last-sign-in.test.ts` | Two component-source-shape cases | Remembered-method cookie parsing |
 | `apps/server/test/inference-node-export.test.mjs` | One export-manifest/build-source case | Actual plain-Node import from a packaged `node_modules` layout |
+| `ee/apps/den-api/test/api/remote-devices.api.test.ts` | One assertion pinning the `computerUse` default inside the team-computers case (red since the GA-defaults change) | The whole case: owner/admin inventory, member 403s, private-data redaction and cross-organization refusals |
 
 **Total: 45 test cases removed; three test files deleted.** Mixed-case edits
 also remove redundant literal defaults and prompt-copy assertions. The tally
