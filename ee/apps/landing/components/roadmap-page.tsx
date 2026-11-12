@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Clock3, LoaderCircle } from "lucide-react";
+import { ArrowRight, Check, Clock3, LoaderCircle, Mail } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { AutomationsView } from "./lp-demo-automations";
@@ -24,6 +24,8 @@ export type RoadmapProduct = {
   items: Record<RoadmapStatus, string[]>;
   /** Ready items that shipped since the last roadmap update; they get a "New" mark. */
   fresh?: string[];
+  /** Ready items in preview: the row links to an email asking for access. */
+  preview?: string[];
 };
 
 /* One entry per product. The status is the column an item sits in, so a
@@ -45,12 +47,36 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "Live artifacts",
         "Computer use on Mac and Windows",
         "Import Claude chats and Claude Code sessions",
-        "Add your own MCP from the Library"
+        "Add your own MCP from the Library",
+        "Agents use a website’s own tools",
+        "Several agents in their own Mac apps at once",
+        "Agents ask a question and keep working",
+        "A feed of your sessions across workspaces",
+        "Send a follow-up now or queue it",
+        "Outlook attachments and drafts",
+        "Recurring Google Calendar meetings"
       ],
-      building: ["Sandboxed workspaces", "Pick up work on any device", "Dictation"],
+      building: [
+        "Sandboxed workspaces",
+        "Pick up work on any device",
+        "Dictation",
+        "Teach a browser task by showing it once",
+        "Suggested next message",
+        "Use Claude through your Claude Code login"
+      ],
       soon: []
     },
-    fresh: ["Computer use on Mac and Windows", "Import Claude chats and Claude Code sessions", "Add your own MCP from the Library"]
+    fresh: [
+      "Computer use on Mac and Windows",
+      "Import Claude chats and Claude Code sessions",
+      "Add your own MCP from the Library",
+      "Agents use a website’s own tools",
+      "Several agents in their own Mac apps at once",
+      "Agents ask a question and keep working",
+      "Send a follow-up now or queue it",
+      "Outlook attachments and drafts",
+      "Recurring Google Calendar meetings"
+    ]
   },
   {
     id: "admin",
@@ -68,12 +94,21 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "Smart Model Router",
         "Custom OpenAI-compatible providers",
         "Several SSO connections per organization",
-        "Export and import organization config"
+        "Export and import organization config",
+        "Admin roles for security and IT",
+        "Custom roles for a person or a team",
+        "Allow, ask first, or block what agents can do",
+        "OpenTelemetry-compatible server logs",
+        "Managed install in your own AWS or Google Cloud"
       ],
-      building: ["Fully managed desktop", "Managed install in your own AWS or Google Cloud", "Choose which members get OpenWork Web"],
-      soon: ["Admin roles for security and IT", "OpenTelemetry export"]
+      building: ["Fully managed desktop", "Share a provider key from your device", "Turn local models on or off"],
+      soon: []
     },
+    preview: ["Managed install in your own AWS or Google Cloud"],
     fresh: [
+      "Admin roles for security and IT",
+      "Custom roles for a person or a team",
+      "Allow, ask first, or block what agents can do",
       "AI Gateway in Cursor, Claude Code, and Codex",
       "Smart Model Router",
       "Custom OpenAI-compatible providers",
@@ -106,7 +141,12 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "Shared or per-person sign-in",
         "OneDrive and SharePoint files"
       ],
-      building: ["Sync plugins from Git", "One app identity enterprises allowlist once", "An MCP server for each connection"],
+      building: [
+        "Sync plugins from Git",
+        "One app identity enterprises allowlist once",
+        "An MCP server for each connection",
+        "Each connected action as its own tool"
+      ],
       soon: ["Stricter sign-in checks for enterprise gateways"]
     },
     fresh: ["OneDrive and SharePoint files"]
@@ -136,12 +176,20 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
         "Workbot, an assistant for every member",
         "Workbot on your phone",
         "Live browser work in the chat",
-        "Self-hosted OpenWork Web"
+        "Self-hosted OpenWork Web",
+        "Watch and take over Workbot’s browser",
+        "Workbot reads PDFs and Office files from Drive"
       ],
-      building: ["Instant start", "Always-on cloud workspace", "A background agent for each member", "Read and edit documents beside the chat"],
+      building: [
+        "Instant start",
+        "Always-on cloud workspace",
+        "A background agent for each member",
+        "Read and edit documents beside the chat",
+        "Workbot settings for each team"
+      ],
       soon: ["Session sharing"]
     },
-    fresh: ["Workbot on your phone", "Live browser work in the chat", "Self-hosted OpenWork Web"]
+    fresh: ["Workbot on your phone", "Live browser work in the chat", "Self-hosted OpenWork Web", "Workbot reads PDFs and Office files from Drive"]
   },
   {
     id: "automations",
@@ -184,11 +232,20 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     heading: ["What matters today,", "at a glance."],
     intro: "Your people build their own quick views, like today’s meetings or open issues, from the apps they already use. Built on the MCP Apps standard.",
     items: {
-      ready: ["Quick-glance views your people create", "Works with MCP Apps", "Build Apps from a chat on the desktop", "Open an App as a site, public or signed-in"],
+      ready: [
+        "Quick-glance views your people create", "Works with MCP Apps", "Build Apps from a chat on the desktop", "Open an App as a site, public or signed-in",
+        "Public Apps anyone can add, no sign-in",
+        "Fix an App with your agent when a tool changes"
+      ],
       building: ["Open Apps from the Workbot chat"],
       soon: []
     },
-    fresh: ["Build Apps from a chat on the desktop", "Open an App as a site, public or signed-in"]
+    fresh: [
+      "Build Apps from a chat on the desktop",
+      "Open an App as a site, public or signed-in",
+      "Public Apps anyone can add, no sign-in",
+      "Fix an App with your agent when a tool changes"
+    ]
   },
   {
     id: "new-apps",
@@ -214,7 +271,7 @@ const STATUS: Record<RoadmapStatus, { label: string; hint: string; className: st
     label: "Building",
     hint: "In progress",
     className: "bg-[#E8EFFD] text-[#1D4ED8]",
-    icon: <LoaderCircle size={12} strokeWidth={2.4} aria-hidden="true" />
+    icon: <LoaderCircle size={12} strokeWidth={2.4} aria-hidden="true" className="motion-safe:animate-[spin_1.8s_linear_infinite]" />
   },
   soon: {
     label: "Coming soon",
@@ -309,6 +366,10 @@ function Preview({ id }: { id: string }) {
   return null;
 }
 
+function previewMailto(item: string) {
+  return `mailto:team@openworklabs.com?subject=${encodeURIComponent(`Preview access: ${item}`)}`;
+}
+
 function StatusColumns({ product }: { product: RoadmapProduct }) {
   return (
     <div className="mt-10 grid gap-8 md:grid-cols-3 md:gap-10">
@@ -332,7 +393,17 @@ function StatusColumns({ product }: { product: RoadmapProduct }) {
                     }`}
                   >
                     {item}
-                    {status === "ready" && product.fresh?.includes(item) ? (
+                    {product.preview?.includes(item) ? (
+                      <a
+                        data-preview
+                        href={previewMailto(item)}
+                        title="Email us for access"
+                        className="inline-flex h-[22px] shrink-0 items-center gap-[5px] rounded-full bg-[#FEF3C7] pl-[7px] pr-[9px] text-xs font-semibold text-[#92400E] transition-colors hover:bg-[#FDE68A]"
+                      >
+                        <Mail size={12} strokeWidth={2.2} aria-hidden="true" />
+                        Preview
+                      </a>
+                    ) : status === "ready" && product.fresh?.includes(item) ? (
                       <span data-fresh className="shrink-0 text-xs font-semibold text-[#047857]">
                         New
                       </span>
@@ -356,11 +427,13 @@ export const ROADMAP_SHIPPED: ShippedEntry[] = [
   { date: "Nov 12", name: "AI Gateway in Cursor, Claude Code, and Codex", detail: "Members create their own key and set up their tool in one step", area: "Admin" },
   { date: "Nov 12", name: "Smart Model Router", detail: "Picks a model for each prompt, set per team", area: "Admin" },
   { date: "Nov 12", name: "Organization config export and import", detail: "Copy one organization’s setup into another", area: "Admin" },
+  { date: "Nov 10", name: "Roles for any person or team", detail: "Custom roles, with Super admin and Billing manager ready-made", area: "Admin" },
   { date: "Nov 10", name: "Workbot on your phone", detail: "Full-screen chat, documents, and results on iPhone", area: "Web" },
   { date: "Nov 10", name: "Apps as sites", detail: "Open an App in a browser, public or behind sign-in", area: "Dashboards" },
   { date: "Nov 5", name: "Mac computer use across apps", detail: "Agents work in several apps and hand your files back", area: "Desktop" },
   { date: "Nov 5", name: "Saved Workflows", detail: "Name a Workflow and find it in My Library", area: "Workflows" },
   { date: "Nov 3", name: "Website tools in the browser", detail: "Agents use a site’s own tools instead of clicking through it", area: "Desktop" },
+  { date: "Nov 3", name: "Rules for what agents can do", detail: "Allow, ask first, or block computer use, scripting, and uploads", area: "Admin" },
   { date: "Nov 3", name: "Your own MCP in the Library", detail: "Members add a personal MCP server", area: "Desktop" },
   { date: "Oct 30", name: "Every-few-hours and meeting schedules", detail: "Automations run on an interval, or before and after a meeting", area: "Automations" },
   { date: "Oct 26", name: "Import from Claude", detail: "Claude chats and Claude Code sessions become OpenWork chats", area: "Desktop" },
