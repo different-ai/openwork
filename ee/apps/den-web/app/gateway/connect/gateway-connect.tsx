@@ -9,7 +9,7 @@ import { DenNotice } from "../../(den)/_components/ui/notice";
 import { gatewayBrowserEndpoint } from "./gateway-browser-endpoint";
 
 type BrowserStep = "loading" | "sign_in_required" | "account_mismatch" | "ready" | "error" | "blocked" | "restart" | "connected";
-type ConnectMethod = "google" | "microsoft" | "aws_sso" | "litellm_key" | "litellm_issued";
+type ConnectMethod = "google" | "microsoft" | "aws_sso" | "litellm_key" | "litellm_issued" | "truefoundry_issued";
 type AwsDevice = { attempt: string; userCode: string; verificationUrl: string; expiresAt: number };
 
 const METHOD_BRAND: Record<"google" | "microsoft" | "aws_sso", string> = { google: "Google", microsoft: "Microsoft", aws_sso: "AWS" };
@@ -34,7 +34,9 @@ function readIssue(value: unknown): IssueState | null {
   if (typeof value !== "object" || value === null) return null;
   const status = readString(value, "status");
   const keyCount: unknown = Reflect.get(value, "keyCount");
-  return status ? { status, message: readString(value, "message"), keyCount: typeof keyCount === "number" ? keyCount : 0 } : null;
+  // TrueFoundry reports `ready` (one key per person) instead of a key count.
+  const ready: unknown = Reflect.get(value, "ready");
+  return status ? { status, message: readString(value, "message"), keyCount: typeof keyCount === "number" ? keyCount : ready === true ? 1 : 0 } : null;
 }
 
 function readString(value: unknown, key: string) {
@@ -112,10 +114,12 @@ export function GatewayConnect() {
       ready.current = status === "ready";
       if (status === "ready") {
         const reported = readString(payload, "method");
-        const nextMethod = reported === "litellm_key" || reported === "litellm_issued" || reported === "microsoft" || reported === "aws_sso" ? reported : "google";
+        const nextMethod = reported === "litellm_key" || reported === "litellm_issued" || reported === "truefoundry_issued" || reported === "microsoft" || reported === "aws_sso" ? reported : "google";
         setMethod(nextMethod);
         setProviderName(readString(payload, "providerName") ?? "LiteLLM");
-        const nextIssue = nextMethod === "litellm_issued" && typeof payload === "object" && payload !== null ? readIssue(Reflect.get(payload, "issue")) : null;
+        const nextIssue = typeof payload === "object" && payload !== null
+          ? nextMethod === "litellm_issued" ? readIssue(Reflect.get(payload, "issue")) : nextMethod === "truefoundry_issued" ? readIssue(Reflect.get(payload, "truefoundry")) : null
+          : null;
         setIssue(nextIssue);
         if (nextIssue && nextIssue.keyCount > 0) {
           connected.current = true;
@@ -407,7 +411,7 @@ export function GatewayConnect() {
     }
   }
 
-  /** OpenWork-created LiteLLM keys: look the person up in LiteLLM again. */
+  /** OpenWork-created LiteLLM or TrueFoundry keys: look the person up again. */
   async function checkIssuedKey() {
     if (!mounted.current || !ready.current || actionRequest.current) return;
     const controller = new AbortController();
@@ -423,7 +427,7 @@ export function GatewayConnect() {
         setError("This sign-in link is invalid. Start signing in again in OpenWork.");
         return;
       }
-      const endpoint = await gatewayBrowserEndpoint("/v1/inference-providers/oauth/browser-litellm-check");
+      const endpoint = await gatewayBrowserEndpoint(method === "truefoundry_issued" ? "/v1/inference-providers/oauth/browser-truefoundry-check" : "/v1/inference-providers/oauth/browser-litellm-check");
       if (!current()) return;
       const response = await fetch(endpoint, {
         method: "POST",
@@ -450,8 +454,8 @@ export function GatewayConnect() {
       const code = readString(payload, "error");
       if (code === "browser_signin_required" || code === "browser_account_mismatch") setStep(code === "browser_signin_required" ? "sign_in_required" : "account_mismatch");
       else if (response.status === 400 && code === "oauth_entry_expired") { setStep("restart"); setError("This sign-in link expired. Start signing in again in OpenWork."); }
-      else if (response.status === 403) { setStep("blocked"); setError(readString(payload, "message") ?? "You don't have LiteLLM access right now. Ask your admin."); }
-      else setError(readString(payload, "message") ?? "Could not check LiteLLM. Try again.");
+      else if (response.status === 403) { setStep("blocked"); setError(readString(payload, "message") ?? `You don't have ${providerName} access right now. Ask your admin.`); }
+      else setError(readString(payload, "message") ?? `Could not check ${providerName}. Try again.`);
     } catch {
       if (!current()) return;
       setError("Could not reach OpenWork. Check your connection and try again.");
@@ -504,7 +508,7 @@ export function GatewayConnect() {
   }
 
   const liteLlm = method === "litellm_key";
-  const issued = method === "litellm_issued";
+  const issued = method === "litellm_issued" || method === "truefoundry_issued";
   const brand = method === "google" || method === "microsoft" || method === "aws_sso" ? METHOD_BRAND[method] : null;
   const title = step === "sign_in_required" ? "Sign in to OpenWork"
     : step === "account_mismatch" ? "Switch OpenWork account"
@@ -535,7 +539,7 @@ export function GatewayConnect() {
           </div>
         ) : null}
         {step === "connected" && issued ? <DenNotice tone="info" message="Your models are ready in OpenWork. You can close this tab." /> : null}
-        {step === "ready" && issued ? <DenNotice tone="neutral" message={issue?.message ?? "OpenWork is creating your LiteLLM key. Check again in a moment."} /> : null}
+        {step === "ready" && issued ? <DenNotice tone="neutral" message={issue?.message ?? `OpenWork is creating your ${providerName} key. Check again in a moment.`} /> : null}
         {step === "ready" && liteLlm ? (
           <label className="flex flex-col gap-1.5 text-[12px] font-medium text-[var(--dls-text-secondary)]">
             {providerName} key

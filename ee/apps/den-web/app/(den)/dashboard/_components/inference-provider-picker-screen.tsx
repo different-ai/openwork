@@ -9,11 +9,12 @@ import { DenChip } from "../../_components/ui/chip";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
-import { getAiGatewayProvidersRoute, getNewAiGatewayCustomProviderRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
+import { getAiGatewayProvidersRoute, getNewAiGatewayCustomProviderRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { isSupportedGatewayNpm } from "./inference-provider-request";
 import { getProviderIconSlug, requestLlmProviderCatalog, type DenModelsDevProviderSummary } from "./llm-provider-data";
 import { LITELLM_DOC_URL, LITELLM_PROVIDER_ID } from "./litellm-provider-data";
+import { TRUEFOUNDRY_DOC_URL, TRUEFOUNDRY_PROVIDER_ID } from "./truefoundry-provider-data";
 
 /** Plain-words taglines for the providers most orgs reach for; anything else falls back to its model count. */
 const TAGLINES: Record<string, string> = {
@@ -27,6 +28,7 @@ const TAGLINES: Record<string, string> = {
   "amazon-bedrock": "Claude, Llama and more on AWS",
   "microsoft-foundry": "Claude on your Microsoft Foundry resource",
   litellm: "Your own LiteLLM proxy, with one shared key or each person's key",
+  truefoundry: "Your TrueFoundry AI Gateway, with a key OpenWork creates for each person",
   mistral: "Mistral and Codestral models",
   groq: "Fast open models: Llama, Qwen, Kimi",
   deepseek: "DeepSeek V3 and R1",
@@ -54,7 +56,8 @@ export function orderCatalog<T extends { id: string; name: string }>(providers: 
 
 export function InferenceProviderPickerScreen({ embedded = false }: { embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
-  const { orgId, orgSlug } = useOrgDashboard();
+  const { orgId, orgSlug, orgContext } = useOrgDashboard();
+  const trueFoundry = orgFeatureEnabled(orgContext, "truefoundryGateway");
   const [catalog, setCatalog] = useState<DenModelsDevProviderSummary[]>([]);
   const [query, setQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -76,12 +79,13 @@ export function InferenceProviderPickerScreen({ embedded = false }: { embedded?:
   }, [orgId, catalogAttempt]);
 
   const providers = useMemo(() => {
-    const supported = catalog.filter((item) => item.id !== LITELLM_PROVIDER_ID && isSupportedGatewayNpm(item.npm));
+    const supported = catalog.filter((item) => item.id !== LITELLM_PROVIDER_ID && item.id !== TRUEFOUNDRY_PROVIDER_ID && isSupportedGatewayNpm(item.npm));
     supported.push({ id: LITELLM_PROVIDER_ID, name: "LiteLLM", npm: null, env: [], doc: LITELLM_DOC_URL, api: null, modelCount: 0 });
+    if (trueFoundry) supported.push({ id: TRUEFOUNDRY_PROVIDER_ID, name: "TrueFoundry", npm: null, env: [], doc: TRUEFOUNDRY_DOC_URL, api: null, modelCount: 0 });
     const ordered = orderCatalog(supported);
     const normalized = query.trim().toLowerCase();
     return normalized ? ordered.filter((item) => item.name.toLowerCase().includes(normalized) || item.id.toLowerCase().includes(normalized) || providerTagline(item).toLowerCase().includes(normalized)) : ordered;
-  }, [catalog, query]);
+  }, [catalog, query, trueFoundry]);
   const visible = showAll || query.trim() ? providers : providers.slice(0, INITIAL_ROWS);
   const hidden = providers.length - visible.length;
 

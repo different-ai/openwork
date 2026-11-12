@@ -51,6 +51,7 @@ import {
   GatewayKeyTable,
   GatewayCredentialSetTable,
   GatewayLiteLlmIssuedKeyTable,
+  GatewayTrueFoundryUserTable,
   GatewayModelGroupTable,
   GatewayModelGroupModelTable,
   GatewayProviderAccessTable,
@@ -574,6 +575,8 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           await tx.delete(GatewayProviderOauthStateTable).where(inArray(GatewayProviderOauthStateTable.gateway_provider_id, gatewayProviderIds))
           // Keys OpenWork created in a customer's LiteLLM outlive this record; that proxy is not ours to change.
           await tx.delete(GatewayLiteLlmIssuedKeyTable).where(inArray(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, gatewayProviderIds))
+          // Tokens OpenWork created in a customer's TrueFoundry tenant likewise stay there.
+          await tx.delete(GatewayTrueFoundryUserTable).where(inArray(GatewayTrueFoundryUserTable.gateway_provider_id, gatewayProviderIds))
           const groups = await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, gatewayProviderIds))
           if (groups.length) await tx.delete(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id)))
           await tx.delete(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.gateway_provider_id, gatewayProviderIds))

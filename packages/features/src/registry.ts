@@ -951,6 +951,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: true,
   },
+  truefoundryGateway: {
+    label: "AI Gateway: TrueFoundry",
+    description: "Admins connect their TrueFoundry AI Gateway with one admin key in AI Gateway › AI Providers. OpenWork finds each allowed person in TrueFoundry by email (or optionally adds them), creates a personal access token for them, and serves the TrueFoundry models that token can use, so TrueFoundry budgets and logs each person.",
+    category: "models",
+    added: "2026-11-12",
+    since: "2026-11",
+    author: "OmarMcAdam",
+    docs: "docs/features/truefoundry-gateway/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   outlookAttachments: {
     label: "Outlook attachments",
     description: "Agents read the files attached to Outlook messages and create Outlook drafts and replies with workspace files attached, after the member approves each draft. Drafts are never sent.",

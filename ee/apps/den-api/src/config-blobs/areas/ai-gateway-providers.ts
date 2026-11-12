@@ -31,6 +31,7 @@ import { lockUsageOrganization } from "@openwork-ee/den-db/gateway-usage-limits"
 import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
 import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
+import { isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
 import { createDenTypeId, denTypeIdPrefixes, normalizeDenTypeId, type DenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
 import { configRefSchema, configSecretSchema, type ConfigApplyStep, type ConfigFieldChange, type ConfigSpec } from "@openwork/types/den/config-blobs"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, GATEWAY_PROVIDER_CREDENTIAL_MODES, GATEWAY_PROVIDER_STATUSES, gatewayAwsSsoSettingsSchema, type GatewayAccessGrantWrite, type GatewayCredentialSetPatch, type GatewayModelGroupPatch } from "@openwork/types/den/gateway"
@@ -576,6 +577,7 @@ function parseResolved(item: ResolvedConfigItem): ResolvedSpec {
 }
 
 function assertApplicable(spec: ResolvedSpec, name: string) {
+  if (isTrueFoundryProviderId(spec.providerId)) throw failure(`"${name}" is a TrueFoundry provider. Its models and people's keys come from your TrueFoundry tenant, so it can't be created or changed from a config blob: add or edit it in AI Gateway, then sync.`)
   if (isLiteLlmProviderId(spec.providerId)) throw failure(`"${name}" is a LiteLLM provider. Its models, groups and keys come from your LiteLLM proxy, so it can't be created or changed from a config blob: add or edit it in AI Gateway, then sync.`)
   if (isGatewayCustomProviderId(spec.providerId)) {
     if (!spec.custom) throw failure(`"${name}" is a custom provider without its model list (custom.models).`)
@@ -748,6 +750,7 @@ function irreversible(op: ConfigApplyOp): string[] {
   if (op.kind === "delete") {
     const out = [`The stored keys of "${op.previous.name}" and members' sign-ins to it are deleted (and revoked upstream); keys must be re-entered after a restore.`]
     if (op.previous.spec.providerId === "litellm") out.push(`Keys OpenWork created in LiteLLM for "${op.previous.name}" are deleted there.`)
+    if (op.previous.spec.providerId === "truefoundry") out.push(`Tokens OpenWork created in TrueFoundry for "${op.previous.name}" are deleted there.`)
     return out
   }
   if (op.kind !== "update") return []
