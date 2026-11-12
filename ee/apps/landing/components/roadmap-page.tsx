@@ -11,6 +11,7 @@ import {
   RoadmapPhonePreview,
   RoadmapSlackPreview,
   RoadmapStreamlinedChatPreview,
+  RoadmapWorkbotPreview,
   RoadmapWorkflowPreview
 } from "./roadmap-previews";
 
@@ -342,6 +343,7 @@ function Preview({ id }: { id: string }) {
   if (id === "mcp-gateway") return <Frame><LpDemoMcp /></Frame>;
   if (id === "activity") return <Frame><RoadmapActivityPreview /></Frame>;
   if (id === "web") return <Frame tall><LpDemoCloud /></Frame>;
+  if (id === "workbot") return <Frame><RoadmapWorkbotPreview /></Frame>;
   if (id === "automations") return <Frame tall><AutomationsView /></Frame>;
   if (id === "workflows") return <Frame><RoadmapWorkflowPreview /></Frame>;
   if (id === "dashboards") return <Frame><RoadmapDashboardPreview /></Frame>;

@@ -1,8 +1,8 @@
-import { AlertTriangle, Circle, CornerDownLeft, GitBranch, Play, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowUp, Circle, CornerDownLeft, GitBranch, Play, Wrench } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { BrandLogo } from "./lp-brand-logos";
-import { GoogleMark, LinearMark, SkillMark, SlackMark } from "./lp-service-marks";
+import { GoogleDriveMark, GoogleMark, LinearMark, SkillMark, SlackMark } from "./lp-service-marks";
 import { OpenWorkMark } from "./openwork-mark";
 
 /* Static previews for the roadmap. Each one shows what a product looks like
@@ -474,6 +474,152 @@ export function RoadmapPhonePreview() {
           </div>
         </div>
         <div className="mx-3.5 mb-5 mt-3 flex h-10 items-center rounded-full bg-white pl-4 text-xs text-[#9CA3AF] shadow-[0_0_0_1px_#E3E7EE]">Ask OpenWork</div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Workbot                                                             */
+/* ------------------------------------------------------------------ */
+
+const WORKBOT_CHATS = ["Northwind renewal", "Monday pipeline review", "Launch checklist", "Expense report for October"];
+
+const WORKBOT_STEPS: { mark: ReactNode; sentence: string; result: string }[] = [
+  { mark: <GoogleMark className="h-3.5 w-3.5" />, sentence: "Read the Northwind thread in Gmail", result: "14 emails" },
+  { mark: <GoogleDriveMark className="h-3.5 w-3.5" />, sentence: "Opened Renewal terms 2026.docx", result: "6 pages" },
+  { mark: <SlackMark className="h-3.5 w-3.5" />, sentence: "Checked #northwind in Slack", result: "3 threads" }
+];
+
+function WorkbotAvatar({ size }: { size: number }) {
+  return (
+    <span className="flex shrink-0 items-center justify-center rounded-full bg-white shadow-[0_0_0_1px_#E3E7EE]" style={{ width: size, height: size }}>
+      <OpenWorkMark className="h-[58%] w-[58%] object-contain" />
+    </span>
+  );
+}
+
+/* What Workbot is doing in its browser: a small page and one button to open it. */
+function WorkbotBrowserCard({ compact }: { compact?: boolean }) {
+  return (
+    <span className={`flex max-w-full items-center self-start rounded-xl bg-white p-2 pr-3 shadow-[0_0_0_1px_#E3E7EE] ${compact ? "gap-2" : "gap-3"}`}>
+      <span className={`flex shrink-0 flex-col overflow-hidden rounded-md bg-[#F4F6F9] shadow-[0_0_0_1px_#E3E7EE] ${compact ? "h-11 w-16" : "h-14 w-[88px]"}`} aria-hidden="true">
+        <span className="flex h-2.5 items-center gap-[3px] bg-[#E7EBF1] px-1.5">
+          <span className="h-1 w-1 rounded-full bg-[#B6C0CF]" />
+          <span className="h-1 w-1 rounded-full bg-[#B6C0CF]" />
+          <span className="ml-1 h-1 flex-1 rounded-full bg-white" />
+        </span>
+        <span className="flex flex-1 flex-col gap-1 p-1.5">
+          <span className="h-1 w-2/3 rounded-full bg-[#C9D2DF]" />
+          <span className="h-1 w-full rounded-full bg-[#DDE3EC]" />
+          <span className="h-1 w-5/6 rounded-full bg-[#DDE3EC]" />
+          <span className="mt-auto h-1.5 w-1/3 rounded-full bg-[#2563EB]" />
+        </span>
+      </span>
+      <span className="flex min-w-0 flex-col">
+        <span className={`font-medium text-[#07192C] ${compact ? "text-[11px]" : "text-[12.5px]"}`}>Used browser</span>
+        <span className={`truncate text-[#637291] ${compact ? "text-[10px]" : "text-[11.5px]"}`}>{compact ? "northwind.com" : "northwind.com/billing"}</span>
+      </span>
+      {compact ? null : (
+        <span className="ml-3 shrink-0 rounded-full px-2.5 py-1 text-[11.5px] font-medium text-[#07192C] shadow-[inset_0_0_0_1px_#D3DAE4]">Open browser</span>
+      )}
+    </span>
+  );
+}
+
+/** Workbot on a desktop browser and on a phone: the same chat, with what it read and the browser it used. */
+export function RoadmapWorkbotPreview() {
+  return (
+    <div className="flex w-full flex-col lg:flex-row" aria-label="Workbot preview with sample data">
+      <div className="flex min-w-0 flex-1">
+        <div className="hidden w-[196px] shrink-0 flex-col gap-0.5 border-r border-[#EDF1F6] bg-[#F8FAFC] p-3 md:flex">
+          <span className="mb-3 flex items-center gap-2 px-1.5">
+            <WorkbotAvatar size={22} />
+            <span className="text-[13px] font-semibold text-[#07192C]">Workbot</span>
+          </span>
+          {["Chats", "Documents", "Calendar"].map((page) => (
+            <span
+              key={page}
+              className={`flex h-8 items-center rounded-lg px-2 text-[12.5px] ${page === "Chats" ? "bg-white font-medium text-[#07192C] shadow-[0_0_0_1px_#E3E7EE]" : "text-[#4B5A75]"}`}
+            >
+              {page}
+            </span>
+          ))}
+          <span className="mt-4 px-2 text-[11px] text-[#8A96AC]">Today</span>
+          {WORKBOT_CHATS.map((chat, index) => (
+            <span key={chat} className={`flex h-7 items-center truncate rounded-md px-2 text-[12px] ${index === 0 ? "bg-[#EEF1F5] text-[#07192C]" : "text-[#4B5A75]"}`}>
+              {chat}
+            </span>
+          ))}
+        </div>
+
+        <div className="flex min-w-0 flex-1 flex-col bg-white">
+          <div className="flex h-12 items-center justify-center border-b border-[#EDF1F6]">
+            <span className="flex items-center gap-2 rounded-full bg-[#F4F6F9] py-1 pl-1 pr-3">
+              <WorkbotAvatar size={22} />
+              <span className="text-[12.5px] font-semibold text-[#07192C]">Workbot</span>
+              <span className="flex items-center gap-1.5 text-[11.5px] text-[#637291]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#10B981] motion-safe:animate-pulse" aria-hidden="true" />
+                Drafting the reply
+              </span>
+            </span>
+          </div>
+          <div className="mx-auto flex w-full max-w-[560px] flex-1 flex-col gap-3 px-5 py-6">
+            <span className="max-w-[85%] self-end rounded-2xl bg-[#EEF1F5] px-3.5 py-2 text-[13px] leading-5 text-[#07192C]">
+              Where are we on the Northwind renewal? Check their billing portal too.
+            </span>
+            <span className="flex flex-col">
+              {WORKBOT_STEPS.map((step) => (
+                <span key={step.sentence} className="flex h-7 items-center gap-2.5 text-[12px]">
+                  {step.mark}
+                  <span className="min-w-0 flex-1 truncate text-[#4B5A75]">{step.sentence}</span>
+                  <span className="shrink-0 tabular-nums text-[#8A96AC]">{step.result}</span>
+                </span>
+              ))}
+            </span>
+            <WorkbotBrowserCard />
+            <span className="text-[13px] leading-[21px] text-[#07192C]">
+              Northwind agreed to the 2026 terms on Tuesday, and their portal shows the invoice as unpaid. Dana is waiting on a signed order form from us. I drafted the reply with the form attached. Want to read it before it goes to your drafts?
+            </span>
+            <span className="flex items-center gap-2.5 self-start rounded-xl bg-white py-2 pl-2.5 pr-4 shadow-[0_0_0_1px_#E3E7EE]">
+              <span className="flex h-8 w-7 items-center justify-center rounded-[5px] bg-[#E8EFFD] text-[9px] font-bold text-[#1D4ED8]">DOC</span>
+              <span className="flex flex-col">
+                <span className="text-[12.5px] font-medium text-[#07192C]">Northwind order form.docx</span>
+                <span className="text-[11.5px] text-[#637291]">Made by Workbot, just now</span>
+              </span>
+            </span>
+            <span className="mt-auto flex h-11 items-center justify-between rounded-full bg-white pl-4 pr-1.5 text-[13px] text-[#9AA5BA] shadow-[0_0_0_1px_#E3E7EE,0_2px_6px_rgba(1,22,39,0.04)]">
+              Message Workbot
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--lp-ink)] text-white">
+                <ArrowUp size={15} strokeWidth={2.4} aria-hidden="true" />
+              </span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex shrink-0 items-center justify-center border-t border-[#EDF1F6] bg-[var(--lp-tonal)] px-10 py-8 lg:border-l lg:border-t-0">
+        <div className="flex h-[440px] w-[220px] rounded-[36px] bg-[var(--lp-ink)] p-[7px] shadow-[0_24px_48px_-24px_rgba(1,22,39,0.45)]">
+          <div className="flex flex-1 flex-col overflow-hidden rounded-[29px] bg-white">
+            <div className="flex items-center justify-between px-5 pt-3.5 text-[10.5px] font-semibold text-[#111827]">
+              <span>9:41</span>
+              <span className="h-4 w-14 rounded-full bg-[var(--lp-ink)]" aria-hidden="true" />
+              <span className="w-5" />
+            </div>
+            <div className="flex justify-center pt-3">
+              <span className="flex items-center gap-1.5 rounded-full bg-[#F4F6F9] py-[3px] pl-[3px] pr-2.5">
+                <WorkbotAvatar size={18} />
+                <span className="text-[11px] font-semibold text-[#07192C]">Workbot</span>
+              </span>
+            </div>
+            <div className="flex flex-1 flex-col gap-2 px-3 pt-4">
+              <span className="max-w-[88%] self-end rounded-2xl bg-[#EEF1F5] px-2.5 py-1.5 text-[11px] leading-4 text-[#07192C]">Where are we on the Northwind renewal?</span>
+              <WorkbotBrowserCard compact />
+              <span className="text-[11px] leading-4 text-[#07192C]">They agreed to the 2026 terms on Tuesday. The invoice is unpaid, and Dana is waiting on a signed order form.</span>
+            </div>
+            <span className="mx-3 mb-4 flex h-9 items-center rounded-full bg-white pl-3.5 text-[11px] text-[#9AA5BA] shadow-[0_0_0_1px_#E3E7EE]">Message Workbot</span>
+          </div>
+        </div>
       </div>
     </div>
   );
