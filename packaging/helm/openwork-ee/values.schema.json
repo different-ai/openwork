@@ -61,6 +61,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "googleCalendarWorkingLocation": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Google Calendar working location: Set home, office or custom working locations over a date range without changing recurring series. Renders DEN_FEATURE_GOOGLE_CALENDAR_WORKING_LOCATION."
+            },
             "claudeAgentProvider": {
               "enum": [
                 "",

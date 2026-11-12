@@ -104,6 +104,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  googleCalendarWorkingLocation: {
+    label: "Google Calendar working location",
+    description: "Set home, office or custom working locations over a date range without changing recurring series.",
+    category: "connect",
+    added: "2026-11-04",
+    since: "2026-11",
+    author: "yomgui",
+    docs: "docs/features/google-calendar-working-location/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   claudeAgentProvider: {
     label: "Claude Code sign-in",
     description: "Connect Claude through the Claude Code login on this computer, without an Anthropic API key.",

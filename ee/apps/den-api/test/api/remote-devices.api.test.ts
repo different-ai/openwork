@@ -421,6 +421,8 @@ test("Workbot cannot preclaim sessions or disclose another owner or tenant's tit
 })
 
 test("owners and regular org admins inspect all members and shared computers, never other organizations", async () => {
+  // The desktop reports computer use enabled; the org's effective flag is independent of that report and rollout defaults.
+  assert.equal((await den.setFeature(orgId, "computerUse", false)).status, 200)
   const macbookRunner = devicesOf(await asMember("GET", "/v1/remote-devices")).find((device) => device.label === "Milo's MacBook Pro")!.computerId!
   await db.update(AutomationRunnerTable).set({ inventory: {
     computer: { label: "Milo's MacBook Pro", platform: "darwin", appVersion: "1.5.0" },
@@ -492,6 +494,22 @@ test("owners and regular org admins inspect all members and shared computers, ne
   const forgedHeader = await den.request(owner.token, "GET", "/v1/org/computers", { orgId: elsewhere.orgId })
   assert.equal(forgedHeader.status, 404, "an unverified organization header cannot select another tenant")
   assert.equal((await den.asPlatformAdmin("GET", "/v1/admin/remote-devices")).status, 404)
+})
+
+test("computer details follow the organization's computer-use override, not the desktop's report", async () => {
+  const desktop = devicesOf(await asMember("GET", "/v1/remote-devices")).find((device) => device.label === "Milo's MacBook Pro")
+  assert.ok(desktop)
+  for (const enabled of [true, false]) {
+    assert.equal((await den.setFeature(orgId, "computerUse", enabled)).status, 200)
+    for (const as of [asOwner, asAdmin]) {
+      const response = await as("GET", `/v1/org/computers/${desktop.id}`)
+      assert.equal(response.status, 200, summary(response))
+      const detail = organizationComputerDetailResponseSchema.parse(response.body)
+      assert.equal(detail.features.computerUse, enabled)
+      assert.equal(detail.features.remoteDevices, true)
+      assert.equal(detail.diagnostics?.computerUse?.enabled, true, "the reported desktop state is unchanged")
+    }
+  }
 })
 
 test("member agents discover read-only Devices capabilities", async () => {

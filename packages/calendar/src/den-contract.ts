@@ -27,6 +27,16 @@ export const denGoogleCalendarEventSchema = z.object({
   htmlLink: z.string(),
   attendees: z.array(z.string()),
   meetLink: z.string().nullable(),
+  eventType: z.string().nullable().optional(),
+  workingLocationProperties: z.object({
+    type: z.enum(["homeOffice", "officeLocation", "customLocation"]),
+    homeOffice: z.unknown().optional(),
+    officeLocation: z.object({
+      label: z.string().optional(), buildingId: z.string().optional(), floorId: z.string().optional(),
+      floorSectionId: z.string().optional(), deskId: z.string().optional(),
+    }).nullish(),
+    customLocation: z.object({ label: z.string().optional() }).nullish(),
+  }).nullable().optional(),
 })
 export type DenGoogleCalendarEvent = z.infer<typeof denGoogleCalendarEventSchema>
 

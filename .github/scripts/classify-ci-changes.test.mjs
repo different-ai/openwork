@@ -72,7 +72,7 @@ for (const files of [null, undefined, {}, [null], [""], ["../outside"], ["/absol
 
 // PR quick check: the Den API auth and permission tests follow their inputs.
 test("PRs run the Den API auth tests only when Den API inputs change", () => {
-  for (const path of [backend, "ee/packages/den-db/src/schema.ts", "packages/types/src/index.ts", "pnpm-lock.yaml", ".github/workflows/ci-tests.yml", "packaging/docker/docker-compose.ci-mysql.yml"]) {
+  for (const path of [backend, "ee/packages/den-db/src/schema.ts", "packages/types/src/index.ts", "packages/calendar/src/den-contract.ts", "packages/calendar/src/den-contract.js", "packages/calendar/package.json", "pnpm-lock.yaml", ".github/workflows/ci-tests.yml", "packaging/docker/docker-compose.ci-mysql.yml"]) {
     assert.deepEqual(quick([modified(path)]), { den_quick: true }, path);
   }
   for (const path of [landing, electron, "apps/app/src/index.ts", "ee/apps/den-web/app/page.tsx", "packages/docs/guide.mdx", "evals/specs/drive-files.e2e.test.ts"]) {
