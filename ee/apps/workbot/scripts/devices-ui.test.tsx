@@ -56,6 +56,9 @@ test("Devices is a destination only where it is on for the person", () => {
   assert.ok(/<button[^>]*aria-label="Devices"[^>]*aria-current="page"|<button[^>]*aria-current="page"[^>]*aria-label="Devices"/.test(current), "marked as the page on screen");
   assert.ok(!navigation({}).includes("Devices"), "absent means off");
   assert.ok(!navigation({ devices: false }).includes("Devices"));
+  assert.ok(!navigation({ devices: true, profileSheet: true, profileComputers: true }).includes('aria-label="Devices"'), "the profile owns Computers without a redundant standalone entry");
+  assert.ok(navigation({ devices: true, profileSheet: true, profileComputers: false }).includes('aria-label="Devices"'), "turning off the move restores the old entry");
+  assert.ok(navigation({ devices: true, profileSheet: false, profileComputers: true }).includes('aria-label="Devices"'), "without the profile sheet the original entry stays reachable");
 });
 
 test("the list names each computer, what it is and whether it can be reached", async () => {

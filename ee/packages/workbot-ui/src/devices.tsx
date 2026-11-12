@@ -2,8 +2,12 @@
 
 import { REMOTE_DEVICE_AVAILABILITY_LABELS, remoteDeviceTypeLabel, type RemoteDevice, type RemoteDeviceAvailability } from "@openwork/types/den/remote-devices";
 import { Cloud, Laptop, Monitor } from "lucide-react";
+import { createContext } from "react";
 import { useWorkbotDevices } from "./data";
 import { computerTabLabel, computerViews, workbotHost } from "./host";
+
+/** The screen owns the same-chat/side-chat and unsaved-draft guards for every Devices surface. */
+export const DeviceComputerNavigationContext = createContext<((chat: string) => (() => void) | null) | undefined>(undefined);
 
 /**
  * Devices (`remoteDevices`): the computers the person can reach through OpenWork, read-only. Their own computers

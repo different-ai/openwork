@@ -601,6 +601,16 @@
               ],
               "description": "Workbot: remote tasks: Shows recent tasks started on another computer in Workbot's profile and working status, from stored create receipts and member-authorized live status. De-duplicates pure status watchers by explicit task ids; never approves or stops remote work automatically. Renders DEN_FEATURE_WORKBOT_REMOTE_TASKS."
             },
+            "workbotProfileComputers": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: Computers in its profile: Moves the existing Devices entry into Workbot's profile as a Computers tab. The same member-scoped computers, status and Open actions remain available. Requires the profile sheet and Devices. Renders DEN_FEATURE_WORKBOT_PROFILE_COMPUTERS."
+            },
             "workbotProfileNav": {
               "enum": [
                 "",

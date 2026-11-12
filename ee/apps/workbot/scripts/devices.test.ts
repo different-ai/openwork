@@ -78,6 +78,20 @@ test("/me says whether the Devices page is on, and an older Den that omits it me
   assert.equal((await me()).devices, false)
 })
 
+test("Computers moves into the profile only with its rollout, profile and existing Devices access", async () => {
+  let signed = member("profile_computers", { profileSheet: true, profileComputers: true })
+  const { app, calls } = workbot(() => signed)
+  const me = async () => z.object({ profileComputers: z.boolean() }).parse(await (await app.request("/v1/workbot/me")).json())
+  assert.equal((await me()).profileComputers, true)
+  for (const off of [{ profileComputers: false }, { profileSheet: false }, { devices: false }, { enabled: false }]) {
+    signed = member("profile_computers", { profileSheet: true, profileComputers: true, ...off })
+    assert.equal((await me()).profileComputers, false)
+  }
+  signed = member("profile_computers", { profileSheet: true })
+  assert.equal((await me()).profileComputers, false, "older Den answers omit the rollout and preserve navigation")
+  assert.equal(calls.list, 0, "checking the rollout never reads or provisions computers")
+})
+
 test("the Devices list is Den's answer as it is, and is never asked for while Devices is off", async () => {
   let signed = member("list_devices")
   let answer: { status: number; payload: unknown } = { status: 200, payload: { devices: [device] } }

@@ -97,6 +97,7 @@ export const denSessionSchema = z.object({
   remoteTasks: z.boolean().default(false),
   /** Pages-only navigation with Files and Apps in the profile (`workbotProfileNav`); absent means off. */
   profileNav: z.boolean().default(false),
+  profileComputers: z.boolean().default(false),
   /** Apps built in OpenWork show as cards and open beside the chat (`workbotApps`); absent means off. */
   openworkApps: z.boolean().default(false),
   /** Quiet calendar (`workbotQuietCalendar`); absent means off. */

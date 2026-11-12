@@ -2,7 +2,7 @@
 
 import { Dialog } from "@base-ui/react/dialog";
 import { connectorDisplayName } from "@openwork/types/connector-brand";
-import { Clock3, Fingerprint, FolderOpen, LayoutGrid, ListChecks, Lock, X } from "lucide-react";
+import { Clock3, Fingerprint, FolderOpen, LayoutGrid, ListChecks, Lock, MonitorSmartphone, X } from "lucide-react";
 import { useContext, useId, useState, type ReactNode } from "react";
 import { describeSchedule } from "@openwork/calendar";
 import { useWorkbotAutomations } from "./calendar-data";
@@ -18,23 +18,21 @@ import { OpenWorkMark } from "./mark";
 import type { WorkbotActivity } from "./activity";
 import { ActivityDetails, StatusIcon } from "./working-status";
 import { PhoneSheetEdge, SheetGrabber, useSheetDrag } from "./sheet-drag";
+import { DeviceComputerNavigationContext, WorkbotDevices } from "./devices";
 
 /**
  * Workbot's profile, behind its name (`profileSheet`): who it is and whether it is at work, then one tab at a time
- * (P3): what it is working on, what it can use (Apps), and what it remembers about the person. No Computer tab: its
- * browser and computer open only from a step's card in the chat. Read-only in this version:
- * the person changes memory by telling Workbot, and connections in Den.
- *
- * Tabs: "tasks", "files" (with `profileNav`: Files left the navigation, which lists only pages), "permissions" (labelled
- * Apps: every app the person can use, connected or not, then what Workbot can do), "schedules" (centered profile only)
- * and "memory". `initialTab` picks the tab each time the sheet opens.
+ * (P3): what it is working on, files, apps, schedules, computers and identity. Computers reuses Devices, including
+ * the screen's existing guarded Open actions; no provisioning or permission changes. The person changes memory by
+ * telling Workbot, and connections in Den. `initialTab` picks the tab each time the sheet opens.
  */
-export type ProfileTab = "tasks" | "files" | "permissions" | "schedules" | "memory";
+export type ProfileTab = "tasks" | "files" | "permissions" | "schedules" | "computers" | "memory";
 const TABS: Array<{ id: ProfileTab; label: string; icon: typeof ListChecks }> = [
   { id: "tasks", label: "Tasks", icon: ListChecks },
   { id: "files", label: "Files", icon: FolderOpen },
   { id: "permissions", label: "Apps", icon: LayoutGrid },
   { id: "schedules", label: "Schedules", icon: Clock3 },
+  { id: "computers", label: "Computers", icon: MonitorSmartphone },
   { id: "memory", label: "Identity", icon: Fingerprint },
 ];
 
@@ -53,7 +51,9 @@ export function ProfileSheet({ open, onClose, name, activity, initialTab = "task
   const tabId = useId();
   const centered = workbotHost().centeredProfile === true;
   const files = workbotHost().profileNav === true;
-  const tabs = (centered ? TABS : TABS.filter((entry) => entry.id !== "schedules")).filter((entry) => files || entry.id !== "files").map((entry) => centered ? entry : ({ ...entry, label: entry.id === "permissions" ? "What I can use" : entry.id === "memory" ? "What I remember" : entry.label }));
+  const computers = workbotHost().profileComputers === true && workbotHost().profileSheet === true && workbotHost().devices === true;
+  const tabs = (centered ? TABS : TABS.filter((entry) => entry.id !== "schedules")).filter((entry) => (files || entry.id !== "files") && (computers || entry.id !== "computers")).map((entry) => centered ? entry : ({ ...entry, label: entry.id === "permissions" ? "What I can use" : entry.id === "memory" ? "What I remember" : entry.label }));
+  if (!tabs.some((entry) => entry.id === tab)) setTab("tasks");
   const drag = useSheetDrag(onClose);
   // One sheet for every screen size: a side panel from `sm` up, and on phones a full-height sheet under the status bar
   // that reaches the bottom edge (its rows scroll under a glass fade), pulled down or closed to dismiss.
@@ -78,13 +78,13 @@ export function ProfileSheet({ open, onClose, name, activity, initialTab = "task
                 if (!entry) return;
                 event.preventDefault(); setTab(entry.id); document.getElementById(`${tabId}-${entry.id}`)?.focus();
               }}
-              className={`flex h-9 flex-1 items-center justify-center rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${tab === id ? "bg-[var(--wb-chip)] text-[var(--wb-text)]" : "text-[var(--wb-muted)] hover:text-[var(--wb-text)]"}`}>
+              className={`flex ${computers ? "h-11" : "h-9"} min-w-0 flex-1 items-center justify-center rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${tab === id ? "bg-[var(--wb-chip)] text-[var(--wb-text)]" : "text-[var(--wb-muted)] hover:text-[var(--wb-text)]"}`}>
               <Icon size={18} strokeWidth={1.6} aria-hidden />
             </button>)}
           </div>
         </div>
         <div role="tabpanel" id={`${tabId}-panel`} aria-labelledby={`${tabId}-${tab}`} tabIndex={0} className="min-h-0 flex-1 overflow-y-auto pb-[calc(env(safe-area-inset-bottom)+2rem)] outline-none sm:pb-6">
-          {tab === "tasks" ? <TasksTab name={name} activity={activity} /> : tab === "files" ? <FilesTab name={name} open={surface.open} onClose={onClose} /> : tab === "permissions" ? <AppsTab name={name} /> : tab === "schedules" ? <SchedulesTab /> : <MemoryTab name={name} />}
+          {tab === "tasks" ? <TasksTab name={name} activity={activity} /> : tab === "files" ? <FilesTab name={name} open={surface.open} onClose={onClose} /> : tab === "permissions" ? <AppsTab name={name} /> : tab === "schedules" ? <SchedulesTab /> : tab === "computers" && computers ? <ComputersTab onClose={onClose} /> : <MemoryTab name={name} />}
         </div>
         <PhoneSheetEdge />
       </Dialog.Popup>
@@ -136,6 +136,15 @@ function TasksTab({ name, activity }: { name: string; activity: WorkbotActivity 
 function FilesTab({ name, open, onClose }: { name: string; open: boolean; onClose(): void }) {
   const openFile = useContext(OpenFileContext);
   return <FilesList enabled={open} assistantName={name} framed={false} onOpenFile={(file) => { onClose(); openFile(file); }} />;
+}
+
+/** Reuse the inventory and the screen's guarded navigation; dismiss the sheet only when Open is available. */
+function ComputersTab({ onClose }: { onClose(): void }) {
+  const computerFor = useContext(DeviceComputerNavigationContext);
+  return <WorkbotDevices computerFor={(chat) => {
+    const openComputer = computerFor?.(chat);
+    return openComputer ? () => { onClose(); openComputer(); } : null;
+  }} />;
 }
 
 function SchedulesTab() {

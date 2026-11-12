@@ -112,6 +112,7 @@ const sessionSchema = z.object({
   remoteTasks: z.boolean().optional(),
   /** Navigation lists only pages; Files and Apps live in the profile (`workbotProfileNav`); older Dens omit it: off. */
   profileNav: z.boolean().optional(),
+  profileComputers: z.boolean().optional(),
   /** Apps built in OpenWork show as cards and open beside the chat (`workbotApps`); older Dens omit it: off. */
   openworkApps: z.boolean().optional(),
   /** Meetings own the calendar grid, runs are quiet dots (`workbotQuietCalendar`); older Dens omit it: off. */
@@ -513,6 +514,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         remoteTasks: features.workbotRemoteTasks,
         // Files and Apps move into the profile, so the profile has to be there.
         profileNav: features.workbotProfileNav && features.workbotProfileSheet && features.workbotWorkingStatus,
+        profileComputers: features.workbotProfileComputers && features.workbotProfileSheet && features.workbotWorkingStatus && features.remoteDevices,
         openworkApps: features.workbotApps,
         quietCalendar: features.workbotQuietCalendar,
         devices: on && features.remoteDevices,

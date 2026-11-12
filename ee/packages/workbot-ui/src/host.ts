@@ -76,6 +76,8 @@ export type WorkbotHost = {
   profileSheet?: boolean
   /** Rich five-tab profile (`workbotCenteredProfile`), off when unset. Browser access independently gets the centered header pill. */
   centeredProfile?: boolean
+  /** Moves Devices into the profile as Computers (`workbotProfileComputers`). Off when unset. */
+  profileComputers?: boolean
   /** Passive native-computer preview (`workbotBrowserPreview`), off when unset. Browser task cards/previews are default. */
   browserPreview?: boolean
   /** Read-only remote tasks in profile and header (`workbotRemoteTasks`). Off when unset. */

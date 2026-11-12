@@ -49,7 +49,7 @@ import { ModelRecovery, AccessRecovery } from "./model-recovery";
 import { hasAnsweredTurn, WorkbotSetupChip } from "./activation";
 import { WorkbotCalendar } from "./lazy-surfaces";
 import { WorkbotDocuments } from "./documents";
-import { WorkbotDevices } from "./devices";
+import { DeviceComputerNavigationContext, WorkbotDevices } from "./devices";
 import { LastGlimpse, LiveGlimpse, WorkbotComputer } from "./computer";
 import { readBrowserSkillRunPrompt, type BrowserTeachingContext } from "@openwork/types/browser-demonstration";
 import { readWorkbotCorrectionPrompt, workbotCorrectionPrompt, workbotContextLabel, workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
@@ -417,12 +417,12 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const mobileNavigation = !showDesktopNavigation ? <MobileNavigation {...navigationProps} /> : null;
   // The chat's header and message box float over its conversation (floating-chrome.ts); other views keep them solid.
   const chrome = useFloatingChrome();
-  const layout = (children: ReactNode, floating = false) => <div className={`workbot workbot-layout flex min-h-0 min-w-0 bg-[var(--wb-bg)] antialiased ${floating ? "is-floating-chrome" : ""}`}>
+  const layout = (children: ReactNode, floating = false) => <DeviceComputerNavigationContext.Provider value={computerFor}><div className={`workbot workbot-layout flex min-h-0 min-w-0 bg-[var(--wb-bg)] antialiased ${floating ? "is-floating-chrome" : ""}`}>
     {showDesktopNavigation && <DesktopNavigation {...navigationProps} />}
     <div className="workbot-layout-main flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
     <AppsSheet open={appsOpen} onClose={() => setAppsOpen(false)} name={data?.name ?? "Workbot"} />
     {profileNav ? <ProfileSheet open={profileTab !== null} initialTab={profileTab ?? "tasks"} onClose={() => setProfileTab(null)} name={data?.name ?? "Workbot"} activity={activity} /> : null}
-  </div>;
+  </div></DeviceComputerNavigationContext.Provider>;
 
   useEffect(() => {
     if (greetingAwaited && (start.isError || start.data?.started === false || (data?.turns.length ?? 0) > 0)) setGreetingAwaited(false);
