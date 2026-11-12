@@ -1,9 +1,10 @@
-import { ArrowRight, Check, Clock3, LoaderCircle, Mail } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, Clock3, LoaderCircle, Mail } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { AutomationsView } from "./lp-demo-automations";
 import { LpDemoDesktop } from "./lp-demo-desktop";
 import { LpDemoAiGateway, LpDemoCloud, LpDemoMcp } from "./lp-demo-panels";
+import { RoadmapExplorer, type RoadmapAudience } from "./roadmap-explorer";
 import {
   RoadmapActivityPreview,
   RoadmapDashboardPreview,
@@ -25,6 +26,8 @@ export type RoadmapProduct = {
   items: Record<RoadmapStatus, string[]>;
   /** Ready items that shipped since the last roadmap update; they get a "New" mark. */
   fresh?: string[];
+  /** The Ready items most people ask about, in order. The rest sit behind "Show more". */
+  top?: string[];
   /** Ready items in preview: the row links to an email asking for access. */
   preview?: string[];
 };
@@ -38,6 +41,14 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     label: "Desktop",
     heading: ["The desktop app", "is home."],
     intro: "Work on your own files with any model. Skills, connections, a built-in browser, and computer use, on macOS, Windows, and Linux.",
+    top: [
+      "macOS, Windows, and Linux",
+      "Files, artifacts, and any model",
+      "Skills, plugins, and connections",
+      "Built-in browser",
+      "Computer use on Mac and Windows",
+      "Import Claude chats and Claude Code sessions"
+    ],
     items: {
       ready: [
         "macOS, Windows, and Linux",
@@ -92,6 +103,14 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     label: "Admin",
     heading: ["You set the rules.", "Every surface follows."],
     intro: "OpenWork Cloud is where admins manage models, spend, policies, and access for every team.",
+    top: [
+      "AI Gateway for every provider",
+      "Usage, spend, and hard limits by team",
+      "SSO, teams, and roles",
+      "Allow, ask first, or block what agents can do",
+      "Audit logs",
+      "Managed install in your own AWS or Google Cloud"
+    ],
     items: {
       ready: [
         "AI Gateway for every provider",
@@ -161,6 +180,13 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     label: "MCP Gateway",
     heading: ["Set up your MCPs once.", "Your whole team has them."],
     intro: "One MCP URL brings your team’s skills, plugins, and connections into Claude Code, Codex, Cursor, and any MCP client.",
+    top: [
+      "One MCP URL for your whole team",
+      "Claude Code, Codex, Cursor, and ChatGPT",
+      "Skills, plugins, and connections by team",
+      "Shared or per-person sign-in",
+      "OneDrive and SharePoint files"
+    ],
     items: {
       ready: [
         "One MCP URL for your whole team",
@@ -219,6 +245,14 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     label: "Workbot",
     heading: ["An assistant", "for every member."],
     intro: "Workbot works from a chat in your browser or on your phone. It has its own cloud computer that stays on, your team’s skills, and your connected apps.",
+    top: [
+      "Workbot, an assistant for every member",
+      "Workbot on your phone",
+      "Always-on cloud workspace",
+      "Live browser work in the chat",
+      "A background agent for each member",
+      "Workbot reads PDFs and Office files from Drive"
+    ],
     items: {
       ready: [
         "Workbot, an assistant for every member",
@@ -244,6 +278,13 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     label: "Automations",
     heading: ["Set it once.", "It runs on its own."],
     intro: "Schedule any task on the web or the desktop, with the same skills and connections as a normal chat.",
+    top: [
+      "Schedules on web and desktop",
+      "Daily and weekly runs",
+      "Every-few-hours schedules",
+      "Runs before or after a meeting",
+      "Cloud runs while your computer is off"
+    ],
     items: {
       ready: [
         "Schedules on web and desktop",
@@ -283,6 +324,12 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     label: "Dashboards",
     heading: ["What matters today,", "at a glance."],
     intro: "Your people build their own quick views, like today’s meetings or open issues, from the apps they already use. Built on the MCP Apps standard.",
+    top: [
+      "Quick-glance views your people create",
+      "Build Apps from a chat on the desktop",
+      "Open an App as a site, public or signed-in",
+      "Works with MCP Apps"
+    ],
     items: {
       ready: [
         "Quick-glance views your people create", "Works with MCP Apps", "Build Apps from a chat on the desktop", "Open an App as a site, public or signed-in",
@@ -311,6 +358,28 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
       building: [],
       soon: ["A single, streamlined chat", "Phone app, starting with MCP Apps"]
     }
+  }
+];
+
+/* What a reader came for. Every product sits under exactly one. */
+const ROADMAP_AUDIENCES: RoadmapAudience[] = [
+  {
+    id: "work",
+    label: "Get work done",
+    blurb: "An agent for your files, your apps, and your computer.",
+    productIds: ["desktop", "workbot", "web", "automations", "workflows", "dashboards", "new-apps"]
+  },
+  {
+    id: "team",
+    label: "Share with my team",
+    blurb: "Set it up once. Everyone has it.",
+    productIds: ["activity", "mcp-gateway"]
+  },
+  {
+    id: "company",
+    label: "Run it for a company",
+    blurb: "Control what it does, what it costs, and who has it.",
+    productIds: ["admin", "visibility"]
   }
 ];
 
@@ -425,13 +494,43 @@ function previewMailto(item: string) {
   return `mailto:team@openworklabs.com?subject=${encodeURIComponent(`Preview access: ${item}`)}`;
 }
 
+function StatusItem({ product, status, item }: { product: RoadmapProduct; status: RoadmapStatus; item: string }) {
+  return (
+    <li
+      className={`flex min-h-[46px] items-center justify-between gap-3 border-b border-[var(--lp-border)] py-2 text-[14.5px] ${
+        status === "soon" ? "text-[var(--lp-body)]" : "text-[var(--lp-ink)]"
+      }`}
+    >
+      {item}
+      {product.preview?.includes(item) ? (
+        <a
+          data-preview
+          href={previewMailto(item)}
+          title="Email us for access"
+          className="inline-flex h-[22px] shrink-0 items-center gap-[5px] rounded-full bg-[#FEF3C7] pl-[7px] pr-[9px] text-xs font-semibold text-[#92400E] transition-colors hover:bg-[#FDE68A]"
+        >
+          <Mail size={12} strokeWidth={2.2} aria-hidden="true" />
+          Preview
+        </a>
+      ) : status === "ready" && product.fresh?.includes(item) ? (
+        <span data-fresh className="shrink-0 text-xs font-semibold text-[#047857]">
+          New
+        </span>
+      ) : null}
+    </li>
+  );
+}
+
 function StatusColumns({ product }: { product: RoadmapProduct }) {
   return (
     <div className="mt-10 grid gap-8 md:grid-cols-3 md:gap-10">
       {STATUS_ORDER.map((status) => {
         const items = product.items[status];
+        const top = status === "ready" ? product.top : undefined;
+        const shown = top ?? items;
+        const more = top ? items.filter((item) => !top.includes(item)) : [];
         return (
-          <div key={status} data-column={status} className="flex flex-col">
+          <div key={status} data-column={status} className={`flex-col ${items.length === 0 ? "hidden md:flex" : "flex"}`}>
             <div className="flex h-10 items-center justify-between border-b border-[var(--lp-ink)]">
               <RoadmapStatusPill status={status} />
               <span className="text-[13px] tabular-nums text-[var(--lp-muted)]">{items.length}</span>
@@ -440,33 +539,23 @@ function StatusColumns({ product }: { product: RoadmapProduct }) {
               {items.length === 0 ? (
                 <li className="flex min-h-[46px] items-center border-b border-[var(--lp-border)] text-[14.5px] text-[#9AA5BA]">Nothing yet</li>
               ) : (
-                items.map((item) => (
-                  <li
-                    key={item}
-                    className={`flex min-h-[46px] items-center justify-between gap-3 border-b border-[var(--lp-border)] py-2 text-[14.5px] ${
-                      status === "soon" ? "text-[var(--lp-body)]" : "text-[var(--lp-ink)]"
-                    }`}
-                  >
-                    {item}
-                    {product.preview?.includes(item) ? (
-                      <a
-                        data-preview
-                        href={previewMailto(item)}
-                        title="Email us for access"
-                        className="inline-flex h-[22px] shrink-0 items-center gap-[5px] rounded-full bg-[#FEF3C7] pl-[7px] pr-[9px] text-xs font-semibold text-[#92400E] transition-colors hover:bg-[#FDE68A]"
-                      >
-                        <Mail size={12} strokeWidth={2.2} aria-hidden="true" />
-                        Preview
-                      </a>
-                    ) : status === "ready" && product.fresh?.includes(item) ? (
-                      <span data-fresh className="shrink-0 text-xs font-semibold text-[#047857]">
-                        New
-                      </span>
-                    ) : null}
-                  </li>
-                ))
+                shown.map((item) => <StatusItem key={item} product={product} status={status} item={item} />)
               )}
             </ul>
+            {more.length > 0 ? (
+              <details className="group">
+                <summary className="flex min-h-[46px] cursor-pointer list-none items-center gap-1.5 text-[14px] font-medium text-[var(--lp-ink)] underline-offset-4 hover:underline [&::-webkit-details-marker]:hidden">
+                  <span className="group-open:hidden">Show {more.length} more</span>
+                  <span className="hidden group-open:inline">Show fewer</span>
+                  <ChevronDown size={14} strokeWidth={2.2} aria-hidden="true" className="transition-transform group-open:rotate-180" />
+                </summary>
+                <ul className="border-t border-[var(--lp-border)]">
+                  {more.map((item) => (
+                    <StatusItem key={item} product={product} status={status} item={item} />
+                  ))}
+                </ul>
+              </details>
+            ) : null}
           </div>
         );
       })}
@@ -578,34 +667,34 @@ export function RoadmapPage() {
             </span>
           ))}
         </div>
-        <nav aria-label="Products" className="flex flex-wrap gap-2">
-          {ROADMAP_PRODUCTS.map((product) => (
-            <a
-              key={product.id}
-              href={`#${product.id}`}
-              className="inline-flex h-8 items-center rounded-full bg-white px-3.5 text-[13px] text-[var(--lp-ink)] shadow-[inset_0_0_0_1px_var(--lp-border)] transition-colors hover:bg-[var(--lp-tonal)]"
-            >
-              {product.label}
-            </a>
-          ))}
-        </nav>
       </section>
 
-      {ROADMAP_PRODUCTS.map((product) => (
-        <section key={product.id} id={product.id} aria-labelledby={`${product.id}-heading`} className="mt-24 scroll-mt-24 md:mt-28">
-          <div className="text-[15px] text-[var(--lp-muted)]">{product.label}</div>
-          <h2
-            id={`${product.id}-heading`}
-            className="mt-3 text-[36px] font-light leading-[42px] tracking-[-0.015em] md:text-[44px] md:leading-[50px]"
-          >
-            <span className="block">{product.heading[0]}</span>
-            <span className="block">{product.heading[1]}</span>
-          </h2>
-          <p className="mt-6 max-w-[640px] text-[16px] leading-[25px] text-[var(--lp-body)]">{product.intro}</p>
-          <Preview id={product.id} />
-          <StatusColumns product={product} />
-        </section>
-      ))}
+      <section aria-labelledby="explore-heading" className="mt-10 md:mt-12">
+        <h2 id="explore-heading" className="mb-5 text-[28px] font-light leading-[34px] tracking-[-0.015em] md:text-[32px] md:leading-[38px]">
+          What do you care about?
+        </h2>
+        <RoadmapExplorer
+          audiences={ROADMAP_AUDIENCES}
+          labels={Object.fromEntries(ROADMAP_PRODUCTS.map((product) => [product.id, product.label]))}
+          panels={Object.fromEntries(
+            ROADMAP_PRODUCTS.map((product) => [
+              product.id,
+              <section key={product.id} aria-labelledby={`${product.id}-heading`}>
+                <h3
+                  id={`${product.id}-heading`}
+                  className="text-[28px] font-light leading-[34px] tracking-[-0.015em] md:text-[44px] md:leading-[50px]"
+                >
+                  <span className="block">{product.heading[0]}</span>
+                  <span className="block">{product.heading[1]}</span>
+                </h3>
+                <p className="mt-5 max-w-[640px] text-[16px] leading-[25px] text-[var(--lp-body)]">{product.intro}</p>
+                <Preview id={product.id} />
+                <StatusColumns product={product} />
+              </section>
+            ])
+          )}
+        />
+      </section>
 
       <section className="mt-32 flex flex-col gap-5 border-t border-[var(--lp-border)] pb-8 pt-12 sm:flex-row sm:items-center sm:justify-between md:mt-40">
         <h2 className="text-[28px] font-light leading-[34px] tracking-[-0.015em]">What should we build next?</h2>

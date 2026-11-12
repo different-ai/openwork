@@ -415,10 +415,10 @@ export function RoadmapSlackPreview() {
               <span className="flex flex-1 flex-col gap-1.5 px-3 py-2.5 text-xs">
                 <b className="text-[12.5px]">At-risk accounts, week of Sep 28</b>
                 {AT_RISK.map((row) => (
-                  <span key={row.account} className="flex">
-                    <span className="w-[88px] font-semibold">{row.account}</span>
-                    <span className="flex-1 text-[#4B5563]">{row.why}</span>
-                    <span className={row.meeting === "No meeting" ? "text-[#B45309]" : "text-[#4B5563]"}>{row.meeting}</span>
+                  <span key={row.account} className="flex gap-2">
+                    <span className="w-[68px] shrink-0 font-semibold sm:w-[80px]">{row.account}</span>
+                    <span className="min-w-0 flex-1 text-[#4B5563]">{row.why}</span>
+                    <span className={`shrink-0 whitespace-nowrap ${row.meeting === "No meeting" ? "text-[#B45309]" : "text-[#4B5563]"}`}>{row.meeting}</span>
                   </span>
                 ))}
               </span>
@@ -496,8 +496,8 @@ function WorkbotAvatar({ size }: { size: number }) {
 /* What Workbot is doing in its browser: a small page and one button to open it. */
 function WorkbotBrowserCard({ compact }: { compact?: boolean }) {
   return (
-    <span className={`flex max-w-full items-center self-start rounded-xl bg-white p-2 pr-3 shadow-[0_0_0_1px_#E3E7EE] ${compact ? "gap-2" : "gap-3"}`}>
-      <span className={`flex shrink-0 flex-col overflow-hidden rounded-md bg-[#F4F6F9] shadow-[0_0_0_1px_#E3E7EE] ${compact ? "h-11 w-16" : "h-14 w-[88px]"}`} aria-hidden="true">
+    <span className={`flex max-w-full items-center self-start rounded-xl bg-white p-2 pr-3 shadow-[0_0_0_1px_#E3E7EE] ${compact ? "gap-2" : "gap-3 pl-3 sm:pl-2"}`}>
+      <span className={`shrink-0 flex-col overflow-hidden rounded-md bg-[#F4F6F9] shadow-[0_0_0_1px_#E3E7EE] ${compact ? "flex h-11 w-16" : "hidden h-14 w-[88px] sm:flex"}`} aria-hidden="true">
         <span className="flex h-2.5 items-center gap-[3px] bg-[#E7EBF1] px-1.5">
           <span className="h-1 w-1 rounded-full bg-[#B6C0CF]" />
           <span className="h-1 w-1 rounded-full bg-[#B6C0CF]" />
@@ -511,7 +511,7 @@ function WorkbotBrowserCard({ compact }: { compact?: boolean }) {
         </span>
       </span>
       <span className="flex min-w-0 flex-col">
-        <span className={`font-medium text-[#07192C] ${compact ? "text-[11px]" : "text-[12.5px]"}`}>Used browser</span>
+        <span className={`whitespace-nowrap font-medium text-[#07192C] ${compact ? "text-[11px]" : "text-[12.5px]"}`}>Used browser</span>
         <span className={`truncate text-[#637291] ${compact ? "text-[10px]" : "text-[11.5px]"}`}>{compact ? "northwind.com" : "northwind.com/billing"}</span>
       </span>
       {compact ? null : (
