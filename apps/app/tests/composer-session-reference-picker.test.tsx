@@ -7,7 +7,12 @@ if (ownsDom) GlobalRegistrator.register({ url: "http://localhost/" });
 mock.module("../src/react-app/domains/session/surface/composer/use-native-dictation-feature", () => ({
   useNativeDictationFeature: () => false,
 }));
-mock.module("../src/components/model-select", () => ({ ModelSelect: () => null }));
+type ModelControls = Parameters<typeof import("../src/components/model-select")["ModelSelect"]>[0];
+let capturedModelControls: ModelControls | null = null;
+mock.module("../src/components/model-select", () => ({ ModelSelect: (props: ModelControls) => {
+  capturedModelControls = props;
+  return null;
+} }));
 mock.module("../src/react-app/domains/connections/use-org-mcp-connections", () => ({
   useOrgMcpConnections: () => ({ connections: [], loading: false, refresh: () => {} }),
 }));
@@ -90,7 +95,7 @@ function composerProps(draft: string, onDraftChange: (value: string) => void, on
   };
 }
 
-async function mountComposer(initial = "") {
+async function mountComposer(initial = "", overrides: Partial<ComposerProps> = {}) {
   const host = document.createElement("div");
   document.body.append(host);
   const drafts: string[] = [];
@@ -104,7 +109,7 @@ async function mountComposer(initial = "") {
     return (
       <QueryClientProvider client={new QueryClient()}>
         <SessionReferenceProvider inventories={inventories} onOpenReference={(reference) => opened.push(reference.sessionId)}>
-          <ReactSessionComposer {...composerProps(draft, (value) => { current = value; drafts.push(value); setDraft(value); }, () => sent.push(current))} />
+          <ReactSessionComposer {...composerProps(draft, (value) => { current = value; drafts.push(value); setDraft(value); }, () => sent.push(current))} {...overrides} />
         </SessionReferenceProvider>
       </QueryClientProvider>
     );
@@ -244,6 +249,29 @@ test("outside a page that can resolve tasks, # never opens the picker", async ()
   await settle();
   expect(options()).toHaveLength(0);
   await act(async () => { root.unmount(); });
+});
+
+test("model and effort edits wait for a session's bound model instead of editing an unrelated fallback", async () => {
+  const edits: string[] = [];
+  const controls = () => {
+    if (!capturedModelControls) throw new Error("Model controls did not render");
+    return capturedModelControls;
+  };
+  for (const pending of [true, false]) {
+    const mounted = await mountComposer("", {
+      modelSelectionPending: pending,
+      onModelVariantChange: (value) => edits.push(`effort:${value}`),
+      onModelChange: (model) => edits.push(`model:${model.modelID}`),
+    });
+    expect(Boolean(controls().disabled)).toBe(pending);
+    await act(async () => {
+      controls().onBehaviorChange?.("low");
+      controls().onChange({ providerID: "remote-provider", modelID: "launch-model" });
+    });
+    expect(edits).toEqual(pending ? [] : ["effort:low", "model:launch-model"]);
+    await act(async () => mounted.root.unmount());
+    mounted.host.remove();
+  }
 });
 
 test("a sent reference shows the current title and opens the task; a missing task is marked unavailable", async () => {

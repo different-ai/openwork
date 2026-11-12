@@ -122,6 +122,8 @@ type ComposerProps = {
   modelVariant: string | null;
   modelBehaviorOptions?: { value: string | null; label: string }[];
   onModelVariantChange: (value: string | null) => void;
+  /** Wait for an existing session's engine-bound model before editing its effort. */
+  modelSelectionPending?: boolean;
   agentLabel: string;
   selectedAgent: string | null;
   listAgents: () => Promise<Agent[]>;
@@ -1636,12 +1638,12 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   hideValue={props.organizationModelsEmpty}
                   onOpenChange={props.onModelPickerOpenChange}
                   onChange={(model, variant) => {
-                    if (!props.steering) {
+                    if (!props.steering && !props.modelSelectionPending) {
                       props.onModelChange(model, variant);
                       if (props.modelRecoveryScope) useModelRecoveryStore.getState().clear(modelRecoveryChatKey(props.modelRecoveryScope, props.sessionId));
                     }
                   }}
-                  disabled={props.steering}
+                  disabled={props.steering || props.modelSelectionPending}
                   sessionId={props.sessionId}
                   openWorkModelsEntitled={props.openWorkModelsEntitled}
                   openWorkModelsSyncing={props.openWorkModelsSyncing}
@@ -1650,7 +1652,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   behaviorLabel={props.modelVariantLabel}
                   behaviorOptions={props.modelBehaviorOptions}
                   onBehaviorChange={(value) => {
-                    if (!props.steering) props.onModelVariantChange(value);
+                    if (!props.steering && !props.modelSelectionPending) props.onModelVariantChange(value);
                   }}
                 />
                 {props.modelUnavailable ? props.onRefreshOrganizationModels ? (
