@@ -225,6 +225,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  singleOpenWorkModelsRow: {
+    label: "Desktop: one OpenWork Models row you can turn off",
+    description: "Settings › AI Providers and Connect a provider list OpenWork Models once. When the organization pays for it, the organization's row replaces the free on-device row, and it has Turn off / Turn on on this device: for every member, or only for admins when the organization manages models (Only models you provide).",
+    category: "models",
+    added: "2026-11-09",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/single-openwork-models-row/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   settledSessions: {
     label: "Desktop: session Feed",
     description: "A Feed view in the sidebar lists every workspace's sessions, the last one interacted with first. Rows can be dragged into a new order and have an Archive button next to More. Finished work is archived, not settled.",
