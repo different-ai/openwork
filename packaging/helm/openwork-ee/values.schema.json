@@ -779,7 +779,17 @@
                 true,
                 false
               ],
-              "description": "Sessions on my computers: My Sessions in Den lists a member's own sessions across their computers and lets them follow one, send a follow-up, stop it and answer or dismiss what it waits on. Organization owners and admins choose whether members may let other devices reach every session on their own computer or only sessions started remotely; each member then chooses per computer in Desktop Settings > Devices. Reaching a session that was started on the computer needs both choices and is enforced on that computer. Off, remote callers reach only sessions started remotely, as before, and computers report no sessions. Renders DEN_FEATURE_REMOTE_SESSION_ACCESS."
+              "description": "Desktop: other devices can open sessions started on a computer: A member can let their other devices, Workbot and agents working for them open sessions they started on one of their own computers, continue them, stop them and answer what they wait on, not only tasks that were started remotely. Organization owners choose whether members may allow it (Manage > Computers > Remote access); each member then allows it per computer in Desktop Settings > Devices. It needs both choices and is enforced on that computer. Off, other devices reach only sessions started remotely, as before, and computers report no sessions. Renders DEN_FEATURE_REMOTE_SESSION_ACCESS."
+            },
+            "remoteTasksOptIn": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: other devices reach a computer only after its owner allows it: A signed-in computer takes nothing from its owner's other devices, Workbot or agents until the owner allows it in Desktop Settings > Devices: no task can be started there and no session reached. Off, a computer whose owner has not chosen keeps taking tasks started remotely, as before. In both cases the owner can turn a computer off, and organization owners can turn remote access off for everyone on Manage > Computers. Renders DEN_FEATURE_REMOTE_TASKS_OPT_IN."
             },
             "remoteSessionPush": {
               "enum": [

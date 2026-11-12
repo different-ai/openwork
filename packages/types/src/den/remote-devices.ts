@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { remoteSessionAccessModeSchema } from "@openwork/types/automations"
 
 /**
  * Remote devices (feature `remoteDevices`): Den's registry of the computers a
@@ -76,6 +77,33 @@ const timestampSchema = z.string().datetime({ offset: true })
 const labelSchema = z.string().trim().min(1).max(80)
 const detailSchema = z.string().trim().max(300)
 
+/**
+ * What the owner's other devices, Workbot and agents working for them may do
+ * on a signed-in desktop right now: `off` nothing, `created` start tasks there
+ * and follow the ones they started, `all` also open sessions started there.
+ * The owner chooses on the computer; the organization sets the most that may
+ * be chosen.
+ */
+export const REMOTE_DEVICE_ACCESS_REASONS = ["organization", "not_chosen", "update_required"] as const
+export type RemoteDeviceAccessReason = (typeof REMOTE_DEVICE_ACCESS_REASONS)[number]
+
+export const remoteDeviceAccessSchema = z.object({
+  /** What applies now: the owner's choice, or the default until they choose, capped by the organization. */
+  effective: remoteSessionAccessModeSchema,
+  /** The owner has chosen on that computer. */
+  chosen: z.boolean(),
+  /**
+   * Why less applies than the computer's owner could expect, when something
+   * other than their own choice decides it. `organization`: the organization's
+   * limit is narrower. `not_chosen`: the organization asks owners to allow
+   * each computer and this one has not been allowed yet. `update_required`:
+   * the app there is from before this choice existed and has to be updated
+   * before it can be allowed. Null when the owner's own choice applies.
+   */
+  reason: z.enum(REMOTE_DEVICE_ACCESS_REASONS).nullable(),
+}).meta({ ref: "RemoteDeviceAccess" })
+export type RemoteDeviceAccess = z.infer<typeof remoteDeviceAccessSchema>
+
 export const remoteDeviceSchema = z.object({
   id: z.string(),
   kind: z.enum(REMOTE_DEVICE_KINDS),
@@ -108,6 +136,12 @@ export const remoteDeviceSchema = z.object({
   disconnectedAt: timestampSchema.nullable().default(null),
   /** The caller may disconnect it: a signed-in desktop that is not disconnected yet. Absent from older servers. */
   canDisconnect: z.boolean().default(false),
+  /**
+   * For a signed-in desktop that can take tasks from other devices: what they
+   * may do there. Null for every other computer, for a disconnected desktop
+   * and from older servers.
+   */
+  remoteAccess: remoteDeviceAccessSchema.nullable().default(null),
 }).meta({ ref: "RemoteDevice" })
 export type RemoteDevice = z.infer<typeof remoteDeviceSchema>
 
