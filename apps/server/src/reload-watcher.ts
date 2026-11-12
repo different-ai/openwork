@@ -5,6 +5,7 @@ import { basename, join, resolve } from "node:path";
 import type { ReloadEventStore } from "./events.js";
 import { computeReloadFingerprint, fingerprintedReloadReasons } from "./reload-fingerprint.js";
 import type { ReloadReason, ReloadTrigger, ServerConfig, WorkspaceInfo } from "./types.js";
+import { workspaceConfigReadBlocked } from "./workspace-init.js";
 
 type LogLevel = "info" | "warn" | "error";
 
@@ -102,6 +103,9 @@ function startWorkspaceReloadWatcher(input: {
   };
 
   const refreshBaseline = async (reasons: ReloadReason[] = fingerprintedReloadReasons) => {
+    // Fingerprinting reads the workspace's files; each read of a blocked
+    // workspace would hold another file thread.
+    if (workspaceConfigReadBlocked(root)) return;
     for (const reason of reasons) {
       if (!fingerprintedReloadReasons.includes(reason)) continue;
       baselines.set(reason, await computeReloadFingerprint(root, reason));
@@ -146,6 +150,7 @@ function startWorkspaceReloadWatcher(input: {
   const checkReason = async (reason: ReloadReason, trigger?: ReloadTrigger) => {
     if (closed) return;
     if (!fingerprintedReloadReasons.includes(reason)) return;
+    if (workspaceConfigReadBlocked(root)) return;
 
     const current = await computeReloadFingerprint(root, reason);
     const previous = baselines.get(reason);
