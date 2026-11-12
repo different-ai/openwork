@@ -10,7 +10,7 @@ import { changedFiles, proofArtifactsForAttempt, selectProof } from "../../.gith
 
 // The only producer: the PR change proof run on the PR head.
 const producers = [
-  { file: "pr-proof.yml", name: "PR change proof", events: ["pull_request"] },
+  { file: "pr-proof.yml", name: "PR change proof", events: ["pull_request", "workflow_dispatch"] },
 ];
 const validSha = (sha) => typeof sha === "string" && /^[a-f0-9]{40}$/.test(sha);
 const validId = (id) => Number.isSafeInteger(id) && id > 0;
@@ -20,7 +20,7 @@ function sameRepo(value, repo) {
 }
 
 // All identity comes from GitHub's API, never artifact contents or the event's first PR.
-export function association(run, repo, workflows) {
+export async function association(run, repo, workflows, api) {
   const producer = workflows.find((workflow) => workflow.id === run.workflow_id);
   if (!producer || run.path !== `.github/workflows/${producer.file}` || run.name !== producer.name)
     return { reason: "unrecognized producer workflow" };
@@ -28,9 +28,22 @@ export function association(run, repo, workflows) {
     return { reason: "producer repository identity mismatch" };
   if (run.status !== "completed" || !["success", "failure"].includes(run.conclusion) || !producer.events.includes(run.event))
     return { reason: "producer event or completion is not eligible" };
-  if (!Array.isArray(run.pull_requests) || run.pull_requests.length !== 1)
+  let pulls = run.pull_requests;
+  if (run.event === "workflow_dispatch") {
+    if (!run.head_branch || !validSha(run.head_sha)) return { reason: "missing dispatch branch or SHA" };
+    pulls = [];
+    for (let page = 1; ; page++) {
+      const candidates = await api(`repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${repo.split("/")[0]}:${run.head_branch}`)}&per_page=100&page=${page}`);
+      if (!Array.isArray(candidates)) return { reason: "invalid open PR listing" };
+      pulls.push(...candidates.filter(pr => pr.state === "open" && pr.head?.ref === run.head_branch && pr.head?.sha === run.head_sha
+        && sameRepo(pr.head?.repo, repo) && sameRepo(pr.base?.repo, repo)
+        && pr.head.repo.id === run.repository.id && pr.base.repo.id === run.repository.id));
+      if (candidates.length < 100) break;
+    }
+  }
+  if (!Array.isArray(pulls) || pulls.length !== 1)
     return { reason: "missing or ambiguous PR association" };
-  const pr = run.pull_requests[0];
+  const pr = pulls[0];
   // Run PR stubs expose repo IDs, not necessarily full repository objects.
   if (!validId(run.repository.id) || run.head_repository.id !== run.repository.id || pr.base?.repo?.id !== run.repository.id || pr.head?.repo?.id !== run.head_repository.id)
     return { reason: "PR base or head repository identity mismatch" };
@@ -65,7 +78,7 @@ export async function publishCompletedEvidence({ repo, runId, runAttempt }, depe
   const source = await api(`repos/${repo}/actions/runs/${runId}`);
   if (!validId(source.id) || String(source.id) !== String(runId)) return skip("source run identity mismatch");
   if (runAttempt && (!validId(Number(runAttempt)) || source.run_attempt !== Number(runAttempt))) return skip("source run attempt is stale");
-  const identity = association(source, repo, workflows);
+  const identity = await association(source, repo, workflows, api);
   if (identity.reason) return skip(identity.reason);
   const current = await api(`repos/${repo}/pulls/${identity.pr}`);
   if (current.number !== identity.pr || current.state !== "open" || !sameRepo(current.base?.repo, repo) || !sameRepo(current.head?.repo, repo))
