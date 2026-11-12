@@ -561,6 +561,16 @@
               ],
               "description": "Workbot: quiet calendar: Calendar where meetings own the week and Workbot's automation runs are small dots at their time instead of chips that fight meetings for space. Each day says how many runs it had; a run that needs the person stands out, and what Workbot did this week opens on demand. Narrow windows and phones get an agenda list. Renders DEN_FEATURE_WORKBOT_QUIET_CALENDAR."
             },
+            "workbotCalmChat": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: calm chat look: A quieter look for Workbot's chat: a labelled sidebar with the open page as a white pill, Workbot's name and live status in one pill at the top, a narrower conversation with replies as plain text, compact browser and file cards, and a softer message box. Looks only; chats, files, browser tasks and navigation work the same. Renders DEN_FEATURE_WORKBOT_CALM_CHAT."
+            },
             "workbotProactive": {
               "enum": [
                 "",

@@ -18,6 +18,7 @@ export type FixtureTurn = {
   error: string | null
   tasks?: unknown[]
   greeting?: boolean
+  retryable?: boolean
   outputs?: Array<{ id: string; name: string; mediaType: string; size: number; updatedAt?: number }>
 }
 export type FixtureThread = { name: string; organizationName: string; status: "idle" | "busy"; turns: FixtureTurn[]; hasEarlier: boolean; filesEnabled: boolean }
@@ -161,6 +162,29 @@ export const scenarios: Record<string, () => FixtureThread> = {
     }
   },
   /** Short and long messages from the person (#1, #2): "Hey" must stay on one line. */
+  /** A conversation with nothing in it yet: the first-open screen. */
+  empty: () => ({ name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true, turns: [] }),
+  /** A turn that failed: the error line under the request, with Try again. */
+  failed: () => ({ name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
+    turns: [
+      hello(),
+      turn("f0", "What's on my calendar tomorrow?", minutesAgo(9), [said("Two things: a planning review at 10 and a dentist appointment at 4.")]),
+      turn("f1", "Move the planning review to Thursday", minutesAgo(2), [], { status: "failed", modelSteps: 0, retryable: true, error: "Workbot could not finish this. Try again in a moment." }),
+    ],
+  }),
+  /** Long messages both ways: wrapping, lists and paragraphs in the narrow column. */
+  long: () => ({ name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
+    turns: [
+      hello(),
+      turn("l1", "I'm planning a two-day offsite for twelve people next month. We need a venue within an hour of the office, one big room and two breakout rooms, lunch both days, and I'd like to keep it under budget without it feeling cheap. Can you sketch a plan and tell me what you need from me?", minutesAgo(7), [said([
+        "Here's a first plan for the offsite. It keeps both days short enough that people still have energy on the second afternoon.",
+        "**Day one**\n\n- 9:30 arrive, coffee, and a short opening on what the two days are for\n- 10:00 to 12:30 the big-room session on next quarter's goals\n- Lunch on site, then breakouts in two groups until 4:00\n- 4:00 to 5:00 each group shares back, followed by dinner nearby",
+        "**Day two**\n\n- 9:30 to 11:30 decisions: what we commit to and who owns it\n- 11:30 to 12:30 open time for anything that came up overnight\n- Lunch, then a one-hour wrap-up so everyone leaves by 2:30",
+        "To book it I need three things from you: the two dates you prefer, a rough budget per person, and whether anyone has dietary or access needs. Once I have those I'll shortlist three venues with prices and availability.",
+      ].join("\n\n"))]),
+      turn("l2", "Dates are the 14th and 15th, no access needs that I know of.", minutesAgo(3), [said("Got it. I'll look for venues free on the 14th and 15th and come back with three options, each with the room layout, lunch and total price.")]),
+    ],
+  }),
   bubbles: () => ({
     name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
     turns: [

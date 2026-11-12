@@ -4,6 +4,7 @@ import { AppWindow, File, FileSpreadsheet, FileText, Film, Globe, Image as Image
 import { useContext, useMemo } from "react";
 import { artifactColor, artifactKind, artifactLabel, artifactTitle, staticAppHtml, type ArtifactKind } from "./artifact";
 import { useWorkbotFileBytes, useWorkbotImageUrl, useWorkbotPreview, useWorkbotPreviewPage, type WorkbotAttachment } from "./data";
+import { calmChat } from "./host";
 import { OpenFileContext, OpenFileIdContext } from "./open-file";
 
 /**
@@ -47,6 +48,23 @@ export function ArtifactCard({ file }: { file: WorkbotAttachment }) {
   const title = artifactTitle(file, html);
   const label = artifactLabel(file);
   const isOpen = openId === file.id;
+  // Calm look: one compact row: a small badge in the file type's colour, its name and what it is.
+  if (calmChat()) {
+    const Icon = ICONS[kind];
+    const color = artifactColor(kind);
+    return (
+      <div className={`group relative flex w-full min-w-0 items-center gap-3 rounded-xl bg-[var(--wb-surface)] p-2.5 transition-shadow duration-150 ease-out ${isOpen ? "shadow-[0_0_0_2px_#01162759]" : "shadow-[0_0_0_1px_var(--wb-ring)] hover:shadow-[0_0_0_1px_var(--wb-disabled)]"}`} data-workbot-artifact-card={file.id} data-open={isOpen || undefined}>
+        <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-lg" style={{ background: `color-mix(in srgb, ${color} 10%, var(--wb-surface))` }} data-workbot-artifact-icon={kind}>
+          <Icon size={17} strokeWidth={1.75} style={{ color }} />
+        </span>
+        <span aria-hidden className="flex min-w-0 flex-col">
+          <span className="truncate text-[13px] font-medium leading-[18px] text-[var(--wb-text)]">{title}</span>
+          <span className="truncate text-[12px] leading-4 text-[var(--wb-muted)]">{label}</span>
+        </span>
+        <button type="button" onClick={() => open(file)} aria-label={`${title}, ${label}`} title={file.name} className="absolute inset-0 rounded-xl focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" />
+      </div>
+    );
+  }
   return (
     <div className="group relative flex w-full min-w-0 flex-col gap-2.5" data-workbot-artifact-card={file.id} data-open={isOpen || undefined}>
       <div
@@ -143,6 +161,11 @@ function Placeholder({ kind }: { kind: ArtifactKind }) {
 
 /** Files Workbot made while answering: one large card, or a two-up grid when there are several. */
 export function ArtifactCards({ files }: { files: WorkbotAttachment[] }) {
+  if (calmChat()) return (
+    <div className="workbot-row-enter grid max-w-[360px] grid-cols-1 gap-2 pt-3" data-workbot-artifacts>
+      {files.map((file) => <ArtifactCard key={file.id} file={file} />)}
+    </div>
+  );
   return (
     <div className={`workbot-row-enter grid gap-x-4 gap-y-5 pl-1.5 pr-1.5 pt-4 ${files.length > 1 ? "max-w-[600px] grid-cols-2" : "max-w-[440px] grid-cols-1"}`} data-workbot-artifacts>
       {files.map((file) => <ArtifactCard key={file.id} file={file} />)}

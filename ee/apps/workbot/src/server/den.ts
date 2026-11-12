@@ -102,6 +102,8 @@ export const denSessionSchema = z.object({
   openworkApps: z.boolean().default(false),
   /** Quiet calendar (`workbotQuietCalendar`); absent means off. */
   quietCalendar: z.boolean().default(false),
+  /** Calm chat look (`workbotCalmChat`); absent means off. */
+  calmChat: z.boolean().default(false),
   /** The organization's default model for Workbot's turns. Null, or a Den from before it, means the runner's default. */
   model: z.string().nullable().default(null),
   verifyModel: z.boolean().default(false),

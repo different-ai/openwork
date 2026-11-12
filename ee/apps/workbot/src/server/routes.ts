@@ -314,6 +314,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       profileNav: who.enabled && who.profileSheet && who.profileNav,
       profileComputers: who.enabled && who.profileSheet && who.devices && who.profileComputers,
       quietCalendar: who.enabled && who.calendar === true && who.quietCalendar,
+      calmChat: who.enabled && who.calmChat,
       devices: who.enabled && who.devices,
       commandPalette: true,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
