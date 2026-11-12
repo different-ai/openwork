@@ -250,6 +250,8 @@ database. Pending approval runs retain their frozen coordinates.
 Automatic **preparation** does not yet mean zero-touch production promotion.
 After merging, configure credentials and complete real-cloud qualification
 before claiming that the live managed installer follows the latest release.
+The proposal to automate qualification and promotion, and to let customers
+update with one click, is in `docs/plans/managed-deployment-one-click-updates.md`.
 
 ## Google Cloud (GCP)
 
