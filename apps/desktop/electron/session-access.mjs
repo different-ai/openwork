@@ -5,42 +5,91 @@ import { join } from "node:path"
 
 /** The runner honours its owner's session access choice; Den signs it into the runner token. */
 export const SESSION_ACCESS_CAPABILITY = "remote_session_access_v1"
-/** Only sessions started remotely: what every computer allows until its owner chooses otherwise. */
+/**
+ * The runner's owner can turn remote access off or leave it unchosen, the
+ * runner enforces `off` itself and its session report says whether the owner
+ * chose. Den signs it into the runner token.
+ */
+export const SESSION_CHOICE_CAPABILITY = "remote_session_choice_v1"
+/** What a computer allows when nothing says otherwise: tasks started remotely, and only those sessions. */
 const DEFAULT_SESSION_ACCESS_MODE = "created"
+/** Narrowest first. */
+const SESSION_ACCESS_ORDER = { off: 0, created: 1, all: 2 }
 const SESSION_ACCESS_FILE = "access.json"
-const SESSION_ACCESS_FILE_MAX_BYTES = 4 * 1024
+const SESSION_ACCESS_FILE_MAX_BYTES = 256 * 1024
+const SESSION_ACCESS_KEY_MAX_LENGTH = 600
 const ATTACHED_COMMANDS_FILE = "attached.json"
 /** Ids kept; with the newest kept, an older attach is forgotten only after this many newer ones. */
 const ATTACHED_COMMANDS_LIMIT = 4_000
 const ATTACHED_COMMAND_ID_MAX_LENGTH = 240
 const ATTACHED_COMMANDS_FILE_MAX_BYTES = 2 * 1024 * 1024
 
+/**
+ * `off`: nothing reaches this computer. `created`: tasks started remotely. `all`: also sessions started here.
+ * @param {unknown} value
+ * @returns {value is "off" | "created" | "all"}
+ */
 export function isSessionAccessMode(value) {
-  return value === "created" || value === "all"
+  return value === "off" || value === "created" || value === "all"
 }
 
 /**
- * Reads the stored choice. Anything missing, corrupt or unknown is the narrow default, never the wide one.
- * @returns {"created" | "all"}
+ * Names the Den and the organization a choice belongs to: the choice made for
+ * one organization never applies in another. Null when either is unknown.
+ */
+export function sessionAccessKey(baseUrl, organizationId) {
+  const den = typeof baseUrl === "string" ? baseUrl.trim() : ""
+  const organization = typeof organizationId === "string" ? organizationId.trim() : ""
+  if (!den || !organization) return null
+  const key = `${den}|${organization}`
+  return isStoredKey(key) ? key : null
+}
+
+const isStoredKey = (key) => typeof key === "string" && key.length > 0 && key.length <= SESSION_ACCESS_KEY_MAX_LENGTH
+
+/**
+ * Reads the stored choices. `choices` holds one choice per organization; an
+ * organization without one has not chosen. `legacy` is what a version 1 file
+ * (one choice for the whole computer) still has to hand to the first
+ * organization: `"all"`, or null for its narrow default, which may never have
+ * been chosen. It is undefined for every other file. Anything missing, corrupt
+ * or unknown is no choice at all, never a wide one.
+ * @returns {{ choices: Record<string, "off" | "created" | "all">, legacy?: "all" | null }}
  */
 export function parseSessionAccess(text) {
   try {
     const stored = JSON.parse(text)
-    return stored?.version === 1 && stored.mode === "all" ? "all" : DEFAULT_SESSION_ACCESS_MODE
+    if (stored?.version === 1 && typeof stored.mode === "string") return { choices: {}, legacy: stored.mode === "all" ? "all" : null }
+    if (stored?.version !== 2 || stored.choices === null || typeof stored.choices !== "object" || Array.isArray(stored.choices)) return { choices: {} }
+    /** @type {Record<string, "off" | "created" | "all">} */
+    const choices = {}
+    for (const [key, mode] of Object.entries(stored.choices)) {
+      if (isStoredKey(key) && isSessionAccessMode(mode)) choices[key] = mode
+    }
+    return { choices }
   } catch {
-    return DEFAULT_SESSION_ACCESS_MODE
+    return { choices: {} }
   }
 }
 
 /**
- * The access in force on this computer. Sessions started here are reachable
- * only when the owner chose it, the organization allows it and Den accepted
- * this runner for it; everything else is the narrow default.
- * @param {{ mode: unknown, ceiling: unknown, capable: unknown }} input
- * @returns {"created" | "all"}
+ * The access in force on this computer, read on every use.
+ *
+ * - The owner chose `off`: off, whatever Den says.
+ * - Otherwise the owner's choice, or for an owner who has not chosen `off`
+ *   under the organization's opt-in and `created` without it, capped by the
+ *   organization's ceiling. Without a policy from Den the ceiling is `created`.
+ * - `all` also needs Den to have accepted this runner for session access.
+ * @param {{ choice: unknown, policy: { ceiling: unknown, optIn?: unknown } | null | undefined, capable: unknown }} input
+ * @returns {"off" | "created" | "all"}
  */
-export function effectiveSessionAccess({ mode, ceiling, capable }) {
-  return mode === "all" && ceiling === "all" && capable === true ? "all" : DEFAULT_SESSION_ACCESS_MODE
+export function effectiveSessionAccess({ choice, policy, capable }) {
+  if (choice === "off") return "off"
+  const base = isSessionAccessMode(choice) ? choice : policy?.optIn === true ? "off" : DEFAULT_SESSION_ACCESS_MODE
+  // A ceiling this app does not know is treated as the narrowest.
+  const cap = policy ? (isSessionAccessMode(policy.ceiling) ? policy.ceiling : "off") : DEFAULT_SESSION_ACCESS_MODE
+  const narrower = SESSION_ACCESS_ORDER[base] <= SESSION_ACCESS_ORDER[cap] ? base : cap
+  return narrower === "all" && capable !== true ? DEFAULT_SESSION_ACCESS_MODE : narrower
 }
 
 /**
@@ -88,20 +137,80 @@ async function writePrivateFile(root, name, text) {
 }
 
 /**
- * The owner's choice for this computer, kept beside the session-runner
- * journals. It belongs to the computer, not to an account or workspace.
- * `getRoot` is read on every use so Electron's userData path is never needed
- * before the app is ready.
+ * The owner's choices for this computer, one per organization, kept beside
+ * the session-runner journals: `{ "version": 2, "choices": { "<key>": mode } }`
+ * with keys from `sessionAccessKey`. An organization without a key has not
+ * chosen. `getRoot` is read on every use so Electron's userData path is never
+ * needed before the app is ready. The file is read once; after that the
+ * choices live here and every change rewrites the file whole.
  */
 export function createSessionAccessStore(getRoot) {
-  return {
-    read() {
+  /** `choices` are in force; `wanted` also holds what the owner asked for and is not saved yet. */
+  let loaded = null
+  let queue = Promise.resolve()
+  const load = () => {
+    if (loaded === null) {
       const text = readPrivateFile(join(getRoot(), SESSION_ACCESS_FILE), SESSION_ACCESS_FILE_MAX_BYTES)
-      return text === null ? DEFAULT_SESSION_ACCESS_MODE : parseSessionAccess(text)
+      const stored = text === null ? { choices: {} } : parseSessionAccess(text)
+      loaded = { ...stored, wanted: stored.choices }
+    }
+    return loaded
+  }
+  const read = (key) => (typeof key === "string" && Object.hasOwn(load().choices, key) ? load().choices[key] : null)
+  /**
+   * Saves everything asked for so far, after every earlier save, so the file
+   * always holds the latest choices. A choice widens in memory only once it is
+   * on disk and still what the owner wants: a narrower one asked for in the
+   * meantime is never undone.
+   */
+  const saveChoice = (key, mode) => {
+    const state = load()
+    const task = queue.then(async () => {
+      try {
+        const text = JSON.stringify({ version: 2, choices: state.wanted })
+        // A file too large to read back would read as no choices at all.
+        if (Buffer.byteLength(text, "utf8") > SESSION_ACCESS_FILE_MAX_BYTES) throw new Error("Too many session access choices")
+        await writePrivateFile(getRoot(), SESSION_ACCESS_FILE, text)
+      } catch (error) {
+        // A wider choice that could not be saved is dropped: a later save must not carry it to disk unasked.
+        if (mode !== null && state.wanted[key] === mode && read(key) !== mode) {
+          const { [key]: _unsaved, ...kept } = state.wanted
+          const inForce = read(key)
+          state.wanted = inForce === null ? kept : { ...kept, [key]: inForce }
+        }
+        throw error
+      }
+      if (mode !== null && state.wanted[key] === mode) state.choices = { ...state.choices, [key]: mode }
+    })
+    queue = task.catch(() => undefined)
+    return task
+  }
+  return {
+    /** The owner's choice for this organization, or null when they have not chosen. */
+    read,
+    /**
+     * Hands a version 1 file's single choice to the organization this computer
+     * is connected to first, and to no other: `all` becomes that
+     * organization's choice once the version 2 file is written, the old narrow
+     * default becomes "not chosen". Resolves to whether a choice was adopted.
+     */
+    adoptLegacy(key) {
+      const state = load()
+      if (state.legacy === undefined || !isStoredKey(key)) return Promise.resolve(false)
+      const adopted = state.legacy === "all"
+      // Taken at once, so an organization configured a moment later never receives it.
+      delete state.legacy
+      if (adopted) state.wanted = { ...state.wanted, [key]: "all" }
+      return saveChoice(key, adopted ? "all" : null).then(() => adopted)
     },
-    async write(mode) {
-      if (!isSessionAccessMode(mode)) throw new Error("Invalid session access choice")
-      await writePrivateFile(getRoot(), SESSION_ACCESS_FILE, JSON.stringify({ version: 1, mode }))
+    /** Narrowing applies before it is saved, widening only once it is. */
+    write(key, mode) {
+      if (!isSessionAccessMode(mode)) return Promise.reject(new Error("Invalid session access choice"))
+      if (!isStoredKey(key)) return Promise.reject(new Error("Invalid session access organization"))
+      const state = load()
+      state.wanted = { ...state.wanted, [key]: mode }
+      if (SESSION_ACCESS_ORDER[mode] <= SESSION_ACCESS_ORDER[read(key) ?? "off"]) state.choices = { ...state.choices, [key]: mode }
+      return saveChoice(key, mode)
     },
   }
 }

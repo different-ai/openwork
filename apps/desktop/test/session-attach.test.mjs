@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { test } from "node:test"
 import { createSessionRunner, emptyJournal, SessionRunnerError } from "@openwork/remote-sessions"
 import { createDesktopAutomationRunner } from "../electron/automation-runner.mjs"
-import { createAttachedCommandStore, parseAttachedCommands } from "../electron/session-access.mjs"
+import { createAttachedCommandStore, parseAttachedCommands, sessionAccessKey } from "../electron/session-access.mjs"
 import { createDesktopSessionAdapter } from "../electron/session-runner-adapter.mjs"
 import { createComputerRequestAnswers } from "../electron/session-runner-computer-requests.mjs"
 import { desktopSessionRunnerPartition } from "../electron/session-runner-journal.mjs"
@@ -26,6 +26,9 @@ const sessionRequest = (requestId, commandId, action = "read", input = { from: "
   engine: null, expiresAt: Date.now() + 60_000, action, input, ...change,
 })
 const signal = new AbortController().signal
+/** The owner's choice for the fixture organization, as it is on disk before the app starts. */
+const storeChoice = (root, mode) => writeFile(join(root, "access.json"),
+  JSON.stringify({ version: 2, choices: { [sessionAccessKey(denBaseUrl, account.organizationId)]: mode } }), "utf8")
 
 async function eventually(predicate, message = "condition was not reached") {
   const deadline = Date.now() + 3_000
@@ -543,10 +546,10 @@ test("through the shared runner an attached session is reachable exactly while i
 })
 
 test("a session started remotely before the journal existed is still served by the released path", async (t) => {
-  const { local, den, start, journalDirectory } = await desktopFixture(t)
+  const { root, local, den, start, journalDirectory } = await desktopFixture(t)
   local.v2.set("ses_local", local.session({ messages: [{ id: "msg_1", role: "user", text: "started remotely" }, { id: "msg_2", role: "assistant", text: "done" }] }))
   const runner = start()
-  await runner.setSessionAccess("all")
+  await storeChoice(root, "all")
   den.requests.push(sessionRequest("request_released", "command_released"))
   configure(runner)
   await eventually(() => den.completion("requests", "request_released"), "the request is completed")
@@ -562,7 +565,7 @@ test("a request for an attach the journal no longer holds is refused without tou
   const { root, local, den, start, queueAttach, journalDirectory } = await desktopFixture(t)
   local.v2.set("ses_local", local.session({ messages: [{ id: "msg_1", role: "user", text: "started here" }] }))
   const runner = start()
-  await runner.setSessionAccess("all")
+  await storeChoice(root, "all")
   queueAttach("attach_one")
   configure(runner)
   await eventually(() => den.completion("commands", "attach_one"), "the attach is completed")
@@ -610,7 +613,7 @@ test("an attach refused without the journal is recorded too, so its requests nev
   const { root, local, den, start, queueAttach } = await desktopFixture(t)
   local.v2.set("ses_local", local.session())
   const runner = start()
-  await runner.setSessionAccess("all")
+  await storeChoice(root, "all")
   queueAttach("attach_legacy")
   configure(runner, legacyCapabilities)
   await eventually(() => den.completion("commands", "attach_legacy"))
@@ -628,7 +631,7 @@ test("an attach that cannot be recorded is failed instead of delivered", async (
   local.v2.set("ses_local", local.session())
   await mkdir(join(root, "attached.json", "in-the-way"), { recursive: true })
   const runner = start()
-  await runner.setSessionAccess("all")
+  await storeChoice(root, "all")
   queueAttach("attach_unrecorded")
   configure(runner)
   await eventually(() => den.completion("commands", "attach_unrecorded"), "the attach is completed")
@@ -643,10 +646,10 @@ test("an attach that cannot be recorded is failed instead of delivered", async (
 })
 
 test("an attached session keeps the fast request poll on only while its owner allows all sessions", async (t) => {
-  const { local, den, start, queueAttach } = await desktopFixture(t)
+  const { root, local, den, start, queueAttach } = await desktopFixture(t)
   local.v2.set("ses_local", local.session({ running: true, messages: [{ id: "msg_1", role: "user", text: "still working" }] }))
   const runner = start()
-  await runner.setSessionAccess("all")
+  await storeChoice(root, "all")
   queueAttach("attach_one")
   configure(runner)
   await eventually(() => den.completion("commands", "attach_one")?.status === "delivered", "the attach is delivered")

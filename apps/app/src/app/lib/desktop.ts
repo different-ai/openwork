@@ -78,15 +78,23 @@ export type RecoveryActionResult = {
 };
 
 /**
- * Which of this computer's sessions its owner's other devices can reach.
- * `ceiling` is null until the organization's limit is known, and `supported`
- * says whether the organization's server accepted this computer for it.
+ * What its owner's other devices can do on this computer: nothing (`off`),
+ * start tasks (`created`), or also open sessions started here (`all`). The
+ * choice is kept per organization.
  */
 export type RemoteSessionAccessState = {
-  mode: RemoteSessionAccessMode;
+  /** The owner's choice for the organization this computer is connected to; null while they have not chosen. */
+  mode: RemoteSessionAccessMode | null;
+  /** The most the organization allows; null until its server says. */
   ceiling: RemoteSessionAccessMode | null;
+  /** What applies right now. */
   effective: RemoteSessionAccessMode;
+  /** The organization's server accepted this computer for sessions started here. */
   supported: boolean;
+  /** A computer whose owner has not chosen takes nothing. */
+  optIn: boolean;
+  /** This computer is connected to an organization, so a choice can be made. */
+  connected: boolean;
 };
 
 export type SpeechDictationEvent =
