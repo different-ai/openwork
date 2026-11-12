@@ -111,7 +111,7 @@ test("managed deployments stays opt-in and cloud-only after folding GCP and agen
   assert.equal(resolveFeature("managedDeployments", { ...base, locks: legacyLocks.locks }).enabled, false)
 })
 
-test("Your agent, browser and computer use each have one opt-in rollout", () => {
+test("Your agent, browser and computer use each have one rollout; legacy switches cannot override it", () => {
   const retired = ["workbotAgentHealthView", "workbotAgentLibrary", "browserLiveView", "computerUseBackground"]
   for (const key of retired) {
     assert.ok(RETIRED_FEATURE_KEYS.some((retiredKey) => retiredKey === key))
@@ -131,7 +131,8 @@ test("Your agent, browser and computer use each have one opt-in rollout", () => 
   for (const key of parents) {
     for (const deployment of ["cloud", "self_hosted"] satisfies Array<FeatureContext["deployment"]>) {
       const context = { ...base, deployment, locks: legacyLocks.locks }
-      assert.equal(resolveFeature(key, context).enabled, false)
+      // Browser and computer use are generally available; Your agent is still opt-in.
+      assert.equal(resolveFeature(key, context).enabled, key !== "workbotProactive")
       assert.equal(resolveFeature(key, { ...context, overrides: { [key]: true } }).enabled, true)
       assert.equal(resolveFeature(key, {
         ...context,
