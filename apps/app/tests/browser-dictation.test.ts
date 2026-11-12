@@ -17,35 +17,35 @@ class Recognition implements BrowserSpeechRecognition {
   words(...transcripts: string[]) { this.onresult?.({ results: transcripts.map(transcript => [{ transcript }]) }) }
 }
 
-test("buffered dictation reveals only the completed correction and preserves surrounding text", () => {
+test("live dictation replaces a selection and preserves the final correction", () => {
   const recognition = new Recognition();
   const changes: string[] = [];
   const owner = createBrowserDictation({ recognition, text: "Ask Friday tomorrow", selection: { start: 4, end: 10 },
-    language: "en-US", deferTranscript: true, onText: text => changes.push(text), onState: () => {}, onError: () => {} });
+    language: "en-US", onText: text => changes.push(text), onState: () => {}, onError: () => {} });
   owner.start();
   recognition.words("the weak");
-  expect(changes).toEqual([]);
-  expect(owner.text()).toBe("Ask Friday tomorrow");
+  expect(changes).toEqual(["Ask the weak tomorrow"]);
+  expect(owner.text()).toBe("Ask the weak tomorrow");
   owner.stop();
   recognition.words("the week.");
-  expect(changes).toEqual([]);
+  expect(changes.at(-1)).toBe("Ask the week. tomorrow");
   recognition.onend?.();
-  expect(changes).toEqual(["Ask the week. tomorrow"]);
+  expect(changes.at(-1)).toBe("Ask the week. tomorrow");
   recognition.words("late words");
-  expect(changes).toHaveLength(1);
+  expect(changes).toHaveLength(2);
 });
 
-test("cancel discards buffered speech and fences late results without touching the draft", () => {
+test("cancel retains displayed words and fences late results", () => {
   const recognition = new Recognition();
   const changes: string[] = [];
   const owner = createBrowserDictation({ recognition, text: "Keep this", selection: { start: 9, end: 9 },
-    language: "en-US", deferTranscript: true, onText: text => changes.push(text), onState: () => {}, onError: () => {} });
+    language: "en-US", onText: text => changes.push(text), onState: () => {}, onError: () => {} });
   owner.start();
-  recognition.words("discard this");
+  recognition.words("captured words");
   owner.cancel();
   recognition.words("late words");
   recognition.onend?.();
-  expect(changes).toEqual([]);
+  expect(changes).toEqual(["Keep this captured words"]);
   expect(recognition.aborted).toBe(1);
 });
 
@@ -54,7 +54,7 @@ test("model setup remains cancellable and download failures explain recovery", (
   const statuses: string[] = [];
   const errors: string[] = [];
   const owner = createBrowserDictation({ recognition, text: "Draft", selection: { start: 5, end: 5 }, language: "en-US",
-    deferTranscript: true, onText: () => {}, onState: () => {}, onStatus: status => statuses.push(status), onError: error => errors.push(error) });
+    onText: () => {}, onState: () => {}, onStatus: status => statuses.push(status), onError: error => errors.push(error) });
   owner.start();
   recognition.onstatus?.("installing");
   expect(statuses).toEqual(["installing"]);
@@ -116,4 +116,35 @@ test("Stop accepts the final refinement without sending, and permission errors k
   retry.onerror?.({ error: "not-allowed" });
   expect(error).toBe("Allow microphone access in your browser.");
   expect(text).toBe("Plan the week");
+});
+
+test("finish waits for the last correction and returns it once recognition ends", async () => {
+  const recognition = new Recognition();
+  let text = "";
+  const owner = createBrowserDictation({ recognition, text, selection: { start: 0, end: 0 }, language: "en-US",
+    onText: value => { text = value }, onState: () => {}, onError: () => {} });
+  owner.start();
+  recognition.words("Plan the weak");
+  let settled = false;
+  const finishing = owner.finish().then(value => { settled = true; return value });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  recognition.words("Plan the week.");
+  recognition.onend?.();
+  expect(await finishing).toBe("Plan the week.");
+  text = "";
+  recognition.words("late");
+  expect(text).toBe("");
+});
+
+test.each(["cancel", "network", "finalization-timeout"])("finish does not authorize submission after %s", async reason => {
+  const recognition = new Recognition();
+  const owner = createBrowserDictation({ recognition, text: "", selection: { start: 0, end: 0 }, language: "en-US",
+    onText: () => {}, onState: () => {}, onError: () => {} });
+  owner.start();
+  recognition.words("Partial words");
+  const finishing = owner.finish();
+  if (reason === "cancel") owner.cancel();
+  else recognition.onerror?.({ error: reason });
+  expect(await finishing).toBeNull();
 });

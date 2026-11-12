@@ -3,7 +3,7 @@ import AVFoundation
 import Foundation
 import Speech
 
-/// Final-only, on-device transcription. All session state belongs to the main
+/// Live, on-device transcription. All session state belongs to the main
 /// queue; conversion is serial and the input stream has a bounded backlog.
 @available(macOS 26.0, *)
 @MainActor
@@ -18,14 +18,15 @@ final class AnalyzerDictation: DictationSession {
   private var results: Task<Void, Error>?
   private var completion: Task<Void, Never>?
   private var installation: AssetInstallationRequest?
-  private var committed: [String] = []
+  private var transcript = DictationTranscript()
   private var tapping = false
   private var stopping = false
   private var finished = false
 
   init(locale: Locale) {
-    // No volatile/fast results: allow the model to use later audio as context.
-    transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
+    // Show tentative words while retaining the model's full-context final pass.
+    // fastResults is intentionally absent: Send waits for finalized results.
+    transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [])
     analyzer = SpeechAnalyzer(modules: [transcriber])
   }
 
@@ -63,11 +64,8 @@ final class AnalyzerDictation: DictationSession {
           guard let self else { return }
           for try await result in transcriber.results {
             guard !finished else { return }
-            let text = String(result.text.characters)
-            if !text.isEmpty {
-              committed.append(text)
-              emit(["type": "result", "segments": committed])
-            }
+            transcript.update(range: result.range, text: String(result.text.characters))
+            emit(["type": "result", "segments": transcript.segments])
           }
         }
         try await analyzer.start(inputSequence: input.stream)
@@ -79,7 +77,7 @@ final class AnalyzerDictation: DictationSession {
           do {
             try await analyzer.finalizeAndFinishThroughEndOfInput()
             try await results?.value
-            finish(error: committed.isEmpty ? "no-speech" : nil)
+            finish(error: transcript.segments.isEmpty ? "no-speech" : nil)
           } catch { if !finished { finish(error: "network") } }
         }
         if let audioFile {
@@ -172,7 +170,7 @@ final class AnalyzerDictation: DictationSession {
 
   private func finish(error: String?) {
     guard !finished else { return }
-    emit(["type": "result", "segments": committed])
+    emit(["type": "result", "segments": transcript.segments])
     if let error { emit(["type": "error", "code": error]) }
     emit(["type": "end"])
     cancel()

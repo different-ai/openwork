@@ -1,4 +1,4 @@
-# Local dictation: record, then review
+# Local dictation: live text and one-action Send
 
 Feature: `nativeDictation` · cloud and self-hosted · off by default.
 Author: reachjalil. This change does not change any live rollout.
@@ -7,20 +7,30 @@ On macOS 26 or later, supported devices and languages use Apple’s
 `SpeechAnalyzer` with `SpeechTranscriber`. Older systems, unsupported hardware
 and languages retain the on-device `SFSpeechRecognizer` fallback.
 
-With the bundled speech helper, click the microphone, speak,
-and press Stop (or Enter). A compact waveform and recording controls sit in the
-composer’s top-right corner. The waveform responds to microphone amplitude;
-interim recognition stays out of the editor. Once recognition finishes, the
-transcript replaces the original selection or inserts at the original cursor.
-Review or edit it, then choose Send. Cancel or Escape discards the recording.
-Existing text and attachments stay in place. Editing the draft, changing chats,
-hiding the app or disabling the feature cancels pending recognition, so late
-words cannot overwrite newer work. Reduced motion replaces the moving meter
-with a static Listening label.
+With the bundled speech helper, click the microphone and speak. Words appear
+in the input as they are recognized and revise in place. A compact waveform,
+Cancel and Stop sit immediately left of Send in the composer footer. The
+waveform responds to microphone amplitude.
+
+Choose Send or press Enter while recording to stop capture, await the final
+words, and submit once. Send works even before the first words appear. While
+recognition finishes, the button shows a progress indicator; it does not
+require a second click or a review step. Stop alone finishes the transcript
+for editing without sending. Cancel or Escape stops capture and any pending
+Send, preserving words already visible in the draft. Recognition errors or a
+finalization timeout also keep the draft for review instead of submitting it.
+
+Speech replaces the original selection or inserts at the original cursor.
+Editing the draft, changing chats, hiding the app or disabling the feature
+cancels pending recognition and submission, so late words cannot overwrite
+newer work. Existing attachments stay in place. Reduced motion replaces the
+moving meter with a static Listening label.
 
 ![Recording in the composer](recording.png)
 
-![Completed text ready to edit](finished.png)
+![Recording at 390 px](recording-narrow.png)
+
+![Stopped text ready to edit](finished.png)
 
 ![Cancellable first-use model setup at 390 px](model-setup.png)
 
@@ -30,10 +40,11 @@ they show the interaction, not an acoustic accuracy result.
 
 ## Local recognition improvements
 
-- Prefer the newer `SpeechTranscriber` model with the `.transcription` preset:
-  finalized results, no fast or volatile guesses. `SpeechAnalyzer` consumes
-  an asynchronous input stream and finalizes through the end of that stream
-  before the completed transcript reaches the editor.
+- Prefer the newer `SpeechTranscriber` model with `volatileResults` enabled
+  for live text, without `fastResults`. Revisions replace overlapping audio
+  ranges rather than duplicating words. Retain each latest result even when
+  it becomes final without being reissued. `SpeechAnalyzer` finalizes through
+  the end of the input stream before a requested Send proceeds.
 - Ask `AssetInventory` for the language asset and install it when needed.
   “Downloading speech model” is visible and cancellable; the microphone starts
   only after the model and analyzer are ready. The system shares and manages
@@ -68,13 +79,16 @@ make an offline guarantee.
 Enable `nativeDictation` through the existing Features controls for a test
 organization. Use a macOS build with its signed speech helper and microphone /
 Speech Recognition permissions. Dictate a prompt with pauses and a technical
-term, stop immediately after the last word, review, cancel a second recording,
-and try editing the existing draft during a third recording.
+term, choose Send immediately after the last word, and confirm the final word
+is included. Use Stop to review another recording, then cancel or edit while
+a requested Send is still finishing.
 
-Focused tests cover buffering and final corrections, selection insertion,
-cancel/edit/revocation fencing, finite level events, Enter before Send, Escape
-without stopping an agent, and the existing live-recognition behavior. Native conversion tests cover 24/44.1/48 kHz stereo input, independent buffer
-ownership, final samples, silence and level bounds. The Swift helper is built
+Focused tests cover live revisions, final corrections, selection insertion,
+one-action Send/Enter (including an empty initial draft), duplicate-submit
+prevention, cancel/error/edit/chat-change fencing, Stop without submission,
+Escape without stopping an agent, finite level events, and the existing
+browser/system recognition behavior. Native tests cover 24/44.1/48 kHz stereo input, independent buffer ownership,
+final samples, silence, level bounds and transcript range revisions. The Swift helper is built
 with the macOS 14 deployment target; new APIs are guarded by macOS 26
 availability. The build includes them when the selected SDK is 26 or newer,
 and retains the legacy path for older SDKs. The isolated
@@ -86,16 +100,17 @@ hardware checks; synthetic speech events do not establish either.
 
 The production analyzer and converter were exercised on macOS 26.5 using a
 synthesized English file, with no microphone recording. The run emitted model
-installation, ready, finalized text, and end events successfully. The spoken
+installation, ready, incremental word updates, final corrections, and end
+events successfully. The spoken
 sample was “Please plan the week. Review the pull request, then check the OAuth
-flow.” The result preserved the sentence but rendered “pull” as “pool” and
-“OAuth” as “Ooth”. This proves native processing and finalization, not improved
+flow.” The latest run rendered “pull” as “poll” and “OAuth” as “O Off”. This proves native processing and finalization, not improved
 recognition accuracy; technical vocabulary still needs real-speaker evaluation.
 Apple documents `AnalysisContext.contextualStrings` for `DictationTranscriber`,
 so the new `SpeechTranscriber` path does not claim those hints are supported.
 
 Reproduce with `apps/desktop/test/native/speech-analyzer-smoke.swift`, compiled
-alongside `native/dictation/audio-input.swift` and `speech-analyzer.swift` with
+alongside `native/dictation/audio-input.swift`, `transcript.swift` and
+`speech-analyzer.swift` with
 `-D OPENWORK_SPEECH_ANALYZER`. Pass a synthesized audio file. This is an opt-in
 hardware check because Apple may download a system language asset; regular
 native unit tests perform no downloads and never open the microphone.
@@ -106,10 +121,12 @@ Compare the legacy and new native flow
 on the same consented audio set: ordinary prompts, accents, pauses, technical
 names, and immediate Stop. Measure word error rate, final-word retention and
 stop-to-text latency. Use those results to decide whether a bundled local model justifies its download, memory and language
-coverage costs. Keep the recording/review interface independent of that choice.
+coverage costs. Keep the recording and submission interface independent of that choice.
 
 References: [SpeechAnalyzer](https://developer.apple.com/documentation/speech/speechanalyzer),
 [SpeechTranscriber](https://developer.apple.com/documentation/speech/speechtranscriber),
+[Volatile results](https://developer.apple.com/documentation/speech/speechtranscriber/reportingoption/volatileresults),
+[Result finalization](https://developer.apple.com/documentation/speech/speechmoduleresult/isfinal),
 [AssetInventory](https://developer.apple.com/documentation/speech/assetinventory),
 [Apple contextual vocabulary](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/contextualstrings),
 [Apple finishing recognition](https://developer.apple.com/documentation/speech/sfspeechrecognitiontask/finish()),

@@ -21,7 +21,7 @@ class Recognition {
 }
 mock.module("../src/react-app/domains/session/surface/composer/use-native-dictation-feature", () => ({ useNativeDictationFeature: () => true }));
 mock.module("../src/react-app/domains/session/surface/composer/desktop-speech-dictation", () => ({
-  useDesktopSpeechDictation: () => ({ recognition: Recognition, deferTranscript: true }),
+  useDesktopSpeechDictation: () => ({ recognition: Recognition, local: true }),
 }));
 mock.module("../src/components/model-select", () => ({ ModelSelect: () => null }));
 mock.module("../src/react-app/domains/connections/use-org-mcp-connections", () => ({
@@ -53,13 +53,13 @@ function composerProps(draft: string, onDraftChange: (value: string) => void, on
   };
 }
 
-test("the composer meters speech, finishes before Send, and Escape cancels only dictation", async () => {
+test.each(["Send", "Enter", "Send before words"])("%s finalizes and submits once; Escape cancels only dictation", async trigger => {
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);
-  const sent: string[] = []; let draft = "Please"; let stoppedAgent = 0;
+  const sent: string[] = []; let draft = ""; let stoppedAgent = 0;
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   function Harness({ busy = false }: { busy?: boolean }) {
-    const [text, setText] = useState("Please"); draft = text;
+    const [text, setText] = useState(""); draft = text;
     return <QueryClientProvider client={client}><ReactSessionComposer
       {...composerProps(text, setText, () => { sent.push(text) })} busy={busy} onStop={() => { stoppedAgent++ }}
     /></QueryClientProvider>;
@@ -73,21 +73,28 @@ test("the composer meters speech, finishes before Send, and Escape cancels only 
   try {
     await act(async () => { root.render(<Harness />) }); await settle();
     await act(async () => { button("Dictate message").click() });
-    await act(async () => { latest?.words("plan the weak"); latest?.onlevel?.(0.8) });
-    expect(draft).toBe("Please");
+    await act(async () => { if (trigger !== "Send before words") latest?.words("plan the weak"); latest?.onlevel?.(0.8) });
+    expect(draft).toBe(trigger === "Send before words" ? "" : "plan the weak");
+    expect(container.querySelector("[data-composer-actions] [data-dictation-recording]")).not.toBeNull();
+    expect(button("Run task").disabled).toBe(false);
     expect(container.querySelector('[aria-label="Microphone level"]')).not.toBeNull();
     expect(Number(container.querySelector('[data-dictation-waveform] rect:last-child')?.getAttribute("height"))).toBeCloseTo(24.4);
     const editor = container.querySelector<HTMLElement>('[contenteditable="true"]');
     if (!editor) throw new Error("Missing editor");
+    await act(async () => {
+      if (trigger === "Enter") editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      else button("Run task").click();
+    });
+    // A second submit while finalization is pending must not send twice.
     await act(async () => { editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })) });
     expect(container.textContent).toContain("Finishing dictation");
     expect(sent).toEqual([]);
     await act(async () => { latest?.words("plan the week."); latest?.onend?.() }); await settle();
     expect(draft).toContain("plan the week.");
     expect(container.querySelector('[data-dictation-recording]')).toBeNull();
-    expect(sent).toEqual([]);
-    await act(async () => { button("Run task").click() });
-    expect(sent).toEqual([draft]);
+    expect(sent).toEqual(["plan the week."]);
+    await act(async () => { latest?.words("late words"); latest?.onend?.() });
+    expect(sent).toHaveLength(1);
     await act(async () => { root.render(<Harness busy />) }); await settle();
     prepareModel = true;
     await act(async () => { button("Dictate message").click() });
@@ -99,4 +106,65 @@ test("the composer meters speech, finishes before Send, and Escape cancels only 
     expect(draft).toBe(beforeCancel);
     expect(stoppedAgent).toBe(0);
   } finally { prepareModel = false; await act(async () => { root.unmount() }); client.clear(); container.remove(); }
+});
+
+test.each(["cancel", "error", "chat change", "edit"])("pending voice Send is revoked by %s", async reason => {
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  const sent: string[] = [];
+  let edit: (text: string) => void = () => {};
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  function Harness({ session = "first" }: { session?: string }) {
+    const [text, setText] = useState(""); edit = setText;
+    return <QueryClientProvider client={client}><ReactSessionComposer
+      {...composerProps(text, setText, () => { sent.push(text) })} sessionId={session}
+    /></QueryClientProvider>;
+  }
+  async function click(label: string) {
+    await act(async () => {
+      const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+      if (!button) throw new Error(`Missing ${label}`);
+      button.click();
+    });
+  }
+  try {
+    await act(async () => { root.render(<Harness />) });
+    await click("Dictate message");
+    await act(async () => { latest?.words("First words") });
+    await click("Run task");
+    expect(sent).toEqual([]);
+    if (reason === "cancel") await click("Cancel dictation");
+    else await act(async () => {
+      if (reason === "error") latest?.onerror?.({ error: "finalization-timeout" });
+      else if (reason === "chat change") root.render(<Harness session="second" />);
+      else edit("My correction");
+    });
+    await act(async () => { latest?.words("late words"); latest?.onend?.() });
+    expect(sent).toEqual([]);
+    expect(container.querySelector('[contenteditable="true"]')?.textContent).toBe(reason === "edit" ? "My correction" : "First words");
+    expect(container.querySelector("[data-dictation-recording]")).toBeNull();
+  } finally { await act(async () => { root.unmount() }); client.clear(); container.remove(); }
+});
+
+test("Stop finishes the live draft for editing without submitting", async () => {
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  const sent: string[] = [];
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  function Harness() {
+    const [text, setText] = useState("");
+    return <QueryClientProvider client={client}><ReactSessionComposer
+      {...composerProps(text, setText, () => { sent.push(text) })}
+    /></QueryClientProvider>;
+  }
+  try {
+    await act(async () => { root.render(<Harness />) });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Dictate message"]')?.click() });
+    await act(async () => { latest?.words("plan the weak") });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Stop dictation"]')?.click() });
+    await act(async () => { latest?.words("plan the week."); latest?.onend?.() });
+    expect(container.querySelector('[contenteditable="true"]')?.textContent).toBe("plan the week.");
+    expect(sent).toEqual([]);
+    expect(container.querySelector("[data-dictation-recording]")).toBeNull();
+  } finally { await act(async () => { root.unmount() }); client.clear(); container.remove(); }
 });

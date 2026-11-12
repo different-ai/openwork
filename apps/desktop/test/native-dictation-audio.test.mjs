@@ -11,7 +11,7 @@ test("native speech conversion preserves duration and final audio samples", { sk
   const root = fileURLToPath(new URL("../", import.meta.url));
   try {
     const executable = path.join(directory, "test-audio");
-    const built = spawnSync("swiftc", [path.join(root, "native/dictation/audio-input.swift"),
+    const built = spawnSync("swiftc", [path.join(root, "native/dictation/audio-input.swift"), path.join(root, "native/dictation/transcript.swift"),
       path.join(root, "test/native/dictation-audio.swift"), "-o", executable], { encoding: "utf8", timeout: 60_000 });
     assert.equal(built.status, 0, built.error?.message ?? built.stderr);
     const ran = spawnSync(executable, [], { encoding: "utf8", timeout: 10_000 });

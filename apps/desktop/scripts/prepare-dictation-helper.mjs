@@ -12,7 +12,7 @@ const outDir = resolve(outIndex >= 0 && raw[outIndex + 1] ? raw[outIndex + 1] : 
 const force = raw.includes("--force");
 const windows = process.platform === "win32";
 const source = resolve(desktopRoot, "native", "dictation", windows ? "windows.cs" : "main.swift");
-const sources = windows ? [source] : [source, ...["audio-input.swift", "speech-analyzer.swift"].map(name => resolve(desktopRoot, "native", "dictation", name))];
+const sources = windows ? [source] : [source, ...["audio-input.swift", "transcript.swift", "speech-analyzer.swift"].map(name => resolve(desktopRoot, "native", "dictation", name))];
 const executable = join(outDir, windows ? "openwork-dictation.exe" : "openwork-dictation");
 const fingerprintPath = join(outDir, "openwork-dictation.sha256");
 

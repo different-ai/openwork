@@ -40,7 +40,7 @@ export function createBrowserDictation(options: {
   text: string
   selection: { start: number; end: number }
   language: string
-  deferTranscript?: boolean
+  finalizationTimeoutMs?: number
   onLevel?(level: number): void
   onStatus?(status: "installing"): void
   onText(text: string): void
@@ -56,17 +56,20 @@ export function createBrowserDictation(options: {
   let displayed = options.text
   let live = true
   let stopping = false
+  let resolveFinished: (text: string | null) => void = () => {}
+  const finished = new Promise<string | null>(resolve => { resolveFinished = resolve })
   let timer: ReturnType<typeof setTimeout> | undefined
   const publish = () => {
     if (displayed === latest) return
     displayed = latest
     options.onText(latest)
   }
-  const endSession = (keep = true) => {
+  const endSession = (keep = true, successful = true) => {
     live = false
     clearTimeout(timer)
     if (keep) publish()
     options.onState("idle")
+    resolveFinished(successful ? latest : null)
   }
   recognition.lang = options.language
   recognition.continuous = true
@@ -78,7 +81,8 @@ export function createBrowserDictation(options: {
   recognition.onerror = event => {
     if (!live) return
     if (event.error !== "aborted") options.onError(speechError(event.error), event.error)
-    endSession()
+    endSession(true, false)
+    try { recognition.abort() } catch { /* Already ended. */ }
   }
   recognition.onresult = event => {
     if (!live) return
@@ -88,39 +92,42 @@ export function createBrowserDictation(options: {
       if (transcript && part && !/\s$/.test(transcript) && !/^[\s.,!?;:]/.test(part)) transcript += " "
       transcript += part
     }
-    if (!transcript) { latest = options.text; if (!options.deferTranscript) publish(); return }
+    if (!transcript) { latest = options.text; publish(); return }
     const left = before && !/\s$/.test(before) && !/^[\s.,!?;:]/.test(transcript) ? " " : ""
     const right = after && !/^[\s.,!?;:]/.test(after) && !/\s$/.test(transcript) ? " " : ""
     latest = before + left + transcript + right + after
-    if (!options.deferTranscript) publish()
+    publish()
   }
   function commit() {
     if (live) {
-      endSession()
+      endSession(true, false)
       try { recognition.abort() } catch { /* Already ended. */ }
     }
     return latest
+  }
+  function stop() {
+    if (!live || stopping) return
+    stopping = true
+    options.onState("stopping")
+    timer = setTimeout(() => {
+      if (options.finalizationTimeoutMs) options.onError(speechError("finalization-timeout"))
+      commit()
+    }, options.finalizationTimeoutMs ?? 1500)
+    try { recognition.stop() } catch { commit() }
   }
   return {
     text: () => displayed,
     start() {
       options.onState("starting")
       try { recognition.start() }
-      catch { options.onError("Couldn’t start dictation. Check microphone access."); endSession() }
+      catch { options.onError("Couldn’t start dictation. Check microphone access."); endSession(true, false) }
     },
-    stop() {
-      if (!live || stopping) return
-      stopping = true
-      options.onState("stopping")
-      timer = setTimeout(() => {
-        if (options.deferTranscript) options.onError("Dictation took too long to finish. Review the captured words before sending.")
-        commit()
-      }, options.deferTranscript ? 6000 : 1500)
-      try { recognition.stop() } catch { commit() }
-    },
+    stop,
+    /** Finalize before sending; errors and cancellation leave a draft to review. */
+    finish() { stop(); return finished },
     cancel() {
       if (!live) return
-      endSession(false)
+      endSession(false, false)
       try { recognition.abort() } catch { /* Already ended. */ }
     },
     commit,

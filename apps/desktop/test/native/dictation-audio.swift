@@ -1,8 +1,24 @@
 import AVFoundation
+import CoreMedia
 import Foundation
 
 @main struct DictationAudioTests {
   static func main() throws {
+    var transcript = DictationTranscript()
+    func range(_ start: Int64, _ end: Int64) -> CMTimeRange {
+      CMTimeRange(start: CMTime(value: start, timescale: 10), end: CMTime(value: end, timescale: 10))
+    }
+    transcript.update(range: range(0, 10), text: "Plan the weak")
+    transcript.update(range: range(0, 12), text: "Plan the week.")
+    transcript.update(range: range(12, 20), text: "Review it")
+    precondition(transcript.segments == ["Plan the week.", "Review it"], "Revisions must replace, not duplicate, words")
+    transcript.update(range: range(12, 22), text: "Review the changes.")
+    precondition(transcript.segments == ["Plan the week.", "Review the changes."], "Adjacent ranges must remain intact")
+    transcript.update(range: range(22, 24), text: "noise")
+    transcript.update(range: range(22, 24), text: "")
+    precondition(transcript.segments.count == 2, "An empty revision removes just its own range")
+    transcript.update(range: range(0, 22), text: "Plan the week. Review the changes.")
+    precondition(transcript.segments == ["Plan the week. Review the changes."], "A merged range replaces every overlapping hypothesis")
     for rate in [24000.0, 44100.0, 48000.0] {
       let source = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2)!
       let target = AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!

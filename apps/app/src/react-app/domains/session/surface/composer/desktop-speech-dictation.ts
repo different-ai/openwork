@@ -18,7 +18,7 @@ export function useDesktopSpeechDictation() {
     staleTime: Infinity,
     retry: false,
   });
-  return query.data ? { recognition: DesktopSpeechRecognition, recognitionTitle: titles[query.data], deferTranscript: query.data === "local" } : {};
+  return query.data ? { recognition: DesktopSpeechRecognition, recognitionTitle: titles[query.data], local: query.data === "local" } : {};
 }
 
 /** Web Speech-shaped adapter over the desktop recognizer, so the composer's

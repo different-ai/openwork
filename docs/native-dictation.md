@@ -9,14 +9,17 @@ self-hosted deployments. Enable through the existing Features controls in
 A plain microphone icon sits beside Send in OpenWork and Workbot. There is
 no circular mic background, extra help panel, onboarding copy or review row.
 On macOS with the bundled on-device recognizer, a microphone waveform appears
-while recording and the completed transcript appears after Stop. Cancel or
-Escape discards that recording. Existing text stays editable. See
+beside Send while words appear live in the input. Send (or Enter) stops
+recording, waits for final corrections, and submits in one action; no review
+click is required. Stop alone leaves the finalized draft for editing. Cancel
+or Escape stops recording and any pending Send, preserving visible words.
+Errors and timeouts retain the draft without sending. See
 [local dictation](features/local-dictation/README.md) for the interaction and
 verification limits. Other recognizers retain the compact text-activity indicator.
 
 | Surface | Dictation |
 | --- | --- |
-| OpenWork desktop on macOS with the speech helper | SpeechAnalyzer + SpeechTranscriber on supported macOS 26 devices/languages; legacy on-device fallback, audio-level waveform, Stop to review, Cancel to discard |
+| OpenWork desktop on macOS with the speech helper | SpeechAnalyzer + SpeechTranscriber on supported macOS 26 devices/languages; legacy on-device fallback, live text and audio-level waveform, Send to finalize and submit, Stop to edit |
 | macOS builds without the speech helper | Opens macOS Dictation in the focused editor through AppKit; native controls own listening and Stop |
 | OpenWork desktop on Windows | Bundled Windows online speech recognition with live text; falls back to native Win+H voice typing if unavailable |
 | Workbot and OpenWork in a supported browser | Starts the browser's SpeechRecognition implementation, showing live interim words directly in the draft; the mic stops dictation |
@@ -56,7 +59,7 @@ remains required.
 The server resolves the registry flag for the current organization. Missing
 flags are off. Signed-out OpenWork follows the deployment flag. Disabling
 it aborts capture and pending desktop launches without deleting existing
-text or attachments; any unrevealed local recording is discarded. An already-open native dictation panel remains under
+text or attachments; any pending voice submission is cancelled. An already-open native dictation panel remains under
 the person's OS controls. Workbot refreshes enabled feature state every minute.
 
 Desktop launches require the focused trusted main frame. Windows rechecks
