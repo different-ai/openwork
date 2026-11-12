@@ -5,9 +5,9 @@ description: "The roadmap for the OpenWork desktop app, portable capabilities, h
 
 Most people use OpenWork through the desktop app today. It is where you create a workspace, work with files, connect services, add skills, and customize how your agent works.
 
-What you create there should not stay trapped there. OpenWork Connect already brings the same capabilities into compatible agents. Next come persistent hosted workspaces, Slack, mobile, and more.
+What you create there should not stay trapped there. OpenWork Connect already brings the same capabilities into compatible agents. Slack and OpenWork Web are live too. Next come persistent hosted workspaces, mobile, and more.
 
-Last updated: August 2026
+Last updated: November 12, 2026
 
 <Info>
   **Live** means available today. **Preview** means available today for select customers — contact us for access. **Partial** means supported with limitations. **Building** means active work. **Next** is the next product horizon. **Exploring** is a direction, not a commitment.
@@ -24,9 +24,11 @@ The desktop app is the main OpenWork experience. It is where people work with fi
 | Skills, plugins, MCPs, and connected services | Customize what your agent knows and which systems it can use. | Live |
 | Organization-managed capabilities | Share approved skills and connections without rebuilding every setup by hand. | Live |
 | Artifacts | Preview, edit, download, and reopen generated files without leaving the desktop workspace. | Live |
-| Live artifacts | Persistent, interactive dashboards that refresh with current data from your connected apps and files every time you open them. | Preview |
-| MCP Apps | Rich, interactive app views rendered directly from agent results — a created-skill card, a workflow result view, a connection status card. | Preview |
-| Scheduled tasks | Run any prompt on a schedule or trigger — set it once and let it handle itself. | Partial |
+| Live artifacts | Persistent, interactive dashboards that refresh with current data from your connected apps and files every time you open them. | Live |
+| MCP Apps | Rich, interactive app views rendered directly from agent results — a created-skill card, a workflow result view, a connection status card. | Live |
+| Automations | Run any prompt on a schedule: daily, weekly, every few hours, or before and after a meeting. Event triggers are next. | Live |
+| Computer use on Mac and Windows | Let agents work in the apps on your computer, across several apps at once, and hand back the files they make. | Live |
+| Import from Claude | Bring Claude chats and Claude Code sessions into a workspace as regular OpenWork chats. | Live |
 | Built-in browser control | Let agents navigate, click, type, and capture pages in a browser that stays visible inside the app. | Live |
 | Isolated sandbox workspaces | Run work in a separate Docker or microsandbox environment, with some platform and setup limitations today. | Partial |
 | Better organization for long-running work | Make active, waiting, and completed work easier to understand and return to. | Building |
@@ -43,6 +45,7 @@ What you configure in OpenWork should not stay trapped in one interface. OpenWor
 | Codex, Claude Code, Cursor, and OpenCode | Live |
 | Organization Collections and access controls | Live |
 | Shared and per-user authentication | Live |
+| OneDrive and SharePoint files | Live |
 | Git-based publishing and automatic sync | Building |
 
 ## MCP spec compliance
@@ -72,10 +75,13 @@ OpenWork Cloud is the control plane for distributing capabilities, applying desk
 | Desktop policies | Control custom providers, the free starter model, workspaces, settings, extensions, built-in tools, and onboarding by organization, team, or member. | Live |
 | Fully managed desktop | A stronger policy mode where your organization decides exactly what the app can do: only approved providers, connections, skills, and tools — nothing else. | Building |
 | Provider spending controls | Set budgets and caps on model spend for managed providers, by organization, team, or member. | Live |
+| AI Gateway in Cursor, Claude Code, and Codex | Members create their own AI Gateway key and point their tool at your organization's approved models. | Live |
+| Smart Model Router | Picks a model for each prompt, set per team. | Live |
+| Organization config export and import | Copy one organization's setup into another. | Live |
 | Members, teams, and roles | Invite people, organize teams, and decide who can manage capabilities and security settings. | Live |
 | Skills and plugin Collections | Publish skills, commands, MCP dependencies, and extensions once, then assign them to the right people and teams. | Live |
 | Anthropic-compatible plugins | Import Claude-compatible plugin and marketplace manifests and normalize their skills, MCPs, commands, and tools into OpenWork extensions. | Live |
-| SAML SSO | Connect an identity provider and provision organization members when they first sign in. | Live |
+| SAML and OIDC SSO | Connect one or several identity providers and provision organization members when they first sign in. | Live |
 | Usage and adoption telemetry | See active members, sessions, and task outcomes over time using event metadata, never prompts, code, or file contents. | Live |
 | OpenTelemetry coverage | Extend OTLP traces, metrics, and logs across OpenWork services and deployment paths. | Building |
 
@@ -90,7 +96,7 @@ Hosted workspaces give a person or team a persistent filesystem and a predictabl
 | Persistent hosted workspaces | Building |
 | Reproducible environments | Building |
 | Long-running and background tasks | Building |
-| Scheduled workflows | Next |
+| Scheduled Automations in the cloud | Live |
 | Continue from another surface | Next |
 
 > Start with the desktop app. Leave work running in a hosted workspace. Return from the desktop, Slack, mobile, or another surface.
@@ -104,7 +110,7 @@ The desktop app remains the richest OpenWork experience. Other surfaces provide 
 | OpenWork desktop | Live |
 | Existing AI agents through MCP | Live |
 | OpenWork Web — the full workspace in your browser, nothing to install | Live |
-| Slack | Next |
+| Slack | Live |
 | Phone app, starting with MCP Apps | Next |
 | Dispatch from your phone — assign tasks that run on your desktop | Next |
 | Email and messaging | Exploring |
@@ -118,10 +124,11 @@ Persistent environments and portable authentication make it possible to turn suc
 | --- | --- |
 | Search and execute | Live |
 | Code Mode — authenticated multi-step scripts across your connected tools | Preview |
-| Schedules and event triggers | Next |
+| Schedules | Live |
+| Saved Workflows, by name in My Library | Live |
 | GitHub triggers — run a skill in the cloud when a repository event happens, such as a push or a new pull request | Next |
-| Human approvals and resumable runs | Next |
-| Retries, logs, and run history | Next |
+| Run history and missed-run recovery | Live |
+| Human approvals in the middle of a run | Next |
 
 ## Help shape what comes next
 
