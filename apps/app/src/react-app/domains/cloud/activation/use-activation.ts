@@ -53,8 +53,9 @@ export function useActivation() {
     pendingFirstAnswer = null;
     void reportActivationEvent("first_response", durationMs);
   }, [state, prefixKey]);
-  const hiddenKey = authorized && organizationId && principalId
-    ? activationHiddenStorageKey({ origin: denOriginComparisonKey(scope.baseUrl), organizationId, principalId })
+  const denOrigin = denOriginComparisonKey(scope.baseUrl);
+  const hiddenKey = authorized && denOrigin && organizationId && principalId
+    ? activationHiddenStorageKey({ origin: denOrigin, organizationId, principalId })
     : null;
   const hidden = useSyncExternalStore(subscribeHidden, () => readHidden(hiddenKey), () => false);
   const hide = () => {
