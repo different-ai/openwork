@@ -1380,6 +1380,13 @@
       "when": 1794524250690,
       "tag": "0197_mcp_thread_events",
       "breakpoints": true
+    },
+    {
+      "idx": 198,
+      "version": "5",
+      "when": 1794525593338,
+      "tag": "0198_mcp_event_resume_binding",
+      "breakpoints": true
     }
   ]
 }

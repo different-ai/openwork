@@ -1,12 +1,12 @@
 import assert from "node:assert/strict"
 import { createHmac } from "node:crypto"
 import { test } from "node:test"
-import { canonicalArguments, eventMessageId, verifyWebhook, MAX_EVENT_BYTES } from "../src/mcp-events/protocol.js"
+import { canonicalArguments, eventMessageId, eventPrompt, verifyWebhook, MAX_EVENT_BYTES } from "../src/mcp-events/protocol.js"
 import { receiveMcpEvent, type WebhookSubscription } from "../src/mcp-events/receiver.js"
 
 const now = 1_800_000_000_000
 const secret = `whsec_${Buffer.alloc(32, 7).toString("base64")}`
-const subscription: WebhookSubscription = { id: "local-subscription", name: "document.changed", remoteId: "remote-subscription", secret, status: "active", expiresAt: new Date(now + 60_000) }
+const subscription: WebhookSubscription = { id: "local-subscription", name: "document.changed", connectionId: "connection", instruction: "Summarize the change", remoteId: "remote-subscription", secret, status: "active", expiresAt: new Date(now + 60_000) }
 const event = { eventId: "event-1", name: subscription.name, timestamp: new Date(now).toISOString(), data: { text: "untrusted source content" } }
 function signed(body = JSON.stringify(event), options: { timestamp?: number; id?: string; signature?: string } = {}) {
   const timestamp = String(options.timestamp ?? now / 1000)
@@ -67,4 +67,25 @@ test("canonical filter identity and turn id are stable and scoped to one subscri
   assert.equal(canonicalArguments({ z: 1, a: { d: 2, c: [3, 2] } }), canonicalArguments({ a: { c: [3, 2], d: 2 }, z: 1 }))
   assert.equal(eventMessageId("a", "1"), eventMessageId("a", "1"))
   assert.notEqual(eventMessageId("a", "1"), eventMessageId("b", "1"))
+})
+
+
+test("event prompts project public source fields, never subscription credentials", () => {
+  const prompt = eventPrompt(subscription.instruction, subscription, event)
+  assert.ok(!prompt.includes(secret))
+  const envelope = JSON.parse(prompt.split("\n\n").at(-1) ?? "")
+  assert.deepEqual(envelope, { source: { connectionId: subscription.connectionId, name: subscription.name }, event })
+})
+
+test("event turn ids fit Workbot retry, edit and delete message ids", () => {
+  assert.match(eventMessageId("subscription", "event").slice(3), /^[A-Za-z0-9_-]{8,64}$/)
+})
+
+test("refuses a signed payload that cannot fit the runner prompt before durable acceptance", async () => {
+  const oversized = { ...event, data: "x".repeat(100_000) }
+  let accepted = false
+  assert.equal((await receiveMcpEvent(signed(JSON.stringify(oversized)), subscription.id, deps({ accept: async () => { accepted = true } }))).status, 413)
+  assert.equal(accepted, false)
+  const fitting = { ...event, data: "x".repeat(99_000) }
+  assert.equal((await receiveMcpEvent(signed(JSON.stringify(fitting)), subscription.id, deps())).status, 202)
 })

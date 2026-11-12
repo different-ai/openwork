@@ -15,6 +15,9 @@ import { demonstrationReplySchema, type DemonstrationCommand } from "@openwork/t
  */
 export type HeadlessRunnerConfig = { url: string; token: string; owner?: string }
 
+/** UTF-16 character limit enforced at runner turn admission. */
+export const HEADLESS_MAX_PROMPT_CHARS = 100_000
+
 export const HEADLESS_OWNER_HEADER = "x-openwork-headless-owner"
 
 function runnerHeaders(config: HeadlessRunnerConfig, extra: Record<string, string> = {}): Record<string, string> {

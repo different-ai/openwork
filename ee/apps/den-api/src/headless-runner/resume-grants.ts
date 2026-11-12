@@ -126,12 +126,11 @@ async function resumeGrantForTurn(input: {
   readOnly?: boolean
   scopes?: readonly string[]
   authorizedAt: Date
-}): Promise<string | undefined> {
+}): Promise<Awaited<ReturnType<typeof mintHeadlessResumeGrant>> | undefined> {
   const { sessionId, messageId } = input
   if (!boundId(sessionId) || !boundId(messageId)) return undefined
   try {
-    const { grant } = await mintHeadlessResumeGrant({ ...input, sessionId, messageId, now: input.authorizedAt })
-    return grant
+    return await mintHeadlessResumeGrant({ ...input, sessionId, messageId, now: input.authorizedAt })
   } catch (error) {
     // The turn still runs; only self-resume is lost. Never log the grant.
     logger.warn("headless resume grant not minted", { error_name: error instanceof Error ? error.name : typeof error })
@@ -173,9 +172,9 @@ export async function mintHeadlessTurnCredentials(input: {
   const resumeGrant = await resumeGrantForTurn({ ...input, authorizedAt })
   const indexCapability = await indexCapabilityForTurn(input)
   if (input.indexKind === "workbot") {
-    await (await import("../mcp-events/context.js")).bindEventTurn({ ...input, tokenId: minted.tokenId, expiresAt: minted.expiresAt })
+    await (await import("../mcp-events/context.js")).bindEventTurn({ ...input, tokenId: minted.tokenId, resumeGrantId: resumeGrant?.grantId, expiresAt: resumeGrant?.expiresAt ?? minted.expiresAt })
   }
-  return { ...minted, ...(resumeGrant ? { resumeGrant } : {}), modelAccess, ...(indexCapability ? { indexCapability } : {}) }
+  return { ...minted, ...(resumeGrant ? { resumeGrant: resumeGrant.grant } : {}), modelAccess, ...(indexCapability ? { indexCapability } : {}) }
 }
 
 export type HeadlessResumeGrantError =
@@ -296,6 +295,12 @@ export async function exchangeHeadlessResumeGrant(
   if (await headlessResumeGrantRevokedNow(row)) {
     await revokeHeadlessRunMcpToken(minted.tokenId)
     return { ok: false, status: 403, error: "grant_revoked" }
+  }
+  if (!row.readOnly) {
+    await (await import("../mcp-events/context.js")).rebindEventTurn({
+      tokenId: minted.tokenId, resumeGrantId: row.id, organizationId: row.organizationId, userId: row.userId,
+      memberId: input.memberId, sessionId: row.sessionId, expiresAt: row.expiresAt,
+    })
   }
   await db
     .update(HeadlessResumeGrantTable)

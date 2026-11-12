@@ -18,7 +18,7 @@ export async function dispatchMcpEvent() {
     const { runner } = await requireEventThread(subscription, scopes)
     const event = eventSchema.parse(JSON.parse(receipt.payload))
     const delivered = await handOffEvent(receipt.id, subscription, async () => {
-      const sent = await runner.sendTurn(subscription, {
+      const sent = await runner.sendTurn({ organizationId: subscription.organizationId, userId: subscription.userId }, {
         sessionId: subscription.sessionId, messageId: receipt.id,
         prompt: eventPrompt(subscription.instruction, subscription, event), model: subscription.model, execution: "steps",
       })

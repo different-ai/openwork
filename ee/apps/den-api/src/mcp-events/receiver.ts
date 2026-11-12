@@ -1,7 +1,8 @@
 import { z } from "zod"
-import { eventSchema, MAX_EVENT_BYTES, verifyWebhook, type McpEvent } from "./protocol.js"
+import { HEADLESS_MAX_PROMPT_CHARS } from "@openwork-ee/headless-protocol"
+import { eventPrompt, eventSchema, MAX_EVENT_BYTES, verifyWebhook, type McpEvent } from "./protocol.js"
 
-export type WebhookSubscription = { id: string; name: string; remoteId: string | null; secret: string; status: string; expiresAt: Date }
+export type WebhookSubscription = { id: string; name: string; connectionId: string; instruction: string; remoteId: string | null; secret: string; status: string; expiresAt: Date }
 export type WebhookDeps<S extends WebhookSubscription> = {
   find: (id: string) => Promise<S | null>
   enabled: (subscription: S) => Promise<boolean>
@@ -39,6 +40,8 @@ export async function receiveMcpEvent<S extends WebhookSubscription>(request: Re
     if (subscription.status === "pending") return reply(503)
     const event = eventSchema.safeParse(body)
     if (!event.success || event.data.name !== subscription.name || request.headers.get("x-mcp-subscription-id") !== subscription.remoteId) return reply(400)
+    // Do not acknowledge an event the thread harness can never admit. Include the saved instruction and envelope.
+    if (eventPrompt(subscription.instruction, subscription, event.data).length > HEADLESS_MAX_PROMPT_CHARS) return reply(413)
     await deps.accept(subscription, event.data)
     return reply(202)
   } catch {

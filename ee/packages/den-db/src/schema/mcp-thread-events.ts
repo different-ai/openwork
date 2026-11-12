@@ -4,13 +4,14 @@ import { compatJsonColumn, denTypeIdColumn, encryptedMediumTextColumn, encrypted
 /** A trusted hosted turn binding, never accepted from MCP tool arguments. No bearer token is retained. */
 export const McpEventTurnTable = mysqlTable("mcp_event_turn", {
   tokenId: denTypeIdColumn("oauthAccessToken", "token_id").notNull().primaryKey(),
+  resumeGrantId: denTypeIdColumn("headlessResumeGrant", "resume_grant_id"),
   organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
   userId: denTypeIdColumn("user", "user_id").notNull(),
   memberId: denTypeIdColumn("member", "member_id").notNull(),
   sessionId: varchar("session_id", { length: 128 }).notNull(),
   model: varchar("model", { length: 512 }).notNull(),
   expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
-}, (t) => [index("mcp_event_turn_expiry").on(t.expiresAt)])
+}, (t) => [index("mcp_event_turn_expiry").on(t.expiresAt), index("mcp_event_turn_resume_grant").on(t.resumeGrantId)])
 
 /** Finite subscriptions. Secret, filters and saved instruction are encrypted using Den's existing key. */
 export const McpEventSubscriptionTable = mysqlTable("mcp_event_subscription", {

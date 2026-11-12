@@ -15,13 +15,24 @@ import type { McpPrincipal } from "../mcp/auth.js"
 export type EventThread = typeof McpEventTurnTable.$inferSelect
 export class EventAccessError extends Error {}
 
-export async function bindEventTurn(input: { tokenId: string; organizationId: string; userId: string; memberId?: string; sessionId?: string; model?: string; readOnly?: boolean; expiresAt: Date }) {
+export async function bindEventTurn(input: { tokenId: string; resumeGrantId?: string | null; organizationId: string; userId: string; memberId?: string; sessionId?: string; model?: string; readOnly?: boolean; expiresAt: Date }) {
   if (input.readOnly || !input.memberId || !input.sessionId || !input.model || !await organizationFeatureEnabled(input.organizationId, "mcpThreadEvents", { userId: input.userId })) return
   await db.insert(McpEventTurnTable).values({
     tokenId: normalizeDenTypeId("oauthAccessToken", input.tokenId),
+    resumeGrantId: input.resumeGrantId ? normalizeDenTypeId("headlessResumeGrant", input.resumeGrantId) : null,
     organizationId: normalizeDenTypeId("organization", input.organizationId), userId: normalizeDenTypeId("user", input.userId),
     memberId: normalizeDenTypeId("member", input.memberId), sessionId: input.sessionId, model: input.model, expiresAt: input.expiresAt,
   })
+}
+
+/** Restore only an explicitly bound grant. Its tasks inherit the same chat, as with the initial MCP token. */
+export async function rebindEventTurn(input: { tokenId: string; resumeGrantId: string; organizationId: string; userId: string; memberId: string; sessionId: string; expiresAt: Date }) {
+  const [binding] = await db.$primary.select().from(McpEventTurnTable).where(and(
+    eq(McpEventTurnTable.resumeGrantId, normalizeDenTypeId("headlessResumeGrant", input.resumeGrantId)), eq(McpEventTurnTable.organizationId, normalizeDenTypeId("organization", input.organizationId)),
+    eq(McpEventTurnTable.userId, normalizeDenTypeId("user", input.userId)), eq(McpEventTurnTable.memberId, normalizeDenTypeId("member", input.memberId)),
+    eq(McpEventTurnTable.sessionId, input.sessionId), gt(McpEventTurnTable.expiresAt, new Date()),
+  )).limit(1)
+  if (binding) await bindEventTurn({ ...input, model: binding.model })
 }
 
 export async function eventThreadForPrincipal(principal: McpPrincipal): Promise<EventThread | null> {
@@ -56,7 +67,7 @@ export async function eventAccess(actor: Actor, originalScopes: readonly string[
 }
 
 export function eventRunner(actor: Actor, scopes: readonly string[]) {
-  const deps = defaultHeadlessRunnerDeps(process.env, { indexKind: "workbot" })
+  const deps = defaultHeadlessRunnerDeps(process.env, { indexKind: "workbot", memberId: actor.memberId })
   if (!deps) throw new Error("The hosted thread runner is unavailable.")
   return createHeadlessRunnerClient({
     ...deps, config: { ...deps.config, owner: workbotOwner(actor.organizationId, actor.memberId) },
