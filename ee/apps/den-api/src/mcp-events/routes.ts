@@ -17,7 +17,7 @@ export function registerMcpEventRoutes<T extends Env>(app: Hono<T>) {
       202: { description: "Durably accepted, including a duplicate event." },
       400: { description: "Invalid event or subscription identity." }, 401: { description: "Invalid signature or timestamp." },
       404: { description: "Unknown subscription." }, 410: { description: "Subscription expired, stopped or unavailable." },
-      413: { description: "Body exceeds 256 KiB." }, 503: { description: "Not durably accepted; retry later." },
+      413: { description: "Body exceeds 256 KiB or the complete event prompt exceeds 100,000 characters." }, 503: { description: "Not durably accepted; retry later." },
     },
   }), signedWebhookRoute, (c) => receiveMcpEvent(c.req.raw, c.req.param("subscriptionId"), {
     find: (id) => /^[a-f0-9]{48}$/.test(id) ? findSubscription(id) : Promise.resolve(null),
