@@ -13,7 +13,7 @@ import { after, test } from "node:test"
 import type { ConfigBlob, ConfigChangeRequestSummary, ConfigPlan, ConfigPlanItem } from "@openwork/types/den/config-blobs"
 import { bootDen, field, isRecord, summary, text, type Call, type Session } from "./harness.js"
 
-// Self-hosted (autoRouter is cloud only); the operator locks workbotDocuments off.
+// Self-hosted (managedDeployments is cloud only); the operator locks workbotDocuments off.
 const den = await bootDen({ env: { DEN_FEATURE_WORKBOT_DOCUMENTS: "false" } })
 after(async () => { await den.close() })
 const { runConfigBlobWorkerOnce } = await import("../../src/config-blobs/worker.js")
@@ -127,7 +127,6 @@ const owner = await den.signUp("Features Owner")
 const orgA = await den.createOrg(owner, "Features source")
 const orgB = await den.createOrg(platformAdmin, "Features target")
 const orgC = await den.createOrg(owner, "Features other target")
-for (const org of [orgA.orgId, orgB.orgId, orgC.orgId]) assert.equal((await den.setFeature(org, "configBlobs", true)).status, 200)
 const apiA = den.as(owner, orgA.orgId)
 const apiB = den.as(platformAdmin, orgB.orgId)
 const apiC = den.as(owner, orgC.orgId)
@@ -144,7 +143,7 @@ for (const key of TURNED_ON) {
 for (const key of TURNED_OFF) {
   for (const org of [orgA.orgId, orgB.orgId, orgC.orgId]) assert.equal((await den.setFeature(org, key, false)).status, 200, key)
 }
-await ok(den.asPlatformAdmin("PUT", "/v1/admin/features/featureIntros", { enabled: true }), "on for everyone")
+await ok(den.asPlatformAdmin("PUT", "/v1/admin/features/followUpSuggestions", { enabled: true }), "on for everyone")
 await ok(den.asPlatformAdmin("PUT", `/v1/admin/organizations/${orgA.orgId}/members/${orgA.owner.memberId}/capabilities`, { capabilities: { agentQuestions: true } }), "member override")
 await ok(apiA("POST", "/v1/org/web-origins", { origin: "https://features-source.example.com" }), "web origin")
 // Killed everywhere: never exported, and skipped when a file asks for it.
@@ -156,7 +155,7 @@ const expectedOnForA = FEATURE_KEYS
     const definition = featureDefinition(key)
     if (!definition.deployments.includes("self_hosted")) return false
     if ([...TURNED_OFF, "claudeAgentProvider", "workbotDocuments"].includes(key)) return false
-    return definition.default || ["configBlobs", "featureIntros", ...TURNED_ON].includes(key)
+    return definition.default || ["followUpSuggestions", ...TURNED_ON].includes(key)
   })
   .map((key): string => key)
   .sort()
@@ -169,7 +168,7 @@ test("export: exactly the features on for the organization, as { enabled: true }
   assert.deepEqual(items.map((item) => item.id), expectedOnForA, JSON.stringify(items))
   for (const key of [...TURNED_OFF, "claudeAgentProvider", "workbotDocuments"]) assert.ok(!items.some((item) => item.id === key), `${key} is off, killed, locked or member-only: never exported`)
   assert.ok(items.every((item) => JSON.stringify(item.spec) === JSON.stringify({ enabled: true })), JSON.stringify(items))
-  assert.equal(items.find((item) => item.id === "configBlobs")?.name, "Config import and export")
+  assert.equal(items.find((item) => item.id === "nativeDictation")?.name, "Native dictation")
   assert.ok(exportedA.scope.includes(AREA))
 })
 
@@ -177,15 +176,14 @@ test("import by a platform admin turns the missing features on; unknown, unavail
   const blob = featuresOnly(exportedA, [
     { id: "notARealFeature", name: "Not a real feature", spec: { enabled: true } },
     { id: "litellm", name: "LiteLLM", spec: { enabled: true } },
-    { id: "autoRouter", name: "Smart routers", spec: { enabled: true } },
+    { id: "managedDeployments", name: "Managed deployments", spec: { enabled: true } },
     { id: "claudeAgentProvider", name: "Claude Code sign-in", spec: { enabled: true } },
     { id: "workbotDocuments", name: "Workbot documents", spec: { enabled: true } },
   ])
   const { id, plan } = await upload(apiB, blob, "merge", "Features")
   const items = featureItems(plan)
   const op = (ref: string) => items.find((item) => item.ref === ref)
-  assert.equal(op("configBlobs")?.op, "unchanged", describe(items))
-  assert.equal(op("featureIntros")?.op, "unchanged", "on for everyone already")
+  assert.equal(op("followUpSuggestions")?.op, "unchanged", "on for everyone already")
   for (const ref of TURNED_ON) {
     assert.equal(op(ref)?.op, "create", describe(items))
     assert.deepEqual(op(ref)?.flags.filter((flag) => flag === "blocked"), [], describe(items))
@@ -194,7 +192,7 @@ test("import by a platform admin turns the missing features on; unknown, unavail
   const skipped = (ref: string) => (op(ref)?.op === "skip" ? op(ref)?.reasons?.join(" ") ?? "" : `not skipped: ${describe(items)}`)
   assert.match(skipped("notARealFeature"), /isn't a feature on this server/)
   assert.match(skipped("litellm"), /no longer a feature flag on this server/)
-  assert.match(skipped("autoRouter"), /isn't part of this deployment/)
+  assert.match(skipped("managedDeployments"), /isn't part of this deployment/)
   assert.match(skipped("claudeAgentProvider"), /kill switch/)
   assert.match(skipped("workbotDocuments"), /locked off by this server's operator \(DEN_FEATURE_WORKBOT_DOCUMENTS\)/)
   assert.equal(plan.summary.blocking, 0, describe(items))
@@ -210,7 +208,7 @@ test("import by a platform admin turns the missing features on; unknown, unavail
   assert.equal(features.superAdminPermissionSet, false)
   // The same override /admin sets, with its history: who turned it on.
   const history = await db.select().from(FeatureChangeTable).where(and(eq(FeatureChangeTable.organization_id, orgB.orgId), eq(FeatureChangeTable.scope, "organization")))
-  const imported = history.filter((row) => row.feature_key !== "configBlobs" && row.action === "on").map((row) => [row.feature_key, row.action, row.changed_by_user_id]).sort()
+  const imported = history.filter((row) => row.action === "on").map((row) => [row.feature_key, row.action, row.changed_by_user_id]).sort()
   assert.deepEqual(imported, [["googleDrivePdfText", "on", platformAdmin.userId], ["nativeDictation", "on", platformAdmin.userId]])
 })
 
@@ -259,7 +257,7 @@ test("mirror mode never turns a feature off, even when its delete is ticked", as
     format: "openwork.config-blob",
     formatVersion: 1,
     scope: [AREA],
-    areas: { settings: { features: { specVersion: 1, items: [{ id: "configBlobs", name: "Config import and export", spec: { enabled: true } }] } } },
+    areas: { settings: { features: { specVersion: 1, items: [{ id: "googleDrivePdfText", name: "Google Drive PDF text", spec: { enabled: true } }] } } },
   }
   const { id, plan } = await upload(apiB, blob, "mirror", "Mirror features")
   const decided = await ok(apiB("PUT", `/v1/config-blobs/change-requests/${id}/decisions`, { deletes: [{ area: AREA, targetId: "nativeDictation" }] }), "tick a delete")

@@ -1,7 +1,7 @@
 import { z } from "zod"
 
 /**
- * AI Gateway custom OpenAI-compatible providers (feature `gatewayCustomProviders`).
+ * AI Gateway custom OpenAI-compatible providers.
  *
  * An admin enters a name, an OpenAI-compatible base URL and one API key. Den
  * calls `GET {baseUrl}/models`, maps the answer to models.dev-shaped model

@@ -64,7 +64,6 @@ import {
   MAX_SESSION_LENGTH_DAYS,
   readSessionSecuritySettings,
   SESSION_LENGTH_HOURS,
-  sessionSecuritySettingsApply,
 } from "../../session-security-settings.js"
 import {
   getOrganizationSsoConnection,
@@ -99,11 +98,11 @@ const sessionSpecSchema = z.object({
   requireSso: z.boolean().default(false),
   /** ssoPerOrganization: every email on the verified SSO domain must sign in with this organization's SSO. */
   restrictDomainToSso: z.boolean().default(false),
-  /** sessionSecuritySettings: hours a sign-in lasts without activity. */
+  /** Hours a sign-in lasts without activity. */
   sessionLengthHours: z.literal(SESSION_LENGTH_HOURS).default(DEFAULT_SESSION_LENGTH_HOURS),
-  /** sessionSecuritySettings: days a sign-in lasts at most. */
+  /** Days a sign-in lasts at most. */
   maxSessionLengthDays: z.literal(MAX_SESSION_LENGTH_DAYS).default(DEFAULT_MAX_SESSION_LENGTH_DAYS),
-  /** sessionSecuritySettings: minutes since sign-in before sensitive changes ask again; 0 is off. */
+  /** Minutes since sign-in before sensitive changes ask again; 0 is off. */
   adminReauthMinutes: z.literal(ADMIN_REAUTH_MINUTES).default(DEFAULT_ADMIN_REAUTH_MINUTES),
 }).strict()
 
@@ -174,7 +173,6 @@ type SessionSpec = z.infer<typeof sessionSpecSchema>
 type SsoConnectionSpec = z.infer<typeof ssoConnectionApplySchema>
 type SessionField = Exclude<keyof SessionSpec, "kind">
 const SESSION_FIELDS: readonly SessionField[] = ["requireSso", "restrictDomainToSso", "sessionLengthHours", "maxSessionLengthDays", "adminReauthMinutes"]
-const SESSION_LIMIT_FIELDS: readonly SessionField[] = ["sessionLengthHours", "maxSessionLengthDays", "adminReauthMinutes"]
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -440,10 +438,6 @@ async function applySession(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, {
     warnings.push("\"Restrict this domain to our SSO\" was not changed: it isn't available for this organization.")
     fields = fields.filter((field) => field !== "restrictDomainToSso")
   }
-  if (fields.some((field) => SESSION_LIMIT_FIELDS.includes(field)) && !sessionSecuritySettingsApply(ctx.features)) {
-    warnings.push("Session settings were not changed: they aren't available for this organization.")
-    fields = fields.filter((field) => !SESSION_LIMIT_FIELDS.includes(field))
-  }
   if (fields.length === 0) return { localId, warnings, steps: [] }
 
   const steps: ConfigApplyStep[] = fields.map((field) => ({ action: "set", target: field, detail: String(next[field]) }))
@@ -545,10 +539,6 @@ async function register(ctx: ConfigAreaContext, route: ConfigRouteContext, kind:
   throw new ConfigApplyError("invalid_request", detail ? detail.message : "The SSO configuration was rejected.", 400)
 }
 
-async function multipleConnections(ctx: ConfigAreaContext, route: ConfigRouteContext): Promise<boolean> {
-  return organizationFeatureEnabled(route.payload.organization.id, "multipleSsoConnections", { userId: route.payload.currentMember.userId })
-}
-
 async function loadConnection(ctx: ConfigAreaContext, id: string): Promise<SsoConnection> {
   if (!isDenTypeId("ssoConnection", id)) throw failure("not_found", "The SSO connection no longer exists.", { status: 404 })
   const [connection] = await ctx.db.select().from(SsoConnectionTable)
@@ -566,19 +556,11 @@ async function createSsoConnection(ctx: ConfigAreaContext, op: Extract<ConfigApp
   const { kind, body } = registrationBody(spec, op.item.name, clientSecretFor(spec, decision, null))
   const route = await configRouteContext(ctx)
   const existing = await listOrganizationSsoConnections(route.payload.organization.id, ctx.db)
-  const multiple = await multipleConnections(ctx, route)
-  if (existing.length > 0 && !multiple) {
-    throw failure("multiple_connections_unavailable", "This organization already has an SSO connection and can't add another. Match this item to the existing connection instead.", { status: 409 })
-  }
   const createStep: ConfigApplyStep = { action: "create", target: "connection", detail: `${kind.toUpperCase()} ${spec.domains.join(", ")}` }
   // Same target as the dashboard: the first connection through /v1/sso/<kind>, more through /v1/sso/connections/<kind>.
   const connection = await step([], createStep, undefined, () => register(ctx, route, kind, body, existing.length === 0 ? undefined : null))
   const provider = await getSsoProviderForConnection(connection, ctx.db.$primary)
-  const warnings = setupWarnings(connection, provider, spec.enabled)
-  if (!multiple && op.item.name !== defaultSsoConnectionName(spec.issuer)) {
-    warnings.push(`The name "${op.item.name}" was not saved: connection names need several SSO connections enabled for this organization.`)
-  }
-  return { localId: connection.id, warnings, steps: [createStep] }
+  return { localId: connection.id, warnings: setupWarnings(connection, provider, spec.enabled), steps: [createStep] }
 }
 
 const CONFIG_FIELDS = new Set(["protocol", "issuer", "domains", "oidc", "saml"])
@@ -589,7 +571,6 @@ async function updateSsoConnection(ctx: ConfigAreaContext, op: Extract<ConfigApp
   const raw = specObject(op.item.spec)
   const connection = await loadConnection(ctx, op.targetId)
   const route = await configRouteContext(ctx)
-  const multiple = await multipleConnections(ctx, route)
   const changed = changedTopFields(op.changes)
   const replaceConfig = [...changed].some((field) => CONFIG_FIELDS.has(field)) || op.secretPaths.length > 0
   const rename = changed.has("name")
@@ -607,22 +588,17 @@ async function updateSsoConnection(ctx: ConfigAreaContext, op: Extract<ConfigApp
     const { kind, body } = registrationBody(spec, op.item.name, clientSecretFor(spec, decision, stored))
     const oldest = await getOrganizationSsoConnection(route.payload.organization.id, ctx.db)
     const isPrimary = oldest?.id === connection.id
-    if (!isPrimary && !multiple) throw failure("multiple_connections_unavailable", "Only the organization's first SSO connection can be changed while several connections are off.", { status: 409 })
     const replaceStep: ConfigApplyStep = { action: "update", target: "connection", detail: `configuration (${[...changed].filter((field) => CONFIG_FIELDS.has(field)).concat(op.secretPaths.length > 0 ? ["client secret"] : []).join(", ")})` }
     const updated = await step(steps, replaceStep, undefined, () => register(ctx, route, kind, body, isPrimary ? undefined : connection))
     const provider = await getSsoProviderForConnection(updated, ctx.db.$primary)
     warnings.push(...setupWarnings(updated, provider, spec.enabled).filter((warning) => !warning.startsWith("The connection was enabled") && !warning.startsWith("The connection is disabled")))
     warnings.push("The new configuration disables the connection until it is tested again in Settings › Auth & Security.")
-    if (rename && multiple) steps.push({ action: "set", target: "name", detail: op.item.name })
+    if (rename) steps.push({ action: "set", target: "name", detail: op.item.name })
   } else if (rename) {
-    if (!multiple) {
-      warnings.push(`The name "${op.item.name}" was not saved: connection names need several SSO connections enabled for this organization.`)
-    } else {
-      await step(steps, { action: "set", target: "name", detail: op.item.name }, "name", async () => {
-        const renamed = await renameOrganizationSsoConnection(connection, op.item.name.trim() || null, auditChangeCapture(route.c))
-        if (!renamed) throw new ConfigApplyError("not_found", "The SSO connection no longer exists.", 404)
-      })
-    }
+    await step(steps, { action: "set", target: "name", detail: op.item.name }, "name", async () => {
+      const renamed = await renameOrganizationSsoConnection(connection, op.item.name.trim() || null, auditChangeCapture(route.c))
+      if (!renamed) throw new ConfigApplyError("not_found", "The SSO connection no longer exists.", 404)
+    })
   }
 
   if (enabledChange) {
@@ -649,10 +625,6 @@ async function deleteSsoConnection(ctx: ConfigAreaContext, op: Extract<ConfigApp
   const lockOut = await wouldLockOut(ctx, connection)
   if (lockOut) throw failure("would_lock_out", lockOut, { status: 409 })
   const route = await configRouteContext(ctx)
-  const oldest = await getOrganizationSsoConnection(route.payload.organization.id, ctx.db)
-  if (oldest?.id !== connection.id && !await multipleConnections(ctx, route)) {
-    throw failure("multiple_connections_unavailable", "Only the organization's first SSO connection can be removed while several connections are off.", { status: 409 })
-  }
   const deleteStep: ConfigApplyStep = { action: "delete", target: "connection" }
   await step([], deleteStep, undefined, () => deleteConnection(route.payload, connection, auditChangeCapture(route.c)))
   return { localId: connection.id, steps: [deleteStep] }

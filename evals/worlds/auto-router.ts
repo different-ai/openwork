@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Seed } from "@openwork/env";
 import { ACME_MODEL, gatewayEnvironment, seedAcmeGateway, startAcmeGateway, startAcmeUpstream } from "../../worlds/lib/acme-gateway.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
 import { isRecord } from "./library.ts";
 
@@ -16,8 +16,7 @@ export function jevEnvironment(typesafe: string | undefined): Record<string, str
 }
 
 /**
- * Smart Model Router: a real Den (cloud deployment, `autoRouter` on for the
- * seeded organization), a real AI Gateway with one Anthropic-protocol provider
+ * Smart Model Router: a real Den (cloud deployment), a real AI Gateway with one Anthropic-protocol provider
  * whose only upstream is the deterministic Acme mock, and the owner signed in
  * on AI Gateway › AI Providers, where Smart Routers are listed. Jev is real when TYPESAFE_API_KEY is set
  * in the test's environment; otherwise Smart takes its fallback model.
@@ -33,7 +32,8 @@ export async function autoRouterWorld(seed: Seed) {
     if (!den.database) throw new Error("The Smart Router world needs its disposable local database.");
     await startAcmeGateway(stack, den.database.url, { baseUrl: gateway.baseUrl, env });
     const provider = await seedAcmeGateway(den.admin, upstream);
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { autoRouter: true });
+    const organizationId = await seededOrganizationId(seed, den.admin);
+    if (!organizationId) throw new Error("Could not resolve the seeded organization.");
     const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/ai-gateway?tab=ai-providers", headless: true, viewport: { width: 1440, height: 1100 } });
     return {
       den,
@@ -66,7 +66,6 @@ export async function autoRouterMissingKeyWorld(seed: Seed) {
     if (!den.database) throw new Error("The Smart Router world needs its disposable local database.");
     await startAcmeGateway(stack, den.database.url, { baseUrl: gateway.baseUrl, env });
     const provider = await seedAcmeGateway(den.admin, upstream);
-    await enableOrganizationCapabilities(seed, den.admin, { autoRouter: true });
     const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/ai-gateway?tab=ai-providers", headless: true, viewport: { width: 1440, height: 1100 } });
     return {
       den,
@@ -88,8 +87,7 @@ export async function autoRouterMissingKeyWorld(seed: Seed) {
 }
 
 /**
- * Smart Model Router on the desktop: the same real Den (cloud, `autoRouter`
- * on) and real AI Gateway over the deterministic Acme upstream, with one
+ * Smart Model Router on the desktop: the same real Den (cloud) and real AI Gateway over the deterministic Acme upstream, with one
  * Smart Router ("Engineering", for everyone, the Acme model with two tasks)
  * created and assigned by the admin through Den's API, and the app in headless Chrome signed
  * in as that admin on the native v2 engine. The desktop learns the Smart model
@@ -107,7 +105,8 @@ export async function autoRouterDesktopWorld(seed: Seed) {
     if (!den.database) throw new Error("The Smart Router desktop world needs its disposable local database.");
     await startAcmeGateway(stack, den.database.url, { baseUrl: gateway.baseUrl, env });
     const provider = await seedAcmeGateway(den.admin, upstream);
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { autoRouter: true });
+    const organizationId = await seededOrganizationId(seed, den.admin);
+    if (!organizationId) throw new Error("Could not resolve the seeded organization.");
     const options = await seed.api(den.admin, "/v1/org/auto-router/options");
     const option = isRecord(options.body) && Array.isArray(options.body.options)
       ? options.body.options.filter(isRecord).find((entry) => entry.modelId === ACME_MODEL)

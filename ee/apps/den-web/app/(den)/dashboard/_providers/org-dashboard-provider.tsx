@@ -44,7 +44,7 @@ export type OrganizationSettingsUpdate = {
   allowedDesktopVersions?: string[] | null;
   requireSso?: boolean;
   restrictDomainToSso?: boolean;
-  /** sessionSecuritySettings: Auth & Security › General. */
+  /** Auth & Security › General. */
   sessionLengthHours?: SessionLengthHours;
   maxSessionLengthDays?: MaxSessionLengthDays;
   adminReauthMinutes?: AdminReauthMinutes;

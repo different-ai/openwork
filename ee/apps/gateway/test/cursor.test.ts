@@ -1,4 +1,4 @@
-// Cursor through the AI Gateway (feature gatewayMemberApiKeys): one OpenAI-compatible base URL that
+// Cursor through the AI Gateway (member AI Gateway API keys): one OpenAI-compatible base URL that
 // serves every model the member can use, under names a person can type into Cursor.
 import assert from "node:assert/strict"
 import { test } from "node:test"
@@ -67,7 +67,7 @@ const ANTHROPIC_STREAM = [
   { type: "message_stop" },
 ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("")
 
-function app(rows: GatewayMemberAccessRow[], options: { enabled?: boolean } = {}) {
+function app(rows: GatewayMemberAccessRow[]) {
   const sent: Request[] = []
   const api = new Hono<{ Variables: InferenceAuthVariables & OrganizationVariables }>()
   api.use("*", async (c, next) => {
@@ -100,7 +100,6 @@ function app(rows: GatewayMemberAccessRow[], options: { enabled?: boolean } = {}
     loadProviderCredential: async () => credential,
     catalog: createProviderCatalog({ anthropic: { npm: "@ai-sdk/anthropic", env: [] } }),
     autoRouterReasoning: createMemoryReasoningStore(),
-    toolEndpointsEnabled: async () => options.enabled ?? true,
     now: () => now,
   })
   const chat = (model: string, extra: Record<string, unknown> = {}, path = "/api/v1/cursor/chat/completions") => api.request(path, {
@@ -228,15 +227,6 @@ test("names that don't resolve are refused before anything is sent upstream", as
   const thinking = await chat(`${name}:high`)
   assert.equal(thinking.status, 400)
   assert.equal(await errorCode(thinking), "unsupported_thinking_level")
-  assert.equal(sent.length, 0)
-})
-
-test("with the feature off the endpoint does not exist", async () => {
-  const row = accessRow({ modelId: "claude-haiku-5-5", name: "Claude Haiku 5.5" })
-  assert.ok(row.model)
-  const { api, sent, chat } = app([row], { enabled: false })
-  assert.equal((await api.request("/api/v1/cursor/models")).status, 404)
-  assert.equal((await chat(cursorModelName({ name: row.model.name, modelId: row.model.id }))).status, 404)
   assert.equal(sent.length, 0)
 })
 

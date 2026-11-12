@@ -3,7 +3,6 @@ import type { Seed } from "@openwork/env";
 import { denFetch } from "@openwork/behaviors";
 import { gatewayEnvironment, record, seedAcmeGateway, startAcmeGateway, startAcmeUpstream } from "../../worlds/lib/acme-gateway.ts";
 import { isRecord } from "./library.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
 export const OPENAI_MOCK_MODEL = "gpt-5-mini";
 export const OPENAI_MOCK_REPLY = "OpenAI Responses mock is working.";
@@ -64,7 +63,7 @@ async function startOpenAiUpstream(stack: AsyncDisposableStack) {
 }
 
 /**
- * The Codex CLI through the AI Gateway (part of `gatewayMemberApiKeys`): a real Den (cloud) and AI
+ * The Codex CLI through the AI Gateway: a real Den (cloud) and AI
  * Gateway with two providers every member may use: OpenAI (a Responses mock, passed through) and
  * Anthropic (the Acme mock, translated). Member API keys are on and allowed; the owner is signed in
  * on My Library › Models.
@@ -89,7 +88,6 @@ export async function gatewayCodexWorld(seed: Seed) {
     if (created.response.status !== 201 || typeof provider?.id !== "string") throw new Error(`OpenAI provider creation failed: HTTP ${created.response.status}`);
     const connected = await denFetch(den.admin, `/v1/inference-providers/${provider.id}/connect`, { headers: orgHeaders });
     if (!connected.response.ok) throw new Error(`OpenAI provider not usable: HTTP ${connected.response.status}`);
-    await enableOrganizationCapabilities(seed, den.admin, { gatewayMemberApiKeys: true });
     const allowed = await seed.api(den.admin, "/v1/org/ai-gateway-settings", { method: "PUT", body: JSON.stringify({ memberApiKeys: true }) });
     if (!allowed.response.ok) throw new Error(`Allowing 3rd party tools failed: HTTP ${allowed.response.status}`);
     const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/library?show=models", headless: true, viewport: { width: 1440, height: 1100 } });

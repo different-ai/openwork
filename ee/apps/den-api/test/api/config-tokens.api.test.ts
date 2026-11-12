@@ -1,7 +1,6 @@
 /**
  * Config tokens (docs/features/config-blobs/change-requests.md, "Config
- * token"): organization API keys of type `config` with scopes, only while the
- * configBlobs feature is on. Scopes live in the Better Auth `apikey.permissions`
+ * token"): organization API keys of type `config` with scopes. Scopes live in the Better Auth `apikey.permissions`
  * column, type and area limit in the key metadata. requireConfigScope is the
  * only API-key gate on config-blob routes: UI sessions pass, standard keys and
  * config tokens without the scope get 403 `config_scope_required`.
@@ -65,11 +64,7 @@ async function call(app: Hono<{ Variables: { apiKey: ApiKeySession; session: nul
 let standardKeyId = ""
 let standardKey = ""
 
-test("with configBlobs off a config token is refused; standard keys still work and list as standard", async () => {
-  const refused = await createKey({ name: "Config before flag", type: "config", scopes: ["config:export"] })
-  assert.equal(refused.status, 400, summary(refused))
-  assert.equal(field(refused.body, "error"), "feature_disabled")
-
+test("standard keys work and list as standard; they take no scopes", async () => {
   const standard = await createKey({ name: "Plain key" })
   assert.equal(standard.status, 201, summary(standard))
   assert.equal(field(standard.body, "apiKey", "type"), "standard")
@@ -88,10 +83,7 @@ test("with configBlobs off a config token is refused; standard keys still work a
 let configKeyId = ""
 let configKey = ""
 
-test("with configBlobs on, a config token stores scopes in permissions and type + areas in metadata", async () => {
-  const enabled = await den.setFeature(orgId, "configBlobs", true)
-  assert.ok(enabled.status < 300, summary(enabled))
-
+test("a config token stores scopes in permissions and type + areas in metadata", async () => {
   const noScopes = await createKey({ name: "No scopes", type: "config" })
   assert.equal(noScopes.status, 400, summary(noScopes))
   const emptyScopes = await createKey({ name: "Empty scopes", type: "config", scopes: [] })

@@ -1,6 +1,6 @@
 # Build plan
 
-Every user-visible piece goes behind `configBlobs` (cloud + self-hosted, off by default; `.opencode/skills/add-a-feature`). Each phase can ship alone.
+Every user-visible piece went behind `configBlobs` (cloud + self-hosted, off by default; `.opencode/skills/add-a-feature`). Each phase could ship alone. The flag is now retired: config import and export is generally available.
 
 ## Status (2026-11-09)
 
@@ -36,7 +36,7 @@ type ConfigArea<Spec> = {
   specSchema: ZodType<Spec>;           // strict
   dependsOn: AreaKey[];                // for ordering and $ref resolution
   deployments: ("cloud" | "self_hosted")[];
-  feature?: FeatureKey;                // e.g. autoRouter
+  feature?: FeatureKey;                // e.g. workbotProactive
   viewPermission: PermissionKey;       // export
   managePermission: PermissionKey;     // apply
   naturalKeys: NaturalKey<Spec>[];     // tier 5, uniqueness checked on both sides
@@ -127,7 +127,7 @@ Each one is its own small PR: adapter + round-trip test + coverage list update.
 
 ## Phase 6: cross-deployment polish
 
-- Cloud-only areas (`openwork-models`, `smart-routers` while `autoRouter` is cloud only) show as `skip` with a reason on self-hosted.
+- Cloud-only areas (`openwork-models`) show as `skip` with a reason on self-hosted.
 - Version skew handling: per-area upgraders and "newer than this server" warnings.
 - Optional `external_key` on more root tables, so hand-written blobs can use keys.
 - "Pending config change" hints on resource pages.

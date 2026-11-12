@@ -6,12 +6,11 @@ import { Check, ChevronLeft, ChevronRight, Copy } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenSelect } from "../../_components/ui/select";
-import { markFeatureUsed } from "../../_lib/feature-usage";
 import { claudeCodeToolModelName, claudeModelId, gatewayToolModelLabel, gatewayToolModelName, useGatewayToolModels, type GatewayToolModel } from "./cursor-setup-data";
 import { GATEWAY_API_KEYS_DOCS_URL } from "./gateway-api-keys-data";
 
 /**
- * Setting up a 3rd party tool with an AI Gateway API key (feature `gatewayMemberApiKeys`): a choice of
+ * Setting up a 3rd party tool with an AI Gateway API key: a choice of
  * tools, then what to paste where for the one picked. Used right after a key is created, while it can
  * still be shown, and on Set up Cursor without a key.
  */
@@ -74,7 +73,6 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
   async function copy() {
     try {
       await navigator.clipboard.writeText(value);
-      markFeatureUsed("gatewayMemberApiKeys");
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {

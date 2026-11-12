@@ -1,4 +1,4 @@
-// Claude Code through the AI Gateway (feature gatewayMemberApiKeys): ANTHROPIC_BASE_URL points at
+// Claude Code through the AI Gateway (member AI Gateway API keys): ANTHROPIC_BASE_URL points at
 // /api/v1/claude-code, and every model answers as Anthropic Messages under a name a person can set.
 import assert from "node:assert/strict"
 import { test } from "node:test"
@@ -56,7 +56,7 @@ const CHAT_STREAM = [
   { id: "c1", object: "chat.completion.chunk", choices: [], usage: { prompt_tokens: 12, completion_tokens: 5, total_tokens: 17 } },
 ].map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n"
 
-function app(rows: GatewayMemberAccessRow[], options: { enabled?: boolean } = {}) {
+function app(rows: GatewayMemberAccessRow[]) {
   const sent: Request[] = []
   const api = new Hono<{ Variables: InferenceAuthVariables & OrganizationVariables }>()
   api.use("*", async (c, next) => {
@@ -87,7 +87,6 @@ function app(rows: GatewayMemberAccessRow[], options: { enabled?: boolean } = {}
     loadProviderCredential: async () => credential,
     catalog: createProviderCatalog({ anthropic: { npm: "@ai-sdk/anthropic", env: [] }, deepseek: { npm: "@ai-sdk/openai-compatible", api: "https://api.deepseek.com/v1", env: [] } }),
     autoRouterReasoning: createMemoryReasoningStore(),
-    toolEndpointsEnabled: async () => options.enabled ?? true,
     now: () => now,
   })
   const messages = (body: Record<string, unknown>, headers: Record<string, string> = {}) => api.request("/api/v1/claude-code/v1/messages", {
@@ -222,14 +221,6 @@ test("Claude Code's own model ids resolve by catalog id; unknown names get an An
   assert.equal(sent.length, 1)
   const count = await json(await api.request("/api/v1/claude-code/v1/messages/count_tokens", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: name(opus), messages: [{ role: "user", content: "hello there" }] }) }))
   assert.ok(typeof count.input_tokens === "number" && count.input_tokens > 0)
-})
-
-test("with member API keys off the endpoint does not exist", async () => {
-  const opus = accessRow(anthropicId, { modelId: "claude-opus-5-5", name: "Claude Opus 5.5" })
-  const { api, sent, messages } = app([opus], { enabled: false })
-  assert.equal((await api.request("/api/v1/claude-code/v1/models")).status, 404)
-  assert.equal((await messages({ model: name(opus), max_tokens: 10, messages: [{ role: "user", content: "hi" }] })).status, 404)
-  assert.equal(sent.length, 0)
 })
 
 // Claude Desktop's Gateway mode uses this endpoint as its Gateway base URL. Its requests, as captured

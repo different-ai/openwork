@@ -1,11 +1,10 @@
 /**
- * Config blobs (feature `configBlobs`): export the organization's
- * configuration as JSON and import it back through change requests.
+ * Config blobs: export the organization's configuration as JSON and import it
+ * back through change requests.
  * Design: docs/features/config-blobs/change-requests.md (API table).
  *
- * Every route: orgMemberRoute() → requireFeature("configBlobs") (404 when
- * off) → requireConfigScope(…) (UI sessions pass; API keys only as config
- * tokens holding the scope). Member permissions are the areas' own view /
+ * Every route: orgMemberRoute() → requireConfigScope(…) (UI sessions pass;
+ * API keys only as config tokens holding the scope). Member permissions are the areas' own view /
  * manage keys, checked per request by the service (sensitive keys also need a
  * recent sign-in, exactly as in the dashboard).
  */
@@ -55,7 +54,6 @@ import {
 } from "../../config-blobs/service.js"
 import { configBlobJsonSchema } from "../../config-blobs/json-schema.js"
 import { allowConfigTokenSecrets, apiKeyHasConfigScope, getConfigTokenAreas, requireConfigScope } from "../../config-blobs/token.js"
-import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, paramValidator, publicRoute, queryValidator, requireOrgPermission } from "../../middleware/index.js"
 import { refuseMachineSecrets } from "../../middleware/refuse-machine-secrets.js"
 import { checkFreshPrivilegedSession, organizationPrivilegedSessionMaxAgeMs } from "../../privileged-session.js"
@@ -78,7 +76,7 @@ const TAGS = ["Config blobs"]
 // OpenAPI shapes (the TypeScript contract is @openwork/types/den/config-blobs)
 
 const errorSchema = z.object({ error: z.string(), message: z.string().optional() }).passthrough().meta({ ref: "ConfigBlobError" })
-const featureDisabledSchema = z.object({ error: z.string(), feature: z.string().optional() }).meta({ ref: "ConfigBlobNotFound" })
+const notFoundSchema = z.object({ error: z.string() }).meta({ ref: "ConfigBlobNotFound" })
 
 const planSummarySchema = z.object(Object.fromEntries([...CONFIG_PLAN_OPS, "blocking"].map((key) => [key, z.number().int()]))).meta({ ref: "ConfigPlanSummary" })
 
@@ -208,7 +206,7 @@ const applyBodySchema = z.object({ planHash: z.string().optional() }).strict()
 const commonErrors = {
   401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
   403: jsonResponse("The caller lacks the area's permission, or the config token lacks the scope.", forbiddenSchema),
-  404: jsonResponse("The change request was not found, or config import and export is off for this organization.", featureDisabledSchema),
+  404: jsonResponse("The organization or change request was not found.", notFoundSchema),
 }
 
 function describe(summary: string, description: string, ok: { status: 200 | 201 | 202; schema: z.ZodType; description: string }, extra: Record<number, ReturnType<typeof jsonResponse>> = {}) {
@@ -321,9 +319,7 @@ function today(): string {
 // Routes
 
 export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
-  const feature = requireFeature("configBlobs")
-
-  // Public and not behind the per-organization flag: the format is the same for everyone, and editors and CI fetch it without credentials.
+  // Public: the format is the same for everyone, and editors and CI fetch it without credentials.
   app.get(
     `${BASE}/schema/:formatVersion`,
     describeRoute({
@@ -351,7 +347,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
     `${BASE}/areas`,
     describe("List config areas", "The config areas of this server: label, sidebar path, spec version, whether each is supported here, and whether the caller may export or import it.", { status: 200, schema: areasResponseSchema, description: "Config areas returned." }),
     orgMemberRoute(),
-    feature,
     requireAnyConfigScope,
     async (c) => {
       try {
@@ -367,7 +362,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
     `${BASE}/export`,
     describe("Export configuration", "Downloads the organization's configuration as a config blob (JSON attachment): every area, or the comma-separated `areas`. Areas the caller can't view are left out and listed in `omitted`. Secrets are never exported; they appear as `$secret` placeholders. A signed-in person needs a recent sign-in (the organization's fresh admin session window); otherwise the answer is `403 { error: \"reauth\", reason: \"fresh_auth_required\" }`. Config tokens are exempt.", { status: 200, schema: blobSchema, description: "The config blob." }, { 400: jsonResponse("Unknown area.", errorSchema) }),
     orgMemberRoute(),
-    feature,
     requireConfigScope("config:export"),
     requireRecentSignInForDownload,
     queryValidator(exportQuerySchema),
@@ -390,7 +384,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
       413: jsonResponse("The blob is larger than the limit.", errorSchema),
     }),
     orgMemberRoute(),
-    feature,
     requireConfigScope("config:submit"),
     queryValidator(submitQuerySchema),
     bodyLimit({ maxSize: CONFIG_BLOB_MAX_BYTES + 64 * 1024, onError: (c) => c.json({ error: "blob_too_large", message: `Config files are limited to ${CONFIG_BLOB_MAX_BYTES / (1024 * 1024)} MB.` }, 413) }),
@@ -414,7 +407,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
     `${BASE}/change-requests`,
     describe("List config change requests", "Open (`state=open`, default) or closed change requests whose areas the caller can view, newest first.", { status: 200, schema: changeRequestListSchema, description: "Change requests returned." }),
     orgMemberRoute(),
-    feature,
     requireConfigScope("config:submit"),
     queryValidator(listQuerySchema),
     async (c) => {
@@ -431,7 +423,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
     `${BASE}/change-requests/:changeRequestId`,
     describe("Get a config change request", "Status, summary, approvals, the latest apply report (`report`) and every apply attempt, newest first (`runs`).", { status: 200, schema: changeRequestDetailSchema, description: "The change request." }),
     orgMemberRoute(),
-    feature,
     requireConfigScope("config:submit"),
     paramValidator(changeRequestParams),
     async (c) => {
@@ -448,7 +439,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
     `${BASE}/change-requests/:changeRequestId/runs/:runId`,
     describe("Get one apply run of a config change request", "One apply attempt: who requested it and who it ran as, and per item its status, the writes done, and where and why it failed.", { status: 200, schema: applyRunResponseSchema, description: "The apply run." }),
     orgMemberRoute(),
-    feature,
     requireConfigScope("config:submit"),
     paramValidator(applyRunParams),
     async (c) => {
@@ -466,7 +456,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
     `${BASE}/change-requests/:changeRequestId/plan`,
     describe("Get a config change request's plan", "The full plan (matches, field diffs, references, secret decisions, blocking flags) and the saved decisions. Never secret values.", { status: 200, schema: planResponseSchema, description: "The plan." }),
     orgMemberRoute(),
-    feature,
     requireConfigScope("config:submit"),
     paramValidator(changeRequestParams),
     async (c) => {
@@ -483,7 +472,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
     `${BASE}/change-requests/:changeRequestId/before-snapshot`,
     describe("Download a change request's before-snapshot", "The items the apply wrote, as they were just before it (JSON attachment; its scope is the areas written): the source of \"Restore previous config\". Like an export, a signed-in person needs a recent sign-in (`403 { error: \"reauth\" }` otherwise); config tokens are exempt.", { status: 200, schema: blobSchema, description: "The before-snapshot blob." }),
     orgMemberRoute(),
-    feature,
     requireConfigScope("config:export"),
     requireRecentSignInForDownload,
     paramValidator(changeRequestParams),
@@ -505,7 +493,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
       409: jsonResponse("The request can't be edited now.", errorSchema),
     }),
     orgMemberRoute(),
-    feature,
     requireConfigScope("config:submit"),
     paramValidator(changeRequestParams),
     jsonValidator(configDecisionsSchema),
@@ -526,7 +513,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
       409: jsonResponse("The request can't be edited now.", errorSchema),
     }),
     orgMemberRoute(),
-    feature,
     requireConfigScope("config:submit"),
     refuseMachineSecrets(["inputs"], { allowApiKeys: allowConfigTokenSecrets }),
     paramValidator(changeRequestParams),
@@ -548,7 +534,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
       409: jsonResponse("Plan changed, blocked, or already approved by the caller.", errorSchema),
     }),
     orgMemberRoute(),
-    feature,
     requireConfigScope("config:apply"),
     paramValidator(changeRequestParams),
     jsonValidator(approveConfigChangeRequestSchema),
@@ -569,7 +554,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
       409: jsonResponse("Not approved, or the plan changed.", errorSchema),
     }),
     orgMemberRoute(),
-    feature,
     requireConfigScope("config:apply"),
     paramValidator(changeRequestParams),
     jsonValidator(applyBodySchema),
@@ -587,7 +571,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
     `${BASE}/change-requests/:changeRequestId/cancel`,
     describe("Cancel a config change request", "Withdraws an open request (not while it is being applied) and deletes its secret inputs. Its creator, or anyone who may import its areas.", { status: 200, schema: changeRequestResponseSchema, description: "Cancelled." }, { 409: jsonResponse("Already closed or being applied.", errorSchema) }),
     orgMemberRoute(),
-    feature,
     requireConfigScope("config:submit"),
     paramValidator(changeRequestParams),
     async (c) => {
@@ -604,7 +587,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
     `${BASE}/change-requests/:changeRequestId/revert`,
     describe("Restore the config before a change request", "\"Restore previous config\": creates a new change request (source `revert`) from the applied request's before-snapshot, in mirror mode with the deletes of the items it created already ticked. It is reviewed and applied like any other. It restores configuration only: its plan lists what the original apply did that can't be undone (emails sent, sign-ins revoked, credentials replaced or deleted).", { status: 201, schema: changeRequestResponseSchema, description: "The revert change request." }, { 409: jsonResponse("Not applied, or a revert is already open.", errorSchema) }),
     orgMemberRoute(),
-    feature,
     requireConfigScope("config:apply"),
     paramValidator(changeRequestParams),
     async (c) => {
@@ -621,7 +603,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
     `${BASE}/settings`,
     describe("Get config change settings", "Organization settings for config change requests: whether a second approver is required.", { status: 200, schema: settingsResponseSchema, description: "Settings returned." }),
     orgMemberRoute(),
-    feature,
     requireAnyConfigScope,
     async (c) => {
       const payload = c.get("organizationContext")
@@ -633,7 +614,6 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
     `${BASE}/settings`,
     describe("Update config change settings", "Turns the second-approver rule on or off. Signed-in people with Edit organization settings only; never an API key.", { status: 200, schema: settingsResponseSchema, description: "Settings saved." }, { 400: jsonResponse("Invalid body.", invalidRequestSchema) }),
     orgMemberRoute(),
-    feature,
     refuseApiKeys,
     requireOrgPermission("organization.update"),
     jsonValidator(configBlobSettingsPatchSchema),

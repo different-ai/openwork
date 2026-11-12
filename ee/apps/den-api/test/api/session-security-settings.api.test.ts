@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { after, test } from "node:test"
 import { bootDen, field, summary } from "./harness.js"
 
-// sessionSecuritySettings (Auth & Security › General): the organization picks
+// Auth & Security › General: the organization picks
 // how recently an admin must have signed in before sensitive changes, and how
 // long its members' sessions last without activity.
 
@@ -40,16 +40,7 @@ async function untilExpiry(userId: string): Promise<number> {
   return seconds * 1000
 }
 
-test("the settings cannot be saved while the feature is off", async () => {
-  const response = await asOwner({ sessionLengthHours: 12 })
-  assert.equal(response.status, 404, summary(response))
-  assert.equal(field(response.body, "error"), "feature_disabled")
-})
-
 test("Enforce fresh admin sessions: 15 minutes by default, the chosen window, or never", async () => {
-  assert.equal((await den.setFeature(orgId, "authSecuritySettings", true)).status, 200)
-  assert.equal((await den.setFeature(orgId, "sessionSecuritySettings", true)).status, 200)
-
   await signedInAgo(owner.userId, 30 * MINUTE)
   const stale = await asOwner({ name: "Renamed once" })
   assert.equal(stale.status, 403, summary(stale))
@@ -114,16 +105,4 @@ test("Maximum session length: activity never extends a session past it, and lowe
   assert.equal(saved.status, 200, summary(saved))
   await cache.auth.deleteSession(token)
   assert.equal((await den.request(token, "GET", "/v1/org", { orgId })).status, 401)
-})
-
-test("with the feature off again: 7-day sessions and the 2 hour sign-in window come back", async () => {
-  assert.equal((await den.setFeature(orgId, "sessionSecuritySettings", false)).status, 200)
-  await signedInAgo(owner.userId, 3 * HOUR)
-  assert.equal((await asOwner({ name: "Renamed after the rollback" })).status, 403)
-  await signedInAgo(owner.userId, HOUR)
-  assert.equal((await asOwner({ name: "Renamed within 2 hours" })).status, 200)
-
-  const signedIn = await den.signIn(member.email)
-  assert.equal(signedIn.status, 200, summary(signedIn))
-  assert.ok(await untilExpiry(member.userId) > 6 * 24 * HOUR, "a new sign-in lasts 7 days")
 })

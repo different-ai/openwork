@@ -18,9 +18,9 @@ const retiredKeys = [
 ]
 
 test("API-first upgrades keep graduated behavior on for published clients", () => {
-  const features = clientFeatures({ autoRouter: false, composerSubagentTracker: false })
+  const features = clientFeatures({ claudeAgentProvider: false, composerSubagentTracker: false })
   for (const key of retiredKeys) assert.equal(features[key], true, key)
-  assert.equal(features.autoRouter, false)
+  assert.equal(features.claudeAgentProvider, false)
   assert.equal(features.composerSubagentTracker, true, "the tracker is GA despite a stale opt-out")
   assert.equal("sandboxOrgs" in features, false, "cloud-only sandbox availability is not advertised as a global client feature")
   assert.deepEqual(clientFeaturesSchema.parse(features), features)

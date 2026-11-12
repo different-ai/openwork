@@ -19,7 +19,6 @@ import {
   getAutomationsRoute,
   getOrgAccessFlags,
   getPluginRoute,
-  orgFeatureEnabled,
 } from "../../../_lib/den-org";
 import { myAgentAvailable } from "../my-agent-availability";
 import { useDenFlow } from "../../../_providers/den-flow-provider";
@@ -167,8 +166,6 @@ export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: D
       workbotSettingsInTeams: workbotSettingsInTeams(orgContext),
       canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
       myBot: myAgentAvailable(orgContext),
-      authSecuritySettings: orgFeatureEnabled(orgContext, "authSecuritySettings"),
-      configBlobs: orgFeatureEnabled(orgContext, "configBlobs"),
     });
     return flattenNavigationForSearch(sections)
       .filter((entry) => entry.href !== "#")

@@ -168,27 +168,26 @@ function EmptyState({ orgSlug }: { orgSlug: string | null }) {
 export function GatewayProvidersSection() {
   const { orgId, orgSlug, orgContext } = useOrgDashboard();
   const { inferenceProviders, busy, error, reloadProviders } = useOrgInferenceProviders(orgId);
-  // Smart Routers (feature `autoRouter`) are listed first, like providers.
-  const smartRoutersEnabled = orgFeatureEnabled(orgContext, "autoRouter");
-  const smartRouters = useAutoRouters(orgId ?? "", smartRoutersEnabled);
+  // Smart Routers are listed first, like providers.
+  const smartRouters = useAutoRouters(orgId ?? "");
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return normalized ? inferenceProviders.filter((provider) => provider.name.toLowerCase().includes(normalized) || provider.providerId.includes(normalized)) : inferenceProviders;
   }, [inferenceProviders, query]);
-  const routers = smartRoutersEnabled ? smartRouters.data?.routers ?? [] : [];
+  const routers = smartRouters.data?.routers ?? [];
   const filteredRouters = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return normalized ? routers.filter((router) => autoRouterModelName(router.name).toLowerCase().includes(normalized)) : routers;
   }, [routers, query]);
   const routing = smartRouters.data?.routing ?? "unknown";
-  const canAddSmartRouter = smartRoutersEnabled && smartRouters.data?.canEdit === true;
+  const canAddSmartRouter = smartRouters.data?.canEdit === true;
   const empty = !busy && !error && inferenceProviders.length === 0;
   const loaded = !busy && !error;
-  // Feature intros (flag `featureIntros`): providers but no Smart Router yet → a banner above the list.
+  // Feature intros: providers but no Smart Router yet → a banner above the list.
   const smartRouterIntro = useFeatureIntro(
     "ai-gateway.smart-routers",
-    loaded && smartRoutersEnabled && smartRouters.data ? { providers: inferenceProviders.length, smartRouters: smartRouters.data.routers.length } : null,
+    loaded && smartRouters.data ? { providers: inferenceProviders.length, smartRouters: smartRouters.data.routers.length } : null,
   );
 
   return (

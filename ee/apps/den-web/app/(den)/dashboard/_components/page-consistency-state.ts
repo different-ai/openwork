@@ -1,19 +1,16 @@
 import type { AuditFilters } from "./audit-logs-data";
-import type { SsoSettings } from "../../_lib/sso-settings";
 
 type SettingsValues = {
   name: string;
   domains: readonly string[];
   domainRestrictionsEnabled: boolean;
-  sso: SsoSettings;
   desktopVersions: readonly string[];
 };
 
-export function settingsDraftChanged(saved: SettingsValues, draft: SettingsValues, options: { compareSso: boolean; compareVersions: boolean }): boolean {
+export function settingsDraftChanged(saved: SettingsValues, draft: SettingsValues, options: { compareVersions: boolean }): boolean {
   return saved.name !== draft.name.trim()
     || saved.domainRestrictionsEnabled !== draft.domainRestrictionsEnabled
     || !sameStringSet(normalizeAllowedEmailDomainsInput(saved.domains.join("\n")) ?? [], draft.domainRestrictionsEnabled ? draft.domains : [])
-    || (options.compareSso && (saved.sso.requireSso !== draft.sso.requireSso || saved.sso.restrictDomainToSso !== draft.sso.restrictDomainToSso))
     || (options.compareVersions && !sameStringSet(saved.desktopVersions, draft.desktopVersions));
 }
 

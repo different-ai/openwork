@@ -80,7 +80,7 @@ Each item pair gets exactly one **state** and may have several **flags**.
 | `unchanged` | matched, the hashes are equal |
 | `delete` | target item in scope, no match, `mirror` mode, and the admin has ticked it |
 | `untouched` | target item in scope, no match, `merge` mode |
-| `skip` | the admin excluded the item, or its area is unsupported on this deployment (e.g. `ai-gateway.smart-routers` on self-hosted without `autoRouter`), or the target owns it elsewhere (SCIM-managed people and teams) |
+| `skip` | the admin excluded the item, or its area is unsupported on this deployment (e.g. `ai-gateway.openwork-models` on self-hosted), or the target owns it elsewhere (SCIM-managed people and teams) |
 
 | Flag | Meaning | Blocks apply? |
 |---|---|---|

@@ -27,10 +27,10 @@ test("most used features come first, then most enabled, then registry order", ()
   const sorted = sortFeatureUsage([
     { ...base, key: "administratorRecovery", enabledMembers: 0, usedLast30Days: 0 },
     { ...base, key: "nativeDictation", enabledMembers: 5, usedLast30Days: 0 },
-    { ...base, key: "autoRouter", enabledMembers: 1, usedLast30Days: 2 },
+    { ...base, key: "claudeAgentProvider", enabledMembers: 1, usedLast30Days: 2 },
     { ...base, key: "computerUse", enabledMembers: 0, usedLast30Days: 0 },
   ]);
-  assert.deepEqual(sorted.map((feature) => feature.key), ["autoRouter", "nativeDictation", "administratorRecovery", "computerUse"]);
+  assert.deepEqual(sorted.map((feature) => feature.key), ["claudeAgentProvider", "nativeDictation", "administratorRecovery", "computerUse"]);
 });
 
 test("the on-for cell counts members in plain words", () => {
@@ -41,7 +41,7 @@ test("the on-for cell counts members in plain words", () => {
 const other = { memberId: "om_b", name: "Member B", email: "b@example.test", enabled: true, firstUsedAt: "2026-10-02T10:00:00.000Z", lastUsedAt: "2026-10-28T10:00:00.000Z", daysUsed: 2 };
 const turnedOn = (at: string) => ({ scope: "organization" as const, action: "on" as const, at, by: null });
 const sample: AdminFeatureUsage[] = [
-  { key: "autoRouter", enabledMembers: 3, usedLast7Days: 1, usedLast30Days: 2, lastChange: turnedOn("2026-11-02T08:00:00.000Z"), members: [other, member] },
+  { key: "claudeAgentProvider", enabledMembers: 3, usedLast7Days: 1, usedLast30Days: 2, lastChange: turnedOn("2026-11-02T08:00:00.000Z"), members: [other, member] },
   { key: "nativeDictation", enabledMembers: 1, usedLast7Days: 0, usedLast30Days: 1, lastChange: turnedOn("2026-10-12T08:00:00.000Z"), members: [member] },
   { key: "computerUse", enabledMembers: 3, usedLast7Days: 0, usedLast30Days: 0, lastChange: null, members: [] },
   { key: "administratorRecovery", enabledMembers: 0, usedLast7Days: 0, usedLast30Days: 0, lastChange: { scope: "organization", action: "off", at: "2026-10-30T08:00:00.000Z", by: null }, members: [] },
@@ -50,13 +50,13 @@ const keys = (features: readonly AdminFeatureUsage[]) => features.map((feature) 
 
 test("filters match status, category and a feature or member search", () => {
   assert.deepEqual(keys(filterFeatureUsage(sample, NO_FEATURE_FILTER, 3)), keys(sample));
-  assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "used" }, 3)), ["autoRouter", "nativeDictation"]);
+  assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "used" }, 3)), ["claudeAgentProvider", "nativeDictation"]);
   assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "unused" }, 3)), ["computerUse", "administratorRecovery"]);
-  assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "everyone" }, 3)), ["autoRouter", "computerUse"]);
+  assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "everyone" }, 3)), ["claudeAgentProvider", "computerUse"]);
   assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "some" }, 3)), ["nativeDictation"]);
   assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "off" }, 3)), ["administratorRecovery"]);
-  assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, category: FEATURES.autoRouter.category }, 3)), keys(sample.filter((feature) => FEATURES[feature.key].category === FEATURES.autoRouter.category)));
-  assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, search: "  B@EXAMPLE " }, 3)), ["autoRouter"]);
+  assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, category: FEATURES.claudeAgentProvider.category }, 3)), keys(sample.filter((feature) => FEATURES[feature.key].category === FEATURES.claudeAgentProvider.category)));
+  assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, search: "  B@EXAMPLE " }, 3)), ["claudeAgentProvider"]);
   assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, search: FEATURES.nativeDictation.label.toLowerCase() }, 3)), ["nativeDictation"]);
 });
 
@@ -66,7 +66,7 @@ test("turned-on dates come from a change that turned the feature on and left it 
   assert.equal(turnedOnAt(sample[3]!), null);
   assert.equal(turnedOnAt({ ...sample[0]!, enabledMembers: 0 }), null);
   const groups = groupFeatureUsage(sample, "turnedOn");
-  assert.deepEqual(groups.map((group) => [group.id, keys(group.features)]), [["2026-11", ["autoRouter"]], ["2026-10", ["nativeDictation"]], ["on", ["computerUse"]], ["off", ["administratorRecovery"]]]);
+  assert.deepEqual(groups.map((group) => [group.id, keys(group.features)]), [["2026-11", ["claudeAgentProvider"]], ["2026-10", ["nativeDictation"]], ["on", ["computerUse"]], ["off", ["administratorRecovery"]]]);
 });
 
 test("date added groups by the registry month, newest first", () => {
@@ -79,8 +79,8 @@ test("date added groups by the registry month, newest first", () => {
 test("grouping by member lists each person's features, most recent use first", () => {
   const people = groupUsageByMember(sample);
   assert.deepEqual(people.map((person) => [person.memberId, person.lastUsedAt, person.uses.map((use) => use.key)]), [
-    ["om_b", "2026-10-28T10:00:00.000Z", ["autoRouter"]],
-    ["om_a", "2026-10-26T10:00:00.000Z", ["autoRouter", "nativeDictation"]],
+    ["om_b", "2026-10-28T10:00:00.000Z", ["claudeAgentProvider"]],
+    ["om_a", "2026-10-26T10:00:00.000Z", ["claudeAgentProvider", "nativeDictation"]],
   ]);
   // A member search keeps all their features; a feature search keeps only matching ones.
   assert.deepEqual(groupUsageByMember(sample, "member a").map((person) => person.uses.length), [2]);
@@ -89,12 +89,12 @@ test("grouping by member lists each person's features, most recent use first", (
 
 test("features added in the last two weeks are new and lead the default view, newest first", () => {
   const addedOn = (key: AdminFeatureUsage["key"]) => Date.parse(`${FEATURES[key].added}T00:00:00.000Z`);
-  const now = addedOn("autoRouter") + 2 * 24 * 60 * 60 * 1000;
-  assert.equal(isNewFeature("autoRouter", now), true);
-  assert.equal(isNewFeature("autoRouter", addedOn("autoRouter") + NEW_FEATURE_DAYS * 24 * 60 * 60 * 1000), false);
+  const now = addedOn("claudeAgentProvider") + 2 * 24 * 60 * 60 * 1000;
+  assert.equal(isNewFeature("claudeAgentProvider", now), true);
+  assert.equal(isNewFeature("claudeAgentProvider", addedOn("claudeAgentProvider") + NEW_FEATURE_DAYS * 24 * 60 * 60 * 1000), false);
   const { fresh, rest } = splitNewFeatures(sample, now);
   assert.deepEqual(keys(fresh), keys(sample.filter((feature) => isNewFeature(feature.key, now))).sort((a, b) => FEATURES[b].added.localeCompare(FEATURES[a].added)));
-  assert.ok(keys(fresh).includes("autoRouter"));
+  assert.ok(keys(fresh).includes("claudeAgentProvider"));
   assert.deepEqual([...keys(fresh), ...keys(rest)].sort(), keys(sample).sort());
   assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "new" }, 3, now)), keys(sample.filter((feature) => isNewFeature(feature.key, now))));
 });

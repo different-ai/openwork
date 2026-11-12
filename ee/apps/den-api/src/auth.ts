@@ -453,7 +453,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** The earlier of `expiresAt` and the end of the person's session limits (sessionSecuritySettings). */
+/** The earlier of `expiresAt` and the end of the person's session limits (Auth & Security › General). */
 async function clampSessionExpiresAt(userId: string, expiresAt: Date, createdAt: Date) {
   try {
     const latest = await userSessionExpiresAt(userId, new Date(), createdAt);
@@ -1065,7 +1065,7 @@ export const auth = betterAuth({
             data: {
               ...session,
               activeOrganizationId,
-              // sessionSecuritySettings: the strictest session limits of the person's organizations.
+              // The strictest session limits of the person's organizations.
               expiresAt: await clampSessionExpiresAt(userId, session.expiresAt, session.createdAt instanceof Date ? session.createdAt : new Date()),
             },
           };
@@ -1101,7 +1101,7 @@ export const auth = betterAuth({
       },
       update: {
         // Better Auth extends a session by 7 days on /get-session; keep it to
-        // the person's session limits (sessionSecuritySettings).
+        // the person's session limits (Auth & Security › General).
         before: async (session, context) => {
           const current = context?.context.session?.session;
           if (!(session.expiresAt instanceof Date) || !current || typeof current.userId !== "string") return;
@@ -1348,8 +1348,8 @@ export const auth = betterAuth({
           if (!authorization.ok) {
             throw new APIError("FORBIDDEN", { message: authorization.message });
           }
-          // An organization or domain can match several connections
-          // (multipleSsoConnections). Better Auth would take any one of them,
+          // An organization or domain can match several connections.
+          // Better Auth would take any one of them,
           // so name the provider Den chose: the ready one.
           if (authorization.providerId && !readStringProperty(ctx.body, "providerId") && isRecord(ctx.body)) {
             return { context: { body: { ...ctx.body, providerId: authorization.providerId } } };

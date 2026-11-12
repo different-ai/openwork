@@ -1,5 +1,5 @@
-// Smart Routers (feature `autoRouter`) on the 3rd party tool endpoints (feature
-// `gatewayMemberApiKeys`): Cursor, Claude Code and Codex list each router that applies to the member
+// Smart Routers on the 3rd party tool endpoints: Cursor,
+// Claude Code and Codex list each router that applies to the member
 // as `openwork/smart-<router name>-<end of its id>` (packages/types/src/den/gateway-cursor.ts), and a
 // request naming one runs the Smart Model Router (auto-router/handler.ts) with the request read as
 // Chat Completions; each endpoint writes the answer back in its own protocol.

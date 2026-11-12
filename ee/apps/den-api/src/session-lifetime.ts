@@ -1,6 +1,6 @@
 /**
  * The longest a session lasts without activity. Organizations can shorten it
- * (sessionSecuritySettings, see session-security-settings.ts); extensions
+ * (Auth & Security › General, see session-security-settings.ts); extensions
  * happen in session.ts and cache.ts.
  */
 export const DEN_SESSION_EXPIRES_IN_DAYS = 7

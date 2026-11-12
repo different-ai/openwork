@@ -46,7 +46,7 @@ export function ssoConnectionDeletedEvent(organizationId: string, before: SsoCon
   return auditChangeEvent({ action: "sso_connection.deleted", resources: resources(organizationId, before.connection), before: serializeSsoConnection(before.connection, before.provider), after: null })
 }
 
-/** multipleSsoConnections: a connection's display name changed (its provider is untouched). */
+/** A connection's display name changed (its provider is untouched). */
 export function ssoConnectionRenamedEvent(organizationId: string, before: SsoConnectionAuditState, after: SsoConnectionAuditState): AuditChangeEventInput | null {
   return auditChangeEvent({
     action: "sso_connection.renamed", resources: resources(organizationId, after.connection),

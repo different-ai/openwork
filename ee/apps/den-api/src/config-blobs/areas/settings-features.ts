@@ -9,7 +9,7 @@
  *   exported whether it is on for everyone, locked on by the operator or
  *   turned on for this organization in /admin. Features that are off are
  *   never exported; member overrides never are.
- * - The item id is the feature key (`configBlobs`), its name the registry
+ * - The item id is the feature key (`nativeDictation`), its name the registry
  *   label, its spec `{ enabled: true }`: the "key: true" of the request. Keys
  *   are lowerCamelCase, which the item `key` pattern rejects, so the key is
  *   the id (matched by id on any instance) and the natural key.

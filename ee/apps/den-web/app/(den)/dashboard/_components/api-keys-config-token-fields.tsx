@@ -54,7 +54,7 @@ function toggle<T>(values: readonly T[], value: T, on: boolean): T[] {
 }
 
 /**
- * The create-form part for config tokens (feature `configBlobs`): key type,
+ * The create-form part for config tokens: key type,
  * what the token can do and an optional area limit. Areas come from
  * GET /v1/config-blobs/areas; without them the limit is left out.
  */

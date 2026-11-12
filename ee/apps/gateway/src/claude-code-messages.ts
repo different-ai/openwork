@@ -1,4 +1,4 @@
-// Anthropic Messages for Claude Code (feature `gatewayMemberApiKeys`). Claude Code only speaks the
+// Anthropic Messages for Claude Code. Claude Code only speaks the
 // Messages API. A model whose provider speaks it too gets the request as it is; every other model
 // goes through the Gateway's translators, which speak Chat Completions on the client side. So a
 // Messages request is read as a chat request, and the Chat Completions answer is written back as a

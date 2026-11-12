@@ -34,12 +34,12 @@ import {
 } from "./gateway-api-keys-data";
 
 /**
- * Library › Models (feature `gatewayMemberApiKeys`): the viewer's own AI Gateway API keys for 3rd party
+ * Library › Models: the viewer's own AI Gateway API keys for 3rd party
  * tools, a way to create one, and the docs on setting a tool up. Shown while the organization allows
  * member keys, or while the viewer still holds keys after it stopped, so they can revoke them.
  */
 export function MemberGatewayApiKeysSection() {
-  const keys = useMyGatewayApiKeys(true);
+  const keys = useMyGatewayApiKeys();
   const revoke = useRevokeGatewayApiKey("mine");
   const { orgSlug } = useOrgDashboard();
   const [creating, setCreating] = useState(false);

@@ -194,7 +194,7 @@ export function PluginsScreen() {
   };
 
   const searchPlaceholder = SEARCH_PLACEHOLDERS[activeView];
-  // Feature intros (flag `featureIntros`): null until both lists are known, so nothing flashes while loading.
+  // Feature intros: null until both lists are known, so nothing flashes while loading.
   // Data, not isLoading: a paused or not-yet-enabled query has no data and isn't loading either.
   const seesAllPlugins = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",

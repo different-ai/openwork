@@ -1,4 +1,4 @@
-// The Codex CLI through the AI Gateway (feature `gatewayMemberApiKeys`). Codex reaches another
+// The Codex CLI through the AI Gateway. Codex reaches another
 // provider through a `[model_providers.<id>]` block in ~/.codex/config.toml with
 // `wire_api = "responses"`, and speaks only the OpenAI Responses API, so every model has to answer
 // as Responses, by a name a person can set as `model`.

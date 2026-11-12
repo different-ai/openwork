@@ -1,8 +1,9 @@
 # AI Gateway: setting up Cursor and other tools
 
-- **Feature key:** `gatewayMemberApiKeys` (part of AI Gateway API keys; see
+- **Feature key:** none; generally available as part of AI Gateway API keys
+  (retired key `gatewayMemberApiKeys`; see
   `docs/features/gateway-member-api-keys/README.md`)
-- **Deployments:** cloud and self-hosted, off by default
+- **Deployments:** cloud and self-hosted
 - **Author:** OmarMcAdam
 - **Public docs:** `packages/docs/ai-gateway/cursor.mdx`
 - **Needs:** the organization's **Allow 3rd party tools & harnesses** setting on
@@ -46,7 +47,7 @@ Shared code: `packages/types/src/den/gateway-cursor.ts`.
 
 ### Smart Routers
 
-Smart Routers (feature `autoRouter`) the member can use get a name of the same
+Smart Routers the member can use get a name of the same
 shape, from their picker name "Smart: <name>":
 
 ```
@@ -138,7 +139,7 @@ key, with a link to create one.
 - The page builds the same names in Den web from
   `GET /v1/inference-providers?scope=usable`, plus the member's Smart Routers
   from `GET /v1/org/auto-router/mine` (ids and names; empty without a routing
-  key, 404 while `autoRouter` is off, which the page treats as none). They come
+  key, and the page treats any failure as none). They come
   last in each model dropdown as "Smart: <name>" and are never the default
   choice. Claude Desktop's list keeps its own filter, so a router shows there
   only when its name passes it.
@@ -363,11 +364,10 @@ Not checked: Windows, the IDE extension, images, Gemini and Bedrock live.
 
 ## Turning it off
 
-Turning off `gatewayMemberApiKeys` (or the organization setting) stops member
-keys at the Gateway, and `/api/v1/cursor/*`, `/api/v1/claude-code/*` and `/api/v1/codex/*` answer
-`404` within 15 seconds. The setup screens go with the API keys section. Nothing else is stored
-for Cursor, so the model names people added to Cursor work again when it is
-turned back on.
+Turning off the organization setting stops member keys at the Gateway within
+15 seconds, so their requests to `/api/v1/cursor/*`, `/api/v1/claude-code/*` and
+`/api/v1/codex/*` are refused. Nothing else is stored for Cursor, so the model
+names people added to Cursor work again when it is turned back on.
 
 ## What to watch
 
@@ -390,7 +390,7 @@ Completions or Responses for each model.
 
 `ee/apps/gateway/test/cursor.test.ts` covers names, resolution, the model list,
 Chat Completions and Responses (JSON and streamed) translated to Anthropic and
-back, refusals, keys, and the feature being off.
+back, refusals and keys.
 `evals/proofs/gateway-cursor-setup.proof.test.ts` drives the page and both APIs
 on a real Den and AI Gateway. `ee/apps/gateway/test/claude-code.test.ts` and
 `evals/proofs/gateway-claude-code.proof.test.ts` do the same for Claude Code

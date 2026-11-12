@@ -8,7 +8,7 @@ The user's request: *main sidebar page = key, sub-page = sub-key*. Area paths ar
 
 The sidebar isn't fully stable, so keys **follow the sidebar but live in their own registry**. Three examples:
 
-- `authSecuritySettings` merges SSO and SCIM.
+- Auth & Security merged SSO and SCIM.
 - `desktopPolicyScreenRemoved` moves desktop policies into team tabs.
 - Roles moves between Settings and Members.
 
@@ -35,7 +35,7 @@ Source of truth: `ee/apps/den-api/src/config-blobs/registry.ts` (one adapter per
 | `members.default-models` | Default models (team Models tab) | `org_default_model` | – | – | provider by reference (BYOK or AI Gateway) |
 | `members.prompts` | Prompts | `org_prompt`, `org_prompt_access` | – | – | confidential content (D1) |
 | `ai-gateway.limits` | Limits | `gateway_usage_limit_policy`, `gateway_usage_limit_entry`, `gateway_usage_limit_assignment` | – | pending increase requests closed when effective limits change | |
-| `ai-gateway.smart-routers` | Smart routers | `auto_router`, `auto_router_access`, `auto_router_model`, `auto_router_task`, `auto_router_model_task` | – | a deleted router's model id is gone; re-created routers get a new one | cloud only, `autoRouter` |
+| `ai-gateway.smart-routers` | Smart routers | `auto_router`, `auto_router_access`, `auto_router_model`, `auto_router_task`, `auto_router_model_task` | – | a deleted router's model id is gone; re-created routers get a new one | |
 | `ai-gateway.openwork-models` | OpenWork Models | – (organization metadata) | – | turning Auto off revokes members' OpenWork Models keys | cloud only; never the subscription, tier or upstream keys |
 | `plugins.plugins` | Plugins | `plugin`, `plugin_config_object`, `plugin_access_grant`, `plugin_mcp_requirement_binding`, `marketplace_plugin` | – | moving an MCP requirement to another connection doesn't carry sign-ins | archived, never deleted; source-filled plugins refused |
 | `plugins.skills` | Skills, agents and commands | `config_object`, `config_object_version`, `config_object_access_grant`, `remote_mcp_app` | – | each content change saves a new version | org-shared objects only, never personal ones, authored MCP Apps or the Workbot "Your agent" template (owned by `workbot.proactive`); preflight: source-managed creates and the template (skip), source-managed content changes (block) |

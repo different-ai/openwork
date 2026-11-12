@@ -5,11 +5,7 @@ description: "Let OpenWork pick the right model and thinking level for every pro
 
 The Smart Model Router lets members choose a **Smart** model instead of a specific one. You create Smart Routers, each with a name, the people it applies to, and a few AI Gateway models tagged with the tasks they're good at. For every prompt, OpenWork sends it to the model whose tasks fit it best, and decides how much that model should think.
 
-You set it up in OpenWork Cloud under **AI Gateway → AI Providers**, where Smart Routers are listed above your providers. Members don't configure anything: each Smart Router that applies to them appears at the top of their model picker as **Smart:** followed by the router's name, for example **Smart: Engineering**.
-
-<Note>
-The Smart Model Router is rolling out on OpenWork Cloud. If you don't see **Add a Smart Router** under AI Providers, ask OpenWork to turn it on for your organization.
-</Note>
+You set it up in OpenWork Cloud (or your self-hosted OpenWork) under **AI Gateway → AI Providers**, where Smart Routers are listed above your providers. Members don't configure anything: each Smart Router that applies to them appears at the top of their model picker as **Smart:** followed by the router's name, for example **Smart: Engineering**.
 
 ## Why use it
 
@@ -112,4 +108,4 @@ Open a Smart Router with **Manage** and select **Remove**. Its Smart model disap
 
 ## Self-hosted
 
-The Smart Model Router is offered on OpenWork Cloud first. Where it is available on a self-hosted install, give the AI Gateway a TypeSafe API key through the Helm chart's `secret.values.typesafeApiKey` (or the `TYPESAFE_API_KEY` key in your existing Secret). Without a key, Smart is off: **Add a Smart Router** explains how to add the key, and members don't see Smart models. See the chart's README for details.
+On a self-hosted install, give the AI Gateway a TypeSafe API key through the Helm chart's `secret.values.typesafeApiKey` (or the `TYPESAFE_API_KEY` key in your existing Secret). Without a key, Smart is off: **Add a Smart Router** explains how to add the key, and members don't see Smart models. See the chart's README for details.

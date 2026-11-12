@@ -35,8 +35,8 @@ export function connectorSharedBeyondCreator(
 /**
  * Section facts for the Connectors intro (DESIGN.md I2), from the same
  * connector lists the Connectors pages load. The queries run only while
- * `enabled` (the `featureIntros` flag), so pages that don't already load them
- * make no extra requests with the flag off. Null until both lists are known.
+ * `enabled` (intros are running for a loaded organization). Null until both
+ * lists are known.
  */
 export function useConnectorsIntroFacts(enabled: boolean): ConnectorsFacts | null {
   const manageable = useMcpConnections("manageable", { enabled });

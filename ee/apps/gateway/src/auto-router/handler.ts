@@ -1,4 +1,4 @@
-// Smart Model Router (feature `autoRouter`): a desktop sends an OpenAI chat
+// Smart Model Router: a desktop sends an OpenAI chat
 // request with model `openwork-smart-<router id>`. The gateway asks Jev to
 // score the latest prompt against the router's tasks, picks the model whose
 // tasks score highest in total at the thinking level Jev suggests, rewrites

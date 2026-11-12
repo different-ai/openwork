@@ -146,7 +146,7 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
   const [savingAccess, setSavingAccess] = useState(false);
   const [accessError, setAccessError] = useState<string | null>(null);
   const back = mode === "admin" ? { href: getPluginsRoute(orgSlug), label: "Plugins" } : { href: getLibraryRoute(orgSlug), label: "My Library" };
-  // Feature intros (flag `featureIntros`): on Manage, a banner while nobody besides its owner can use this plugin,
+  // Feature intros: on Manage, a banner while nobody besides its owner can use this plugin,
   // directly or through a collection it's in.
   const introsEnabled = useFeatureIntroRuntime().enabled;
   const collectionGrants = usePluginCollectionGrants(

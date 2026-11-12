@@ -70,7 +70,7 @@ export const AUTO_ROUTER_GROUP = "Smart";
 export const SMART_MODEL_FALLBACK_NAME = "Smart";
 
 /**
- * One of the organization's Smart Routers (feature `autoRouter`): the Gateway
+ * One of the organization's Smart Routers: the Gateway
  * picks the real model for every prompt. Every router is a model of the one
  * `openwork-auto` provider, named "Smart: <router name>". Not OpenWork Free.
  */

@@ -146,7 +146,7 @@ export function AdminConnectorPageScreen({ connection, confirmRemove = false }: 
     ? { orgWide: connection.access.orgWide, memberIds: connection.access.memberIds, teamIds: connection.access.teamIds }
     : { orgWide: false, memberIds: [], teamIds: [] };
   const addedBy = connection.createdByName?.trim();
-  // Feature intros (flag `featureIntros`): a banner while nobody besides whoever added it can use this connector.
+  // Feature intros: a banner while nobody besides whoever added it can use this connector.
   const connectorsFacts = useConnectorsIntroFacts(useFeatureIntroRuntime().enabled);
   const accessIntro = useFeatureIntro("connectors.access", connectorsFacts ? {
     ...connectorsFacts,

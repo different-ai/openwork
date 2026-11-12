@@ -18,7 +18,7 @@ type OrganizationId = typeof MemberTable.$inferSelect.organizationId
 type OrganizationMemberId = typeof MemberTable.$inferSelect.id
 type ApiKeyId = typeof AuthApiKeyTable.$inferSelect.id
 
-/** `standard`: acts as its member everywhere. `config`: a config token (feature `configBlobs`), see config-blobs/token.ts. */
+/** `standard`: acts as its member everywhere. `config`: a config token, see config-blobs/token.ts. */
 export const DEN_API_KEY_TYPES = ["standard", "config"] as const
 export type DenApiKeyType = (typeof DEN_API_KEY_TYPES)[number]
 

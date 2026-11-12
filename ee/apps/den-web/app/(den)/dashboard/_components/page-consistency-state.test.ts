@@ -4,9 +4,9 @@ import { auditFiltersFromDraft, auditLocalDate, normalizeAllowedEmailDomainsInpu
 
 const saved = {
   name: "Example workspace", domains: ["example.com", "partner.test"], domainRestrictionsEnabled: true,
-  sso: { requireSso: true, restrictDomainToSso: false }, desktopVersions: ["1.2.3", "1.2.4"],
+  desktopVersions: ["1.2.3", "1.2.4"],
 };
-const compare = { compareSso: true, compareVersions: true };
+const compare = { compareVersions: true };
 
 test("audit draft validation rejects invalid dates and reversed ranges without serializing or mutating the draft", () => {
   for (const draft of [
@@ -47,11 +47,10 @@ test("settings compare domains and desktop versions as sets, not formatting or o
   assert.equal(settingsDraftChanged(saved, { ...saved, desktopVersions: ["1.2.3"] }, compare), true);
   assert.equal(settingsDraftChanged(saved, { ...saved, domains: ["other.test"] }, compare), true);
   assert.equal(settingsDraftChanged(saved, { ...saved, name: "Another workspace" }, compare), true);
-  assert.equal(settingsDraftChanged(saved, { ...saved, sso: { ...saved.sso, restrictDomainToSso: true } }, compare), true);
 });
 
-test("unavailable versions and hidden SSO fields do not create unsaveable dirty state", () => {
-  assert.equal(settingsDraftChanged(saved, { ...saved, desktopVersions: [], sso: { requireSso: false, restrictDomainToSso: true } }, { compareVersions: false, compareSso: false }), false);
+test("unavailable versions do not create unsaveable dirty state", () => {
+  assert.equal(settingsDraftChanged(saved, { ...saved, desktopVersions: [] }, { compareVersions: false }), false);
   const unrestricted = { ...saved, domains: [], domainRestrictionsEnabled: false };
   assert.equal(settingsDraftChanged(unrestricted, { ...unrestricted, domainRestrictionsEnabled: true }, compare), true);
 });

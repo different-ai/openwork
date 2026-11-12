@@ -84,7 +84,7 @@ export function WorkflowRunsScreen() {
       return getWorkflowRuns(payload);
     },
   });
-  // With `featureIntros` on, a box replaces "No workflow runs yet".
+  // Feature intro: a box replaces "No workflow runs yet".
   const intro = useFeatureIntro("analytics.workflow-runs", entitled ? workflowRunsIntroFacts(runs) : null);
 
   return <div className={analyticsPageClass}>

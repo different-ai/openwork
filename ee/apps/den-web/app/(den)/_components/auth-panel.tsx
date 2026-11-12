@@ -36,7 +36,7 @@ type LoginOption = {
   alternativeStep: AlternativeLoginStep | null;
   ssoRequired: boolean;
   organizationName: string | null;
-  /** multipleSsoConnections: the identity providers that sign in this email; several get one button each. */
+  /** The identity providers that sign in this email; several get one button each. */
   ssoProviders: SsoProviderOption[];
 };
 

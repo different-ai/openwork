@@ -76,7 +76,7 @@ from settings needs the Enterprise plan.
   or Google session has no proofs to carry.
 - **"Ask for SSO again" was removed.** An SSO proof opens the organization for
   as long as the session lasts; how long sessions last is set in Auth &
-  Security › General ([`sessionSecuritySettings`](../session-security-settings/README.md)).
+  Security › General ([session settings](../session-security-settings/README.md)).
   `PATCH /v1/org` no longer accepts `ssoSessionMaxAgeHours`, and a value
   stored before the removal is ignored.
 - `session_sso_authentication` (one row per session) is superseded by

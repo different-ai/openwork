@@ -90,9 +90,6 @@ let connectionId = ""
 let scimToken = ""
 
 test("setup: an OIDC connection, enabled, with SCIM creating teams", async () => {
-  for (const key of ["sessionSecuritySettings", "authSecuritySettings", "multipleSsoConnections"]) {
-    assert.equal((await den.setFeature(orgA.orgId, key, true)).status, 200)
-  }
   const registered = await apiA("POST", "/v1/sso/oidc", {
     issuer,
     domain: domainA,

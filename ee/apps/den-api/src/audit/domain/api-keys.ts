@@ -15,7 +15,7 @@ export const apiKeyAuditColumns = {
 }
 export type ApiKeyAuditRow = Pick<typeof AuthApiKeyTable.$inferSelect, "id" | "name" | "prefix" | "enabled" | "expiresAt" | "rateLimitEnabled" | "rateLimitMax" | "rateLimitTimeWindow" | "createdAt">
 export type ApiKeyAuditOwner = Readonly<{ userId: string; memberId: string }>
-/** Config token kind for the snapshot (configBlobs); standard keys pass nothing. */
+/** Config token kind for the snapshot; standard keys pass nothing. */
 export type ApiKeyAuditKind = Readonly<{ type: "config"; scopes: readonly string[]; areas: readonly string[] | null }>
 export type ApiKeyRevocationReason = "member_role_changed" | "member_removed" | "ownership_transferred" | "role_permissions_changed" | "member_access_changed"
 

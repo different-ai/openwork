@@ -22,7 +22,7 @@ export type ProviderCatalog = {
 }
 
 /**
- * Custom OpenAI-compatible providers (feature `gatewayCustomProviders`) are not
+ * Custom OpenAI-compatible providers are not
  * in models.dev. Every such row shares this synthetic, address-less entry: the
  * upstream always comes from the row's `settings.upstreamBaseUrl`, which must be
  * a public HTTPS address or an operator-allowlisted origin.

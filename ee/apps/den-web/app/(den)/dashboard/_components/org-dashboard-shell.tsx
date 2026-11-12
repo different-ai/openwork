@@ -49,8 +49,6 @@ import {
   getMarketplacesRoute,
   getMarketplaceOnboardingRoute,
   getPluginsRoute,
-  getSsoRoute,
-  getScimRoute,
   getAuthSecurityRoute,
   getWorkflowRunsRoute,
   getWebRoute,
@@ -268,12 +266,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getAuthSecurityRoute(orgSlug))) {
     return "Auth & Security";
-  }
-  if (pathname.startsWith(getScimRoute(orgSlug))) {
-    return "SCIM";
-  }
-  if (pathname.startsWith(getSsoRoute(orgSlug))) {
-    return "SSO";
   }
   if (pathname.startsWith(getAutomationsRoute(orgSlug))) {
     return "My Automations";
@@ -501,8 +493,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
     remoteDevices: orgFeatureEnabled(orgContext, "remoteDevices"),
     managedDeployments: orgFeatureEnabled(orgContext, "managedDeployments"),
-    authSecuritySettings: orgFeatureEnabled(orgContext, "authSecuritySettings"),
-    configBlobs: orgFeatureEnabled(orgContext, "configBlobs"),
     canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
 
     desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),

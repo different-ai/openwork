@@ -94,7 +94,7 @@ export function GatewayUsersTeamsSection({ orgId, orgSlug, orgContext }: { orgId
   const teamUsage = useGatewayUsage(orgId, "team", []);
   const [query, setQuery] = useState("");
   const [pages, setPages] = useState(1);
-  // Feature intros (flag `featureIntros`): providers nobody can use yet → a banner above the directory.
+  // Feature intros: providers nobody can use yet → a banner above the directory.
   const accessIntro = useFeatureIntro(
     "ai-gateway.users-and-teams",
     providers.data ? { accessGrants: providers.data.reduce((count, provider) => count + provider.accessGrants.length, 0) } : null,

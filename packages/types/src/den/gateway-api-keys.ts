@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * AI Gateway API keys for 3rd party tools (feature `gatewayMemberApiKeys`).
+ * AI Gateway API keys for 3rd party tools.
  *
  * An organization admin turns the setting on in Settings › General › AI Gateway. Members can then create
  * their own named Gateway keys and call the Gateway's provider-less endpoints from any tool or harness.

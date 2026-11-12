@@ -105,7 +105,7 @@ export const GatewayKeyTable = mysqlTable(
 )
 
 /**
- * Keys members create themselves for 3rd party tools (feature `gatewayMemberApiKeys`). Separate from
+ * Keys members create themselves for 3rd party tools. Separate from
  * gateway_keys, which holds the one key OpenWork issues and pushes to each member's own apps. Only a
  * digest is stored: the key is shown once when it is created. A key authenticates as its member, so it
  * reaches exactly what that member's grants allow.

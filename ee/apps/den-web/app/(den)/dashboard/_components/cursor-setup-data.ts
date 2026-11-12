@@ -10,9 +10,9 @@ import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 /**
- * Setting up a 3rd party tool with an AI Gateway API key (feature `gatewayMemberApiKeys`): the models
+ * Setting up a 3rd party tool with an AI Gateway API key: the models
  * the viewer can use right now, one entry per model however many groups and credential sets grant
- * it, as the AI Gateway lists them, then the Smart Routers (feature `autoRouter`) they can use.
+ * it, as the AI Gateway lists them, then the Smart Routers they can use.
  */
 const usableProvidersSchema = z.object({
   inferenceProviders: z.array(z.object({
@@ -119,7 +119,7 @@ export function claudeCodeToolModelName(model: GatewayToolModel): string {
   return claudeCodeModelName({ name: model.name, modelId: model.modelId, contextWindow: model.contextWindow });
 }
 
-/** Smart Routers are optional here: the feature being off (404) or any failure just lists none. */
+/** Smart Routers are optional here: any failure just lists none. */
 async function fetchSmartRouters(orgId: string, signal: AbortSignal): Promise<GatewayToolModel[]> {
   try {
     const { response, payload } = await requestJson("/v1/org/auto-router/mine", { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId }, signal }, 15_000);

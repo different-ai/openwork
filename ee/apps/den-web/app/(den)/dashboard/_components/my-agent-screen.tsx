@@ -43,7 +43,7 @@ export function MyAgentScreen() {
   const { orgSlug, orgContext } = useOrgDashboard();
   const orgId = orgContext?.organization.id ?? "";
   const available = myAgentAvailable(orgContext);
-  // Feature intros (flag `featureIntros`): My bot answers `?` only; its switch and settings are the setup.
+  // Feature intros: My bot answers `?` only; its switch and settings are the setup.
   useFeatureIntro("my-bot", orgContext ? {} : null);
   // With Workbot settings per team on, an admin can turn Workbot off for the member, and their agent with it.
   // The check is the one the Workbot entry already made; Den would refuse the agent's own requests.

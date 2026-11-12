@@ -30,7 +30,6 @@ import {
   saveAutoRouterAssignment,
 } from "../../auto-router.js"
 import { env } from "../../env.js"
-import { requireFeature } from "../../features.js"
 import { ensureMemberGatewayKey } from "../../gateway-keys.js"
 import { jsonValidator, orgMemberRoute, paramValidator, requireOrgPermission } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -55,7 +54,7 @@ const writeProblemSchema = z
   .meta({ ref: "AutoRouterWriteProblem" })
 
 const routerParamsSchema = idParamSchema("routerId", "autoRouter")
-const notFound = jsonResponse("The organization or Smart Router was not found, or the Smart Model Router feature is off.", notFoundSchema)
+const notFound = jsonResponse("The organization or Smart Router was not found.", notFoundSchema)
 const unauthorized = jsonResponse("Authentication required.", unauthorizedSchema)
 const manageForbidden = jsonResponse("The caller lacks the Manage Gateway providers permission or needs to sign in again.", forbiddenSchema)
 
@@ -91,7 +90,7 @@ const assignmentResponses = {
 }
 
 /**
- * Smart Model Router (feature `autoRouter`): admins create named routers,
+ * Smart Model Router: admins create named routers,
  * assign each to everyone, teams or members, and list AI Gateway models with
  * the tasks each handles; members pick "Smart: <name>" in the desktop and the
  * gateway routes each prompt (packages/types/src/den/auto-router.ts).
@@ -145,7 +144,7 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Inference Providers"],
       summary: "List Smart Routers",
-      description: "Returns the organization's Smart Routers, oldest first: each one's name, who it applies to (everyone, teams, members), and its AI Gateway models with the tasks each handles. Also returns every task in the organization and whether the AI Gateway can route (routing: ready, missing_key when it has no TypeSafe key, or unknown when it could not be reached). Requires the View Gateway providers permission and the Smart Model Router feature.",
+      description: "Returns the organization's Smart Routers, oldest first: each one's name, who it applies to (everyone, teams, members), and its AI Gateway models with the tasks each handles. Also returns every task in the organization and whether the AI Gateway can route (routing: ready, missing_key when it has no TypeSafe key, or unknown when it could not be reached). Requires the View Gateway providers permission.",
       responses: {
         200: jsonResponse("Smart Routers returned.", autoRouterListSchema),
         401: unauthorized,
@@ -154,7 +153,6 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
-    requireFeature("autoRouter"),
     requireOrgPermission("gateway_providers.view"),
     async (c) => {
       c.header("Cache-Control", "no-store")
@@ -167,7 +165,7 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Inference Providers"],
       summary: "List models for Smart Routers",
-      description: "Lists the AI Gateway models a Smart Router can use, and who can use each through the AI Gateway's access grants (everyone, team ids, member ids). Only models in an active model group of an active provider, whose protocol the gateway can route Smart requests to, are listed. Requires the View Gateway providers permission and the Smart Model Router feature.",
+      description: "Lists the AI Gateway models a Smart Router can use, and who can use each through the AI Gateway's access grants (everyone, team ids, member ids). Only models in an active model group of an active provider, whose protocol the gateway can route Smart requests to, are listed. Requires the View Gateway providers permission.",
       responses: {
         200: jsonResponse("Models returned.", autoRouterOptionsSchema),
         401: unauthorized,
@@ -176,7 +174,6 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
-    requireFeature("autoRouter"),
     requireOrgPermission("gateway_providers.view"),
     async (c) => {
       c.header("Cache-Control", "no-store")
@@ -189,11 +186,10 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Inference Providers"],
       summary: "Create a Smart Router",
-      description: "Creates a Smart Router: its name and its AI Gateway models in order, each with the tasks it handles (at least one). It applies to nobody until who it applies to is set with PUT /v1/org/auto-routers/{routerId}/assignment. Tasks are shared across the organization and matched case-insensitively; new names are created. The first model wins ties and is used when the router cannot decide. Refused with auto_router_not_configured while the AI Gateway has no TypeSafe key. Requires the Manage Gateway providers permission, a recent sign-in and the Smart Model Router feature. Returns the whole list and the new router's id.",
+      description: "Creates a Smart Router: its name and its AI Gateway models in order, each with the tasks it handles (at least one). It applies to nobody until who it applies to is set with PUT /v1/org/auto-routers/{routerId}/assignment. Tasks are shared across the organization and matched case-insensitively; new names are created. The first model wins ties and is used when the router cannot decide. Refused with auto_router_not_configured while the AI Gateway has no TypeSafe key. Requires the Manage Gateway providers permission and a recent sign-in. Returns the whole list and the new router's id.",
       responses: { 200: jsonResponse("Smart Router created.", autoRouterSavedSchema), ...writeResponses },
     }),
     orgMemberRoute(),
-    requireFeature("autoRouter"),
     requireOrgPermission("gateway_providers.manage"),
     jsonValidator(autoRouterWriteSchema),
     async (c) => save(c, c.req.valid("json")),
@@ -204,11 +200,10 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Inference Providers"],
       summary: "Update a Smart Router",
-      description: "Replaces a Smart Router's name and models with their tasks; who it applies to is kept. Tasks no model uses anymore are removed from the organization. Requires the Manage Gateway providers permission, a recent sign-in and the Smart Model Router feature. Returns the whole list and the router's id.",
+      description: "Replaces a Smart Router's name and models with their tasks; who it applies to is kept. Tasks no model uses anymore are removed from the organization. Requires the Manage Gateway providers permission and a recent sign-in. Returns the whole list and the router's id.",
       responses: { 200: jsonResponse("Smart Router saved.", autoRouterSavedSchema), ...writeResponses },
     }),
     orgMemberRoute(),
-    requireFeature("autoRouter"),
     requireOrgPermission("gateway_providers.manage"),
     paramValidator(routerParamsSchema),
     jsonValidator(autoRouterWriteSchema),
@@ -220,11 +215,10 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Inference Providers"],
       summary: "Set who a Smart Router applies to",
-      description: "Replaces who a Smart Router applies to: everyone, teams and members. Members it applies to get \"Smart: <name>\" in the desktop at their next provider sync, when they can use at least one of its models. Making it apply to everyone also needs the Share with everyone permission. Requires the Manage Gateway providers permission, a recent sign-in and the Smart Model Router feature. Returns the whole list and the router's id.",
+      description: "Replaces who a Smart Router applies to: everyone, teams and members. Members it applies to get \"Smart: <name>\" in the desktop at their next provider sync, when they can use at least one of its models. Making it apply to everyone also needs the Share with everyone permission. Requires the Manage Gateway providers permission and a recent sign-in. Returns the whole list and the router's id.",
       responses: assignmentResponses,
     }),
     orgMemberRoute(),
-    requireFeature("autoRouter"),
     requireOrgPermission("gateway_providers.manage"),
     paramValidator(routerParamsSchema),
     jsonValidator(autoRouterAssignmentWriteSchema),
@@ -236,7 +230,7 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Inference Providers"],
       summary: "Delete a Smart Router",
-      description: "Deletes a Smart Router; members it applied to lose its Smart model at their next provider sync. Tasks no other router uses are removed. Requires the Manage Gateway providers permission, a recent sign-in and the Smart Model Router feature. Returns the whole list.",
+      description: "Deletes a Smart Router; members it applied to lose its Smart model at their next provider sync. Tasks no other router uses are removed. Requires the Manage Gateway providers permission and a recent sign-in. Returns the whole list.",
       responses: {
         200: jsonResponse("Smart Router deleted.", autoRouterListSchema),
         400: jsonResponse("The router id is invalid.", invalidRequestSchema),
@@ -246,7 +240,6 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
-    requireFeature("autoRouter"),
     requireOrgPermission("gateway_providers.manage"),
     paramValidator(routerParamsSchema),
     async (c) => {
@@ -261,7 +254,7 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Inference Providers"],
       summary: "List my Smart Routers",
-      description: "Lists the Smart Routers the caller can use: each one that applies to the caller and has at least one model they can use, by id and name. Empty while the AI Gateway has no TypeSafe key. 3rd party tools reach them through the AI Gateway as openwork/smart-<name>-<end of id>. Requires organization membership and the Smart Model Router feature.",
+      description: "Lists the Smart Routers the caller can use: each one that applies to the caller and has at least one model they can use, by id and name. Empty while the AI Gateway has no TypeSafe key. 3rd party tools reach them through the AI Gateway as openwork/smart-<name>-<end of id>. Requires organization membership.",
       responses: {
         200: jsonResponse("Smart Routers returned.", autoRouterMemberListSchema),
         401: unauthorized,
@@ -269,7 +262,6 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgMemberRoute(),
-    requireFeature("autoRouter"),
     async (c) => {
       c.header("Cache-Control", "no-store")
       const payload = c.get("organizationContext")
@@ -284,7 +276,7 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
     describeRoute(secretRoute({
       tags: ["Inference Providers"],
       summary: "Connect to Smart",
-      description: "For desktops: returns the OpenAI-compatible gateway base URL, the caller's own Gateway key, and one model per Smart Router that applies to the caller and has at least one model they can use (named \"Smart: <router name>\"). Answers 404 when there is none, including while the AI Gateway has no TypeSafe key. Never returns provider secrets. Requires organization membership and the Smart Model Router feature.",
+      description: "For desktops: returns the OpenAI-compatible gateway base URL, the caller's own Gateway key, and one model per Smart Router that applies to the caller and has at least one model they can use (named \"Smart: <router name>\"). Answers 404 when there is none, including while the AI Gateway has no TypeSafe key. Never returns provider secrets. Requires organization membership.",
       responses: {
         200: jsonResponse("Connection returned.", autoRouterConnectSchema),
         401: unauthorized,
@@ -292,7 +284,6 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
       },
     })),
     orgMemberRoute(),
-    requireFeature("autoRouter"),
     async (c) => {
       c.header("Cache-Control", "no-store")
       const payload = c.get("organizationContext")

@@ -4,11 +4,10 @@ import { Check, ChevronRight, Copy, Pencil, SlidersHorizontal, Trash2 } from "lu
 import { useEffect, useMemo, useRef, useState } from "react";
 import { markFeatureUsed } from "../../_lib/feature-usage";
 import { normalizeAllowedEmailDomainsInput, refreshedDraft, sameStringSet, settingsDraftChanged } from "./page-consistency-state";
-import { getErrorMessage, requestJson, SsoSessionRequiredError } from "../../_lib/den-flow";
+import { getErrorMessage, requestJson } from "../../_lib/den-flow";
 import {
   getAllowedDesktopVersionsFromMetadata,
   getOrgAccessFlags,
-  getSsoSettingsFromMetadata,
   orgFeatureEnabled,
   permissionLockReason,
 } from "../../_lib/den-org";
@@ -28,8 +27,6 @@ import { ItemSection } from "./item-list";
 import { COMPACT_INPUT_CLASS, DASHBOARD_PAGE_CLASS, SETTINGS_MEASURE_CLASS } from "../../_components/ui/dashboard-styles";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenCheckbox } from "../../_components/ui/checkbox";
-import { SsoRequirementFields } from "./sso-requirement-fields";
-import { ssoSettingsChanges, type SsoSettings } from "../../_lib/sso-settings";
 import {
   allPublishedDesktopVersionsAllowed,
   compareDesktopVersions,
@@ -166,7 +163,6 @@ export function OrgSettingsScreen() {
   const [allowedDomainsDraft, setAllowedDomainsDraft] = useState("");
   const [domainRestrictionsEnabled, setDomainRestrictionsEnabled] =
     useState(false);
-  const [ssoDraft, setSsoDraft] = useState<SsoSettings>({ requireSso: false, restrictDomainToSso: false });
   const [domainEditModeEnabled, setDomainEditModeEnabled] = useState(false);
   const [desktopVersionOptions, setDesktopVersionOptions] = useState<string[]>(
     [],
@@ -183,7 +179,6 @@ export function OrgSettingsScreen() {
     string | null
   >(null);
   const [pageError, setPageError] = useState<string | null>(null);
-  const [ssoRecoveryPath, setSsoRecoveryPath] = useState<string | null>(null);
   const [copiedOrgId, setCopiedOrgId] = useState(false);
   const [denVersion, setDenVersion] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -193,7 +188,7 @@ export function OrgSettingsScreen() {
   const pageConsistency = orgFeatureEnabled(orgContext, "denPageConsistency");
   const currentAllowedDomains =
     orgContext?.organization.allowedEmailDomains ?? null;
-  const previousSettings = useRef<{ orgId: string; name: string; domains: string; restricted: boolean; sso: SsoSettings } | null>(null);
+  const previousSettings = useRef<{ orgId: string; name: string; domains: string; restricted: boolean } | null>(null);
   const previousVersions = useRef<{ orgId: string; versions: string[] } | null>(null);
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
@@ -230,30 +225,26 @@ export function OrgSettingsScreen() {
   });
   const pageSuccess = orgSettingsCompletion?.message ?? null;
   const savedDomains = orgContext?.organization.allowedEmailDomains ?? [];
-  const savedSso = getSsoSettingsFromMetadata(orgContext?.organization.metadata ?? null);
   const savedDesktopVersions = useMemo(() => orgContext && supportedDesktopVersionOptions.length > 0
     ? initialAllowedDesktopVersions(getAllowedDesktopVersionsFromMetadata(orgContext.organization.metadata), supportedDesktopVersionOptions).filter((version) => supportedDesktopVersionOptions.includes(version))
     : [], [orgContext, supportedDesktopVersionOptions]);
   // Compare effective values, not formatting or set order. Unavailable/hidden fields are not submitted.
   const dirty = Boolean(orgContext) && settingsDraftChanged({
     name: orgContext?.organization.name ?? "", domains: savedDomains, domainRestrictionsEnabled: savedDomains.length > 0,
-    sso: savedSso, desktopVersions: savedDesktopVersions,
+    desktopVersions: savedDesktopVersions,
   }, {
     name: orgNameDraft, domains: draftAllowedDomains ?? [], domainRestrictionsEnabled,
-    sso: ssoDraft, desktopVersions: allowedDesktopVersionsDraft,
+    desktopVersions: allowedDesktopVersionsDraft,
   }, {
-    compareSso: orgFeatureEnabled(orgContext, "ssoPerOrganization") && !orgFeatureEnabled(orgContext, "ssoSettingsOnSsoPage"),
     compareVersions: supportedDesktopVersionOptions.length > 0,
   });
   function discardChanges() {
     if (!orgContext || !canManageSettings || !dirty || mutationBusy === "update-organization-settings") return;
     if (pageConsistency) markFeatureUsed("denPageConsistency");
     clearOrgSettingsCompletion();
-    setSsoRecoveryPath(null);
     setOrgNameDraft(orgContext.organization.name);
     setAllowedDomainsDraft(savedDomains.join("\n"));
     setDomainRestrictionsEnabled(savedDomains.length > 0);
-    setSsoDraft(savedSso);
     setAllowedDesktopVersionsDraft(savedDesktopVersions);
     setDomainEditModeEnabled(false);
     setPageError(null);
@@ -286,7 +277,6 @@ export function OrgSettingsScreen() {
       name: orgContext.organization.name,
       domains: (orgContext.organization.allowedEmailDomains ?? []).join("\n"),
       restricted: (orgContext.organization.allowedEmailDomains?.length ?? 0) > 0,
-      sso: getSsoSettingsFromMetadata(orgContext.organization.metadata),
     };
     const previous = previousSettings.current;
     // A rollout change is not an organization switch: never erase an unsaved draft when the flag is killed.
@@ -295,12 +285,9 @@ export function OrgSettingsScreen() {
     setAllowedDomainsDraft((current) => refreshedDraft(current, previous?.domains, next.domains, sameOrganization,
       (left, right) => sameStringSet(normalizeAllowedEmailDomainsInput(left) ?? [], normalizeAllowedEmailDomainsInput(right) ?? [])));
     setDomainRestrictionsEnabled((current) => refreshedDraft(current, previous?.restricted, next.restricted, sameOrganization));
-    setSsoDraft((current) => refreshedDraft(current, previous?.sso, next.sso, sameOrganization,
-      (left, right) => left.requireSso === right.requireSso && left.restrictDomainToSso === right.restrictDomainToSso));
     if (!sameOrganization) {
       setDomainEditModeEnabled(false);
       setPageError(null);
-      setSsoRecoveryPath(null);
     }
     previousSettings.current = next;
   }, [orgContext, pageConsistency]);
@@ -416,8 +403,6 @@ export function OrgSettingsScreen() {
 
   const organizationId = orgContext.organization.id;
   const organizationName = orgContext.organization.name;
-  const ssoPerOrganization = orgFeatureEnabled(orgContext, "ssoPerOrganization");
-  const ssoSettingsOnSsoPage = orgFeatureEnabled(orgContext, "ssoSettingsOnSsoPage");
 
   async function handleCopyOrgId() {
     await navigator.clipboard.writeText(organizationId);
@@ -442,7 +427,6 @@ export function OrgSettingsScreen() {
   async function handleSaveSettings(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPageError(null);
-    setSsoRecoveryPath(null);
     clearOrgSettingsCompletion();
 
     if (!canManageSettings) {
@@ -462,13 +446,6 @@ export function OrgSettingsScreen() {
         allowedEmailDomains: domainRestrictionsEnabled
           ? draftAllowedDomains
           : null,
-        ...(ssoSettingsOnSsoPage
-          ? {}
-          : ssoSettingsChanges({
-              perOrganization: ssoPerOrganization,
-              saved: getSsoSettingsFromMetadata(orgContext?.organization.metadata ?? null),
-              draft: ssoDraft,
-            })),
         ...(supportedDesktopVersionOptions.length > 0
           ? {
               allowedDesktopVersions: allDesktopVersionsAllowed
@@ -486,9 +463,6 @@ export function OrgSettingsScreen() {
           ? error.message
           : "Could not update workspace settings.",
       );
-      if (error instanceof SsoSessionRequiredError) {
-        setSsoRecoveryPath(`${error.signInPath}?callbackURL=${encodeURIComponent(window.location.href)}`);
-      }
     }
   }
 
@@ -538,18 +512,13 @@ export function OrgSettingsScreen() {
       {/* Settings read as label and control side by side, so they keep a narrower measure than the lists. */}
       <div className={SETTINGS_MEASURE_CLASS}>
       {orgContext && !orgContext.entitlements.orgControls ? (
-        <EnterprisePlanNotice feature={ssoSettingsOnSsoPage ? "Desktop version control" : "Enforced SSO and desktop version control"} />
+        <EnterprisePlanNotice feature="Desktop version control" />
       ) : null}
       {pageError ? (
         <DenNotice
           message={pageError}
           className="mb-6"
-          tone={ssoRecoveryPath ? "neutral" : "error"}
-          action={ssoRecoveryPath ? (
-            <DenButton href={ssoRecoveryPath} variant="secondary" size="sm">
-              Sign in with SSO
-            </DenButton>
-          ) : undefined}
+          tone="error"
         />
       ) : null}
       {pageSuccess ? (
@@ -656,18 +625,6 @@ export function OrgSettingsScreen() {
           ) : null}
           </ItemSection>
         </section>
-
-        {ssoSettingsOnSsoPage ? null : (
-          <ItemSection variant="rule" title="Single sign-on requirement">
-
-            <SsoRequirementFields
-              perOrganization={ssoPerOrganization}
-              draft={ssoDraft}
-              disabled={!canManageSettings}
-              onChange={setSsoDraft}
-            />
-          </ItemSection>
-        )}
 
                   <OrgAutomationSettingsSection canManage={canManageSettings} />
 

@@ -2,7 +2,7 @@
 
 import { Lock, Plus } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
-import { getLibraryRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getLibraryRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { createOwnGatewayApiKeyRoute, useMyGatewayApiKeys } from "./gateway-api-keys-data";
 import { CursorSteps } from "./gateway-tool-setup";
@@ -10,17 +10,15 @@ import { ItemHeader, ItemPage } from "./item-header";
 import { ItemPanel } from "./item-list";
 
 /**
- * Library › Models › Set up Cursor (feature `gatewayMemberApiKeys`): what to paste into Cursor's
+ * Library › Models › Set up Cursor: what to paste into Cursor's
  * settings, with every model's Cursor name to copy. The key itself is only shown when it is created,
  * so this page links to creating one.
  */
 export function CursorSetupScreen() {
-  const { orgSlug, orgContext } = useOrgDashboard();
-  const available = orgFeatureEnabled(orgContext, "gatewayMemberApiKeys");
-  const keys = useMyGatewayApiKeys(available);
+  const { orgSlug } = useOrgDashboard();
+  const keys = useMyGatewayApiKeys();
   const back = { href: `${getLibraryRoute(orgSlug)}?show=models`, label: "My Library" };
 
-  if (!available) return <ItemPage><ItemHeader back={back} title="Not available" description="Cursor setup isn't turned on for your organization." /></ItemPage>;
   if (!keys.data && keys.isLoading) return <ItemPage><ItemHeader back={back} title="Loading..." /></ItemPage>;
   if (!keys.data) return <ItemPage><ItemHeader back={back} title="It did not load" description="Reload the page to try again." /></ItemPage>;
 

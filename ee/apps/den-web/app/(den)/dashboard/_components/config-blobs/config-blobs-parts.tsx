@@ -1,19 +1,15 @@
 "use client";
 
 import type { ConfigChangeRequestStatus, ConfigPlanSummary } from "@openwork/types/den/config-blobs";
-import { notFound } from "next/navigation";
 import { DenChip } from "../../../_components/ui/chip";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
-import { orgFeatureEnabled } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { CONFIG_STATUS_PRESENTATION, formatSummaryCounts, isTransientStatus } from "./config-blobs-model";
 
-/** Settings › Config exists only with the `configBlobs` feature on; otherwise the page is not found. */
-export function useConfigBlobsFeature(): { ready: boolean } {
+/** Settings › Config renders once the organization has loaded. */
+export function useConfigOrgReady(): { ready: boolean } {
   const { orgContext, orgBusy } = useOrgDashboard();
-  if (orgBusy || !orgContext) return { ready: false };
-  if (!orgFeatureEnabled(orgContext, "configBlobs")) notFound();
-  return { ready: true };
+  return { ready: !orgBusy && Boolean(orgContext) };
 }
 
 export function ConfigStatusChip({ status }: { status: ConfigChangeRequestStatus }) {
