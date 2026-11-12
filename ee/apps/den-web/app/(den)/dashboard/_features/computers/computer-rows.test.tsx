@@ -15,7 +15,7 @@ const row = (html: string, id: string) => html.split('role="row"').find((part) =
 const desktop: OrganizationComputer = {
   id: "rdv_mac", kind: "desktop", provider: "openwork_desktop", source: "desktop_app", platform: "darwin", label: "Alex's MacBook Pro",
   availability: "online", state: "ready", statusDetail: null, lastSeenAt: "2026-11-10T12:08:00Z", createdAt: "2026-11-03T12:00:00Z",
-  appVersion: "0.18.66-alpha.4137+053df1c", computerId: "cmp_1", workbotChat: null, canRemove: false, disconnectedAt: null, canDisconnect: true,
+  appVersion: "0.18.66-alpha.4137+053df1c", computerId: "cmp_1", workbotChat: null, canRemove: false, disconnectedAt: null, canDisconnect: true, remoteAccess: null,
   organization: { id: "org_1", name: "Fieldnotes Studio" }, owner: { memberId: "mem_alex", name: "Alex Morgan", email: "alex@example.com", former: false }, shared: false,
   externalId: "install-1", removedAt: null, recentProblems: 0, lastEvent: null,
 };
@@ -53,6 +53,12 @@ test("each computer is one row: what it is, its owner, status, last contact and 
   assert.doesNotMatch(text(html), /4137|053df1c/);
   assert.match(row(html, "rdv_mac"), /title="0\.18\.66-alpha\.4137\+053df1c"/);
   assert.match(row(html, "rdv_mac"), /<time[^>]*title="[^"]+"[^>]*>2 min ago<\/time>/);
+});
+
+test("the team list keeps its lanes: what other devices can do on a computer is in its open detail, not in the row", () => {
+  const html = render([{ ...desktop, remoteAccess: { effective: "off", chosen: false, reason: "not_chosen" } }, needsSetup]);
+  assert.match(text(html), /Computer Owner Status Last contact App version/);
+  assert.doesNotMatch(html, /Other devices can|data-remote-access|Not allowed|basis-full/);
 });
 
 test("computers of one owner that share a name say when each was added; a name used once says nothing more", () => {

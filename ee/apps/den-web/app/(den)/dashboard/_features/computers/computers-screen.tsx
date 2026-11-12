@@ -10,13 +10,12 @@ import { DenPageHeader } from "../../../_components/ui/page-header";
 import { DenSelect } from "../../../_components/ui/select";
 import { DenSegmented } from "../../../_components/ui/segmented";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
-import { getOrgAccessFlags, orgFeatureEnabled, permissionLockReason, type DenOrgContext } from "../../../_lib/den-org";
+import { getOrgAccessFlags, orgFeatureEnabled, permissionLockReason } from "../../../_lib/den-org";
 import { useDenToast } from "../../_components/den-toast";
 import { FilterInput } from "../../_components/item-list";
 import { TeamsListLocked } from "../../_components/teams-list-row";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { FeatureIntroGate } from "../feature-intros/feature-intro-gate";
-import { OrgSessionAccessSetting } from "../sessions/session-access-setting";
 import { AddComputerDialog, ComputerActionButtons, ComputerMenu, type ComputerActionSet } from "./computer-action-controls";
 import { disconnectLocked, disconnectOwnerName, disconnectTeamConfirm, disconnectedLine, removeConfirm, teamComputerActions } from "./computer-actions";
 import { ComputerDetail } from "./computer-detail";
@@ -25,6 +24,7 @@ import { LANE, ListRow, OwnerLane, RowLaneLabel, RowList, RowListHeader, RowList
 import { disconnectOrganizationComputer, removeOrganizationComputer, useComputers } from "./computers-data";
 import { KIND_LABELS, PROVIDER_LABELS, clearComputerFilters, computerStatus, computersStateLine, devicePageCount, duplicateNameNotes, hasComputerFilters, parseDeviceAvailability, parseDeviceProvider, readComputerFilters, staleLine, teamOwnerKey, writeComputerFilters, type ComputerFilters, type OrganizationComputer } from "./computers-format";
 import { RegisteredInstances } from "./registered-instances";
+import { RemoteAccessSetting } from "./remote-access-setting";
 
 const KIND_OPTIONS: Array<{ value: RemoteDeviceKind | "all"; label: string }> = [
   { value: "all", label: "All computers" },
@@ -50,7 +50,7 @@ export function ComputersScreen() {
       {!access.canViewComputers ? permissionLockReason("computers.view") : "Computers is not enabled for this organization. Ask an organization owner or admin about availability."}
     </p>
   </section>;
-  return <ComputersList key={orgId} orgId={orgId} orgContext={orgContext} canDisconnectComputers={access.canDisconnectComputers} />;
+  return <ComputersList key={orgId} orgId={orgId} canDisconnectComputers={access.canDisconnectComputers} />;
 }
 
 function ComputersSkeleton() {
@@ -143,7 +143,7 @@ export function StaleComputersLine({ hidden, shown, onShow, onHide }: { hidden: 
   </p>;
 }
 
-function ComputersList({ orgId, orgContext, canDisconnectComputers }: { orgId: string; orgContext: Pick<DenOrgContext, "features">; canDisconnectComputers: boolean }) {
+function ComputersList({ orgId, canDisconnectComputers }: { orgId: string; canDisconnectComputers: boolean }) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();
   const toast = useDenToast();
@@ -215,8 +215,8 @@ function ComputersList({ orgId, orgContext, canDisconnectComputers }: { orgId: s
     <ComputersPageHeader title="Computers" state={data ? computersStateLine({ online: data.online, total: data.total, filtered }) : null}
       refreshing={query.isFetching} onRefresh={() => void refresh()} onAdd={() => setAdding(true)} />
     <AddComputerDialog open={adding} onClose={() => setAdding(false)} />
-    {/* The organization's ceiling for what members may let their other devices reach; renders only with remoteSessionAccess on. */}
-    <OrgSessionAccessSetting orgId={orgId} orgContext={orgContext} />
+    {/* The organization's limit on what other devices may do on members' computers; there whenever Den serves the setting. */}
+    <RemoteAccessSetting orgId={orgId} />
     {query.error ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-[13px]"><p>{query.error.message}{data ? " Showing the last known list." : ""}</p><DenButton variant="secondary" size="sm" onClick={() => void query.refetch()}>Try again</DenButton></div> : null}
     <FeatureIntroGate introKey="computers" facts={data && !filtered ? { computers: data.total + data.staleHidden + data.instancesTotal } : null}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2" role="group" aria-label="Computer filters">

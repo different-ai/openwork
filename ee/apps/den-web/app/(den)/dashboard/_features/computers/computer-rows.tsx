@@ -1,15 +1,15 @@
 "use client";
 
 import type { MouseEvent, ReactNode } from "react";
-import Link from "next/link";
 import { ChevronRight, Cloud, Laptop, Server, Unplug, User, Users, type LucideIcon } from "lucide-react";
-import type { RemoteDeviceKind, RemoteDeviceProvider } from "@openwork/types/den/remote-devices";
+import type { RemoteDeviceAccess, RemoteDeviceKind, RemoteDeviceProvider } from "@openwork/types/den/remote-devices";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { StatusDot, TimeAgo, focusRing, hairline, secondaryText } from "./computer-parts";
 import { isFormerOwner, ownerEmail, ownerLabel, versionLabel, type ComputerOwner, type DeviceTone } from "./computers-format";
+import { REMOTE_ACCESS_LABEL, remoteAccessNote, remoteAccessValue, type RemoteAccessVoice } from "./remote-access";
 
 /*
- * The one row language of Computers, My Computers and My Sessions: flat rows
+ * The one row language of Computers and My Computers: flat rows
  * on the page with a hairline between them, a small leading tile, a name over
  * one muted line, fixed lanes on the right so rows line up, then at most one
  * control. No cards, so the lists read the same on a tinted or a white canvas.
@@ -31,16 +31,12 @@ export const LANE = {
   teamVersion: "hidden w-24 @4xl:block",
   /** An instance's version: as wide as a computer's version, menu and chevron lanes together, so both team lists line up. */
   instanceVersion: "hidden w-[164px] @4xl:block",
+  /** What other devices can do on a member's own computer. On a narrower list it moves to a line under the row. */
+  remoteAccess: "hidden w-52 @2xl:flex",
   /** Last contact, in a member's own list. */
-  time: "hidden w-24 @lg:block",
+  time: "hidden w-24 @3xl:block",
   /** App version, in a member's own list. */
-  version: "hidden w-24 @2xl:block",
-  /** A session's state: dot and word. */
-  state: "flex w-24 @md:w-28",
-  /** A session's Connect button, or what it is doing instead. */
-  connection: "flex w-[76px] justify-end @md:w-24",
-  /** A computer's status on My Sessions: it starts where the session rows' state lane does. */
-  sessionStatus: "flex w-[76px] @md:w-[220px] @lg:w-[328px]",
+  version: "hidden w-24 @4xl:block",
 } as const;
 
 const laneBase = "min-w-0 shrink-0 text-[13px] leading-5";
@@ -60,18 +56,12 @@ export function RowList({ label, header, children, testId, busy }: {
 }
 
 /** Column labels over the lanes. `menu` and `chevron` reserve the trailing lanes the rows below have. */
-export function RowListHeader({ lead, children, menu = false, chevron = false, visuallyHidden = false }: {
+export function RowListHeader({ lead, children, menu = false, chevron = false }: {
   lead: string;
   children?: ReactNode;
   menu?: boolean;
   chevron?: boolean;
-  /** Keep the labels for assistive tech only, for a short list whose lanes explain themselves. */
-  visuallyHidden?: boolean;
 }) {
-  if (visuallyHidden) return <div role="row" className="sr-only">
-    <span role="columnheader">{lead}</span>
-    {children}
-  </div>;
   return <div role="row" className={`flex min-h-8 items-center gap-3 border-b ${hairline} text-[12px] leading-4 ${secondaryText}`}>
     <span role="columnheader" className="min-w-0 flex-1 truncate">{lead}</span>
     {children}
@@ -112,28 +102,20 @@ export type RowToggle = {
 /**
  * One row. With `toggle` its name is the button that opens the detail under
  * it, and a click anywhere on the row that is not on a control does the same.
- * With `href` its name is a link that covers the row.
  */
-export function ListRow({ icon, name, wrapName = false, secondLine, secondLineWrap = "none", note, lanes, action, toggle, href, testId, rowTestId, rowData, children }: {
+export function ListRow({ icon, name, secondLine, lanes, below, action, toggle, testId, rowTestId, children }: {
   icon: LucideIcon;
   name: string;
-  /** On a narrow list, let a long name take two lines instead of cutting it short. */
-  wrapName?: boolean;
   secondLine?: ReactNode;
-  /** Let the second line run onto two lines, or as many as it needs, instead of cutting it short at one. */
-  secondLineWrap?: "none" | "two" | "all";
-  /** One more line under the second, e.g. why the row's action failed. */
-  note?: ReactNode;
   lanes?: ReactNode;
+  /** A line across the row, under it, for what a lane says on a wide list and has no room for on a narrow one. */
+  below?: ReactNode;
   /** The row's menu or lock, in a fixed 28px lane. Leave undefined for a list whose rows have none. */
   action?: ReactNode;
   toggle?: RowToggle;
-  href?: string;
   /** On the name: the element a person, or a test, presses to open the row. */
   testId?: string;
   rowTestId?: string;
-  /** `data-*` attributes for the row. */
-  rowData?: Record<`data-${string}`, string | undefined>;
   /** The open detail, under the row. */
   children?: ReactNode;
 }) {
@@ -147,22 +129,18 @@ export function ListRow({ icon, name, wrapName = false, secondLine, secondLineWr
     if (window.getSelection()?.toString()) return;
     toggle.onToggle();
   }
-  const nameClass = `max-w-full text-left text-[13px] font-medium leading-5 text-[color:var(--dls-text-primary)] ${wrapName ? "line-clamp-2 break-words @md:line-clamp-1" : "block truncate"}`;
+  const nameClass = "block max-w-full truncate text-left text-[13px] font-medium leading-5 text-[color:var(--dls-text-primary)]";
   return <>
-    <div role="row" {...rowData} data-testid={rowTestId} data-open={toggle?.expanded || undefined} onClick={toggle ? rowClick : undefined}
-      className={`group flex min-h-[52px] items-center gap-3 border-b ${hairline} py-2 ${toggle ? "cursor-pointer" : ""} ${href ? "relative" : ""}`}>
+    <div role="row" data-testid={rowTestId} data-open={toggle?.expanded || undefined} onClick={toggle ? rowClick : undefined}
+      className={`group flex min-h-[52px] flex-wrap items-center gap-x-3 gap-y-0.5 border-b ${hairline} py-2 ${toggle ? "cursor-pointer" : ""}`}>
       <div role="cell" className="flex min-w-0 flex-1 items-center gap-3">
         <RowTile icon={icon} />
         <div className="min-w-0 flex-1">
           {toggle
             ? <button type="button" aria-expanded={toggle.expanded} aria-controls={toggle.controls} onClick={toggle.onToggle} data-testid={testId} title={name}
                 className={`${nameClass} rounded-sm ${focusRing}`}>{name}</button>
-            : href
-              ? <Link href={href} scroll={false} data-testid={testId} title={name}
-                  className={`${nameClass} rounded-sm outline-none after:absolute after:inset-0 focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-[var(--dls-text-secondary)]`}>{name}</Link>
-              : <span data-testid={testId} title={name} className={nameClass}>{name}</span>}
-          {secondLine ? <p className={`${secondLineWrap === "all" ? "break-words" : secondLineWrap === "two" ? "line-clamp-2 break-words" : "truncate"} text-[12px] leading-4 ${secondaryText}`}>{secondLine}</p> : null}
-          {note}
+            : <span data-testid={testId} title={name} className={nameClass}>{name}</span>}
+          {secondLine ? <p className={`truncate text-[12px] leading-4 ${secondaryText}`}>{secondLine}</p> : null}
         </div>
       </div>
       {lanes}
@@ -171,6 +149,7 @@ export function ListRow({ icon, name, wrapName = false, secondLine, secondLineWr
       {toggle ? <span aria-hidden="true" className={`hidden w-4 shrink-0 justify-end @md:flex ${secondaryText} transition-colors duration-150 group-hover:text-[color:var(--dls-text-primary)]`}>
         <ChevronRight size={16} strokeWidth={1.5} className={`transition-transform duration-150 motion-reduce:transition-none ${toggle.expanded ? "rotate-90" : ""}`} />
       </span> : null}
+      {below}
     </div>
     {children ? <div role="row"><div role="cell" id={toggle?.controls} className={`border-b ${hairline} pb-5 pl-0 pt-3 @md:pl-11`}>{children}</div></div> : null}
   </>;
@@ -233,5 +212,36 @@ export function RowListSkeleton({ rows = 4 }: { rows?: number }) {
       <span className="flex min-w-0 flex-1 flex-col gap-1.5"><DenSkeleton className="h-3 w-40 max-w-full" /><DenSkeleton className="h-2.5 w-24" /></span>
       <DenSkeleton className="h-3 w-20 shrink-0" />
     </div>)}
+  </div>;
+}
+
+/**
+ * What other devices can do on a computer, as a lane: the value, with the
+ * reason under it when something other than the owner's choice decides it.
+ * Nothing for a computer that takes no tasks this way.
+ */
+export function RemoteAccessLane({ access, voice = "owner", lane = LANE.remoteAccess }: {
+  access: RemoteDeviceAccess | null;
+  voice?: RemoteAccessVoice;
+  lane?: string;
+}) {
+  if (!access) return <RowLane lane={lane}>{null}</RowLane>;
+  const note = remoteAccessNote(access, voice);
+  return <RowLane lane={lane} className="flex-col justify-center" title={note ?? undefined}>
+    <span className="truncate" data-remote-access={access.effective}>{remoteAccessValue(access)}</span>
+    {note ? <span className={`truncate text-[12px] leading-4 ${secondaryText}`}>{note}</span> : null}
+  </RowLane>;
+}
+
+/**
+ * The same, as a line across a row for `ListRow`'s `below`, on a list too
+ * narrow for the lane. It carries the label the lane's column gives it there.
+ */
+export function RemoteAccessBelow({ access, voice = "owner" }: { access: RemoteDeviceAccess | null; voice?: RemoteAccessVoice }) {
+  if (!access) return null;
+  const note = remoteAccessNote(access, voice);
+  return <div role="cell" className={`basis-full pl-11 text-[12px] leading-4 @2xl:hidden ${secondaryText}`}>
+    <span>{REMOTE_ACCESS_LABEL}: </span><span className="mr-2 text-[color:var(--dls-text-primary)]" data-remote-access={access.effective}>{remoteAccessValue(access)}</span>
+    {note ? <span>{note}</span> : null}
   </div>;
 }

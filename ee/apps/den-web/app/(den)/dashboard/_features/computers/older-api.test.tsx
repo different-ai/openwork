@@ -43,6 +43,8 @@ test("a team list from an older API parses, and reads as connected computers nob
   assert.deepEqual(list.devices.map((device) => [device.disconnectedAt, device.canDisconnect, device.canRemove, device.owner?.former ?? null]),
     [[null, false, false, false], [null, false, false, null]]);
   for (const device of list.devices) assert.deepEqual(teamComputerActions(device), []);
+  // Nor does it say what other devices can do on a computer: nothing is shown for it.
+  assert.deepEqual(list.devices.map((device) => device.remoteAccess), [null, null]);
 
   // No count of who is online when the API sent none: just how many there are.
   assert.equal(computersStateLine({ online: list.online, total: list.total }), "17 computers");
@@ -84,7 +86,8 @@ test("one computer's detail from an older API parses and renders", () => {
   assert.equal(detail.device.canRemove, false);
   const plain = text(renderToStaticMarkup(<ComputerDetailView detail={detail} now={now} standalone />));
   assert.match(plain, /Type Mac Status Online Owner Alex Morgan Last contact 2 min ago App version 1\.5\.2/);
-  assert.doesNotMatch(plain, /Disconnected/);
+  assert.doesNotMatch(plain, /Disconnected|Other devices can/);
+  assert.equal(detail.device.remoteAccess, null);
   assert.equal(parseComputerDetail({ device: null }), null);
 });
 
@@ -100,10 +103,11 @@ test("a member's own list from an older API parses, with nothing to disconnect a
   assert.ok(device);
   assert.equal(device.disconnectedAt, null);
   assert.equal(device.canDisconnect, false);
+  assert.equal(device.remoteAccess, null);
   assert.deepEqual(myComputerActions(device), []);
   assert.equal(computersStateLine({ online: onlineCount(parsed.data.devices), total: 1 }), "1 of 1 online");
   const html = renderToStaticMarkup(<MyComputerRows devices={parsed.data.devices} now={now} openId="" onToggle={() => {}} action={() => null} detail={() => null} />);
   assert.match(text(html), /Work laptop Mac Online 2 min ago 1\.5\.2/);
-  assert.doesNotMatch(html, /Disconnected|my-computer-menu-/);
+  assert.doesNotMatch(html, /Disconnected|my-computer-menu-|Other devices can/);
   assert.ok(remoteDeviceDetailResponseSchema.safeParse({ device: oldMine, events: [] }).success);
 });
