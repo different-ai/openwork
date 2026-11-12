@@ -47,6 +47,7 @@ export const meSchema = z.object({
   remoteTasks: z.boolean().default(false),
   /** Pages-only navigation with Files and Apps in the profile (`workbotProfileNav`); absent means off. */
   profileNav: z.boolean().default(false),
+  profileComputers: z.boolean().default(false),
   /** Quiet calendar (`workbotQuietCalendar`); absent means off. */
   quietCalendar: z.boolean().default(false),
   /** The Devices page (`remoteDevices`, while Workbot is on); absent means off. */
@@ -186,6 +187,7 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     browserPreview: me.browserPreview,
     remoteTasks: me.remoteTasks,
     profileNav: me.profileNav,
+    profileComputers: me.profileComputers,
     quietCalendar: me.quietCalendar,
     devices: me.devices,
     account: me.accountMenu ? { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace } : undefined,
