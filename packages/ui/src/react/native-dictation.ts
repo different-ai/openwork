@@ -50,6 +50,9 @@ export function useNativeDictation(options: {
   const session = useRef<ReturnType<typeof createBrowserDictation> | null>(null)
   const request = useRef<AbortController | null>(null)
   const generation = useRef(0)
+  // A recognizer can publish again between a React commit and its effects.
+  // Remember our unacknowledged drafts so an older echo is not a user edit.
+  const publishedDrafts = useRef(new Set<string>())
   const currentOptions = useRef(options)
   currentOptions.current = options
   const Constructor = options.recognition ?? browserSpeechConstructor()
@@ -61,12 +64,14 @@ export function useNativeDictation(options: {
     setState("idle"); setNativeMode(false); setError(null); meter.reset(); setInstallingModel(false); setModelDownloadProgress(null)
     return () => {
       generation.current++
+      publishedDrafts.current.clear()
       request.current?.abort(); request.current = null
       session.current?.cancel(); session.current = null
     }
   }, [options.enabled, options.scope])
   function commit() {
     generation.current++
+    publishedDrafts.current.clear()
     request.current?.abort(); request.current = null
     const text = session.current?.commit() ?? currentOptions.current.text
     session.current = null
@@ -75,6 +80,7 @@ export function useNativeDictation(options: {
   }
   function cancel() {
     generation.current++
+    publishedDrafts.current.clear()
     request.current?.abort(); request.current = null
     session.current?.cancel(); session.current = null
     setState("idle"); setNativeMode(false); meter.reset(); setInstallingModel(false); setModelDownloadProgress(null)
@@ -89,7 +95,10 @@ export function useNativeDictation(options: {
   useEffect(() => {
     // Edits outside the text input (chips, imported drafts, navigation) also
     // fence recognition so a late interim result cannot overwrite them.
-    if (session.current && options.text !== session.current.text()) cancel()
+    if (!session.current) return
+    if (publishedDrafts.current.delete(options.text)) {
+      if (options.text === session.current.text()) publishedDrafts.current.clear()
+    } else if (options.text !== session.current.text()) cancel()
   }, [options.text])
   useEffect(() => {
     const hidden = () => { if (document.visibilityState === "hidden" && session.current) cancel() }
@@ -108,6 +117,7 @@ export function useNativeDictation(options: {
     const Speech = options.recognition ?? browserSpeechConstructor()
     if (!Speech) return
     const id = ++generation.current
+    publishedDrafts.current.clear()
     // A host recognizer that fails before listening (permission, language,
     // missing speech service) hands over to system dictation instead.
     // A local-only session must not silently hand audio to system/online dictation.
@@ -118,13 +128,23 @@ export function useNativeDictation(options: {
       recognition: new Speech(), text: options.text, selection: options.selection(),
       language: options.recognition ? navigator.language || "en-US" : document.documentElement.lang || navigator.language || "en-US",
       finalizationTimeoutMs: options.local ? 6000 : undefined,
+      resultFrames: options.local && typeof window.requestAnimationFrame === "function"
+        && !window.matchMedia("(prefers-reduced-motion: reduce)").matches ? {
+          request: callback => window.requestAnimationFrame(callback),
+          cancel: frame => window.cancelAnimationFrame(frame),
+          now: () => performance.now(),
+        } : undefined,
       onLevel: level => { if (id === generation.current) meter.push(level) },
       onStatus: (_status, progress) => {
         if (id !== generation.current || listened) return
         setInstallingModel(progress !== 1)
         setModelDownloadProgress(progress ?? null)
       },
-      onText: text => { if (id === generation.current) currentOptions.current.onText(text) },
+      onText: text => {
+        if (id !== generation.current) return
+        publishedDrafts.current.add(text)
+        currentOptions.current.onText(text)
+      },
       onState: next => {
         if (id !== generation.current) return
         if (next === "listening") listened = true

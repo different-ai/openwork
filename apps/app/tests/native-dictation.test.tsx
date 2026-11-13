@@ -3,7 +3,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 const ownsDom = !GlobalRegistrator.isRegistered;
 if (ownsDom) GlobalRegistrator.register({ url: "http://localhost/" });
-const { act, useState } = await import("react");
+const { act, useLayoutEffect, useState } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { dictationPlatform, useNativeDictation } = await import("../../../packages/ui/src/react/native-dictation");
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
@@ -205,4 +205,43 @@ test("local recording shows revisions, accepts final words, and cancels on edits
     await act(async () => { root.unmount() });
     container.remove();
   }
+});
+
+test("a newer result arriving before draft effects run does not cancel recording", async () => {
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  let controller: ReturnType<typeof useNativeDictation> | undefined;
+  let recognizer: Recognition | undefined;
+  class Recognition {
+    lang = ""; continuous = false; interimResults = false; aborted = false;
+    onstart: (() => void) | null = null;
+    onend: (() => void) | null = null;
+    onerror: ((event: { error: string }) => void) | null = null;
+    onresult: ((event: { results: Array<Array<{ transcript: string }>> }) => void) | null = null;
+    constructor() { recognizer = this; }
+    start() { this.onstart?.(); }
+    stop() {}
+    abort() { this.aborted = true; }
+    say(text: string) { this.onresult?.({ results: [[{ transcript: text }]] }); }
+  }
+  function Harness() {
+    const [text, setText] = useState("");
+    controller = useNativeDictation({ enabled: true, local: true, recognition: Recognition,
+      text, onText: setText, selection: () => ({ start: 0, end: 0 }), focusInput: () => {} });
+    // Deliver a newer event after the draft commits but before its passive
+    // effects reconcile it, reproducing a burst racing with an editor update.
+    useLayoutEffect(() => { if (text === "First words") recognizer?.say("These words continue"); }, [text]);
+    return <output>{text}</output>;
+  }
+  try {
+    await act(async () => { root.render(<Harness />); });
+    await act(async () => { await controller?.toggle(); });
+    await act(async () => { recognizer?.say("First words"); });
+    expect(recognizer?.aborted).toBe(false);
+    expect(controller?.state).toBe("listening");
+    expect(container.textContent).toBe("These words continue");
+    await act(async () => { recognizer?.say("Recording reached the final marker."); });
+    expect(container.textContent).toBe("Recording reached the final marker.");
+    expect(recognizer?.aborted).toBe(false);
+  } finally { await act(async () => { root.unmount(); }); container.remove(); }
 });

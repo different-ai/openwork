@@ -49,12 +49,22 @@ height. The outgoing phase stays visible during collapse instead of flashing
 a different label. Icons crossfade over 150 ms; audio bars follow each actual
 microphone measurement immediately, without repeatedly restarting a slower
 transform transition. Press feedback is subtle,
-with no bounce, fabricated activity or delay before an action takes effect.
+with no bounce or delay before an action takes effect. During startup, the
+same bars show a gentle traveling pulse, labeled Starting dictation for
+assistive technology. Once capture is ready, the pulse stops and the bars
+show measured audio. Downloads keep their measured progress bar.
+
+The first recognized words and visible corrections appear immediately.
+Subsequent appended words reveal over a 100 ms window, coalescing incoming
+results into the same deadline instead of accumulating a typing queue.
+Character boundaries preserve emoji and combining marks. Stop and Send flush
+the latest text immediately; Cancel preserves only what was displayed and
+fences pending animation frames. Reduced motion applies text immediately.
 
 The main Mic/Stop button remains mounted. Keyboard cancellation returns focus
 to it after setup or capture; closed controls are inert and leave the tab order
 immediately, even while fading out. Reduced motion disables transitions, press
-scaling and spinner animation and uses a static Listening label.
+scaling and the startup pulse, and uses static Starting dictation / Listening labels.
 
 Browser frame sampling verified intermediate opening/closing widths, a fixed
 Send position and equal widths for setup/listening/finishing. A 390 px check
@@ -102,6 +112,10 @@ interaction checks, not a device-wide rendering benchmark.
   this visualization gate never removes audio from recognition. Only the
   waveform subscribes to level updates; the full composer does not rerender
   for every audio buffer.
+- Acknowledge drafts published by recognition before checking for external
+  edits. A newer result can arrive between React's commit and its effects;
+  an older draft echo must not be mistaken for a manual edit and abort capture.
+  Actual edits, cancellation and chat changes still fence recognition.
 
 Recognition still requires Apple’s on-device support for the language. A
 failed model download or local start gives a recovery message rather than
@@ -132,6 +146,14 @@ composer is also checked at desktop and narrow widths and with reduced motion.
 Packaged microphone/permission acceptance and measured speech accuracy remain
 hardware checks; synthetic speech events do not establish either.
 
+Continuity regressions deliver a newer result between React's commit and
+effects, exercise burst coalescing with a controlled frame clock, and check
+that corrections never retract an unchanged visible prefix. The actual
+editor also stayed listening through 150 rapid simulated updates to a
+2,482-character draft. Startup and live capture reuse the same bars without
+moving Send; a 390 px reduced-motion check had no active startup animations
+or horizontal overflow.
+
 ## Native smoke check
 
 The production analyzer and converter were exercised on macOS 26.5 using a
@@ -160,6 +182,11 @@ it. The final transcript matched across all runs, including the existing
 accuracy guarantee. Both repeat runs passed the smoke's `--expect-cached`
 assertion with no installation events; the baseline emitted them on this same
 device. The smoke now reports elapsed time and paces file input for live timing.
+
+A subsequent 90.5-second paced synthetic recording completed with the final
+marker, “Orange bicycle finishes the recording.” This did not reproduce a
+fixed-duration analyzer cutoff; it does not exercise live microphone routing
+or establish the cause of every interrupted recording.
 
 The browser control fixture settled to a flat meter within 0.9 seconds of
 quiet events without moving Send. Audio bars have no transform tween; the

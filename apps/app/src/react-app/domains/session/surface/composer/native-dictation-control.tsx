@@ -1,4 +1,4 @@
-import { CircleAlert, LoaderCircle, Mic, MicOff, Square, X } from "lucide-react";
+import { CircleAlert, Mic, MicOff, Square, X } from "lucide-react";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { DictationWaveform, type useNativeDictation } from "@openwork/ui/react";
 import { Button } from "@/components/ui/button";
@@ -42,17 +42,18 @@ function LocalDictationControl({ dictation, disabled }: {
     }
   }, [recording]);
   // Retain the outgoing phase during collapse instead of flashing "Listening".
-  const phase = useRef<{ listening: boolean; installing: boolean; progress: number | null; status: string }>({
-    listening: false, installing: false, progress: null, status: "Starting dictation",
+  const phase = useRef<{ listening: boolean; preparing: boolean; installing: boolean; progress: number | null; status: string }>({
+    listening: false, preparing: false, installing: false, progress: null, status: "Starting dictation",
   });
   if (recording) phase.current = {
     listening: dictation.state === "listening",
+    preparing: dictation.state === "starting" && !dictation.installingModel,
     installing: dictation.installingModel,
     progress: dictation.modelDownloadProgress,
     status: dictation.installingModel ? "Downloading speech model" : dictation.state === "starting" ? "Starting dictation" : dictation.state === "stopping" ? "Finishing dictation" : "Listening",
   };
-  const { listening, installing, progress, status } = phase.current;
-  const icon = dictation.state === "starting" ? "busy" : dictation.error ? "error" : recording ? "stop" : "mic";
+  const { listening, preparing, installing, progress, status } = phase.current;
+  const icon = dictation.error ? "error" : recording && dictation.state !== "starting" ? "stop" : "mic";
   const iconMotion = "col-start-1 row-start-1 transition-[opacity,scale,translate] duration-150 ease-out motion-reduce:transition-none motion-reduce:scale-100 motion-reduce:translate-y-0";
   const feedback = "rounded-md text-dls-secondary hover:bg-muted/50 hover:text-foreground transition-[background-color,color,opacity,scale] duration-150 ease-out enabled:active:scale-95 motion-reduce:enabled:active:scale-100 motion-reduce:transition-none motion-reduce:scale-100 motion-reduce:translate-y-0";
   return <div data-dictation-recording={recording ? "" : undefined} className="flex h-9 shrink-0 items-center">
@@ -69,9 +70,9 @@ function LocalDictationControl({ dictation, disabled }: {
         </Button>
         <div className="grid h-9 w-24 shrink-0 place-items-center">
           <div className="contents" aria-hidden="true">
-            <DictationWaveform text="" levels={levels}
-              className={`col-start-1 row-start-1 h-5 w-24 text-dls-secondary transition-[opacity,scale,translate] duration-150 ease-out motion-reduce:hidden ${listening ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"}`} />
-            <span className={`col-start-1 row-start-1 w-24 text-center text-xs leading-4 text-dls-secondary transition-[opacity,scale,translate] duration-150 ease-out motion-reduce:transition-none motion-reduce:scale-100 motion-reduce:translate-y-0 ${installing ? "opacity-0" : listening ? "-translate-y-1 opacity-0 motion-reduce:opacity-100" : "translate-y-0 opacity-100"}`}>
+            <DictationWaveform text="" levels={levels} preparing={preparing && recording}
+              className={`col-start-1 row-start-1 h-5 w-24 text-dls-secondary transition-[opacity,scale,translate] duration-150 ease-out motion-reduce:hidden ${listening || preparing ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"}`} />
+            <span className={`col-start-1 row-start-1 w-24 text-center text-xs leading-4 text-dls-secondary transition-[opacity,scale,translate] duration-150 ease-out motion-reduce:transition-none motion-reduce:scale-100 motion-reduce:translate-y-0 ${installing ? "opacity-0" : listening || preparing ? "-translate-y-1 opacity-0 motion-reduce:opacity-100" : "translate-y-0 opacity-100"}`}>
               {status}
             </span>
           </div>
@@ -95,9 +96,6 @@ function LocalDictationControl({ dictation, disabled }: {
       <span className="grid place-items-center" aria-hidden="true">
         <Mic size={16} strokeWidth={1.5} className={`${iconMotion} ${icon === "mic" ? "scale-100 opacity-100" : "scale-75 opacity-0"}`} />
         <Square size={16} strokeWidth={1.5} fill="currentColor" className={`${iconMotion} ${icon === "stop" ? "scale-100 opacity-100" : "scale-75 opacity-0"}`} />
-        <span className={`${iconMotion} ${icon === "busy" ? "scale-100 opacity-100" : "scale-75 opacity-0"}`}>
-          <LoaderCircle size={16} strokeWidth={1.5} className={icon === "busy" ? "animate-spin motion-reduce:animate-none" : undefined} />
-        </span>
         <CircleAlert size={16} strokeWidth={1.5} className={`${iconMotion} ${icon === "error" ? "scale-100 opacity-100" : "scale-75 opacity-0"}`} />
       </span>
     </Button>
