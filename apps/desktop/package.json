@@ -45,7 +45,7 @@
     "@sentry/electron": "^7.16.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
-    "better-sqlite3": "^13.0.2",
+    "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2",
     "electron-updater": "^6.3.9",
     "htmlparser2": "8.0.2",
