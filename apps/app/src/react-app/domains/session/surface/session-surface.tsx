@@ -2281,6 +2281,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[props.workspaceId]?.running);
   const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
   const followUpSuggestionsEnabled = useDesktopFeature("followUpSuggestions");
+  const questionMinimizeEnabled = useDesktopFeature("questionMinimize");
   const followUpSuggestion = useFollowUpSuggestion({
     enabled: followUpSuggestionsEnabled && !archived && !snapshot?.session.parentID,
     client: opencodeClient,
@@ -4185,6 +4186,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   <QuestionPanel
                     questions={composerQuestion.questions}
                     busy={props.questionReplyBusy ?? false}
+                    collapsible={questionMinimizeEnabled}
+                    requestId={composerQuestion.id}
+                    shortcutActive={props.isControlTarget}
                     onReply={(answers) => {
                       if (composerQuestion) {
                         void Promise.resolve(props.respondQuestion?.(composerQuestion.id, answers)).catch(() => {});

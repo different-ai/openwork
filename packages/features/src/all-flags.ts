@@ -13,6 +13,7 @@ export { default as managedDeployments } from "@openwork/features/flags/managed-
 export { default as mcpThreadEvents } from "@openwork/features/flags/mcp-thread-events"
 export { default as nativeMcpEvents } from "@openwork/features/flags/native-mcp-events"
 export { default as opencodeV2Only } from "@openwork/features/flags/opencode-v2-only"
+export { default as questionMinimize } from "@openwork/features/flags/question-minimize"
 export { default as remoteComputers } from "@openwork/features/flags/remote-computers"
 export { default as remoteDesktopDeviceLogin } from "@openwork/features/flags/remote-desktop-device-login"
 export { default as remoteTasksOptIn } from "@openwork/features/flags/remote-tasks-opt-in"

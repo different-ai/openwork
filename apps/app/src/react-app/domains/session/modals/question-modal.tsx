@@ -1,10 +1,17 @@
 /** @jsxImportSource react */
-import { useEffect, useReducer } from "react";
+import { useEffect, useEffectEvent, useReducer, useRef, useState } from "react";
 import type { QuestionInfo } from "@opencode-ai/sdk/v2/client";
-import { Check, ChevronRight, HelpCircle, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ChevronUp, HelpCircle, X } from "lucide-react";
 
+import { markFeatureUsed } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { t } from "@/i18n";
+import {
+  isQuestionCollapseChord,
+  QUESTION_COLLAPSE_PANEL_CLASS,
+  questionCollapseChordLabel,
+} from "@/react-app/domains/session/modals/question-collapse";
 
 export type QuestionPanelProps = {
   questions: QuestionInfo[];
@@ -12,6 +19,16 @@ export type QuestionPanelProps = {
   onReply: (answers: string[][]) => void;
   /** Declines the whole request without answering. Hidden when omitted. */
   onDismiss?: () => void;
+  /**
+   * Feature `questionMinimize`: the person can collapse the pending question
+   * to one line above the composer and reopen it with everything they picked
+   * or typed. Off, the panel is unchanged.
+   */
+  collapsible?: boolean;
+  /** Identifies the pending request, so its draft survives leaving the chat and coming back. */
+  requestId?: string;
+  /** Whether this panel answers the collapse chord; one pane at a time. */
+  shortcutActive?: boolean;
 };
 
 type QuestionState = {
@@ -25,6 +42,7 @@ type QuestionState = {
 
 type QuestionAction =
   | { type: "reset"; questionCount: number }
+  | { type: "restore"; state: QuestionState }
   | { type: "setCustomInput"; value: string }
   | { type: "setCustomAnswerActive"; value: boolean }
   | { type: "setFocusedOptionIndex"; value: number }
@@ -54,6 +72,8 @@ function questionReducer(state: QuestionState, action: QuestionAction): Question
         customAnswerActive: false,
         focusedOptionIndex: 0,
       };
+    case "restore":
+      return action.state;
     case "setCustomInput":
       return { ...state, customInput: action.value };
     case "setCustomAnswerActive":
@@ -91,12 +111,94 @@ function questionReducer(state: QuestionState, action: QuestionAction): Question
   }
 }
 
+type QuestionDraft = { state: QuestionState; collapsed: boolean };
+
+/**
+ * What the person picked or typed for a question still pending, by request,
+ * kept while the app runs so leaving the chat and coming back restores it.
+ * Only written while the panel is collapsible.
+ */
+const questionDrafts = new Map<string, QuestionDraft>();
+const QUESTION_DRAFT_LIMIT = 50;
+
+function saveQuestionDraft(requestId: string, draft: QuestionDraft) {
+  questionDrafts.delete(requestId);
+  questionDrafts.set(requestId, draft);
+  if (questionDrafts.size <= QUESTION_DRAFT_LIMIT) return;
+  const oldest = questionDrafts.keys().next();
+  if (!oldest.done) questionDrafts.delete(oldest.value);
+}
+
+/** Test seam: forget every kept draft. */
+export function clearQuestionDrafts() {
+  questionDrafts.clear();
+}
+
 export function QuestionPanel(props: QuestionPanelProps) {
-  const [state, dispatch] = useReducer(questionReducer, initialQuestionState);
+  const draftKey = props.collapsible ? props.requestId : undefined;
+  const [state, dispatch] = useReducer(
+    questionReducer,
+    draftKey,
+    (key) => (key ? questionDrafts.get(key)?.state : undefined) ?? initialQuestionState,
+  );
+  const [collapsed, setCollapsed] = useState(() => (draftKey ? questionDrafts.get(draftKey)?.collapsed === true : false));
+  const loadedDraftKey = useRef(draftKey && questionDrafts.has(draftKey) ? draftKey : undefined);
+  const loadingDraft = useRef(false);
+  // An answered or dismissed request must not be saved again by a late state change.
+  const settledDraftKey = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    dispatch({ type: "reset", questionCount: props.questions.length });
-  }, [props.questions]);
+    if (!draftKey) {
+      dispatch({ type: "reset", questionCount: props.questions.length });
+      return;
+    }
+    // A request already on screen keeps its answers; a new one opens expanded.
+    if (loadedDraftKey.current === draftKey) return;
+    loadedDraftKey.current = draftKey;
+    // The state still on screen belongs to the previous request; save after it is replaced.
+    loadingDraft.current = true;
+    const draft = questionDrafts.get(draftKey);
+    if (draft) dispatch({ type: "restore", state: draft.state });
+    else dispatch({ type: "reset", questionCount: props.questions.length });
+    setCollapsed(draft?.collapsed === true);
+  }, [draftKey, props.questions]);
+
+  useEffect(() => {
+    if (!draftKey || loadedDraftKey.current !== draftKey || settledDraftKey.current === draftKey) return;
+    if (loadingDraft.current) {
+      loadingDraft.current = false;
+      return;
+    }
+    saveQuestionDraft(draftKey, { state, collapsed });
+  }, [draftKey, state, collapsed]);
+
+  const changeCollapsed = (next: boolean) => {
+    if (next) markFeatureUsed("questionMinimize");
+    setCollapsed(next);
+  };
+  const handleCollapseChord = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.repeat || !isQuestionCollapseChord(event)) return;
+    event.preventDefault();
+    changeCollapsed(!collapsed);
+  });
+  const chordListening = Boolean(props.collapsible && props.shortcutActive);
+  useEffect(() => {
+    if (!chordListening) return;
+    const handler = (event: KeyboardEvent) => handleCollapseChord(event);
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [chordListening]);
+
+  const reply = (answers: string[][]) => {
+    settledDraftKey.current = draftKey;
+    if (draftKey) questionDrafts.delete(draftKey);
+    props.onReply(answers);
+  };
+  const dismiss = () => {
+    settledDraftKey.current = draftKey;
+    if (draftKey) questionDrafts.delete(draftKey);
+    props.onDismiss?.();
+  };
 
   const currentQuestion = props.questions[state.currentIndex];
   const options = currentQuestion?.options ?? [];
@@ -121,7 +223,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
     newAnswers[state.currentIndex] = nextAnswer;
     if (isLastQuestion) {
       dispatch({ type: "setAnswers", answers: newAnswers });
-      props.onReply(newAnswers);
+      reply(newAnswers);
     } else {
       dispatch({ type: "advance", answers: newAnswers });
     }
@@ -139,7 +241,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
       newAnswers[state.currentIndex] = [option];
       if (isLastQuestion) {
         dispatch({ type: "setAnswers", answers: newAnswers });
-        props.onReply(newAnswers);
+        reply(newAnswers);
       } else {
         dispatch({ type: "advance", answers: newAnswers });
       }
@@ -148,45 +250,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
 
   if (!currentQuestion) return null;
 
-  return (
-    <div className="overflow-hidden border-b border-dls-border bg-transparent">
-      <div className="border-b border-dls-border px-4 py-3">
-        <div className="flex items-start gap-2.5">
-          <div className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border border-blue-7/30 bg-blue-3/20 text-blue-11">
-            <HelpCircle size={12} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <div className="text-sm font-medium leading-5 text-gray-12">
-                {currentQuestion.header || t("common.question")}
-              </div>
-              <div className="text-[11px] font-medium leading-4 text-gray-9">
-                {t("question_modal.question_counter", undefined, {
-                  current: state.currentIndex + 1,
-                  total: props.questions.length,
-                })}
-              </div>
-            </div>
-            <div className="mt-1 text-sm leading-6 text-gray-11">
-              {currentQuestion.question}
-            </div>
-          </div>
-          {props.onDismiss ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="-mr-2 -mt-1 shrink-0 text-gray-10"
-              disabled={props.busy}
-              title={t("question_modal.dismiss_hint")}
-              onClick={props.onDismiss}
-            >
-              <X data-icon="inline-start" />
-              {t("question_modal.dismiss")}
-            </Button>
-          ) : null}
-        </div>
-      </div>
-
+  const body = (
       <div className="max-h-72 space-y-3 overflow-auto px-4 py-3">
         {options.length > 0 ? (
           <div className="space-y-2">
@@ -289,6 +353,117 @@ export function QuestionPanel(props: QuestionPanelProps) {
           </div>
         </div>
       </div>
+  );
+
+  if (props.collapsible) {
+    const heading = currentQuestion.header || t("common.question");
+    return (
+      <Collapsible
+        open={!collapsed}
+        onOpenChange={(open) => changeCollapsed(!open)}
+        className="overflow-hidden border-b border-dls-border bg-transparent"
+        data-question-collapsed={collapsed ? "true" : "false"}
+      >
+        <div className={`px-4 ${collapsed ? "py-2" : "border-b border-dls-border py-3"}`}>
+          <div className={`flex gap-2.5 ${collapsed ? "items-center" : "items-start"}`}>
+            <div className={`flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-3 text-blue-11 ${collapsed ? "" : "mt-0.5"}`}>
+              <HelpCircle size={12} />
+            </div>
+            {collapsed ? (
+              <div className="flex min-w-0 flex-1 items-baseline gap-2">
+                <div className="min-w-0 truncate text-sm font-medium leading-5 text-gray-12">{heading}</div>
+                <div className="shrink-0 text-xs leading-4 text-gray-10" role="status">
+                  {t("question_modal.collapsed_status")}
+                </div>
+              </div>
+            ) : (
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <div className="text-sm font-medium leading-5 text-gray-12">{heading}</div>
+                  <div className="text-[11px] font-medium leading-4 text-gray-9">
+                    {t("question_modal.question_counter", undefined, {
+                      current: state.currentIndex + 1,
+                      total: props.questions.length,
+                    })}
+                  </div>
+                </div>
+                <div className="mt-1 text-sm leading-6 text-gray-11">{currentQuestion.question}</div>
+              </div>
+            )}
+            <CollapsibleTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={`shrink-0 text-gray-10 aria-expanded:text-gray-10 aria-expanded:hover:text-foreground ${collapsed ? "-mr-2" : "-mt-1"}`}
+                />
+              }
+              data-question-collapse-toggle=""
+            >
+              {collapsed ? <ChevronUp data-icon="inline-start" /> : <ChevronDown data-icon="inline-start" />}
+              {collapsed ? t("question_modal.expand") : t("question_modal.collapse")}
+              <span className="text-[11px] font-normal text-gray-9" aria-hidden="true">{questionCollapseChordLabel()}</span>
+            </CollapsibleTrigger>
+            {props.onDismiss && !collapsed ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="-mr-2 -mt-1 shrink-0 text-gray-10"
+                disabled={props.busy}
+                title={t("question_modal.dismiss_hint")}
+                onClick={dismiss}
+              >
+                <X data-icon="inline-start" />
+                {t("question_modal.dismiss")}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+        <CollapsibleContent className={QUESTION_COLLAPSE_PANEL_CLASS}>{body}</CollapsibleContent>
+      </Collapsible>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden border-b border-dls-border bg-transparent">
+      <div className="border-b border-dls-border px-4 py-3">
+        <div className="flex items-start gap-2.5">
+          <div className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border border-blue-7/30 bg-blue-3/20 text-blue-11">
+            <HelpCircle size={12} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <div className="text-sm font-medium leading-5 text-gray-12">
+                {currentQuestion.header || t("common.question")}
+              </div>
+              <div className="text-[11px] font-medium leading-4 text-gray-9">
+                {t("question_modal.question_counter", undefined, {
+                  current: state.currentIndex + 1,
+                  total: props.questions.length,
+                })}
+              </div>
+            </div>
+            <div className="mt-1 text-sm leading-6 text-gray-11">
+              {currentQuestion.question}
+            </div>
+          </div>
+          {props.onDismiss ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="-mr-2 -mt-1 shrink-0 text-gray-10"
+              disabled={props.busy}
+              title={t("question_modal.dismiss_hint")}
+              onClick={props.onDismiss}
+            >
+              <X data-icon="inline-start" />
+              {t("question_modal.dismiss")}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      {body}
     </div>
   );
 }
