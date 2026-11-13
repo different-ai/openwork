@@ -309,6 +309,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       quietCalendar: who.enabled && who.calendar === true,
       scrollToBottom: who.enabled,
       profileComputers: who.enabled && who.profileComputers,
+      deviceActivity: who.enabled && who.deviceActivity,
       calmChat: who.enabled && who.calmChat,
       devices: who.enabled,
       commandPalette: true,

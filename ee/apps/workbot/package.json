@@ -20,6 +20,7 @@
     "test:task-sheet-browser": "node scripts/task-sheet-browser.mjs",
     "test:session-cells": "tsx --conditions=development --test scripts/session-cells.test.ts",
     "test:command-palette": "tsx --conditions=development --test scripts/command-palette.test.ts",
+    "test:devices": "tsx --conditions=development --test scripts/devices.test.ts",
     "test:calendar-connections": "esbuild scripts/calendar-connections.test.ts --bundle --conditions=development --platform=node --format=cjs --jsx=automatic --external:react --external:react-dom --external:@tanstack/react-query --external:zod --outfile=node_modules/.cache/calendar-connections.test.cjs && node node_modules/.cache/calendar-connections.test.cjs"
   },
   "dependencies": {

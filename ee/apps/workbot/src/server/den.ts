@@ -76,6 +76,8 @@ export const denSessionSchema = z.object({
   /** Side chats are on for this person. A Den from before side chats doesn't say: off. */
   sideChats: z.boolean().default(false),
   profileComputers: z.boolean().default(false),
+  /** Devices rows say what Workbot is doing on each computer (`workbotDeviceActivity`); absent means off. */
+  deviceActivity: z.boolean().default(false),
   /** Calm chat look (`workbotCalmChat`); absent means off. */
   calmChat: z.boolean().default(false),
   /** The organization's default model for Workbot's turns. Null, or a Den from before it, means the runner's default. */
