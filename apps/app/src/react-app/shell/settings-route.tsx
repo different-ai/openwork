@@ -10,6 +10,7 @@ import { useAutoAccess } from "@/react-app/domains/cloud/auto-access-ui";
 import { freeAutoSwitchedOff } from "@/app/lib/inference-access";
 import { openNewSessionDraft } from "@/react-app/domains/session/chat/new-session-destination";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { Navigate, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "@/components/ui/sonner";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
@@ -198,7 +199,7 @@ import { applyDefaultModelPreference } from "./command-palette-models";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
 import { buildFeedbackUrl } from "@/app/lib/feedback";
-import { getDenInferenceUrl, isDenOrgAdminRole, readDenSettings, type DenSettings } from "@/app/lib/den";
+import { getDenInferenceUrl, markFeatureUsed, isDenOrgAdminRole, readDenSettings, type DenSettings } from "@/app/lib/den";
 import { denDashboardUrl } from "@/app/lib/den-dashboard-links";
 import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
 import { useUiStateStore } from "./ui-state-store";
@@ -1169,6 +1170,23 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   );
 
   const runtimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspace?.id ?? null;
+  const importOpencodeConnectionsEnabled = useDesktopFeature("importOpencodeConnections");
+  const opencodeConnectionsImport = useMemo(() => {
+    if (!importOpencodeConnectionsEnabled || !openworkClient || !runtimeWorkspaceId) return undefined;
+    return {
+      workspaceId: runtimeWorkspaceId,
+      preview: () => openworkClient.previewOpencodeConnections(runtimeWorkspaceId),
+      importConnections: (names: string[]) => {
+        markFeatureUsed("importOpencodeConnections");
+        return openworkClient.importOpencodeConnections(runtimeWorkspaceId, names);
+      },
+      onImported: () => {
+        // The engine starts each connection after it is saved; read once now and once it has had time to settle.
+        void refreshMcpServersRef.current?.();
+        window.setTimeout(() => void refreshMcpServersRef.current?.(), 4_000);
+      },
+    };
+  }, [importOpencodeConnectionsEnabled, openworkClient, runtimeWorkspaceId]);
   routeStateRef.current.runtimeWorkspaceId = runtimeWorkspaceId;
   routeStateRef.current.selectedWorkspaceOpenworkClient = selectedWorkspaceEndpoint?.client ?? openworkClient;
   const cloudMcpHealth = cloudMcpHealthResult?.workspaceId === runtimeWorkspaceId
@@ -2554,6 +2572,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 detailId={detailId}
                 onDetailIdChange={onDetailIdChange}
                 onRefresh={onRefresh}
+                opencodeImport={opencodeConnectionsImport}
               />
             )}
 

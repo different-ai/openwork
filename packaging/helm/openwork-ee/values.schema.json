@@ -111,6 +111,16 @@
               ],
               "description": "Desktop: minimize a pending question: When an agent asks a question, the person can minimize it to one line above the message box to read the conversation, then reopen it with everything they picked or typed still there. The question stays pending the whole time. Turning it off shows the question fully open, as before. Renders DEN_FEATURE_QUESTION_MINIMIZE."
             },
+            "importOpencodeConnections": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: import connections from OpenCode: Settings shows how many connections a person set up in their own OpenCode config are not in OpenWork, with an Import from OpenCode action. Importing copies them into OpenWork once, like adding each by hand, then shows each one's real state and anything that was left out. The person's OpenCode files are never changed. Off, Settings does not look at the OpenCode config. Renders DEN_FEATURE_IMPORT_OPENCODE_CONNECTIONS."
+            },
             "activationLocalSetup": {
               "enum": [
                 "",
