@@ -25,7 +25,7 @@ import { BriefPreview, CHECK_GATE_ROW, everyLabel, hourLabel, SEND_CHECK_ROW, Th
 import { AGENTS_SWITCH_LABEL, type AgentPolicyScope } from "./workbot-agent-scope";
 
 /**
- * Members' agents with `workbotSettingsTabs` on: the same settings and saves as `WorkbotAgentBriefPanel`, in three
+ * Members' agents in the standard tabbed settings: the same settings and saves as before, in three
  * groups (who gets an agent, messages, schedule) and then what to tell people. A choice between yes and no is a
  * switch and a choice among several is a select. Only a row whose label can't say what it does has a tooltip.
  */
