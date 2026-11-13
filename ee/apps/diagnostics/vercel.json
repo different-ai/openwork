@@ -1,12 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "git": {
-    "deploymentEnabled": {
-      "dev": false
-    }
-  },
-  "ignoreCommand": "turbo query affected --base=$VERCEL_GIT_PREVIOUS_SHA --packages @openwork-ee/diagnostics --exit-code || exit 1",
+  "ignoreCommand": "[ \"$VERCEL_GIT_COMMIT_REF\" = dev ] && exit 0; turbo query affected --base=$VERCEL_GIT_PREVIOUS_SHA --packages @openwork-ee/diagnostics --exit-code || exit 1",
   "fluid": true,
   "headers": [
     {

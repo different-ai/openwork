@@ -304,11 +304,16 @@ auto-deploys have usually made the commit live already), without deploying.
      `workbot` and `client-web`, and on the suspended services that still have
      it on (`api`, `inference`, `inference-west`, `den-api-west`,
      `den-legacy-migrator-temp`, `den-mysql-core`).
-   - Vercel: `"git": { "deploymentEnabled": { "dev": false } }` in the
-     `vercel.json` of `ee/apps/den-web`, `apps/app`, `ee/apps/landing` and
-     `ee/apps/diagnostics` (done; `production-deploy.test.mjs` keeps it so).
-     PR previews keep building. Until the mode is `deploy`, nothing deploys
-     these projects' production from dev.
+   - Vercel: the `ignoreCommand` in the `vercel.json` of `ee/apps/den-web`,
+     `apps/app`, `ee/apps/landing` and `ee/apps/diagnostics` first skips dev
+     (`[ "$VERCEL_GIT_COMMIT_REF" = dev ] && exit 0`), so Vercel's Git build
+     for a dev push ends as a green "Canceled by Ignored Build Step". Vercel
+     runs the ignore command only for Git deployments, not for this
+     workflow's CLI deploys. (`git.deploymentEnabled: { dev: false }` also
+     stops them, but leaves a red "Deployment was blocked" status on dev
+     commits.) Done; `production-deploy.test.mjs` keeps it so. PR previews
+     keep building. Until the mode is `deploy`, nothing deploys these
+     projects' production from dev.
    - Set the repository variable `PRODUCTION_DEPLOY_MODE` to `deploy`.
 4. To deploy a dev commit by hand, or to roll forward after a fix, run
    **Actions → Production deploy → Run workflow** with mode `deploy` and an

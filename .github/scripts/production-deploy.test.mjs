@@ -29,11 +29,17 @@ test("every target names a build input target and the Vercel ones their app's ve
   assert.equal(TARGETS["api-private"].migrations, true);
 });
 
+// Skipped through the ignore command, which reports success, not
+// git.deploymentEnabled, which leaves a red "Deployment was blocked" status on
+// every dev commit. Vercel runs the ignore command only for Git deployments,
+// never for the CLI deploys production-deploy.yml makes.
 test("Vercel does not also deploy dev from Git: production-deploy.yml does", () => {
   for (const [name, spec] of Object.entries(TARGETS)) {
     if (spec.provider !== "vercel") continue;
     const config = JSON.parse(readFileSync(new URL(`../../${spec.rootDirectory}/vercel.json`, import.meta.url), "utf8"));
-    assert.equal(config.git?.deploymentEnabled?.dev, false, name);
+    assert.ok(config.ignoreCommand.startsWith('[ "$VERCEL_GIT_COMMIT_REF" = dev ] && exit 0; '), name);
+    assert.ok(config.ignoreCommand.length <= 256, `${name}: Vercel allows at most 256 characters`);
+    assert.equal(config.git?.deploymentEnabled, undefined, name);
   }
 });
 
