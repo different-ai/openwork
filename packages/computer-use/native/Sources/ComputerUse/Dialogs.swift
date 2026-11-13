@@ -33,12 +33,11 @@ extension AppIdentity {
         NSRunningApplication.runningApplications(withBundleIdentifier: filePanelService)
             .map(\.processIdentifier).first { responsible(for: $0) == pid }
     }
-    /// The panel processes that may take the keys of `pid`'s open panel: the one macOS names as
-    /// working for it, or, when it names none, every one running. Keys reach one only while the
-    /// app is in front, which real input checks before each event.
+    /// The panel process macOS positively attributes to `pid`, if any.
+    /// Unknown ownership admits no panel service.
     static func filePanelServices(for pid: pid_t) -> Set<pid_t> {
-        if let service = filePanelService(for: pid) { return [service] }
-        return Set(NSRunningApplication.runningApplications(withBundleIdentifier: filePanelService).map(\.processIdentifier))
+        guard let service = filePanelService(for: pid) else { return [] }
+        return [service]
     }
 
     /// The panel process is not a regular app, so `resolve` never returns it.
