@@ -1,22 +1,14 @@
 # Workbot: settings in tabs
 
-Feature key: `workbotSettingsTabs` · Deployments: cloud and self-hosted · Default: off · Author: @reachjalil
+Generally available on cloud and self-hosted. The `workbotSettingsTabs` rollout flag was retired in November 2026; this is the standard settings UI. Author: @reachjalil.
 
 ## What changes
 
-With members' agents on (`workbotProactive`), Workbot's settings are one long
-page: Workbot's own settings (on or off, default model, name, and whether
-agents read the calendar), then how members' agents work (messages,
-schedule, limits, what to tell people, a preview), then the connectors
-agents read. The same page appears in two places:
+Workbot's settings use three tabs wherever members' agents are available:
 
-- Den › Manage › Workbot. With `workbotTeamSettings` on, this page is no
-  longer in the side menu for people who can open Members › Teams (it still
-  opens by its address); Everyone's page below holds the same settings.
-- Den › Members › Teams › a team (or Everyone) › Workbot
-  (`workbotTeamSettings`).
-
-With the feature on, both split it into three tabs:
+- Den › Manage › Workbot. This page is no longer in the side menu for people
+  who can open Members › Teams; its address still opens the same settings.
+- Den › Members › Teams › a team (or Everyone) › Workbot.
 
 | Tab | What it holds |
 |---|---|
@@ -75,13 +67,11 @@ What each control saves and who can edit it are the same.
 
 ## Try it
 
-1. Turn `workbotSettingsTabs` on for the organization in `/admin` (with
-   `workbotProactive`, and `workbotTeamSettings` for the team pages).
-2. Open Den › Manage › Workbot, or Members › Teams › a team › Workbot.
-
-## Turning it off
-
-Both places show the single page again on the next load. Nothing is stored.
+Open Den › Manage › Workbot, or Members › Teams › a team › Workbot.
+No rollout or organization override is needed. Workbot deployment availability,
+permissions and the separate Your agent's brief rollout still apply. Historical
+settings-tab overrides and operator locks are ignored; older clients receive a
+fixed true compatibility value.
 
 ## Code
 

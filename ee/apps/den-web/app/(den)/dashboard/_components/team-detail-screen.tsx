@@ -16,7 +16,7 @@ import { directoryAccess } from "./gateway-directory-data";
 import { useGatewayAccessProviders } from "./gateway-subject-access-data";
 import { PromptsPanel, promptsTabVisible } from "./prompts-panel";
 import { teamScopeOf } from "./team-scope";
-import { TeamPageFrame, TeamSections, teamSectionsSidebarEnabled } from "./team-sections";
+import { TeamPageFrame, TeamSections } from "./team-sections";
 import { WorkbotPanel, workbotTabVisible } from "./team-workbot-panel";
 import { ListRow, RowLane, RowLaneLabel, RowList, RowListHeader } from "../_features/computers/computer-rows";
 import { PersonLead } from "../_features/computers/computer-parts";
@@ -76,8 +76,6 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
   const showPrompts = promptsTabVisible(orgContext);
   // What the team changes from Everyone's Workbot settings, with settings per team on.
   const showWorkbot = workbotTabVisible(orgContext);
-  // The sections in a sidebar on the left instead of a row of tabs.
-  const sidebar = teamSectionsSidebarEnabled(orgContext);
   const [chosenTab, setChosenTab] = useState<TeamDetailTab | null>(initialTab);
   const defaultTab: TeamDetailTab = "role";
   // The tab is in the address (?tab=agents), so a reload or a shared link opens it again.
@@ -142,13 +140,12 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
     ];
 
   return (
-    <TeamPageFrame sidebar={sidebar} title={team?.name ?? "Team"} memberCount={memberCount} backHref={getMembersTeamsRoute(orgSlug)}
+    <TeamPageFrame title={team?.name ?? "Team"} memberCount={memberCount} backHref={getMembersTeamsRoute(orgSlug)}
       action={team ? canEditTeam
         ? <LinkButton size="sm" variant="secondary" href={`${getMembersRoute(orgSlug)}?tab=teams&editTeam=${encodeURIComponent(teamId)}`} data-testid="team-edit">Edit team</LinkButton>
         : <span className="flex flex-col items-end gap-1"><DenButton size="sm" variant="secondary" disabled title={editTeamLockedReason} data-testid="team-edit-locked">Edit team</DenButton><span className="max-w-72 text-right text-[12px] text-[var(--dls-text-secondary)]">{editTeamLockedReason}</span></span>
         : undefined}>
       <TeamSections
-        sidebar={sidebar}
         tabs={tabs.map((item) => ({ ...item, unseen: introUnseen(TEAM_DETAIL_TAB_INTROS[item.value]) }))}
         activeTab={activeTab}
         onChange={setActiveTab}

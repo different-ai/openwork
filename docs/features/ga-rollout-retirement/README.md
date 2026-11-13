@@ -111,6 +111,9 @@ Revert this code change to restore the switches and their checks. Their historic
 
 ## Flags intentionally retained
 
+November 2026 follow-up: `teamSettingsSidebar` was removed; `workbotSettingsTabs`
+and Cloud sandbox-only `sandboxSlack` became standard behavior without rollout switches.
+
 These remain controlled rollouts or operational switches. Neither a stale code default nor a single-organization override is sufficient evidence of GA. The 18 deployment-wide completed rollouts listed in the second-pass guide are no longer in this registry.
 
 | Key | Feature |
@@ -120,7 +123,6 @@ These remain controlled rollouts or operational switches. Neither a stale code d
 | `remoteDesktopDeviceLogin` | Remote desktop device sign-in |
 | `followUpSuggestions` | Desktop: suggested follow-ups |
 | `denGreySidebar` | Den: grey sidebar, white pages |
-| `teamSettingsSidebar` | Den: team sections in a sidebar |
 | `administratorRecovery` | Deploy-time administrator recovery |
 | `connectionMcpServers` | Connect: an MCP server for each connection |
 | `opencodeV2Only` | OpenCode v2 only |
@@ -133,11 +135,9 @@ These remain controlled rollouts or operational switches. Neither a stale code d
 | `workbotAgentBrief` | Workbot: Your agent's brief and check rhythm |
 | `workbotAgentCheckGate` | Workbot: Your agent skips checks when nothing new arrived |
 | `workbotAgentSendCheck` | Workbot: Your agent checks each message before sending |
-| `workbotSettingsTabs` | Workbot: settings in tabs |
 | `browserDemonstrations` | Workbot: teach browser tasks |
 | `remoteComputers` | Desktop: computer use on remote computers |
 | `remoteTasksOptIn` | Desktop: other devices reach a computer only after its owner allows it |
 | `sandboxGateway` | Workbot: computers through the sandbox gateway |
-| `sandboxSlack` | Sandboxes: sample Slack for Workbot |
 | `connectStandardTools` | Connect: standard tools |
 | `connectEngineTools` | Connect: a tool for each action in OpenWork's engine |
