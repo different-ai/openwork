@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/server/validators/ajv"
+import { SCHEMA_CHECK_TIME_LIMIT_MS, SCHEMA_CHECK_TOO_SLOW_MESSAGE, TimeLimitExceededError, runWithTimeLimit } from "../time-limit.js"
 
 export type ExternalMcpArgumentIssue = {
   path: string
@@ -12,7 +13,7 @@ export type ExternalMcpArgumentValidation =
   | { ok: false; error: "invalid_arguments"; issues: ExternalMcpArgumentIssue[] }
   | { ok: false; error: "invalid_schema"; message: string }
 
-const validatorProvider = new AjvJsonSchemaValidator()
+let validatorProvider = new AjvJsonSchemaValidator()
 const VALIDATION_MESSAGE_LIMIT = 1_000
 
 function canonicalJson(value: unknown): string {
@@ -58,7 +59,8 @@ export function validateExternalMcpToolArguments(
   }
 
   try {
-    const result = validatorProvider.getValidator<Record<string, unknown>>(schema)(value)
+    // The remote server wrote this schema's patterns: see runWithTimeLimit.
+    const result = runWithTimeLimit(() => validatorProvider.getValidator<Record<string, unknown>>(schema)(value), SCHEMA_CHECK_TIME_LIMIT_MS)
     if (result.valid) return { ok: true, arguments: value }
     return {
       ok: false,
@@ -69,7 +71,12 @@ export function validateExternalMcpToolArguments(
         message: boundedMessage(result.errorMessage),
       }],
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof TimeLimitExceededError) {
+      // The stopped check may have left this validator half-way through compiling.
+      validatorProvider = new AjvJsonSchemaValidator()
+      return { ok: false, error: "invalid_arguments", issues: [{ path: "/", keyword: "schema_validation", message: SCHEMA_CHECK_TOO_SLOW_MESSAGE }] }
+    }
     return {
       ok: false,
       error: "invalid_schema",
