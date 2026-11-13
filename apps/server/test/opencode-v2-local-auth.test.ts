@@ -214,6 +214,22 @@ test("local metadata reads retain engine authentication and propagate failures w
   );
 });
 
+test("an engine that cannot describe one provider costs only that provider", async () => {
+  const native = await nativeProviders();
+  const failures: string[] = [];
+  const result = await localProviderDefinitions(
+    { ...connection(), opencodePassword: "incorrect-secret" },
+    auth({ "self-hosted": KEY, groq: "gsk-local-test-key" }, ["openai"]),
+    {},
+    { native, onCatalogError: error => { failures.push(error.message); } },
+  );
+
+  assert.deepEqual(result.native.map(provider => provider.id), ["groq"], "a catalog provider needs no v1 metadata");
+  assert.deepEqual(result.skipped, [{ id: "openai", reason: "oauth" }, { id: "self-hosted", reason: "metadata" }]);
+  assert.deepEqual(failures, ["Could not read locally connected provider metadata"]);
+  assert.equal(JSON.stringify([failures, result.skipped]).includes(KEY), false);
+});
+
 test("auth.json API keys and sign-ins are told apart", async () => {
   const directory = await mkdtemp(join(tmpdir(), "openwork-local-auth-"));
   try {
