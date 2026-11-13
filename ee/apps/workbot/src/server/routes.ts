@@ -476,7 +476,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     const member = c.get("member")
     if (!member.den.enabled) return c.json({ error: "feature_disabled" }, 404)
     const body = activationEventRequestSchema.safeParse(await c.req.json().catch(() => null))
-    if (!body.success || body.data.step === "own_provider" || body.data.step === "use_skill") return c.json({ error: "invalid_request" }, 400)
+    if (!body.success || body.data.step === "own_provider" || body.data.step === "use_skill" || body.data.step === "connector") return c.json({ error: "invalid_request" }, 400)
     const result = await den.activationEvent(member.accessToken, body.data)
     return new Response(JSON.stringify(result.payload), { status: result.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } })
   })

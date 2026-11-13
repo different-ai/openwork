@@ -24,6 +24,7 @@ import type { DenResourceSnapshot } from "./den-types";
 import type { CloudImportedMarketplace, CloudImportedPlugin, CloudImportedProvider } from "../cloud/import-state";
 import { desktopFreeAccessStatusSchema } from "./inference-access";
 import { claudeImportItemsSchema, claudeImportResultsSchema } from "./claude-import";
+import { opencodeConnectionImportResultsSchema, opencodeConnectionsPreviewSchema } from "./opencode-connections-import";
 
 const desktopFreePreferencesSchema = z.object({ enabled: z.boolean(), available: z.boolean(), canEnable: z.boolean(), refresh: z.enum(["reloaded", "deferred"]).optional() });
 export type DesktopFreePreferences = z.infer<typeof desktopFreePreferencesSchema>;
@@ -2093,6 +2094,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       ),
     getMcpStatus: (workspaceId: string) =>
       requestJson<McpStatusMap>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode/mcp`, { token, hostToken }),
+    /** The connection catalog of the engine that runs chats on a v2 desktop, as that engine reports it. */
+    getChatEngineMcpCatalog: (workspaceId: string) =>
+      requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/mcp`, { token, hostToken }),
     listMcpApps: (workspaceId: string) =>
       requestJson<{ servers: OpenworkMcpAppCatalogServer[] }>(
         baseUrl,
@@ -2331,6 +2335,20 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "DELETE",
       }),
+    previewOpencodeConnections: async (workspaceId: string) =>
+      opencodeConnectionsPreviewSchema.parse(
+        await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode-import/connections`, { token, hostToken }),
+      ),
+    importOpencodeConnections: async (workspaceId: string, names: string[]) =>
+      opencodeConnectionImportResultsSchema.parse(
+        await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode-import/connections`, {
+          token,
+          hostToken,
+          method: "POST",
+          body: { names },
+          timeoutMs: 2 * 60_000,
+        }),
+      ).results,
     listClaudeCodeSessions: async (workspaceId: string) =>
       claudeImportItemsSchema.parse(
         await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/code`, { token, hostToken, timeoutMs: 60_000 }),

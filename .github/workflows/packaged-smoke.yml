@@ -3,7 +3,7 @@ name: Packaged desktop smoke
 # Packages the real Linux desktop and boots it (app-smoke). It runs before each
 # alpha release is published (alpha-macos-aarch64.yml calls it and its publish
 # jobs wait for it) and on demand. It is not on PRs or ordinary dev pushes.
-# The macOS signed update install runs nightly in "Build and core checks".
+# The macOS signed update install runs nightly in "Nightly regression".
 on:
   workflow_call:
     inputs:

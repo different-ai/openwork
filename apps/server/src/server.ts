@@ -124,6 +124,7 @@ import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } 
 import { registerSessionGroupRoutes } from "./routes/session-groups.js";
 import { registerWorkspaceDefaultModelRoutes } from "./routes/workspace-default-model.js";
 import { createNativeClaudeImportEngine, registerClaudeImportRoutes } from "./routes/claude-import.js";
+import { registerOpencodeConnectionsImportRoutes } from "./routes/opencode-connections-import.js";
 import { registerUiControlRoutes } from "./routes/ui-control.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
@@ -2985,6 +2986,44 @@ function createRoutes(
     ensureWritable,
     requireClientScope,
     resolveWorkspaceWithoutBootstrap,
+  });
+
+  registerOpencodeConnectionsImportRoutes({
+    routes,
+    config,
+    jsonResponse,
+    readJsonBody,
+    ensureWritable,
+    requireClientScope,
+    resolveWorkspace,
+    requireApproval: (ctx, workspace, names) => requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "mcp.add",
+      summary: `Import ${names.length} MCP${names.length === 1 ? "" : "s"} from OpenCode`,
+      paths: [openworkConfigPath(workspace.path)],
+    }),
+    // The same steps as POST /workspace/:id/mcp, so an imported connection is
+    // validated, policy-checked and registered exactly like a hand-added one.
+    targetFor: (ctx, workspace) => ({
+      existingNames: async () => new Set(Object.keys(runtimeMcpMap(await readEffectiveRuntimeOpencodeConfig(config, workspace.id)))),
+      checkPolicy: (name) => managedDesktopPolicy(config).assertAgentPermission("mcp", name),
+      add: async (name, connection) => {
+        validateUserMcpName(name);
+        const result = await addMcp(config, workspace.id, name, connection);
+        await syncRuntimeMcpToOpencodeEngine(config, workspace, [name], undefined, engineMcpServerState).catch(() => undefined);
+        await recordAudit(workspace.path, {
+          id: shortId(),
+          workspaceId: workspace.id,
+          actor: ctx.actor ?? { type: "remote" },
+          action: "mcp.add",
+          target: openworkConfigPath(workspace.path),
+          summary: `Imported MCP ${name} from OpenCode`,
+          timestamp: Date.now(),
+        });
+        await engineV2Preview.settleWorkspaceMcp(workspace.id, workspace.path, name);
+        emitReloadEvent(ctx.reloadEvents, workspace, "mcp", { type: "mcp", name, action: result.action });
+      },
+    }),
   });
 
   registerCloudMcpRoutes({

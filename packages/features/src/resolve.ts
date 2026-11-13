@@ -1,5 +1,5 @@
 /**
- * How a feature from ./registry.ts resolves. One function for
+ * How a feature from ./flags resolves. One function for
  * every feature and every place it is checked (den-api, Den web, the desktop):
  *
  *   1. not part of this deployment      → off    ("unavailable")
@@ -134,6 +134,12 @@ export const RETIRED_FEATURE_KEYS = [
   "nativeDictation", "workbotScrollToBottom", "workbotApps",
   "workbotProactive", "workbotTeamSettings", "workbotUsageAnalytics",
   "fileSendPermissions", "remoteDevices", "remoteSessionAccess",
+  // Removed (2026-11): team settings use the existing top tabs.
+  "teamSettingsSidebar",
+  // Generally available (2026-11): Workbot settings tabs; sample Slack stays cloud-sandbox-only.
+  "workbotSettingsTabs", "sandboxSlack",
+  // Generally available (2026-11): choosing a new sandbox's models; stays cloud-sandbox-only.
+  "sandboxModelChoice",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

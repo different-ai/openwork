@@ -21,7 +21,7 @@ import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
 import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
-import { noteActivationRunStarted } from "../domains/cloud/activation/use-activation";
+import { noteActivationConnectionStatuses, noteActivationRunStarted } from "../domains/cloud/activation/use-activation";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
@@ -1011,7 +1011,8 @@ export function SessionRoute() {
       authToken: runtime.endpoint.token }];
   }));
 
-  const mcpConnectedCount = useMcpConnectedCount(opencodeClient, selectedWorkspaceRoot);
+  const mcpConnectedCount = useMcpConnectedCount(opencodeClient, selectedWorkspaceRoot,
+    (statuses) => noteActivationConnectionStatuses(opencodeBaseUrl, statuses));
   const automationCatalog = useMemo(
     () => providerListQuery.data === undefined || providerListQuery.isError
       ? undefined

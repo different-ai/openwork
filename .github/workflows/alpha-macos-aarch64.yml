@@ -82,6 +82,31 @@ jobs:
         # A dispatch or unavailable diff selects the build, never skips it.
         run: node .github/scripts/build-inputs.mjs --target desktop --base "${BUILD_BASE:-0000000000000000000000000000000000000000}" --head "$BUILD_HEAD"
 
+  # No alpha is published from a commit the quick check (quick-check.yml) did
+  # not pass. It runs on the same dev push, so this waits for it to finish.
+  # A build-only dispatch publishes nothing and is not held.
+  critical-checks:
+    name: Require the quick check on this commit
+    needs: changes
+    if: needs.changes.outputs.affected == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout the release gate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts/require-quick-check.mjs
+          sparse-checkout-cone-mode: false
+      - name: Wait for the quick check to pass on this commit
+        if: github.event_name == 'push' || inputs.publish == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/require-quick-check.mjs --sha "$GITHUB_SHA" --wait-minutes 20
+
   # The packaged Linux desktop must build and boot before any alpha is
   # published; both publish jobs wait for it and are skipped if it fails.
   packaged-smoke:
@@ -299,8 +324,8 @@ jobs:
           retention-days: 1
 
   publish-alpha-macos-aarch64:
-    # The packaged Linux smoke must pass before any alpha is published.
-    needs: [changes, packaged-smoke, build-alpha-macos-aarch64]
+    # The quick check and the packaged Linux smoke must pass before any alpha is published.
+    needs: [changes, critical-checks, packaged-smoke, build-alpha-macos-aarch64]
     if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || (inputs.platform != 'windows-x64' && inputs.publish == true))
     name: Publish alpha (aarch64-apple-darwin)
     runs-on: ubuntu-latest
@@ -406,7 +431,7 @@ jobs:
         run: node scripts/release/prune-alpha-assets.mjs --repo "$GITHUB_REPOSITORY" --tag "$CHANNEL_TAG" --keep 100 --protect-run "$GITHUB_RUN_NUMBER"
 
   publish-alpha-windows-x64:
-    needs: [changes, packaged-smoke]
+    needs: [changes, critical-checks, packaged-smoke]
     if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || inputs.platform != 'macos-arm64')
     name: Build + Publish alpha (x86_64-pc-windows-msvc)
     runs-on: blacksmith-8vcpu-windows-2025

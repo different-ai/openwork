@@ -13,6 +13,8 @@ export const SANDBOX_MAX_DAYS = 90;
 export const SANDBOX_MAX_MEMBERS = 500;
 /** Highest model credit, in US dollars, one sandbox's own model key can be capped at. */
 export const SANDBOX_MAX_CREDIT_USD = 5000;
+/** Most AI Gateway models one sandbox can be created with. */
+export const SANDBOX_MAX_MODELS = 20;
 
 const creditUsdSchema = z.number().int().min(1).max(SANDBOX_MAX_CREDIT_USD);
 
@@ -37,6 +39,11 @@ export const sandboxCreateInputSchema = z.object({
    * deployment default; ignored when every sandbox shares the deployment's key.
    */
   creditUsd: creditUsdSchema.optional(),
+  /**
+   * AI Gateway models this sandbox gets, as ids in the deployment's sandbox provider catalog. Omitted uses the
+   * deployment's list. Needs a sandbox model key on the deployment.
+   */
+  modelIds: z.array(z.string().trim().min(1).max(200)).min(1).max(SANDBOX_MAX_MODELS).optional(),
 }).strict();
 
 /** Sets the sandbox model key's total cap (not an increment). */
@@ -60,7 +67,7 @@ export const sandboxSchema = z.object({
   connectorCount: z.number().int(),
   /** Outlook, Calendar and Drive come as one Microsoft 365 connector Workbot can use (sandboxMicrosoft365). Older servers omit it. */
   sampleMicrosoft365: z.boolean().optional(),
-  /** The sandbox has the sample Slack with the Workbot Slack app installed (sandboxSlack). Older servers omit it. */
+  /** The sandbox has the sample Slack with the Workbot Slack app installed. Older servers omit it. */
   sampleSlack: z.boolean().optional(),
   /** AI Gateway providers in the sandbox organization. Older servers omit it. */
   modelProviderCount: z.number().int().optional(),
@@ -87,6 +94,16 @@ export const sandboxDefaultsSchema = z.object({
   gatewayProviderId: z.string().nullable(),
   /** Default cap for each sandbox's own model key; null when sandboxes share the deployment's key. Older servers omit it. */
   creditUsd: z.number().nullable().optional(),
+  /** Whether a new sandbox's models can be chosen (`modelIds`): the deployment has a sandbox model key. Older servers omit it. */
+  modelChoice: z.boolean().optional(),
+});
+
+/** The models a new sandbox can be given: the sandbox provider's catalog models the AI Gateway supports. */
+export const sandboxModelOptionsSchema = z.object({
+  providerId: z.string(),
+  /** False when the provider's catalog could not be read; model ids can still be sent and are checked on create. */
+  available: z.boolean(),
+  models: z.array(z.object({ id: z.string(), name: z.string() })),
 });
 
 export const sandboxListSchema = z.object({
@@ -115,4 +132,5 @@ export type Sandbox = z.infer<typeof sandboxSchema>;
 export type SandboxState = z.infer<typeof sandboxStateSchema>;
 export type SandboxList = z.infer<typeof sandboxListSchema>;
 export type SandboxDefaults = z.infer<typeof sandboxDefaultsSchema>;
+export type SandboxModelOptions = z.infer<typeof sandboxModelOptionsSchema>;
 export type SandboxJoinPreview = z.infer<typeof sandboxJoinPreviewSchema>;

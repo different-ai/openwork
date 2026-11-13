@@ -10,7 +10,7 @@ import { z } from "zod"
  * that key (and the minimum supported client version enforces that boundary).
  * sandboxOrgs is deliberately absent: sandbox availability is cloud-only and
  * is advertised by its deployment-checked admin API, not a client rollout key.
- * The same applies to sandboxMicrosoft365 and Workbot browser recovery.
+ * The same applies to sandboxMicrosoft365, sandboxSlack, sandboxModelChoice and Workbot browser recovery.
  * Workbot advertises recovery only from its deployment-checked session route.
  */
 const retired = z.literal(true).default(true).meta({
@@ -32,6 +32,7 @@ const retiredClientFeaturesSchema = z.object({
   workbotApps: retired,
   workbotProactive: retired,
   workbotTeamSettings: retired,
+  workbotSettingsTabs: retired,
   workbotUsageAnalytics: retired,
   fileSendPermissions: retired,
   remoteDevices: retired,
@@ -104,6 +105,11 @@ const retiredClientFeaturesSchema = z.object({
   automationCalendarTriggers: retired,
   lastUsedSignIn: retired,
   remoteSessionHelperView: retired,
+  // Removed, not GA: team pages keep their existing top tabs.
+  teamSettingsSidebar: z.literal(false).default(false).meta({
+    deprecated: true,
+    description: "Fixed false compatibility value for the removed team sidebar; not configurable.",
+  }),
   // Removed, not GA: older desktops must keep the pre-existing updater path.
   desktopUpdateDownloadWindow: z.literal(false).default(false).meta({
     deprecated: true,

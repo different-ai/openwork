@@ -13,7 +13,7 @@ import { ItemPanel, ItemRow } from "./item-list";
 import { ModelsPanel, modelsTabVisible } from "./team-models-panel";
 import { PromptsPanel, promptsTabVisible } from "./prompts-panel";
 import { EVERYONE_SCOPE } from "./team-scope";
-import { TeamPageFrame, TeamSections, teamSectionsSidebarEnabled } from "./team-sections";
+import { TeamPageFrame, TeamSections } from "./team-sections";
 import { WorkbotPanel, workbotTabVisible } from "./team-workbot-panel";
 import { usePermissionSets } from "./permissions-data";
 import { useFeatureIntroRuntime, useFeatureIntroUnseen } from "../_features/feature-intros";
@@ -41,8 +41,6 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
   const showPrompts = promptsTabVisible(orgContext);
   // Workbot holds Everyone's settings (on or off, model, name), which a team's Workbot tab can change for its members.
   const showWorkbot = workbotTabVisible(orgContext);
-  // The sections in a sidebar on the left instead of a row of tabs, as on each team's page.
-  const sidebar = teamSectionsSidebarEnabled(orgContext);
   const [chosenTab, setChosenTab] = useState<EveryoneTab | null>(initialTab);
   // The tab is in the address, so a reload or a shared link opens it again.
   const chooseTab = (tab: EveryoneTab) => {
@@ -77,8 +75,8 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
   ];
 
   return (
-    <TeamPageFrame sidebar={sidebar} title="Everyone" memberCount={memberCount} backHref={getMembersTeamsRoute(orgSlug)} testId="everyone-screen">
-      <TeamSections sidebar={sidebar} tabs={tabs.map((item) => ({ ...item, unseen: introUnseen(TEAM_DETAIL_TAB_INTROS[item.value]) }))} activeTab={activeTab} onChange={chooseTab}>
+    <TeamPageFrame title="Everyone" memberCount={memberCount} backHref={getMembersTeamsRoute(orgSlug)} testId="everyone-screen">
+      <TeamSections tabs={tabs.map((item) => ({ ...item, unseen: introUnseen(TEAM_DETAIL_TAB_INTROS[item.value]) }))} activeTab={activeTab} onChange={chooseTab}>
         {activeTab === "desktop" ? (<div role="tabpanel" aria-label="Desktop"><TeamTabIntro tab="desktop" facts={introFacts}><DesktopSuggestionsPanel team={null} /></TeamTabIntro></div>) : activeTab === "role" ? (
           <div role="tabpanel" aria-label="Role">
             <TeamTabIntro tab="role" facts={introFacts}>

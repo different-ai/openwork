@@ -26,6 +26,8 @@ const WATCH_MS = 1_500;
  *   notes?: { keyboard: string, observe: string },
  *   close?: () => Promise<void>,
  *   windows: () => Promise<RemoteWindow[]>,
+ *   apps?: () => Promise<Array<{ app: string, name: string }>>,
+ *   launch?: (app: string) => Promise<void>,
  *   screen: () => Promise<Region>,
  *   focus: (windowId: number) => Promise<void>,
  *   screenshot: (region: Region, options?: { maxWidth?: number, windowId?: number }) => Promise<{ png: Uint8Array, width: number, height: number }>,
@@ -42,11 +44,15 @@ const base64 = (bytes) => Buffer.from(bytes).toString("base64");
 /**
  * `restricted` windows are listed with the reason they can't be used and are
  * never opened. A driver with `wholeScreen: false` offers no desktop target.
+ * A driver with `apps` and `launch` also lists installed apps that have no
+ * window; opening one starts it and waits up to `launchWaitMs` for its window.
+ * Only an app the driver itself lists is ever started.
  * `device` names a VM for the organization's devices list: who runs it and the
  * provider's id for it, never a credential.
- * @param {{ id: string, label: string, driver: ComputerDriver, placement?: "local" | "remote", device?: { provider: "freestyle" | "daytona", externalId: string }, now?: () => number }} options
+ * @param {{ id: string, label: string, driver: ComputerDriver, placement?: "local" | "remote", device?: { provider: "freestyle" | "daytona", externalId: string }, now?: () => number, launchWaitMs?: number, launchPollMs?: number }} options
  */
-export function createRemoteComputerAdapter({ id, label, driver, placement = "remote", device, now = Date.now }) {
+export function createRemoteComputerAdapter({ id, label, driver, placement = "remote", device, now = Date.now, launchWaitMs = 15_000, launchPollMs = 250 }) {
+  const launches = typeof driver.apps === "function" && typeof driver.launch === "function";
   return {
     id,
     label,
@@ -163,22 +169,54 @@ export function createRemoteComputerAdapter({ id, label, driver, placement = "re
             entry.targets.push({ window_id: window.id, title: window.title, focused: window.focused === true, ...(window.restricted ? { unavailable: window.restricted } : {}) });
             apps.set(window.app, entry);
           }
+          // Installed apps with no window are listed too; a failed listing leaves the open windows.
+          if (launches) for (const app of (await serial(() => driver.apps()).catch(() => [])).slice(0, 400)) {
+            if (!apps.has(app.app)) apps.set(app.app, { app_id: app.app, name: app.name, windows: 0, targets: [] });
+          }
           return text({ ok: true, protocol: COMPUTER_PROTOCOL, computer: label, platform: driver.platform, apps: [...apps.values()],
             modes: ["observe", "control"], permissions: { accessibility: true, screenRecording: true },
             keyboard: { modifiers: ["control", "shift", "option", "command"], note: driver.notes?.keyboard ?? "Linux: use control for shortcuts; command is sent as control, option as alt." },
             limits: { lease_seconds: SESSION_SECONDS, actions_per_lease: MAX_ACTIONS, batch: 8, observation_seconds: OBSERVATION_MS / 1000 },
-            note: driver.notes?.observe ?? "Observations include semantic controls when AT-SPI is available. Otherwise use coordinates from the observation image." });
+            note: `${driver.notes?.observe ?? "Observations include semantic controls when AT-SPI is available. Otherwise use coordinates from the observation image."}${launches ? " An app listed with no windows is installed but not open: computer_open starts it." : ""}` });
         },
         async computer_open_session(args, options) {
           if (live()) return failure("session_open", "A session is already open. Keep using it, or close it first. Nothing was dispatched.");
           if (!["observe", "control", "assist"].includes(args.mode) || typeof args.app_id !== "string" || !args.app_id || typeof args.purpose !== "string" || !args.purpose || args.purpose.length > 500) return failure("invalid_arguments", "Provide an app, mode and task purpose.");
           if (args.mode === "assist") return failure("mode_unsupported", "This computer has no accessibility controls. Use control (mouse and keyboard) or observe. Nothing was dispatched.");
           if (args.app_id === "desktop" && driver.wholeScreen === false) return failure("app_not_found", "Whole-screen control is not available on this computer. Open an app window from computer_discover. Nothing was dispatched.");
-          const windows = args.app_id === "desktop"
+          const listWindows = async () => (await serial(() => driver.windows())).filter((window) => window.app === args.app_id).map(window => ({ ...window, whole: false }));
+          let windows = args.app_id === "desktop"
             ? [{ id: 1, title: "Whole screen", app: "desktop", region: await serial(() => driver.screen()), whole: true, focused: false }]
-            : (await serial(() => driver.windows())).filter((window) => window.app === args.app_id).map(window => ({ ...window, whole: false }));
-          options.signal.throwIfAborted();
-          if (closed) throw new Error("Computer use ended while finding the app.");
+            : await listWindows();
+          const proceed = () => {
+            options.signal.throwIfAborted();
+            if (closed) throw new Error("Computer use ended while finding the app.");
+          };
+          proceed();
+          if (!windows.length && launches && args.window_id === undefined) {
+            // Not open: start it, but only if the driver itself lists it as installed.
+            const installed = (await serial(() => driver.apps())).find((app) => app.app === args.app_id);
+            proceed();
+            if (!installed) return failure("app_not_found", "That app is not installed on this computer and has no open window. Use an app_id that computer_discover lists; an app cannot be started from a path or a command. Nothing was started.", { next: "discover" });
+            try { await serial(() => driver.launch(installed.app)); } catch (error) {
+              return failure("app_launch_failed", `${error instanceof Error ? error.message : "The app could not be started."} Nothing was opened.`, { next: "discover" });
+            }
+            const pause = () => new Promise((resolve) => { setTimeout(resolve, launchPollMs); });
+            const until = now() + launchWaitMs;
+            for (;;) {
+              proceed();
+              windows = await listWindows();
+              if (windows.length || now() >= until) break;
+              await pause();
+            }
+            proceed();
+            if (!windows.length) return failure("app_window_timeout", `${installed.name} was started but showed no window within ${Math.max(1, Math.round(launchWaitMs / 1000))} seconds. It may still be starting, or its window may be listed under another app: call computer_discover and open the window it lists. Do not start it again.`, { next: "discover" });
+            // A first window is often a splash screen: look once more before choosing.
+            await pause();
+            proceed();
+            const settled = await listWindows();
+            if (settled.length) windows = settled;
+          }
           if (!windows.length) return failure("app_not_found", "That app has no open window on this computer. Call computer_discover again. Nothing was dispatched.");
           if (args.window_id !== undefined && (!Number.isSafeInteger(args.window_id) || args.window_id < 1 || args.window_id > 0xffffffff)) return failure("invalid_arguments", "window_id must be a positive window ID from discovery.");
           const candidates = args.window_id !== undefined ? windows.filter(window => window.id === args.window_id)
