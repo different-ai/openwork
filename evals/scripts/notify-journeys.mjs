@@ -21,7 +21,7 @@ export function validateReport(report) {
 const excludedLine = report => report.excluded.length ? `\n${report.excluded.length} skipped (prerequisites unmet): ${report.excluded.map(entry => `${escape(entry.name)} — needs: ${escape(entry.reason)}`).join('; ')}` : '';
 
 const titles = {
-  'Build and core checks': 'Full regression — component checks',
+  'Nightly regression': 'Full regression — component checks',
   'Freestyle world check': 'Nightly core journey and world check',
   'Den DB Migrate': 'Production Den DB migrations (Den DB Migrate)',
 };

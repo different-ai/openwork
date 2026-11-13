@@ -9,8 +9,7 @@
     "dev": "next dev --hostname 127.0.0.1 --port ${REVIEW_PORT:-3011}",
     "build": "pnpm --filter \"@openwork/review-app^...\" --if-present run build && next build",
     "start": "next start --hostname 127.0.0.1 --port ${REVIEW_PORT:-3011}",
-    "typecheck": "tsc --noEmit",
-    "test": "node --test lib/*.test.ts"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@openwork/daytona-evidence": "workspace:*",

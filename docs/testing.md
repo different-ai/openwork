@@ -26,12 +26,19 @@ the highest risks only, in about a minute:
 - **Den API auth and permission tests** and audit route coverage, when Den API
   inputs change (`pnpm --filter @openwork-ee/den-api test:api:security`).
 
-Unit tests also run on the PR ("Build and core checks"). Nothing runs on a dev
-push except release and deployment builds; the rest is nightly or on demand:
+- **Desktop build:** the server bundled the way packaged builds do, and
+  Electron main typechecked against the IPC contract.
+
+These are the critical checks, and the only ones that gate anything. They run
+on every PR, where they gate the merge, and again on every dev push, where the
+alpha build and the release refuse a commit they did not pass
+(`.github/scripts/require-quick-check.mjs`). Keep the set under two minutes:
+a check that cannot block a merge and a release does not belong in CI, and a
+test nothing runs should be deleted. The rest is nightly or on demand:
 
 | Check | Where it runs |
 | --- | --- |
-| Unit tests, full Den API security suite, desktop build, docs and model validation | Every PR that changes what they cover, and nightly ("Build and core checks") |
+| Test-framework checks, engine smoke tests, docs and model snapshot validation | Nightly and on demand ("Nightly regression") |
 | Core journeys | Nightly and on demand ("Core journeys"); core-chat nightly in "Freestyle world check" |
 | Changed one-off proofs (`evals/proofs`) | Never automatically; by hand with `gh workflow run pr-proof.yml --ref <branch> -f pr=<n>` |
 | Packaged desktop build and boot | Before every alpha release ("Packaged desktop smoke"); macOS update install nightly |

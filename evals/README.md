@@ -9,13 +9,14 @@ to the module they test (`packages/*/src/**/*.test.ts`) and run in the same
 
 ## How CI works (start here)
 
-Every PR to `dev` gets one quick check ("Quick check", `quick-check.yml`, about
-a minute): static CI guards, the feature registry, a typecheck of the shipped
-code it changes, and the Den API auth tests when Den API code changes. Red here
-means a normal code problem. The rest:
+Every PR to `dev` gets one quick check ("Quick check", `quick-check.yml`, under
+two minutes): static CI guards, the feature registry, a typecheck of the
+shipped code it changes, the desktop build, and the Den API auth tests when Den
+API code changes. It runs again on every dev push, and no alpha or release
+ships a commit it did not pass. Red here means a normal code problem. The rest:
 
-1. **Unit tests and build** (`ci-tests.yml`, on the PR): the "Unit tests
-   (...)" jobs, the full Den API security suite and "Build the desktop app".
+1. **Nightly regression** (`ci-tests.yml`, nightly and on demand):
+   test-framework checks, engine smoke tests, docs and model validation.
 2. **Core journeys** (`core-journeys.yml`, nightly and on demand), and
    [`core/core-chat.e2e.test.ts`](./core/core-chat.e2e.test.ts) in the nightly
    Freestyle world check. Proofs never run automatically.
