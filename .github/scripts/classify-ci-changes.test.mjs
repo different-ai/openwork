@@ -2,71 +2,15 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { test } from "node:test";
 import { isBuildAffected } from "./build-inputs.mjs";
-import { QUICK_CHECKS, REQUIRED_JOBS, assertQuickChecks, assertSelectedChecks, classifyCiChanges, classifyQuickChanges, pullRequestChanges } from "./classify-ci-changes.mjs";
+import { QUICK_CHECKS, assertQuickChecks, classifyQuickChanges, pullRequestChanges } from "./classify-ci-changes.mjs";
 
-const snapshot = "ee/apps/gateway/src/models/base.json";
-const snapshotV2 = "ee/apps/gateway/src/models/base-v2.json";
 const electron = "apps/desktop/electron/main.ts";
 const landing = "ee/apps/landing/app/page.tsx";
 const backend = "ee/apps/den-api/src/routes/example.ts";
 const base = "a".repeat(40);
 const head = "b".repeat(40);
-const none = { core: false, den_api: false, snapshot: false, docs: false };
-const all = Object.fromEntries(Object.keys(none).map((key) => [key, true]));
 const modified = (filename) => ({ filename, status: "modified" });
-const pr = (files) => classifyCiChanges({ eventName: "pull_request", files }, isBuildAffected);
 const quick = (files, expectedCount = files?.length) => classifyQuickChanges({ eventName: "pull_request", files, expectedCount }, isBuildAffected);
-const flags = ({ lane, ...selected }) => selected;
-const expectFlags = (actual, expected) => assert.deepEqual(flags(actual), { ...none, ...expected });
-
-for (const [name, files, expected] of [
-  ["landing-only", [landing], {}],
-  ["Electron-only", [electron], { core: true, den_api: true }],
-  ["shared UI", ["packages/ui/src/components/button.tsx"], { core: true, den_api: true }],
-  ["shared types", ["packages/types/src/index.ts"], { core: true, den_api: true }],
-  ["backend-only", [backend], { core: true, den_api: true }],
-  ["Den web-only", ["ee/apps/den-web/app/page.tsx"], { core: true, den_api: true }],
-  ["a mixed app/backend PR", [electron, backend, landing], { core: true, den_api: true }],
-  ["a model snapshot mixed with landing", [snapshot, landing], { core: true, den_api: true, snapshot: true }],
-  ["a model snapshot mixed with Electron", [snapshot, electron], { core: true, den_api: true, snapshot: true }],
-  ["a docs page mixed with backend", ["packages/docs/guide.mdx", backend], { core: true, den_api: true, docs: true }],
-  ["a deleted desktop file", [{ filename: electron, status: "removed" }], { core: true, den_api: true }],
-  ["a PR moving desktop source to landing", [electron, landing], { core: true, den_api: true }],
-  ["outbound-only docs now guarded independently", ["docs/enterprise/outbound-access.md"], {}],
-]) {
-  test(`${name} PR selects independent unit checks`, () => expectFlags(pr(files), expected));
-}
-
-for (const path of ["packages/docs/guide.md", "packages/docs/guides/setup.mdx", "packages/docs/docs.json", "packages/docs/images/screenshot.png"]) {
-  test(`${path} validates the docs site on PRs`, () => expectFlags(pr([path]), { docs: true }));
-}
-
-test("the generated snapshot fast lane survives on a PR, not mixed changes", () => {
-  expectFlags(pr([snapshot]), { snapshot: true });
-  assert.equal(pr([snapshot]).lane, "snapshot");
-  assert.equal(pr([snapshot, landing]).lane, "affected");
-  // A deleted snapshot must not claim a modified snapshot.
-  expectFlags(pr([{ filename: snapshot, status: "removed" }]), { core: true, den_api: true, snapshot: true });
-});
-
-test("the v1 and v2 model snapshots refreshed together stay in the snapshot fast lane", () => {
-  assert.equal(pr([snapshot, snapshotV2]).lane, "snapshot");
-  assert.equal(pr([snapshotV2]).lane, "snapshot");
-  expectFlags(pr([snapshot, snapshotV2]), { snapshot: true });
-  assert.equal(pr([snapshot, snapshotV2, landing]).lane, "affected");
-  expectFlags(pr([snapshot, { filename: snapshotV2, status: "removed" }]), { core: true, den_api: true, snapshot: true });
-});
-
-for (const eventName of ["schedule", "workflow_dispatch", "push", "unknown-event"]) {
-  test(`${eventName} retains full regression without a changed-file shortcut`, () => {
-    expectFlags(classifyCiChanges({ eventName, files: [landing] }, () => false), all);
-  });
-}
-
-for (const files of [null, undefined, {}, [null], [""], ["../outside"], ["/absolute"], ["a\\b"], [landing, landing], [{ filename: landing, status: "invalid" }], [{ filename: landing, status: "renamed" }]]) {
-  test(`unknown or malformed diff ${JSON.stringify(files)} selects full work`, () => expectFlags(pr(files), all));
-}
-
 // PR quick check: the Den API auth and permission tests follow their inputs.
 test("PRs run the Den API auth tests only when Den API inputs change", () => {
   for (const path of [backend, "ee/packages/den-db/src/schema.ts", "packages/types/src/index.ts", "pnpm-lock.yaml", ".github/workflows/ci-tests.yml", "packaging/docker/docker-compose.ci-mysql.yml"]) {
@@ -105,19 +49,13 @@ test("an unknown, incomplete or broken PR comparison runs the Den API tests", ()
   for (const isAffected of [() => { throw new Error("missing manifest"); }, () => undefined, () => "false"]) {
     assert.deepEqual(classifyQuickChanges({ eventName: "pull_request", files: [modified(landing)], expectedCount: 1 }, isAffected), { den_quick: true });
   }
-  // Dev pushes skip the Den tests (the PR ran them); manual runs check everything.
-  assert.deepEqual(classifyQuickChanges({ eventName: "push", files: [backend] }, isBuildAffected), { den_quick: false });
-  assert.deepEqual(classifyQuickChanges({ eventName: "workflow_dispatch", files: null }, isBuildAffected), { den_quick: true });
-});
-
-test("a broken dependency calculation fails open instead of green-skipping work", () => {
-  for (const isAffected of [() => { throw new Error("missing workspace manifest"); }, () => undefined, () => "false"]) {
-    expectFlags(classifyCiChanges({ eventName: "pull_request", files: [landing] }, isAffected), all);
+  // Only PRs are narrowed: a dev push and a manual run check everything, whatever changed.
+  for (const eventName of ["push", "workflow_dispatch", "schedule", "unknown-event"]) {
+    assert.deepEqual(classifyQuickChanges({ eventName, files: [modified(landing)], expectedCount: 1 }, () => false), { den_quick: true }, eventName);
   }
 });
 
 test("a known empty PR may skip work; an empty PR still runs the always-on quick checks", () => {
-  expectFlags(pr([]), {});
   assert.deepEqual(quick([], 0), { den_quick: false });
 });
 
@@ -177,59 +115,10 @@ for (const [name, options] of [
   });
 }
 
-function passingReport(selection) {
-  const selected = flags(selection);
-  return {
-    classification: "success",
-    selected: Object.fromEntries(Object.entries(selected).map(([check, value]) => [check, String(value)])),
-    results: Object.fromEntries(Object.entries(REQUIRED_JOBS).map(([job, check]) => [job, selected[check] ? "success" : "skipped"])),
-  };
-}
-
-test("the summary accepts exactly the actual selected checks", () => {
-  for (const selection of [pr([landing]), pr([backend]), pr(["packages/docs/guide.mdx"]), pr([snapshot]), pr(null)]) {
-    assert.doesNotThrow(() => assertSelectedChecks(passingReport(selection)));
-  }
-});
-
-test("every selection output gates at least one job", () => {
-  assert.deepEqual([...new Set(Object.values(REQUIRED_JOBS))].sort(), Object.keys(none).sort());
-});
-
-test("every selected job must pass; skipped, cancelled and failed are not success", () => {
-  const report = passingReport(pr(null));
-  for (const job of Object.keys(REQUIRED_JOBS)) {
-    for (const result of ["skipped", "cancelled", "failure", "", undefined]) {
-      assert.throws(() => assertSelectedChecks({ ...report, results: { ...report.results, [job]: result } }), new RegExp(job));
-    }
-  }
-});
-
-test("every unselected job must be skipped; unexpected runs cannot mask a mismatch", () => {
-  const report = passingReport(pr([landing]));
-  for (const job of Object.keys(REQUIRED_JOBS)) {
-    for (const result of ["success", "cancelled", "failure", "", undefined]) {
-      assert.throws(() => assertSelectedChecks({ ...report, results: { ...report.results, [job]: result } }), new RegExp(job));
-    }
-  }
-});
-
-test("classification failure cannot green-skip the summary", () => {
-  const report = passingReport(pr([landing]));
-  for (const result of ["skipped", "cancelled", "failure", "", undefined]) assert.throws(() => assertSelectedChecks({ ...report, classification: result }), /blocking merge/);
-  for (const [key, drop] of [["selected", "docs"], ["results", "core_evals"]]) {
-    const missing = { ...report[key] };
-    delete missing[drop];
-    assert.throws(() => assertSelectedChecks({ ...report, [key]: missing }), /Missing or unexpected/);
-    assert.throws(() => assertSelectedChecks({ ...report, [key]: { ...report[key], unknown: "skipped" } }), /Missing or unexpected/);
-  }
-  for (const value of ["", "TRUE", undefined, null, 0]) assert.throws(() => assertSelectedChecks({ ...report, selected: { ...report.selected, core: value } }), /Invalid selection/);
-});
-
 // The PR gate (`openwork-tests-required` in quick-check.yml).
 const quickReport = (denQuick, denResult = denQuick ? "success" : "skipped") => ({
   classification: "success",
-  always: { static: "success", typecheck: "success" },
+  always: { static: "success", typecheck: "success", desktop_build: "success" },
   selected: { den_quick: String(denQuick) },
   results: { den_quick: denResult },
 });
@@ -240,7 +129,7 @@ test("the PR gate passes only when always-run checks pass and the Den tests matc
   assert.doesNotThrow(() => assertQuickChecks(quickReport(false)));
   for (const result of ["skipped", "cancelled", "failure", "", null]) assert.throws(() => assertQuickChecks(quickReport(true, result)), /den_quick/);
   for (const result of ["success", "cancelled", "failure", "", null]) assert.throws(() => assertQuickChecks(quickReport(false, result)), /den_quick/);
-  for (const check of ["static", "typecheck"]) {
+  for (const check of ["static", "typecheck", "desktop_build"]) {
     for (const result of ["skipped", "cancelled", "failure", "", undefined]) {
       const report = quickReport(false);
       assert.throws(() => assertQuickChecks({ ...report, always: { ...report.always, [check]: result } }), new RegExp(check));
@@ -264,14 +153,16 @@ function job(name, workflow = ciTests) {
 }
 const triggers = (workflow) => workflow.split("\njobs:\n")[0];
 
-test("unit tests and the full Den API suite run on PRs, never on dev pushes", () => {
-  assert.match(triggers(ciTests), /^  pull_request:\n    branches:\n      - dev/m);
-  assert.doesNotMatch(triggers(ciTests), /^  (push|pull_request_target):/m);
+test("the critical checks run on PRs and dev pushes; the nightly regression gates nothing", () => {
+  assert.match(triggers(quickCheck), /^  pull_request:\n    branches:\n      - dev\n  push:\n    branches:\n      - dev/m);
+  assert.doesNotMatch(triggers(ciTests), /^  (push|pull_request|pull_request_target):/m);
   assert.match(triggers(ciTests), /^  schedule:/m);
-  assert.match(triggers(quickCheck), /^  pull_request:\n    branches:\n      - dev/m);
-  // Only one workflow reports the required context on PRs.
+  assert.match(triggers(ciTests), /^  workflow_dispatch:/m);
+  // Only one workflow reports the required context.
   assert.equal(quickCheck.split("\n  openwork-tests-required:\n").length, 2);
-  assert.doesNotMatch(ciTests, /\n  openwork-tests-required:\n/);
+  assert.doesNotMatch(ciTests, /\n  openwork-tests-(required|full):\n/);
+  // Nothing in the nightly run is narrowed by changed files or left unselected.
+  assert.doesNotMatch(ciTests, /classify-changes|^    (if|needs):/m);
 });
 
 test("cheap source guards need no install, build or classification", () => {
@@ -296,33 +187,30 @@ test("cheap source guards need no install, build or classification", () => {
   for (const name of tests) assert.ok(staticJob.includes(`.github/scripts/${name}`), name);
 });
 
-test("desktop Node permission tests build their shared runtime before importing it", () => {
-  const app = job("openwork-tests-app");
-  const testCommand = app.split("\n").find((line) => line.includes("node --test ") && line.includes("apps/desktop/electron/computer-agent-permissions.test.mjs"));
-  assert.ok(testCommand, "keep the desktop permission tests in the app job");
-  const build = app.indexOf("pnpm --filter @openwork/types build");
-  assert.ok(build !== -1 && build < app.indexOf(testCommand), "build @openwork/types before Node resolves its dist exports");
-  assert.doesNotMatch(testCommand, /--conditions=development/, "exercise the production runtime export, not the TypeScript source");
-});
-
 test("the PR gate requires the always-run checks and the Den job only when selected", () => {
   const required = job("openwork-tests-required", quickCheck);
-  assert.match(required, /needs: \[quick-select, quick-static, quick-typecheck, den-quick\]/);
+  assert.match(required, /needs: \[quick-select, quick-static, quick-typecheck, desktop-build, den-quick\]/);
   assert.match(required, /if: always\(\)/);
   assert.match(required, /assertQuickChecks\(checks\)/);
   assert.ok(required.includes("needs.quick-static.result"));
   assert.ok(required.includes("needs.quick-typecheck.result"));
+  assert.ok(required.includes("needs.desktop-build.result"));
   assert.ok(required.includes("needs.quick-select.outputs.den_quick"));
   assert.ok(required.includes("needs.den-quick.result"));
   assert.ok(job("den-quick", quickCheck).includes("if: needs.quick-select.outputs.den_quick == 'true'"));
   assert.ok(job("quick-select", quickCheck).includes("den_quick: ${{ steps.classify.outputs.den_quick }}"));
-  for (const name of ["quick-static", "quick-typecheck"]) assert.doesNotMatch(job(name, quickCheck), /^    (if|needs):/m, name);
+  for (const name of ["quick-static", "quick-typecheck", "desktop-build"]) assert.doesNotMatch(job(name, quickCheck), /^    (if|needs):/m, name);
   assert.match(job("quick-typecheck", quickCheck), /node \.github\/scripts\/typecheck-shipped\.mjs --base HEAD\^1 --head HEAD/);
   assert.match(job("den-quick", quickCheck), /pnpm --filter @openwork-ee\/den-api test:api:security/);
   assert.match(job("den-quick", quickCheck), /pnpm --filter @openwork-ee\/den-api audit:coverage/);
+  // The desktop build check bundles the server the way packaged builds do, then typechecks Electron main.
+  const desktop = job("desktop-build", quickCheck);
+  const bundle = desktop.indexOf("pnpm --filter openwork-server build");
+  assert.ok(bundle !== -1 && bundle < desktop.indexOf("pnpm --filter @openwork/desktop typecheck:electron"));
+  assert.match(desktop, /rm -rf packages\/types\/dist/);
 });
 
-test("the PR Den API subset names real API test files that the full suite also runs", () => {
+test("the Den API auth and permission tests name real API test files", () => {
   const scripts = JSON.parse(readFileSync(new URL("../../ee/apps/den-api/package.json", import.meta.url), "utf8")).scripts;
   const files = scripts["test:api:security"].split(" ").filter((part) => part.startsWith("test/api/"));
   assert.ok(files.length >= 10);
@@ -333,46 +221,8 @@ test("the PR Den API subset names real API test files that the full suite also r
   assert.ok(scripts["test:api:security"].startsWith("node --conditions=development --import tsx --test "));
 });
 
-test("PR jobs and the summary context consume each real boolean, not a shared full lane", () => {
-  const jobs = {
-    core_app: "openwork-tests-app", core_headless: "openwork-tests-headless", core_workbot: "openwork-tests-workbot",
-    core_den: "openwork-tests-den", core_evals: "openwork-tests-evals",
-    desktop_build: "openwork-tests-desktop-build", den_api: "den-api-security",
-    snapshot: "validate-models-snapshot", docs: "validate-docs",
-  };
-  assert.deepEqual(Object.keys(jobs).sort(), Object.keys(REQUIRED_JOBS).sort());
-  const summary = job("openwork-tests-full");
-  for (const [key, name] of Object.entries(jobs)) {
-    const output = REQUIRED_JOBS[key];
-    assert.ok(job(name).includes(`if: needs.classify-changes.outputs.${output} == 'true'`), name);
-    assert.ok(job("classify-changes").includes(`${output}: \${{ steps.classify.outputs.${output} }}`), output);
-    assert.ok(summary.includes(`needs.classify-changes.outputs.${output}`), output);
-    assert.ok(summary.includes(`needs.${name}.result`), name);
-    assert.match(summary, new RegExp(`\\b${key}: env\\.`), key);
-    assert.ok(summary.match(/needs: \[([^\]]+)\]/)[1].split(", ").includes(name), name);
-  }
-  assert.match(summary, /if: always\(\)/);
-  assert.match(summary, /assertSelectedChecks\(checks\)/);
-  assert.match(job("classify-changes"), /pullRequestChanges\(/);
-  assert.match(job("classify-changes"), /head: context\.payload\.pull_request\.head\.sha/);
-});
-
-test("the Den API security shards run every API test file exactly once", () => {
-  const scripts = JSON.parse(readFileSync(new URL("../../ee/apps/den-api/package.json", import.meta.url), "utf8")).scripts;
-  // The shard script is test:api with only the shard option added.
-  assert.equal(scripts["test:api:shard"], scripts["test:api"].replace("--test ", "--test --test-shard=${DEN_API_TEST_SHARD:-1/1} "));
-  const security = job("den-api-security");
-  const shards = security.match(/shard: \[([^\]]+)\]/)[1].split(", ").map(Number);
-  assert.deepEqual(shards, Array.from({ length: shards.length }, (_, index) => index + 1));
-  assert.ok(security.includes(`DEN_API_TEST_SHARD="$SHARD/${shards.length}" pnpm --filter @openwork-ee/den-api test:api:shard`));
-  assert.match(security, /fail-fast: false/);
-  assert.match(security, /pnpm ci:den:mysql/);
-});
-
 test("daily and manual cross-platform regression and packaged macOS coverage remain", () => {
-  for (const name of ["openwork-tests-extended", "packaged-desktop-macos"]) {
-    assert.ok(job(name).includes("if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"));
-  }
+  for (const name of ["openwork-tests-extended", "packaged-desktop-macos", "validate-models-snapshot", "validate-docs"]) assert.ok(job(name));
   assert.match(job("openwork-tests-extended"), /blacksmith-16vcpu-ubuntu-2204, blacksmith-12vcpu-macos-15/);
   assert.match(job("openwork-tests-extended"), /pnpm test:e2e/);
   assert.match(job("packaged-desktop-macos"), /packaged-smoke-macos\.mjs --server-built/);

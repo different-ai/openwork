@@ -74,14 +74,14 @@ test("both alpha platforms depend on the desktop scope while retaining manual pl
   assert.match(macBuild, /contents: read/);
   assert.doesNotMatch(macBuild, /concurrency:|contents: write|gh release/);
   const macPublish = job(workflow, "publish-alpha-macos-aarch64");
-  // The packaged Linux smoke must pass before any alpha is published.
-  assert.match(macPublish, /needs: \[changes, packaged-smoke, build-alpha-macos-aarch64\]/);
+  // The quick check and the packaged Linux smoke must pass before any alpha is published.
+  assert.match(macPublish, /needs: \[changes, critical-checks, packaged-smoke, build-alpha-macos-aarch64\]/);
   assert.ok(macPublish.includes("(inputs.platform != 'windows-x64' && inputs.publish == true)"));
   assert.match(macPublish, /concurrency:\n      group: alpha-macos-\$\{\{ inputs\.channel_tag \|\| 'alpha-macos-latest' \}\}\n      cancel-in-progress: false/);
   assert.doesNotMatch(macPublish, /environment:|secrets\.|runs-on: macos/);
 
   const windows = job(workflow, "publish-alpha-windows-x64");
-  assert.match(windows, /needs: \[changes, packaged-smoke\]/);
+  assert.match(windows, /needs: \[changes, critical-checks, packaged-smoke\]/);
   assert.ok(windows.includes("if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || inputs.platform != 'macos-arm64')"));
   assert.match(windows, install);
 

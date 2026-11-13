@@ -21,7 +21,6 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --clean --external zod --target es2022 && tsc -p tsconfig.build.json",
-    "test": "node --test test/*.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

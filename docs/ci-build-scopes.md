@@ -31,11 +31,16 @@ must select work rather than skip it. Push classification compares the full
 commit. PRs run the quick check (`quick-check.yml`): its classifier checks
 paginated file counts and head consistency, and selects the Den API auth tests
 when their inputs change (`den-api-tests`). Its `openwork-tests-required`
-context requires the always-run static and typecheck jobs to succeed, and the
-Den job to succeed when selected and be skipped otherwise. "Build and core
-checks" (`ci-tests.yml`) also runs on PRs, narrowed to the unit tests the PR's
-files affect, with the same rule in `openwork-tests-full`. It does not run on
-dev pushes.
+context requires the always-run static, typecheck and desktop build jobs to
+succeed, and the Den job to succeed when selected and be skipped otherwise.
+
+The quick check also runs in full on every dev push. That result gates
+releases: the alpha workflow publishes nothing, and a fresh release tags
+nothing, unless the quick check passed on that exact commit
+(`.github/scripts/require-quick-check.mjs`). A tag pushed by hand (the audited
+expedited path) and a recovery rerun of an existing tag are not held.
+"Nightly regression" (`ci-tests.yml`) runs nightly and on demand only and
+gates nothing.
 
 ### EE publication and cancellation
 

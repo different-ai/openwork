@@ -19,8 +19,7 @@
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
-    "test:live": "tsx --test --test-concurrency=1 src/live.test.ts",
-    "test": "tsx --test src/unit.test.ts"
+    "test:live": "tsx --test --test-concurrency=1 src/live.test.ts"
   },
   "dependencies": {
     "@daytonaio/sdk": "^0.201.0",

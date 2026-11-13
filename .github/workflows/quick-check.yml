@@ -1,9 +1,10 @@
 name: Quick check
 
-# The one check every PR waits for (`openwork-tests-required`): the highest
-# risks only, in about a minute. Unit tests, the full Den API security tests
-# and the desktop build also run on PRs ("Build and core checks"); core
-# journeys run nightly only; the packaged
+# The critical checks, in under two minutes (`openwork-tests-required`). They
+# run on every PR, where they gate the merge, and on every dev push, where the
+# alpha build and the release refuse a commit they did not pass
+# (.github/scripts/require-quick-check.mjs). Nothing else gates a merge or a
+# release. Core journeys and the wider regression run nightly; the packaged
 # desktop before each alpha release ("Packaged desktop smoke"). See
 # docs/ci-build-scopes.md for where each check runs.
 on:
@@ -98,6 +99,7 @@ jobs:
           evals/scripts/run-parity-proof.test.mjs
           .github/scripts/build-inputs.test.mjs
           .github/scripts/classify-ci-changes.test.mjs
+          .github/scripts/require-quick-check.test.mjs
           .github/scripts/typecheck-shipped.test.mjs
           .github/scripts/docs-validation.test.mjs
           .github/scripts/ee-image-inputs.test.mjs
@@ -173,8 +175,7 @@ jobs:
 
   # Security-critical Den API rules (roles, tenants, API keys, sessions, OAuth,
   # audit secrets, feature rollouts) against the real app and MySQL, plus audit
-  # route coverage, when Den API inputs change. The full suite runs in six
-  # shards on PRs ("Build and core checks").
+  # route coverage, when a PR changes Den API inputs and on every dev push.
   den-quick:
     name: Den API auth and permission tests
     needs: quick-select
@@ -217,11 +218,33 @@ jobs:
           [ "$audit" -eq 0 ] || echo "::error::Audit route coverage failed"
           [ "$tests" -eq 0 ] && [ "$audit" -eq 0 ]
 
+  # Packaged builds resolve server plugins differently from test source, and
+  # Electron main is typechecked against the IPC contract: both break the
+  # desktop release when wrong.
+  desktop-build:
+    name: Build the desktop app (Electron typecheck and server bundle)
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      # The server build bundles with Bun, which the engine setup installs.
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-tests
+        with:
+          evals: "false"
+      - name: Bundle the server plugins the way packaged builds do
+        run: |
+          rm -rf packages/types/dist
+          pnpm --filter openwork-server build
+      - name: Typecheck Electron main against the IPC contract
+        run: pnpm --filter @openwork/desktop typecheck:electron
+
   # Single stable context for branch rulesets to require. Every always-run
   # quick check must succeed; the Den job must succeed when selected and be
   # skipped otherwise. Classification failure never green-skips the Den tests.
   openwork-tests-required:
-    needs: [quick-select, quick-static, quick-typecheck, den-quick]
+    needs: [quick-select, quick-static, quick-typecheck, desktop-build, den-quick]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -238,6 +261,7 @@ jobs:
           SELECT_RESULT: ${{ needs.quick-select.result }}
           STATIC_RESULT: ${{ needs.quick-static.result }}
           TYPECHECK_RESULT: ${{ needs.quick-typecheck.result }}
+          DESKTOP_BUILD_RESULT: ${{ needs.desktop-build.result }}
           DEN_QUICK: ${{ needs.quick-select.outputs.den_quick }}
           DEN_QUICK_RESULT: ${{ needs.den-quick.result }}
         run: |
@@ -246,7 +270,7 @@ jobs:
           const { env } = process
           const checks = {
             classification: env.SELECT_RESULT,
-            always: { static: env.STATIC_RESULT, typecheck: env.TYPECHECK_RESULT },
+            always: { static: env.STATIC_RESULT, typecheck: env.TYPECHECK_RESULT, desktop_build: env.DESKTOP_BUILD_RESULT },
             selected: { den_quick: env.DEN_QUICK },
             results: { den_quick: env.DEN_QUICK_RESULT },
           }
