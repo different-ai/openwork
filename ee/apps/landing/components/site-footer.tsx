@@ -50,6 +50,9 @@ export function SiteFooter() {
           <Link href="/ai-governance" className="whitespace-nowrap transition-colors hover:text-gray-800">
             AI governance
           </Link>
+          <Link href="/sovereign-ai" className="whitespace-nowrap transition-colors hover:text-gray-800">
+            Sovereign AI
+          </Link>
           <Link href="/contact" className="whitespace-nowrap transition-colors hover:text-gray-800">
             Contact
           </Link>
