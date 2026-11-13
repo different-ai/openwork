@@ -33,7 +33,7 @@ The app UI normally loads at:
 http://localhost:5173/
 ```
 
-A packaged app opens no CDP port unless it is launched with `OPENWORK_ELECTRON_REMOTE_DEBUG_PORT` set to one.
+A packaged app opens no CDP port unless it is launched with `OPENWORK_ELECTRON_REMOTE_DEBUG_PORT` set to one. On someone else's installed app, they can choose **Help > Restart with Debugging** instead; the Help menu then shows the port.
 
 To use a different CDP port, launch with an override:
 

@@ -23,7 +23,7 @@ import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@ope
 
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
-import { resolveRemoteDebugPort } from "./remote-debug-port.mjs";
+import { pickRemoteDebugPort, remoteDebugMenuItems, remoteDebugRelaunchArgs, resolveRemoteDebugPort } from "./remote-debug-port.mjs";
 import { registerSessionPins } from "./session-pins.mjs";
 import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./runtime.mjs";
 import { registerUpdaterIpc, resolveAppVersion } from "./updater.mjs";
@@ -219,6 +219,12 @@ const applicationMenu = createApplicationMenu({
   docsUrl: DOCS_PAGE_URL,
   getWindow: () => createMainWindow(),
   closeBrowserTab: (host) => browserPanel?.closeFocusedBrowserTab(host) ?? false,
+  // Read when the menu is installed, after the launch's debug port is known.
+  helpDebugItems: () => remoteDebugMenuItems({
+    packaged: app.isPackaged,
+    port: remoteDebugPort,
+    restart: (debugging) => runDetachedTask("restart for debugging from menu", () => restartForDebugging(debugging)),
+  }),
 });
 
 let browserPanel = null;
@@ -1187,7 +1193,9 @@ if (process.platform === "darwin" && INITIAL_APP_ICON_IMAGE && !INITIAL_APP_ICON
 // Must resolve before app.commandLine.appendSwitch (before `ready`).
 const remoteDebugPort = await resolveRemoteDebugPort({
   packaged: app.isPackaged,
-  requested: process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT,
+  // The environment variable, or Chromium's own switch: Help > Restart with
+  // Debugging restarts the app with that switch.
+  requested: process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() || app.commandLine.getSwitchValue("remote-debugging-port"),
 });
 if (remoteDebugPort > 0) {
   app.commandLine.appendSwitch("remote-debugging-port", String(remoteDebugPort));
@@ -3090,6 +3098,40 @@ ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
   }
   return openExternalUrl(url.trim());
 });
+/**
+ * Help > Restart with Debugging (and without): the way to open the debug port
+ * of an installed app for a support session without a terminal. Only the
+ * native menu calls this, and turning it on asks first.
+ */
+async function restartForDebugging(debugging) {
+  if (debugging) {
+    /** @type {import("electron").MessageBoxOptions} */
+    const options = {
+      type: "warning",
+      buttons: ["Restart with Debugging", "Cancel"],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Restart ${APP_NAME} with debugging?`,
+      detail: `While debugging is on, other programs on this computer can inspect and control ${APP_NAME}, including your signed-in account. Turn it on only when you are working with someone you trust to look into a problem. It turns off when you quit ${APP_NAME} or choose Help > Restart without Debugging.`,
+    };
+    const { response } = mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showMessageBox(mainWindow, options)
+      : await dialog.showMessageBox(options);
+    if (response !== 0) return;
+  }
+  const port = debugging ? await pickRemoteDebugPort() : 0;
+  // A launch that set the variable would otherwise pass it on to the restart.
+  if (!debugging) delete process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT;
+  try {
+    mainWindow?.webContents.session.flushStorageData();
+    session.defaultSession.flushStorageData();
+  } catch {
+    // Best effort: never block the restart on a flush failure.
+  }
+  app.relaunch({ args: remoteDebugRelaunchArgs(process.argv.slice(1), port) });
+  app.quit();
+}
+
 ipcMain.handle("openwork:shell:relaunch", async () => {
   app.relaunch();
   app.quit();
