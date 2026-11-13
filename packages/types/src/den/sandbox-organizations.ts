@@ -67,7 +67,7 @@ export const sandboxSchema = z.object({
   connectorCount: z.number().int(),
   /** Outlook, Calendar and Drive come as one Microsoft 365 connector Workbot can use (sandboxMicrosoft365). Older servers omit it. */
   sampleMicrosoft365: z.boolean().optional(),
-  /** The sandbox has the sample Slack with the Workbot Slack app installed (sandboxSlack). Older servers omit it. */
+  /** The sandbox has the sample Slack with the Workbot Slack app installed. Older servers omit it. */
   sampleSlack: z.boolean().optional(),
   /** AI Gateway providers in the sandbox organization. Older servers omit it. */
   modelProviderCount: z.number().int().optional(),

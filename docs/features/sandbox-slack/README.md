@@ -1,8 +1,7 @@
-# Sandboxes: sample Slack for Workbot (`sandboxSlack`)
+# Sandboxes: sample Slack for Workbot
 
-- **Key:** `sandboxSlack`
+- **Status:** generally available; `sandboxSlack` was retired in November 2026.
 - **Deployments:** cloud only (sandbox organizations are cloud only)
-- **Default:** off
 - **Author:** @reachjalil
 
 ## What changes
@@ -11,7 +10,7 @@ Sandbox organizations (`/admin/sandbox-orgs`) connect the hosted sample work app
 each member's agent messages as a DM from the Workbot Slack app, so in a sandbox the switch stayed locked with
 "Needs the Slack app first": nobody has a Slack workspace to install the app in.
 
-With the feature on, a **new** sandbox gets a sample Slack that lives in the sample work apps, not Slack:
+A **new** sandbox with sample work apps gets a sample Slack that lives in the sample work apps, not Slack:
 
 1. When the sandbox is created, Den registers a sample Slack app with the workplace
    (`POST <workplace>/_workshop/slack/apps`), adds a per-person **Slack** connector at `<workplace>/slack/mcp`, and
@@ -39,21 +38,22 @@ Where a Slack call goes is decided per installation, on every call, from things 
   other bot token comes from Slack's own install answer, and Slack never issues that prefix;
 - the organization is an **open** sandbox, the address is the workplace address a platform admin gave it, and the
   Slack connector still points at that workplace;
-- the feature is on for the organization.
+- this is a Cloud deployment.
 
 Every other organization and connector keeps Slack's API. The Slack client itself refuses to send a sample token to
 Slack. The Slack app setup and install routes still accept only Slack's own connector, so a real Slack app can't be
 installed on the sample connector.
 
-## Turning it off
+## Sandbox lifecycle
 
-The kill switch (or turning it off for an organization) makes the sample Slack **unavailable**: sending answers
-`sandbox_slack_unavailable` and nothing is sent anywhere. Turning it back on restores it without reconnecting. When a
-sandbox closes or expires, the same happens.
+Closing or expiring a sandbox makes its sample Slack unavailable: sending answers
+`sandbox_slack_unavailable` and nothing is sent anywhere. Reopening an unexpired
+sandbox restores it without reconnecting. Real Slack and non-sandbox organizations
+are unchanged.
 
-Sandboxes created while the feature was off have no sample Slack. To give an existing sandbox one, turn the feature
-on for its organization, then use **Add Slack** on its row in `/admin/sandbox-orgs`
-(`POST /v1/admin/sandbox-orgs/:id/slack`).
+For an older sandbox that has no sample Slack yet, use **Add Slack** on its row in
+`/admin/sandbox-orgs` (`POST /v1/admin/sandbox-orgs/:id/slack`). No feature override is
+needed. The sandbox must be open and have a sample work apps address.
 
 If the workplace has no sample Slack yet (an older deployment of the workshop), sandbox creation logs
 `sandbox slack failed` and the sandbox is created without it.
@@ -62,7 +62,7 @@ If the workplace has no sample Slack yet (an older deployment of the workshop), 
 
 - The workplace runs `evals/packages/open-workplace/src/workshop.mjs` with Open Slack (`GET /health` reports
   `slack: true`).
-- Proactive Mode itself still needs its own feature and a headless runner, as in any organization.
+- Proactive Mode still needs a headless runner and an administrator to enable the actual setting, as in any organization.
 
 ## Try it
 

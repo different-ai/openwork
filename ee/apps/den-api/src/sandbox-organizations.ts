@@ -36,7 +36,7 @@ import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { createOrganizationForUser, isEmailAllowedForOrganization, updateOrganizationMemberRole } from "./orgs.js"
 import { getInvitationOrigin } from "./routes/org/shared.js"
-import { deploymentFeatureEnabled, organizationFeatureEnabled } from "./features.js"
+import { deploymentFeatureEnabled } from "./features.js"
 import { addSandboxMicrosoft365, SANDBOX_MICROSOFT_APP_KEYS, SANDBOX_MICROSOFT_EXTERNAL_KEY, SandboxMicrosoftUnavailableError } from "./sandbox-microsoft-365.js"
 import { getExternalMcpConnectionByExternalKey } from "./capability-sources/external-mcp-connections.js"
 import { addSandboxSlack, SANDBOX_SLACK_EXTERNAL_KEY, SandboxSlackUnavailableError } from "./sandbox-slack.js"
@@ -297,7 +297,7 @@ export async function getSandbox(id: DenTypeId<"sandboxOrganization">): Promise<
  * workplace (so Workbot's chat, Calendar, Documents and first hello can read them); `callbackBaseUrl` is Den's public
  * API address the workplace sends people back to. If the workplace can't offer it, the separate connectors are used.
  *
- * With `sandboxSlack` on, the sandbox also gets the workplace's sample Slack with the Workbot Slack app installed
+ * On Cloud, the sandbox also gets the workplace's sample Slack with the Workbot Slack app installed
  * (sandbox-slack.ts), so Proactive Mode can message people there. If the workplace can't offer it, it is left out.
  */
 export async function createSandbox(actor: UserId, input: SandboxCreateInput, options: { callbackBaseUrl?: string | null } = {}): Promise<Sandbox> {
@@ -368,7 +368,7 @@ export async function createSandbox(actor: UserId, input: SandboxCreateInput, op
       })
     }
   }
-  if (input.connectorBaseUrl && await organizationFeatureEnabled(organizationId, "sandboxSlack")) {
+  if (input.connectorBaseUrl && env.features.deployment === "cloud") {
     await addSandboxSlack({ organizationId, ownerMemberId: owner.id, workplaceUrl: input.connectorBaseUrl }).catch((error: unknown) => {
       appLogger.error("sandbox slack failed", { organization_id: organizationId, error: error instanceof Error ? error.message : "unknown" })
     })
@@ -589,14 +589,14 @@ export async function addMicrosoft365ToSandbox(id: DenTypeId<"sandboxOrganizatio
 
 /**
  * Adds the sample Slack (connector and Workbot Slack app) to an existing open sandbox, one created before
- * `sandboxSlack` was on for it. Does nothing when it is already there.
+ * sample Slack was included by default. Does nothing when it is already there.
  */
 export async function addSlackToSandbox(id: DenTypeId<"sandboxOrganization">) {
   const [row] = await db.select().from(SandboxOrganizationTable).where(eq(SandboxOrganizationTable.id, id)).limit(1)
   if (!row) return null
   if (sandboxState(row) !== "open") throw new SandboxInputError("Reopen this sandbox first.")
   if (!row.connectorBaseUrl) throw new SandboxInputError("This sandbox has no sample work apps address.")
-  if (!await organizationFeatureEnabled(row.organizationId, "sandboxSlack")) throw new SandboxInputError("Turn on Sandboxes: sample Slack for this organization first.")
+  if (env.features.deployment !== "cloud") throw new SandboxInputError("Sample Slack is available only on cloud deployments.")
   const [owner] = await db.select({ id: MemberTable.id }).from(MemberTable)
     .where(and(eq(MemberTable.organizationId, row.organizationId), eq(MemberTable.userId, row.createdByUserId), isNull(MemberTable.removedAt))).limit(1)
   if (!owner) throw new SandboxInputError("The sandbox's creator is no longer a member.")

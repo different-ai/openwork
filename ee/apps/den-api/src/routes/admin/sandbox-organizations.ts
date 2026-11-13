@@ -95,7 +95,7 @@ export function registerAdminSandboxOrganizationRoutes<T extends { Variables: Au
     }
   })
 
-  app.post(`${base}/:sandboxId/slack`, updated("Add sample Slack to a sandbox", "Adds a per-person Slack connector at the sandbox's sample work apps and installs the Workbot Slack app against it with a sample bot token, so Proactive Mode can be turned on and each member's agent messages arrive on their sample Slack page. Needs an open sandbox with a sample work apps address and Sandboxes: sample Slack (sandboxSlack) on for its organization. Does nothing when it is already there. Platform administrators only."), adminRoute(), async c => {
+  app.post(`${base}/:sandboxId/slack`, updated("Add sample Slack to a sandbox", "Adds a per-person Slack connector at the sandbox's sample work apps and installs the Workbot Slack app against it with a sample bot token, so Proactive Mode can be turned on and each member's agent messages arrive on their sample Slack page. Needs an open sandbox with a sample work apps address on a cloud deployment. Does nothing when it is already there. Platform administrators only."), adminRoute(), async c => {
     if (env.features.deployment !== "cloud") return c.json(disabled, 404)
     const id = c.req.param("sandboxId")
     if (!isDenTypeId("sandboxOrganization", id)) return c.json({ error: "invalid_request", message: "Invalid sandbox id." }, 400)

@@ -23,7 +23,7 @@ import { denDropdownListClass, denDropdownRowBaseClass, denDropdownRowIdleClass 
 import { DenSelect } from "../../_components/ui/select";
 import { ConnectorLogo } from "./item-logo";
 import type { AgentPolicyScope } from "./workbot-agent-scope";
-import { AgentConnectionTools, AgentConnectionToolsButton } from "./workbot-agent-tools";
+import { AgentConnectionToolsButton } from "./workbot-agent-tools";
 
 /**
  * What members' agents read. The calendar is one setting on General (`AgentCalendarPolicy`): on for everyone, members
@@ -188,9 +188,7 @@ export function AgentCalendarPolicy({ view, disabled, onChange }: {
   );
 }
 
-export function WorkbotProactiveSources({ view, canManage, saving, onChange, tools, heading = true, help = false }: {
-  /** In a tab (`workbotSettingsTabs`): only the connectors that were added are listed, and each one's tools open from a button on its row. */
-  help?: boolean;
+export function WorkbotProactiveSources({ view, canManage, saving, onChange, tools, heading = true }: {
   /** False where the tab around it already says "Connectors". */
   heading?: boolean;
   view: WorkbotProactiveView;
@@ -209,21 +207,18 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
   const anyConnector = view.brief !== undefined;
 
   const save = (change: AgentSourcesPolicyInput) => onChange({ sources: change });
-  // In a tab, a connection's tools open from a button on its row; otherwise from a line under it.
-  const toolsButtonOf = (option: { id: string; name: string }) => tools && anyConnector && help ? (
+  // A connection's tools open from a button on its row.
+  const toolsButtonOf = (option: { id: string; name: string }) => tools && anyConnector ? (
     <AgentConnectionToolsButton orgId={tools.orgId} scope={tools.scope} connectionId={option.id} name={option.name} connectHref={tools.connectorHref(option.id)} disabled={locked} onChange={save} />
-  ) : null;
-  const toolsOf = (option: { id: string; name: string }) => tools && anyConnector && !help ? (
-    <AgentConnectionTools orgId={tools.orgId} scope={tools.scope} connectionId={option.id} name={option.name} connectHref={tools.connectorHref(option.id)} disabled={locked} onChange={save} />
   ) : null;
 
   // With the brief: every connection, each with its policy and its tools.
   const everyConnectionRows = () => {
     const everything = connections?.other ?? [];
     // In a tab: only the connections that were added; the rest are behind "Add connector".
-    const all = help ? everything.filter((option) => otherConnectionAdded(view, option)) : everything;
-    const rest = help ? everything.filter((option) => !otherConnectionAdded(view, option)) : [];
-    const filtering = help && all.length > FILTER_FROM;
+    const all = everything.filter((option) => otherConnectionAdded(view, option));
+    const rest = everything.filter((option) => !otherConnectionAdded(view, option));
+    const filtering = all.length > FILTER_FROM;
     const every = filtering ? filterConnections(all, filter) : all;
     return (
       <>
@@ -248,7 +243,7 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
                 </span>
                 <span className="flex min-w-0 flex-wrap items-center justify-end gap-3">
                   <PolicySelect label={option.name} value={policy} disabled={locked} onChange={(next) => save({ connections: { [option.id]: next } })} />
-                  {help && view.settings.sources.connections[option.id] !== undefined ? (
+                  {view.settings.sources.connections[option.id] !== undefined ? (
                     <DenButton variant="ghost" size="xs" disabled={locked} aria-label={`Remove ${option.name} from Connectors`}
                       onClick={() => save({ connections: { [option.id]: null } })}>
                       Remove
@@ -256,11 +251,10 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
                   ) : null}
                 </span>
               </div>
-              {policy !== "off" ? toolsOf(option) : null}
             </div>
           );
         })}
-        {help && rest.length > 0 ? (
+        {rest.length > 0 ? (
           <>
             <AddConnector options={rest} disabled={locked} onPick={(option) => save({ connections: { [option.id]: "members" } })} />
             <p className="px-6 pb-2 text-[12px] text-gray-500" data-testid="workbot-source-other-rest">{otherConnectionsRestLine(rest.length)}</p>

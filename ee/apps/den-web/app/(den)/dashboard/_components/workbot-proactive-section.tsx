@@ -25,9 +25,7 @@ import type { WorkbotAgentsPart } from "./workbot-settings-tabs-model";
 import { useSaveWorkbotProactive, useWorkbotProactive } from "./workbot-proactive-data";
 import { PROACTIVE_PREVIEW_KINDS, WorkbotProactivePreview } from "./workbot-proactive-preview";
 import { WorkbotProactiveSources } from "./workbot-proactive-sources";
-import { WorkbotAgentBriefPanel } from "./workbot-agent-brief-panel";
 import { WorkbotAgentSettingsGroups } from "./workbot-agent-settings-groups";
-import { workbotSettingsTabsEnabled } from "./workbot-settings-tabs";
 import { getLibraryConnectorRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
@@ -100,10 +98,7 @@ export function WorkbotProactivePanel({
   connectorsHref,
   initialPreview = "morning_brief",
   scope = EVERYONE,
-  grouped = false,
 }: {
-  /** With `workbotSettingsTabs` and the brief on: the rows in groups, with switches for yes or no and a tooltip each. */
-  grouped?: boolean;
   view: WorkbotProactiveView;
   canManage: boolean;
   saving: boolean;
@@ -116,8 +111,7 @@ export function WorkbotProactivePanel({
   const ids = { destination: useId(), days: useId(), cap: useId(), members: useId() };
   const [preview, setPreview] = useState<AgentResponsibility>(initialPreview);
   // With Your agent's brief on (the server sends `brief`), one rhythm and a text replace the message types.
-  if (view.brief && grouped) return <WorkbotAgentSettingsGroups view={view} brief={view.brief} canManage={canManage} saving={saving} onChange={onChange} connectorsHref={connectorsHref} scope={scope} />;
-  if (view.brief) return <WorkbotAgentBriefPanel view={view} brief={view.brief} canManage={canManage} saving={saving} onChange={onChange} connectorsHref={connectorsHref} scope={scope} />;
+  if (view.brief) return <WorkbotAgentSettingsGroups view={view} brief={view.brief} canManage={canManage} saving={saving} onChange={onChange} connectorsHref={connectorsHref} scope={scope} />;
   const switchLabel = AGENTS_SWITCH_LABEL;
   const { settings, template, slackReady, runnerReady } = view;
   const locked = !canManage || saving;
@@ -292,7 +286,7 @@ export function WorkbotProactiveSection({ orgId, canManage, connectorsHref, scop
   onEdit?: () => void;
 }) {
   const query = useWorkbotProactive(orgId, Boolean(orgId), scope);
-  const { orgSlug, orgContext } = useOrgDashboard();
+  const { orgSlug } = useOrgDashboard();
   const save = useSaveWorkbotProactive(orgId, scope);
   const headingId = useId();
   const saving = save.isPending || busy;
@@ -333,11 +327,10 @@ export function WorkbotProactiveSection({ orgId, canManage, connectorsHref, scop
               connectorsHref={connectorsHref}
               onChange={change}
               scope={scope}
-              grouped={workbotSettingsTabsEnabled(orgContext)}
             />
           )}
           {show === "policy" ? null : (
-            <WorkbotProactiveSources view={query.data} canManage={canManage} saving={saving} onChange={change} heading={show !== "sources"} help={workbotSettingsTabsEnabled(orgContext)}
+            <WorkbotProactiveSources view={query.data} canManage={canManage} saving={saving} onChange={change} heading={show !== "sources"}
               tools={{ orgId, scope, connectorHref: (connectionId) => getLibraryConnectorRoute(orgSlug, connectionId) }} />
           )}
         </div>
