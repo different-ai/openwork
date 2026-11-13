@@ -206,6 +206,9 @@ export function captureException(error, context = {}) {
     if (context.surface) scope.setTag("surface", String(context.surface));
     if (context.route) scope.setTag("route", String(context.route));
     if (context.method) scope.setTag("method", String(context.method));
+    if (Array.isArray(context.fingerprint)) scope.setFingerprint(context.fingerprint.map(String));
+    if (context.level) scope.setLevel(String(context.level));
+    for (const [key, value] of Object.entries(context.tags ?? {})) scope.setTag(key, String(value));
     sentry.captureException(error);
   });
   return true;

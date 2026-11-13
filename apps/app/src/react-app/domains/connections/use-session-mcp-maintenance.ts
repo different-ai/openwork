@@ -84,12 +84,13 @@ function genericCloudMcpMaintenanceIssue(input?: {
   code?: string;
   message?: string;
   retryable?: boolean;
+  recommendedAction?: string;
 }): CloudMcpMaintenanceIssue {
   return {
     code: input?.code ?? "cloud_mcp_maintenance_failed",
     stage: "engine_delivery",
     retryable: input?.retryable ?? true,
-    recommendedAction: "Retry, then open Settings → Connect if the problem continues.",
+    recommendedAction: input?.recommendedAction ?? "Retry, then open Settings → Connect if the problem continues.",
     message: input?.message ?? "OpenWork could not verify connected service tools for this workspace.",
   };
 }
@@ -108,7 +109,20 @@ function failedCloudMcpBackgroundSync(input: {
   };
 }
 
-function cloudMcpMaintenanceFailure(error: unknown): CloudMcpBackgroundSyncResult {
+export function cloudMcpMaintenanceFailure(error: unknown): CloudMcpBackgroundSyncResult {
+  // A full disk fails every attempt the same way until space is freed, so
+  // retrying only repeats the failure. The server's message says what to do.
+  if (error instanceof OpenworkServerError && error.code === "insufficient_storage") {
+    return failedCloudMcpBackgroundSync({
+      health: null,
+      issue: genericCloudMcpMaintenanceIssue({
+        code: error.code,
+        message: error.message,
+        retryable: false,
+        recommendedAction: "Free up disk space on this computer, then try again.",
+      }),
+    });
+  }
   return failedCloudMcpBackgroundSync({
     health: null,
     issue: error instanceof OpenworkServerError || error instanceof DenApiError
