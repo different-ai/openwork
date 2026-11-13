@@ -52,14 +52,31 @@ Versions use the next stable patch plus `-alpha.<run>+<sha>` (Windows adds
 `.<attempt>` after the run number so reruns never overwrite signed installers),
 stamped only in the build workspace. Uploads put versioned assets first and the
 manifest last; each release retains the newest 100 builds. macOS builds run
-in parallel with the packaged smoke and with each other; only the upload to
-`alpha-macos-latest` waits for the smoke and is serialized. Both platforms skip
+on `blacksmith-6vcpu-macos-26`, in parallel with the packaged smoke and with
+each other; only the upload to `alpha-macos-latest` waits for the smoke and is
+serialized. Neither Mac building nor publication waits for Windows. Both platforms skip
 publications older than an uploaded build and protect the currently published
 run from pruning. A build-only macOS dispatch keeps its signed output in the
 run's `openwork-alpha-macos-arm64` artifact for one day. These prereleases do not replace
 the stable Latest release. Windows requires the same `windows-signing`
 environment and Azure OIDC/signing configuration as stable, with no unsigned
 fallback.
+
+To compare Mac runners, dispatch the same branch on both with publication off:
+
+```bash
+gh workflow run alpha-macos-aarch64.yml -R different-ai/openwork --ref <branch> \
+  -f platform=macos-arm64 -f publish=false -f macos_runner=blacksmith-6vcpu-macos-26
+gh workflow run alpha-macos-aarch64.yml -R different-ai/openwork --ref <branch> \
+  -f platform=macos-arm64 -f publish=false -f macos_runner=macos-26
+```
+
+Keep the branch commit unchanged between dispatches. Compare the Mac job's
+setup, build, signed packaging, and artifact upload times; the job records its
+macOS, Xcode, and Swift versions. Record first-run cache misses separately
+from subsequent cache hits. These dispatches retain the signed artifact,
+skip Windows, and never update the rolling release. Ordinary `dev` pushes
+always select the six-core Blacksmith runner.
 
 Build just Windows (download the signed output from the run's
 `openwork-alpha-windows-x64` artifact, retained for seven days):

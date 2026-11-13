@@ -27,6 +27,14 @@ on:
           - all
           - macos-arm64
           - windows-x64
+      macos_runner:
+        description: "macOS runner (select GitHub to benchmark the same ref)"
+        required: false
+        type: choice
+        default: blacksmith-6vcpu-macos-26
+        options:
+          - blacksmith-6vcpu-macos-26
+          - macos-26
       publish:
         description: "Publish the packaged build to the alpha channel release (leave off for build-only validation)"
         required: false
@@ -83,13 +91,15 @@ jobs:
       contents: read
     uses: ./.github/workflows/packaged-smoke.yml
 
-  # Builds run in parallel with the packaged smoke and with each other, so a
-  # merge never waits for an earlier build. Only publication takes the lock.
+  # Mac builds run in parallel with the packaged smoke and other Mac builds.
+  # Neither building nor publishing a Mac alpha waits for Windows.
+  # Only Mac publication takes the Mac channel lock.
   build-alpha-macos-aarch64:
     needs: changes
     if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || inputs.platform != 'windows-x64')
     name: Build alpha (aarch64-apple-darwin)
-    runs-on: macos-26
+    # Keep signing on known runner labels even for an API workflow dispatch.
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.macos_runner == 'macos-26' && 'macos-26' || 'blacksmith-6vcpu-macos-26' }}
     # Apple signing secrets belong to this environment; no deployment is recorded.
     environment:
       name: macos-signing
@@ -166,6 +176,7 @@ jobs:
           swift_version="$(xcrun swift --version)"
           sdk_version="$(xcrun --sdk macosx --show-sdk-version)"
           xcode_version="$(xcodebuild -version)"
+          printf '%s\n' "$swift_version" "$sdk_version" "$xcode_version"
           fingerprint="$(printf '%s\n' "$swift_version" "$sdk_version" "$xcode_version" | shasum -a 256 | cut -d ' ' -f 1)"
           echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
 
