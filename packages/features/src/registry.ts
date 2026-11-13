@@ -144,6 +144,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  importOpencodeConnections: {
+    label: "Desktop: import connections from OpenCode",
+    description: "Settings shows how many connections a person set up in their own OpenCode config are not in OpenWork, with an Import from OpenCode action. Importing copies them into OpenWork once, like adding each by hand, then shows each one's real state and anything that was left out. The person's OpenCode files are never changed. Off, Settings does not look at the OpenCode config.",
+    category: "experience",
+    added: "2026-11-13",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/import-opencode-connections/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   activationLocalSetup: {
     label: "Get set up: count what works on this device",
     description: "The Get set up checklist also checks off a model provider and a connection that work on the person's own device, without setting them up again in OpenWork, and inviting a teammate becomes optional while they are the only person in the organization, so someone working alone can finish setup. Turning it off restores the earlier checklist at once; nothing is lost.",

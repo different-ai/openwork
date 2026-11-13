@@ -46,6 +46,7 @@ import type {
 } from "../../../app/types";
 import { isDesktopRuntime, normalizeDirectoryPath, safeStringify } from "../../../app/utils";
 import { conflictsWithOpenworkConnect } from "./mcp-connection-boundary";
+import { readChatEngineMcpStatus } from "./chat-engine-mcp-status";
 
 import type { OpenworkServerStore } from "./openwork-server-store";
 import { attemptSilentMcpReauth } from "./mcp-silent-reauth";
@@ -384,7 +385,7 @@ export function createConnectionsStore(options: {
     // Read through the same workspace mount as configuration. The chat client
     // can still point at the previous/default workspace during restoration.
     try {
-      nextStatuses = filterConfiguredStatuses(await openworkClient.getMcpStatus(openworkWorkspaceId), next);
+      nextStatuses = filterConfiguredStatuses(await readChatEngineMcpStatus(openworkClient, openworkWorkspaceId), next);
     } catch {
       nextStatuses = {};
     }
