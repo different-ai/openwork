@@ -1,7 +1,6 @@
 # AI Gateway: TrueFoundry
 
-- **Feature key:** `truefoundryGateway`
-- **Deployments:** cloud and self-hosted, off by default
+- **Feature key:** `truefoundryGateway`, retired 2026-11: always on, on cloud and self-hosted
 - **Author:** @OmarMcAdam
 - **Public docs:** `packages/docs/ai-gateway/truefoundry.mdx`
 
@@ -52,16 +51,15 @@ A token owned by the person's TrueFoundry user follows that user's teams and mod
 | Spend tracking off | `ee/apps/gateway/src/gateway.ts` |
 | Den web | `truefoundry-provider-screen.tsx`, `truefoundry-provider-data.ts`, picker, `/gateway/connect` (`truefoundry_issued`) |
 
-## Turning it off
+## Availability
 
-The flag gates the picker entry, the setup screen and the create/sync/update routes (404 `feature_disabled`) and the browser "Check again" route. Existing TrueFoundry providers keep serving and can still be viewed or removed; their tokens stay valid in TrueFoundry until the provider is removed. Turning it back on resumes syncing.
+The `truefoundryGateway` flag shipped off and was retired in 2026-11: TrueFoundry is always available in **Add a provider**, and the key is listed in `RETIRED_FEATURE_KEYS` so stored overrides are ignored. To stop an organization using it, remove its TrueFoundry provider (its tokens are deleted in TrueFoundry).
 
 ## How to try it
 
-1. Turn `truefoundryGateway` on for an organization in `/admin`.
-2. In TrueFoundry, create a virtual account with the Tenant Admin role and copy its token.
-3. Add the TrueFoundry provider with the tenant address (e.g. `https://acme.truefoundry.cloud`) and the token.
-4. In the OpenWork app, the TrueFoundry models appear for allowed people with a TrueFoundry user.
+1. In TrueFoundry, create a virtual account with the Tenant Admin role and copy its token.
+2. Add the TrueFoundry provider with the tenant address (e.g. `https://acme.truefoundry.cloud`) and the token.
+3. In the OpenWork app, the TrueFoundry models appear for allowed people with a TrueFoundry user.
 
 ## What to watch
 
@@ -73,6 +71,6 @@ The flag gates the picker entry, the setup screen and the create/sync/update rou
 
 - `ee/apps/den-api/test/truefoundry.test.ts`: client behavior against a scripted tenant.
 - `ee/apps/den-api/test/truefoundry-models.test.ts`: catalog matching order and rules.
-- `ee/apps/den-api/test/api/gateway-truefoundry.api.test.ts`: full flow against a fake tenant that follows TrueFoundry's rules (feature gate, admin checks, token reuse, missing users, access loss, removal).
+- `ee/apps/den-api/test/api/gateway-truefoundry.api.test.ts`: full flow against a fake tenant that follows TrueFoundry's rules (admin checks, token reuse, missing users, access loss, removal).
 - `ee/apps/den-web/app/(den)/dashboard/_components/truefoundry-provider-data.test.ts`.
 - Verified manually end to end against a real TrueFoundry tenant: provider creation, token creation, user creation, and streamed and non-streamed chat completions through the AI Gateway.

@@ -9,7 +9,7 @@ import { DenChip } from "../../_components/ui/chip";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
-import { getAiGatewayProvidersRoute, getNewAiGatewayCustomProviderRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getAiGatewayProvidersRoute, getNewAiGatewayCustomProviderRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { isSupportedGatewayNpm } from "./inference-provider-request";
 import { getProviderIconSlug, requestLlmProviderCatalog, type DenModelsDevProviderSummary } from "./llm-provider-data";
@@ -48,6 +48,14 @@ export function providerTagline(provider: Pick<DenModelsDevProviderSummary, "id"
   return TAGLINES[provider.id] ?? `${provider.modelCount} ${provider.modelCount === 1 ? "model" : "models"}`;
 }
 
+/** Gateways an organization already runs (LiteLLM, TrueFoundry) are always in the first rows, never behind "Show more". */
+const ALWAYS_VISIBLE = new Set([LITELLM_PROVIDER_ID, TRUEFOUNDRY_PROVIDER_ID]);
+
+/** The first rows of the unfiltered list, plus any always-visible provider beyond them, in list order. */
+export function initialProviders<T extends { id: string }>(providers: readonly T[], rows = INITIAL_ROWS): T[] {
+  return providers.filter((item, index) => index < rows || ALWAYS_VISIBLE.has(item.id));
+}
+
 /** Featured providers first in a stable order, then the rest alphabetically. */
 export function orderCatalog<T extends { id: string; name: string }>(providers: readonly T[]): T[] {
   const rank = (id: string) => { const index = FEATURED.indexOf(id); return index === -1 ? FEATURED.length : index; };
@@ -56,8 +64,7 @@ export function orderCatalog<T extends { id: string; name: string }>(providers: 
 
 export function InferenceProviderPickerScreen({ embedded = false }: { embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
-  const { orgId, orgSlug, orgContext } = useOrgDashboard();
-  const trueFoundry = orgFeatureEnabled(orgContext, "truefoundryGateway");
+  const { orgId, orgSlug } = useOrgDashboard();
   const [catalog, setCatalog] = useState<DenModelsDevProviderSummary[]>([]);
   const [query, setQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -81,12 +88,12 @@ export function InferenceProviderPickerScreen({ embedded = false }: { embedded?:
   const providers = useMemo(() => {
     const supported = catalog.filter((item) => item.id !== LITELLM_PROVIDER_ID && item.id !== TRUEFOUNDRY_PROVIDER_ID && isSupportedGatewayNpm(item.npm));
     supported.push({ id: LITELLM_PROVIDER_ID, name: "LiteLLM", npm: null, env: [], doc: LITELLM_DOC_URL, api: null, modelCount: 0 });
-    if (trueFoundry) supported.push({ id: TRUEFOUNDRY_PROVIDER_ID, name: "TrueFoundry", npm: null, env: [], doc: TRUEFOUNDRY_DOC_URL, api: null, modelCount: 0 });
+    supported.push({ id: TRUEFOUNDRY_PROVIDER_ID, name: "TrueFoundry", npm: null, env: [], doc: TRUEFOUNDRY_DOC_URL, api: null, modelCount: 0 });
     const ordered = orderCatalog(supported);
     const normalized = query.trim().toLowerCase();
     return normalized ? ordered.filter((item) => item.name.toLowerCase().includes(normalized) || item.id.toLowerCase().includes(normalized) || providerTagline(item).toLowerCase().includes(normalized)) : ordered;
-  }, [catalog, query, trueFoundry]);
-  const visible = showAll || query.trim() ? providers : providers.slice(0, INITIAL_ROWS);
+  }, [catalog, query]);
+  const visible = showAll || query.trim() ? providers : initialProviders(providers);
   const hidden = providers.length - visible.length;
 
   return (

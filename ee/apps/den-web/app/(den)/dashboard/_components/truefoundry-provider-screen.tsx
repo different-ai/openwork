@@ -13,7 +13,7 @@ import { DenSecretInput } from "../../_components/ui/secret-input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getAiGatewayProviderRoute, getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getAiGatewayProviderRoute, getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, useOrgInferenceProviders } from "./inference-provider-data";
 import { ProviderRemovalUsageLimits, useProviderRemovalUsageLimits } from "./provider-removal-usage-limits";
@@ -53,8 +53,7 @@ function MissingUsersSetting({ checked, disabled, onChange }: { checked: boolean
 export function TrueFoundrySetupScreen({ embedded = false }: { embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
-  const { orgSlug, orgContext, runReauthableAction } = useOrgDashboard();
-  const available = !orgContext || orgFeatureEnabled(orgContext, "truefoundryGateway");
+  const { orgSlug, runReauthableAction } = useOrgDashboard();
   const [controlPlaneUrl, setControlPlaneUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [createMissingUsers, setCreateMissingUsers] = useState(false);
@@ -91,7 +90,6 @@ export function TrueFoundrySetupScreen({ embedded = false }: { embedded?: boolea
         <Heading className="text-[20px] font-medium tracking-[-0.02em] text-gray-900" data-testid="gateway-provider-title">Add TrueFoundry</Heading>
       </div>
       <p className="mt-2 text-[13px] leading-5 text-gray-600">OpenWork finds each person in TrueFoundry by their email and creates an API key for them, so TrueFoundry's teams, budgets and logs apply to each person. Nobody pastes a key.</p>
-      {!available ? <DenNotice tone="neutral" message="TrueFoundry isn't turned on for this organization yet. Ask OpenWork support to turn it on." className="mt-4" /> : null}
       {error ? <DenNotice tone="error" message={error} className="mt-4" /> : null}
 
       <section className={`${CARD} mt-5`} aria-labelledby="truefoundry-connection-heading">
@@ -114,7 +112,7 @@ export function TrueFoundrySetupScreen({ embedded = false }: { embedded?: boolea
 
       <DenStickyActionBar summary={<span>One admin key · {access.allMembers ? "everyone" : `${access.teamIds.length + access.memberIds.length} teams or people`}</span>}>
         <Link href={getAiGatewayProvidersRoute(orgSlug)} className={buttonVariants({ variant: "secondary" })}>Cancel</Link>
-        <DenButton data-testid="truefoundry-connect" loading={saving} disabled={!available} onClick={() => void connect()}>Connect TrueFoundry</DenButton>
+        <DenButton data-testid="truefoundry-connect" loading={saving} onClick={() => void connect()}>Connect TrueFoundry</DenButton>
       </DenStickyActionBar>
     </div>
   );

@@ -851,16 +851,6 @@
               ],
               "description": "Workflows and computer programs as standard JavaScript: Workflows written from now on, Workflow tests, and computer-use programs on the desktop app and cloud computers run as standard JavaScript (ECMAScript, checked against test262), calling tools described the MCP way with JSON Schema. The engine is @opencode/codemode. Workflows saved before keep running as they always have. Turning this off returns new Workflows and computer programs to OpenWork's original Code Mode; Workflows saved as standard JavaScript stop with a message rather than switching interpreter, and run again when it is back on. Renders DEN_FEATURE_STANDARD_CODE_MODE."
             },
-            "truefoundryGateway": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "AI Gateway: TrueFoundry: Admins connect their TrueFoundry AI Gateway with one admin key in AI Gateway › AI Providers. OpenWork finds each allowed person in TrueFoundry by email (or optionally adds them), creates a personal access token for them, and serves the TrueFoundry models that token can use, so TrueFoundry budgets and logs each person. Renders DEN_FEATURE_TRUEFOUNDRY_GATEWAY."
-            },
             "outlookAttachments": {
               "enum": [
                 "",
@@ -2242,6 +2232,16 @@
               "description": "Retired: no longer a feature switch. Ignored."
             },
             "autoRouter": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "truefoundryGateway": {
               "enum": [
                 "",
                 "true",
