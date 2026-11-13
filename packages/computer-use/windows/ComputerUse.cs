@@ -5,7 +5,7 @@
 //
 //   openwork-computer-use.exe --check                one status line, then exit
 //   openwork-computer-use.exe serve --host-pid N     {"type":"ready",...}, then requests:
-//     windows | focus | capture | input | status     answered in order
+//     windows | apps | focus | capture | input | status   answered in order
 //     cancel                                         answered at once; stops a running input
 //
 // Coordinates are physical pixels (per-monitor DPI aware) and window regions are
@@ -19,6 +19,11 @@
 // the moment it acts, then gives the front and the pointer back. Low-level hooks
 // tell the person's own clicks and keys from the agent's injected input; the
 // helper keeps only when they happened, never which key or where.
+//
+// "apps" lists what the person could start from the Start menu: shortcuts that
+// run a program with no arguments, and the app aliases Windows keeps for
+// packaged apps. The helper starts nothing itself; the host starts a listed
+// program by the path given here, never by a path or command from the agent.
 //
 // Built with the .NET Framework compiler (C# 5) that ships with Windows; keep
 // to C# 5 syntax.
@@ -331,6 +336,76 @@ static class OpenWorkComputerUse {
       windows.Add(window);
     }
     return windows;
+  }
+
+  // ---- Installed apps ------------------------------------------------------
+
+  const int MaxApps = 400;
+
+  static bool Launchable(string path, out string app) {
+    app = null;
+    if (string.IsNullOrEmpty(path) || path.Length > 400 || !path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || !Path.IsPathRooted(path)) return false;
+    // An advertised (Windows Installer) shortcut points at an icon file, not the program.
+    var installer = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Installer") + "\\";
+    if (path.StartsWith(installer, StringComparison.OrdinalIgnoreCase)) return false;
+    app = Path.GetFileNameWithoutExtension(path).ToLowerInvariant();
+    if (app.Length == 0 || app.Length > 120 || ProtectedApps.Contains(app) || app.StartsWith("openwork", StringComparison.OrdinalIgnoreCase)
+      || app.StartsWith("unins", StringComparison.OrdinalIgnoreCase)) return false;
+    try { return File.Exists(path); } catch { return false; }
+  }
+
+  static void Shortcuts(string folder, int depth, List<string> found) {
+    if (string.IsNullOrEmpty(folder) || depth > 4 || found.Count >= 2000) return;
+    try {
+      foreach (var file in Directory.GetFiles(folder, "*.lnk")) { if (found.Count >= 2000) return; found.Add(file); }
+      foreach (var child in Directory.GetDirectories(folder)) Shortcuts(child, depth + 1, found);
+    } catch { }
+  }
+
+  static void AddApp(Dictionary<string, Dictionary<string, object>> apps, string path, string name) {
+    string app;
+    if (apps.Count >= MaxApps || !Launchable(path, out app) || apps.ContainsKey(app)) return;
+    apps[app] = Message("app", app, "name", string.IsNullOrWhiteSpace(name) ? app : Truncate(name.Trim(), 120), "path", path);
+  }
+
+  static List<Dictionary<string, object>> ListApps() {
+    var apps = new Dictionary<string, Dictionary<string, object>>(StringComparer.Ordinal);
+    // Shell links are apartment objects; read them on their own STA thread.
+    var reader = new Thread(delegate () {
+      var files = new List<string>();
+      Shortcuts(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), 0, files);
+      Shortcuts(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), 0, files);
+      foreach (var file in files) {
+        object link = null;
+        try {
+          link = new ShellLink();
+          ((System.Runtime.InteropServices.ComTypes.IPersistFile)link).Load(file, 0);
+          var shell = (IShellLinkW)link;
+          var target = new StringBuilder(1024);
+          var arguments = new StringBuilder(1024);
+          // A shortcut that passes arguments runs a command, not just an app.
+          if (shell.GetPath(target, target.Capacity, IntPtr.Zero, 0) != 0 || shell.GetArguments(arguments, arguments.Capacity) != 0 || arguments.Length != 0) continue;
+          lock (apps) AddApp(apps, target.ToString(), Path.GetFileNameWithoutExtension(file));
+        } catch { } finally { if (link != null) Marshal.FinalReleaseComObject(link); }
+      }
+    });
+    reader.IsBackground = true;
+    reader.SetApartmentState(ApartmentState.STA);
+    reader.Start();
+    bool finished = reader.Join(8000);
+    List<Dictionary<string, object>> listed;
+    lock (apps) {
+      if (finished) {
+        // Packaged apps (Notepad, Paint on Windows 11) are started through their alias.
+        try {
+          var aliases = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps");
+          foreach (var file in Directory.GetFiles(aliases, "*.exe")) AddApp(apps, file, null);
+        } catch { }
+      }
+      listed = new List<Dictionary<string, object>>(apps.Values);
+    }
+    listed.Sort(delegate (Dictionary<string, object> a, Dictionary<string, object> b) { return string.CompareOrdinal((string)a["app"], (string)b["app"]); });
+    return listed;
   }
 
   static string Field(Dictionary<string, object> source, string key) {
@@ -1109,6 +1184,7 @@ static class OpenWorkComputerUse {
       switch (Field(request, "op")) {
         case "status": result = Status(); result["ok"] = true; break;
         case "windows": result = Message("ok", true, "windows", ListWindows()); break;
+        case "apps": result = Message("ok", true, "apps", ListApps()); break;
         case "focus": result = Focus(request); break;
         case "capture": result = Capture(request); break;
         case "input": result = Input(id, request); break;
@@ -1124,6 +1200,22 @@ static class OpenWorkComputerUse {
     Emit(result);
     if (moment) ScheduleHandBack();
   }
+}
+
+[ComImport, Guid("00021401-0000-0000-C000-000000000046")]
+class ShellLink { }
+
+// Only the leading methods are declared; the helper reads a shortcut's target and arguments.
+[ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("000214F9-0000-0000-C000-000000000046")]
+interface IShellLinkW {
+  [PreserveSig] int GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder file, int size, IntPtr data, uint flags);
+  [PreserveSig] int GetIDList(out IntPtr list);
+  [PreserveSig] int SetIDList(IntPtr list);
+  [PreserveSig] int GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder name, int size);
+  [PreserveSig] int SetDescription([MarshalAs(UnmanagedType.LPWStr)] string name);
+  [PreserveSig] int GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder directory, int size);
+  [PreserveSig] int SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string directory);
+  [PreserveSig] int GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder arguments, int size);
 }
 
 static class Native {

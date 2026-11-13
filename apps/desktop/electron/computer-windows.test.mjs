@@ -3,7 +3,7 @@ import test from "node:test";
 import { EventEmitter } from "node:events";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
-import { WINDOWS_HELPER_PROTOCOL } from "@openwork/computer-use/computer-windows-driver";
+import { WINDOWS_HELPER_PROTOCOL, startWindowsApp } from "@openwork/computer-use/computer-windows-driver";
 import { createWindowsComputerAdapter } from "./computer-windows.mjs";
 
 const payload = (result) => JSON.parse(result.content.find((item) => item.type === "text").text);
@@ -15,10 +15,10 @@ const admin = { hwnd: "65900", pid: 5200, started: "133400000000000001", app: "r
 
 /**
  * A stand-in for openwork-computer-use.exe speaking its line protocol.
- * @param {{ check?: Record<string, unknown>, windows?: Array<Record<string, unknown>>, handle?: (request: any, reply: (value: unknown) => void) => unknown }} [options]
+ * @param {{ check?: Record<string, unknown>, windows?: Array<Record<string, unknown>>, apps?: Array<Record<string, unknown>>, handle?: (request: any, reply: (value: unknown) => void) => unknown }} [options]
  */
-function fakeHelper({ check = { protocol: WINDOWS_HELPER_PROTOCOL, ok: true, reason: null, supported: true }, windows = [notepad, admin], handle } = {}) {
-  const state = { windows, requests: [], spawned: [] };
+function fakeHelper({ check = { protocol: WINDOWS_HELPER_PROTOCOL, ok: true, reason: null, supported: true }, windows = [notepad, admin], apps, handle } = {}) {
+  const state = { windows, apps, requests: [], spawned: [] };
   state.spawnChild = (binary, args) => {
     assert.equal(binary, helper);
     /** @type {any} */
@@ -43,6 +43,7 @@ function fakeHelper({ check = { protocol: WINDOWS_HELPER_PROTOCOL, ok: true, rea
           const custom = handle?.(request, reply);
           if (custom !== undefined) continue;
           if (request.op === "windows") reply({ id: request.id, ok: true, windows: state.windows });
+          else if (request.op === "apps" && state.apps) reply({ id: request.id, ok: true, apps: state.apps });
           else if (request.op === "focus") reply({ id: request.id, ok: true, region: notepad.region });
           else if (request.op === "capture") reply({ id: request.id, ok: true, mode: "screen", width: 800, height: 600, png: Buffer.from("pixels").toString("base64") });
           else if (request.op === "input") reply({ id: request.id, ok: true, completed: request.steps.length, attempted: true });
@@ -59,9 +60,10 @@ function fakeHelper({ check = { protocol: WINDOWS_HELPER_PROTOCOL, ok: true, rea
   return state;
 }
 
-async function thisPc(t, options = {}) {
+async function thisPc(t, { startApp = () => assert.fail("no app should be started"), launchWaitMs, launchPollMs = 5, ...options } = {}) {
   const fake = fakeHelper(options);
-  const adapter = createWindowsComputerAdapter({ resourcesPath, appRoot: join("C:", "missing"), fileExists: (candidate) => candidate === helper, spawnChild: fake.spawnChild });
+  const adapter = createWindowsComputerAdapter({ resourcesPath, appRoot: join("C:", "missing"), fileExists: (candidate) => candidate === helper, spawnChild: fake.spawnChild,
+    startApp, launchPollMs, ...(launchWaitMs ? { launchWaitMs } : {}) });
   const events = [];
   const transport = await adapter.connect({ signal: new AbortController().signal, onUi: (value) => events.push(value), onClose: () => {} });
   t.after(() => transport.close());
@@ -179,4 +181,104 @@ test("Stop cancels input in flight and closing the session ends the helper", asy
   assert.equal(serve.child.closed, false);
   await pc.transport.close();
   assert.equal(serve.child.closed, true);
+});
+
+const notepadApp = { app: "notepad", name: "Notepad", path: "C:\\Windows\\System32\\notepad.exe" };
+const paintApp = { app: "mspaint", name: "Paint", path: "C:\\Windows\\System32\\mspaint.exe" };
+const open = (pc, app_id, extra = {}) => pc.call("computer_open_session", { app_id, mode: "control", purpose: "Write the draft", ...extra });
+
+test("discovery also lists installed apps that are not open, without their paths", async (t) => {
+  const pc = await thisPc(t, { windows: [notepad], apps: [notepadApp, paintApp] });
+  const found = await pc.call("computer_discover");
+  // An open app is listed once, with its windows.
+  assert.equal(found.apps.filter((app) => app.app_id === "notepad").length, 1);
+  assert.equal(found.apps.find((app) => app.app_id === "notepad").windows, 1);
+  assert.deepEqual(found.apps.find((app) => app.app_id === "mspaint"), { app_id: "mspaint", name: "Paint", windows: 0, targets: [] });
+  assert.match(found.note, /installed but not open: computer_open starts it/);
+  assert.ok(!JSON.stringify(found).includes("System32"));
+});
+
+test("opening an installed app that is not running starts it, waits for its window and attaches", async (t) => {
+  const started = [];
+  const pc = await thisPc(t, {
+    windows: [], apps: [notepadApp, paintApp],
+    startApp: async (file) => { started.push(file); setTimeout(() => { pc.fake.windows = [{ ...notepad, title: "Untitled - Notepad" }]; }, 20); },
+  });
+  const session = await open(pc, "notepad");
+  assert.equal(session.ok, true);
+  assert.equal(session.state, "active");
+  assert.equal(session.window_title, "Untitled - Notepad");
+  // Started once, by the path the helper listed.
+  assert.deepEqual(started, [notepadApp.path]);
+  assert.equal(pc.fake.ops("focus").length, 1);
+  assert.ok((await pc.call("computer_observe", { session_id: session.session_id })).observation_id);
+});
+
+test("an app that is already running is attached to, never started again", async (t) => {
+  const pc = await thisPc(t, { windows: [notepad], apps: [notepadApp] });
+  assert.equal((await open(pc, "notepad")).ok, true);
+  assert.deepEqual(pc.fake.ops("apps"), []);
+});
+
+test("an app that is not installed is not found, and nothing is started", async (t) => {
+  const pc = await thisPc(t, { windows: [], apps: [notepadApp] });
+  const result = await open(pc, "winword");
+  assert.equal(result.code, "app_not_found");
+  assert.match(result.message, /not installed on this computer/);
+  // A window id names an open window: it never starts an app.
+  assert.equal((await open(pc, "notepad", { window_id: 7 })).code, "app_not_found");
+});
+
+test("an app whose window never appears ends in a bounded, honest error", async (t) => {
+  const started = [];
+  const pc = await thisPc(t, { windows: [], apps: [notepadApp], launchWaitMs: 40, startApp: async (file) => { started.push(file); } });
+  const result = await open(pc, "notepad");
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "app_window_timeout");
+  assert.match(result.message, /Notepad was started but showed no window within 1 seconds/);
+  assert.match(result.message, /Do not start it again/);
+  assert.deepEqual(started, [notepadApp.path]);
+  assert.deepEqual(pc.fake.ops("focus"), []);
+  // No session was left behind.
+  assert.equal((await pc.call("computer_observe", { session_id: "none" })).code, "session_unavailable");
+});
+
+test("only apps the helper lists are started: never a path, a command or a mismatched entry", async (t) => {
+  const pc = await thisPc(t, { windows: [], apps: [
+    notepadApp,
+    // Entries whose id is not the program's own file name, or whose path is not absolute, are dropped.
+    { app: "calc", name: "Calculator", path: "C:\\Windows\\System32\\cmd.exe" },
+    { app: "tool", name: "Tool", path: "tool.exe" },
+    { app: "share", name: "Share", path: "\\\\server\\share\\share.exe" },
+    { app: "script", name: "Script", path: "C:\\Tools\\script.cmd" },
+  ] });
+  const listed = (await pc.call("computer_discover")).apps.map((app) => app.app_id);
+  assert.deepEqual(listed, ["notepad"]);
+  for (const id of ["C:\\Windows\\System32\\cmd.exe", "C:\\Windows\\System32\\notepad.exe", "notepad.exe", "notepad /p secret.txt", "..\\notepad", "cmd /c calc", "calc", "tool", "share", "script", "NOTEPAD"]) {
+    const result = await open(pc, id);
+    assert.equal(result.code, "app_not_found", id);
+    assert.match(result.message, /cannot be started from a path or a command/);
+  }
+});
+
+test("an app Windows refuses to start reports that, with no session", async (t) => {
+  const pc = await thisPc(t, { windows: [], apps: [notepadApp], startApp: async () => { throw new Error("spawn C:\\secret\\path EACCES"); } });
+  const result = await open(pc, "notepad");
+  assert.equal(result.code, "app_launch_failed");
+  assert.equal(result.message, "Windows could not start Notepad. Nothing was opened.");
+});
+
+test("an installed app is started directly: no shell and no arguments", async () => {
+  const calls = [];
+  const spawnChild = (file, args, options) => {
+    calls.push({ file, args, options });
+    const child = new EventEmitter();
+    child.unref = () => { calls.push("unref"); };
+    setImmediate(() => child.emit("spawn"));
+    return child;
+  };
+  await startWindowsApp(notepadApp.path, /** @type {any} */ (spawnChild));
+  assert.deepEqual(calls, [{ file: notepadApp.path, args: [], options: { cwd: "C:\\Windows\\System32", detached: true, stdio: "ignore", shell: false } }, "unref"]);
+  const failing = () => { const child = new EventEmitter(); setImmediate(() => child.emit("error", new Error("ENOENT"))); return child; };
+  await assert.rejects(startWindowsApp(notepadApp.path, /** @type {any} */ (failing)), /ENOENT/);
 });

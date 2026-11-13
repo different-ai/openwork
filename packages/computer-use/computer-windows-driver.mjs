@@ -6,10 +6,14 @@
 // window loses focus, moves or closes, Windows locks, the host cancels, or the
 // person clicks or types. It takes the front only for the agent's moment and
 // then gives the front and the pointer back.
+// The helper also lists the programs the person could start from the Start menu.
+// An app that is not open is started here, by the path the helper listed for
+// it and with no arguments: never by a path or command line from the agent.
 // Sessions, receipts, Take over, Continue, Stop and watch frames come from the
 // shared runtime in computer-remote.mjs.
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { win32 } from "node:path";
 
 export const WINDOWS_HELPER_PROTOCOL = "openwork.computer-use.windows/1";
 const MODIFIERS = { control: "control", command: "control", shift: "shift", option: "alt" };
@@ -36,6 +40,21 @@ const integer = (value, min, max) => Number.isSafeInteger(value) && value >= min
 const validRegion = (region) => region && typeof region === "object" && ["x", "y"].every((key) => integer(region[key], -1_000_000, 1_000_000))
   && ["width", "height"].every((key) => integer(region[key], 1, 1_000_000));
 
+/**
+ * Starts one installed program as the signed-in person would from the Start
+ * menu: no shell, no arguments, not tied to OpenWork's lifetime.
+ * @param {string} file
+ * @param {typeof spawn} [spawnChild]
+ * @returns {Promise<void>}
+ */
+export function startWindowsApp(file, spawnChild = spawn) {
+  return new Promise((resolve, reject) => {
+    const child = spawnChild(file, [], { cwd: win32.dirname(file), detached: true, stdio: "ignore", shell: false });
+    child.once("error", reject);
+    child.once("spawn", () => { child.unref(); resolve(); });
+  });
+}
+
 /** Windows key names for one action; Mac-style names and modifiers are translated. */
 export function windowsStep(step) {
   const translated = { ...step };
@@ -60,13 +79,14 @@ export function windowsStep(step) {
  * @param {{
  *   binary: () => string | null,
  *   spawnChild?: typeof spawn,
+ *   startApp?: (file: string) => Promise<void>,
  *   hostPid?: number,
  *   env?: NodeJS.ProcessEnv,
  *   timeouts?: Partial<Record<"check" | "start" | "call" | "input" | "close" | "idle", number>>,
  * }} options
  * @returns {import("./computer-remote.mjs").ComputerDriver & { close: () => Promise<void> }}
  */
-export function createWindowsDriver({ binary, spawnChild = spawn, hostPid = process.pid, env = process.env, timeouts = {} }) {
+export function createWindowsDriver({ binary, spawnChild = spawn, startApp = startWindowsApp, hostPid = process.pid, env = process.env, timeouts = {} }) {
   const limits = { check: 5_000, start: 10_000, call: 20_000, input: 60_000, close: 3_000, idle: 60_000, ...timeouts };
   const childEnv = Object.fromEntries(ENVIRONMENT.filter((key) => typeof env[key] === "string").map((key) => [key, env[key]]));
   /** @type {null | { child: import("node:child_process").ChildProcess, pending: Map<string, { resolve: (value: any) => void, reject: (error: Error) => void }>, ready: Promise<void>, exited: Promise<void>, idle?: NodeJS.Timeout }} */
@@ -77,6 +97,9 @@ export function createWindowsDriver({ binary, spawnChild = spawn, hostPid = proc
   const identities = new Map();
   const regions = new Map();
   let nextId = 1;
+  // Programs the helper last listed as installed, by app id. Only these can be started.
+  /** @type {Map<string, { name: string, file: string }>} */
+  let installed = new Map();
 
   function readLines(stream, limit, onLine) {
     let buffer = "";
@@ -258,6 +281,25 @@ export function createWindowsDriver({ binary, spawnChild = spawn, hostPid = proc
       // Forget windows that are gone; their ids are never reused.
       for (const [key, id] of ids) if (!seen.has(key)) { ids.delete(key); identities.delete(id); regions.delete(id); }
       return listed;
+    },
+    /** Installed programs that can be started; their paths stay in this process. */
+    async apps() {
+      const result = answer(await call("apps"));
+      if (!Array.isArray(result.apps)) throw new Error("The Windows helper returned an invalid app list.");
+      const next = new Map();
+      for (const entry of result.apps.slice(0, 400)) {
+        if (!entry || typeof entry.app !== "string" || typeof entry.path !== "string" || entry.path.length > 400 || !/^[a-z]:\\/i.test(entry.path)) continue;
+        // The id is the program's own file name, as it is for an open window.
+        if (!entry.app || entry.app.length > 120 || win32.basename(entry.path).toLowerCase() !== `${entry.app}.exe` || next.has(entry.app)) continue;
+        next.set(entry.app, { name: typeof entry.name === "string" && entry.name ? entry.name.slice(0, 120) : entry.app, file: entry.path });
+      }
+      installed = next;
+      return [...next].map(([app, { name }]) => ({ app, name }));
+    },
+    async launch(app) {
+      const entry = installed.get(app);
+      if (!entry) throw new Error("This app is not installed.");
+      try { await startApp(entry.file); } catch { throw new Error(`Windows could not start ${entry.name}.`); }
     },
     async focus(id) {
       answer(await call("focus", { window: identity(id) }));
