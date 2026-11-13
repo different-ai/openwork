@@ -19,38 +19,17 @@ config:
   # Which product this install is. Only OpenWork Cloud sets "cloud"; features
   # declared unavailable for self-hosted cannot be turned on here. Renders DEN_DEPLOYMENT.
   deployment: self_hosted
-  # BEGIN GENERATED features (pnpm features:sync; source: packages/features/src/registry.ts)
+  # BEGIN GENERATED features (pnpm features:sync; source: packages/features/src/flags)
   # Operator locks for this install. Each key renders DEN_FEATURE_<KEY>.
   #   ""      follow /admin: on or off for everyone, plus per-organization overrides
   #   "true"  on for everyone; /admin shows "Set by deployment config"
   #   "false" off for everyone; /admin shows "Set by deployment config"
   # The /admin kill switch still turns a feature off, even when locked on.
-  features:
-    nativeMcpEvents: ""           # default off · Subscribe to changes in your remote sessions and computers through MCP Events.
-    mcpThreadEvents: ""           # default off · Subscribe a hosted chat to signed webhook events from its connected MCP servers.
-    remoteDesktopDeviceLogin: ""  # default off · Sign a remote OpenWork desktop into an organization by approving a code on another computer.
-    followUpSuggestions: ""       # default off · After a reply finishes, the empty message box can show a suggested next message in gray. Tab fills it in; typing anything else ignores it. A small model writes the suggestion, and nothing shows when it has no clear next step to offer.
-    importOpencodeConnections: "" # default off · Settings shows how many connections a person set up in their own OpenCode config are not in OpenWork, with an Import from OpenCode action. Importing copies them into OpenWork once, like adding each by hand, then shows each one's real state and anything that was left out. The person's OpenCode files are never changed. Off, Settings does not look at the OpenCode config.
-    activationLocalSetup: ""      # default off · The Get set up checklist also checks off a model provider and a connection that work on the person's own device, without setting them up again in OpenWork, and inviting a teammate becomes optional while they are the only person in the organization, so someone working alone can finish setup. Turning it off restores the earlier checklist at once; nothing is lost.
-    denGreySidebar: ""            # default off · The Den dashboard shows its sidebar on a light grey band and every page on white, like the admin dashboard pictured on the website, instead of a white sidebar beside lightly tinted pages. Only colours change: navigation, page layouts and every control stay where they are. Turning it off restores the earlier colours at once.
-    administratorRecovery: ""     # default off · Run a one-time, operator-selected Admin-team permission repair at deployment; disabling stops future repairs, not existing grants.
-    connectionMcpServers: ""      # default off · Members can add one connected service, such as Gmail or Linear, to an agent like Claude Code as its own MCP server that lists only that service's tools.
-    opencodeV2Only: ""            # default off · Desktop chats always run on OpenCode v2: switching to OpenCode v1 is turned off and earlier chats are copied to v2 in the background.
-    managedDeployments: ""        # default off (cloud only) · Organization admins install OpenWork in their own AWS account or Google Cloud project and see its health and updates in OpenWork, and agents connected to OpenWork can create and follow those deployments.
-    workbotDocuments: ""          # default off · Members browse recent Google Drive files and folders in Workbot, open documents in tabs, play video and audio files in the tab, and save supported text and spreadsheet edits to Drive.
-    workbotDocumentEditing: ""    # default off · Members choose Edit from a document preview. Full Office editing starts their Cloud workspace only when requested. Requires Workbot Documents.
-    workbotWorkspaceAssistant: "" # default off · Members ask Workbot about the document they have open (Ask Workbot brings it into the chat) and navigate from a compact sidebar. Workbot offers to open the documents it mentions. The chat itself stays on its own page.
-    workbotProfileComputers: ""   # default off · Moves the existing Devices entry into Workbot's profile as a Computers tab. The same member-scoped computers, status and Open actions remain available. Requires the profile sheet and Devices.
-    workbotCalmChat: ""           # default off · A quieter look for Workbot's chat: a labelled sidebar with the open page as a white pill, Workbot's name and live status in one pill at the top, a narrower conversation with smaller text, a compact browser card, and a softer message box. Looks only; chats, files, browser tasks and navigation work the same.
-    workbotAgentBrief: ""         # default off · With Your agent on, it checks on one rhythm (every 2 hours in working hours by default, plus up to 3 extra checks it asks for) instead of four fixed message types, and follows a plain-text brief: the organization's default plus each member's own lines, set in Manage › Workbot, My bot or chat. Each check researches first and then writes at most a few short messages, each one finding with a lock-screen first sentence. Messages per day and hours stay hard limits.
-    workbotAgentCheckGate: ""     # default off (cloud only) · With Your agent's brief on, admins can turn on Skip checks when nothing new arrived in Manage › Workbot. Before a scheduled check, Workbot looks at what reached the member's Gmail and Google Calendar since the agent last looked. With nothing new, or only routine mail, the agent doesn't run for that check. The first check of the day, checks the agent asked for, and a check after two skipped in a row always run.
-    workbotAgentSendCheck: ""     # default off (cloud only) · With Your agent's brief on, admins can turn on Check each message before sending in Manage › Workbot. A fast second model then reads each message Your agent wrote against the brief and what the member was already told today, and holds a message the brief says to skip or that repeats one from today. It never writes, changes or adds a message, and when it can't answer the message is sent as before.
-    browserDemonstrations: ""     # default off · Demonstrate a browser task with explanations, save it as a private reusable skill, and run it with new inputs.
-    remoteComputers: ""           # default off · Use a Linux cloud computer with its browser and desktop in OpenWork Web, or connect a VM from Desktop. Configured and conversation-owned desktops open directly when enabled, including follow-ups and internal session renewal. Take over and Stop stay available.
-    remoteTasksOptIn: ""          # default off · A signed-in computer takes nothing from its owner's other devices, Workbot or agents until the owner allows it in Desktop Settings > Devices: no task can be started there and no session reached. Off, a computer whose owner has not chosen keeps taking tasks started remotely, as before. In both cases the owner can turn a computer off, and organization owners can turn remote access off for everyone on Manage > Computers.
-    sandboxGateway: ""            # default off · Workbot's cloud computers for this organization run through the runner's sandbox gateway (Differently), which holds the provider keys and picks the provider, instead of the runner's own Freestyle or Daytona account. Needs a runner with SANDBOX_GATEWAY set; without one, or while it is down, new computers use the runner's own provider.
-    connectStandardTools: ""      # default off · Claude Code and standalone OpenCode discover connected actions, Workflows and artifacts as individual tools; OpenWork Desktop, Web and automation runs keep capability search. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas.
-    connectEngineTools: ""        # default off · OpenWork Desktop, Web and automation runs get each connected action, Workflow and artifact as its own tool, found with their engine's Code Mode search; capability search stays for OpenWork's own operations and skills. Other clients are unaffected. Turning this off restores capability search.
+  # The published chart lists every key here with its default and description
+  # (`helm show values oci://ghcr.io/different-ai/charts/openwork-ee`). In a
+  # checkout the keys are the file names under packages/features/src/flags, in
+  # lowerCamelCase; `node scripts/features-sync.mjs --chart` writes them here.
+  features: {}
   # END GENERATED features
   administratorRecovery:
     # Processed only with config.features.administratorRecovery on. Flag off is a
