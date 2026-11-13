@@ -14,8 +14,6 @@ Every expedited path below has a compensating control and leaves evidence. No un
 | Published-release rollback (`pnpm release:rollback`) | A bad version is live | The script is non-destructive: it re-points Latest and demotes the bad release, but never deletes it. It redeploys only previously reviewed artifacts. | GitHub audit log, release timeline, and a note in the post-hoc issue |
 | Clean-revert fast lane (auto-approved revert PRs) | A reviewed change must be undone immediately | A machine verifies that the PR tree is the exact inverse of a commit that already passed review. Approval inherits the original review. | Bot approval with the verified SHA on the PR |
 
-See [Releasing OpenWork](./RELEASING.md) for release mechanics.
-
 ## Post-hoc review SLA
 
 Every `emergency-change` issue must receive sign-off from a human reviewer other than the actor within one business day. Link the incident or reason. Only that reviewer closes the issue.
