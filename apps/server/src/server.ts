@@ -75,6 +75,7 @@ import {
 import { deleteSkill, listSkills, renderSkillContentForResponse, upsertSkill } from "./skills.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
+import { unexpectedApiError, watchDiskSpace } from "./disk-space.js";
 import { createClaudeCodeLogin } from "./claude-code-login.js";
 import { inheritedEngineEnv } from "./managed-opencode-v2.js";
 import { opencodeConfigApiError } from "./opencode-config-error.js";
@@ -811,6 +812,7 @@ export async function startServer(
   const env = new EnvService();
   envServicesByConfig.set(config, env);
   const logger = createServerLogger(config);
+  watchDiskSpace(runtimeStorageDir(config));
   try {
     await reconcileLocalManagedMcpRuntimeEntries(config);
   } catch (error) {
@@ -1027,7 +1029,7 @@ export async function startServer(
             ? error
             : requestCanceled
               ? new ApiError(499, "request_aborted", "Request was canceled")
-              : new ApiError(500, "internal_error", "Unexpected server error");
+              : unexpectedApiError(error);
           recordApiError(apiError);
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
@@ -1091,7 +1093,7 @@ export async function startServer(
             ? error
             : requestCanceled
               ? new ApiError(499, "request_aborted", "Request was canceled")
-              : new ApiError(500, "internal_error", "Unexpected server error");
+              : unexpectedApiError(error);
           recordApiError(apiError);
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
@@ -1169,7 +1171,7 @@ export async function startServer(
             ? error
             : requestCanceled
               ? new ApiError(499, "request_aborted", "Request was canceled")
-              : new ApiError(500, "internal_error", "Unexpected server error");
+              : unexpectedApiError(error);
           recordApiError(apiError);
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
@@ -1217,7 +1219,7 @@ export async function startServer(
           ? error
           : requestCanceled
             ? new ApiError(499, "request_aborted", "Request was canceled")
-            : new ApiError(500, "internal_error", "Unexpected server error");
+            : unexpectedApiError(error);
         recordApiError(apiError);
         const response = jsonResponse(formatError(apiError), apiError.status);
         const isAgentDiagnosticsRequest =
