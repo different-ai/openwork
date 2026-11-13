@@ -65,11 +65,6 @@ test("Workbot usage counts tagged requests, before and after the rollup folds th
   const other = await den.createOrg(await den.signUp("Olga Other"), "Other usage org")
   const read = () => den.as(owner, orgId)("GET", "/v1/workbot-usage")
 
-  // Off until the feature is turned on for the organization.
-  const off = await read()
-  assert.equal(off.status, 404, summary(off))
-  for (const id of [orgId, other.orgId]) assert.equal((await den.setFeature(id, "workbotUsageAnalytics", true)).status, 200)
-
   const empty = await read()
   assert.equal(empty.status, 200, summary(empty))
   assert.equal(field(empty.body, "since"), null)

@@ -295,7 +295,8 @@ test("export A: every area, no secret values", async () => {
   assert.deepEqual(exportedA.omitted ?? [], [], "nothing left out")
   assert.deepEqual([...exportedA.scope].sort(), [...CONFIG_AREA_KEYS].sort(), "all 27 areas")
   const empty = CONFIG_AREA_KEYS.filter((key) => areaItems(exportedA, key).length === 0)
-  assert.deepEqual(empty, [], "something in every area")
+  // Every feature this organization once turned on is now on for everyone, so no flag is left to export.
+  assert.deepEqual(empty, FEATURES.length ? [] : ["settings.features"], "something in every other area")
   // Task 1: the "Your agent" template rides with workbot.proactive only.
   assert.ok(!areaItems(exportedA, "plugins.skills").some((item) => item.id === templateId || item.spec.type === "agent"), JSON.stringify(areaItems(exportedA, "plugins.skills").map((item) => [item.name, item.spec.type])))
 })

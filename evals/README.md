@@ -12,13 +12,13 @@ to the module they test (`packages/*/src/**/*.test.ts`) and run in the same
 Every PR to `dev` gets one quick check ("Quick check", `quick-check.yml`, about
 a minute): static CI guards, the feature registry, a typecheck of the shipped
 code it changes, and the Den API auth tests when Den API code changes. Red here
-means a normal code problem. Everything else runs after merge:
+means a normal code problem. The rest:
 
-1. **Unit tests and build** (`ci-tests.yml`, every `dev` push): the "Unit tests
+1. **Unit tests and build** (`ci-tests.yml`, on the PR): the "Unit tests
    (...)" jobs, the full Den API security suite and "Build the desktop app".
-2. **Core journeys** (`core-journeys.yml`, every `dev` push and nightly), and
+2. **Core journeys** (`core-journeys.yml`, nightly and on demand), and
    [`core/core-chat.e2e.test.ts`](./core/core-chat.e2e.test.ts) in the nightly
-   Freestyle world check. A dev push also runs every proof it adds or changes.
+   Freestyle world check. Proofs never run automatically.
 3. **The packaged desktop** ("Packaged desktop smoke") before every alpha release.
 
 PR evidence is on demand: `gh workflow run pr-proof.yml --ref <branch> -f

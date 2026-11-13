@@ -1,10 +1,11 @@
 name: Build and core checks
 run-name: ${{ github.event_name == 'schedule' && 'Full regression — component checks' || 'Build and core checks' }}
 
-# Dev pushes, nightly and manual runs. PRs run only the quick check
-# (quick-check.yml); every job here also guards what merges, one push later.
+# Every PR to dev, nightly and manual runs. These jobs gate the merge (require
+# "Build and core checks passed" in the dev ruleset); nothing here runs on dev
+# pushes, so a regression is reported on the PR that causes it.
 on:
-  push:
+  pull_request:
     branches:
       - dev
 
@@ -12,8 +13,7 @@ on:
     - cron: "37 7 * * *"
   workflow_dispatch:
 
-# A later unrelated push may select no product checks. Do not let it replace a
-# pending relevant dev run; only PR updates share a cancellation group.
+# A new push to a PR replaces that PR's running checks.
 concurrency:
   group: openwork-tests-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -53,23 +53,17 @@ jobs:
         with:
           script: |
             const { pathToFileURL } = require("node:url")
-            const { execFileSync } = require("node:child_process")
             const scripts = pathToFileURL(`${process.env.GITHUB_WORKSPACE}/.github/scripts/`)
-            const { changedFiles, isBuildAffected } = await import(new URL("build-inputs.mjs", scripts))
-            const { classifyCiChanges, pushChanges } = await import(new URL("classify-ci-changes.mjs", scripts))
+            const { isBuildAffected } = await import(new URL("build-inputs.mjs", scripts))
+            const { classifyCiChanges, pullRequestChanges } = await import(new URL("classify-ci-changes.mjs", scripts))
             let files = null
-            if (context.eventName === "push") {
-              files = pushChanges({
-                base: context.payload.before,
-                head: context.sha,
-                readDiff: changedFiles,
-                // Fetch endpoint objects, not the last commit's file list. A
-                // multi-commit dev push must include every changed input.
-                fetchBase: (base) => execFileSync("git", ["fetch", "--no-tags", "--no-recurse-submodules", "--depth=1", "origin", base], { stdio: "pipe", timeout: 60000 }),
-              })
-            }
-            if (files === null && context.eventName === "push") {
-              core.warning("A complete changed-file comparison is unavailable; selecting full regression.")
+            if (context.eventName === "pull_request") {
+              ;({ files } = await pullRequestChanges({
+                github, ...context.repo,
+                number: context.payload.pull_request.number,
+                head: context.payload.pull_request.head.sha,
+              }))
+              if (files === null) core.warning("A complete changed-file comparison is unavailable; selecting full regression.")
             }
             const selection = classifyCiChanges({ eventName: context.eventName, files }, isBuildAffected)
             for (const [name, value] of Object.entries(selection)) core.setOutput(name, String(value))
@@ -355,29 +349,9 @@ jobs:
       - name: Check contract generation and commit-hook safety
         run: pnpm test:contracts
 
-  openwork-tests-evals-lint:
-    name: Unit tests (test framework lint and spec lint)
-    needs: classify-changes
-    if: needs.classify-changes.outputs.core == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Setup tests
-        id: setup
-        uses: ./.github/actions/setup-tests
-      # About 20s. Runs on every dev push so spec lint cannot drift;
-      # it used to run only nightly, and debt piled up unnoticed.
-      - name: Check the test framework (lint and spec lint)
-        run: |
-          git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
-          pnpm evals:check
-
   # Security rules (roles, tenants, keys, OAuth, audit) against the real den-api
   # app and a throwaway database per test file on MySQL (root:password), on
-  # every dev push that runs unit tests. PRs run the auth and permission subset
-  # in the quick check. Node's --test-shard splits the files across jobs; every
+  # every PR that changes what unit tests cover. Node's --test-shard splits the files across jobs; every
   # file runs in exactly one shard.
   den-api-security:
     name: Den API security tests (${{ matrix.shard }}/6)
@@ -623,13 +597,13 @@ jobs:
       - name: Check for broken links and images
         run: pnpm dlx "mint@$MINT_VERSION" broken-links
 
-  # One summary context for dev pushes and the nightly run: each selected job
+  # One summary context for PRs and the nightly run: each selected job
   # must succeed and every unselected job must be skipped. Classification
   # failure/cancellation never green-skips a check. PRs require the quick check's
   # `openwork-tests-required` instead (quick-check.yml).
   openwork-tests-full:
     name: Build and core checks passed
-    needs: [classify-changes, openwork-tests-app, openwork-tests-headless, openwork-tests-workbot, openwork-tests-den, openwork-tests-evals, openwork-tests-evals-lint, openwork-tests-desktop-build, den-api-security, validate-models-snapshot, validate-docs]
+    needs: [classify-changes, openwork-tests-app, openwork-tests-headless, openwork-tests-workbot, openwork-tests-den, openwork-tests-evals, openwork-tests-desktop-build, den-api-security, validate-models-snapshot, validate-docs]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -653,7 +627,6 @@ jobs:
           CORE_WORKBOT_RESULT: ${{ needs.openwork-tests-workbot.result }}
           CORE_DEN_RESULT: ${{ needs.openwork-tests-den.result }}
           CORE_EVALS_RESULT: ${{ needs.openwork-tests-evals.result }}
-          CORE_EVALS_LINT_RESULT: ${{ needs.openwork-tests-evals-lint.result }}
           DESKTOP_BUILD_RESULT: ${{ needs.openwork-tests-desktop-build.result }}
           DEN_API_RESULT: ${{ needs.den-api-security.result }}
           SNAPSHOT_RESULT: ${{ needs.validate-models-snapshot.result }}
@@ -676,7 +649,6 @@ jobs:
               core_workbot: env.CORE_WORKBOT_RESULT,
               core_den: env.CORE_DEN_RESULT,
               core_evals: env.CORE_EVALS_RESULT,
-              core_evals_lint: env.CORE_EVALS_LINT_RESULT,
               desktop_build: env.DESKTOP_BUILD_RESULT,
               den_api: env.DEN_API_RESULT,
               snapshot: env.SNAPSHOT_RESULT,

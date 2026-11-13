@@ -1,11 +1,8 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
 import { test } from "node:test";
-import { changedFiles, isBuildAffected } from "./build-inputs.mjs";
-import { QUICK_CHECKS, REQUIRED_JOBS, assertQuickChecks, assertSelectedChecks, classifyCiChanges, classifyQuickChanges, pullRequestChanges, pushChanges } from "./classify-ci-changes.mjs";
+import { isBuildAffected } from "./build-inputs.mjs";
+import { QUICK_CHECKS, REQUIRED_JOBS, assertQuickChecks, assertSelectedChecks, classifyCiChanges, classifyQuickChanges, pullRequestChanges } from "./classify-ci-changes.mjs";
 
 const snapshot = "ee/apps/gateway/src/models/base.json";
 const snapshotV2 = "ee/apps/gateway/src/models/base-v2.json";
@@ -17,7 +14,7 @@ const head = "b".repeat(40);
 const none = { core: false, den_api: false, snapshot: false, docs: false };
 const all = Object.fromEntries(Object.keys(none).map((key) => [key, true]));
 const modified = (filename) => ({ filename, status: "modified" });
-const push = (files) => classifyCiChanges({ eventName: "push", files }, isBuildAffected);
+const pr = (files) => classifyCiChanges({ eventName: "pull_request", files }, isBuildAffected);
 const quick = (files, expectedCount = files?.length) => classifyQuickChanges({ eventName: "pull_request", files, expectedCount }, isBuildAffected);
 const flags = ({ lane, ...selected }) => selected;
 const expectFlags = (actual, expected) => assert.deepEqual(flags(actual), { ...none, ...expected });
@@ -29,45 +26,45 @@ for (const [name, files, expected] of [
   ["shared types", ["packages/types/src/index.ts"], { core: true, den_api: true }],
   ["backend-only", [backend], { core: true, den_api: true }],
   ["Den web-only", ["ee/apps/den-web/app/page.tsx"], { core: true, den_api: true }],
-  ["a mixed app/backend push", [electron, backend, landing], { core: true, den_api: true }],
+  ["a mixed app/backend PR", [electron, backend, landing], { core: true, den_api: true }],
   ["a model snapshot mixed with landing", [snapshot, landing], { core: true, den_api: true, snapshot: true }],
   ["a model snapshot mixed with Electron", [snapshot, electron], { core: true, den_api: true, snapshot: true }],
   ["a docs page mixed with backend", ["packages/docs/guide.mdx", backend], { core: true, den_api: true, docs: true }],
   ["a deleted desktop file", [{ filename: electron, status: "removed" }], { core: true, den_api: true }],
-  ["a no-renames push moving desktop source to landing", [electron, landing], { core: true, den_api: true }],
+  ["a PR moving desktop source to landing", [electron, landing], { core: true, den_api: true }],
   ["outbound-only docs now guarded independently", ["docs/enterprise/outbound-access.md"], {}],
 ]) {
-  test(`${name} dev push selects independent unit checks`, () => expectFlags(push(files), expected));
+  test(`${name} PR selects independent unit checks`, () => expectFlags(pr(files), expected));
 }
 
 for (const path of ["packages/docs/guide.md", "packages/docs/guides/setup.mdx", "packages/docs/docs.json", "packages/docs/images/screenshot.png"]) {
-  test(`${path} validates the docs site on dev pushes`, () => expectFlags(push([path]), { docs: true }));
+  test(`${path} validates the docs site on PRs`, () => expectFlags(pr([path]), { docs: true }));
 }
 
-test("the generated snapshot fast lane survives on push, not mixed changes", () => {
-  expectFlags(push([snapshot]), { snapshot: true });
-  assert.equal(push([snapshot]).lane, "snapshot");
-  assert.equal(push([snapshot, landing]).lane, "affected");
+test("the generated snapshot fast lane survives on a PR, not mixed changes", () => {
+  expectFlags(pr([snapshot]), { snapshot: true });
+  assert.equal(pr([snapshot]).lane, "snapshot");
+  assert.equal(pr([snapshot, landing]).lane, "affected");
   // A deleted snapshot must not claim a modified snapshot.
-  expectFlags(push([{ filename: snapshot, status: "removed" }]), { core: true, den_api: true, snapshot: true });
+  expectFlags(pr([{ filename: snapshot, status: "removed" }]), { core: true, den_api: true, snapshot: true });
 });
 
 test("the v1 and v2 model snapshots refreshed together stay in the snapshot fast lane", () => {
-  assert.equal(push([snapshot, snapshotV2]).lane, "snapshot");
-  assert.equal(push([snapshotV2]).lane, "snapshot");
-  expectFlags(push([snapshot, snapshotV2]), { snapshot: true });
-  assert.equal(push([snapshot, snapshotV2, landing]).lane, "affected");
-  expectFlags(push([snapshot, { filename: snapshotV2, status: "removed" }]), { core: true, den_api: true, snapshot: true });
+  assert.equal(pr([snapshot, snapshotV2]).lane, "snapshot");
+  assert.equal(pr([snapshotV2]).lane, "snapshot");
+  expectFlags(pr([snapshot, snapshotV2]), { snapshot: true });
+  assert.equal(pr([snapshot, snapshotV2, landing]).lane, "affected");
+  expectFlags(pr([snapshot, { filename: snapshotV2, status: "removed" }]), { core: true, den_api: true, snapshot: true });
 });
 
-for (const eventName of ["schedule", "workflow_dispatch", "pull_request", "unknown-event"]) {
+for (const eventName of ["schedule", "workflow_dispatch", "push", "unknown-event"]) {
   test(`${eventName} retains full regression without a changed-file shortcut`, () => {
     expectFlags(classifyCiChanges({ eventName, files: [landing] }, () => false), all);
   });
 }
 
 for (const files of [null, undefined, {}, [null], [""], ["../outside"], ["/absolute"], ["a\\b"], [landing, landing], [{ filename: landing, status: "invalid" }], [{ filename: landing, status: "renamed" }]]) {
-  test(`unknown or malformed diff ${JSON.stringify(files)} selects full work`, () => expectFlags(push(files), all));
+  test(`unknown or malformed diff ${JSON.stringify(files)} selects full work`, () => expectFlags(pr(files), all));
 }
 
 // PR quick check: the Den API auth and permission tests follow their inputs.
@@ -108,19 +105,19 @@ test("an unknown, incomplete or broken PR comparison runs the Den API tests", ()
   for (const isAffected of [() => { throw new Error("missing manifest"); }, () => undefined, () => "false"]) {
     assert.deepEqual(classifyQuickChanges({ eventName: "pull_request", files: [modified(landing)], expectedCount: 1 }, isAffected), { den_quick: true });
   }
-  // Dev pushes run the full suite in Build and core checks; manual runs check everything.
+  // Dev pushes skip the Den tests (the PR ran them); manual runs check everything.
   assert.deepEqual(classifyQuickChanges({ eventName: "push", files: [backend] }, isBuildAffected), { den_quick: false });
   assert.deepEqual(classifyQuickChanges({ eventName: "workflow_dispatch", files: null }, isBuildAffected), { den_quick: true });
 });
 
 test("a broken dependency calculation fails open instead of green-skipping work", () => {
   for (const isAffected of [() => { throw new Error("missing workspace manifest"); }, () => undefined, () => "false"]) {
-    expectFlags(classifyCiChanges({ eventName: "push", files: [landing] }, isAffected), all);
+    expectFlags(classifyCiChanges({ eventName: "pull_request", files: [landing] }, isAffected), all);
   }
 });
 
-test("a known empty push may skip work; an empty PR still runs the always-on quick checks", () => {
-  expectFlags(push([]), {});
+test("a known empty PR may skip work; an empty PR still runs the always-on quick checks", () => {
+  expectFlags(pr([]), {});
   assert.deepEqual(quick([], 0), { den_quick: false });
 });
 
@@ -180,58 +177,6 @@ for (const [name, options] of [
   });
 }
 
-test("push collection compares before to sha and fetches only a missing endpoint", () => {
-  const calls = [];
-  let fetched = false;
-  const files = pushChanges({
-    base, head,
-    readDiff: (range) => { calls.push(range); return fetched ? [electron, landing] : null; },
-    fetchBase: (sha) => { calls.push(sha); fetched = true; },
-  });
-  assert.deepEqual(calls, [{ base, head }, base, { base, head }]);
-  expectFlags(push(files), { core: true, den_api: true });
-  assert.deepEqual(pushChanges({ base, head, readDiff: () => [landing], fetchBase: () => assert.fail("a known diff must not fetch") }), [landing]);
-});
-
-test("push base, fetch and git errors select full work rather than an empty diff", () => {
-  for (const options of [
-    { base: undefined }, { base: "0".repeat(40) }, { base: "--invalid" }, { head: undefined },
-    { readDiff: () => { throw new Error("git failed"); } },
-    { fetchBase: () => { throw new Error("fetch failed"); } },
-  ]) {
-    const files = pushChanges({ base, head, readDiff: () => null, fetchBase: () => {}, ...options });
-    assert.equal(files, null);
-    expectFlags(push(files), all);
-  }
-});
-
-test("a multi-commit push includes earlier desktop changes, not just its landing tip", (t) => {
-  const root = mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), "ci-selection-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-  const write = (path, content) => { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), content); };
-  const commit = () => { git("add", "--all"); git("-c", "user.name=CI fixture", "-c", "user.email=ci@example.invalid", "commit", "--quiet", "-m", "fixture"); return git("rev-parse", "HEAD"); };
-  git("init", "--quiet");
-  write(electron, "original desktop\n");
-  write(landing, "original landing\n");
-  const before = commit();
-  write(electron, "changed desktop\n");
-  commit();
-  write(landing, "changed landing\n");
-  const sha = commit();
-  const files = pushChanges({ base: before, head: sha, readDiff: (range) => changedFiles({ ...range, root }), fetchBase: () => assert.fail("local endpoints exist") });
-  assert.deepEqual(files, [electron, landing]);
-  expectFlags(push(files), { core: true, den_api: true });
-  expectFlags(push(changedFiles({ base: `${sha}^`, head: sha, root })), {});
-  // The shared diff reader keeps deletions and both rename paths as input names.
-  const moved = "ee/apps/landing/moved.ts";
-  write(moved, readFileSync(join(root, electron), "utf8"));
-  rmSync(join(root, electron));
-  const renamed = commit();
-  assert.deepEqual(changedFiles({ base: sha, head: renamed, root }), [electron, moved]);
-  expectFlags(push(changedFiles({ base: sha, head: renamed, root })), { core: true, den_api: true });
-});
-
 function passingReport(selection) {
   const selected = flags(selection);
   return {
@@ -241,8 +186,8 @@ function passingReport(selection) {
   };
 }
 
-test("the dev-push summary accepts exactly the actual selected checks", () => {
-  for (const selection of [push([landing]), push([backend]), push(["packages/docs/guide.mdx"]), push([snapshot]), push(null)]) {
+test("the summary accepts exactly the actual selected checks", () => {
+  for (const selection of [pr([landing]), pr([backend]), pr(["packages/docs/guide.mdx"]), pr([snapshot]), pr(null)]) {
     assert.doesNotThrow(() => assertSelectedChecks(passingReport(selection)));
   }
 });
@@ -252,7 +197,7 @@ test("every selection output gates at least one job", () => {
 });
 
 test("every selected job must pass; skipped, cancelled and failed are not success", () => {
-  const report = passingReport(push(null));
+  const report = passingReport(pr(null));
   for (const job of Object.keys(REQUIRED_JOBS)) {
     for (const result of ["skipped", "cancelled", "failure", "", undefined]) {
       assert.throws(() => assertSelectedChecks({ ...report, results: { ...report.results, [job]: result } }), new RegExp(job));
@@ -261,7 +206,7 @@ test("every selected job must pass; skipped, cancelled and failed are not succes
 });
 
 test("every unselected job must be skipped; unexpected runs cannot mask a mismatch", () => {
-  const report = passingReport(push([landing]));
+  const report = passingReport(pr([landing]));
   for (const job of Object.keys(REQUIRED_JOBS)) {
     for (const result of ["success", "cancelled", "failure", "", undefined]) {
       assert.throws(() => assertSelectedChecks({ ...report, results: { ...report.results, [job]: result } }), new RegExp(job));
@@ -269,8 +214,8 @@ test("every unselected job must be skipped; unexpected runs cannot mask a mismat
   }
 });
 
-test("classification failure cannot green-skip the dev-push summary", () => {
-  const report = passingReport(push([landing]));
+test("classification failure cannot green-skip the summary", () => {
+  const report = passingReport(pr([landing]));
   for (const result of ["skipped", "cancelled", "failure", "", undefined]) assert.throws(() => assertSelectedChecks({ ...report, classification: result }), /blocking merge/);
   for (const [key, drop] of [["selected", "docs"], ["results", "core_evals"]]) {
     const missing = { ...report[key] };
@@ -319,9 +264,9 @@ function job(name, workflow = ciTests) {
 }
 const triggers = (workflow) => workflow.split("\njobs:\n")[0];
 
-test("PRs run only the quick check; Build and core checks runs after merge", () => {
-  assert.doesNotMatch(triggers(ciTests), /^  pull_request(_target)?:/m);
-  assert.match(triggers(ciTests), /^  push:\n    branches:\n      - dev/m);
+test("unit tests and the full Den API suite run on PRs, never on dev pushes", () => {
+  assert.match(triggers(ciTests), /^  pull_request:\n    branches:\n      - dev/m);
+  assert.doesNotMatch(triggers(ciTests), /^  (push|pull_request_target):/m);
   assert.match(triggers(ciTests), /^  schedule:/m);
   assert.match(triggers(quickCheck), /^  pull_request:\n    branches:\n      - dev/m);
   // Only one workflow reports the required context on PRs.
@@ -388,10 +333,10 @@ test("the PR Den API subset names real API test files that the full suite also r
   assert.ok(scripts["test:api:security"].startsWith("node --conditions=development --import tsx --test "));
 });
 
-test("dev-push jobs and the summary context consume each real boolean, not a shared full lane", () => {
+test("PR jobs and the summary context consume each real boolean, not a shared full lane", () => {
   const jobs = {
     core_app: "openwork-tests-app", core_headless: "openwork-tests-headless", core_workbot: "openwork-tests-workbot",
-    core_den: "openwork-tests-den", core_evals: "openwork-tests-evals", core_evals_lint: "openwork-tests-evals-lint",
+    core_den: "openwork-tests-den", core_evals: "openwork-tests-evals",
     desktop_build: "openwork-tests-desktop-build", den_api: "den-api-security",
     snapshot: "validate-models-snapshot", docs: "validate-docs",
   };
@@ -408,9 +353,8 @@ test("dev-push jobs and the summary context consume each real boolean, not a sha
   }
   assert.match(summary, /if: always\(\)/);
   assert.match(summary, /assertSelectedChecks\(checks\)/);
-  assert.match(job("classify-changes"), /base: context\.payload\.before/);
-  assert.match(job("classify-changes"), /head: context\.sha/);
-  assert.doesNotMatch(job("classify-changes"), /head_commit|payload\.commits/);
+  assert.match(job("classify-changes"), /pullRequestChanges\(/);
+  assert.match(job("classify-changes"), /head: context\.payload\.pull_request\.head\.sha/);
 });
 
 test("the Den API security shards run every API test file exactly once", () => {

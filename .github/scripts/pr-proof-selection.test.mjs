@@ -47,13 +47,13 @@ test("a PR that changes the proof machinery runs every core journey but the nigh
   assert.ok(NIGHTLY_ONLY.has("thread-continues-after-restart.e2e.test.ts"));
 });
 
-test("every core journey a PR no longer runs still runs on dev pushes and nightly", () => {
+test("every core journey a PR no longer runs still runs nightly", () => {
   const journeys = [...everyCoreJourney(), ...[...NIGHTLY_ONLY].map((name) => `evals/core/${name}`)];
   assert.ok(journeys.length >= 5);
   assert.ok(journeys.includes(restart));
   assert.ok(journeys.every((spec) => !/\/(core-chat|app-smoke|packaged-[^/]+)\.e2e\.test\.ts$/.test(spec)));
   const workflow = readFileSync(new URL("../workflows/core-journeys.yml", import.meta.url), "utf8");
-  assert.match(workflow, /\n  push:\n    branches: \[dev\]\n/);
+  assert.doesNotMatch(workflow, /\n  push:\n/);
   assert.match(workflow, /\n  schedule:\n/);
   assert.match(workflow, /cancel-in-progress: false/);
   // The workflow lists evals/core itself; it must exclude exactly the journeys

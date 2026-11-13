@@ -26,26 +26,27 @@ the highest risks only, in about a minute:
 - **Den API auth and permission tests** and audit route coverage, when Den API
   inputs change (`pnpm --filter @openwork-ee/den-api test:api:security`).
 
-Everything else runs after merge and fails there for the same defects:
+Unit tests also run on the PR ("Build and core checks"). Nothing runs on a dev
+push except release and deployment builds; the rest is nightly or on demand:
 
 | Check | Where it runs |
 | --- | --- |
-| Unit tests, full Den API security suite, desktop build, docs and model validation | Every dev push ("Build and core checks") |
-| Core journeys | Every dev push and nightly ("Core journeys"); core-chat nightly in "Freestyle world check" |
-| Changed one-off proofs (`evals/proofs`) | The dev push that adds or changes them ("Core journeys"); by hand with `gh workflow run pr-proof.yml --ref <branch> -f pr=<n>` |
+| Unit tests, full Den API security suite, desktop build, docs and model validation | Every PR that changes what they cover, and nightly ("Build and core checks") |
+| Core journeys | Nightly and on demand ("Core journeys"); core-chat nightly in "Freestyle world check" |
+| Changed one-off proofs (`evals/proofs`) | Never automatically; by hand with `gh workflow run pr-proof.yml --ref <branch> -f pr=<n>` |
 | Packaged desktop build and boot | Before every alpha release ("Packaged desktop smoke"); macOS update install nightly |
 | CodeQL analysis | Every dev push and weekly (PRs upload empty results for the merge rule) |
 | EE images, Helm, plugin, Terraform, installers, evidence tooling | Dev pushes that change them; EE health checks nightly |
 
-A red dev push is a regression in what just merged: fix or revert it first.
+A red nightly run is a regression in what merged that day: fix or revert it first.
 
 To expand coverage, add a step to a core journey in `evals/core`. A failing journey
 must be diagnosed and fixed, not retried until green or silently ignored.
 
 ## Broader coverage
 
-The test-framework checks (`pnpm evals:check`) run on every dev push in "Unit
-tests (test framework lint and spec lint)". Nightly at 07:37 UTC (or through **Run workflow** on a selected branch)
+The test-framework lint (`pnpm evals:check`) is not run in CI; run it locally
+when changing the framework. Nightly at 07:37 UTC (or through **Run workflow** on a selected branch)
 the same workflow runs all PR specs (`pnpm evals:pr`, Linux, with MySQL and the
 bundled OpenCode binary) and the engine smoke (`pnpm test:e2e`, Linux and macOS).
 Packaging can be reproduced with `pnpm --filter openwork-server build` and
