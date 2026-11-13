@@ -1,4 +1,5 @@
 import {
+  ACTIVATION_OPTIONAL_DETAIL,
   ACTIVATION_STEP_TITLES,
   activationChecklistPresentation,
   activationProgress,
@@ -56,7 +57,7 @@ export function activationCardModel(state: ActivationState | null | undefined, o
         id: step.id,
         title: ACTIVATION_STEP_TITLES[step.id],
         state: rowState,
-        line: step.done ? step.detail ?? null : step.lockedReason ?? null,
+        line: step.done ? step.detail ?? null : step.lockedReason ?? (step.optional ? ACTIVATION_OPTIONAL_DETAIL : null),
         action: rowState === "open" ? ACTIONS[step.id] ?? null : null,
       };
     }),
@@ -98,6 +99,44 @@ export function createActivationReporter<Scope extends { key: string }>(input: {
       inFlight.delete(key);
     }
   };
+}
+
+/** The engine's built-in models: usable with no key of the person's own, so their id alone proves no setup. */
+const BUILT_IN_PROVIDER_ID = "opencode";
+
+/**
+ * Whether a model provider the person set up on this device has served a completed answer, from the outcomes the
+ * app already keeps per workspace and provider (`useProviderCredentialHealth`: "verified" is recorded only when an
+ * answer from that provider finished without an error, and is dropped when its key changes or is rejected).
+ * Counted only for workspaces that run on this device, and never for providers the organization or OpenWork
+ * supplies (`managed`) or the engine's built-in models.
+ */
+export function hasVerifiedDeviceProvider(
+  health: {
+    entries: Readonly<Record<string, { status: string }>>;
+    workspaceScopes: Readonly<Record<string, string>>;
+  },
+  managed: (providerId: string) => boolean,
+): boolean {
+  return Object.entries(health.entries).some(([key, entry]) => {
+    if (entry.status !== "verified") return false;
+    let parsed: unknown;
+    try { parsed = JSON.parse(key); } catch { return false; }
+    if (!Array.isArray(parsed)) return false;
+    const [workspaceId, providerId]: unknown[] = parsed;
+    if (typeof workspaceId !== "string" || typeof providerId !== "string") return false;
+    const id = providerId.trim();
+    return health.workspaceScopes[workspaceId] === "device" && Boolean(id) && id.toLowerCase() !== BUILT_IN_PROVIDER_ID && !managed(id);
+  });
+}
+
+/**
+ * Whether the engine that serves chats reports a connection of the person's own as connected. Connections OpenWork
+ * adds for the organization (`openwork-cloud`, `openwork-direct-*`) are Den's to count, and anything else named for
+ * OpenWork is left out too, so only a connection the person added can check the step off.
+ */
+export function hasDeviceConnection(statuses: Readonly<Record<string, { status: string }>> | null | undefined): boolean {
+  return Object.entries(statuses ?? {}).some(([name, entry]) => entry.status === "connected" && !name.trim().toLowerCase().startsWith("openwork"));
 }
 
 /** Composer draft parts that run a skill (a local skill or one assigned through OpenWork). */

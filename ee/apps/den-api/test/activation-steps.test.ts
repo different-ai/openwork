@@ -10,6 +10,8 @@ const fresh: ActivationFacts = {
   ownProvider: { reportedOnDevice: false, addedProviderName: null, orgProvided: false, canConfigure: true },
   gateway: { canManage: true, hasProvider: false, providerName: null },
   readyConnectionName: null,
+  connectionOnDevice: false,
+  localSetup: false,
   ownerName: "Avery Owner",
   dismissed: false,
 }
@@ -100,6 +102,8 @@ test("hiding collapses to the next line, and the checklist disappears at six of 
     ownProvider: { reportedOnDevice: true, addedProviderName: null, orgProvided: false, canConfigure: true },
     gateway: { canManage: true, hasProvider: true, providerName: "Team OpenAI" },
     readyConnectionName: "Slack",
+    connectionOnDevice: false,
+    localSetup: false,
     ownerName: "Avery Owner",
     dismissed: false,
   }
@@ -110,4 +114,56 @@ test("hiding collapses to the next line, and the checklist disappears at six of 
   assert.equal(nextActivationStep(complete), null)
   // A step an older Den does not send counts as not done, in recipe order.
   assert.deepEqual(orderedActivationSteps({ steps: [{ id: "connector", done: true }] }).map((step) => step.done), [false, false, false, false, false, true])
+})
+
+const solo: ActivationFacts = {
+  ...fresh,
+  firstResponse: { done: true, durationMs: 1000 },
+  skillUsed: true,
+  ownProvider: { reportedOnDevice: true, addedProviderName: null, orgProvided: false, canConfigure: true },
+  gateway: { canManage: true, hasProvider: true, providerName: "Team OpenAI" },
+  connectionOnDevice: true,
+}
+
+test("with activationLocalSetup off, a device connection and working alone change nothing", () => {
+  const state = computeActivationState(solo)
+  assert.deepEqual(state.steps[1], { id: "invite_teammate", done: false })
+  assert.deepEqual(state.steps[5], { id: "connector", done: false })
+  assert.deepEqual(activationProgress(state), { done: 4, total: 6, complete: false })
+  assert.equal(nextActivationStep(state)?.id, "invite_teammate")
+  assert.equal(activationChecklistPresentation(state), "full")
+})
+
+test("with activationLocalSetup on, a connection on the device counts and says where it is", () => {
+  const device = computeActivationState({ ...fresh, localSetup: true, connectionOnDevice: true })
+  assert.deepEqual(device.steps[5], { id: "connector", done: true, detail: "Connected on this device" })
+  // An organization connection keeps its own name, ahead of the device one.
+  const both = computeActivationState({ ...fresh, localSetup: true, connectionOnDevice: true, readyConnectionName: "Slack" })
+  assert.deepEqual(both.steps[5], { id: "connector", done: true, detail: "Slack connected" })
+  assert.deepEqual(computeActivationState({ ...fresh, localSetup: true }).steps[5], { id: "connector", done: false })
+})
+
+test("with activationLocalSetup on, inviting is optional while alone: listed, not counted, never next", () => {
+  const state = computeActivationState({ ...solo, localSetup: true, connectionOnDevice: false })
+  assert.deepEqual(state.steps[1], { id: "invite_teammate", done: false, optional: true })
+  assert.deepEqual(activationProgress(state), { done: 4, total: 5, complete: false })
+  assert.equal(nextActivationStep(state)?.id, "connector")
+  // Everything that applies is done: the checklist is finished for someone working alone.
+  const finished = computeActivationState({ ...solo, localSetup: true })
+  assert.deepEqual(activationProgress(finished), { done: 5, total: 5, complete: true })
+  assert.equal(nextActivationStep(finished), null)
+  assert.equal(activationChecklistPresentation(finished), "hidden")
+  // Alone without permission to invite: still locked with who can, and still not counted.
+  const lockedAlone = computeActivationState({ ...solo, localSetup: true, invite: { canInvite: false, invitedByMe: 0, teammates: 0, joined: 1, pending: 0 } })
+  assert.deepEqual(lockedAlone.steps[1], { id: "invite_teammate", done: false, lockedReason: "Avery Owner can invite people", optional: true })
+})
+
+test("with activationLocalSetup on, inviting counts again once anyone else is there or invited", () => {
+  // Someone else joined but this owner invited nobody: an ordinary open step.
+  const withTeammate = computeActivationState({ ...solo, localSetup: true, invite: { canInvite: true, invitedByMe: 0, teammates: 1, joined: 2, pending: 0 } })
+  assert.deepEqual(withTeammate.steps[1], { id: "invite_teammate", done: false })
+  assert.deepEqual(activationProgress(withTeammate), { done: 5, total: 6, complete: false })
+  const invited = computeActivationState({ ...solo, localSetup: true, invite: { canInvite: true, invitedByMe: 1, teammates: 1, joined: 1, pending: 1 } })
+  assert.deepEqual(invited.steps[1], { id: "invite_teammate", done: true, detail: "1 joined, 1 invited" })
+  assert.deepEqual(activationProgress(invited), { done: 6, total: 6, complete: true })
 })
