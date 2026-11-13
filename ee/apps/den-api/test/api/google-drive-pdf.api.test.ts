@@ -54,7 +54,7 @@ const den = await bootDen({ env: {
 } })
 after(async () => { await den.close(); await provider.close() })
 
-test("an agent reads the text of a few-hundred-KB PDF in Drive once googleDrivePdfText is on", async () => {
+test("an agent reads the text of a few-hundred-KB PDF in Drive without a rollout override", async () => {
   const { owner, orgId } = await den.createOrg(await den.signUp("Alex Example"), "Drive PDFs")
   const call = den.as(owner, orgId)
   const configured = await call("POST", "/v1/oauth-providers/google-workspace/client", { clientId: "fixture_client", clientSecret: "fixture_secret", features: ["driveRead"] })
@@ -68,14 +68,6 @@ test("an agent reads the text of a few-hundred-KB PDF in Drive once googleDriveP
   assert.equal((await den.request(null, "GET", callback.pathname + callback.search)).status, 200)
   const read = (fileId: string) => call("GET", `/v1/capabilities/google-workspace/drive-file/${fileId}`)
 
-  // Off for the organization: a ~415 KB PDF is "too large" and nothing is downloaded.
-  assert.equal((await den.setFeature(orgId, "googleDrivePdfText", false)).status, 200)
-  const before = await read("breakdown_pdf")
-  assert.equal(before.status, 200, summary(before))
-  assert.equal(field(before.body, "file", "contentUnavailableReason"), "file_too_large")
-  assert.equal(downloads.length, 0)
-
-  assert.equal((await den.setFeature(orgId, "googleDrivePdfText", true)).status, 200)
   const enabled = await read("breakdown_pdf")
   assert.equal(enabled.status, 200, summary(enabled))
   assert.equal(field(enabled.body, "file", "encoding"), "text")
@@ -106,5 +98,4 @@ test("an agent reads the text of a few-hundred-KB PDF in Drive once googleDriveP
   for (const unavailable of [scanned, huge]) {
     assert.match(text(field(unavailable.body, "file", "contentUnavailableHint"), "hint"), /createGoogleDriveDownloadLink/)
   }
-  assert.equal(field(before.body, "file", "contentUnavailableHint"), undefined, "nothing changes with the feature off")
 })

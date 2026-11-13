@@ -48,7 +48,7 @@ export async function adminFeatureOutcomesWorld(seed: Seed) {
     if (!set.response.ok) throw new Error(`Could not turn features on (${set.response.status}).`);
   };
   // Your agent is the remaining background outcome feature; the schedule-trigger outcome features are retired (GA).
-  await turnOn(acmeId, ["workbotProactive", "settledSessions"]);
+  await turnOn(acmeId, ["workbotProactive", "workbotDocuments"]);
 
   // Your agent: daily counters for every member, and one member's check records.
   await sql("INSERT INTO agent_instance (member_id, organization_id, next_wake_at) VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 30 DAY))", [acmeMember.id, acmeId]);
@@ -78,7 +78,7 @@ export async function adminFeatureOutcomesWorld(seed: Seed) {
   const use = async (organizationId: string, memberId: string, key: string, hoursAgo: number) => {
     await sql("INSERT INTO feature_usage (member_id, feature_key, organization_id, first_used_at, days_used, last_used_at, last_used_day) VALUES (?, ?, ?, DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? HOUR), 1, DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? HOUR), DATE_FORMAT(DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? HOUR), '%Y-%m-%d'))", [memberId, key, organizationId, hoursAgo, hoursAgo, hoursAgo]);
   };
-  for (const key of ["automationCalendarTriggers", "workbotProactive", "settledSessions"]) await use(acmeId, acmeMember.id, key, 2);
+  for (const key of ["automationCalendarTriggers", "workbotProactive", "workbotDocuments", "settledSessions"]) await use(acmeId, acmeMember.id, key, 2);
   await use(acmeId, acmeOwner.id, "automationIntervalSchedules", 1);
   await use(northwindId, northwindOwner.id, "slackSendAsBot", 4);
   await use(northwindId, northwindOwner.id, "automationCalendarTriggers", 20 * 24);

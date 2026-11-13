@@ -1,5 +1,7 @@
 # SSO: optional unless required, enforced per organization
 
+> **Generally available:** `ssoPerOrganization` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 - Feature: `ssoPerOrganization`
 - Deployments: cloud and self-hosted; default **off**. Never changes
   single-organization deployments (`DEN_ORG_MODE=single_org`): their SSO stays

@@ -7,7 +7,7 @@ import { managedDesktopPolicy } from "../src/managed-desktop-policy.js";
 import { serve } from "../src/serve-node.js";
 import type { ServerConfig } from "../src/types.js";
 
-test("cloud computer programs follow the signed-in organization's standardCodeMode", async () => {
+test("remote computers still require the signed-in organization's rollout", async () => {
   const dir = await mkdtemp(join(tmpdir(), "openwork-standard-code-mode-"));
   const previous = process.env.OPENWORK_RUNTIME_DB;
   process.env.OPENWORK_RUNTIME_DB = join(dir, "runtime.sqlite");
@@ -17,7 +17,7 @@ test("cloud computer programs follow the signed-in organization's standardCodeMo
     startedAt: Date.now(), tokenSource: "generated", hostTokenSource: "generated", logFormat: "json", logRequests: false,
   };
   const reads: Array<{ path: string; token: string | null }> = [];
-  let features: Record<string, unknown> | null = { standardCodeMode: true };
+  let features: Record<string, unknown> | null = { remoteComputers: true };
   const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => {
     const path = new URL(request.url).pathname;
     if (path === "/v1/org") reads.push({ path, token: request.headers.get("authorization") });
@@ -27,27 +27,27 @@ test("cloud computer programs follow the signed-in organization's standardCodeMo
   const policy = managedDesktopPolicy(config);
   const session = { baseUrl: `http://127.0.0.1:${server.port}`, token: "first-secret", orgId: "org_test" };
   try {
-    assert.equal(await policy.standardCodeModeEnabled(), false, "signed out runs OpenWork's Code Mode without asking Den");
+    assert.equal(await policy.remoteComputersEnabled(), false, "signed out cannot use remote computers");
     assert.equal(reads.length, 0);
 
     await policy.setSession(session);
-    assert.equal(await policy.standardCodeModeEnabled(), true);
-    features = { standardCodeMode: false };
-    assert.equal(await policy.standardCodeModeEnabled(), true, "a recent answer is reused");
-    assert.equal(reads.length, 1);
+    assert.equal(await policy.remoteComputersEnabled(), true);
+    features = { remoteComputers: false };
+    assert.equal(await policy.remoteComputersEnabled(), false, "remote access is checked again");
+    assert.equal(reads.length, 2);
 
     // Another sign-in never reuses the previous one's answer.
     await policy.setSession({ ...session, token: "second-secret" });
-    assert.equal(await policy.standardCodeModeEnabled(), false);
+    assert.equal(await policy.remoteComputersEnabled(), false);
     assert.equal(reads.at(-1)?.token, "Bearer second-secret");
 
     features = { computerUse: true };
     await policy.setSession({ ...session, token: "third-secret" });
-    assert.equal(await policy.standardCodeModeEnabled(), false, "a missing key is off");
+    assert.equal(await policy.remoteComputersEnabled(), false, "a missing key is off");
 
     features = null;
     await policy.setSession({ ...session, token: "fourth-secret" });
-    assert.equal(await policy.standardCodeModeEnabled(), false, "an unreachable Den is off");
+    assert.equal(await policy.remoteComputersEnabled(), false, "an unreachable Den is off");
   } finally {
     await policy.clearSession();
     await server.stop();

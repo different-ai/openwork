@@ -28,8 +28,8 @@
  *
  * Guard rails against locking people out:
  * - Require SSO / Restrict domain can only be turned on when the target
- *   already has a ready SSO connection (enabled + verified domain). With
- *   ssoPerOrganization the route's own rule also applies: only a session
+ *   already has a ready SSO connection (enabled + verified domain).
+ *   The route's own rule also applies: only a session
  *   signed in through this organization's SSO may turn it on, which an import
  *   never has, so the import reports how to finish it by hand.
  * - The last ready connection can't be disabled, deleted or reconfigured
@@ -49,7 +49,6 @@ import { z } from "zod"
 import { auth } from "../../auth.js"
 import { auditChangeCapture } from "../../audit/request-capture.js"
 import { env } from "../../env.js"
-import { organizationFeatureEnabled } from "../../features.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { permissionDeniedMessage } from "../../permissions/effective.js"
 import { resolvePermissionsForMember } from "../../permissions/resolve.js"
@@ -96,7 +95,7 @@ const sessionSpecSchema = z.object({
   kind: z.literal("session"),
   /** Members must sign in with this organization's SSO to open it. */
   requireSso: z.boolean().default(false),
-  /** ssoPerOrganization: every email on the verified SSO domain must sign in with this organization's SSO. */
+  /** every email on the verified SSO domain must sign in with this organization's SSO. */
   restrictDomainToSso: z.boolean().default(false),
   /** Hours a sign-in lasts without activity. */
   sessionLengthHours: z.literal(SESSION_LENGTH_HOURS).default(DEFAULT_SESSION_LENGTH_HOURS),
@@ -432,18 +431,19 @@ async function applySession(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, {
   const named = op.kind === "update" ? changedTopFields(op.changes) : new Set<string>(SESSION_FIELDS)
   const warnings: string[] = []
   const localId = ctx.organizationId
-  let fields = SESSION_FIELDS.filter((field) => named.has(field) && current[field] !== next[field])
+  const fields = SESSION_FIELDS.filter((field) => named.has(field) && current[field] !== next[field])
 
-  if (fields.includes("restrictDomainToSso") && !await organizationFeatureEnabled(normalizeDenTypeId("organization", ctx.organizationId), "ssoPerOrganization")) {
-    warnings.push("\"Restrict this domain to our SSO\" was not changed: it isn't available for this organization.")
-    fields = fields.filter((field) => field !== "restrictDomainToSso")
-  }
   if (fields.length === 0) return { localId, warnings, steps: [] }
 
   const steps: ConfigApplyStep[] = fields.map((field) => ({ action: "set", target: field, detail: String(next[field]) }))
   const enabling = fields.filter((field) => (field === "requireSso" || field === "restrictDomainToSso") && next[field] === true)
   if (enabling.length > 0 && !await hasEnabledOrganizationSsoConnection(normalizeDenTypeId("organization", ctx.organizationId))) {
     throw failure("sso_not_ready", "SSO can't be required yet: this organization has no enabled SSO connection with a verified domain. Set up, verify, test and enable a connection, then turn on \"Require SSO\".", { field: enabling[0], step: steps.find((entry) => entry.target === enabling[0]) })
+  }
+
+  // Imports carry approval authority, not an SSO-authenticated browser session.
+  if (enabling.length > 0) {
+    throw failure("sso_session_required", "Requiring SSO must be turned on by an admin signed in through this organization's SSO, so nobody is locked out. Sign in with SSO and turn it on in Settings › Auth & Security; nothing was changed.", { field: enabling[0], status: 409 })
   }
 
   const { c, payload } = await configRouteContext(ctx)
@@ -675,22 +675,13 @@ function enabledSwitches(op: Exclude<ConfigApplyOp, { kind: "delete" }>): Array<
 }
 
 async function sessionPreflight(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, { kind: "delete" }>): Promise<ConfigPreflightResult | null> {
-  let switches = enabledSwitches(op)
+  const switches = enabledSwitches(op)
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
-  const perOrganization = await organizationFeatureEnabled(organizationId, "ssoPerOrganization")
-  const warnings: string[] = []
-  if (switches.includes("restrictDomainToSso") && !perOrganization) {
-    warnings.push("\"Restrict this domain to our SSO\" isn't available for this organization and won't be changed.")
-    switches = switches.filter((field) => field !== "restrictDomainToSso")
-  }
-  if (switches.length === 0) return warnings.length > 0 ? { warnings } : null
+  if (switches.length === 0) return null
   if (!await hasEnabledOrganizationSsoConnection(organizationId)) {
     return { block: "SSO can't be required yet: this organization has no enabled SSO connection with a verified domain. Set up, verify, test and enable a connection first (a connection this import creates starts disabled), or skip this item and turn on \"Require SSO\" by hand later." }
   }
-  if (perOrganization) {
-    return { block: "Requiring SSO must be turned on by an admin signed in through this organization's SSO, so nobody is locked out; an import can't. Skip this item (or set it to off) and turn it on in Settings › Auth & Security." }
-  }
-  return warnings.length > 0 ? { warnings } : null
+  return { block: "Requiring SSO must be turned on by an admin signed in through this organization's SSO, so nobody is locked out; an import can't. Skip this item (or set it to off) and turn it on in Settings › Auth & Security." }
 }
 
 function ssoConnectionPreflight(op: Exclude<ConfigApplyOp, { kind: "delete" }>, info: ConfigPreflightInfo): ConfigPreflightResult | null {

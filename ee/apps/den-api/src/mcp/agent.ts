@@ -1364,7 +1364,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
 
     // Only tools/list shows this description and only tools/call runs a test, so
     // only they read the language; both then name the one the test runs in.
-    const workflowLanguage = method === "tools/list" || method === "tools/call" ? await newWorkflowLanguage(organizationId) : "codemode-js"
+    const workflowLanguage = method === "tools/list" || method === "tools/call" ? await newWorkflowLanguage() : "codemode-js"
     server.registerTool(
       EXECUTE_CAPABILITY_SCRIPT_TOOL_NAME,
       {

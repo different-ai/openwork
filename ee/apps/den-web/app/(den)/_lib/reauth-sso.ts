@@ -66,7 +66,6 @@ export function resolveReauthSsoTarget(input: {
   organization: {
     slug: string;
     hasSso: boolean;
-    perOrganization: boolean;
     requireSso: boolean;
     restrictDomainToSso: boolean;
   } | null;
@@ -93,7 +92,7 @@ export function resolveReauthSsoTarget(input: {
     }
     return {
       signInUrl: `/sso/${encodeURIComponent(organization.slug)}`,
-      ssoOnly: !organization.perOrganization || organization.requireSso || organization.restrictDomainToSso,
+      ssoOnly: organization.requireSso || organization.restrictDomainToSso,
     };
   }
 

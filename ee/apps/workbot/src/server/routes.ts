@@ -174,7 +174,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   const workbotFor = (member: Member, desktopViews = desktopViewsOf(member.den)) =>
     createWorkbot({
       client: runnerClientFor(member),
-      remoteTasks: member.den.remoteTasks,
       apps: member.den.openworkApps,
       remoteStatus: input => den.remoteStatus(member.accessToken, input),
       remoteRead: input => den.remoteRead(member.accessToken, input),
@@ -187,9 +186,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       workspaceAssistant: async () => member.den.workspaceAssistant,
       // Opening a document on request needs Documents too; Den still checks the member's Drive access on open.
       guidedNavigation: async () => member.den.guidedNavigation && member.den.documents === true,
-      driveFiles: async () => member.den.driveFiles,
-      workingStatus: async () => member.den.workingStatus,
-      quickReply: async () => member.den.quickReply,
       connectors: () => connectors(`${member.den.organization.id}:${member.den.memberId}`, member.accessToken),
       sandboxGateway: member.den.sandboxGateway,
       browserRecovery: member.den.browserRecovery,
@@ -270,7 +266,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     } catch { return c.json({ error: "teaching_unavailable", message: save.success ? "Couldn't confirm the skill was saved. Check your skill library before trying another save." : "Couldn't update the demonstration. Reconnect and check its current state." }, 409) }
   })
 
-
   app.get("/v1/workbot/me", async (c) => {
     const member = c.get("member")
     const { den: who } = member
@@ -300,20 +295,21 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       activationChecklist: who.enabled,
       canSchedule: who.enabled && who.canSchedule,
       sideChats: who.enabled && who.sideChats,
+      // Response-only compatibility for UI bundles loaded before these presentation rollouts became standard.
       // Signing out and switching workspace don't depend on Workbot being on for this workspace.
-      accountMenu: who.accountMenu,
-      workingStatus: who.enabled && who.workingStatus,
-      quickReply: who.enabled && who.quickReply,
-      browserChat: who.enabled && who.browser && who.browserChat,
-      instantOpen: who.enabled && who.instantOpen,
+      accountMenu: true,
+      workingStatus: who.enabled,
+      quickReply: who.enabled,
+      browserChat: who.enabled && who.browser,
+      instantOpen: who.enabled,
+      profileSheet: who.enabled,
+      centeredProfile: who.enabled,
+      browserPreview: who.enabled && (who.browser || who.computer),
+      remoteTasks: who.enabled,
+      profileNav: who.enabled,
+      quietCalendar: who.enabled && who.calendar === true,
       scrollToBottom: who.enabled && who.scrollToBottom,
-      profileSheet: who.enabled && who.profileSheet,
-      centeredProfile: who.enabled && who.centeredProfile,
-      browserPreview: who.enabled && who.browserPreview,
-      remoteTasks: who.enabled && who.remoteTasks,
-      profileNav: who.enabled && who.profileSheet && who.profileNav,
-      profileComputers: who.enabled && who.profileSheet && who.devices && who.profileComputers,
-      quietCalendar: who.enabled && who.calendar === true && who.quietCalendar,
+      profileComputers: who.enabled && who.devices && who.profileComputers,
       calmChat: who.enabled && who.calmChat,
       devices: who.enabled && who.devices,
       commandPalette: true,
@@ -349,7 +345,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     const viewer = z.object({ view: z.enum(["browser", "computer"]), control: z.boolean().default(false), wake: z.boolean().default(false) }).strict().safeParse(raw)
     const action = z.object({ action: z.enum(["continue", "pause", "resume", "rebuild"]) }).strict().safeParse(raw)
     if (operation === "viewer" ? !viewer.success : !action.success) return c.json({ error: "invalid_request" }, 400)
-    // Each view is its own rollout: the browser (browserUse) and the native desktop apps (computerUse).
+    // Den determines which views this deployment and member may use.
     const requestedView = viewer.success ? viewer.data.view : null
     const client = runnerClientFor(member)
     // Den's devices registry hears what happens to this chat's computer (`remoteDevices`), going by Den's latest
@@ -608,7 +604,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         ...connection,
         connectUrl: connection.ready || !denWeb ? connection.connectUrl : workbotConnectionUrl(denWeb, member.den.organization.id, connection.id),
       })),
-      ...(listed.apps && member.den.profileSheet ? { apps: listed.apps.map((app) => ({
+      ...(listed.apps ? { apps: listed.apps.map((app) => ({
         ...linked(app),
         // Bundled Den assets live on Den, not on the standalone Workbot origin.
         iconCandidates: app.iconCandidates?.map((src) => src.startsWith("/integrations/") || src === "/openwork-mark.svg" ? (denWeb ? new URL(src, denWeb).href : null) : src).filter((src): src is string => src !== null),
@@ -621,7 +617,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     c.header("Cache-Control", "no-store")
     const member = c.get("member")
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
-    if (!member.den.remoteTasks) return c.json({ error: "feature_disabled" }, 404)
     const scope = chatOf(c)
     if (scope.refused) return scope.refused
     try {
@@ -636,7 +631,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     c.header("Cache-Control", "no-store")
     const member = c.get("member")
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
-    if (!member.den.remoteTasks) return c.json({ error: "feature_disabled" }, 404)
     const scope = chatOf(c)
     if (scope.refused) return scope.refused
     const key = c.req.param("key")
@@ -653,7 +647,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     c.header("Cache-Control", "no-store")
     const member = c.get("member")
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
-    if (!member.den.remoteTasks) return c.json({ error: "feature_disabled" }, 404)
     const scope = chatOf(c)
     if (scope.refused) return scope.refused
     const body = z.object({ messageId: z.string().trim().min(1).max(240) }).strict().safeParse(await c.req.json().catch(() => null))
@@ -704,11 +697,10 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     }
   })
 
-  /** What Workbot remembers about the person, read-only, for its profile (`workbotProfileSheet`). */
+  /** What Workbot remembers about the person, read-only, for its profile. */
   app.get("/v1/workbot/memory", async (c) => {
     const member = c.get("member")
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
-    if (!member.den.profileSheet) return c.json({ error: "feature_disabled" }, 404)
     try {
       return c.json({ files: await workbotFor(member).readMemory(actorOf(member)) })
     } catch (error) {

@@ -303,7 +303,7 @@ async function handleMcpAppServerRequestUntimed(input: {
   }
   // The site page asks on a signed-in visitor's behalf. An App that was not
   // made a site reads the same to it as one that does not exist.
-  if (context.req.header(APP_SITE_HEADER) && !(definition.site && organizationFeatures.appSites)) return refuse("not_found")
+  if (context.req.header(APP_SITE_HEADER) && !definition.site) return refuse("not_found")
   const server = createMcpAppServer({
     definition,
     scopes: principal.scopes,

@@ -28,9 +28,9 @@ test("most used features come first, then most enabled, then registry order", ()
     { ...base, key: "administratorRecovery", enabledMembers: 0, usedLast30Days: 0 },
     { ...base, key: "nativeDictation", enabledMembers: 5, usedLast30Days: 0 },
     { ...base, key: "claudeAgentProvider", enabledMembers: 1, usedLast30Days: 2 },
-    { ...base, key: "computerUse", enabledMembers: 0, usedLast30Days: 0 },
+    { ...base, key: "remoteComputers", enabledMembers: 0, usedLast30Days: 0 },
   ]);
-  assert.deepEqual(sorted.map((feature) => feature.key), ["claudeAgentProvider", "nativeDictation", "administratorRecovery", "computerUse"]);
+  assert.deepEqual(sorted.map((feature) => feature.key), ["claudeAgentProvider", "nativeDictation", "administratorRecovery", "remoteComputers"]);
 });
 
 test("the on-for cell counts members in plain words", () => {
@@ -43,7 +43,7 @@ const turnedOn = (at: string) => ({ scope: "organization" as const, action: "on"
 const sample: AdminFeatureUsage[] = [
   { key: "claudeAgentProvider", enabledMembers: 3, usedLast7Days: 1, usedLast30Days: 2, lastChange: turnedOn("2026-11-02T08:00:00.000Z"), members: [other, member] },
   { key: "nativeDictation", enabledMembers: 1, usedLast7Days: 0, usedLast30Days: 1, lastChange: turnedOn("2026-10-12T08:00:00.000Z"), members: [member] },
-  { key: "computerUse", enabledMembers: 3, usedLast7Days: 0, usedLast30Days: 0, lastChange: null, members: [] },
+  { key: "remoteComputers", enabledMembers: 3, usedLast7Days: 0, usedLast30Days: 0, lastChange: null, members: [] },
   { key: "administratorRecovery", enabledMembers: 0, usedLast7Days: 0, usedLast30Days: 0, lastChange: { scope: "organization", action: "off", at: "2026-10-30T08:00:00.000Z", by: null }, members: [] },
 ];
 const keys = (features: readonly AdminFeatureUsage[]) => features.map((feature) => feature.key);
@@ -51,8 +51,8 @@ const keys = (features: readonly AdminFeatureUsage[]) => features.map((feature) 
 test("filters match status, category and a feature or member search", () => {
   assert.deepEqual(keys(filterFeatureUsage(sample, NO_FEATURE_FILTER, 3)), keys(sample));
   assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "used" }, 3)), ["claudeAgentProvider", "nativeDictation"]);
-  assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "unused" }, 3)), ["computerUse", "administratorRecovery"]);
-  assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "everyone" }, 3)), ["claudeAgentProvider", "computerUse"]);
+  assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "unused" }, 3)), ["remoteComputers", "administratorRecovery"]);
+  assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "everyone" }, 3)), ["claudeAgentProvider", "remoteComputers"]);
   assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "some" }, 3)), ["nativeDictation"]);
   assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "off" }, 3)), ["administratorRecovery"]);
   assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, category: FEATURES.claudeAgentProvider.category }, 3)), keys(sample.filter((feature) => FEATURES[feature.key].category === FEATURES.claudeAgentProvider.category)));
@@ -66,7 +66,7 @@ test("turned-on dates come from a change that turned the feature on and left it 
   assert.equal(turnedOnAt(sample[3]!), null);
   assert.equal(turnedOnAt({ ...sample[0]!, enabledMembers: 0 }), null);
   const groups = groupFeatureUsage(sample, "turnedOn");
-  assert.deepEqual(groups.map((group) => [group.id, keys(group.features)]), [["2026-11", ["claudeAgentProvider"]], ["2026-10", ["nativeDictation"]], ["on", ["computerUse"]], ["off", ["administratorRecovery"]]]);
+  assert.deepEqual(groups.map((group) => [group.id, keys(group.features)]), [["2026-11", ["claudeAgentProvider"]], ["2026-10", ["nativeDictation"]], ["on", ["remoteComputers"]], ["off", ["administratorRecovery"]]]);
 });
 
 test("date added groups by the registry month, newest first", () => {

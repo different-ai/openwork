@@ -52,7 +52,7 @@ export type AddLibraryItemPageProps = {
   canConfigureMcpConnections?: boolean;
   /**
    * Members add an MCP server as their own connector: each person signs in with
-   * their own account, or it needs no sign-in. Behind desktopPersonalConnectors.
+   * their own account, or it needs no sign-in.
    */
   addsPersonalConnection?: boolean;
   /** Connectors a plugin can include without typing an address. */

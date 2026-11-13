@@ -104,8 +104,6 @@ import { useDesktopFeature } from "../status/use-desktop-feature";
 import { RetainedArtifactSurface } from "../../dashboard/retained-artifact-surface";
 import { CloudComputerControl } from "../computer/cloud-computer-control";
 import { ComputerControl } from "../computer/computer-control";
-import { useComputerSessionHistoryStore } from "@/components/chat/computer-session-history-store";
-import { useSteadyLiveTurnStore } from "@/components/chat/steady-live-turn-store";
 import { useComputerEndTurn } from "../computer/computer-store";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
@@ -176,8 +174,6 @@ export type SessionPageSidebarProps = {
   selectedSessionId: string | null;
   developerMode: boolean;
   sessionStatusById: Record<string, string>;
-  /** The Workspaces · Feed switch ships with `settledSessions`. */
-  feedEnabled?: boolean;
   sessionAttentionLabelById?: Record<string, string>;
   sessionAttentionSourceById?: Record<string, "child" | "descendant">;
   sessionAttentionKindById?: Record<string, SessionWaitingKind>;
@@ -239,7 +235,7 @@ export type SessionPagePaneRuntime = {
 };
 
 export type SessionPageProps = {
-  /** Archive state of the open session (ships with `settledSessions`); one toggle shared with the palette and shortcut. */
+  /** Archive state of the open session; one toggle shared with the palette and shortcut. */
   currentSessionArchive?: SessionArchiveToggle;
   sessionReferenceInventories?: readonly SessionReferenceInventory[];
   createWorkspaceSessionMetadataCallbacks?: (runtime: SessionMetadataRuntime) => SessionMetadataCallbacks;
@@ -669,20 +665,9 @@ export function SessionPage(props: SessionPageProps) {
     setSidePanel: setCurrentSidePanel,
   });
   const { isPoppedOut: browserIsPoppedOut, placeOpenedBrowser, handlePanelClosed: handleBrowserPanelClosed } = browserPresentation;
-  // Computer use on this Mac, behind its feature flag: the header Computer
-  // button, its floating view, in-chat requests and the hand-back at turn end.
-  const computerUseFeature = useDesktopFeature("computerUse");
-  const computerHistoryFeature = useDesktopFeature("computerSessionHistory");
-  useEffect(() => {
-    useComputerSessionHistoryStore.getState().setEnabled(computerHistoryFeature);
-  }, [computerHistoryFeature]);
-  const steadyLiveTurnFeature = useDesktopFeature("steadyLiveTurn");
-  useEffect(() => {
-    useSteadyLiveTurnStore.getState().setEnabled(steadyLiveTurnFeature);
-  }, [steadyLiveTurnFeature]);
   const remoteComputersFeature = useDesktopFeature("remoteComputers");
   // The button hides itself when this computer can't run it and no VM is connected.
-  const computerUse = computerUseFeature && isElectronRuntime();
+  const computerUse = isElectronRuntime();
   useComputerEndTurn(props.sidebar.sessionStatusById, computerUse);
   useBrowserAgentTurns(props.sidebar.sessionStatusById);
 
@@ -1502,7 +1487,6 @@ export function SessionPage(props: SessionPageProps) {
           selectedSessionId={props.sidebar.selectedSessionId}
           showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
           sessionStatusById={props.sidebar.sessionStatusById}
-          feedEnabled={props.sidebar.feedEnabled}
           sessionAttentionLabelById={props.sidebar.sessionAttentionLabelById}
           sessionAttentionSourceById={props.sidebar.sessionAttentionSourceById}
           sessionAttentionKindById={props.sidebar.sessionAttentionKindById}
@@ -1736,7 +1720,7 @@ export function SessionPage(props: SessionPageProps) {
                   ) : null}
                 </DropdownMenuContent>
               </DropdownMenu>
-              {!isElectronRuntime() && computerUseFeature && remoteComputersFeature && props.openworkServerClient ? <CloudComputerControl client={props.openworkServerClient} /> : null}
+              {!isElectronRuntime() && remoteComputersFeature && props.openworkServerClient ? <CloudComputerControl client={props.openworkServerClient} /> : null}
               {computerUse && props.selectedSessionId ? <ComputerControl key={props.selectedSessionId} sessionId={props.selectedSessionId} /> : null}
               <Tooltip>
                 <TooltipTrigger

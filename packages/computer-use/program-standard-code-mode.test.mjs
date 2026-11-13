@@ -39,8 +39,8 @@ function page({ delayMs = 0, fail } = {}) {
   return { host, calls, state: () => ({ value, checked, saves }) };
 }
 
-const run = (code, host, { standardCodeMode, input, signal = new AbortController().signal } = {}) =>
-  runComputerProgram({ surface: "browser", code, ...(input === undefined ? {} : { input }) }, host, signal, standardCodeMode === undefined ? undefined : { standardCodeMode });
+const run = (code, host, { input, signal = new AbortController().signal } = {}) =>
+  runComputerProgram({ surface: "browser", code, ...(input === undefined ? {} : { input }) }, host, signal);
 
 test("standard JavaScript programs drive the same helpers and report the same receipts", async () => {
   const f = page();
@@ -49,7 +49,7 @@ test("standard JavaScript programs drive the same helpers and report the same re
     await tools.ui.setChecked({ target: { name: "Details" }, checked: true });
     const saved = await tools.ui.click({ target: { name: "Save" } });
     return { saved, found: await tools.ui.exists({ target: { name: "Save" } }) };
-  `, f.host, { standardCodeMode: true, input: { title: "Weekly report" } });
+  `, f.host, { input: { title: "Weekly report" } });
   assert.equal(result.ok, true, JSON.stringify(result.error));
   // Helpers declare no output schema; their results still reach the program.
   assert.deepEqual(result.value, { saved: { clicked: true }, found: true });
@@ -58,57 +58,51 @@ test("standard JavaScript programs drive the same helpers and report the same re
   assert.equal(result.mayHaveActed, true);
 });
 
-test("the host's option, not the program, picks the interpreter", async () => {
+test("standard JavaScript is the sole interpreter", async () => {
   // TypeScript annotations: OpenWork's Code Mode strips them, standard JavaScript rejects them.
   const typed = 'const found: boolean = await tools.ui.exists({ target: { name: "Save" } }); return found;';
-  assert.deepEqual(await run(typed, page().host).then((result) => [result.ok, result.value]), [true, true]);
-  const rejected = await run(typed, page().host, { standardCodeMode: true });
+  const rejected = await run(typed, page().host);
   assert.equal(rejected.ok, false);
   assert.equal(rejected.error.kind, "ParseError");
   // Promise chaining: only standard JavaScript has it.
   const chained = 'return await tools.ui.exists({ target: { name: "Save" } }).then((found) => ({ found }));';
-  assert.deepEqual((await run(chained, page().host, { standardCodeMode: true })).value, { found: true });
-  assert.equal((await run(chained, page().host, { standardCodeMode: false })).error.kind, "UnsupportedSyntax");
+  assert.deepEqual((await run(chained, page().host)).value, { found: true });
 });
 
 test("a helper's refusal reaches a standard program; host failures stay generic", async () => {
-  const refused = await run(`try { await tools.ui.click({ target: { name: "Missing" } }) } catch (error) { return error.message }`, page().host, { standardCodeMode: true });
+  const refused = await run(`try { await tools.ui.click({ target: { name: "Missing" } }) } catch (error) { return error.message }`, page().host);
   assert.match(refused.value, /^target_not_found: /);
   const f = page({ fail: { open: new Error("internal detail: session token abc") } });
-  const crashed = await run(`try { await tools.ui.open({ url: "https://example.com" }) } catch (error) { return error.message }`, f.host, { standardCodeMode: true });
+  const crashed = await run(`try { await tools.ui.open({ url: "https://example.com" }) } catch (error) { return error.message }`, f.host);
   assert.equal(crashed.value, "Tool execution failed");
 });
 
 test("a standard program changes only its own copy of input and reaches no host globals", async () => {
   const input = { items: [1, 2, 3] };
-  const result = await run("input.items.push(4); return input.items.length;", page().host, { standardCodeMode: true, input });
+  const result = await run("input.items.push(4); return input.items.length;", page().host, { input });
   assert.equal(result.value, 4);
   assert.deepEqual(input, { items: [1, 2, 3] });
-  const globals = await run("return [typeof fetch, typeof process, typeof require, typeof globalThis];", page().host, { standardCodeMode: true });
+  const globals = await run("return [typeof fetch, typeof process, typeof require, typeof globalThis];", page().host);
   assert.deepEqual(globals.value, ["undefined", "undefined", "undefined", "undefined"]);
-  const constructor = await run('return [].constructor.constructor("return 1")()', page().host, { standardCodeMode: true });
+  const constructor = await run('return [].constructor.constructor("return 1")()', page().host);
   assert.equal(constructor.ok, false);
 });
 
 test("a call the program does not await sends no input after it returns", async () => {
-  for (const standardCodeMode of [false, true]) {
-    const f = page({ delayMs: 30 });
-    const result = await run('tools.ui.click({ target: { name: "Save" } }); return 1;', f.host, { standardCodeMode });
-    const receipts = JSON.stringify(result.receipts);
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    // OpenWork's Code Mode waits for the click; the standard engine cancels it at
-    // return, and then nothing of it may reach the page.
-    assert.equal(f.state().saves, standardCodeMode ? 0 : 1, `standardCodeMode ${standardCodeMode}`);
-    assert.equal(result.mayHaveActed, !standardCodeMode);
-    assert.equal(JSON.stringify(result.receipts), receipts, "receipts do not change after the result");
-    assert.equal(f.calls.includes("act"), !standardCodeMode);
-  }
+  const f = page({ delayMs: 30 });
+  const result = await run('tools.ui.click({ target: { name: "Save" } }); return 1;', f.host);
+  const receipts = JSON.stringify(result.receipts);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(f.state().saves, 0);
+  assert.equal(result.mayHaveActed, false);
+  assert.equal(JSON.stringify(result.receipts), receipts);
+  assert.equal(f.calls.includes("act"), false);
 });
 
 test("Stop ends a standard program without replaying input", async () => {
   const f = page({ delayMs: 20 });
   const controller = new AbortController();
-  const running = run('await tools.ui.click({ target: { name: "Save" } }); return await tools.ui.waitFor({ target: { name: "Never" }, timeoutMs: 5000 });', f.host, { standardCodeMode: true, signal: controller.signal });
+  const running = run('await tools.ui.click({ target: { name: "Save" } }); return await tools.ui.waitFor({ target: { name: "Never" }, timeoutMs: 5000 });', f.host, { signal: controller.signal });
   while (!f.calls.includes("act")) await new Promise((resolve) => setTimeout(resolve, 5));
   await new Promise((resolve) => setTimeout(resolve, 60));
   controller.abort(new Error("Stop"));

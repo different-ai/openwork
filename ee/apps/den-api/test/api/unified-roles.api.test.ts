@@ -19,13 +19,9 @@ import { bootDen, field, list, strings, summary, text, type Member } from "./har
 const den = await bootDen()
 after(() => den.close())
 
-async function world(label: string, options: { superAdminSet?: boolean } = {}) {
+async function world(label: string) {
   const olivia = await den.signUp(`Olivia ${label}`)
   const { orgId, owner } = await den.createOrg(olivia, `Unified roles ${label}`)
-  if (options.superAdminSet) {
-    const enabled = await den.setFeature(orgId, "superAdminPermissionSet", true)
-    assert.equal(enabled.status, 200, summary(enabled))
-  }
   const sam = await den.newMember(owner, orgId, `Sam ${label}`)
   const adam = await den.newMember(owner, orgId, `Adam ${label}`, "admin")
   const ownerCall = den.as(owner, orgId)
@@ -225,7 +221,7 @@ test("a team can be given Billing manager, and its members hold it", async () =>
 })
 
 test("giving a team Super admin, or taking it away, needs the owner or a super admin", async () => {
-  const w = await world("super", { superAdminSet: true })
+  const w = await world("super")
   const superAdmin = await w.setOfKind("super_admin_default")
   const leadership = await den.createTeam(w.owner, w.orgId, "Leadership", [w.sam.memberId])
 

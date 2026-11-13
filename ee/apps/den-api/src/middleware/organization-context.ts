@@ -97,7 +97,7 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
     return c.json({ error: "organization_not_found" }, 404) as never
   }
 
-  // ssoPerOrganization: an organization that requires SSO opens only from a
+  // an organization that requires SSO opens only from a
   // session signed in through its SSO. API keys are issued from such a
   // session (POST /v1/api-keys runs behind this check), so they are not re-checked.
   if (!apiKey) {

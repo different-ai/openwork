@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  AGENT_HARNESS_PERMISSION_KEYS,
   normalizeAgentPermissionSettings,
   type AgentPermissionSettings,
 } from "@openwork/types/den/agent-permissions";
@@ -117,12 +116,6 @@ export function useSaveAgentPermissions(orgId: string) {
             15000,
           );
           if (!response.ok) throw getRequestError(payload, response, `Couldn't save agent permissions (${response.status}).`);
-          if (orgFeatureEnabled(orgContext, "agentHarnessPermissions") && AGENT_HARNESS_PERMISSION_KEYS.some((key) => change.settings[key] !== undefined)) {
-            markFeatureUsed("agentHarnessPermissions");
-          }
-          if (orgFeatureEnabled(orgContext, "browserUploadPermissions") && change.settings.browserUploads !== undefined) {
-            markFeatureUsed("browserUploadPermissions");
-          }
           if (orgFeatureEnabled(orgContext, "fileSendPermissions") && change.settings.fileSends !== undefined) {
             markFeatureUsed("fileSendPermissions");
           }

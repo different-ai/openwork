@@ -38,7 +38,7 @@ told to use control to finish the task and to pick a narrower mode only when the
 person asks for one. On a parallel Mac computer, control works in the window
 where it is, without taking the front unless the app or step needs it
 ([docs](../../docs/features/computer-use-background/README.md)). This is
-included in `computerUse`, not a separate rollout.
+included in computer use.
 A kernel-held lock allows one session per window, so chats in different windows
 work at once. On a parallel Mac one chat keeps up to three apps open at once,
 each in its own window with its own helper session, so a task can move between
@@ -53,7 +53,7 @@ turn at the keyboard and pointer and its idle release; end of turn releases
 them all, Take over on any of them holds the whole chat until Continue, and Stop
 ends them all. Watch live shows the app being worked in, and the session card
 names the app of each step. Other computers keep one app per chat.
-With `parallelComputerUse` on ([docs](../../docs/features/parallel-computer-use/README.md)),
+With [parallel computer use](../../docs/features/parallel-computer-use/README.md),
 a subagent the chat starts (OpenCode's `subagent` tool) works on the chat's
 computer as part of the chat; off, it is its own chat. The bridge reads the subagent's root chat from the
 engine's session tree and sends it as `rootSessionId`; model input never names
@@ -196,7 +196,7 @@ minimized, counts as not following until the person is back in OpenWork. Each
 receipt's `desktop.followed` says which mode the step ran in. Other computers
 get neither argument.
 
-With `parallelComputerUse` on, a subagent's helpers follow when the person watches its chat, or the
+A subagent's helpers follow when the person watches its chat, or the
 subagent's own thread. Then every agent of the chat works in view and they take
 turns at the keyboard and pointer, one whole call at a time, as one chat's
 apps do. With apps of more than one agent open, none goes `beside_openwork` on
@@ -459,7 +459,7 @@ it is a focused provider diagnostic, separate from the Web rollout UI proof.
 
 ## UI programs and shortcuts
 
-With `computerUse` enabled, `computer_run` executes one bounded JavaScript
+`computer_run` executes one bounded JavaScript
 program against the conversation's selected computer or built-in browser. It
 uses the same Stop/takeover controls and organization policy as direct tools.
 Programs share the enabled access, target validation and human handoff used by direct tools. The `remoteComputers` rollout is

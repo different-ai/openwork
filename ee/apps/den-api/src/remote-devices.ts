@@ -979,9 +979,9 @@ export async function readOrganizationComputerRecord(organizationId: Organizatio
     } : null,
     features: {
       remoteDevices: features.remoteDevices,
-      computerUse: features.computerUse,
+      computerUse: true,
       remoteComputers: features.remoteComputers,
-      browserUse: features.browserUse,
+      browserUse: true,
       sandboxGateway: features.sandboxGateway,
     },
   }

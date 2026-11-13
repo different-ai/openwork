@@ -507,7 +507,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       if (approval.organizationId && approval.organizationId !== session.activeOrganizationId) activateOrganizationId = approval.organizationId
     }
 
-    // ssoPerOrganization: never hand a session to the desktop inside an
+    // never hand a session to the desktop inside an
     // organization that requires SSO unless the session signed in through it.
     const ssoBlock = await findSsoAccessBlock({ sessionId: session.id, organizationId: activateOrganizationId ?? session.activeOrganizationId })
     if (ssoBlock) {

@@ -10,12 +10,49 @@ import { z } from "zod"
  * that key (and the minimum supported client version enforces that boundary).
  * sandboxOrgs is deliberately absent: sandbox availability is cloud-only and
  * is advertised by its deployment-checked admin API, not a client rollout key.
+ * The same applies to sandboxMicrosoft365 and Workbot browser recovery.
+ * Workbot advertises recovery only from its deployment-checked session route.
  */
 const retired = z.literal(true).default(true).meta({
   deprecated: true,
   description: "Fixed compatibility value for supported published desktop clients; not a configurable feature.",
 })
 const retiredClientFeaturesSchema = z.object({
+  googleCalendarRecurrence: retired,
+  googleDrivePdfText: retired,
+  plainFreeModel: retired,
+  settledSessions: retired,
+  appToolRepair: retired,
+  publicApps: retired,
+  appSites: retired,
+  composerBackgroundTasks: retired,
+  agentQuestions: retired,
+  steadyLiveTurn: retired,
+  ssoPerOrganization: retired,
+  superAdminPermissionSet: retired,
+  desktopPersonalConnectors: retired,
+  workbotDriveFiles: retired,
+  workbotAccountMenu: retired,
+  workbotBrowserChat: retired,
+  workbotInstantOpen: retired,
+  workbotQuickReply: retired,
+  workbotWorkingStatus: retired,
+  workbotCenteredProfile: retired,
+  workbotBrowserPreview: retired,
+  workbotProfileSheet: retired,
+  workbotRemoteTasks: retired,
+  workbotProfileNav: retired,
+  workbotQuietCalendar: retired,
+  workbotSlackAnswerReply: retired,
+  browserUploadPermissions: retired,
+  agentHarnessPermissions: retired,
+  computerUse: retired,
+  computerSessionHistory: retired,
+  parallelComputerUse: retired,
+  browserUse: retired,
+  remoteSessionPush: retired,
+  standardCodeMode: retired,
+  outlookAttachments: retired,
   engineV2ForceUpgrade: retired,
   libraryDetailBreadcrumbs: retired,
   nativeAffordanceCodeMode: retired,

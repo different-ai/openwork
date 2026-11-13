@@ -1,5 +1,7 @@
 # Super admin permission set
 
+> **Generally available:** `superAdminPermissionSet` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 - Feature key: `superAdminPermissionSet`
 - Deployments: cloud and self-hosted
 - Default: off

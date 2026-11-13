@@ -5,16 +5,9 @@ import { workbotAccountMenu } from "../worlds/workbot-account-menu.ts";
 const test = spec.world(workbotAccountMenu, { timeout: 90_000, needs: { placement: "local" }, resources: { surfaces: [], services: [] } });
 
 test("a person signs out of Workbot, or switches workspace, from the avatar menu", async ({ world, user, probe, step, evidence }) => {
-  await step("before: with workbotAccountMenu off, the avatar only links to the dashboard", async () => {
-    await user.navigate(world.page("off"));
-    await user.see({ role: "link", label: "Your dashboard" });
-    await user.notSee({ testId: "workbot-account-menu" });
-    await user.notSee({ text: "Sign out" });
-    await user.screenshot();
-  });
 
   await step("after: the avatar opens a menu with the account, its workspace and Sign out", async () => {
-    await user.navigate(world.page("on"));
+    await user.navigate(world.page());
     await user.click({ testId: "workbot-account-menu" });
     await user.see({ text: "sam@example.test" });
     await user.see({ testId: "workbot-account-workspace", text: "Example Team" });
@@ -27,7 +20,7 @@ test("a person signs out of Workbot, or switches workspace, from the avatar menu
   await step("a failed sign-out says so and stays signed in, then trying again lands on the signed-out page", async () => {
     await user.click({ role: "menuitem", text: "Sign out" });
     await user.see({ role: "alert", text: "Workbot couldn't sign you out. Check your connection and try again." });
-    expect(await probe.url()).toContain("/?menu=on");
+    expect(new URL(await probe.url()).pathname).toBe("/");
     await user.screenshot();
     await user.click({ role: "menuitem", text: "Sign out" });
     await user.see({ role: "heading", text: "You're signed out of Workbot" });
@@ -39,7 +32,7 @@ test("a person signs out of Workbot, or switches workspace, from the avatar menu
   });
 
   await step("Switch workspace sends the person to Den's workspace chooser", async () => {
-    await user.navigate(world.page("on"));
+    await user.navigate(world.page());
     await user.click({ testId: "workbot-account-menu" });
     await user.click({ role: "menuitem", text: "Switch workspace" });
     await user.see({ role: "heading", text: "Choose a workspace" });

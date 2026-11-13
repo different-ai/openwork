@@ -221,10 +221,10 @@ export function getWorkspaceSettingsTabs(): SettingsTab[] {
 export function getGlobalSettingsTabs(
   developerMode: boolean,
   capabilities: Pick<PlatformCapabilities, "autoUpdate">,
-  options: { computerUse?: boolean } = {},
+  options: { desktop?: boolean } = {},
 ): SettingsTab[] {
   const tabs: SettingsTab[] = ["ai", "ollama", "appearance", "shortcuts", "environment"];
-  if (options.computerUse) tabs.push("computer");
+  if (options.desktop) tabs.push("computer");
   if (capabilities.autoUpdate) tabs.push("updates");
   if (developerMode) tabs.push("debug");
   return tabs;
@@ -282,14 +282,13 @@ export function useSettingsNavGroups(developerMode: boolean): SettingsNavGroups 
   const platform = usePlatform();
   const checkRestriction = useCheckDesktopRestriction();
   // Computer use runs in the desktop app; the web app has no local computer.
-  const computerUse = useDesktopFeature("computerUse") && isElectronRuntime();
   const remoteDevices = useDesktopFeature("remoteDevices");
   const allowed = (tabs: SettingsTab[]) =>
     tabs.filter((tab) => isSettingsTabAllowed({ tab, checkRestriction }));
   return {
     hub: allowed(["general"]),
     workspace: allowed(getWorkspaceSettingsTabs()),
-    global: allowed(getGlobalSettingsTabs(developerMode, platform.capabilities, { computerUse })),
+    global: allowed(getGlobalSettingsTabs(developerMode, platform.capabilities, { desktop: isElectronRuntime() })),
     cloud: allowed([...CLOUD_SETTINGS_TABS, ...(remoteDevices ? ["devices" as const] : [])]),
   };
 }

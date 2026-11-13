@@ -82,11 +82,6 @@ async function passwordSession(person: Session): Promise<Session> {
   return { ...person, token: text(field(signedIn.body, "token"), "token"), cookie }
 }
 
-async function setFlag(orgId: string, enabled: boolean) {
-  const changed = await den.setFeature(orgId, "ssoPerOrganization", enabled)
-  assert.equal(changed.status < 300, true, summary(changed))
-}
-
 async function setSsoSettings(owner: Session, orgId: string, body: Record<string, boolean>) {
   const updated = await den.as(owner, orgId)("PATCH", "/v1/org", body)
   assert.equal(updated.status, 200, summary(updated))
@@ -108,24 +103,7 @@ const both = await den.signUp("Both Member", `both-${den.stamp}@${ssoDomain}`)
 await den.join(ssoOwner, ssoOrgId, both)
 await den.join(otherOwner, otherOrgId, both)
 
-test("flag off: an email on the SSO domain is sent to SSO only, even with an invitation to another organization", async () => {
-  await setFlag(ssoOrgId, false)
-  const invited = await den.as(otherOwner, otherOrgId)("POST", "/v1/invitations", { email: `invitee-off-${den.stamp}@${ssoDomain}`, role: "member" })
-  const inviteToken = text(field(invited.body, "inviteToken"), `invite token (${summary(invited)})`)
-
-  const options = await loginOptions(`invitee-off-${den.stamp}@${ssoDomain}`, inviteToken)
-  assert.equal(options.status, 200, summary(options))
-  assert.equal(field(options.body, "nextStep"), "sso")
-  assert.equal(field(options.body, "allowInvitationSignup"), false)
-  assert.equal(field(options.body, "alternativeStep"), undefined)
-  assert.equal(field(options.body, "ssoRequired"), undefined)
-
-  const signIn = await den.signIn(both.email)
-  assert.equal(signIn.status, 403, `members of an SSO organization cannot use a password while the flag is off: ${summary(signIn)}`)
-})
-
-test("flag on, SSO not required: SSO is offered first and the usual step stays available", async () => {
-  await setFlag(ssoOrgId, true)
+test("SSO not required: SSO is offered first and the usual step stays available", async () => {
   await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: false })
 
   const existing = await loginOptions(both.email)
@@ -146,8 +124,7 @@ test("flag on, SSO not required: SSO is offered first and the usual step stays a
   assert.equal(ssoOrg.status, 200, `SSO is optional, so the organization opens: ${summary(ssoOrg)}`)
 })
 
-test("flag on: an invitation to another organization skips the domain's SSO", async () => {
-  await setFlag(ssoOrgId, true)
+test("an invitation to another organization skips the domain's SSO", async () => {
   const email = `invitee-on-${den.stamp}@${ssoDomain}`
   const invited = await den.as(otherOwner, otherOrgId)("POST", "/v1/invitations", { email, role: "member" })
   const inviteToken = text(field(invited.body, "inviteToken"), `invite token (${summary(invited)})`)
@@ -164,8 +141,7 @@ test("flag on: an invitation to another organization skips the domain's SSO", as
   assert.equal(field(own.body, "nextStep"), "sso")
 })
 
-test("flag on, Require SSO: the person still signs in and uses other organizations, but the SSO organization opens only from an SSO session", async () => {
-  await setFlag(ssoOrgId, true)
+test("Require SSO: the person still signs in and uses other organizations, but the SSO organization opens only from an SSO session", async () => {
   await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: true })
 
   const options = await loginOptions(both.email)
@@ -220,21 +196,11 @@ test("flag on, Require SSO: the person still signs in and uses other organizatio
   const active = await den.request(viaSso.token, "POST", "/v1/me/active-organization", { body: { organizationId: ssoOrgId } })
   assert.equal(active.status, 200, summary(active))
 
-  // Turning the flag off restores today's behavior: no per-organization check, password refused at sign-in.
-  await setFlag(ssoOrgId, false)
-  const reopened = await den.as(viaPassword, ssoOrgId)("GET", "/v1/org")
-  assert.equal(reopened.status, 200, `flag off never adds the per-organization check: ${summary(reopened)}`)
-  const refused = await den.signIn(both.email)
-  assert.equal(refused.status, 403, summary(refused))
   await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: false })
 })
 
-test("restricting the domain needs the flag, and brings back sign-in-wide SSO for every email on it", async () => {
-  await setFlag(ssoOrgId, false)
-  const unavailable = await den.as(ssoAdmin, ssoOrgId)("PATCH", "/v1/org", { restrictDomainToSso: true })
-  assert.equal(unavailable.status, 404, summary(unavailable))
+test("restricting the domain enforces sign-in-wide SSO for every email on it", async () => {
 
-  await setFlag(ssoOrgId, true)
   await setSsoSettings(ssoAdmin, ssoOrgId, { restrictDomainToSso: true })
   const invited = await den.as(otherOwner, otherOrgId)("POST", "/v1/invitations", { email: `restricted-${den.stamp}@${ssoDomain}`, role: "member" })
   const inviteToken = text(field(invited.body, "inviteToken"), "invite token")
@@ -258,20 +224,17 @@ test("restricting the domain needs the flag, and brings back sign-in-wide SSO fo
   assert.equal(signUp.status, 403, `a new account on the restricted domain is refused: ${summary(signUp)}`)
 
   await setSsoSettings(ssoAdmin, ssoOrgId, { restrictDomainToSso: false })
-  await setFlag(ssoOrgId, false)
 })
 
-test("flag on: only an admin signed in through the organization's SSO can require it, so nobody locks themselves out", async () => {
-  await setFlag(ssoOrgId, true)
+test("only an admin signed in through the organization's SSO can require it, so nobody locks themselves out", async () => {
   const viaPassword = await den.as(ssoOwner, ssoOrgId)("PATCH", "/v1/org", { requireSso: true })
   assert.equal(viaPassword.status, 409, summary(viaPassword))
   assert.equal(field(viaPassword.body, "error"), "sso_session_required")
   await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: true })
   await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: false })
-  await setFlag(ssoOrgId, false)
 })
 
-test("re-authentication lists the person's SSO organizations, with SSO offered (not only required) once the flag is on", async () => {
+test("re-authentication lists the person's SSO organizations, with SSO offered (not only required) by default", async () => {
   const signIns = async (session: Session) => {
     const response = await den.request(session.token, "GET", "/v1/me/sso-sign-in")
     assert.equal(response.status, 200, summary(response))
@@ -279,7 +242,6 @@ test("re-authentication lists the person's SSO organizations, with SSO offered (
     assert.ok(Array.isArray(organizations), summary(response))
     return organizations
   }
-  await setFlag(ssoOrgId, true)
   await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: false })
   const bothSession = await passwordSession(both)
 
@@ -303,9 +265,6 @@ test("re-authentication lists the person's SSO organizations, with SSO offered (
   assert.equal(field((await signIns(ssoAdmin))[0], "ssoOnly"), true)
   await setSsoSettings(ssoAdmin, ssoOrgId, { requireSso: false })
 
-  // Flag off: members must use SSO.
-  await setFlag(ssoOrgId, false)
-  assert.equal(field((await signIns(ssoAdmin))[0], "ssoOnly"), true)
 
   assert.deepEqual(await signIns(otherOwner), [], "a person without SSO organizations gets none")
   assert.equal((await den.request(null, "GET", "/v1/me/sso-sign-in")).status, 401)

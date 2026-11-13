@@ -65,7 +65,7 @@ function runner(fixture, options = {}) {
 
 test("an announced remote-session task makes the desktop check for work at once, not at the next minute poll", async (t) => {
   const fixture = den()
-  const desktop = runner(fixture, { remoteSessionPush: true })
+  const desktop = runner(fixture)
   t.after(() => desktop.stop())
   desktop.configure({ baseUrl: denBaseUrl, runnerId: account.runnerId, token })
   await eventually(() => fixture.workPolls() === 1 && fixture.events().length === 1, "the first poll and the event stream start")
@@ -77,9 +77,9 @@ test("an announced remote-session task makes the desktop check for work at once,
   await eventually(() => fixture.workPolls() === 2, "the announced task triggers a work check")
 })
 
-test("while Den has the feature off the desktop keeps polling and asks again ten minutes later", async (t) => {
+test("an older Den without runner events keeps polling and retries the stream later", async (t) => {
   const fixture = den({ eventsStatus: 404 })
-  const desktop = runner(fixture, { remoteSessionPush: true })
+  const desktop = runner(fixture)
   t.after(() => desktop.stop())
   desktop.configure({ baseUrl: denBaseUrl, runnerId: account.runnerId, token })
   await eventually(() => fixture.waits.includes(10 * 60_000), "the push loop waits ten minutes after a 404")
@@ -87,14 +87,14 @@ test("while Den has the feature off the desktop keeps polling and asks again ten
   assert.ok(fixture.workPolls() >= 1, "the minute poll still runs")
 })
 
-test("without the option the desktop never opens the event stream", async (t) => {
+test("the desktop opens the event stream without a rollout option", async (t) => {
   const fixture = den()
   const desktop = runner(fixture)
   t.after(() => desktop.stop())
   desktop.configure({ baseUrl: denBaseUrl, runnerId: account.runnerId, token })
   await eventually(() => fixture.workPolls() === 1, "the first poll runs")
   await new Promise((resolve) => setTimeout(resolve, 30))
-  assert.equal(fixture.events().length, 0)
+  assert.equal(fixture.events().length, 1)
 })
 
 test("the event reader splits events across chunks and CRLF line endings", async () => {

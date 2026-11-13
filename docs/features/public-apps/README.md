@@ -1,5 +1,7 @@
 # Public artifacts without sign-in (`publicApps`)
 
+> **Generally available:** `publicApps` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 - **Feature key:** `publicApps`
 - **Deployments:** cloud and self-hosted (`everywhere`), off by default
 - **Author:** @reachjalil

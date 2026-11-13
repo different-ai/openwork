@@ -89,7 +89,7 @@ test("service reads the actor's derived chat, requests stored outputs, and passe
     if (url.pathname.endsWith("/sessions")) return Response.json({ sessions: [] })
     return Response.json(snapshot(created()))
   } })
-  const deps = { client, remoteTasks: true, canSchedule: async () => false, remoteStatus: async (input: unknown) => { statuses.push(input); return { threads: [live], retryAfterMs: 1000 } } }
+  const deps = { client, canSchedule: async () => false, remoteStatus: async (input: unknown) => { statuses.push(input); return { threads: [live], retryAfterMs: 1000 } } }
   const result = await readWorkbotRemoteJobs(actor, {}, deps)
   assert.equal(result.jobs[0]?.status?.state, "running")
   assert.deepEqual(statuses, [{ threads: [{ commandId: "command_1" }], waitMs: 0 }])
@@ -121,7 +121,7 @@ test("a chat with no remote task is read without tool outputs and Den is never a
     // As the runner does: without outputs, a tool message carries only its length.
     return Response.json(snapshot(url.searchParams.get("outputs") === "none" ? messages.map(message => message.role === "tool" ? { ...message, output: undefined } : message) : messages))
   } })
-  const deps = { client, remoteTasks: true, canSchedule: async () => false, remoteStatus: async () => { assert.fail("nothing to ask Den about") } }
+  const deps = { client, canSchedule: async () => false, remoteStatus: async () => { assert.fail("nothing to ask Den about") } }
   assert.deepEqual(await readWorkbotRemoteJobs(member, {}, deps), { jobs: [], hasEarlier: false })
   assert.deepEqual(await readWorkbotRemoteJobs(member, {}, deps), { jobs: [], hasEarlier: false })
   assert.deepEqual(reads, ["none", "none"])
@@ -145,7 +145,7 @@ test("polls that overlap share one read; opening a row reuses the list just read
   const held = new Promise<void>(resolve => { release = resolve })
   const base = chatWith(["cmd_a"])
   const client = { ...base, readSession: async (...args: Parameters<typeof base.readSession>) => { reads += 1; await held; return base.readSession(...args) } }
-  const deps = { client, remoteTasks: true, canSchedule: async () => false,
+  const deps = { client, canSchedule: async () => false,
     remoteStatus: async () => { statuses += 1; return { threads: [statusOf("cmd_a", "running")], retryAfterMs: 5000 } },
     remoteRead: async () => ({ messages: [{ id: "remote_turn_1", role: "user", text: "Do it" }] }),
     remoteStop: async () => ({ stopped: true }),
@@ -194,7 +194,7 @@ test("batched status: every task is checked in one call and each gets its own st
   resetWorkbotSessionCells()
   const member = { ...actor, memberId: "member_batch", userId: "user_batch" }
   const calls: unknown[] = []
-  const result = await readWorkbotRemoteJobs(member, {}, { client: chatWith(["cmd_a", "cmd_b", "cmd_c"]), remoteTasks: true, canSchedule: async () => false,
+  const result = await readWorkbotRemoteJobs(member, {}, { client: chatWith(["cmd_a", "cmd_b", "cmd_c"]), canSchedule: async () => false,
     remoteStatus: async input => { calls.push(input); return { threads: [statusOf("cmd_a", "idle"), statusOf("cmd_b", "running"), statusOf("cmd_c", "waiting")], retryAfterMs: 5000 } } })
   assert.equal(calls.length, 1, "one batched call, never one per row")
   assert.deepEqual(calls[0], { threads: [{ commandId: "cmd_c" }, { commandId: "cmd_b" }, { commandId: "cmd_a" }], waitMs: 0 })
@@ -207,7 +207,7 @@ test("a failed refresh is retried once, then keeps each task's last state and wh
   resetWorkbotSessionCells()
   const member = { ...actor, memberId: "member_retry", userId: "user_retry" }
   const client = chatWith(["cmd_a", "cmd_b"])
-  const base = { client, remoteTasks: true, canSchedule: async () => false }
+  const base = { client, canSchedule: async () => false }
   const first = await readWorkbotRemoteJobs(member, {}, { ...base, remoteStatus: async () => ({ threads: [statusOf("cmd_a", "idle"), statusOf("cmd_b", "running")], retryAfterMs: 5000 }) })
   const checkedAt = first.jobs.map(job => job.checkedAt)
   // One passing failure, then success: the retry hides it entirely.
@@ -286,26 +286,32 @@ test("Den adapter uses the member token and the existing read-only status capabi
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())) }
 })
 
-test("default-off service does no runner or remote reads", async () => {
-  const result = await readWorkbotRemoteJobs(actor, {}, { client: null, canSchedule: async () => false, remoteStatus: async () => { assert.fail("must not read remote status") } })
-  assert.deepEqual(result, { jobs: [], hasEarlier: false })
-  const who = denSessionSchema.parse({ user: { id: "user_one", name: null, email: "one@example.test" }, organization: { id: "org_example", name: "Example", brandAppName: null }, memberId: "member_one", enabled: true, canSchedule: false })
-  assert.equal(who.remoteTasks, false)
+test("remote discovery still requires an available runner", async () => {
+  await assert.rejects(readWorkbotRemoteJobs({ ...actor, memberId: "member_unavailable" }, {}, { client: null, canSchedule: async () => false, remoteStatus: async () => { assert.fail("must not read remote status without a runner") } }))
 })
 
-test("route refuses absent flag, signed-out access and unauthorized side chats before discovery", async () => {
-  const config = loadConfig({ WORKBOT_PUBLIC_URL: "http://localhost:3090", WORKBOT_DEN_API_URL: "http://localhost:3091", WORKBOT_RUNNER_URL: "http://127.0.0.1:1", WORKBOT_RUNNER_TOKEN: "x".repeat(32), WORKBOT_SESSION_SECRET: "s".repeat(32) })
+test("route exposes discovery by default but refuses signed-out access and unauthorized side chats", async (t) => {
+  const runner = createServer((_req, res) => {
+    res.writeHead(404, { "content-type": "application/json" })
+    res.end(JSON.stringify({ error: "unknown_session" }))
+  })
+  await new Promise<void>(resolve => runner.listen(0, "127.0.0.1", resolve))
+  const address = runner.address(); assert.ok(address && typeof address !== "string")
+  t.after(() => new Promise<void>((resolve, reject) => runner.close(error => error ? reject(error) : resolve())))
+  const config = loadConfig({ WORKBOT_PUBLIC_URL: "http://localhost:3090", WORKBOT_DEN_API_URL: "http://localhost:3091", WORKBOT_RUNNER_URL: `http://127.0.0.1:${address.port}`, WORKBOT_RUNNER_TOKEN: "x".repeat(32), WORKBOT_SESSION_SECRET: "s".repeat(32) })
   const den = createDen({ apiUrl: config.denApiUrl, publicUrl: config.publicUrl })
   const auth = createAuth({ config, den })
   const app = new Hono<AppEnv>()
   registerWorkbotRoutes(app, { config, den, sameOrigin: auth.sameOrigin, member: async (c, next) => {
     if (c.req.header("x-test-signed-out")) return c.json({ error: "signed_out" }, 401)
-    const who = denSessionSchema.parse({ user: { id: "user_one", name: null, email: "one@example.test" }, organization: { id: "org_example", name: "Example", brandAppName: null }, memberId: "member_one", enabled: c.req.header("x-test-disabled") !== "true", canSchedule: false, remoteTasks: c.req.header("x-test-remote") === "on" })
+    const who = denSessionSchema.parse({ user: { id: "user_one", name: null, email: "one@example.test" }, organization: { id: "org_example", name: "Example", brandAppName: null }, memberId: "member_one", enabled: c.req.header("x-test-disabled") !== "true", canSchedule: false })
     c.set("member", { session: { id: "session", userId: "user_one", organizationId: "org_example", tokens: { accessToken: "test", expiresAt: Date.now() + 60000 }, createdAt: Date.now() }, accessToken: "test", den: who })
     await next()
   } })
   const path = "http://localhost:3090/v1/workbot/remote-jobs"
-  assert.equal((await app.request(path)).status, 404)
+  const listed = await app.request(path)
+  assert.equal(listed.status, 200)
+  assert.deepEqual(await listed.json(), { jobs: [], hasEarlier: false })
   assert.equal((await app.request(path, { headers: { "x-test-signed-out": "true" } })).status, 401)
   assert.equal((await app.request(path, { headers: { "x-test-disabled": "true", "x-test-remote": "on" } })).status, 409)
   assert.equal((await app.request(path + "?chat=0123456789abcdef", { headers: { "x-test-remote": "on" } })).status, 404)
@@ -324,7 +330,7 @@ test("read and stop rediscover owner receipts; foreign keys and members never re
     return Response.json(snapshot(url.pathname.includes(workbotSessionId(actor.organizationId, actor.memberId)) ? created() : []))
   } })
   let pending = false
-  const deps = { client, remoteTasks: true, canSchedule: async () => false, remoteStatus: async () => ({ threads: [live], retryAfterMs: 1000 }),
+  const deps = { client, canSchedule: async () => false, remoteStatus: async () => ({ threads: [live], retryAfterMs: 1000 }),
     remoteRead: async (input: unknown) => { reads.push(input); return pending ? { state: "pending", requestId: "read_request_1" } : { messages: [{ id: "remote_turn_1", role: "user", text: "Review the draft" }, { id: "answer_1", role: "assistant", text: "Reading it" }] } },
     remoteStop: async (input: unknown) => { stops.push(input); return { stopped: false, reason: "different_turn" } },
   }
@@ -340,7 +346,6 @@ test("read and stop rediscover owner receipts; foreign keys and members never re
     await assert.rejects(stopWorkbotRemoteJob(foreign, { ...input, messageId: "remote_turn_1" }, deps), WorkbotRemoteJobError)
   }
   await assert.rejects(readWorkbotRemoteJob(actor, { key: "command:foreign" }, deps), WorkbotRemoteJobError)
-  await assert.rejects(stopWorkbotRemoteJob(actor, { ...input, messageId: "remote_turn_1" }, { ...deps, remoteTasks: false }), WorkbotRemoteJobError)
   await assert.rejects(stopWorkbotRemoteJob(actor, { ...input, messageId: "remote_turn_1" }, { ...deps, remoteStatus: async () => { throw new Error("revoked") } }), WorkbotRemoteJobError)
   assert.equal(reads.length, 1)
   assert.equal(stops.length, 1)
@@ -362,19 +367,15 @@ test("transcript projection is plain, bounded, and disables stop without a lates
   assert.equal(remoteJobDetail({ messages: [{ id: "answer", role: "assistant", text: "done" }] }, job).canStop, false)
 })
 
-test("remote introspection instructions are static, default off and distinguish real work from its watcher", () => {
-  const base = { name: "Workbot", organizationName: "Example", firstName: null, timeZone: "UTC", canSchedule: false, workingStatus: true, quickReply: true }
-  const off = workbotInstructions(base)
-  assert.equal(workbotInstructions({ ...base, remoteTasks: false }), off, "flag off preserves the existing prompt byte-for-byte")
-  assert.equal(off.includes("Remote sessions are real tasks"), false)
-  const on = workbotInstructions({ ...base, remoteTasks: true })
-  assert.equal(on, workbotInstructions({ ...base, remoteTasks: true }), "no changing refs, live lookups or dates enter the cached instructions")
-  assert.equal(on.split("\n").filter(line => !line.startsWith("- Remote sessions are real tasks") && !line.startsWith("- For remote work,") && !line.startsWith("- When following remote work,")).join("\n"), off)
-  for (const rule of ["Before answering a current-progress question", "remote-session:status", "persisted commandId", "sessionId (cloud)", "same explicit refs the profile follows", "Never use a local watcher's progress, completion", "computerLabel, latestStep and preview", "waiting means the person must review", "remote-session:read", "short follow-up report", "never approve a remote permission"]) assert.ok(on.includes(rule), rule)
+test("remote introspection instructions are static and distinguish real work from its watcher", () => {
+  const base = { name: "Workbot", organizationName: "Example", firstName: null, timeZone: "UTC", canSchedule: false }
+  const instructions = workbotInstructions(base)
+  assert.equal(instructions, workbotInstructions(base), "no changing refs, live lookups or dates enter cached instructions")
+  for (const rule of ["Before answering a current-progress question", "remote-session:status", "persisted commandId", "sessionId (cloud)", "same explicit refs the profile follows", "Never use a local watcher's progress, completion", "computerLabel, latestStep and preview", "waiting means the person must review", "remote-session:read", "short follow-up report", "never approve a remote permission"]) assert.ok(instructions.includes(rule), rule)
 })
 
 test("remote introspection reaches main and side-chat instructions without a synchronous remote lookup on send", async () => {
-  for (const remoteTasks of [undefined, false, true]) {
+  {
     resetWorkbotSessionCells()
     const instructions: string[] = []
     let sent = 0
@@ -389,7 +390,7 @@ test("remote introspection reaches main and side-chat instructions without a syn
       if (init?.method === "POST" && url.pathname.endsWith("/turns")) { sent++; return Response.json({ state: "accepted" }, { status: 202 }) }
       return Response.json({ error: "unknown_session" }, { status: 404 })
     } })
-    const deps = { client, canSchedule: async () => false, remoteTasks,
+    const deps = { client, canSchedule: async () => false,
       remoteStatus: async () => { assert.fail("send must not block on remote status") },
       remoteRead: async () => { assert.fail("send must not read a remote transcript") },
     }
@@ -397,7 +398,7 @@ test("remote introspection reaches main and side-chat instructions without a syn
     await sendWorkbotMessage(actor, { id: "message_two", text: "And that remote task?", chat: "sidechat000000001" }, deps)
     assert.equal(sent, 2)
     assert.equal(instructions.length, 3, "main chat is refreshed for both sends, then the side chat")
-    for (const prompt of instructions) assert.equal(prompt.includes("Remote sessions are real tasks"), remoteTasks === true)
+    for (const prompt of instructions) assert.equal(prompt.includes("Remote sessions are real tasks"), true)
     assert.ok(instructions.at(-1)?.includes("This is a side chat"))
   }
 })

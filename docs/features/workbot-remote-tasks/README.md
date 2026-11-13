@@ -1,5 +1,7 @@
 # Workbot remote tasks
 
+> **Generally available:** `workbotRemoteTasks` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 `workbotRemoteTasks` is independent and **default off** on every deployment.
 It enables remote-task introspection and guarded Stop controls, plus header integration. Workbot's working
 status/profile flags still choose which surface shows them. No live flags are

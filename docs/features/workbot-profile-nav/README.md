@@ -1,5 +1,7 @@
 # Workbot: pages on the left, the rest in its profile
 
+> **Generally available:** `workbotProfileNav` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 Feature: `workbotProfileNav` · Cloud and self-hosted · Default **off** · Author: @benjaminshafii.
 
 Requires `workbotProfileSheet` and `workbotWorkingStatus` (Den sends `profileNav` only when all three are on).

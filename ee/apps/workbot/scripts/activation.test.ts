@@ -9,7 +9,7 @@ import { registerWorkbotRoutes } from "../src/server/routes.js"
 
 const PUBLIC = "http://localhost:3090"
 
-function workbot(enabled: boolean, profileSheet = false) {
+function workbot(enabled: boolean) {
   const calls: Array<{ method: string; body?: unknown }> = []
   const config = loadConfig({ WORKBOT_PUBLIC_URL: PUBLIC, WORKBOT_DEN_API_URL: "http://localhost:3091", WORKBOT_DEN_WEB_URL: "https://console.example.test", WORKBOT_RUNNER_URL: "http://localhost:3092", WORKBOT_RUNNER_TOKEN: "r".repeat(32), WORKBOT_SESSION_SECRET: "s".repeat(32) })
   const state = { steps: [{ id: "first_response", done: true }], dismissed: false }
@@ -28,7 +28,7 @@ function workbot(enabled: boolean, profileSheet = false) {
   const auth = createAuth({ config, den })
   const app = new Hono<AppEnv>()
   registerWorkbotRoutes(app, { config, den, sameOrigin: auth.sameOrigin, member: async (c, next) => {
-    const who = denSessionSchema.parse({ user: { id: "user_example", name: "Example", email: "member@example.test" }, organization: { id: "org_example", name: "Example workspace", brandAppName: null }, memberId: "member_example", enabled, canSchedule: false, profileSheet })
+    const who = denSessionSchema.parse({ user: { id: "user_example", name: "Example", email: "member@example.test" }, organization: { id: "org_example", name: "Example workspace", brandAppName: null }, memberId: "member_example", enabled, canSchedule: false })
     c.set("member", { session: { id: "session_example", userId: who.user.id, organizationId: who.organization.id, tokens: { accessToken: "fixture-token", expiresAt: Date.now() + 60000 }, createdAt: Date.now() }, accessToken: "fixture-token", den: who })
     await next()
   } })
@@ -79,7 +79,9 @@ test("external connection links carry the Workbot workspace on the configured De
   const { request } = workbot(true)
   const response = await request("GET", "/v1/workbot/connections")
   assert.equal(response.status, 200)
-  assert.deepEqual(await response.json(), { connections: [{ id: "fixture-connection", name: "Fixture", app: "gmail", ready: false, connectMode: "external", connectUrl: "https://console.example.test/dashboard/your-connections?connectionId=fixture-connection&workbotOrganizationId=org_example" }] })
+  const body: unknown = await response.json()
+  assert.ok(typeof body === "object" && body !== null && "connections" in body)
+  assert.deepEqual({ connections: body.connections }, { connections: [{ id: "fixture-connection", name: "Fixture", app: "gmail", ready: false, connectMode: "external", connectUrl: "https://console.example.test/dashboard/your-connections?connectionId=fixture-connection&workbotOrganizationId=org_example" }] })
 })
 
 test("activation links strip only trailing slashes in one scan, including long suffixes", () => {
@@ -89,10 +91,8 @@ test("activation links strip only trailing slashes in one scan, including long s
   }
 })
 
-test("the profile's Apps list passes through only with the profile on, with Den links on the configured Den domain", async () => {
-  const off = await (await workbot(true).request("GET", "/v1/workbot/connections")).json()
-  assert.ok(typeof off === "object" && off !== null && !("apps" in off))
-  const response = await workbot(true, true).request("GET", "/v1/workbot/connections")
+test("the profile's Apps list always passes through, with Den links on the configured Den domain", async () => {
+  const response = await workbot(true).request("GET", "/v1/workbot/connections")
   assert.equal(response.status, 200)
   const body: unknown = await response.json()
   assert.ok(typeof body === "object" && body !== null && "apps" in body && Array.isArray(body.apps))
@@ -104,6 +104,6 @@ test("the profile's Apps list passes through only with the profile on, with Den 
 
 
 test("bundled Apps icons resolve on Den's origin, while generated external candidates are kept intact", async () => {
-  const body = await (await workbot(true, true).request("GET", "/v1/workbot/connections")).json() as { apps: Array<{ iconCandidates?: string[] }> }
+  const body = await (await workbot(true).request("GET", "/v1/workbot/connections")).json() as { apps: Array<{ iconCandidates?: string[] }> }
   assert.deepEqual(body.apps[0]?.iconCandidates, ["https://console.example.test/integrations/linear.svg", "https://www.google.com/s2/favicons?sz=64&domain=linear.app"])
 })

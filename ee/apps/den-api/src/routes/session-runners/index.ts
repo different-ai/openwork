@@ -53,11 +53,10 @@ import {
 } from "../../automations/runner-notification-poll.js"
 import { appLogger } from "../../observability/logger.js"
 import { readOrganizationEnginePolicy } from "../engine-policy.js"
-import { organizationFeatureEnabled } from "../../features.js"
 import { onRemoteSessionWork } from "../../remote-sessions/work-signal.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 
-/** Desktops that send this header want queued remote-session tasks announced (feature remoteSessionPush). */
+/** Desktops that send this header want queued remote-session tasks announced. */
 const REMOTE_SESSION_PUSH_HEADER = "x-openwork-remote-session-push"
 /** Longest a push stream waits before checking for pending commands queued on another Den instance. */
 const REMOTE_SESSION_PUSH_CHECK_MS = 5_000
@@ -77,8 +76,6 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
     service?: SessionRunnerService
     automationService?: Pick<AutomationService, "discoverDesktopRunnerWork" | "runnerNotifications">
     commandStore?: RemoteSessionCommandStore
-    /** Whether remoteSessionPush is on for an organization; defaults to the feature registry. */
-    remoteSessionPushEnabled?: (organizationId: string) => Promise<boolean>
     requestStore?: RemoteSessionRequestStore
     readEnginePolicy?: typeof readOrganizationEnginePolicy
     /** What the runner's organization lets other devices do on its members' computers; defaults to remote-sessions/access.ts. */
@@ -187,10 +184,9 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
     "/v1/automation-runners/events",
     runnerRoute({
       summary: "Stream Automation runner notifications",
-      description: "Server-sent events stream that tells a desktop runner when work or cancellations are available. Send Last-Event-ID to resume from a cursor. A desktop runner that sends X-OpenWork-Remote-Session-Push: 1 also hears remote_session_work_available when a remote-session task is queued for it, or gets 404 while the remoteSessionPush feature is off.",
+      description: "Server-sent events stream that tells a desktop runner when work or cancellations are available. Send Last-Event-ID to resume from a cursor. A desktop runner that sends X-OpenWork-Remote-Session-Push: 1 also hears remote_session_work_available when a remote-session task is queued for it,.",
       responses: {
         200: textResponse("Server-sent event stream (text/event-stream)."),
-        404: jsonResponse("Remote-session push was requested but is not enabled for this organization.", runnerErrorSchema),
       },
     }),
     async (c) => {
@@ -200,14 +196,8 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
       if (!audited.ok) return audited.response
       const requestedCursor = Number(c.req.header("Last-Event-ID") ?? "0")
       let cursor = Number.isSafeInteger(requestedCursor) && requestedCursor >= 0 ? requestedCursor : 0
-      const pushEnabled = options.remoteSessionPushEnabled ?? ((organizationId: string) => organizationFeatureEnabled(organizationId, "remoteSessionPush"))
-      // Desktops that ask for remote-session pushes learn at once when the feature is off,
-      // so they fall back to polling instead of holding a stream open for nothing.
       const wantsPush = c.req.header(REMOTE_SESSION_PUSH_HEADER) === "1"
         && identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)
-      if (wantsPush && !await pushEnabled(identity.organizationId)) {
-        return c.json({ error: "feature_disabled", message: "Remote-session push is not enabled for this organization." }, 404)
-      }
       // An attach is announced like a new task, to runners that can take one.
       let announceAttach = wantsPush && await takesAttaches(identity)
       return streamSSE(c, async (stream) => {
@@ -231,8 +221,6 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
             if (Date.now() - lastOwnerCheckAt >= 15_000) {
               // An inactive owner or a disconnected computer ends the stream; reconnecting is told why.
               if (await service.runnerStanding(identity) !== "active") break
-              // The kill switch ends the stream; the desktop reconnects, gets 404 and polls.
-              if (wantsPush && !await pushEnabled(identity.organizationId)) break
               announceAttach = wantsPush && await takesAttaches(identity)
               lastOwnerCheckAt = Date.now()
             }

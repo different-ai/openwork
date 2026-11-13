@@ -14,7 +14,7 @@ const STATES: Record<ComputerCrewMember["state"], string> = {
 }
 
 /**
- * While `enabled`, the chat's subagents on its computer (`parallelComputerUse`), read from the
+ * While `enabled`, the chat's subagents on its computer, read from the
  * desktop with a live frame of each agent's app. Leaving stops the frames.
  */
 export function useComputerCrew(sessionId: string, enabled: boolean): ComputerCrewMember[] {

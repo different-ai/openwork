@@ -15,7 +15,6 @@ import { openProviderAuthEvent } from "@/react-app/shell/new-providers-listener"
 import { openComposerModelPickerEvent } from "@/app/lib/inference-access";
 import { fixedModelTitle, managesOwnBehavior, modelTitle, modelTriggerSettings, type RetainedModelSelection } from "@/react-app/domains/models/model-catalog";
 import { useModelPickerCatalogStore } from "@/react-app/domains/session/models/model-collections-store";
-import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 
 export { ModelPickerFooter } from "@/react-app/domains/models/model-picker-panel";
 
@@ -48,7 +47,6 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
   const workspace = useWorkspace();
   const setWorkspaceDefault = useSetWorkspaceDefaultModel();
   const checkRestriction = useCheckDesktopRestriction();
-  const plainFreeModel = useDesktopFeature("plainFreeModel");
   const choice = useModelChoice(JSON.stringify([sessionId, value, behaviorValue, disabled]));
   const catalog = useModelCatalog({ client: workspace.client, baseUrl: workspace.opencodeBaseUrl, directory: workspace.selectedWorkspaceRoot,
     enabled: true, refreshWhen: open, fallbackOptions, pendingOptions: choice.pendingOptions, disabledProviders: choice.disabledProviders,
@@ -73,7 +71,7 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
     return () => { if (sessionId) useModelPickerCatalogStore.getState().release(sessionId, owner); };
   }, [sessionId]);
   const selected = options.find((option) => option.providerID === value.providerID && option.modelID === value.modelID);
-  const name = hideValue ? undefined : fixedModelTitle(value, { plainFreeModel }) ?? (catalog.currentOption ? modelTitle(catalog.currentOption, { plainFreeModel }) : undefined);
+  const name = hideValue ? undefined : fixedModelTitle(value) ?? (catalog.currentOption ? modelTitle(catalog.currentOption) : undefined);
   // Fast shows on its own as a quiet "· Fast" after the model name. Nothing follows "Select model", and a
   // setting the list does not show is only called out once the list is the engine's answer for a verified sign-in.
   const { summary, fast: fastOn } = modelTriggerSettings({ model: value, named: name !== undefined,

@@ -1,5 +1,4 @@
 import {
-  AGENT_HARNESS_PERMISSION_KEYS,
   agentPermissionDefinitions,
   agentPermissionDecisionsFor,
   agentPermissionDecisionLabels,
@@ -16,9 +15,6 @@ import {
 export type AgentPermissionsArea = "all" | "agents" | "browser";
 
 const BROWSER_KEYS: readonly string[] = ["websites", "browserUploads"];
-const HARNESS_KEYS: readonly string[] = AGENT_HARNESS_PERMISSION_KEYS;
-/** Rows that only exist while computer use does: files and the clipboard move through it. */
-const COMPUTER_USE_KEYS: readonly string[] = ["computerUse", "computerFiles", "computerClipboard"];
 /** Rows that blocking computer use blocks too, shown with its lock. */
 const BLOCKED_WITH_COMPUTER_USE: readonly string[] = ["computerFiles", "computerClipboard", "appScripting"];
 
@@ -34,24 +30,13 @@ const EDITOR_GROUPS: readonly { label: string; sections: readonly AgentPermissio
   { label: "Skills and MCP servers", sections: ["extensions"] },
 ];
 
-/** Preview only: keep saved and draft settings intact while computer use is unavailable. */
-export function effectiveAgentPermissionSettings(settings: AgentPermissionSettings, computerUseEnabled: boolean): AgentPermissionSettings {
-  if (computerUseEnabled) return settings;
-  const effective = { ...settings };
-  delete effective.computerUse;
-  return effective;
-}
-
-export function visibleAgentPermissionGroups(area: AgentPermissionsArea, harnessEnabled: boolean, computerUseEnabled: boolean, browserUploadsEnabled = false, fileSendsEnabled = false) {
+export function visibleAgentPermissionGroups(area: AgentPermissionsArea, fileSendsEnabled = false) {
   const groups = area === "browser" ? [{ label: "Websites", sections: ["web"] }] : EDITOR_GROUPS;
   return groups.map((group) => ({
     label: group.label,
     definitions: agentPermissionDefinitions.filter((definition) =>
       group.sections.includes(definition.section)
       && inArea(area, definition.key)
-      && (harnessEnabled || !HARNESS_KEYS.includes(definition.key))
-      && (computerUseEnabled || !COMPUTER_USE_KEYS.includes(definition.key))
-      && (browserUploadsEnabled || definition.key !== "browserUploads")
       && (fileSendsEnabled || definition.key !== "fileSends")),
   })).filter((group) => group.definitions.length > 0);
 }
@@ -66,8 +51,8 @@ const TRY_KINDS: readonly { action: AgentPermissionAction; label: string; placeh
   { action: "mcp", label: "Local MCP server", placeholder: "issue-tracker" },
 ];
 
-export function visibleAgentPermissionTryKinds(area: AgentPermissionsArea, harnessEnabled: boolean, computerUseEnabled: boolean, browserUploadsEnabled = false, fileSendsEnabled = false) {
-  const keys = visibleAgentPermissionGroups(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled, fileSendsEnabled).flatMap((group) => group.definitions.map((definition) => definition.key));
+export function visibleAgentPermissionTryKinds(area: AgentPermissionsArea, fileSendsEnabled = false) {
+  const keys = visibleAgentPermissionGroups(area, fileSendsEnabled).flatMap((group) => group.definitions.map((definition) => definition.key));
   return TRY_KINDS.filter((entry) => agentPermissionDefinitions.some((definition) => definition.action === entry.action && keys.includes(definition.key)));
 }
 

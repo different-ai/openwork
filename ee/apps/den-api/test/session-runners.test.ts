@@ -82,7 +82,6 @@ function fixtures(options: {
   /** What the service says of the runner's credential; a function is asked on every check. */
   standing?: () => "active" | "inactive" | "disconnected"
   capabilities?: AutomationDesktopRunnerCapability[]
-  push?: boolean
   pending?: () => RemoteSessionCommand[]
   /** The organization's session access policy; reading it without one fails the test. */
   sessionAccess?: RemoteSessionAccessPolicy
@@ -141,7 +140,6 @@ function fixtures(options: {
   registerSessionRunnerRoutes(app, {
     service, commandStore, requestStore,
     async readEnginePolicy() { return { upgrade: false } },
-    async remoteSessionPushEnabled() { return options.push ?? false },
     async readSessionAccess(identity) {
       assert.equal(identity.organizationId, scope.organizationId)
       assert.equal(identity.ownerMemberId, scope.ownerMemberId)
@@ -978,18 +976,8 @@ async function readEvents(response: Response, until: (events: string[]) => boole
 
 const PUSH = { "X-OpenWork-Remote-Session-Push": "1" }
 
-test("a desktop asking for remote-session pushes gets 404 while the feature is off; plain streams are unchanged", async () => {
-  const { app, headers } = fixtures({ push: false })
-  const refused = await app.request("/v1/automation-runners/events", { headers: { ...headers, ...PUSH } })
-  assert.equal(refused.status, 404)
-  assert.deepEqual(await refused.json(), { error: "feature_disabled", message: "Remote-session push is not enabled for this organization." })
-  const plain = await app.request("/v1/automation-runners/events", { headers })
-  assert.equal(plain.status, 200)
-  await plain.body?.cancel()
-})
-
-test("with the feature on, a queued remote-session task is announced once on the runner's stream", async () => {
-  const { app, headers } = fixtures({ push: true })
+test("a queued remote-session task is announced once on the runner's stream", async () => {
+  const { app, headers } = fixtures()
   const response = await app.request("/v1/automation-runners/events", { headers: { ...headers, ...PUSH } })
   assert.equal(response.status, 200)
   const events = await readEvents(response, (seen) => seen.includes("remote_session_work_available"), 3_000)
@@ -1002,7 +990,7 @@ test("an attach is announced like a new task, only to a runner that can take one
     [{ capabilities: accessCapabilities, sessionAccess: { enabled: false, optIn: false, devices: false, ceiling: "created" } }, "pending-command"],
     [{}, "pending-command"],
   ] as const) {
-    const { app, headers, calls } = fixtures({ push: true, ...options })
+    const { app, headers, calls } = fixtures(options)
     const response = await app.request("/v1/automation-runners/events", { headers: { ...headers, ...PUSH } })
     assert.equal(response.status, 200)
     const events = await readEvents(response, (seen) => seen.includes("remote_session_work_available"), 3_000)
@@ -1014,7 +1002,7 @@ test("an attach is announced like a new task, only to a runner that can take one
 test("a task queued on this Den instance wakes the stream at once instead of at the next check", async () => {
   const { signalRemoteSessionWork } = await import("../src/remote-sessions/work-signal.js")
   let pending: RemoteSessionCommand[] = []
-  const { app, headers } = fixtures({ push: true, pending: () => pending })
+  const { app, headers } = fixtures({ pending: () => pending })
   const response = await app.request("/v1/automation-runners/events", { headers: { ...headers, ...PUSH } })
   assert.equal(response.status, 200)
   // Let the first (empty) check run, then queue a task and signal it.

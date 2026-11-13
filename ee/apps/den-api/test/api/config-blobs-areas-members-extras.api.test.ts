@@ -271,11 +271,8 @@ test("round trip into a second organization: refs resolve there, preferred ids a
   }
 })
 
-test("agent permissions: a permission whose feature is off on the target is skipped with a warning", async () => {
-  // The feature is turned off for the target here, not left to the registry default.
-  assert.equal((await den.setFeature(target.orgId, "agentHarnessPermissions", false)).status, 200)
+test("agent permissions: computer use permissions import without a rollout override", async () => {
   const gatedCtx = await contextFor(target.orgId, target.owner)
-  assert.equal(gatedCtx.features.agentHarnessPermissions, false, "fixture: harness permissions are off")
   const result = await membersAgentPermissionsArea.apply(gatedCtx, {
     kind: "update",
     targetId: (await membersAgentPermissionsArea.exportItems(gatedCtx))[0]!.id,
@@ -284,8 +281,8 @@ test("agent permissions: a permission whose feature is off on the target is skip
     changes: [{ path: "settings.computerUse", to: { decision: "deny" } }],
     secretPaths: [],
   })
-  assert.deepEqual(result.steps, [])
-  assert.ok(result.warnings?.some((warning) => warning.includes("agentHarnessPermissions")), JSON.stringify(result.warnings))
+  assert.ok(result.steps.length > 0)
+  assert.deepEqual(result.warnings ?? [], [])
 })
 
 test("delete removes the scope's configuration", async () => {

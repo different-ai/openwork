@@ -569,7 +569,7 @@ export async function testWorkflowDraft(input: {
   buildTools: BuildCodemodeTools
 }) {
   const resource = await workflowResource(input.context, input.configObjectId, "manager")
-  const payload = normalizedPayload(input.draft, await newWorkflowLanguage(resource.configObject.organizationId))
+  const payload = normalizedPayload(input.draft, await newWorkflowLanguage())
   const execution = await executeWorkflow({
     database: db,
     organizationId: resource.configObject.organizationId,
@@ -606,7 +606,7 @@ export async function createWorkflowVersion(input: {
 }) {
   const resource = await workflowResource(input.context, input.configObjectId, "manager")
   assertWorkflowSourceSafe(input.draft.code)
-  const payload = normalizedPayload(input.draft, await newWorkflowLanguage(resource.configObject.organizationId))
+  const payload = normalizedPayload(input.draft, await newWorkflowLanguage())
   if (payload.parsed.inputSchema) {
     const validation = validateCodemodeScriptInput(payload.parsed.inputSchema, input.draft.exampleInput)
     if (!validation.ok) throw new Error("workflow_current_input_invalid")
@@ -932,7 +932,7 @@ export async function saveWorkflow(input: {
     }
   }
   const normalizedPayloadJson = {
-    language: await newWorkflowLanguage(organizationId),
+    language: await newWorkflowLanguage(),
     ...(input.workflow.inputSchema === undefined ? {} : { inputSchema: input.workflow.inputSchema }),
     ...(input.workflow.outputSchema === undefined ? {} : { outputSchema: input.workflow.outputSchema }),
     ...(retained?.mode === "live" || input.workflow.currentInput === undefined ? {} : { exampleInput: input.workflow.currentInput }),

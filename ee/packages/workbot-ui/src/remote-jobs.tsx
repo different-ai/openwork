@@ -98,9 +98,8 @@ export function followConversation(queryClient: QueryClient, input: { chat: stri
 export function useWorkbotRemoteJobs(enabled: boolean, options: { follow?: boolean } = {}) {
   const chat = useWorkbotChat();
   const queryClient = useQueryClient();
-  const allowed = enabled && workbotHost().remoteTasks === true;
   const key = ["workbot", "remote-jobs", workbotHost().identity, chat ?? "main"];
-  const follow = allowed && options.follow === true;
+  const follow = enabled && options.follow === true;
   useEffect(() => {
     if (!follow) return;
     const following = followConversation(queryClient, { chat, remoteKey: ["workbot", "remote-jobs", workbotHost().identity, chat ?? "main"] });
@@ -115,15 +114,15 @@ export function useWorkbotRemoteJobs(enabled: boolean, options: { follow?: boole
   }, [follow, queryClient, chat]);
   const query = useQuery({
     queryKey: key,
-    enabled: allowed,
+    enabled,
     queryFn: async () => {
-      if (workbotHost().remoteTasks !== true) return { jobs: [], hasEarlier: false };
+
       const { response, payload } = await workbotHost().requestJson(inChat("/v1/workbot/remote-jobs", chat), { method: "GET" }, 30_000);
       if (!response.ok) throw new Error(errorMessage(payload, "Couldn't check remote tasks. Try again."));
       return retainRemoteStatuses(workbotRemoteJobsSchema.parse(payload), queryClient.getQueryData<WorkbotRemoteJobs>(key));
     },
     staleTime: 5_000,
-    refetchInterval: (current) => (allowed ? remoteJobsPollMs(current.state.data, current.state.status === "error") : false),
+    refetchInterval: (current) => (enabled ? remoteJobsPollMs(current.state.data, current.state.status === "error") : false),
     refetchIntervalInBackground: false,
     retry: 1,
   });
@@ -133,14 +132,14 @@ export function useWorkbotRemoteJobs(enabled: boolean, options: { follow?: boole
   const [, look] = useState(0);
   const updatedAt = query.dataUpdatedAt;
   useEffect(() => {
-    if (!allowed || !polled || !updatedAt) return;
+    if (!enabled || !polled || !updatedAt) return;
     const timer = window.setTimeout(() => look(Date.now()), Math.max(0, updatedAt + OVERDUE_MS - Date.now()) + 1);
     return () => window.clearTimeout(timer);
-  }, [allowed, polled, updatedAt]);
+  }, [enabled, polled, updatedAt]);
   // A failed or overdue refresh keeps every row's last state, marked stale; rows show how old it is, not a warning.
   const unverified = query.isError || (polled && Date.now() - query.dataUpdatedAt > OVERDUE_MS);
   const data = query.data && unverified ? { ...query.data, jobs: query.data.jobs.map(job => ({ ...job, stale: true })) } : query.data;
-  return { ...query, data: allowed ? data : undefined };
+  return { ...query, data: enabled ? data : undefined };
 }
 
 /** Unknown/stale work never holds the header at “working”; waiting stays distinct from running. */
@@ -211,7 +210,6 @@ function RemoteJobTranscript({ job }: { job: WorkbotRemoteJob }) {
   const path = `/v1/workbot/remote-jobs/${encodeURIComponent(job.key)}`;
   const detail = useQuery({
     queryKey: ["workbot", "remote-job-detail", workbotHost().identity, chat ?? "main", job.key],
-    enabled: workbotHost().remoteTasks === true,
     queryFn: async () => {
       const { response, payload } = await workbotHost().requestJson(inChat(path, chat), { method: "GET" }, 55_000);
       if (!response.ok) throw new Error("Couldn't read this task. Check the remote session or try again.");
@@ -284,7 +282,7 @@ function RemoteJobRow({ job }: { job: WorkbotRemoteJob }) {
  * Running and waiting work comes first; finished tasks sit below with a checkmark.
  */
 export function RemoteJobs({ jobs, statusError }: { jobs: WorkbotRemoteJob[]; statusError?: WorkbotRemoteJobs["statusError"] }) {
-  if (workbotHost().remoteTasks !== true || !jobs.length) return null;
+  if (!jobs.length) return null;
   const { active, finished } = orderRemoteJobs(jobs);
   return <section className="px-5 pt-3" aria-label="Remote tasks">
     <h2 className="pb-1 text-[13px] font-medium text-[var(--wb-text)]">Remote tasks</h2>

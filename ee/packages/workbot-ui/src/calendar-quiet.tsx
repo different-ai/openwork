@@ -23,7 +23,7 @@ import { ChevronDown, ChevronRight, Lock, RotateCcw, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 /**
- * The quiet calendar (`workbotQuietCalendar`). Meetings own the time grid at full width; Workbot's automation runs are
+ * The quiet calendar. Meetings own the time grid at full width; Workbot's automation runs are
  * small dots at their time on the left edge of each day, never chips that fight meetings for width. Each day says how
  * many runs it had in plain text; the Workbot panel (Needs you, Up next, a 7-day track per automation) opens on demand
  * from the toolbar. Routine success is grey: only a failure is red, and it is a dot, not a banner. Narrow widths and

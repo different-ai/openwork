@@ -144,13 +144,11 @@ test("SSO responses stay unchanged, including when password is the SSO alternati
     "INSERT INTO sso_connection (id, organization_id, provider_id, kind, issuer, domain, status, sign_in_path) VALUES (?, ?, ?, 'oidc', ?, ?, 'enabled', ?)",
     [createDenTypeId("ssoConnection"), orgId, providerId, "https://idp.example.test", domain, `/sso/test-${den.stamp}`],
   )
-  for (const perOrganization of [false, true]) {
-    const changed = await den.setFeature(orgId, "ssoPerOrganization", perOrganization)
-    assert.equal(changed.status, 200, summary(changed))
+  {
     await rollout({ enabled: false, killed: false })
     const before = await loginOptions(member.email)
     assert.equal(field(before, "nextStep"), "sso")
-    if (perOrganization) assert.equal(field(before, "alternativeStep"), "password")
+    assert.equal(field(before, "alternativeStep"), "password")
 
     await rollout({ enabled: true })
     const after = await loginOptions(member.email)

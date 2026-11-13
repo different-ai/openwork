@@ -17,9 +17,6 @@ export function createUiControlServer({
   computerTask = undefined,
   computerProgram = undefined,
   computerScript = undefined,
-  computerEnabled = undefined,
-  computerParallel = undefined,
-  agentQuestionsEnabled = undefined,
 }) {
   let uiControlServer = null;
   let uiControlDiscoveryPath = null;
@@ -169,15 +166,6 @@ export function createUiControlServer({
           const controller = new AbortController();
           response.once("close", () => { if (!response.writableEnded) controller.abort(); });
           sendJsonResponse(response, 200, await browserTask(await readJsonRequestBody(request), { signal: controller.signal }));
-          return;
-        }
-        if (request.method === "GET" && url.pathname === "/computer/enabled") {
-          sendJsonResponse(response, 200, { enabled: typeof computerEnabled === "function" && computerEnabled() === true,
-            parallel: typeof computerParallel === "function" && computerParallel() === true });
-          return;
-        }
-        if (request.method === "GET" && url.pathname === "/agent-questions/enabled") {
-          sendJsonResponse(response, 200, { enabled: typeof agentQuestionsEnabled === "function" && agentQuestionsEnabled() === true });
           return;
         }
         if (request.method === "POST" && url.pathname === "/computer/program") {

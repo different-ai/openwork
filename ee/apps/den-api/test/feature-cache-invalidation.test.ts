@@ -267,9 +267,7 @@ test("cached retired child settings cannot split the consolidated rollouts", asy
   }))
   const features = await getOrganizationFeatures(organizationId, { userId })
   assert.equal(features.workbotProactive, true)
-  assert.equal(features.browserUse, false, "the retained browser kill switch still wins")
-  assert.equal(features.computerUse, true)
-  for (const key of ["workbotAgentHealthView", "workbotAgentLibrary", "browserLiveView", "computerUseBackground"]) {
+  for (const key of ["workbotAgentHealthView", "workbotAgentLibrary", "browserLiveView", "computerUseBackground", "browserUse", "computerUse"]) {
     assert.equal(Object.hasOwn(features, key), false, "old cached child settings must not reappear in the feature map")
   }
 })

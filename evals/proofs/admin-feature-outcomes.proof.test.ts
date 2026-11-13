@@ -29,11 +29,13 @@ test("a platform admin sees, per feature across organizations, whether backgroun
     await admin.see({ testId: "admin-feature-usage-toggle-workbotProactive" });
     // Historical usage is preserved in the store, but cannot resurrect a retired rollout.
     await admin.notSee({ testId: "admin-feature-usage-toggle-slackSendAsBot" });
+    await admin.notSee({ testId: "admin-feature-usage-toggle-settledSessions" });
+    await admin.notSee({ testId: "admin-feature-usage-toggle-computerUse" });
     const health = async (key: string) => (await adminProbe.dom(`[data-testid="admin-feature-usage-health-${key}"]`)).elements[0]?.text ?? "";
     const labels = {
       agent: await health("workbotProactive"),
-      adoptionOnly: await health("settledSessions"),
-      unused: await health("computerUse"),
+      adoptionOnly: await health("workbotDocuments"),
+      unused: await health("remoteComputers"),
     };
     const bars = await adminProbe.dom('[data-testid="admin-feature-usage-bars"]');
     const failed = await adminProbe.dom('[data-testid="admin-feature-usage-bars"] [data-failed="true"]');

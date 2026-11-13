@@ -187,41 +187,17 @@ test("resuming an interrupted turn carries step mode only with stepTurns", async
   }
 })
 
-test("workbotDriveFiles reaches the instructions of the main chat and side chats, and only when Den turns it on", async () => {
-  const instructionsOf = async (driveFiles?: boolean) => {
-    const runner = fakeRunner()
-    const deps: WorkbotDeps = { client: runner.client, canSchedule: async () => false, ...(driveFiles === undefined ? {} : { driveFiles: async () => driveFiles }) }
-    await sendWorkbotMessage(actor, { id: "message_one", text: "hi" }, deps)
-    await sendWorkbotMessage(actor, { id: "message_two", text: "in a side chat", chat: "sidechat000000001" }, deps)
-    return runner.sessions.flatMap((session) => typeof session.instructions === "string" ? [session.instructions] : [])
-  }
-  const on = await instructionsOf(true)
-  assert.ok(on.length >= 2)
-  for (const instructions of on) assert.ok(instructions.includes("createGoogleDriveDownloadLink"))
-  for (const instructions of [...await instructionsOf(false), ...await instructionsOf()]) assert.equal(instructions.includes("createGoogleDriveDownloadLink"), false)
-  // A Den from before the feature doesn't say: off.
-  const older = {
-    user: { id: "user_test", name: null, email: "person@example.test" },
-    organization: { id: "org_test", name: "Test Org", brandAppName: null },
-    memberId: "member_test",
-    enabled: true,
-    canSchedule: false,
-  }
-  assert.equal(denSessionSchema.parse(older).driveFiles, false)
-  assert.equal(denSessionSchema.parse({ ...older, driveFiles: true }).driveFiles, true)
-  assert.equal(denSessionSchema.parse(older).quickReply, false)
-  assert.equal(denSessionSchema.parse({ ...older, quickReply: true }).quickReply, true)
-})
-
-test("quickReply reaches main and side-chat instructions only when enabled", async () => {
-  for (const quickReply of [undefined, false, true]) {
-    const runner = fakeRunner()
-    const deps: WorkbotDeps = { client: runner.client, canSchedule: async () => false, ...(quickReply === undefined ? {} : { quickReply: async () => quickReply }) }
-    await sendWorkbotMessage(actor, { id: "message_one", text: "hi" }, deps)
-    await sendWorkbotMessage(actor, { id: "message_two", text: "in a side chat", chat: "sidechat000000001" }, deps)
-    const instructions = runner.sessions.flatMap(session => typeof session.instructions === "string" ? [session.instructions] : [])
-    assert.ok(instructions.length >= 2)
-    for (const prompt of instructions) assert.equal(prompt.includes("before any tool call, including search_capabilities"), quickReply === true)
+test("main and side chats always receive Drive file, status and acknowledgment instructions", async () => {
+  const runner = fakeRunner()
+  const deps: WorkbotDeps = { client: runner.client, canSchedule: async () => false }
+  await sendWorkbotMessage(actor, { id: "message_one", text: "hi" }, deps)
+  await sendWorkbotMessage(actor, { id: "message_two", text: "in a side chat", chat: "sidechat000000001" }, deps)
+  const instructions = runner.sessions.flatMap((session) => typeof session.instructions === "string" ? [session.instructions] : [])
+  assert.ok(instructions.length >= 2)
+  for (const prompt of instructions) {
+    assert.ok(prompt.includes("createGoogleDriveDownloadLink"))
+    assert.ok(prompt.includes("before any tool call, including search_capabilities"))
+    assert.ok(prompt.includes("The header and task sheet show work in progress"))
   }
 })
 
@@ -284,25 +260,25 @@ test("a message writes the chat's settings again only when they changed", async 
   await send("message_three", { timeZone: "Asia/Tokyo" })
   assert.equal(runner.writes.length, 2)
   assert.equal(runner.writes[1]?.body.timeZone, "Asia/Tokyo")
-  await send("message_four", { timeZone: "Asia/Tokyo" }, { ...deps, quickReply: async () => true })
+  await send("message_four", { timeZone: "Asia/Tokyo" }, { ...deps, workspaceAssistant: async () => true })
   assert.equal(runner.writes.length, 3, "new instructions are a change")
-  assert.ok(String(runner.writes[2]?.body.instructions).includes("before any tool call, including search_capabilities"))
+  assert.ok(String(runner.writes[2]?.body.instructions).includes("Contextual turns have read-only credentials"))
 
   // A side chat: the main chat is unchanged, the side chat is new; then neither is written.
-  await send("message_five", { timeZone: "Asia/Tokyo", chat: "sidechat000000001" }, { ...deps, quickReply: async () => true })
+  await send("message_five", { timeZone: "Asia/Tokyo", chat: "sidechat000000001" }, { ...deps, workspaceAssistant: async () => true })
   assert.equal(runner.writes.length, 4)
   assert.equal(runner.writes[3]?.body.ref, "sidechat000000001")
-  await send("message_six", { timeZone: "Asia/Tokyo", chat: "sidechat000000001" }, { ...deps, quickReply: async () => true })
+  await send("message_six", { timeZone: "Asia/Tokyo", chat: "sidechat000000001" }, { ...deps, workspaceAssistant: async () => true })
   assert.equal(runner.writes.length, 4)
   // Removing the side chat forgets what was written to it.
   assert.deepEqual(await removeWorkbotChat(member, "sidechat000000001", deps), { ok: true })
-  await send("message_seven", { timeZone: "Asia/Tokyo", chat: "sidechat000000001" }, { ...deps, quickReply: async () => true })
+  await send("message_seven", { timeZone: "Asia/Tokyo", chat: "sidechat000000001" }, { ...deps, workspaceAssistant: async () => true })
   assert.equal(runner.writes.length, 5)
   assert.equal(runner.turns.at(-1), "accepted")
 
   // What was written is trusted for five minutes, so another instance's change is written over again.
   clock += 5 * 60_000
-  await send("message_eight", { timeZone: "Asia/Tokyo" }, { ...deps, quickReply: async () => true })
+  await send("message_eight", { timeZone: "Asia/Tokyo" }, { ...deps, workspaceAssistant: async () => true })
   assert.equal(runner.writes.length, 6)
 
   // Without the host's memory of its writes, every message writes, as before.

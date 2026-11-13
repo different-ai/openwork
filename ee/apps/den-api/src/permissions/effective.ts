@@ -20,10 +20,9 @@ export type MemberPermissions = {
   featureEnabled: true
   isOwner: boolean
   /**
-   * Direct super-admin role (not the owner). With `superAdminPermissionSet`
-   * on, their keys come from the Super admin default set (seeded with every
-   * catalog key), plus Member, Admin and team sets; with it off they hold
-   * every catalog key, like the owner. Role-hierarchy rules (who may make or
+   * Direct super-admin role (not the owner). Their keys come from the Super
+   * admin default set (seeded with every catalog key), plus Member, Admin
+   * and team sets. Role-hierarchy rules (who may make or
    * remove super-admins) read this flag; deleting the organization and
    * transferring ownership stay owner-only role checks.
    */
@@ -37,7 +36,7 @@ export type MemberPermissions = {
 /** Why a member holds a permission. */
 export type PermissionSource =
   | { kind: "owner" }
-  /** `superAdminPermissionSet` off: the role itself grants every key. */
+  /** Legacy explanation source retained for published clients. */
   | { kind: "super_admin" }
   | { kind: "super_admin_default"; setId: string; setName: string }
   | { kind: "member_default"; setId: string; setName: string }
@@ -69,11 +68,6 @@ export function sortedPermissionKeys(keys: Iterable<PermissionKey>): PermissionK
 
 export function ownerPermissionGrants(): PermissionGrant[] {
   return [{ source: { kind: "owner" }, keys: new Set(PERMISSION_KEYS) }]
-}
-
-/** `superAdminPermissionSet` off: a super-admin holds every catalog key, as the owner does. */
-export function superAdminPermissionGrants(): PermissionGrant[] {
-  return [{ source: { kind: "super_admin" }, keys: new Set(PERMISSION_KEYS) }]
 }
 
 /**

@@ -21,7 +21,7 @@ import { PhoneSheetEdge, SheetGrabber, useSheetDrag } from "./sheet-drag";
 import { DeviceComputerNavigationContext, WorkbotDevices } from "./devices";
 
 /**
- * Workbot's profile, behind its name (`profileSheet`): who it is and whether it is at work, then one tab at a time
+ * Workbot's profile, behind its name: who it is and whether it is at work, then one tab at a time
  * (P3): what it is working on, files, apps, schedules, computers and identity. Computers reuses Devices, including
  * the screen's existing guarded Open actions; no provisioning or permission changes. The person changes memory by
  * telling Workbot, and connections in Den. `initialTab` picks the tab each time the sheet opens.
@@ -49,10 +49,9 @@ export function ProfileSheet({ open, onClose, name, activity, initialTab = "task
     if (want) setTab(want);
   }
   const tabId = useId();
-  const centered = workbotHost().centeredProfile === true;
-  const files = workbotHost().profileNav === true;
-  const computers = workbotHost().profileComputers === true && workbotHost().profileSheet === true && workbotHost().devices === true;
-  const tabs = (centered ? TABS : TABS.filter((entry) => entry.id !== "schedules")).filter((entry) => (files || entry.id !== "files") && (computers || entry.id !== "computers")).map((entry) => centered ? entry : ({ ...entry, label: entry.id === "permissions" ? "What I can use" : entry.id === "memory" ? "What I remember" : entry.label }));
+
+  const computers = workbotHost().profileComputers === true && workbotHost().devices === true;
+  const tabs = TABS.filter((entry) => computers || entry.id !== "computers");
   if (!tabs.some((entry) => entry.id === tab)) setTab("tasks");
   const drag = useSheetDrag(onClose);
   // One sheet for every screen size: a side panel from `sm` up, and on phones a full-height sheet under the status bar
@@ -64,12 +63,12 @@ export function ProfileSheet({ open, onClose, name, activity, initialTab = "task
         <div {...drag.handle} className="relative flex shrink-0 touch-none select-none flex-col items-center gap-1.5 px-5 pb-4 pt-6 sm:touch-auto sm:select-auto">
           <SheetGrabber />
           <Dialog.Close aria-label="Close" className="absolute left-4 top-4 grid size-9 place-items-center rounded-full text-[var(--wb-muted)] shadow-[0_0_0_1px_var(--wb-ring)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-sheet-close><X size={16} strokeWidth={1.75} aria-hidden /></Dialog.Close>
-          <span aria-hidden className={`grid ${centered ? "size-[96px]" : "size-[76px]"} place-items-center rounded-full bg-[var(--wb-surface)] shadow-[var(--wb-card-shadow)]`}><OpenWorkMark width={centered ? 38 : 34} height={centered ? 48 : 42} /></span>
-          <Dialog.Title className={`pt-2 font-semibold text-[var(--wb-text)] ${centered ? "text-[24px] leading-7 tracking-[-0.02em]" : "text-[20px] leading-6 tracking-[-0.015em]"}`}>{name}</Dialog.Title>
+          <span aria-hidden className="grid size-[96px] place-items-center rounded-full bg-[var(--wb-surface)] shadow-[var(--wb-card-shadow)]"><OpenWorkMark width={38} height={48} /></span>
+          <Dialog.Title className="pt-2 font-semibold text-[var(--wb-text)] text-[24px] leading-7 tracking-[-0.02em]">{name}</Dialog.Title>
           <Dialog.Description className="flex max-w-full items-center gap-1.5 text-[14px] text-[var(--wb-muted)]" data-workbot-profile-status>
-            {!centered && activity.working ? <><StatusIcon activity={activity} size={13} /><span className="truncate">{activity.label}</span></> : <><span aria-hidden className={`size-2 rounded-full ${activity.connected === false ? "bg-[var(--wb-disabled)]" : "bg-[#30a46c]"}`} />{activity.connected === false ? "Connecting" : centered ? "Connected" : "Ready"}</>}
+            <><span aria-hidden className={`size-2 rounded-full ${activity.connected === false ? "bg-[var(--wb-disabled)]" : "bg-[#30a46c]"}`} />{activity.connected === false ? "Connecting" : "Connected"}</>
           </Dialog.Description>
-          {centered && activity.working ? <p className="flex max-w-full items-center gap-1.5 text-[12px] text-[var(--wb-muted)]"><StatusIcon activity={activity} size={12} /><span className="truncate">{activity.label}</span></p> : null}
+          {activity.working ? <p className="flex max-w-full items-center gap-1.5 text-[12px] text-[var(--wb-muted)]"><StatusIcon activity={activity} size={12} /><span className="truncate">{activity.label}</span></p> : null}
           <div role="tablist" aria-label={`${name}'s profile`} className="mt-3 flex w-full max-w-[320px] items-center justify-between rounded-full bg-[var(--wb-surface)] p-1 shadow-[0_0_0_1px_var(--wb-ring)]">
             {tabs.map(({ id, label, icon: Icon }, index) => <button key={id} type="button" role="tab" id={`${tabId}-${id}`} aria-controls={`${tabId}-panel`} tabIndex={tab === id ? 0 : -1} aria-selected={tab === id} aria-label={label} title={label} onClick={() => setTab(id)}
               onKeyDown={(event) => {
@@ -92,29 +91,6 @@ export function ProfileSheet({ open, onClose, name, activity, initialTab = "task
   </Dialog.Root>;
 }
 
-/**
- * Apps, from the navigation: the apps the person can use and what Workbot can do with them, as a plain sheet titled
- * Apps. No avatar, status or profile tabs: it is a list, not a person.
- */
-export function AppsSheet({ open, onClose, name }: { open: boolean; onClose(): void; name: string }) {
-  const surface = useRetainedSurface(open);
-  return <Dialog.Root open={surface.open} onOpenChange={(next) => { if (!next) onClose(); }}>
-    <Dialog.Portal {...surface.portal}>
-      <Dialog.Backdrop className="fixed inset-0 z-40 bg-[var(--wb-ink)]/25 transition-opacity duration-200 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none sm:bg-[var(--wb-ink)]/10" />
-      <Dialog.Popup className="workbot fixed inset-x-0 bottom-0 top-3 z-50 flex flex-col overflow-hidden rounded-t-[24px] bg-[var(--wb-bg)] pb-[env(safe-area-inset-bottom)] shadow-[var(--wb-panel-shadow)] outline-none workbot-sheet-motion transition-transform data-[ending-style]:translate-y-full data-[starting-style]:translate-y-full motion-reduce:transition-none sm:inset-y-0 sm:left-auto sm:right-0 sm:top-0 sm:w-[420px] sm:rounded-none sm:shadow-[var(--wb-sheet-shadow)] sm:data-[ending-style]:translate-x-full sm:data-[ending-style]:translate-y-0 sm:data-[starting-style]:translate-x-full sm:data-[starting-style]:translate-y-0" data-workbot-apps-sheet>
-        <div className="flex h-14 shrink-0 items-center justify-between gap-3 pl-5 pr-3">
-          <Dialog.Title className="text-[15px] font-semibold leading-5 text-[var(--wb-text)]">Apps</Dialog.Title>
-          <Dialog.Close aria-label="Close" className="grid size-9 place-items-center rounded-full text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"><X size={16} strokeWidth={1.75} aria-hidden /></Dialog.Close>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto pb-6">
-          <AppsTab name={name} titled />
-        </div>
-      </Dialog.Popup>
-    </Dialog.Portal>
-  </Dialog.Root>;
-}
-
-/** What Workbot is working on. Its browser and computer open from the step's card in the chat, not from here. */
 function TasksTab({ name, activity }: { name: string; activity: WorkbotActivity }) {
   const remote = useWorkbotRemoteJobs(true);
   const localWork = activity.main !== null || activity.tasks.length > 0;
@@ -124,9 +100,9 @@ function TasksTab({ name, activity }: { name: string; activity: WorkbotActivity 
       <h2 className="px-5 pb-2 text-[13px] font-medium text-[var(--wb-text)]">{localActive ? "In progress" : "Recent"}</h2>
       <ActivityDetails name={name} activity={activity} />
     </> : !remote.data?.jobs.length && !remote.isFetching ? <p className="px-5 pt-2 text-[13px] text-[var(--wb-muted)]">{name} isn&apos;t working on anything right now. Bigger jobs you hand it show up here while they run.</p> : null}
-    {workbotHost().remoteTasks && remote.isPending ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]" role="status">Checking your remote tasks…</p> : null}
+    {remote.isPending ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]" role="status">Checking your remote tasks…</p> : null}
     {/* Only when nothing is known yet; known rows keep their last state through a failed refresh. */}
-    {workbotHost().remoteTasks && remote.isError && !remote.data ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]" role="status">Couldn&apos;t check your remote tasks just now. <button type="button" className="underline" onClick={() => void remote.refetch()}>Try again</button></p> : null}
+    {remote.isError && !remote.data ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]" role="status">Couldn&apos;t check your remote tasks just now. <button type="button" className="underline" onClick={() => void remote.refetch()}>Try again</button></p> : null}
     <RemoteJobs jobs={remote.data?.jobs ?? []} statusError={remote.data?.statusError} />
     {remote.data?.hasEarlier ? <p className="px-5 pt-2 text-[12px] text-[var(--wb-muted)]">Showing recent remote tasks. Older jobs may be outside this chat&apos;s current history.</p> : null}
   </>;
@@ -232,10 +208,9 @@ function memoryTitle(file: string) {
 
 /** What Workbot remembers, file by file, newest first. Read-only: it changes when the person tells Workbot. */
 function MemoryTab({ name }: { name: string }) {
-  // The profile can open without `workbotProfileSheet` (from the layout's nav); its memory read stays behind the flag.
-  const enabled = workbotHost().profileSheet === true;
-  const memory = useWorkbotMemory(enabled);
-  if (!enabled) return <p className="px-5 pt-1 text-[13px] leading-[19px] text-[var(--wb-muted)]">What {name} remembers about you isn&apos;t shown in this workspace yet.</p>;
+
+  const memory = useWorkbotMemory(true);
+
   return <div className="flex flex-col gap-3 px-5 pt-1">
     <p className="text-[13px] leading-[18px] text-[var(--wb-muted)]">What {name} keeps in mind about you across chats. To change something, tell {name} in the chat.</p>
     {memory.isPending ? <p className="text-[13px] text-[var(--wb-muted)]" role="status">Reading what I remember…</p>

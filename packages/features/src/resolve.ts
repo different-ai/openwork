@@ -111,6 +111,21 @@ export const RETIRED_FEATURE_KEYS = [
   "autoRouter",
   // Generally available (2026-11): TrueFoundry in AI Gateway, always on, on cloud and self-hosted.
   "truefoundryGateway",
+  // Generally available (2026-11): completed default-on rollouts. Their gates are gone.
+  // Browser recovery and sample Microsoft 365 remain cloud-only, without rollout switches.
+  "googleCalendarRecurrence", "googleDrivePdfText", "plainFreeModel",
+  "settledSessions", "appToolRepair", "publicApps",
+  "appSites", "composerBackgroundTasks", "agentQuestions",
+  "steadyLiveTurn", "ssoPerOrganization", "superAdminPermissionSet",
+  "desktopPersonalConnectors", "workbotDriveFiles", "workbotAccountMenu",
+  "workbotBrowserChat", "workbotInstantOpen", "workbotBrowserRecovery",
+  "workbotQuickReply", "workbotWorkingStatus", "workbotCenteredProfile",
+  "workbotBrowserPreview", "workbotProfileSheet", "workbotRemoteTasks",
+  "workbotProfileNav", "workbotQuietCalendar", "workbotSlackAnswerReply",
+  "browserUploadPermissions", "agentHarnessPermissions", "computerUse",
+  "computerSessionHistory", "parallelComputerUse", "browserUse",
+  "remoteSessionPush", "sandboxMicrosoft365", "standardCodeMode",
+  "outlookAttachments",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

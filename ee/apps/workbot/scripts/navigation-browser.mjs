@@ -110,8 +110,7 @@ async function assertDestinations(nav, phone = false) {
   const workspace = nav.getByRole("navigation", { name: phone ? "Go to" : "Workspace", exact: true })
   // The desktop rail returns to the chat; Main chat itself is picked in the list beside it (or in the phone drawer).
   await workspace.getByRole("button", { name: phone ? "Main chat" : "Chats", exact: true }).waitFor()
-  await workspace.getByRole("button", { name: "Files", exact: true }).waitFor()
-  await workspace.getByRole("button", { name: "Apps", exact: true }).waitFor()
+  for (const name of ["Files", "Apps"]) assert.equal(await workspace.getByRole("button", { name, exact: true }).count(), 0, "Profile tabs are not navigation destinations")
   // Task progress lives in the status under Workbot's name and the sheet behind it, never as a destination.
   for (const unavailable of ["Calendar", "Documents", "Computer", "Browser", "Tasks"]) {
     assert.equal(await workspace.getByRole("button", { name: unavailable, exact: true }).count(), 0, `${unavailable} is not a navigation destination in this fixture`)
@@ -136,14 +135,13 @@ async function assertDesktopColumn(page) {
   assert.ok(box.x >= available.x && box.x + box.width <= available.x + available.width + 1, "Composer fits in the available chat area")
   await assertNoOverflow(page)
 }
-/** Apps opens a plain sheet titled Apps: the apps list, no avatar, status or profile tabs. */
+/** Apps lives in the standard profile alongside Tasks, Files, Schedules and Identity. */
 async function assertAppsSheet(page, screenshotName) {
-  const sheet = page.locator("[data-workbot-apps-sheet]")
+  const sheet = page.locator("[data-workbot-profile]")
   await sheet.waitFor()
-  await sheet.getByRole("heading", { name: "Apps", exact: true }).waitFor()
+  await sheet.getByRole("tab", { name: "Apps", exact: true }).click()
   await sheet.getByText("Gmail", { exact: true }).waitFor()
-  assert.equal(await sheet.getByRole("tab").count(), 0, "The Apps sheet is a list, not a profile with tabs")
-  assert.equal(await page.locator("[data-workbot-profile]").count(), 0, "Apps does not open the profile")
+  assert.ok(await sheet.getByRole("tab").count() >= 5, "Apps is part of the profile")
   await shot(page, screenshotName)
   await page.keyboard.press("Escape")
   await sheet.waitFor({ state: "hidden" })
@@ -192,8 +190,8 @@ try {
     await assertDesktopColumn(page)
     await shot(page, "desktop-1920x1080")
   })
-  await check(page, "desktop rail Apps opens the Apps sheet", async () => {
-    await desktopNav(page).getByRole("navigation", { name: "Workspace", exact: true }).getByRole("button", { name: "Apps", exact: true }).click()
+  await check(page, "desktop logo opens the profile Apps tab", async () => {
+    await desktopNav(page).locator("[data-workbot-profile-trigger]").click()
     await assertAppsSheet(page, "desktop-apps")
     await assertDesktopColumn(page)
   })
@@ -304,13 +302,13 @@ try {
     await phone.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Open workspace navigation")
     await assertDraft(phone, "An unsent main chat draft.")
   })
-  await check(phone, "iPhone name opens the same sheet as the desktop avatar (the task sheet without the profile flag)", async () => {
+  await check(phone, "iPhone name opens the same profile as the desktop avatar", async () => {
     assert.equal(await phone.locator("[data-workbot-profile-badge]").count(), 0, "No avatar-and-name badge on a phone")
     const name = phone.locator("[data-workbot-working-name]")
     await name.click()
-    const sheet = phone.locator("[data-workbot-task-sheet]")
+    const sheet = phone.locator("[data-workbot-profile]")
     await sheet.waitFor()
-    assert.equal(await phone.locator("[data-workbot-profile]").count(), 0, "Without the profile flag the desktop avatar opens the task sheet too")
+    assert.equal(await phone.locator("[data-workbot-task-sheet]").count(), 0, "The retired task sheet is not rendered")
     await shot(phone, "iphone-task-sheet")
     await phone.keyboard.press("Escape")
     await sheet.waitFor({ state: "hidden" })
@@ -428,10 +426,10 @@ try {
       await assertDraft(phone, "An unsent main chat draft.")
     }
   })
-  await check(phone, "iPhone drawer Apps closes navigation and opens the Apps sheet", async () => {
+  await check(phone, "iPhone drawer opens the profile Apps tab", async () => {
     assert.equal(new URL(phone.url()).searchParams.has("chat"), false, "This flow returns to the main composer")
     await trigger(phone).click()
-    await drawer(phone).getByRole("navigation", { name: "Go to", exact: true }).getByRole("button", { name: "Apps", exact: true }).click()
+    await drawer(phone).locator("[data-workbot-profile-trigger]").click()
     await drawer(phone).waitFor({ state: "hidden" })
     await assertAppsSheet(phone, "iphone-apps")
     await assertDraft(phone, "An unsent main chat draft.")
@@ -455,12 +453,13 @@ try {
     await assertDraft(phone)
     await shot(phone, "iphone-selected-side-chat-closed")
   })
-  await check(phone, "iPhone Files opens the existing real Files panel", async () => {
+  await check(phone, "iPhone Files tab opens the real file list", async () => {
     await trigger(phone).click()
-    await drawer(phone).getByRole("button", { name: "Files", exact: true }).click()
+    await drawer(phone).locator("[data-workbot-profile-trigger]").click()
     await drawer(phone).waitFor({ state: "hidden" })
-    const files = phone.getByRole("dialog", { name: "Files", exact: true })
+    const files = phone.locator("[data-workbot-profile]")
     await files.waitFor()
+    await files.getByRole("tab", { name: "Files", exact: true }).click()
     await files.getByText(/Files you send Workbot/).waitFor()
     await shot(phone, "iphone-real-files-panel")
     await files.getByRole("button", { name: "Close", exact: true }).click()

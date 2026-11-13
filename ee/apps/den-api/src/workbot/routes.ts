@@ -483,13 +483,13 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         organization: { id: organization.id, name: organization.name, brandAppName: workbot.name },
         memberId,
         enabled: on,
-        // Workbot's browser and its other desktop apps share one cloud computer but are rolled out separately.
-        computer: features.computerUse && features.remoteComputers,
-        browser: features.browserUse && features.remoteComputers,
-        browserRecovery: features.workbotBrowserRecovery,
-        browserDemonstrations: features.browserDemonstrations && features.browserUse && features.remoteComputers,
+        // Workbot's browser and other native apps share remote-computer availability.
+        computer: features.remoteComputers,
+        browser: features.remoteComputers,
+        browserRecovery: env.features.deployment === "cloud",
+        browserDemonstrations: features.browserDemonstrations && features.remoteComputers,
         // Compatibility for older Workbot clients: the page stream now follows browser access.
-        browserLiveView: features.browserUse && features.remoteComputers,
+        browserLiveView: features.remoteComputers,
         sandboxGateway: features.sandboxGateway,
         canSchedule,
         calendar: on,
@@ -498,27 +498,26 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         nativeDictation: features.nativeDictation,
         workspaceAssistant: on && features.workbotWorkspaceAssistant,
         guidedNavigation: on && features.workbotWorkspaceAssistant,
-        driveFiles: features.workbotDriveFiles,
+        // Fixed response-only values for independently released Workbot clients.
+        driveFiles: true,
+        accountMenu: true,
+        workingStatus: true,
+        quickReply: true,
+        browserChat: features.remoteComputers,
+        instantOpen: true,
+        profileSheet: true,
+        centeredProfile: true,
+        browserPreview: features.remoteComputers,
+        remoteTasks: true,
+        profileNav: true,
+        quietCalendar: true,
         // The limit card and model recovery links: included models need them as much as upgrades do.
         usageRecovery: true,
         activationChecklist: true,
         sideChats: on,
-        accountMenu: features.workbotAccountMenu,
-        workingStatus: features.workbotWorkingStatus,
-        quickReply: features.workbotQuickReply,
-        browserChat: features.workbotBrowserChat && features.browserUse && features.remoteComputers,
-        instantOpen: features.workbotInstantOpen,
         scrollToBottom: features.workbotScrollToBottom,
-        // The profile opens from the name's status line, so it needs the working status.
-        profileSheet: features.workbotProfileSheet && features.workbotWorkingStatus,
-        centeredProfile: features.workbotCenteredProfile && features.workbotProfileSheet && features.workbotWorkingStatus,
-        browserPreview: features.workbotBrowserPreview && features.remoteComputers && (features.browserUse || features.computerUse),
-        remoteTasks: features.workbotRemoteTasks,
-        // Files and Apps move into the profile, so the profile has to be there.
-        profileNav: features.workbotProfileNav && features.workbotProfileSheet && features.workbotWorkingStatus,
-        profileComputers: features.workbotProfileComputers && features.workbotProfileSheet && features.workbotWorkingStatus && features.remoteDevices,
+        profileComputers: features.workbotProfileComputers && features.remoteDevices,
         openworkApps: features.workbotApps,
-        quietCalendar: features.workbotQuietCalendar,
         calmChat: features.workbotCalmChat,
         devices: on && features.remoteDevices,
         commandPalette: true,
@@ -672,8 +671,6 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       })
       // What Workbot's steps in each connection are called ("Searching Exa"), for everyone.
       const connectors = facts.map((fact) => ({ id: fact.id, name: fact.name, site: connectorSite(fact.url) }))
-      // Only the profile's Apps list reads these (`workbotProfileSheet`); without it the answer is as before.
-      if (!features.workbotProfileSheet) return c.json({ connections, connectors })
       const apps = workbotApps(facts, { inline, canManage: permissions.has("connections.manage"), connectUrl: openworkYourConnectionsUrl })
       return c.json({ connections, apps, connectors })
     },

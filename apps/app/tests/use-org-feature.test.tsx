@@ -24,7 +24,7 @@ beforeEach(() => {
   Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__");
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   queryClient.setQueryData(["den", "org-features", orgId], {
-    nativeDictation: true, computerUse: true,
+    nativeDictation: true, remoteComputers: true,
   });
   const client = createDenClient({ baseUrl: "https://den.example.test", token: "test-token" });
   spyOn(client, "getOrgFeatures").mockResolvedValue({});
@@ -52,7 +52,7 @@ async function renderFeatures(options: { desktopOnly?: boolean; active?: boolean
   root = createRoot(host);
   function Features() {
     const dictation = useOrgFeature("nativeDictation", options);
-    const computer = useOrgFeature("computerUse");
+    const computer = useOrgFeature("remoteComputers");
     const missing = useOrgFeature("missingFeature");
     const state = useOrgFeatureState("nativeDictation", options);
     return <div data-dictation={dictation} data-computer={computer} data-missing={missing} data-state={state.data} />;
@@ -85,7 +85,7 @@ for (const guard of ["signed-out", "missing-client", "missing-organization"]) {
     if (guard === "missing-client") context = { ...context, client: null };
     if (guard === "missing-organization") {
       context = { ...context, organizationId: null };
-      queryClient.setQueryData(["den", "org-features", null], { nativeDictation: true, computerUse: true });
+      queryClient.setQueryData(["den", "org-features", null], { nativeDictation: true, remoteComputers: true });
     }
     const node = await renderFeatures();
     expect(node?.getAttribute("data-dictation")).toBe("false");

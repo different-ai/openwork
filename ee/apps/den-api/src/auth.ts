@@ -1337,7 +1337,7 @@ export const auth = betterAuth({
         }
 
         if (ctx.path === "/organization/set-active") {
-          // ssoPerOrganization: entering an organization that requires SSO
+          // entering an organization that requires SSO
           // needs a session signed in through its SSO.
           const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null);
           const session = typeof token === "string" ? await cache.auth.session(token) : null;
@@ -1396,7 +1396,7 @@ export const auth = betterAuth({
       }
 
       // Flag off for the SSO organization: its members must use SSO. With
-      // ssoPerOrganization on, only "Restrict this domain to our SSO" refuses
+      // only "Restrict this domain to our SSO" refuses
       // sign-in; "Require SSO" is enforced when the organization is opened.
       const requirement = await findNonSsoSignInBlock({ email });
       if (!requirement) {

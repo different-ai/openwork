@@ -80,7 +80,7 @@ test("a current API is recognised as one, so its locks and menus show", () => {
 test("one computer's detail from an older API parses and renders", () => {
   const detail = parseComputerDetail({
     device: oldTeamComputer, diagnostics: null, events: [], runner: null, session: null,
-    features: { remoteDevices: true, computerUse: true, remoteComputers: false, browserUse: true, sandboxGateway: false },
+    features: { remoteDevices: true, remoteComputers: false, sandboxGateway: false },
   });
   assert.ok(detail, "the older detail did not parse");
   assert.equal(detail.device.canRemove, false);

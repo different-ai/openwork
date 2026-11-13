@@ -29,7 +29,6 @@ import {
 } from "@openwork/types/mcp-app"
 import { db } from "./db.js"
 import { env } from "./env.js"
-import { getOrganizationFeatures, organizationFeatureEnabled } from "./features.js"
 import { withPrimaryReads } from "./read-routing.js"
 import { buildGeneratedMcpApp, type GeneratedArtifactViewBuildResult } from "./generated-artifact-view-builder.js"
 import type { McpMemberIdentity } from "./mcp/external-capabilities.js"
@@ -241,21 +240,12 @@ async function addWorkflows(context: PluginArchActorContext, pluginId: DenTypeId
 }
 
 /**
- * An App may be marked public only where the feature is on and it has no
+ * An App may be marked public only when it has no
  * tools: a visitor is not signed in, so there is nobody for a tool to run as.
  */
-async function requirePublishable(organizationId: string, tools: McpAppToolBinding[]) {
-  if (!await organizationFeatureEnabled(organizationId, "publicApps")) {
-    throw new McpAppError(409, "public_apps_off", "Public artifacts are not turned on for this organization. Omit public, or ask an admin to turn the feature on. No revision was published.")
-  }
+async function requirePublishable(tools: McpAppToolBinding[]) {
   if (tools.length > 0) {
     throw new McpAppError(409, "public_app_has_tools", "A public artifact cannot have tools, because visitors are not signed in. Remove its tools (tools: []) or pass public: false. No revision was published.")
-  }
-}
-
-async function requireSites(organizationId: string) {
-  if (!await organizationFeatureEnabled(organizationId, "appSites")) {
-    throw new McpAppError(409, "app_sites_off", "Opening artifacts as sites is not turned on for this organization. Omit site, or ask an admin to turn the feature on. No revision was published.")
   }
 }
 
@@ -365,8 +355,7 @@ async function createMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
   const input = parsed.data
   let pluginId = input.pluginId ? await editablePlugin(context, input.pluginId) : null
   const resolved = await resolveTools(input.tools ?? [])
-  if (input.public) await requirePublishable(context.organizationContext.organization.id, resolved)
-  if (input.site) await requireSites(context.organizationContext.organization.id)
+  if (input.public) await requirePublishable(resolved)
   if (input.publicName) await requirePublicNameFree({ name: input.publicName, isPublic: input.public === true, appId: null })
   const workflows = await workflowsToAdd(context, pluginId, workflowTools(resolved))
   const compiled = await compile(input, pluginId ?? createDenTypeId("plugin"), resolved)
@@ -431,10 +420,9 @@ async function updateMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
   const resolved = input.tools ? await resolveTools(input.tools) : current.payload.tools
   // An omitted public keeps the App's current choice, like its tools.
   const isPublic = input.public ?? current.payload.public === true
-  if (isPublic) await requirePublishable(context.organizationContext.organization.id, resolved)
+  if (isPublic) await requirePublishable(resolved)
   const isSite = input.site ?? current.payload.site === true
   // Only a new choice is checked, so an App keeps updating while the feature is off.
-  if (input.site) await requireSites(context.organizationContext.organization.id)
   if (input.publicName) await requirePublicNameFree({ name: input.publicName, isPublic, appId: id })
   const workflows = input.tools ? await workflowsToAdd(context, pluginId, workflowTools(resolved)) : []
   const compiled = await compile({
@@ -722,8 +710,7 @@ async function appIdForPublicPath(appIdOrName: string): Promise<DenTypeId<"confi
  * The current revision of an App marked public, found by its App id or its
  * friendly name, for a visitor who is not signed in. Checked on every request, with no member or Plugin access: the
  * App is active, its newest revision is marked public and has no tools, and
- * the feature is on for its organization. Anything else is not found, so
- * unmarking it, adding a tool or turning the feature off stops it at once.
+ * its resource integrity checks pass. Unmarking it or adding a tool stops it at once.
  */
 export async function loadPublicMcpApp(input: { appIdOrName: string }): Promise<McpAppResource | null> {
   if (!env.appMcpServersEnabled) return null
@@ -741,7 +728,6 @@ export async function loadPublicMcpApp(input: { appIdOrName: string }): Promise<
   if (!head || !content) return null
   const { payload } = content
   if (payload.public !== true || payload.tools.length > 0) return null
-  if (!await organizationFeatureEnabled(app.organizationId, "publicApps")) return null
   content.intact ??= digest(payload.html) === payload.resourceDigest && Buffer.byteLength(payload.html) === payload.htmlBytes
   if (!content.intact) return null
   return {
@@ -754,8 +740,8 @@ export async function loadPublicMcpApp(input: { appIdOrName: string }): Promise<
 
 /**
  * Whether a browser at a public URL gets the site page: the App there is
- * public, as loadPublicMcpApp checks, and its newest revision was made a site
- * with the feature on. Asked with no sign-in, so it is only ever true for an
+ * public, as loadPublicMcpApp checks, and its newest revision was made a site.
+ * Asked with no sign-in, so it is only ever true for an
  * App its editor already shared with everyone.
  */
 export async function isPublicMcpAppSite(input: { appIdOrName: string }): Promise<boolean> {
@@ -772,8 +758,7 @@ export async function isPublicMcpAppSite(input: { appIdOrName: string }): Promis
   const head = await latestRevisionHead(app.organizationId, id)
   const payload = head ? (await revisionContent(app.organizationId, id, head))?.payload : null
   if (!payload || payload.site !== true || payload.public !== true || payload.tools.length > 0) return false
-  const features = await getOrganizationFeatures(app.organizationId)
-  return features.appSites && features.publicApps
+  return true
 }
 
 // Opt-in numeric profiling only; never emit request payloads or identities.

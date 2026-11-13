@@ -1,5 +1,7 @@
 # Session Feed (`settledSessions`)
 
+> **Generally available:** `settledSessions` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 - **Feature key:** `settledSessions` (the key is permanent; the feature is now the Feed, and settling is gone)
 - **Deployments:** cloud and self-hosted (`everywhere`), off by default
 - **Author:** @reachjalil

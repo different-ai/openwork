@@ -15,7 +15,7 @@ const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 500));
 /**
  * A cloud Den with the hosted sample work apps (the workshop gateway in its no-password mode: each browser gets its
  * own private workplace), a platform admin on /admin/sandbox-orgs, and two people who will join a sandbox from their
- * own browsers. Sandbox Microsoft 365 starts off; the proof turns it on the way a platform admin does.
+ * own browsers. New sandboxes include sample Microsoft 365 without a rollout override.
  */
 export async function sandboxMicrosoft365World(seed: Seed) {
   const resources = new AsyncDisposableStack();
@@ -56,11 +56,6 @@ export async function sandboxMicrosoft365World(seed: Seed) {
 
     return {
       den, origin, admin, webAvery, webRiley,
-      /** What a platform admin does on /admin › Features: on (or off) for everyone. */
-      async setRollout(body: { enabled?: boolean; killed?: boolean }) {
-        const result = await seed.api(den.admin, "/v1/admin/features/sandboxMicrosoft365", { method: "PUT", body: JSON.stringify(body) });
-        if (!result.response.ok) throw new Error(`Feature rollout failed (${result.response.status}).`);
-      },
       async sandboxes() {
         const result = await seed.api(den.admin, "/v1/admin/sandbox-orgs");
         if (!result.response.ok) throw new Error(`Sandbox list failed (${result.response.status}).`);

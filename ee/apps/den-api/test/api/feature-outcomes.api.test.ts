@@ -151,7 +151,7 @@ test("Your agent: runs, how they ended and why, by organization, this week", asy
   assert.doesNotMatch(agentDetail.text, /Fixture sentence/, "never the sentence a member reads")
 
   // A feature with no reader shows adoption only.
-  const plain = feature(result, "settledSessions")
+  const plain = feature(result, "workbotScrollToBottom")
   assert.equal(plain.outcomes, null)
   assert.deepEqual(field(plain, "health"), { status: "not_used", count: null })
 })

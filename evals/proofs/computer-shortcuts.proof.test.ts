@@ -67,16 +67,4 @@ test("an agent fills a report, finds a project and saves once in one UI program"
     evidence.recordAssertionEvidence("The other conversation cannot use the tab", "The foreign-tab program is refused and the report still has one saved copy.", denied.ok === false && (await witness()).records.length === 1);
     await user.screenshot();
   });
-
-  await step("turning the feature off stops further computer programs", async () => {
-    await agent.run("session.open", { sessionId: world.session.sessionId });
-    await world.setCapabilities({ computerUse: false });
-    await probe.eventually(world.snapshot, { within: 60_000, until: value => typeof value === "object" && value !== null && "enabled" in value && value.enabled === false, label: "the desktop receives the admin rollout change" });
-    const denied = resultSchema.parse(await agent.computerProgram({ sessionId: world.session.sessionId, surface: "browser", tabId, code: "await tools.ui.click({target:{role:'button',name:'Save draft'}}); return true;" }));
-    expect(denied.ok).toBe(false);
-    expect((await witness()).records).toHaveLength(1);
-    await user.see("composer", { editable: true });
-    evidence.recordAssertionEvidence("Rollout rollback prevents another save", "A program after rollback is refused; the saved report count remains one.", denied.ok === false && (await witness()).records.length === 1);
-    await user.screenshot();
-  });
 });

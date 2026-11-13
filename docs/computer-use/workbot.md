@@ -1,5 +1,7 @@
 # Workbot's Computer tab
 
+> **Generally available:** `browserUse` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../features/ga-rollout-retirement/README.md).
+
 Workbot's **Computer** tab appears after **Documents** when `workbot` and
 `remoteComputers` are enabled for the organization in `/admin`, together with at
 least one of its two views. It opens directly, without a consent screen. The
