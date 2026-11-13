@@ -17,6 +17,36 @@ export function withStoredBearer(headers: Record<string, string>): Record<string
   }
 }
 
+/** Asks the admin to confirm their identity and answers whether they did. The admin shell registers its dialog here. */
+type AdminReauthPrompt = () => Promise<boolean>;
+let adminReauthPrompt: AdminReauthPrompt | null = null;
+
+export function setAdminReauthPrompt(prompt: AdminReauthPrompt | null) {
+  adminReauthPrompt = prompt;
+}
+
+async function needsRecentSignIn(response: Response): Promise<boolean> {
+  if (response.status !== 403) return false;
+  try {
+    const payload: unknown = await response.clone().json();
+    return Boolean(payload && typeof payload === "object" && "error" in payload && payload.error === "reauth");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Sends an admin change. Den asks for a recent sign-in before platform-admin
+ * changes; when it does, the admin confirms their identity and the same request
+ * is sent once more, as organization settings do. `init` is built per attempt
+ * so the retry carries the credentials of the new sign-in.
+ */
+export async function fetchAdminChange(endpoint: string, init: () => RequestInit): Promise<Response> {
+  const response = await fetch(endpoint, init());
+  if (!adminReauthPrompt || !(await needsRecentSignIn(response))) return response;
+  return (await adminReauthPrompt()) ? fetch(endpoint, init()) : response;
+}
+
 export type AdminAccess = "ready" | "signed-out" | "forbidden" | "error";
 
 export type AdminResult<T> =
@@ -59,13 +89,13 @@ export async function requestAdmin<T>(path: string, parse: (payload: unknown) =>
 /** PUT/POST JSON to an admin endpoint; returns the parsed payload or the server's error message. */
 export async function sendAdmin(path: string, method: "PUT" | "POST" | "PATCH", body?: unknown, signal?: AbortSignal): Promise<{ ok: true; payload: unknown } | { ok: false; message: string; status: number; code?: string; retryAfterSeconds?: number }> {
   const endpoint = denBrowserEndpoint(path);
-  const response = await fetch(endpoint, {
+  const response = await fetchAdminChange(endpoint, () => ({
     method,
     credentials: denApiCredentials(endpoint),
     signal,
     headers: withStoredBearer(body === undefined ? { Accept: "application/json" } : { Accept: "application/json", "Content-Type": "application/json" }),
     body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  }));
   const text = await response.text();
   let payload: unknown = null;
   try { payload = text ? JSON.parse(text) : null; } catch { payload = text; }

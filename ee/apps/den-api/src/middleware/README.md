@@ -5,7 +5,7 @@ This folder contains reusable Hono middleware that route areas can compose as ne
 ## Files
 
 - `index.ts`: public export surface for all shared middleware
-- `admin.ts`: requires an authenticated allowlisted admin
+- `admin.ts`: requires an allowlisted admin's own signed-in session (never an API key or MCP token); changes also need a recent sign-in
 - `current-user.ts`: requires an authenticated user
 - `user-organizations.ts`: loads the orgs the current user belongs to
 - `organization-context.ts`: loads org + current member context for `:orgSlug` routes

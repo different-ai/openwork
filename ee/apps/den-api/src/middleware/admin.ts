@@ -6,7 +6,11 @@ import { ensureAdminAllowlistSeeded } from "../admin-allowlist.js"
 import { beginAuditRequest } from "../audit/request-capture.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
+import { checkFreshPrivilegedSession } from "../privileged-session.js"
 import type { AuthContextVariables } from "../session.js"
+
+export const PLATFORM_ADMIN_REAUTH_SECURITY_MESSAGE = "For security, confirm it's you before making admin changes."
+const ADMIN_READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
 
 function normalizeEmail(value: string | null | undefined) {
   return value?.trim().toLowerCase() ?? ""
@@ -83,14 +87,20 @@ export async function isLocalDeploymentOperatorUserId(userId: string): Promise<b
   return isPlatformAdminUserId(userId)
 }
 
-/** A genuine Better Auth user session (not an API key or MCP token) of an allowlisted local operator. */
-export async function hasLocalDeploymentOperatorSessionAuthority(principal: AuthContextVariables): Promise<boolean> {
+/** A genuine Better Auth user session: a person signed in, not an API key or an MCP token acting for them. */
+function hasUserSession(principal: AuthContextVariables): boolean {
   if (principal.apiKey || !principal.user?.id || !principal.session?.id || !principal.session.token) return false
   try {
     normalizeDenTypeId("session", principal.session.id)
   } catch {
     return false
   }
+  return true
+}
+
+/** A genuine Better Auth user session (not an API key or MCP token) of an allowlisted local operator. */
+export async function hasLocalDeploymentOperatorSessionAuthority(principal: AuthContextVariables): Promise<boolean> {
+  if (!hasUserSession(principal) || !principal.user?.id) return false
   return isLocalDeploymentOperatorUserId(principal.user.id)
 }
 
@@ -134,10 +144,25 @@ export const requireLocalDeploymentOperatorMiddleware: MiddlewareHandler<{ Varia
   await next()
 }
 
+/**
+ * Platform admin authority reaches every organization, so it belongs to the
+ * admin's own sign-in. An API key outlives the session that made it and an MCP
+ * token acts for an agent, so neither is accepted, even from an allowlisted
+ * user. Changes also need a recent sign-in, with the same `reauth` response as
+ * sensitive organization settings; reading does not.
+ */
 export const requireAdminMiddleware: MiddlewareHandler<{ Variables: AuthContextVariables }> = async (c, next) => {
   const user = c.get("user")
   if (!user?.id) {
     return c.json({ error: "unauthorized" }, 401) as never
+  }
+
+  const session = c.get("session")
+  if (!hasUserSession({ user, session, apiKey: c.get("apiKey") })) {
+    return c.json({
+      error: "forbidden",
+      message: "Use a signed-in user session for this operation.",
+    }, 403) as never
   }
 
   const email = normalizeEmail(user.email)
@@ -153,6 +178,13 @@ export const requireAdminMiddleware: MiddlewareHandler<{ Variables: AuthContextV
 
   if (!(await isAdminEmailAllowed(email))) {
     return c.json({ error: "forbidden" }, 403) as never
+  }
+
+  if (!ADMIN_READ_METHODS.has(c.req.method.toUpperCase())) {
+    const fresh = checkFreshPrivilegedSession({ apiKey: null, session })
+    if (!fresh.ok) {
+      return c.json({ ...fresh.response, message: PLATFORM_ADMIN_REAUTH_SECURITY_MESSAGE }, 403) as never
+    }
   }
 
   // Routes declared `path:<param>` attribute audit evidence to the validated

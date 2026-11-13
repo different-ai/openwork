@@ -6,6 +6,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { Activity, ArrowLeft, Building2, ChartNoAxesCombined, Flag, FlaskConical, LayoutDashboard, ScanSearch, Server, ShieldAlert, Users } from "lucide-react";
 import { AdminBreadcrumbs } from "./admin-breadcrumbs";
 import { AdminAccessScreen } from "./admin-access-screen";
+import { AdminReauth } from "./admin-reauth";
 import { requestAdmin, withStoredBearer, type AdminResult } from "./admin-request";
 
 const SessionCookieContext = createContext(false);
@@ -108,6 +109,7 @@ function AdminShellContent({ children }: { children: ReactNode }) {
             {children}
           </main>
         </div>
+        <AdminReauth />
       </div>
   );
 }

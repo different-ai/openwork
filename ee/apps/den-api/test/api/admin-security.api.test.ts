@@ -7,7 +7,7 @@ import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { after, test } from "node:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { bootDen, summary, type Call } from "./harness.js"
+import { bootDen, field, summary, text, type Call } from "./harness.js"
 
 const den = await bootDen()
 after(() => den.close())
@@ -105,4 +105,40 @@ test("request activity shows the failed sign-in burst by hour", async () => {
   const signIns = requests.findings.find((finding) => finding.id === "failed-sign-ins")
   assert.equal(signIns?.severity, "high")
   assert.ok(requests.endpoints.some((endpoint) => endpoint.action === "auth.sign_in.email.attempted" && endpoint.refused >= 120))
+})
+
+test("platform admin authority needs the admin's own, recent sign-in", async () => {
+  const candidate = { email: `second-admin+${den.stamp}@example.test` }
+  const allowlisted = async () => {
+    const [rows] = await query("SELECT COUNT(*) AS count FROM admin_allowlist WHERE email = ?", [candidate.email])
+    return Number(field(Array.isArray(rows) ? rows[0] : null, "count"))
+  }
+
+  // An API key the admin made works in their organization, never as the platform admin.
+  const { orgId } = await den.createOrg(admin, "Admin workspace")
+  const minted = await den.as(admin, orgId)("POST", "/v1/api-keys", { name: "Admin key" })
+  const apiKey = text(field(minted.body, "key"), `api key (${summary(minted)})`)
+  assert.equal((await den.request(null, "GET", "/v1/org", { headers: { "x-api-key": apiKey } })).status, 200, "the key itself is valid")
+  for (const [method, path, body] of [["GET", "/v1/admin/security", undefined], ["POST", "/v1/admin/admins", candidate]] as const) {
+    const keyed = await den.request(null, method, path, { headers: { "x-api-key": apiKey }, body })
+    assert.deepEqual([keyed.status, field(keyed.body, "error")], [403, "forbidden"], summary(keyed))
+  }
+  assert.equal(await allowlisted(), 0)
+
+  // A sign-in from hours ago can still read, but a change asks the admin to confirm it is them.
+  await query("UPDATE session SET created_at = ? WHERE user_id = ?", [utc(new Date(Date.now() - 3 * 60 * 60_000)), admin.userId])
+  assert.equal((await den.request(admin.token, "GET", "/v1/admin/security")).status, 200)
+  const stale = await den.request(admin.token, "POST", "/v1/admin/admins", { body: candidate })
+  assert.deepEqual([stale.status, field(stale.body, "error"), field(stale.body, "reason")], [403, "reauth", "fresh_auth_required"], summary(stale))
+  assert.equal(await allowlisted(), 0)
+
+  // Someone who is not a platform admin is refused outright, however recently they signed in.
+  const outsider = await den.request(person.token, "POST", "/v1/admin/admins", { body: candidate })
+  assert.deepEqual([outsider.status, field(outsider.body, "error")], [403, "forbidden"], summary(outsider))
+
+  // Signing in again is what lets the change through.
+  const again = await den.signIn(admin.email)
+  const added = await den.request(text(field(again.body, "token"), "new session token"), "POST", "/v1/admin/admins", { body: candidate })
+  assert.equal(added.status, 200, summary(added))
+  assert.equal(await allowlisted(), 1)
 })

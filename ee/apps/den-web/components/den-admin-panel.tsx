@@ -9,7 +9,7 @@ import { Check, Copy, Download, Search, Trash2 } from "lucide-react";
 import { planEndLabel } from "../app/(den)/_lib/plan-display";
 import { mapFeatures } from "@openwork/features";
 import { denApiCredentials, denBrowserEndpoint } from "../app/(den)/_lib/den-api-origin";
-import { withStoredBearer } from "./admin/admin-request";
+import { fetchAdminChange, withStoredBearer } from "./admin/admin-request";
 import { adminOrganizationHref, useAdminListLocation, type AdminDataSection } from "./admin/admin-list-location";
 import { AdminDeferredContent } from "./admin/admin-deferred-content";
 import { AdminAccessScreen } from "./admin/admin-access-screen";
@@ -995,7 +995,7 @@ function isAbortError(error: unknown): boolean {
 
 async function postJson(path: string, body: unknown) {
   const endpoint = denBrowserEndpoint(path);
-  const response = await fetch(endpoint, {
+  const response = await fetchAdminChange(endpoint, () => ({
     method: "POST",
     credentials: denApiCredentials(endpoint),
     headers: withStoredBearer({
@@ -1003,7 +1003,7 @@ async function postJson(path: string, body: unknown) {
       "Content-Type": "application/json"
     }),
     body: JSON.stringify(body)
-  });
+  }));
 
   const text = await response.text();
   let payload: unknown = null;
@@ -1019,7 +1019,7 @@ async function postJson(path: string, body: unknown) {
 
 async function putJson(path: string, body: unknown) {
   const endpoint = denBrowserEndpoint(path);
-  const response = await fetch(endpoint, {
+  const response = await fetchAdminChange(endpoint, () => ({
     method: "PUT",
     credentials: denApiCredentials(endpoint),
     headers: withStoredBearer({
@@ -1027,7 +1027,7 @@ async function putJson(path: string, body: unknown) {
       "Content-Type": "application/json"
     }),
     body: JSON.stringify(body)
-  });
+  }));
 
   const text = await response.text();
   let payload: unknown = null;
@@ -1045,13 +1045,13 @@ async function putJson(path: string, body: unknown) {
 
 async function deleteJson(path: string) {
   const endpoint = denBrowserEndpoint(path);
-  const response = await fetch(endpoint, {
+  const response = await fetchAdminChange(endpoint, () => ({
     method: "DELETE",
     credentials: denApiCredentials(endpoint),
     headers: withStoredBearer({
       Accept: "application/json"
     })
-  });
+  }));
 
   const text = await response.text();
   let payload: unknown = null;
