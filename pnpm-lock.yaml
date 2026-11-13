@@ -110,6 +110,7 @@ patchedDependencies:
   '@better-auth/sso@1.7.7': c949a8c9335b88b8d3ee50d693aaff8a687182f3d6b1d079e5182a8dde955883
   '@modelcontextprotocol/client@2.3.1': 276c86ab47f7056638d00fa9f29759a9d3a60ac21635ceebe41f513414797476
   '@modelcontextprotocol/sdk': 9b32612a84a84cbc1bfe77dde0164b4a76bf6d36b589254aec8128c7d6e91745
+  '@opencode/codemode@2.2.5': 5b5016ae6cd77dd5dc814ef12966b224b0c9460cbfedee30b6358e6e2123679c
   deepmerge@4.3.1: 63c2ec2d0750f4ca9572b366693782a43346fd0a9fce7173bbaa0653a193df14
 
 importers:
@@ -1570,7 +1571,7 @@ importers:
     dependencies:
       '@opencode/codemode':
         specifier: 2.2.5
-        version: 2.2.5
+        version: 2.2.5(patch_hash=5b5016ae6cd77dd5dc814ef12966b224b0c9460cbfedee30b6358e6e2123679c)
       acorn:
         specifier: 8.16.0
         version: 8.16.0
@@ -13637,7 +13638,7 @@ snapshots:
     dependencies:
       cross-spawn: 7.0.6
 
-  '@opencode/codemode@2.2.5':
+  '@opencode/codemode@2.2.5(patch_hash=5b5016ae6cd77dd5dc814ef12966b224b0c9460cbfedee30b6358e6e2123679c)':
     dependencies:
       acorn: 8.15.0
       effect: 4.0.6

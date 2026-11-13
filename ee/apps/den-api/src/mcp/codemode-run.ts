@@ -1,8 +1,12 @@
 import { CodeMode } from "@openwork/codemode"
 import { Effect } from "effect"
+import { limitCodemodePatternTime } from "./codemode-pattern-limit.js"
 import { runStandardCodeMode } from "./codemode-run-standard.js"
 import type { CodemodeLanguage } from "./codemode-script-object.js"
 import type { CodemodeToolTree } from "./codemode-tools.js"
+
+// Den runs programs for every organization on one event loop.
+limitCodemodePatternTime()
 
 /**
  * Which interpreter runs a script: OpenWork's original Code Mode, or the

@@ -156,4 +156,5 @@ patchedDependencies:
   '@better-auth/sso@1.7.7': patches/@better-auth__sso@1.7.7.patch
   '@modelcontextprotocol/client@2.3.1': patches/@modelcontextprotocol__client@2.3.1.patch
   '@modelcontextprotocol/sdk': patches/@modelcontextprotocol__sdk.patch
+  '@opencode/codemode@2.2.5': patches/@opencode__codemode@2.2.5.patch
   deepmerge@4.3.1: patches/deepmerge@4.3.1.patch

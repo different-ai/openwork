@@ -1,5 +1,6 @@
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv"
 import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation"
+import { SCHEMA_CHECK_TIME_LIMIT_MS, SCHEMA_CHECK_TOO_SLOW_MESSAGE, TimeLimitExceededError, runWithTimeLimit } from "../time-limit.js"
 
 export type JsonSchemaObject = JsonSchemaType
 
@@ -172,7 +173,8 @@ export function validateCodemodeScriptInput(schema: JsonSchemaObject, value: unk
     if (hasAsyncSchema(schema)) {
       return { ok: false, error: "invalid_schema", message: "Asynchronous Workflow schemas are not supported." }
     }
-    const result = new AjvJsonSchemaValidator().getValidator<unknown>(schema)(value)
+    // A schema's patterns are regular expressions from the caller: see runWithTimeLimit.
+    const result = runWithTimeLimit(() => new AjvJsonSchemaValidator().getValidator<unknown>(schema)(value), SCHEMA_CHECK_TIME_LIMIT_MS)
     if (result.valid) return { ok: true }
     return {
       ok: false,
@@ -185,7 +187,10 @@ export function validateCodemodeScriptInput(schema: JsonSchemaObject, value: unk
           : result.errorMessage,
       }],
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof TimeLimitExceededError) {
+      return { ok: false, error: "invalid_arguments", issues: [{ path: "/", keyword: "schema_validation", message: SCHEMA_CHECK_TOO_SLOW_MESSAGE }] }
+    }
     return {
       ok: false,
       error: "invalid_schema",
