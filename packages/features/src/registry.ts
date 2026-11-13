@@ -144,6 +144,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  questionMinimize: {
+    label: "Desktop: minimize a pending question",
+    description: "When an agent asks a question, the person can minimize it to one line above the message box to read the conversation, then reopen it with everything they picked or typed still there. The question stays pending the whole time. Turning it off shows the question fully open, as before.",
+    category: "experience",
+    added: "2026-11-13",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/question-minimize/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   denGreySidebar: {
     label: "Den: grey sidebar, white pages",
     description: "The Den dashboard shows its sidebar on a light grey band and every page on white, like the admin dashboard pictured on the website, instead of a white sidebar beside lightly tinted pages. Only colours change: navigation, page layouts and every control stay where they are. Turning it off restores the earlier colours at once.",

@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { useLocal } from "@/react-app/kernel/local-provider"
 import type { RemoteThreadPanelTab } from "../panel/panel-tab-store"
 import { answerRemoteThread } from "./remote-thread-actions"
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature"
 import { RemoteThreadAnswerCard } from "./remote-thread-answer-card"
 import { useFollowRemoteThread, useRemoteThread, type RemoteThreadEntry } from "./remote-thread-store"
 import { REMOTE_THREAD_PAGE_MAX, REMOTE_THREAD_PAGE_SIZE, useRemoteThreadConversation } from "./use-remote-thread-conversation"
@@ -35,6 +36,7 @@ export function RemoteThreadPanel({ tab }: { tab: RemoteThreadPanelTab }) {
 }
 
 function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
+  const questionMinimizeEnabled = useDesktopFeature("questionMinimize")
   const conversation = useRemoteThreadConversation(entry)
   const { view, stopping, page } = conversation
 
@@ -64,7 +66,7 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
       />
 
       {view.waitingFor && page?.pending?.kind === view.waitingFor ? (
-        <RemoteThreadAnswerCard pending={page.pending} computer={view.computer} onAnswer={(answer) => answerRemoteThread(entry, answer)} />
+        <RemoteThreadAnswerCard pending={page.pending} computer={view.computer} collapsible={questionMinimizeEnabled} onAnswer={(answer) => answerRemoteThread(entry, answer)} />
       ) : view.waitingFor ? (
         <div className="shrink-0 border-t border-border px-4 py-2 text-xs text-amber-11" data-remote-thread-waiting={view.waitingFor}>
           {t("session.remote_task_answer_there", { computer: view.computer })}
