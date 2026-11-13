@@ -162,7 +162,7 @@ import {
   sidebarRowPaddingInlineStart,
 } from "./sidebar-lanes";
 import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
-import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
+import { isSameWorkbenchSession, useWorkbenchStore, workbenchSessionKey } from "../chat/workbench-store";
 import { shouldHideAttachedSideChat } from "./side-chat-status";
 import { SidebarDestination } from "./sidebar-destination";
 import { SessionTitle } from "./session-title";
@@ -724,6 +724,7 @@ export function AppSidebar(props: AppSidebarProps) {
   const feed = useSessionFeed(props.workspaceSessionGroups, {
     enabled: sidebarView === "feed",
     statusById: props.sessionStatusById,
+    selectedSessionId: props.selectedSessionId,
   });
   const feedView = feed !== null;
 
@@ -1059,10 +1060,13 @@ function FeedOrderMenu() {
 }
 
 /** Every workspace's sessions in one Feed, or null outside the Feed view. */
-function useSessionFeed(groups: WorkspaceSessionGroup[], { enabled, statusById }: {
+function useSessionFeed(groups: WorkspaceSessionGroup[], { enabled, statusById, selectedSessionId }: {
   enabled: boolean;
   statusById: Record<string, string> | undefined;
+  selectedSessionId: string | null;
 }): SessionFeed | null {
+  const sideChats = useWorkbenchStore((state) => state.sideChats);
+  const attachedSideChatKeys = React.useMemo(() => new Set(Object.values(sideChats).map(workbenchSessionKey)), [sideChats]);
   const pinnedIdList = useSessionManagementStore((state) => state.pinnedIds);
   const unreadIdList = useSessionManagementStore((state) => state.unreadIds);
   const workedAtById = useSessionManagementStore((state) => state.workedAtById);
@@ -1078,12 +1082,14 @@ function useSessionFeed(groups: WorkspaceSessionGroup[], { enabled, statusById }
     groupBy,
     sortBy,
     pinnedIds: new Set(pinnedIdList),
+    attachedSideChatKeys,
+    selectedSessionId,
     unreadIds: new Set(unreadIdList),
     workedAtById,
     placementById,
     statusById,
     now,
-  }), [enabled, feedFolders, groupBy, groups, groupsByWorkspace, now, pinnedIdList, placementById, sortBy, statusById, unreadIdList, workedAtById]);
+  }), [attachedSideChatKeys, enabled, feedFolders, groupBy, groups, groupsByWorkspace, now, pinnedIdList, placementById, selectedSessionId, sortBy, statusById, unreadIdList, workedAtById]);
 }
 
 /** The workspace, and the group when it has one, stands in for the project on each Feed row. */
