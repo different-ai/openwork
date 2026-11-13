@@ -34,7 +34,13 @@ test("the Get set up checklist reports each person's own steps from what actuall
   assert.equal(rows.length, 1)
   assert.equal(rows[0]?.member_id, workspace.owner.memberId)
   assert.equal(rows[0]?.source, "app")
-  assert.equal((await owner("POST", "/v1/me/activation/events", { step: "connector" })).status, 400, "server-computed steps cannot be claimed by a client")
+  assert.equal((await owner("POST", "/v1/me/activation/events", { step: "gateway_provider" })).status, 400, "server-computed steps cannot be claimed by a client")
+  // A connection on the device counts only with activationLocalSetup: off, the report is accepted and stores nothing.
+  const ignored = await owner("POST", "/v1/me/activation/events", { step: "connector" })
+  assert.equal(ignored.status, 200, summary(ignored))
+  assert.deepEqual(step(ignored.body, "connector"), { id: "connector", done: false })
+  assert.deepEqual(step(ignored.body, "invite_teammate"), { id: "invite_teammate", done: false })
+  assert.equal((await db.select().from(TelemetryEventTable).where(and(eq(TelemetryEventTable.org_id, workspace.orgId), sql`${TelemetryEventTable.event_type} like ${"activation.%"}`))).length, 1)
   assert.equal((await owner("POST", "/v1/me/activation/events", { step: "first_response", organizationId: workspace.orgId })).status, 400)
   // The generic telemetry ingest cannot forge a Get set up fact either.
   assert.equal((await owner("POST", "/v1/telemetry/ingest", { events: [{ type: "activation.own_provider", timestamp: new Date().toISOString(), source: "app" }] })).status, 204)
@@ -84,4 +90,40 @@ test("the Get set up checklist reports each person's own steps from what actuall
   assert.deepEqual(memberRows.map((row) => row.source).sort(), ["workbot", "workbot"])
 
   assert.equal((await db.select().from(TelemetryEventTable).where(sql`${TelemetryEventTable.event_type} like ${"activation.%"}`)).length, 3)
+})
+
+test("with activationLocalSetup, a person working alone finishes setup from what works on their device", async () => {
+  const workspace = await den.createOrg(await den.signUp("Sam Solo"), "Solo workspace")
+  const solo = den.as(workspace.owner, workspace.orgId)
+  assert.equal((await den.setFeature(workspace.orgId, "activationLocalSetup", true)).status, 200)
+
+  // Alone: inviting stays listed with its action but is not counted.
+  const before = await solo("GET", "/v1/me/activation")
+  assert.deepEqual(step(before.body, "invite_teammate"), { id: "invite_teammate", done: false, optional: true })
+  assert.deepEqual(step(before.body, "connector"), { id: "connector", done: false })
+
+  // The desktop reports a connection that is connected in its engine; repeats and parallel tabs record one fact.
+  const reports = await Promise.all([1, 2, 3].map(() => solo("POST", "/v1/me/activation/events", { step: "connector" })))
+  assert.deepEqual(reports.map((entry) => entry.status), [200, 200, 200], reports.map(summary).join("\n"))
+  assert.deepEqual(step(reports[0]?.body, "connector"), { id: "connector", done: true, detail: "Connected on this device" })
+  const rows = await db.select().from(TelemetryEventTable).where(and(eq(TelemetryEventTable.org_id, workspace.orgId), eq(TelemetryEventTable.event_type, "activation.connector")))
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]?.member_id, workspace.owner.memberId)
+  // The generic telemetry ingest cannot forge it.
+  assert.equal((await solo("POST", "/v1/telemetry/ingest", { events: [{ type: "activation.connector", timestamp: new Date().toISOString(), source: "app" }] })).status, 204)
+  assert.equal((await db.select().from(TelemetryEventTable).where(and(eq(TelemetryEventTable.org_id, workspace.orgId), eq(TelemetryEventTable.event_type, "activation.connector")))).length, 1)
+
+  // A provider that served an answer on the device is the existing own_provider report.
+  const provider = await solo("POST", "/v1/me/activation/events", { step: "own_provider" })
+  assert.deepEqual(step(provider.body, "own_provider"), { id: "own_provider", done: true, detail: "Your key, on this device" })
+
+  // Someone joins: inviting is an ordinary step again, done because this owner invited them.
+  await den.newMember(workspace.owner, workspace.orgId, "Robin Joined")
+  assert.deepEqual(step((await solo("GET", "/v1/me/activation")).body, "invite_teammate"), { id: "invite_teammate", done: true, detail: "2 joined, 0 invited" })
+
+  // Turned off again: the device connection stops counting; nothing else changes.
+  assert.equal((await den.setFeature(workspace.orgId, "activationLocalSetup", false)).status, 200)
+  const off = await solo("GET", "/v1/me/activation")
+  assert.deepEqual(step(off.body, "connector"), { id: "connector", done: false })
+  assert.deepEqual(step(off.body, "own_provider"), { id: "own_provider", done: true, detail: "Your key, on this device" })
 })

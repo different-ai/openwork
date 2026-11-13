@@ -573,7 +573,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
     async (c) => {
       const context = await activationFor(c, true)
       if (context instanceof Response) return context
-      await recordActivationEvent({ organizationId: context.resolved.organization.id, memberId: context.resolved.memberId }, c.req.valid("json"), "workbot")
+      await recordActivationEvent({ organizationId: context.resolved.organization.id, memberId: context.resolved.memberId, userId: context.organizationContext.currentMember.userId }, c.req.valid("json"), "workbot")
       return c.json(await readActivationState(context))
     },
   )
