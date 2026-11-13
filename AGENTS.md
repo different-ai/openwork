@@ -41,8 +41,9 @@ interrupting authenticated enrollment/health reports.
 ## Confidentiality (hard rule — this repo is public)
 
 Never let a branch name, commit, PR text, comment, fixture, or evidence identify
-a customer, prospect, partner, or outside person; use internal ticket IDs, and
-escalate any leak instead of rewriting history.
+a customer, prospect, partner, or outside person or expose internal ticket IDs.
+Use semantic names and generic descriptions; keep customer/task-to-PR links
+private. Escalate any leak instead of rewriting history.
 
 ## Generated API contracts
 
