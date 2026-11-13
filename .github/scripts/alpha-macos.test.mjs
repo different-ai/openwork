@@ -10,8 +10,30 @@ const workflow = readFileSync(new URL("../workflows/alpha-macos-aarch64.yml", im
 const macPublish = workflow.split("\n  publish-alpha-macos-aarch64:\n")[1]?.split("\n  publish-alpha-windows-x64:\n")[0];
 const macBuild = workflow.split("\n  build-alpha-macos-aarch64:\n")[1]?.split("\n  publish-alpha-macos-aarch64:\n")[0];
 
-function stepScript(name) {
-  const step = macPublish.split(`      - name: ${name}\n`)[1]?.split("\n      - name:")[0];
+test("Mac helper cache is exact to native inputs, architecture and toolchain", () => {
+  const cache = macBuild.split("      - name: Cache native macOS helpers\n")[1]?.split("\n      - name:")[0];
+  assert.ok(cache, "Missing native helper cache");
+  assert.match(cache, /continue-on-error: true/);
+  assert.match(cache, /\$\{\{ runner\.arch \}\}/);
+  assert.match(cache, /\$\{\{ steps\.native-toolchain\.outputs\.fingerprint \}\}/);
+  assert.doesNotMatch(cache, /restore-keys:/);
+  for (const input of [
+    "packages/computer-use/native/Package.swift", "packages/computer-use/native/Package.resolved",
+    "packages/computer-use/native/Sources/**", "apps/desktop/native/dictation/*.swift",
+    "apps/desktop/scripts/prepare-computer-use-helper.mjs", "apps/desktop/scripts/prepare-dictation-helper.mjs",
+    "apps/desktop/resources/icons/computer-use.icns",
+  ]) assert.ok(cache.includes(`'${input}'`), input);
+  for (const output of ["OpenWork Computer Use.app", "openwork-dictation", "openwork-dictation.sha256"]) {
+    assert.ok(cache.includes(`apps/desktop/resources/helpers/${output}`), output);
+  }
+  assert.match(macBuild, /xcrun swift --version/);
+  assert.match(macBuild, /xcrun --sdk macosx --show-sdk-version/);
+  assert.match(macBuild, /xcodebuild -version/);
+  assert.match(macBuild, /OPENWORK_REUSE_NATIVE_HELPERS: "true"/);
+});
+
+function stepScript(name, job = macPublish) {
+  const step = job.split(`      - name: ${name}\n`)[1]?.split("\n      - name:")[0];
   const script = step?.split("        run: |\n")[1];
   assert.ok(script, `Missing shell script for ${name}`);
   return script.split("\n").map(line => line.startsWith("          ") ? line.slice(10) : line).join("\n");
@@ -64,6 +86,51 @@ if (args[1] === 'upload' && !args.some(arg => arg.endsWith('/latest-mac.yml'))) 
     rmSync(directory, { recursive: true, force: true });
   }
 }
+
+test("native toolchain changes invalidate the cache and failed detection stops the build", () => {
+  fixture(({ directory }) => {
+    writeFileSync(join(directory, "xcrun"), '#!/bin/bash\n[ "${TOOLCHAIN_FAIL:-0}" = 0 ] || exit 41\nif [ "$1" = swift ]; then echo "$SWIFT_VERSION"; else echo "$SDK_VERSION"; fi\n', { mode: 0o755 });
+    writeFileSync(join(directory, "xcodebuild"), '#!/bin/bash\necho "$XCODE_VERSION"\n', { mode: 0o755 });
+    const output = join(directory, "toolchain-output");
+    const fingerprint = (overrides = {}) => {
+      writeFileSync(output, "");
+      const result = spawnSync("bash", ["-c", stepScript("Identify native macOS toolchain", macBuild)], {
+        encoding: "utf8", env: {
+          ...process.env, PATH: `${directory}:${process.env.PATH}`, GITHUB_OUTPUT: output,
+          SWIFT_VERSION: "Swift 6.3", SDK_VERSION: "26.5", XCODE_VERSION: "Xcode 26.5 build A", ...overrides,
+        },
+      });
+      return { status: result.status, value: readFileSync(output, "utf8") };
+    };
+    const initial = fingerprint();
+    assert.equal(initial.status, 0);
+    assert.match(initial.value, /^fingerprint=[a-f0-9]{64}\n$/);
+    assert.deepEqual(fingerprint(), initial);
+    for (const name of ["SWIFT_VERSION", "SDK_VERSION", "XCODE_VERSION"]) {
+      const changed = fingerprint({ [name]: "updated" });
+      assert.equal(changed.status, 0);
+      assert.notEqual(changed.value, initial.value, name);
+    }
+    assert.deepEqual(fingerprint({ TOOLCHAIN_FAIL: "1" }), { status: 41, value: "" });
+  });
+});
+
+test("total packaging timing preserves success and failure exit codes", () => {
+  fixture(({ directory }) => {
+    writeFileSync(join(directory, "pnpm"), '#!/bin/bash\nexit "$PACKAGE_EXIT"\n', { mode: 0o755 });
+    const summary = join(directory, "summary");
+    for (const status of [0, 37]) {
+      const result = spawnSync("bash", ["-c", stepScript("Package Electron alpha (macOS, signed + notarized)", macBuild)], {
+        encoding: "utf8", env: {
+          ...process.env, PATH: `${directory}:${process.env.PATH}`, GITHUB_STEP_SUMMARY: summary, PACKAGE_EXIT: String(status),
+        },
+      });
+      assert.equal(result.status, status, result.stderr);
+      assert.match(result.stdout, new RegExp(`total_seconds=\\d+ exit_code=${status}`));
+      assert.ok(readFileSync(summary, "utf8").includes(`(exit ${status})`));
+    }
+  });
+});
 
 test("publishes labeled assets before the rolling manifest and authorizes pruning", () => {
   fixture(({ run, calls, directory }) => {
