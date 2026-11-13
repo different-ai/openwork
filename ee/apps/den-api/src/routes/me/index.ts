@@ -454,7 +454,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       }
 
       const sessionId = normalizeDenTypeId("session", session.id)
-      // ssoPerOrganization: an organization that requires SSO is entered only from a session signed in through it.
+      // an organization that requires SSO is entered only from a session signed in through it.
       const ssoBlock = await findSsoAccessBlock({ sessionId, organizationId: activeOrg.id })
       if (ssoBlock) {
         return c.json(ssoRequiredErrorBody(ssoBlock), 403)
@@ -494,7 +494,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
     describeRoute({
       tags: ["Users"],
       summary: "Get current user's desktop config",
-      description: "Returns the authenticated desktop app restrictions for the caller's active organization, including the caller's agent permissions as ordered OpenCode permission rules and the model new chats start with (defaultModel, applied by OpenCode v2 desktops only) when the organization has chosen one the caller can use. Computer use, Mac app scripting and outside-folder rules are delivered only when agentHarnessPermissions is enabled for the caller. Computer use rules and their scripting dependency additionally require the caller's computerUse feature. X-OpenWork-Browser-Upload-Permissions: 1 clients receive browserUploadPermissions with the verified organization and member scope, and browser_upload rules only when enabled for the caller. Older clients receive a conservative website block when an active managed upload rule cannot be enforced.",
+      description: "Returns the authenticated desktop app restrictions for the caller's active organization, including the caller's agent permissions as ordered OpenCode permission rules and the model new chats start with (defaultModel, applied by OpenCode v2 desktops only) when the organization has chosen one the caller can use. Computer use, Mac app scripting and outside-folder rules follow the organization's agent permission settings. X-OpenWork-Browser-Upload-Permissions: 1 clients receive browserUploadPermissions with the verified organization and member scope, and the organization's browser_upload rules. Older clients receive a conservative website block when an active managed upload rule cannot be enforced.",
       responses: {
         200: jsonResponse("Current user desktop config returned successfully.", meDesktopConfigResponseSchema),
         401: jsonResponse("The caller must be signed in to read desktop config.", unauthorizedSchema),
@@ -510,17 +510,16 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         orgMemberId: currentMember.id,
       })
       const features = await getOrganizationFeatures(organization.id, { userId: currentMember.userId })
-      const rules = await readAgentPermissionRulesForMember({ organizationId: organization.id, orgMemberId: currentMember.id, computerUseEnabled: features.computerUse })
+      const rules = await readAgentPermissionRulesForMember({ organizationId: organization.id, orgMemberId: currentMember.id })
       const supportsBrowserUploads = c.req.header("X-OpenWork-Browser-Upload-Permissions") === "1"
-      const visibleRules = features.agentHarnessPermissions ? rules : withoutAgentHarnessRules(rules)
       // Published desktops reject a rule list naming an action they do not know,
       // so file-send rules reach only desktops that ask for them.
       const supportsFileSends = c.req.header("X-OpenWork-File-Send-Permissions") === "1"
-      const uploadRules: AgentPermissionRule[] = features.browserUploadPermissions && supportsBrowserUploads ? visibleRules : withoutBrowserUploadRules(visibleRules)
+      const uploadRules: AgentPermissionRule[] = supportsBrowserUploads ? rules : withoutBrowserUploadRules(rules)
       const deliveredRules: AgentPermissionRule[] = features.fileSendPermissions && supportsFileSends ? uploadRules : withoutFileSendRules(uploadRules)
       // Published clients drop unknown actions. Refuse browsing conservatively
       // rather than silently dropping an active managed upload permission.
-      if (features.browserUploadPermissions && !supportsBrowserUploads && rules.some((rule) => rule.action === "browser_upload")) {
+      if (!supportsBrowserUploads && rules.some((rule) => rule.action === "browser_upload")) {
         deliveredRules.push({ action: "webfetch", resource: "*", effect: "deny", source: "Browser upload policy requires an updated OpenWork app" })
       }
       const agentPermissions = { rules: deliveredRules }
@@ -550,7 +549,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         localProviderMirror: true,
         removeOpencodeZen: true,
         agentPermissions,
-        ...(supportsBrowserUploads ? { browserUploadPermissions: { enabled: features.browserUploadPermissions, organizationId: organization.id, memberId: currentMember.id } } : {}),
+        ...(supportsBrowserUploads ? { browserUploadPermissions: { enabled: true, organizationId: organization.id, memberId: currentMember.id } } : {}),
         ...(supportsFileSends ? { fileSendPermissions: { enabled: features.fileSendPermissions, organizationId: organization.id, memberId: currentMember.id } } : {}),
         ...(defaultModel ? { defaultModel } : {}),
         ...(Array.isArray(metadata.allowedDesktopVersions)

@@ -6,7 +6,6 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
-import { requireFeature } from "../../features.js"
 import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
@@ -605,7 +604,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
       },
     }),
-    orgMemberRouteMiddleware, requireFeature("outlookAttachments"), paramValidator(mailMessageParamSchema),
+    orgMemberRouteMiddleware, paramValidator(mailMessageParamSchema),
     async (c) => {
       const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["mailRead"], "Outlook mail read")
       if (client instanceof Response) return client
@@ -628,7 +627,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
       },
     }),
-    orgMemberRouteMiddleware, requireFeature("outlookAttachments"), paramValidator(mailAttachmentParamSchema),
+    orgMemberRouteMiddleware, paramValidator(mailAttachmentParamSchema),
     async (c) => {
       const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["mailRead"], "Outlook mail read")
       if (client instanceof Response) return client
@@ -655,7 +654,6 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       },
     }),
     options.transportRoute ?? cloudTransportRoute(),
-    requireFeature("outlookAttachments"),
     bodyLimit({
       maxSize: MAIL_DRAFT_UPLOAD_BODY_MAX_BYTES,
       onError: (c) => c.json({ error: "invalid_request", message: "Direct upload request is too large." }, 413),

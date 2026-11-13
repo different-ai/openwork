@@ -114,7 +114,7 @@ export async function provisionVerifiedDomainMembership(input: { userId: UserId;
     .where(eq(SsoProviderTable.domainVerified, true))
   const provider = providers.find((entry) => emailDomainMatches(emailDomain, entry.domain))
   if (!provider) return
-  // ssoPerOrganization: an organization that requires SSO gets members through
+  // an organization that requires SSO gets members through
   // SSO sign-up, never from a password or Google sign-in on its domain.
   const perOrganization = (await readSsoPerOrganization([provider.organizationId])).get(provider.organizationId) === true
   if (!allowsVerifiedDomainAutoJoin({ policy: readOrganizationSsoPolicy(provider.metadata), perOrganization })) return

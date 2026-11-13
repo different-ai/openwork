@@ -78,16 +78,42 @@ test("/me says whether the Devices page is on, and an older Den that omits it me
   assert.equal((await me()).devices, false)
 })
 
-test("Computers moves into the profile only with its rollout, profile and existing Devices access", async () => {
-  let signed = member("profile_computers", { profileSheet: true, profileComputers: true })
+test("retired presentation fields stay enabled for loaded UI bundles without granting computer access", async () => {
+  let signed = member("me_compatibility", {
+    calendar: true, accountMenu: false, workingStatus: false, quickReply: false, browserChat: false,
+    instantOpen: false, profileSheet: false, centeredProfile: false, browserPreview: false,
+    remoteTasks: false, profileNav: false, quietCalendar: false,
+  })
+  const { app } = workbot(() => signed)
+  const schema = z.object({
+    accountMenu: z.boolean(), workingStatus: z.boolean(), quickReply: z.boolean(), browserChat: z.boolean(),
+    instantOpen: z.boolean(), profileSheet: z.boolean(), centeredProfile: z.boolean(), browserPreview: z.boolean(),
+    remoteTasks: z.boolean(), profileNav: z.boolean(), quietCalendar: z.boolean(),
+  })
+  const me = async () => schema.parse(await (await app.request("/v1/workbot/me")).json())
+  assert.ok(Object.values(await me()).every(Boolean), "retired response fields no longer depend on rollout values")
+  signed = member("me_compatibility", { computer: false, browser: false, calendar: false })
+  assert.deepEqual(await me(), {
+    accountMenu: true, workingStatus: true, quickReply: true, browserChat: false,
+    instantOpen: true, profileSheet: true, centeredProfile: true, browserPreview: false,
+    remoteTasks: true, profileNav: true, quietCalendar: false,
+  })
+  signed = member("me_compatibility", { enabled: false })
+  const disabled = await me()
+  assert.equal(disabled.accountMenu, true, "sign-out remains available even without Workbot")
+  assert.ok(Object.entries(disabled).filter(([key]) => key !== "accountMenu").every(([, enabled]) => !enabled))
+})
+
+test("Computers moves into the profile only with its rollout and existing Devices access", async () => {
+  let signed = member("profile_computers", { profileComputers: true })
   const { app, calls } = workbot(() => signed)
   const me = async () => z.object({ profileComputers: z.boolean() }).parse(await (await app.request("/v1/workbot/me")).json())
   assert.equal((await me()).profileComputers, true)
-  for (const off of [{ profileComputers: false }, { profileSheet: false }, { devices: false }, { enabled: false }]) {
-    signed = member("profile_computers", { profileSheet: true, profileComputers: true, ...off })
+  for (const off of [{ profileComputers: false }, { devices: false }, { enabled: false }]) {
+    signed = member("profile_computers", { profileComputers: true, ...off })
     assert.equal((await me()).profileComputers, false)
   }
-  signed = member("profile_computers", { profileSheet: true })
+  signed = member("profile_computers", {})
   assert.equal((await me()).profileComputers, false, "older Den answers omit the rollout and preserve navigation")
   assert.equal(calls.list, 0, "checking the rollout never reads or provisions computers")
 })

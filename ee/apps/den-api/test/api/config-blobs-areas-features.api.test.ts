@@ -133,9 +133,9 @@ const apiC = den.as(owner, orgC.orgId)
 
 // Every feature state this file relies on is set here, never left to the registry default.
 /** On for A, off for B and C: the features an import has to turn on. */
-const TURNED_ON = ["googleDrivePdfText", "nativeDictation"]
+const TURNED_ON = ["nativeDictation", "workbotScrollToBottom"]
 /** Off for every organization here: one A turned off, and one only A's owner has (a member override). */
-const TURNED_OFF = ["agentQuestions", "superAdminPermissionSet"]
+const TURNED_OFF = ["workbotDocumentEditing", "workbotDocuments"]
 for (const key of TURNED_ON) {
   assert.equal((await den.setFeature(orgA.orgId, key, true)).status, 200, key)
   for (const org of [orgB.orgId, orgC.orgId]) assert.equal((await den.setFeature(org, key, false)).status, 200, key)
@@ -144,7 +144,7 @@ for (const key of TURNED_OFF) {
   for (const org of [orgA.orgId, orgB.orgId, orgC.orgId]) assert.equal((await den.setFeature(org, key, false)).status, 200, key)
 }
 await ok(den.asPlatformAdmin("PUT", "/v1/admin/features/followUpSuggestions", { enabled: true }), "on for everyone")
-await ok(den.asPlatformAdmin("PUT", `/v1/admin/organizations/${orgA.orgId}/members/${orgA.owner.memberId}/capabilities`, { capabilities: { agentQuestions: true } }), "member override")
+await ok(den.asPlatformAdmin("PUT", `/v1/admin/organizations/${orgA.orgId}/members/${orgA.owner.memberId}/capabilities`, { capabilities: { workbotDocumentEditing: true } }), "member override")
 await ok(apiA("POST", "/v1/org/web-origins", { origin: "https://features-source.example.com" }), "web origin")
 // Killed everywhere: never exported, and skipped when a file asks for it.
 await ok(den.asPlatformAdmin("PUT", "/v1/admin/features/claudeAgentProvider", { killed: true }), "kill switch")
@@ -200,16 +200,16 @@ test("import by a platform admin turns the missing features on; unknown, unavail
   const applied = await applyPlan(platformAdmin, orgB.orgId, id, plan)
   assert.equal(applied.status, "applied", JSON.stringify(applied.errors))
   const features = await orgFeatures(apiB)
-  assert.equal(features.googleDrivePdfText, true)
+  assert.equal(features.workbotScrollToBottom, true)
   assert.equal(features.nativeDictation, true)
   assert.equal(features.workbotDocuments, false)
   assert.equal(features.claudeAgentProvider, false)
-  assert.equal(features.agentQuestions, false, "member overrides never travel")
-  assert.equal(features.superAdminPermissionSet, false)
+  assert.equal(features.workbotDocumentEditing, false, "member overrides never travel")
+  assert.equal(features.workbotDocuments, false)
   // The same override /admin sets, with its history: who turned it on.
   const history = await db.select().from(FeatureChangeTable).where(and(eq(FeatureChangeTable.organization_id, orgB.orgId), eq(FeatureChangeTable.scope, "organization")))
   const imported = history.filter((row) => row.action === "on").map((row) => [row.feature_key, row.action, row.changed_by_user_id]).sort()
-  assert.deepEqual(imported, [["googleDrivePdfText", "on", platformAdmin.userId], ["nativeDictation", "on", platformAdmin.userId]])
+  assert.deepEqual(imported, [["nativeDictation", "on", platformAdmin.userId], ["workbotScrollToBottom", "on", platformAdmin.userId]])
 })
 
 test("anyone else is blocked on the features; the rest of the import still applies", async () => {
@@ -228,7 +228,7 @@ test("anyone else is blocked on the features; the rest of the import still appli
   const applied = await applyPlan(owner, orgC.orgId, id, skipped)
   assert.equal(applied.status, "applied", JSON.stringify(applied.errors))
   const features = await orgFeatures(apiC)
-  assert.equal(features.googleDrivePdfText, false)
+  assert.equal(features.workbotScrollToBottom, false)
   assert.equal(features.nativeDictation, false)
   const origins = await ok(apiC("GET", "/v1/org/web-origins"), "origins")
   assert.ok(origins.text.includes("https://features-source.example.com"), summary(origins))
@@ -257,7 +257,7 @@ test("mirror mode never turns a feature off, even when its delete is ticked", as
     format: "openwork.config-blob",
     formatVersion: 1,
     scope: [AREA],
-    areas: { settings: { features: { specVersion: 1, items: [{ id: "googleDrivePdfText", name: "Google Drive PDF text", spec: { enabled: true } }] } } },
+    areas: { settings: { features: { specVersion: 1, items: [{ id: "workbotScrollToBottom", name: "Workbot scroll to bottom", spec: { enabled: true } }] } } },
   }
   const { id, plan } = await upload(apiB, blob, "mirror", "Mirror features")
   const decided = await ok(apiB("PUT", `/v1/config-blobs/change-requests/${id}/decisions`, { deletes: [{ area: AREA, targetId: "nativeDictation" }] }), "tick a delete")

@@ -5,7 +5,6 @@ import { SsoSessionRequiredError } from "../../_lib/den-flow";
 import {
   getOrgAccessFlags,
   getSsoSettingsFromMetadata,
-  orgFeatureEnabled,
   permissionLockReason,
 } from "../../_lib/den-org";
 import { ssoSettingsChanges, type SsoSettings } from "../../_lib/sso-settings";
@@ -41,9 +40,7 @@ export function SsoRequirementSection() {
     orgContext.currentMember.isOwner,
     orgContext.currentMember.permissions,
   ).canManageSettings;
-  const ssoPerOrganization = orgFeatureEnabled(orgContext, "ssoPerOrganization");
   const changes = ssoSettingsChanges({
-    perOrganization: ssoPerOrganization,
     saved: getSsoSettingsFromMetadata(orgContext.organization.metadata),
     draft,
   });
@@ -88,7 +85,7 @@ export function SsoRequirementSection() {
           <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">
             Single sign-on requirement
           </h2>
-          <p className="text-[14px] text-gray-500">{ssoRequirementDescription(ssoPerOrganization)}</p>
+          <p className="text-[14px] text-gray-500">{ssoRequirementDescription()}</p>
         </div>
 
         {!orgContext.entitlements.orgControls ? <EnterprisePlanNotice feature="Enforced SSO" /> : null}
@@ -105,13 +102,12 @@ export function SsoRequirementSection() {
         ) : null}
 
         <SsoRequirementFields
-          perOrganization={ssoPerOrganization}
           draft={draft}
           disabled={!canManageSettings}
           onChange={updateDraft}
         />
 
-        {ssoPerOrganization ? (
+        {(
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
             <p className="text-[13px] text-gray-500" role="status">
               {!canManageSettings
@@ -128,7 +124,7 @@ export function SsoRequirementSection() {
               Save
             </DenButton>
           </div>
-        ) : null}
+        )}
       </DenCard>
     </form>
   );

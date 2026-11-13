@@ -407,9 +407,9 @@ export const REMOTE_SESSION_REQUEST_POLL = Object.freeze({
   activeWindowMs: 30 * 60_000,
 })
 export const REMOTE_SESSION_CONTROL_CAPABILITY = "remote_session_control_v1"
-/** Asks Den's runner event stream to announce queued remote-session tasks (feature remoteSessionPush). */
+/** Asks Den's runner event stream to announce queued remote-session tasks. */
 export const REMOTE_SESSION_PUSH_HEADER = "X-OpenWork-Remote-Session-Push"
-/** Den answers 404 while remoteSessionPush is off; ask again this much later. */
+/** An older Den may not serve runner events; ask again this much later. */
 const REMOTE_SESSION_PUSH_DISABLED_RETRY_MS = 10 * 60_000
 
 /**
@@ -1383,7 +1383,6 @@ export function createDesktopAutomationRunner(options) {
   const lifecycleRequestTimeoutMs = options.lifecycleRequestTimeoutMs ?? 30_000
   const requestPoll = { ...REMOTE_SESSION_REQUEST_POLL, ...options.remoteSessionRequestPoll }
   const remoteRequestTimeoutMs = options.remoteSessionRequestTimeoutMs ?? REMOTE_SESSION_REQUEST_TIMEOUT_MS
-  const remoteSessionPush = options.remoteSessionPush === true
   const legacyBaseUrls = new Set((options.legacyBaseUrls ?? [])
     .map((value) => normalizeRunnerBaseUrl(value))
     .filter(Boolean))
@@ -2408,7 +2407,7 @@ export function createDesktopAutomationRunner(options) {
     }
     void connectLoop(state)
     if (state.controlCapable) void remoteSessionRequestLoop(state)
-    if (remoteSessionPush && state.controlCapable) void remoteSessionPushLoop(state)
+    if (state.controlCapable) void remoteSessionPushLoop(state)
   }
 
   /**

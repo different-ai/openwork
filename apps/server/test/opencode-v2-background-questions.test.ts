@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createV2ContextBridge } from "../src/opencode-v2-context-bridge.js";
 import nativeContext from "../src/opencode-plugins/openwork-context-v2.js";
-import { agentQuestionsOffered } from "../src/opencode-plugins/openwork-agent-questions.js";
 
 /** The engine's form, prompt and event routes. */
 async function fakeEngine() {
@@ -102,7 +101,7 @@ test("a dismissed background question sends nothing to the chat", async () => {
   }
 });
 
-test("ask_without_waiting is offered only while the desktop has agentQuestions on", async () => {
+test("ask_without_waiting is available without a rollout lookup", async () => {
   let offered = false;
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
@@ -122,44 +121,15 @@ test("ask_without_waiting is offered only while the desktop has agentQuestions o
     skill: { async transform() { return { async dispose() {} }; }, async reload() {} },
   } as Parameters<typeof nativeContext.setup>[0]);
   try {
-    assert.equal(names.has("ask_without_waiting"), false, "flag off: the model never sees it");
+    assert.equal(names.has("ask_without_waiting"), true);
     offered = true;
     await prompt?.();
     assert.equal(names.has("ask_without_waiting"), true, "turning the flag on offers it from the next prompt");
     offered = false;
     await prompt?.();
-    assert.equal(names.has("ask_without_waiting"), false, "turning it off withdraws it again");
+    assert.equal(names.has("ask_without_waiting"), true);
   } finally {
     await stop();
     await new Promise<void>(resolve => server.close(() => resolve()));
-  }
-});
-
-test("only an explicit desktop answer of on offers background questions", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "openwork-agent-questions-"));
-  const previous = process.env.OPENWORK_UI_CONTROL_DISCOVERY;
-  let answer: { status: number; body: unknown } = { status: 200, body: { enabled: true } };
-  const desktop = createServer((request, response) => {
-    const found = new URL(request.url ?? "/", "http://127.0.0.1").pathname === "/agent-questions/enabled";
-    const { status, body } = found ? answer : { status: 404, body: { ok: false } };
-    response.writeHead(status, { "Content-Type": "application/json" }).end(JSON.stringify(body));
-  });
-  await new Promise<void>(resolve => desktop.listen(0, "127.0.0.1", resolve));
-  const { port } = desktop.address() as AddressInfo;
-  try {
-    const discovery = join(directory, "openwork-ui-control.json");
-    await writeFile(discovery, JSON.stringify({ baseUrl: `http://127.0.0.1:${port}`, token: "desktop" }));
-    process.env.OPENWORK_UI_CONTROL_DISCOVERY = discovery;
-    assert.equal(await agentQuestionsOffered(), true);
-    answer = { status: 200, body: { enabled: false } };
-    assert.equal(await agentQuestionsOffered(), false);
-    // A cloud worker's bridge has no such route: the feature stays off there.
-    answer = { status: 404, body: { ok: false } };
-    assert.equal(await agentQuestionsOffered(), false);
-  } finally {
-    if (previous === undefined) delete process.env.OPENWORK_UI_CONTROL_DISCOVERY;
-    else process.env.OPENWORK_UI_CONTROL_DISCOVERY = previous;
-    await new Promise<void>(resolve => desktop.close(() => resolve()));
-    await rm(directory, { recursive: true, force: true });
   }
 });

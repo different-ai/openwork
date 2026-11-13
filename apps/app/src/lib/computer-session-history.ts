@@ -257,10 +257,9 @@ export function withoutComputerHistory(parts: UIMessage["parts"], history: Compu
  * With the session card on, the card shows the work: the live computer view opens
  * only from it, or on its own when the person is needed there (a takeover to end).
  */
-export function showsLiveComputerView({ historyEnabled, watching, session }: {
-  historyEnabled: boolean
+export function showsLiveComputerView({ watching, session }: {
   watching: boolean
   session: { state: string } | null | undefined
 }): boolean {
-  return !historyEnabled || watching || session?.state === "paused"
+  return watching || session?.state === "paused"
 }

@@ -417,6 +417,6 @@ export async function executeBuiltinSkillCapability(name: string, organizationId
     name: skill.descriptor.title,
     description: skill.descriptor.description,
     provenance: "Built into OpenWork Cloud.",
-    content: typeof skill.source === "string" ? skill.source : skill.source(await newWorkflowLanguage(organizationId)),
+    content: typeof skill.source === "string" ? skill.source : skill.source(await newWorkflowLanguage()),
   }
 }

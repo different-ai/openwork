@@ -51,7 +51,6 @@ function runner(fixture) {
   const desktop = createDesktopAutomationRunner({
     fetchImpl: fixture.fetchImpl,
     getLocalRuntime: async () => null,
-    remoteSessionPush: true,
     remoteSessionRequestPoll: { pollMs: 60_000 },
     // Nothing waits for real: every wait parks until the runner stops.
     waitBeforeReconnect: (ms, signal) => {

@@ -4,8 +4,7 @@
  *
  * - Built-in sets (Member, Admin, Super admin) are items keyed by their
  *   `default_key`; they always exist, so they are only ever updated, never
- *   created, renamed or deleted. Super admin is only exported while the
- *   organization shows it (`superAdminPermissionSet`), like the dashboard.
+ *   created, renamed or deleted.
  * - Spec: the keys the set allows now (`permission_set_permission` current
  *   state only, never its history) and, for custom roles, team references.
  * - Apply goes through the permission routes' own functions
@@ -62,10 +61,6 @@ function normalizedName(name: string): string {
 
 function builtInOf(item: ConfigItem): string | null {
   return typeof item.spec.builtIn === "string" ? item.spec.builtIn : null
-}
-
-function superAdminSetShown(ctx: ConfigAreaContext): boolean {
-  return ctx.features.superAdminPermissionSet === true
 }
 
 async function activeTeamIdsBySet(ctx: ConfigAreaContext, setIds: readonly string[]) {
@@ -272,7 +267,6 @@ async function readRoles(ctx: ConfigAreaContext, ids: readonly string[] | null):
       setIdFilter ? inArray(PermissionSetTable.id, setIdFilter) : undefined,
     ))
     .orderBy(asc(PermissionSetTable.name), asc(PermissionSetTable.id)))
-    .filter((set) => set.defaultKey !== "super-admin" || superAdminSetShown(ctx))
   const setIds = sets.map((set) => set.id)
   const [states, teamsBySet] = await Promise.all([
     readPermissionSetStates(ctx.db, setIds),

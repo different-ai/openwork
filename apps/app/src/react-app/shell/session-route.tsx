@@ -115,7 +115,6 @@ import type { ActivityResource } from "@/react-app/kernel/activity-types";
 import { encodeConnectSkillToken } from "@/react-app/domains/session/surface/composer/connect-skill-token";
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
-import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { remoteThreadAttentionBySession, useRemoteThreadAttentionKey } from "@/react-app/domains/session/remote-threads/remote-thread-store";
 import { RemoteSessionHeader, RemoteSessionSurface } from "@/react-app/domains/session/remote-threads/remote-session-surface";
 import { isRemoteSessionRouteId, remoteSessionRouteId } from "@/lib/remote-session-route";
@@ -966,8 +965,6 @@ export function SessionRoute() {
     return { statusById: withSideChatActivity(statusById, sideChats, workspaceSessionGroups), labelById, sourceById, kindById };
   }, [attentionLocale, remoteAttentionKey, selectWorkspaceAttention, sideChats, sessionActivityByWorkspaceId, sessionWaitingByWorkspaceId, sessionChildIdsByWorkspaceId, workspaceSessionGroups]);
   const sidebarSessionStatusById = sidebarSessionAttention.statusById;
-  // The Feed view and the header's Archive toggle ship behind `settledSessions`.
-  const settledSessionsEnabled = useDesktopFeature("settledSessions");
   const selectedSidebarSession = useMemo(() => {
     if (!selectedWorkspaceId || !selectedSessionId) return null;
     return workspaceSessionGroups.find((group) => group.workspace.id === selectedWorkspaceId)
@@ -979,12 +976,12 @@ export function SessionRoute() {
   const currentSessionArchive = useMemo(() => {
     const sessionId = selectedSidebarSession?.id;
     const workspaceId = selectedWorkspaceId;
-    if (!settledSessionsEnabled || !sessionId || !workspaceId || !opencodeClient) return undefined;
+    if (!sessionId || !workspaceId || !opencodeClient) return undefined;
     return {
       archived: currentSessionArchived,
       toggle: () => { void archiveSessionRef.current?.(sessionId, !currentSessionArchived, workspaceId); },
     };
-  }, [currentSessionArchived, opencodeClient, selectedSidebarSession?.id, selectedWorkspaceId, settledSessionsEnabled]);
+  }, [currentSessionArchived, opencodeClient, selectedSidebarSession?.id, selectedWorkspaceId]);
 
   const sidebarActiveWorkspaceId = useMemo(() => {
     const sessionId = selectedSessionId?.trim() ?? "";
@@ -4086,7 +4083,6 @@ export function SessionRoute() {
         selectedSessionId,
         developerMode: false,
         sessionStatusById: sidebarSessionStatusById,
-        feedEnabled: settledSessionsEnabled,
         sessionAttentionLabelById: sidebarSessionAttention.labelById,
         sessionAttentionSourceById: sidebarSessionAttention.sourceById,
         sessionAttentionKindById: sidebarSessionAttention.kindById,

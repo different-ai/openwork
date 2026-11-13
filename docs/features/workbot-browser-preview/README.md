@@ -1,5 +1,7 @@
 # Workbot: one browser experience
 
+> **Generally available:** `workbotBrowserPreview` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 Browser tasks use this experience by default wherever Browser access is enabled. The presentation no longer depends on `workbotBrowserPreview`, `workbotWorkingStatus`, `workbotCenteredProfile` or `workbotQuickReply`. Browser access itself (`remoteComputers` / `browserUse`) and all viewer-ticket authorization remain unchanged.
 
 ## What people see

@@ -2,7 +2,7 @@ import type { LiveText, WorkbotStep, WorkbotTask, WorkbotTurn } from "./data";
 import { connectorSummary } from "./connector-activity";
 
 /**
- * What Workbot is doing right now, for the status line under its name and the task sheet (`workingStatus`): one
+ * What Workbot is doing right now, for the status line under its name and the task sheet: one
  * short label, and behind it the steps of the reply in progress ("main") and of each background task. Worked out from
  * what the page already reads; nothing here reaches the chat itself.
  */

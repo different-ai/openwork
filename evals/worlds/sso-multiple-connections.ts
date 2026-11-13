@@ -43,8 +43,6 @@ export async function ssoMultipleConnections(seed: Seed, _context: { place: Plac
   const org = record(record(read.body).organization);
   const orgId = text(org.id);
   const orgSlug = text(org.slug);
-  const feature = await request(den.admin, `/v1/admin/organizations/${orgId}/capabilities`, { method: "PUT", body: JSON.stringify({ capabilities: { ssoPerOrganization: true } }) });
-  if (!feature.response.ok) throw new Error(`Turn on ssoPerOrganization: ${feature.text}`);
   const browserLogin = await fetch(`${den.ref.apiUrl}/api/auth/sign-in/email`, { method: "POST", headers: { "content-type": "application/json", origin: den.ref.webUrl }, body: JSON.stringify({ email: owner.email, password: owner.password }) });
   const adminCookie = browserLogin.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ");
 

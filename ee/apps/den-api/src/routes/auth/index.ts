@@ -534,11 +534,11 @@ const loginOptionsResponseSchema = z.object({
   organizationSlug: z.string().optional(),
   signInPath: z.string().optional(),
   signInUrl: z.string().url().optional(),
-  /** ssoPerOrganization: the SSO organization's name, shown on the "Continue with SSO" button. */
+  /** the SSO organization's name, shown on the "Continue with SSO" button. */
   organizationName: z.string().optional(),
-  /** ssoPerOrganization: the organization requires SSO to open it; other methods still sign in. */
+  /** the organization requires SSO to open it; other methods still sign in. */
   ssoRequired: z.boolean().optional(),
-  /** ssoPerOrganization: the usual step when the person does not use SSO. Absent: SSO is the only way in. */
+  /** the usual step when the person does not use SSO. Absent: SSO is the only way in. */
   alternativeStep: z.union([z.literal("google"), z.literal("github"), z.literal("password"), z.literal("new_account")]).optional(),
   /**
    * The SSO step's identity providers that sign in this email, oldest first.
@@ -1103,7 +1103,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
       tags: ["Authentication"],
       security: [],
       summary: "Resolve deterministic login option",
-      description: "Returns the deterministic next authentication step for an email address. SSO is preferred before Google, password, GitHub compatibility, and new account creation. When the SSO organization has ssoPerOrganization on and does not restrict its domain, the SSO step also carries alternativeStep (the usual method), ssoRequired and organizationName, and a valid pending invitation to another organization skips the domain's SSO.",
+      description: "Returns the deterministic next authentication step for an email address. SSO is preferred before Google, password, GitHub compatibility, and new account creation. When the SSO organization does not restrict its domain, the SSO step also carries alternativeStep (the usual method), ssoRequired and organizationName, and a valid pending invitation to another organization skips the domain's SSO.",
       responses: {
         200: jsonResponse("Login option resolved successfully.", loginOptionsResponseSchema),
         400: jsonResponse("The login option query parameters were invalid.", z.object({ error: z.literal("invalid_request") })),
@@ -1189,7 +1189,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
           ...(signInOptions && signInOptions.options.length > 0 ? { ssoProviders: signInOptions.options } : {}),
         }
         if (routing.kind === "sso_preferred" && domainRequirement && otherStep !== "sso") {
-          // ssoPerOrganization: SSO first, the usual step one click away.
+          // SSO first, the usual step one click away.
           return c.json({
             ...ssoStep,
             organizationName: domainRequirement.organizationName,

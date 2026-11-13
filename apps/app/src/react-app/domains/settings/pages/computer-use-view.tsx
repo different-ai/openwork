@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { useDesktopFeature } from "../../session/status/use-desktop-feature";
 import {
   LayoutSection,
   LayoutSectionItemDescription,
@@ -48,9 +47,9 @@ const SEEN = "The agent sees the app window it is using, and its content goes to
 
 const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 
-/** Settings > Computer use, for the desktop app with the `computerUse` feature. */
+/** Settings > Computer use, for the native desktop app. */
 export function ComputerUseView({ fileSends }: { fileSends?: FileSendGrantsClient | null }) {
-  const enabled = useDesktopFeature("computerUse") && isElectronRuntime();
+  const enabled = isElectronRuntime();
   return <ComputerUseSettings enabled={enabled} fileSends={fileSends} />;
 }
 

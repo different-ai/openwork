@@ -24,7 +24,6 @@ import {
 import { useOpencodeEngineControls } from "@/react-app/shell/opencode-engine-controls";
 import { desktopBridge } from "@/app/lib/desktop";
 import { isDesktopRuntime, isElectronRuntime, isMacPlatform } from "@/app/utils";
-import { useDesktopFeature } from "../../session/status/use-desktop-feature";
 import { t } from "@/i18n";
 import { ControlPlaneUrlEditor } from "../cloud/control-plane-url-editor";
 import { usePlatform } from "../../../kernel/platform";
@@ -860,7 +859,7 @@ export function AdvancedDeveloperSection(props: AdvancedDeveloperSectionProps) {
  * Main keeps the choice until OpenWork quits; it applies to the next app the agent starts using.
  */
 function ComputerUseRecordingItem() {
-  const shown = useDesktopFeature("computerUse") && isElectronRuntime() && isMacPlatform();
+  const shown = isElectronRuntime() && isMacPlatform();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [error, setError] = useState("");
 

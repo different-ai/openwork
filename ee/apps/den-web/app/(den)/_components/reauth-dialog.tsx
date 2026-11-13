@@ -7,7 +7,7 @@ import { DenButton, buttonVariants } from "./ui/button";
 import { DenInput } from "./ui/input";
 import { DenNotice } from "./ui/notice";
 import { type AuthUser, getErrorMessage, getUser, requestJson, type SocialAuthProvider, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../_lib/den-flow";
-import { type DenOrgContext, getRequireSsoFromMetadata, getRestrictDomainToSsoFromMetadata, orgFeatureEnabled } from "../_lib/den-org";
+import { type DenOrgContext, getRequireSsoFromMetadata, getRestrictDomainToSsoFromMetadata } from "../_lib/den-org";
 import { type MemberSsoSignIn, type ResolvedDomainSso, parseMemberSsoSignIns, parseResolvedDomainSso, resolveReauthSsoTarget } from "../_lib/reauth-sso";
 
 function getSocialLabel(provider: SocialAuthProvider) {
@@ -103,7 +103,6 @@ export function ReauthDialog({
       ? {
           slug: orgContext.organization.slug,
           hasSso: orgContext.authMethods.sso,
-          perOrganization: orgFeatureEnabled(orgContext, "ssoPerOrganization"),
           requireSso: getRequireSsoFromMetadata(organizationMetadata),
           restrictDomainToSso: getRestrictDomainToSsoFromMetadata(organizationMetadata),
         }

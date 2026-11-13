@@ -46,7 +46,6 @@ import {
   getSsoTestPresentation,
 } from "../../sso-test-lifecycle.js"
 import { orgMemberRoute, orgPermissionRoute, requireOrgPermission } from "../../middleware/index.js"
-import { updateOrganizationSettings } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 /**
@@ -514,14 +513,6 @@ async function createTest(payload: OrganizationPayload, connection: SsoConnectio
 export async function enableConnection(payload: OrganizationPayload, connection: SsoConnection | null, capture: AuditChangeCapture | null) {
   const enabled = await enableOrganizationSsoConnection(connection, capture)
   if (!enabled.ok) return enabled
-  if (!await organizationFeatureEnabled(payload.organization.id, "ssoPerOrganization")) {
-    // Until ssoPerOrganization is on, enabled SSO is the only way in
-    // whatever "Require SSO" holds. Store that, so turning the flag on
-    // later keeps it required (migration 0180 did the same for
-    // organizations with SSO before). With the flag on, a new SSO
-    // connection starts optional until an admin requires it.
-    await updateOrganizationSettings({ organizationId: payload.organization.id, requireSso: true })
-  }
   await finishLegacyAuditAction(capture, {
     organizationId: payload.organization.id,
     actorUserId: payload.currentMember.userId,

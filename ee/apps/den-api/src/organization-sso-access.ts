@@ -12,7 +12,6 @@ import {
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 import { env } from "./env.js"
-import { organizationFeatureEnabled } from "./features.js"
 import { ssoConnectionDisplayName, ssoDomainColumnCovers, ssoDomainsCover } from "./sso-domains.js"
 import {
   blocksNonSsoSignIn,
@@ -23,10 +22,8 @@ import {
 } from "./sso-routing.js"
 
 /**
- * Den side of `ssoPerOrganization` (rules in sso-routing.ts): which
- * organizations a session may open, and which sign-ins an organization's SSO
- * still refuses. Every check reads the SSO organization's own flag, so turning
- * it on for one organization changes only that organization.
+ * Den side of SSO routing: organization settings govern which sessions may
+ * open them; single-organization deployments keep sign-in-wide SSO.
  */
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
@@ -58,11 +55,11 @@ export function ssoSignInUrl(signInPath: string) {
   return new URL(signInPath, env.betterAuthTrustedOrigins[0] ?? env.betterAuthUrl).toString()
 }
 
-/** Per organization: is `ssoPerOrganization` on? Always off on single-organization deployments. Cached reads. */
+/** Per-organization routing is available on multi-org deployments; single-org SSO stays sign-in-wide. */
 export async function readSsoPerOrganization(organizationIds: readonly string[]): Promise<Map<string, boolean>> {
   const result = new Map<string, boolean>()
   for (const id of new Set(organizationIds)) {
-    result.set(id, env.orgMode !== "single_org" && await organizationFeatureEnabled(id, "ssoPerOrganization"))
+    result.set(id, env.orgMode !== "single_org")
   }
   return result
 }
@@ -242,7 +239,7 @@ export async function findNonSsoSignInBlock(input: { email: string | null; userI
 
 /**
  * Organizations among `organizationIds` that only a session signed in through
- * their own SSO may open: `ssoPerOrganization` on, SSO enabled on a verified
+ * their own SSO may open: multi-org deployment, SSO enabled on a verified
  * domain, and "Require SSO" (or a restricted domain) set.
  */
 async function readSsoRequiredOrganizations(organizationIds: readonly string[]): Promise<Map<string, SsoAccessBlock>> {

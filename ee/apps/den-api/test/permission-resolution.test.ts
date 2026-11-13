@@ -26,7 +26,6 @@ import {
   memberPermissionsFromGrants,
   ownerPermissionGrants,
   permissionDeniedMessage,
-  superAdminPermissionGrants,
 } from "../src/permissions/effective.ts"
 import { isEffectiveOrganizationAdmin } from "../src/organization-role-hierarchy.ts"
 
@@ -165,14 +164,6 @@ test("super admin is a default permission set that starts with every catalog key
   // Owner-only by default still means "not in Member or Admin"; Super admin holds them.
   assert.equal(isPermissionOwnerOnlyByDefault("permissions.manage"), true)
   assert.ok(permissionDefaultKeys("super-admin").includes("permissions.manage"))
-})
-
-test("superAdminPermissionSet off: a super-admin holds every catalog key through the role, and is an admin", () => {
-  const permissions = memberPermissionsFromGrants({ isOwner: false, isSuperAdmin: true, isAdmin: false, grants: superAdminPermissionGrants() })
-  assert.equal(permissions.isSuperAdmin, true)
-  assert.equal(permissions.isAdmin, true)
-  assert.equal(permissions.keys.size, PERMISSION_KEYS.length)
-  assert.deepEqual(explainPermissionGrants(superAdminPermissionGrants())[0]?.sources, [{ kind: "super_admin" }])
 })
 
 test("a super-admin holds the keys of their Super admin set, and is an admin", () => {

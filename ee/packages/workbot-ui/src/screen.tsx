@@ -4,10 +4,9 @@ import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, FileText, Globe, Lock, 
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { calmChat, computerTabLabel, computerViews, setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
-import { clearThreadSnapshots } from "./thread-cache";
 import { chatTitle, RemoveChatButton, SideChatTitle, useChatLocation } from "./chats";
 import { DesktopNavigation, MobileNavigation, type NavigationProps } from "./navigation";
-import { AppsSheet, ProfileSheet, type ProfileTab } from "./profile-sheet";
+import { ProfileSheet, type ProfileTab } from "./profile-sheet";
 import {
   useEditWorkbotMessage,
   useRetryWorkbotMessage,
@@ -29,13 +28,12 @@ import {
   type LiveText,
   type WorkbotAttachment,
   type WorkbotLiveStore,
-  type WorkbotPart,
   type WorkbotStep,
   type WorkbotTask,
   type WorkbotThread,
   type WorkbotTurn,
 } from "./data";
-import { AppMark, AttachButton, FilesButton, FilesPanel, SentAttachments, UploadTray, useFileDrop, type Upload } from "./files";
+import { AppMark, AttachButton, FilesPanel, SentAttachments, UploadTray, useFileDrop, type Upload } from "./files";
 import { createComposerState, type ComposerState, type Pending } from "./composer-state";
 import { browserTask, computerWork, finishedSummary, keepsCard, type ComputerSurface } from "./computer-work";
 import { BrowserExperience, useBrowserPreview, type BrowserPreviewTask } from "./browser-preview";
@@ -54,7 +52,7 @@ import { LastGlimpse, LiveGlimpse, WorkbotComputer } from "./computer";
 import { readBrowserSkillRunPrompt, type BrowserTeachingContext } from "@openwork/types/browser-demonstration";
 import { readWorkbotCorrectionPrompt, workbotCorrectionPrompt, workbotContextLabel, workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import type { DocumentOpenOutcome, DocumentOpenRequest } from "@openwork/documents";
-import { ComputerNavigationContext, ComputerOffer, DockedChat, DocumentNavigationContext, DocumentNavigationStatus, DocumentOffers, type DocumentNavigationState, OpenDocumentContext, SentContext, useWideScreen, WorkspaceNavigationContext } from "./workspace";
+import { ComputerNavigationContext, DockedChat, DocumentNavigationContext, DocumentNavigationStatus, DocumentOffers, type DocumentNavigationState, OpenDocumentContext, SentContext, useWideScreen, WorkspaceNavigationContext } from "./workspace";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNativeDictation } from "@openwork/ui/react";
 import { WorkbotDictation } from "./native-dictation";
@@ -118,9 +116,6 @@ type ChatNavigation = {
 /** The Workbot page. `host` is the app it lives in: signed-in requests, the person, their apps (see WorkbotHost). */
 export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   setWorkbotHost(host);
-  // Pages kept on this device are only for people with instantOpen; turning it off forgets them.
-  const instantOpen = host.instantOpen === true;
-  useEffect(() => { if (!instantOpen) clearThreadSnapshots(); }, [instantOpen]);
   const sideChats = host.sideChats === true;
   const composers = useMemo(() => new Map<string | null, ComposerState>(), [host.identity?.organizationId, host.identity?.principalId]);
   const positions = useMemo(() => new Map<string | null, ConversationScrollState>(), [host.identity?.organizationId, host.identity?.principalId]);
@@ -174,8 +169,8 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const [filesOpen, setFilesOpen] = useState(false);
   // Once activated, keep this shell mounted even when the flag is revoked: draft editors must survive.
   const [teaching, setTeaching] = useState<BrowserTeachingContext>();
-  // Chat beside the browser (`workbotBrowserChat`) needs the same shell as the floating chat: one conversation, many views.
-  const browserChat = host.browserChat === true && host.browser === true;
+  // Chat beside the browser needs the same shell as the floating chat: one conversation, many views.
+  const browserChat = host.browser === true;
   const [workspaceShell, setWorkspaceShell] = useState(host.workspaceAssistant === true || host.browserDemonstrations === true || browserChat);
   useEffect(() => { if (host.workspaceAssistant || host.browserDemonstrations || browserChat) setWorkspaceShell(true); }, [host.workspaceAssistant, host.browserDemonstrations, browserChat]);
   const wideScreen = useWideScreen();
@@ -343,7 +338,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     // A foreground answer wins; otherwise name the newest genuinely active job, local or remote.
     if (!local.main && away && (!localTask || (away.since ?? 0) >= (localTask.startedAt ?? 0))) return { ...local, working: true, label: away.label, icon: "computer" as const, since: away.since, watch: null };
     return local;
-  }, [host.browser, host.workingStatus, host.profileSheet, host.remoteTasks, data, liveStatus, activityNow, remote.data]);
+  }, [host.browser, data, liveStatus, activityNow, remote.data]);
   const addFiles = composerState.add;
   const openFiles = filesEnabled ? () => { if (!workspaceShell && tab !== "home") setTab("home"); setFilesOpen(true); } : undefined;
   const chatListEnabled = navigation !== null;
@@ -396,9 +391,8 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     />
   );
   const dragging = useFileDrop(filesEnabled, addFiles);
-  const [appsOpen, setAppsOpen] = useState(false);
-  // `profileNav`: the navigation lists only pages; Files and Apps are tabs of Workbot's profile, opened from its logo.
-  const profileNav = host.profileNav === true && host.profileSheet === true;
+  // The navigation lists only pages; Files and Apps are tabs of Workbot's profile, opened from its logo.
+
   const [profileTab, setProfileTab] = useState<ProfileTab | null>(null);
   // The browser viewer keeps a 480px conversation beside it. Its chosen panel temporarily discloses navigation
   // through the same drawer, rather than squeezing the conversation behind a second 324px sidebar.
@@ -409,14 +403,12 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     onRetry: () => void paletteChats.refetch(),
     onOpenChat: navigation ? next => { if (!documentsDirty) { setTab("home"); navigation.openChat(next); } } : undefined,
     drafts: documentsDirty,
-    onFiles: openFiles,
-    onApps: () => setAppsOpen(true),
     onOpen: () => void paletteChats.refetch(),
     // On phones the palette stays in the header even with the drawer closed, keeping Cmd/Ctrl+K available.
     search: showDesktopNavigation ? palette : undefined,
     onSearch: showDesktopNavigation ? undefined : () => document.querySelector<HTMLButtonElement>("[data-workbot-palette-trigger]")?.click(),
     account: <AccountAvatar userName={user?.name ?? null} />,
-    ...(profileNav ? { onProfile: () => setProfileTab("tasks"), assistantName: data?.name ?? "Workbot" } : {}),
+    onProfile: () => setProfileTab("tasks"), assistantName: data?.name ?? "Workbot",
   };
   const mobileNavigation = !showDesktopNavigation ? <MobileNavigation {...navigationProps} /> : null;
   // The chat's header and message box float over its conversation (floating-chrome.ts); other views keep them solid.
@@ -424,8 +416,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const layout = (children: ReactNode, floating = false) => <DeviceComputerNavigationContext.Provider value={computerFor}><div className={`workbot workbot-layout flex min-h-0 min-w-0 bg-[var(--wb-bg)] antialiased ${floating ? "is-floating-chrome" : ""}`} data-workbot-look={calmChat() ? "calm" : undefined}>
     {showDesktopNavigation && <DesktopNavigation {...navigationProps} />}
     <div className="workbot-layout-main flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
-    <AppsSheet open={appsOpen} onClose={() => setAppsOpen(false)} name={data?.name ?? "Workbot"} />
-    {profileNav ? <ProfileSheet open={profileTab !== null} initialTab={profileTab ?? "tasks"} onClose={() => setProfileTab(null)} name={data?.name ?? "Workbot"} activity={activity} /> : null}
+    {<ProfileSheet open={profileTab !== null} initialTab={profileTab ?? "tasks"} onClose={() => setProfileTab(null)} name={data?.name ?? "Workbot"} activity={activity} />}
   </div></DeviceComputerNavigationContext.Provider>;
 
   useEffect(() => {
@@ -538,7 +529,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       <DocumentNavigationContext.Provider value={guided && host.documents ? { status: navigationStatus, open: followNavigation } : null}>
         {layout(<div ref={chrome.frame} className="relative flex min-h-0 flex-1 flex-col" data-workbot-workspace>
           <WorkbotHeader floating={floating ? chrome.top : undefined} name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} activity={activity} wide={wideScreen}
-            files={filesEnabled && !profileNav ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
+
             chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
             page={pageTitle} action={askAbout ? <AskWorkbotButton name={name} onClick={askAbout} /> : null}
             remove={navigation?.chat && data && data.turns.length > 0 ? <RemoveChatButton disabled={documentsDirty} chatId={navigation.chat} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
@@ -578,7 +569,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           name={data?.name ?? "Workbot"}
           organizationName={data?.organizationName ?? ""}
           userName={user?.name ?? null}
-          files={null}
+
           chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
           page={tab === "documents" ? "Documents" : tab === "calendar" ? "Calendar" : tab === "devices" ? "Devices" : computerTabLabel(host)}
           answered={hasAnsweredTurn(data?.turns)}
@@ -660,7 +651,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
         name={shown.name}
         organizationName={shown.organizationName}
         userName={user?.name ?? null}
-        files={filesEnabled && !profileNav ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
+
         chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
         title={navigation && chatId ? <SideChatTitle title={navigation.title} onBack={() => navigation.openChat(null)} /> : null}
         remove={navigation && chatId && shown.turns.length > 0 ? <RemoveChatButton chatId={chatId} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
@@ -887,7 +878,6 @@ function WorkbotHeader(props: {
   name: string;
   organizationName: string;
   userName: string | null;
-  files: ReactNode;
   /** Opens the list of chats, before the name (main chat, where side chats are on). */
   chats?: ReactNode;
   /** Replaces the mark and name: a side chat's back button and name. */
@@ -1580,22 +1570,6 @@ function useTaskClock(turns: WorkbotTurn[] | undefined) {
 }
 
 /**
- * Workbot's computer: a slim laptop with a soft blue screen whose two lines write themselves while it works.
- * Sized for the 16px slot (DESIGN V5); the motion stops for reduced motion (V6).
- */
-/** Workbot's computer; its screen "writes" only while it is working (V6). */
-function ComputerGlyph({ working = true }: { working?: boolean }) {
-  return (
-    <svg viewBox="0 0 16 16" width={16} height={16} fill="none" className={`workbot-computer ${working ? "is-working" : ""}`}>
-      <rect x="2.25" y="3" width="11.5" height="8" rx="1.75" className="workbot-computer-screen" strokeWidth={1.25} />
-      <path d="M1.5 13h13" className="workbot-computer-stand" strokeWidth={1.25} strokeLinecap="round" />
-      <path className="workbot-computer-line" d="M4.75 6h3.5" strokeWidth={1.25} strokeLinecap="round" />
-      <path className="workbot-computer-line" d="M4.75 8.25h5.5" strokeWidth={1.25} strokeLinecap="round" />
-    </svg>
-  );
-}
-
-/**
  * A little person at Workbot's computer: while it works they type (hands tapping, head nodding along, lines
  * appearing on the screen); when it's done they sit back. Only motion that means "working" (DESIGN V6).
  */
@@ -1674,8 +1648,6 @@ function StreamingText({ text, instant = false }: { text: string; instant?: bool
   );
 }
 
-
-
 /** An app the turn used, for the "Using …" line: Workbot's computer or a connected app. */
 type UsedApp = { key: string; name: string; computer: boolean };
 
@@ -1717,7 +1689,6 @@ function useHeld<T>(value: T, key: string, minMs: number): T {
   }, [key, minMs, shown.key]);
   return shown.value;
 }
-
 
 /** A computer update stays at least this long, so quick commands read as one calm change. */
 const UPDATE_HOLD_MS = 1_600;
@@ -1811,9 +1782,9 @@ function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, s
   const starting = surface === "background" ? "Running in the background" : "Starting up";
   // Finished work on a screen, with the inline preview or the working status: a compact record that stays in the
   // conversation, never a live view. One tap opens the full view.
-  if (!live && surface !== "background" && (workbotHost().browserPreview || workbotHost().workingStatus)) return <FinishedSurfaceCard surface={surface} steps={steps} watchable={watchable} task={task} />;
+  if (!live && surface !== "background") return <FinishedSurfaceCard surface={surface} steps={steps} watchable={watchable} task={task} />;
   // A thumbnail is a glance, never a takeover: one button opens the full view only on the person's tap.
-  if (workbotHost().browserPreview && live && watchable && surface !== "background") return <section className="workbot-row-enter w-full max-w-[480px] rounded-[20px] bg-[var(--wb-chip)] p-3" aria-label="Computer activity" data-workbot-computer-card>
+  if (live && watchable && surface !== "background") return <section className="workbot-row-enter w-full max-w-[480px] rounded-[20px] bg-[var(--wb-chip)] p-3" aria-label="Computer activity" data-workbot-computer-card>
     <div className="flex min-w-0 items-center gap-2.5 px-1 pb-1">
       <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[var(--wb-surface)] text-[var(--wb-text)]"><Monitor size={20} strokeWidth={1.7} /></span>
       <div className="min-w-0">
@@ -1893,8 +1864,6 @@ function AppLogos({ apps }: { apps: UsedApp[] }) {
   );
 }
 
-
-
 /** An answer as it is written, without a closing "Next:" line, which becomes buttons once the answer is done. */
 function withoutNextLine(text: string) {
   const lines = text.split("\n");
@@ -1920,7 +1889,6 @@ function replyProgress(turn: WorkbotTurn, live: LiveText | null) {
   const lastIsLive = working && last?.kind === "steps" && !liveText;
   return { working, liveText, starting, lastIsLive };
 }
-
 
 /** True only once `flag` has held for `ms`: the typing bubble doesn't flash for a beat between two steps. */
 function useSettled(flag: boolean, ms: number) {
@@ -1970,8 +1938,8 @@ const TurnView = memo(function TurnView(props: {
   const { working, liveText, starting, lastIsLive } = replyProgress(turn, streamed);
   // Browser tasks use one persistent card, never the parallel computer/background cards.
   const browserWork = starting?.surface === "browser" || turn.parts.some(part => part.kind === "steps" && part.steps.some(step => step.surface === "browser"));
-  const quiet = browserWork || workbotHost().workingStatus === true;
-  const visibleTasks = turn.tasks.filter((task) => !props.watcherIds.has(task.id) && (!quiet || task.status === "failed" || task.status === "stopped"));
+
+  const visibleTasks = turn.tasks.filter((task) => !props.watcherIds.has(task.id) && (task.status === "failed" || task.status === "stopped"));
   // A message still sending waits on its files first, in the place the dots take next.
   const uploading = pending !== null && !pending.failed && pending.uploads.some((upload) => upload.status === "uploading");
   // An answer watched while it was written keeps revealing at its pace once it's stored; answers already done when the
@@ -2012,7 +1980,7 @@ const TurnView = memo(function TurnView(props: {
     // Apps used beside computer work show as logos on its card; on their own, as a quiet line.
     here.forEach((surface, at) => {
       const item = card(surface, at === here.length - 1 ? usedApps(apps, null) : []);
-      if (!browserWork && keepsCard(item, { quiet, preview: workbotHost().browserPreview === true })) items.push(item);
+      if (!browserWork && keepsCard(item)) items.push(item);
     });
   });
   if (working && streamed) {
@@ -2024,11 +1992,11 @@ const TurnView = memo(function TurnView(props: {
   if (live && liveText) items.push({ kind: "text", key: `text-${live.step}`, text: liveText });
   for (const surface of work.trailing) {
     const item = card(surface);
-    if (!browserWork && keepsCard(item, { quiet, preview: workbotHost().browserPreview === true })) items.push(item);
+    if (!browserWork && keepsCard(item)) items.push(item);
   }
   // Only once the server's conversation has accepted it: acknowledge without waiting for the model's first token.
   // Real words replace this acceptance line; it never claims the browser opened or a background job started.
-  const acknowledgement = (browserWork || workbotHost().quickReply) && !pending && !items.some((item) => item.kind === "text" && item.text.trim()) ? firstReply(turn) : null;
+  const acknowledgement = !pending && !items.some((item) => item.kind === "text" && item.text.trim()) ? firstReply(turn) : null;
   if (acknowledgement) items.splice(browserWork ? 1 : 0, 0, { kind: "text", key: "accepted", text: acknowledgement });
   // The connected apps as a quiet logo stack under the answer. The header reads the same summary for its status,
   // so it names the same current connector; names and tool details in the chat are disclosed only on hover/tap.
@@ -2044,7 +2012,7 @@ const TurnView = memo(function TurnView(props: {
   // Quiet: the dots mean only "a reply is coming" before Workbot has said or done anything. Once it is at work, the
   // status line under its name says so; dots for minutes would read as someone typing.
   const atWork = parts.some((part) => part.kind === "steps") || Boolean(live?.working);
-  const dots = !acknowledgement && (quiet ? waiting && items.length === 0 && !atWork : waiting && (fresh || settled));
+  const dots = !acknowledgement && (waiting && items.length === 0 && !atWork);
   const [held, setHeld] = useState(false);
   // Whether there are words yet, not the words: this runs when they start, not again for every word streamed.
   const writing = liveText !== "";
@@ -2058,7 +2026,6 @@ const TurnView = memo(function TurnView(props: {
   // One computer, so only the newest reply that used its screen offers to open it, already while it works. Commands run
   // in the background leave nothing on the screen to open.
   const onScreen = (step: WorkbotStep) => step.icon === "computer" && !step.background;
-  const usedComputer = props.latest && ((starting !== null && !starting.background) || parts.some((part) => part.kind === "steps" && part.steps.some(onScreen)));
   return (
     <>
       <SentAttachments attachments={turn.attachments} localUrls={pending ? { ...props.previews, ...pendingAttachments(pending).urls } : props.previews} />
@@ -2090,7 +2057,6 @@ const TurnView = memo(function TurnView(props: {
       </div>
       <DocumentOffers links={offers} />
       <DocumentNavigationStatus receipts={turn.navigation} />
-      {usedComputer && !browserWork && !workbotHost().browserPreview ? <ComputerOffer /> : null}
       {turn.outputs.length ? <ArtifactCards files={turn.outputs} /> : null}
       {/* Quiet: running and finished tasks live in the task sheet (the report says it's done); one that failed or was
           stopped stays here with its way forward. */}
@@ -2122,7 +2088,6 @@ const TurnView = memo(function TurnView(props: {
     </>
   );
 });
-
 
 function duration(ms: number) {
   const seconds = Math.max(0, Math.round(ms / 1_000));

@@ -1,5 +1,7 @@
 # Sandboxes: sample Microsoft 365 for Workbot (`sandboxMicrosoft365`)
 
+> **Generally available:** `sandboxMicrosoft365` is retired; the enabled behavior is now standard. It remains cloud-only. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 - **Key:** `sandboxMicrosoft365`
 - **Deployments:** cloud only (sandbox organizations are cloud only)
 - **Default:** off

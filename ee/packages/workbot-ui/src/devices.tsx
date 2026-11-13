@@ -75,7 +75,7 @@ function DeviceRow({ device, onOpen }: { device: RemoteDevice; onOpen: (() => vo
       <span className="flex min-w-0 flex-wrap gap-x-3 text-[12px] leading-4 text-[var(--wb-muted)]">
         <span>{remoteDeviceTypeLabel(device)}</span>
         {device.access === "shared" ? <span>Shared with your organization</span> : null}
-        {device.kind === "desktop" && device.computerId !== null && host.remoteTasks === true ? <span>Takes tasks from Workbot</span> : null}
+        {device.kind === "desktop" && device.computerId !== null ? <span>Takes tasks from Workbot</span> : null}
       </span>
     </span>
     <span className="flex min-w-0 max-w-[45%] shrink-0 flex-col items-end">

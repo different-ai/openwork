@@ -27,7 +27,6 @@ let pageActive = true;
 let launches: string[] = [];
 let mounts = 0;
 let createPrompts: string[] = [];
-let toolRepair = false;
 let fixChangedTool: ((tool: string) => Promise<void>) | undefined;
 let featuresUsed: string[] = [];
 const legacy: SavedAppSummary = { view: { id: "saved-view", configObjectId: "config", title: "Saved report", description: null, status: "active", activeRevisionId: null, revisions: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }, workflowTitle: "Saved report", canManage: true, onDashboard: false };
@@ -48,7 +47,6 @@ mock.module("../src/react-app/domains/dashboard/mcp-app-tile", () => ({
 mock.module("../src/react-app/domains/dashboard/dashboard-apps", () => ({ SavedDashboardApp: ({ app }: { app: SavedAppSummary }) => <div data-saved-artifact={app.view.id}>Saved artifact</div> }));
 mock.module("../src/react-app/domains/apps/built-app-share-button", () => ({ BuiltAppShareDialog: ({ open }: { open: boolean }) => open ? createPortal(<div data-artifact-share-dialog>Share artifact</div>, document.body) : null }));
 mock.module("../src/app/lib/den", () => ({ markFeatureUsed: (key: string) => { featuresUsed.push(key); } }));
-mock.module("../src/react-app/domains/cloud/use-org-feature", () => ({ useOrgFeature: (name: string) => name === "appToolRepair" && toolRepair }));
 const { ArtifactsPage } = await import("../src/react-app/domains/dashboard/artifacts-page");
 const { rememberArtifactSelection } = await import("../src/react-app/domains/dashboard/artifacts-workspace");
 const { readDashboardTileCache, removeDashboardTileCache, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache");
@@ -69,7 +67,7 @@ async function click(label: string) {
 beforeEach(() => {
   deletions = []; deleteFails = false;
   apps = initialApps; ids = ["overview"]; verified = true; catalogReady = true; pageActive = true; scope = "artifacts-test-member-org"; launches = []; mounts = 0; createPrompts = [];
-  toolRepair = false; fixChangedTool = undefined; featuresUsed = [];
+  fixChangedTool = undefined; featuresUsed = [];
   rememberArtifactSelection(scope, null);
   rememberArtifactSelection("another-member-org", null);
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -179,26 +177,23 @@ test("Delete shows only on an artifact this member may delete", async () => {
   expect(pageButton("Delete")).not.toBeUndefined();
 });
 
-test("Fix with agent is offered only with its feature on, for an App this member manages", async () => {
+test("Fix with agent is offered only for an App this member manages", async () => {
   deletable();
   await render(); await click("Open Overview");
-  expect(fixChangedTool).toBeUndefined();
-  toolRepair = true;
-  await render();
   expect(fixChangedTool).toBeFunction();
   await click("Open Review queue");
   expect(fixChangedTool).toBeUndefined();
 });
 
 test("Fix with agent starts a conversation that updates the same App", async () => {
-  deletable(); toolRepair = true;
+  deletable();
   await render(); await click("Open Overview");
   await act(async () => { await fixChangedTool?.("load_issues"); });
   expect(createPrompts).toHaveLength(1);
   expect(createPrompts[0]).toContain("“Overview” (artifact ID: overview)");
   expect(createPrompts[0]).toContain("“load_issues”");
   expect(createPrompts[0]).toContain("Do not create a copy");
-  expect(featuresUsed).toEqual(["appToolRepair"]);
+  expect(featuresUsed).toEqual([]);
   expect(launches).toHaveLength(1);
 });
 

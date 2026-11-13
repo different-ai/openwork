@@ -5,34 +5,17 @@ import { DenSwitch } from "../../_components/ui/switch";
 
 const ROW_CLASS = "flex min-h-12 items-start justify-between gap-4 border-b border-[var(--den-list-line)] py-3";
 
-export function ssoRequirementDescription(perOrganization: boolean) {
-  return perOrganization
-    ? "SSO is offered first at sign-in. Choose whether this organization, or your whole email domain, requires it."
-    : "How sign-in works for people on your SSO domain.";
+export function ssoRequirementDescription() {
+  return "SSO is offered first at sign-in. Choose whether this organization, or your whole email domain, requires it.";
 }
 
-/**
- * The SSO requirement rows, on Org settings or the SSO page. With
- * ssoPerOrganization off an enabled SSO connection is the only way in, so the
- * rows state that instead of offering a switch that changes nothing.
- */
+/** The SSO requirement rows, on Org settings or the SSO page. */
 export function SsoRequirementFields(props: {
-  perOrganization: boolean;
   draft: SsoSettings;
   disabled: boolean;
   onChange: (next: SsoSettings) => void;
 }) {
-  const { perOrganization, draft, disabled, onChange } = props;
-
-  if (!perOrganization) {
-    return (
-      <div className={ROW_CLASS} data-testid="sso-legacy-status">
-        <p className="text-[13px] font-medium text-[var(--dls-text-primary)]">
-          Required: with SSO on, everyone on your verified domain signs in with it
-        </p>
-      </div>
-    );
-  }
+  const { draft, disabled, onChange } = props;
 
   return (
     <>

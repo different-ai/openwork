@@ -3,7 +3,7 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { Tooltip } from "@base-ui/react/tooltip";
 import { Download, Paperclip, Plug, Trash2, X } from "lucide-react";
-import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { workbotHost, useRetainedSurface } from "./host";
 import {
   downloadWorkbotFile,
@@ -22,7 +22,6 @@ export type { Upload } from "./composer-state";
 export { isImage } from "./images";
 
 /** Files in Workbot (Paper v5: screens 5–8). */
-
 
 export function formatSize(bytes: number) {
   if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
@@ -312,7 +311,7 @@ export function FilesButton({ open, onOpen }: { open: boolean; onOpen: () => voi
       className={`flex h-8 items-center gap-1.5 rounded-full px-2 sm:px-3 text-[13px] font-medium leading-4 transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${open ? "bg-[var(--wb-chip)] text-[var(--wb-text)]" : "text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)]"}`}
     >
       <Paperclip size={15} strokeWidth={1.75} aria-hidden />
-      <span className={workbotHost().centeredProfile ? "hidden sm:inline" : undefined}>Files</span>
+      <span className={"hidden sm:inline"}>Files</span>
     </button>
   );
 }
@@ -376,7 +375,7 @@ export function FilesPanel({ open, onClose, assistantName, onOpenFile }: { open:
 
 /**
  * Files the person sent and files Workbot made, newest first, with how many and how much they take. The Files panel
- * and the Files tab of Workbot's profile (`workbotProfileNav`) show the same list.
+ * and the Files tab of Workbot's profile show the same list.
  */
 export function FilesList({ enabled, assistantName, onOpenFile, framed = true }: { enabled: boolean; assistantName: string; onOpenFile: (file: WorkbotFile) => void; /** The panel's footer; the profile tab shows the count above the list instead. */ framed?: boolean }) {
   const files = useWorkbotFiles(enabled);

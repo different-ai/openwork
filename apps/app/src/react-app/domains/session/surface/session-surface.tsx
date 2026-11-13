@@ -2280,7 +2280,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Commands the agent left running, listed under the Agents list until each exits.
   const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[props.workspaceId]?.running);
   const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
-  const composerBackgroundTasksEnabled = useDesktopFeature("composerBackgroundTasks");
   const followUpSuggestionsEnabled = useDesktopFeature("followUpSuggestions");
   const followUpSuggestion = useFollowUpSuggestion({
     enabled: followUpSuggestionsEnabled && !archived && !snapshot?.session.parentID,
@@ -2290,7 +2289,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     settled: !composerBusy && !error && !props.activePermission && !props.activeQuestion && queuedItems.length === 0,
     model: sessionModel.selectedModel,
   });
-  const backgroundTasksShown = composerBackgroundTasksEnabled && backgroundShells.length > 0 && !archived;
+  const backgroundTasksShown = backgroundShells.length > 0 && !archived;
 
   useEffect(() => {
     if (!hasFullHistory || admissionOutcome !== "unresolved") {
@@ -3978,7 +3977,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
                         activityStatus={effectiveActivityStatus}
                         retryStatus={liveStatus.type === "retry" ? liveStatus : null}
                         syncHealth={runSyncHealth}
-                        backgroundTasksInComposer={composerBackgroundTasksEnabled}
                       />
                     </MessageListProvider>
                   </EnvironmentVariableProvider>

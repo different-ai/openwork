@@ -22,7 +22,6 @@ import {
 import { MemberTable, TeamMemberTable, TeamTable, type OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
-import { organizationFeatureEnabled } from "../features.js"
 import { appLogger } from "../observability/logger.js"
 import { roleIncludesOwner } from "../organization-member-guards.js"
 import { isEffectiveOrganizationAdmin, isOrganizationSuperAdminRole } from "../organization-role-hierarchy.js"
@@ -33,7 +32,6 @@ import {
   memberPermissionsFromGrants,
   missingDefaultSetsPermissionGrants,
   ownerPermissionGrants,
-  superAdminPermissionGrants,
   type MemberPermissions,
   type PermissionExplanation,
   type PermissionGrant,
@@ -43,11 +41,9 @@ import {
  * Server-side permission resolution (docs/permissions/overview.md, section 6).
  *
  * - Owner: every catalog key.
- * - Super-admin (direct role) with `superAdminPermissionSet` off: every
- *   catalog key, like the owner.
  * - Everyone else: the union of the Member default set, the Admin default set
  *   (effective admins only), the Super admin default set (direct super-admin
- *   role, with `superAdminPermissionSet` on; seeded with every catalog key),
+ *   role; seeded with every catalog key),
  *   the active sets of the member's teams (a custom role, or a built-in set
  *   such as Billing manager given to the team) and the sets given to the
  *   member directly (permission_set_member).
@@ -278,24 +274,10 @@ async function databaseGrants(subject: PermissionSubject, membership: DefaultSet
   return grants
 }
 
-/**
- * `superAdminPermissionSet`, per organization only (no member overrides), so
- * every super-admin of an organization resolves the same way. Read through
- * the transaction when resolving inside one.
- */
-function superAdminPermissionSetEnabled(organizationId: OrganizationId, reads: PermissionReads): Promise<boolean> {
-  return reads.transaction
-    ? organizationFeatureEnabled(organizationId, "superAdminPermissionSet", { database: reads.database, lock: "share" })
-    : organizationFeatureEnabled(organizationId, "superAdminPermissionSet")
-}
-
 async function collectPermissionGrants(subject: PermissionSubject, reads: PermissionReads = ROOT_READS): Promise<CollectedGrants> {
   const effectiveAdmin = isEffectiveOrganizationAdmin({ directRole: subject.directRole, adminTeamIds: subject.adminTeams.map((team) => team.id) })
   if (subject.isOwner) return { isOwner: true, isSuperAdmin: false, isAdmin: effectiveAdmin, grants: ownerPermissionGrants() }
   const isSuperAdmin = isOrganizationSuperAdminRole(subject.directRole)
-  if (isSuperAdmin && !(await superAdminPermissionSetEnabled(subject.organizationId, reads))) {
-    return { isOwner: false, isSuperAdmin: true, isAdmin: true, grants: superAdminPermissionGrants() }
-  }
   // Every super-admin is also an admin, so the Admin set applies to them too.
   const isAdmin = effectiveAdmin || isSuperAdmin
 

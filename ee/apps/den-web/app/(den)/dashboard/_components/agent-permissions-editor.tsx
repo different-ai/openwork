@@ -60,7 +60,6 @@ import {
   agentPermissionChoiceOptions,
   agentPermissionChoiceValue,
   storedAgentPermissionDecision,
-  effectiveAgentPermissionSettings,
   visibleAgentPermissionGroups,
   visibleAgentPermissionTryKinds,
   type AgentPermissionsArea,
@@ -410,18 +409,13 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
   onChange: (settings: AgentPermissionSettings) => void;
 }) {
   const { orgContext } = useOrgDashboard();
-  const harnessEnabled = orgFeatureEnabled(orgContext, "agentHarnessPermissions");
-  const browserUploadsEnabled = orgFeatureEnabled(orgContext, "browserUploadPermissions");
   const fileSendsEnabled = orgFeatureEnabled(orgContext, "fileSendPermissions");
-  const computerUseEnabled = orgFeatureEnabled(orgContext, "computerUse");
-  const effectiveSettings = effectiveAgentPermissionSettings(settings, computerUseEnabled);
-  const effectiveEveryone = effectiveAgentPermissionSettings(everyone, computerUseEnabled);
   const scope = teamScopeOf(team === null ? null : { id: scopeId, name: team });
   return (
     <div className="min-w-0" data-testid="agent-permissions-editor" data-scope={scopeId}>
       {/* The standard list panel; each group brings its own top and bottom padding. */}
       <ItemPanel className="!py-0">
-        {visibleAgentPermissionGroups(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled, fileSendsEnabled).map((group) => (
+        {visibleAgentPermissionGroups(area, fileSendsEnabled).map((group) => (
           <div key={group.label} className="pb-1">
             <h3 className="pb-1 pt-3 text-[12px] font-medium text-[var(--dls-text-secondary)]">{group.label}</h3>
             {group.definitions.map((definition) => {
@@ -434,7 +428,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
                   setting={settings[definition.key]}
                   everyoneSetting={team === null ? settings[definition.key] : everyone[definition.key]}
                   editable={editable}
-                  blockedBy={agentPermissionBlockedBy(definition.key, effectiveSettings, team === null ? null : effectiveEveryone)}
+                  blockedBy={agentPermissionBlockedBy(definition.key, settings, team === null ? null : everyone)}
                   onChange={(setting) => onChange(withSetting(settings, definition.key, setting))}
                 />
               );
@@ -442,7 +436,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
           </div>
         ))}
       </ItemPanel>
-      <TryRequest area={area} harnessEnabled={harnessEnabled} browserUploadsEnabled={browserUploadsEnabled} fileSendsEnabled={fileSendsEnabled} computerUseEnabled={computerUseEnabled} everyone={team === null ? effectiveSettings : effectiveEveryone} team={team === null ? null : { name: team, settings: effectiveSettings }} />
+      <TryRequest area={area} fileSendsEnabled={fileSendsEnabled} everyone={team === null ? settings : everyone} team={team === null ? null : { name: team, settings: settings }} />
     </div>
   );
 }
@@ -690,8 +684,8 @@ function PatternLine({ list, label, noun, testId, kind, patterns, inherited, edi
 // Try a request
 // ---------------------------------------------------------------------------
 
-function TryRequest({ area, harnessEnabled, computerUseEnabled, browserUploadsEnabled, fileSendsEnabled, everyone, team }: { area: AgentPermissionsArea; harnessEnabled: boolean; computerUseEnabled: boolean; browserUploadsEnabled: boolean; fileSendsEnabled: boolean; everyone: AgentPermissionSettings; team: { name: string; settings: AgentPermissionSettings } | null }) {
-  const kinds = visibleAgentPermissionTryKinds(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled, fileSendsEnabled);
+function TryRequest({ area, fileSendsEnabled, everyone, team }: { area: AgentPermissionsArea; fileSendsEnabled: boolean; everyone: AgentPermissionSettings; team: { name: string; settings: AgentPermissionSettings } | null }) {
+  const kinds = visibleAgentPermissionTryKinds(area, fileSendsEnabled);
   const [selectedAction, setAction] = useState<AgentPermissionAction>(kinds[0]?.action ?? "shell");
   // A rollout refresh can hide the selected kind without remounting this draft.
   const action = kinds.find((entry) => entry.action === selectedAction)?.action ?? kinds[0]?.action ?? "shell";

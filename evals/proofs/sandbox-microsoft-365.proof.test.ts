@@ -23,17 +23,7 @@ test("a sandbox member connects the sample Microsoft 365 once and Workbot's cale
     return (await world.sandboxes()).sandboxes.find((sandbox) => sandbox.name === name);
   };
 
-  await step("before: with the feature off, a new sandbox gets five separate sample apps Workbot cannot read", async () => {
-    const sandbox = await createSandbox("Before rollout");
-    const ok = sandbox?.connectorCount === 5 && sandbox.sampleMicrosoft365 === false;
-    evidence.recordAssertionEvidence("Off by default: Outlook, Calendar and Drive stay separate MCP connectors", `connectors=${sandbox?.connectorCount}; Microsoft 365=${sandbox?.sampleMicrosoft365}`, ok);
-    expect(ok).toBe(true);
-    await admin.screenshot();
-  });
-
-  await step("the platform admin turns it on and creates a demo sandbox: one Microsoft 365 connector plus Jira and Confluence", async () => {
-    await world.setRollout({ enabled: true });
-    await admin.reload();
+  await step("the platform admin creates a demo sandbox: one Microsoft 365 connector plus Jira and Confluence", async () => {
     const sandbox = await createSandbox("Demo sandbox");
     organizationId = sandbox?.organizationId ?? "";
     joinLink = sandbox?.joinLink ?? "";
@@ -110,19 +100,5 @@ test("a sandbox member connects the sample Microsoft 365 once and Workbot's cale
     evidence.recordAssertionEvidence("Each member reads only their own sample workspace", `Riley account=${status.account}; Avery's meeting in Riley's Den calendar=${calendar.events.includes(MEETING)}; in Riley's Open Calendar=${pageText.includes(MEETING)}`, ok);
     expect(ok).toBe(true);
     await riley.screenshot();
-  });
-
-  await step("the kill switch stops the sample connector without sending anything to Microsoft", async () => {
-    await world.setRollout({ killed: true });
-    const calendar = await world.calendar("avery", organizationId);
-    let startRefused = false;
-    try { await world.connectStart("avery", organizationId, connectionId); } catch (error) { startRefused = error instanceof Error && !error.message.includes("login.microsoftonline.com"); }
-    await avery.navigate(new URL("/dashboard/your-connections", joinLink).toString());
-    await avery.see({ text: "Microsoft 365" }, { timeoutMs: 30_000 });
-    const ok = calendar.status === 409 && /turned off/.test(calendar.message) && startRefused;
-    evidence.recordAssertionEvidence("Turned off: Den refuses rather than falling back to Microsoft", `calendar=${calendar.status} "${calendar.message}"; connect refused=${startRefused}`, ok);
-    expect(ok).toBe(true);
-    await avery.screenshot();
-    await world.setRollout({ killed: false });
   });
 });

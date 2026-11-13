@@ -35,11 +35,11 @@ export const checkpointSchema = z.object({
   sessionResets: z.number().default(0),
   /** New messages always answer like Workbot. False only preserves older in-flight checkpoints. */
   workbot: z.boolean().default(false),
-  /** Told how to read Drive files (`workbotDriveFiles`). Chosen once per message, like `workbot`. */
+  /** New turns always include Drive instructions; false only preserves older in-flight checkpoints. */
   driveFiles: z.boolean().default(false),
   /**
-   * `workbotSlackAnswerReply`: notes written on the way stream into one message, and the final answer is posted as a
-   * new reply that notifies the person. Chosen once per message, like `workbot`.
+   * New turns stream notes then post the final answer as its own reply.
+   * False preserves the reply format of older in-flight checkpoints.
    */
   answerReply: z.boolean().default(false),
   /** The final answer waiting to be posted as its own reply, and how many of its parts already went out. */

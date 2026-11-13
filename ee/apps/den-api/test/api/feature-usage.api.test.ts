@@ -11,7 +11,7 @@ const org = await den.createOrg(await den.signUp("Usage Owner"), "Feature usage 
 const member = await den.newMember(org.owner, org.orgId, "Usage Member")
 const other = await den.createOrg(await den.signUp("Other Owner"), "Other usage workspace")
 // setFeature signs the platform administrator up, so it runs before signing in.
-for (const [key, enabled] of [["settledSessions", true], ["nativeDictation", false], ["workbotProactive", true]] as const) {
+for (const [key, enabled] of [["workbotScrollToBottom", true], ["nativeDictation", false], ["workbotProactive", true]] as const) {
   const set = await den.setFeature(org.orgId, key, enabled)
   assert.equal(set.status, 200, `${key}: ${summary(set)}`)
 }
@@ -20,7 +20,6 @@ const adminToken = text(field(signedIn.body, "token"), "platform admin session")
 const usagePath = (organizationId = org.orgId) => `/v1/admin/organizations/${organizationId}/feature-usage`
 const { db } = await import("../../src/db.js")
 const { recordFeatureUsage } = await import("@openwork-ee/den-db/organization-features")
-
 
 async function usageRows(memberId: string) {
   return db.select({
@@ -48,7 +47,7 @@ function featureEntry(call: Call, key: string) {
 test("recording a use is idempotent within a UTC day and counts the next day once", async () => {
   const memberId = createDenTypeId("member")
   const organizationId = createDenTypeId("organization")
-  const write = (at: string) => recordFeatureUsage(db, { organizationId, memberId, keys: ["settledSessions"], at: new Date(at) })
+  const write = (at: string) => recordFeatureUsage(db, { organizationId, memberId, keys: ["workbotScrollToBottom"], at: new Date(at) })
   await write("2026-10-20T08:00:00.000Z")
   await write("2026-10-20T20:00:00.000Z")
   let [row] = await usageRows(memberId)
@@ -67,14 +66,14 @@ test("recording a use is idempotent within a UTC day and counts the next day onc
 })
 
 test("a client report records only known features that are on for the caller", async () => {
-  const reported = await den.as(member, org.orgId)("POST", "/v1/org/feature-usage", { features: ["settledSessions", "nativeDictation", "notARealFeature"] })
+  const reported = await den.as(member, org.orgId)("POST", "/v1/org/feature-usage", { features: ["workbotScrollToBottom", "nativeDictation", "notARealFeature"] })
   assert.equal(reported.status, 200, summary(reported))
   assert.deepEqual(reported.body, { ok: true })
   const rows = await eventually(() => usageRows(member.memberId), (value) => value.length > 0)
-  assert.deepEqual(rows.map((row) => row.feature_key), ["settledSessions"])
-  const invalid = await den.as(member, org.orgId)("POST", "/v1/org/feature-usage", { features: "settledSessions" })
+  assert.deepEqual(rows.map((row) => row.feature_key), ["workbotScrollToBottom"])
+  const invalid = await den.as(member, org.orgId)("POST", "/v1/org/feature-usage", { features: "workbotScrollToBottom" })
   assert.equal(invalid.status, 400, summary(invalid))
-  assert.equal((await den.request(null, "POST", "/v1/org/feature-usage", { orgId: org.orgId, body: { features: ["settledSessions"] } })).status, 401)
+  assert.equal((await den.request(null, "POST", "/v1/org/feature-usage", { orgId: org.orgId, body: { features: ["workbotScrollToBottom"] } })).status, 401)
 })
 
 test("a request through a feature-gated route counts as a use", async () => {
@@ -98,7 +97,7 @@ test("the admin view shows who has each feature on and who used it", async () =>
   assert.equal(field(result.body, "activeMembers"), 2)
   assert.equal(typeof field(result.body, "generatedAt"), "string")
 
-  const mermaid = featureEntry(result, "settledSessions")
+  const mermaid = featureEntry(result, "workbotScrollToBottom")
   assert.equal(mermaid?.enabledMembers, 2)
   assert.equal(mermaid?.usedLast7Days, 1)
   assert.equal(mermaid?.usedLast30Days, 1)
@@ -117,8 +116,8 @@ test("the admin view shows who has each feature on and who used it", async () =>
   assert.deepEqual(dictation?.members, [])
 
   // Turning a feature off keeps its history and shows it is off now.
-  assert.equal((await den.setFeature(org.orgId, "settledSessions", false)).status, 200)
-  const off = featureEntry(await den.request(adminToken, "GET", usagePath()), "settledSessions")
+  assert.equal((await den.setFeature(org.orgId, "workbotScrollToBottom", false)).status, 200)
+  const off = featureEntry(await den.request(adminToken, "GET", usagePath()), "workbotScrollToBottom")
   assert.equal(off?.enabledMembers, 0)
   assert.equal(list(off?.members)[0]?.enabled, false)
   assert.equal(field(off?.lastChange, "action"), "off")

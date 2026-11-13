@@ -20,7 +20,7 @@ export async function denComputersWorld(seed: Seed) {
       members: { manager: { name: "Alex Morgan" }, owner: { name: "Casey Rivera" }, member: { name: "Riley Chen" }, foreign: { name: "Foreign Owner" } },
     } });
     if (!den.database) throw new Error("Computers proof requires a disposable local database, never an attached Den");
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { remoteDevices: true, computerUse: true, remoteComputers: true });
+    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { remoteDevices: true, remoteComputers: true });
     const request = (session: DenSession, path: string, body?: unknown, method = body === undefined ? "GET" : "POST", org = organizationId) =>
       denFetch(session, path, { method, headers: { authorization: `Bearer ${session.token}`, "x-openwork-org-id": org }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const send = async (session: DenSession, path: string, body?: unknown, method?: string, org?: string) => {

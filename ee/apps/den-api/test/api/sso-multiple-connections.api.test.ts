@@ -86,7 +86,6 @@ let firstProviderId = ""
 let secondProviderId = ""
 
 test("connections are added next to each other, each with its own provider, name and domains", async () => {
-  await den.setFeature(orgId, "ssoPerOrganization", true)
 
   const first = await asOwner("POST", "/v1/sso/connections/oidc", registration(idpA, [mainDomain], "Okta"))
   assert.equal(first.status, 201, summary(first))

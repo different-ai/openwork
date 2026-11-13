@@ -13,7 +13,6 @@ test("single-organization deployments ignore per-organization proof checks even 
   const orgId = text(field(org.body, "organization", "id"), "single org id")
   const { client } = await import("../../src/db.js")
   if (!("getConnection" in client)) throw new Error("needs MySQL")
-  await den.setFeature(orgId, "ssoPerOrganization", true)
   const providerId = `sso-${createDenTypeId("ssoProvider")}`
   await client.execute("INSERT INTO sso_provider (id, issuer, domain, user_id, provider_id, organization_id, domain_verified) VALUES (?, ?, ?, ?, ?, ?, 1)", [createDenTypeId("ssoProvider"), "https://synthetic-idp.example", "single.example", owner.userId, providerId, orgId])
   await client.execute("INSERT INTO sso_connection (id, organization_id, provider_id, kind, issuer, domain, status, sign_in_path) VALUES (?, ?, ?, 'oidc', ?, ?, 'enabled', ?)", [createDenTypeId("ssoConnection"), orgId, providerId, "https://synthetic-idp.example", "single.example", "/sso/single-test"])

@@ -44,11 +44,8 @@ const run = (code: string, runtime?: CodemodeRuntime, extra: { scriptInput?: unk
   runCodemodeScript({ code, tools, timeoutMs: extra.timeoutMs ?? 5_000, scriptInput: extra.scriptInput, ...(runtime ? { runtime } : {}) })
 
 test("a saved Workflow runs only on the interpreter it was written for, never switching silently", () => {
-  assert.equal(codemodeRuntimeFor("codemode-js", true), "openwork")
-  assert.equal(codemodeRuntimeFor("codemode-js", false), "openwork")
-  assert.equal(codemodeRuntimeFor("ecmascript", true), "standard")
-  // With the feature off a standard JavaScript Workflow does not run at all.
-  assert.equal(codemodeRuntimeFor("ecmascript", false), undefined)
+  assert.equal(codemodeRuntimeFor("codemode-js"), "openwork")
+  assert.equal(codemodeRuntimeFor("ecmascript"), "standard")
 })
 
 test("a Workflow payload names either Code Mode and nothing else", () => {

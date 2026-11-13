@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseMemberSsoSignIns, parseResolvedDomainSso, resolveReauthSsoTarget } from "./reauth-sso";
 
-const organization = { slug: "org_abc", hasSso: true, perOrganization: true, requireSso: false, restrictDomainToSso: false };
+const organization = { slug: "org_abc", hasSso: true, requireSso: false, restrictDomainToSso: false };
 const offered = { organizationId: "org_abc", signInUrl: "https://app.example.com/sso/org_abc", ssoOnly: false };
 const required = { organizationId: "org_req", signInUrl: "https://app.example.com/sso/org_req", ssoOnly: true };
 const domainOffered = { signInUrl: "https://app.example.com/sso/acme", domainForced: false, organizationRequired: false };
@@ -35,7 +35,6 @@ test("signed in without a known organization, only a single SSO organization is 
 test("an older Den API without /v1/me/sso-sign-in falls back to the organization context", () => {
   assert.deepEqual(resolveReauthSsoTarget({ ...none, organizationId: "org_abc", organization }), { signInUrl: "/sso/org_abc", ssoOnly: false });
   assert.equal(resolveReauthSsoTarget({ ...none, organization: { ...organization, requireSso: true } })?.ssoOnly, true);
-  assert.equal(resolveReauthSsoTarget({ ...none, organization: { ...organization, perOrganization: false } })?.ssoOnly, true);
   assert.equal(resolveReauthSsoTarget({ ...none, resolvedDomainSso: domainOffered, organization: { ...organization, hasSso: false } }), null);
   assert.equal(resolveReauthSsoTarget({ ...none, organization: { ...organization, slug: "a b/c" } })?.signInUrl, "/sso/a%20b%2Fc");
 });

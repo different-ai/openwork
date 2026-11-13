@@ -44,7 +44,6 @@ before(async () => {
 })
 
 const admin = await den.signUp("Platform Admin", `platform-admin+${den.stamp}@example.test`)
-const rollout = (body: { enabled?: boolean; killed?: boolean }) => den.request(admin.token, "PUT", "/v1/admin/features/sandboxMicrosoft365", { body })
 const create = (name: string) => den.request(admin.token, "POST", "/v1/admin/sandbox-orgs", {
   body: { name, connectorBaseUrl: workplace, days: 14, memberLimit: 5, allowedEmailDomains: [], joinRole: "member" },
 })
@@ -96,16 +95,7 @@ async function calendar(person: Session, orgId: string) {
 }
 const subjects = (call: Awaited<ReturnType<typeof calendar>>) => list(field(call.body, "events")).map((event) => String(event.subject))
 
-test("off: a sandbox keeps its five separate sample connectors", async () => {
-  assert.equal((await rollout({ enabled: false })).status, 200)
-  const created = await create("Before the rollout")
-  assert.equal(created.status, 200, summary(created))
-  assert.equal(field(created.body, "sandbox", "connectorCount"), 5)
-  assert.equal(field(created.body, "sandbox", "sampleMicrosoft365"), false)
-})
-
 test("on: each member's Microsoft 365 reads their own sample workspace through Den's ordinary routes", async () => {
-  assert.equal((await rollout({ enabled: true })).status, 200)
   const created = await create("Demo sandbox")
   assert.equal(created.status, 200, summary(created))
   const sandbox = field(created.body, "sandbox")
@@ -138,17 +128,6 @@ test("on: each member's Microsoft 365 reads their own sample workspace through D
   const mail = await den.as(riley, orgId)("GET", "/v1/capabilities/microsoft-365/mail-messages?maxResults=5")
   assert.equal(mail.status, 200, summary(mail))
 
-  // The kill switch stops the sample connector; nothing is sent to Microsoft instead.
-  assert.equal((await rollout({ killed: true })).status, 200)
-  const killed = await calendar(avery, orgId)
-  assert.equal(killed.status, 409, summary(killed))
-  assert.match(text(field(killed.body, "message"), "message"), /turned off/)
-  const refusedStart = await den.as(avery, orgId)("GET", `/v1/oauth-providers/${connectionId}/connect/start`)
-  assert.ok(!JSON.stringify(refusedStart.body).includes("login.microsoftonline.com"), summary(refusedStart))
-  assert.notEqual(refusedStart.status, 200, summary(refusedStart))
-  assert.equal((await rollout({ killed: false, enabled: true })).status, 200)
-  assert.equal((await calendar(avery, orgId)).status, 200, "restoring the rollout brings it back without reconnecting")
-
   // When the sandbox ends, so does its sample Microsoft 365.
   await client.execute("UPDATE sandbox_organization SET expires_at = DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 1 MINUTE) WHERE organization_id = ?", [orgId])
   const ended = await calendar(avery, orgId)
@@ -157,21 +136,15 @@ test("on: each member's Microsoft 365 reads their own sample workspace through D
 })
 
 test("an existing sandbox gets it from /admin, and ordinary organizations keep Microsoft's sign-in", async () => {
-  assert.equal((await rollout({ enabled: false })).status, 200)
   const older = field((await create("Older sandbox")).body, "sandbox")
   const id = text(field(older, "id"), "sandbox id"), orgId = text(field(older, "organizationId"), "organization id")
-  const refused = await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/microsoft-365`)
-  assert.equal(refused.status, 400, "needs the feature on for the organization first")
-  const override = await den.request(admin.token, "PUT", `/v1/admin/organizations/${encodeURIComponent(orgId)}/capabilities`, { body: { capabilities: { sandboxMicrosoft365: true } } })
-  assert.ok(override.status < 300, summary(override))
   const added = await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/microsoft-365`)
   assert.equal(added.status, 200, summary(added))
   assert.equal(field(added.body, "sandbox", "sampleMicrosoft365"), true)
-  assert.equal(field(added.body, "sandbox", "connectorCount"), 6, "the separate connectors stay until an admin removes them")
-  assert.equal(field((await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/microsoft-365`)).body, "sandbox", "connectorCount"), 6, "adding twice is harmless")
+  assert.equal(field(added.body, "sandbox", "connectorCount"), 3, "existing Microsoft 365 stays in place")
+  assert.equal(field((await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/microsoft-365`)).body, "sandbox", "connectorCount"), 3, "adding twice is harmless")
 
   // An ordinary organization with the feature on everywhere still signs in at Microsoft.
-  assert.equal((await rollout({ enabled: true })).status, 200)
   const owner = await den.signUp("Ordinary Owner")
   const ordinary = await den.createOrg(owner, "Ordinary company")
   const connection = await den.as(owner, ordinary.orgId)("POST", "/v1/mcp-connections", { kind: "native_provider", nativeProviderKey: "microsoft-365", name: "Microsoft 365", oauthClient: { clientId: "real-entra-app", clientSecret: "real-entra-secret-value", features: ["calendarRead"] } })

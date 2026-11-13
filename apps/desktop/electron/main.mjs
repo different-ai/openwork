@@ -356,7 +356,7 @@ function computerPolicyDenied(message) {
 }
 
 /** The chat a call belongs to: a subagent's is the chat that started it, as the trusted bridge reports. */
-const computerChatOf = (args) => computerControl.parallelAgents() && typeof args?.rootSessionId === "string" && args.rootSessionId ? args.rootSessionId : args?.sessionId;
+const computerChatOf = (args) => typeof args?.rootSessionId === "string" && args.rootSessionId ? args.rootSessionId : args?.sessionId;
 
 /** @param {string} sessionId */
 async function checkComputerPermission(sessionId) {
@@ -367,9 +367,6 @@ async function checkComputerPermission(sessionId) {
   }
   return null;
 }
-
-/** The renderer reports the `agentQuestions` feature; the engine offers ask_without_waiting while it is on. */
-let agentQuestionsEnabled = false;
 
 const uiControlServer = createUiControlServer({
   app,
@@ -396,9 +393,6 @@ const uiControlServer = createUiControlServer({
     if (decision.effect === "deny") return computerPolicyDenied(decision.message);
     return computerControl.script(args, { ...options, approveEachScript: decision.effect === "ask" });
   },
-  computerEnabled: () => computerControl.featureEnabled(),
-  computerParallel: () => computerControl.parallelAgents(),
-  agentQuestionsEnabled: () => agentQuestionsEnabled,
 });
 
 const terminalProcesses = new Map();
@@ -1601,8 +1595,6 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
   // rollout only for endpoints trusted before the renderer starts issuing IPC.
   legacyBaseUrls: legacyRunnerBaseUrls,
   getJournalRoot: () => path.join(app.getPath("userData"), "session-runner"),
-  // Start remote-session tasks as soon as Den announces them (Den's remoteSessionPush feature).
-  remoteSessionPush: true,
   // A task started from another computer reports the computer-use approval it waits on,
   // so the person can answer it where they are instead of coming to this computer.
   computerRequests: createComputerRequestAnswers(computerControl),
@@ -2273,26 +2265,9 @@ const desktopCommandHandlers = {
       if (typeof id !== "string" || !id) throw new Error("Choose a remembered file sharing permission to remove.");
       return browserUploadPermissions.remove(id);
   },
-  "computerSetFeatureEnabled": async (event, enabled) => {
-      assertComputerSender(event);
-      return computerControl.setFeatureEnabled(enabled === true);
-  },
-  "agentQuestionsSetEnabled": async (event, enabled) => {
-      if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error("Only the main OpenWork window reports features.");
-      agentQuestionsEnabled = enabled === true;
-      return agentQuestionsEnabled;
-  },
   "computerSetRemoteEnabled": async (event, enabled) => {
       assertComputerSender(event);
       return computerControl.setRemoteEnabled(enabled === true);
-  },
-  "computerSetStandardCodeMode": async (event, enabled) => {
-      assertComputerSender(event);
-      return computerControl.setStandardCodeMode(enabled === true);
-  },
-  "computerSetParallelAgents": async (event, enabled) => {
-      assertComputerSender(event);
-      return computerControl.setParallelAgents(enabled === true);
   },
   "computerRecordableOverlay": async (event) => {
       assertComputerSender(event);
@@ -2303,10 +2278,10 @@ const desktopCommandHandlers = {
       computerRecordableOverlay = enabled === true;
       return computerRecordableOverlay;
   },
-  // Compatibility for older renderers; background delivery now follows computerUse.
+  // Compatibility for older renderers; background delivery is always available.
   "computerSetBackgroundEnabled": async (event) => {
       assertComputerSender(event);
-      return computerControl.setBackgroundEnabled();
+      return true;
   },
   "computerResetPermission": async (event, permission) => {
       assertComputerSender(event);

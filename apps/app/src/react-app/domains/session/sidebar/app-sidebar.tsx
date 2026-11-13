@@ -477,52 +477,6 @@ function SessionRowMenu({ className, sessionId, workspaceId, sessionTitle, works
   );
 }
 
-/** Keep the shipped quick actions when the settledSessions rollout is off. */
-function SessionLegacyQuickActions({ sessionId, workspaceId, isPinned, isArchived, relativeTime }: {
-  sessionId: string;
-  workspaceId: string;
-  isPinned: boolean;
-  isArchived: boolean;
-  relativeTime: string | null;
-}) {
-  const ctx = useSidebarContext();
-  return (
-    <div
-      data-session-hover-actions
-      className="absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 opacity-0 pointer-events-none transition-opacity group-hover/menu-sub-item:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-has-data-popup-open/menu-sub-item:opacity-100 group-has-data-popup-open/menu-sub-item:pointer-events-auto max-lg:opacity-100 max-lg:pointer-events-auto pointer-coarse:opacity-100 pointer-coarse:pointer-events-auto"
-    >
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-5 text-muted-foreground hover:bg-transparent hover:text-foreground"
-        aria-label={isPinned ? t("session_management.unpin_session") : t("session_management.pin_session")}
-        onClick={(event) => {
-          event.stopPropagation();
-          useSessionManagementStore.getState().togglePin(sessionId);
-        }}
-      >
-        {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
-      </Button>
-      {ctx.onArchiveSession && !ctx.archiveDisabledReason ? (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-5 text-muted-foreground hover:bg-transparent hover:text-foreground"
-          aria-label={isArchived ? t("session_management.unarchive_session") : t("session_management.archive_session")}
-          data-testid={`session-archive-${sessionId}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            ctx.onArchiveSession?.(sessionId, !isArchived, workspaceId);
-          }}
-        >
-          {isArchived ? <ArchiveRestore className="size-3.5" /> : <Archive className="size-3.5" />}
-        </Button>
-      ) : null}
-      {relativeTime ? <span className={SESSION_ROW_METADATA_CLASS}>{relativeTime}</span> : null}
-    </div>
-  );
-}
-
 type SessionContextMenuProps = {
   children: React.ReactElement;
   sessionId: string;
@@ -614,8 +568,6 @@ export type AppSidebarProps = {
   selectedSessionId: string | null;
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
-  /** Shows the Workspaces · Feed switch (ships with `settledSessions`). */
-  feedEnabled?: boolean;
   sessionAttentionLabelById?: Record<string, string>;
   sessionAttentionSourceById?: Record<string, "child" | "descendant">;
   sessionAttentionKindById?: Record<string, SessionWaitingKind>;
@@ -731,7 +683,6 @@ export function AppSidebar(props: AppSidebarProps) {
     developerMode: props.developerMode,
     showSessionActions: props.showSessionActions,
     sessionStatusById: props.sessionStatusById,
-    feedEnabled: props.feedEnabled,
     sessionAttentionLabelById: props.sessionAttentionLabelById,
     sessionAttentionSourceById: props.sessionAttentionSourceById,
     sessionAttentionKindById: props.sessionAttentionKindById,
@@ -771,7 +722,7 @@ export function AppSidebar(props: AppSidebarProps) {
   );
   const sidebarView = useSessionManagementStore((state) => state.sidebarView);
   const feed = useSessionFeed(props.workspaceSessionGroups, {
-    enabled: props.feedEnabled === true && sidebarView === "feed",
+    enabled: sidebarView === "feed",
     statusById: props.sessionStatusById,
   });
   const feedView = feed !== null;
@@ -875,16 +826,10 @@ export function AppSidebar(props: AppSidebarProps) {
             {/* A flex item of the scrolling list: without shrink-0 it collapses to its
                 button's height once the list overflows, shifting every row up. */}
             <div className={cn("group/workspaces-header flex h-6 shrink-0 items-center mt-4", SIDEBAR_SECTION_LANE)}>
-              {props.feedEnabled ? (
-                <SidebarViewSwitch
-                  view={feedView ? "feed" : "workspaces"}
-                  onChange={(view) => useSessionManagementStore.getState().setSidebarView(view)}
-                />
-              ) : (
-                <span className={SIDEBAR_SECTION_LABEL}>
-                  {t("workspace_list.title")}
-                </span>
-              )}
+              <SidebarViewSwitch
+                view={feedView ? "feed" : "workspaces"}
+                onChange={(view) => useSessionManagementStore.getState().setSidebarView(view)}
+              />
               {feedView ? (
                 <div className="ml-auto flex items-center gap-0.5">
                   <FeedOrderMenu />
@@ -1834,7 +1779,7 @@ function SessionGroupActions({ group, groups, workspaceId, count }: {
         data-session-group-actions={group.id}
         className={cn(
           "relative ml-auto flex h-5 shrink-0 items-center justify-end overflow-hidden transition-[width] duration-150",
-          expanded ? (ctx.feedEnabled ? "w-20" : "w-15") : "w-4",
+          expanded ? "w-20" : "w-4",
         )}
         onMouseLeave={() => setExpanded(false)}
       >
@@ -1854,21 +1799,19 @@ function SessionGroupActions({ group, groups, workspaceId, count }: {
           </button>
         ) : (
           <span className="flex items-center">
-            {ctx.feedEnabled ? (
-              <button
-                type="button"
-                className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  useSessionManagementStore.getState().toggleFeedFolder(workspaceId, group.id);
-                  setExpanded(false);
-                }}
-                aria-label={pinnedToFeed ? t("session_management.unpin_from_feed") : t("session_management.pin_to_feed")}
-                title={pinnedToFeed ? t("session_management.unpin_from_feed") : t("session_management.pin_to_feed")}
-              >
-                {pinnedToFeed ? <PinOff className="size-3" /> : <Pin className="size-3" />}
-              </button>
-            ) : null}
+            <button
+              type="button"
+              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+              onClick={(event) => {
+                event.stopPropagation();
+                useSessionManagementStore.getState().toggleFeedFolder(workspaceId, group.id);
+                setExpanded(false);
+              }}
+              aria-label={pinnedToFeed ? t("session_management.unpin_from_feed") : t("session_management.pin_to_feed")}
+              title={pinnedToFeed ? t("session_management.unpin_from_feed") : t("session_management.pin_to_feed")}
+            >
+              {pinnedToFeed ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+            </button>
             <button
               type="button"
               className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
@@ -2322,27 +2265,6 @@ function SessionNumberShortcutSlot({ digit, children, sharedWithMenu = false }: 
   const ctx = useSidebarContext();
   const label = digit === undefined ? null : sessionNumberShortcutLabel(ctx.sessionNumberShortcutOs, digit);
 
-  if (!ctx.feedEnabled) {
-    if (label === null) return null;
-    return (
-      <span
-        data-session-action-slot="number-shortcut"
-        aria-hidden="true"
-        className={cn(
-          "flex h-5 shrink-0 items-center justify-center animate-in fade-in duration-1000 ease-out motion-reduce:animate-none",
-          ctx.sessionNumberShortcutOs === "macos" ? "w-8" : "w-11",
-        )}
-      >
-        <kbd
-          data-session-shortcut-badge={digit}
-          className="inline-flex h-5 items-center justify-center rounded-md border border-sidebar-border/70 bg-sidebar-accent/80 px-1.5 font-sans text-[10px] font-medium leading-none tracking-tight text-sidebar-foreground/70 shadow-xs"
-        >
-          {label}
-        </kbd>
-      </span>
-    );
-  }
-
   return (
     <span
       data-session-action-slot="number-shortcut"
@@ -2454,7 +2376,7 @@ export function SessionMenuItem({
     />
   );
 
-  const menu = ctx.feedEnabled ? (
+  const menu = (
     <SessionRowMenu
       sessionId={session.id}
       workspaceId={workspaceId}
@@ -2466,8 +2388,6 @@ export function SessionMenuItem({
         ? cn("absolute bottom-1 end-3 z-10", shortcutDigit !== undefined && "invisible data-popup-open:visible focus-visible:visible")
         : cn("absolute end-2.5 top-1/2 z-10 -translate-y-1/2", shortcutDigit !== undefined && "invisible data-popup-open:visible focus-visible:visible")}
     />
-  ) : (
-    <SessionLegacyQuickActions sessionId={session.id} workspaceId={workspaceId} isPinned={isPinned} isArchived={isArchived} relativeTime={relativeTime} />
   );
 
   const item = (
@@ -2511,7 +2431,6 @@ export function SessionMenuItem({
             className={cn(
               SESSION_ROW_BUTTON_CLASS,
               "w-full text-start",
-              !ctx.feedEnabled && "group-hover/menu-sub-item:pe-18 group-has-data-popup-open/menu-sub-item:pe-18 max-lg:pe-18 pointer-coarse:pe-18",
               // Calm Feed: 48px two-line row, 12px × 6px padding, every lane fixed.
               feedRow && "h-12 translate-x-0 items-start gap-2 rounded-md px-3 pe-3 py-1.5 rtl:translate-x-0",
             )}
@@ -2540,17 +2459,13 @@ export function SessionMenuItem({
               <>
                 {leading}
                 <SessionTitle intent={titleIntent} title={displayTitle} tooltip={itemTitle} />
-                {ctx.feedEnabled ? (
-                  <SessionNumberShortcutSlot digit={shortcutDigit} sharedWithMenu>
-                    {relativeTime ? (
-                      <span className={cn(SESSION_ROW_METADATA_CLASS, "col-start-1 row-start-1 transition-opacity duration-75 group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0 group-has-data-popup-open/menu-sub-item:opacity-0 pointer-coarse:opacity-0")}>
-                        {relativeTime}
-                      </span>
-                    ) : null}
-                  </SessionNumberShortcutSlot>
-                ) : shortcutDigit !== undefined ? (
-                  <SessionNumberShortcutSlot digit={shortcutDigit} />
-                ) : null}
+                <SessionNumberShortcutSlot digit={shortcutDigit} sharedWithMenu>
+                  {relativeTime ? (
+                    <span className={cn(SESSION_ROW_METADATA_CLASS, "col-start-1 row-start-1 transition-opacity duration-75 group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0 group-has-data-popup-open/menu-sub-item:opacity-0 pointer-coarse:opacity-0")}>
+                      {relativeTime}
+                    </span>
+                  ) : null}
+                </SessionNumberShortcutSlot>
               </>
             )}
           </SidebarMenuSubButton>

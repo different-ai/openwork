@@ -1,5 +1,7 @@
 # Steady chat while a reply runs
 
+> **Generally available:** `steadyLiveTurn` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 Feature: `steadyLiveTurn`. Cloud and self-hosted. Author: `benjaminshafii`.
 Off by default.
 

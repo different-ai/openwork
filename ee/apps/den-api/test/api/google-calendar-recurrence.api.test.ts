@@ -77,7 +77,7 @@ const den = await bootDen({ env: {
 } })
 after(async () => { await den.close(); await provider.close() })
 
-test("Google Calendar recurrence is gated, normalized and confirmed through the real API", async (t) => {
+test("Google Calendar recurrence is normalized and confirmed through the real API", async (t) => {
   const { owner, orgId } = await den.createOrg(await den.signUp("Calendar Owner"), "Calendar recurrence workspace")
   const call = den.as(owner, orgId)
   const configured = await call("POST", "/v1/oauth-providers/google-workspace/client", { clientId: "fixture_client", clientSecret: "fixture_secret", features: ["calendarRead", "calendarWrite"] })
@@ -91,23 +91,6 @@ test("Google Calendar recurrence is gated, normalized and confirmed through the 
   const connected = await den.request(null, "GET", callback.pathname + callback.search)
   assert.equal(connected.status, 200, summary(connected))
 
-  await t.test("recurrence turned off for the organization rejects structured and raw creates before contacting Google", async () => {
-    const disabled = await den.setFeature(orgId, "googleCalendarRecurrence", false)
-    assert.equal(disabled.status, 200, summary(disabled))
-    const org = await call("GET", "/v1/org")
-    assert.equal(org.status, 200, summary(org))
-    assert.equal(field(org.body, "features", "googleCalendarRecurrence"), false)
-    const before = calls.length
-    for (const rule of [{ recurrence }, { rrule: rawRules }]) {
-      const denied = await call("POST", path, { ...eventInput, timeZone, ...rule })
-      assert.equal(denied.status, 400, summary(denied))
-      assert.ok(denied.text.includes("googleCalendarRecurrence"), denied.text)
-    }
-    assert.equal(calls.length, before, "disabled recurrence never contacts the provider")
-  })
-
-  const enabled = await den.setFeature(orgId, "googleCalendarRecurrence", true)
-  assert.equal(enabled.status, 200, summary(enabled))
   let masterId = ""
   await t.test("enabled structured recurrence sends only Google recurrence lines and returns the series receipt", async () => {
     const created = await call("POST", path, { ...eventInput, timeZone, recurrence })
@@ -292,27 +275,4 @@ test("Google Calendar recurrence is gated, normalized and confirmed through the 
     }
   })
 
-  await t.test("disabling recurrence again blocks creates, replacements and clears while ordinary events remain usable", async () => {
-    const disabled = await den.setFeature(orgId, "googleCalendarRecurrence", false)
-    assert.equal(disabled.status, 200, summary(disabled))
-    const before = calls.length
-    for (const rule of [{ recurrence }, { rrule: rawRules }]) {
-      const denied = await call("POST", path, { ...eventInput, timeZone, ...rule })
-      assert.equal(denied.status, 400, summary(denied))
-    }
-    for (const rule of [{ recurrence }, { rrule: rawRules }, { recurrence: null }]) {
-      const denied = await call("PATCH", `${path}/${masterId}`, { ...times, ...rule, sendUpdates: "none" })
-      assert.equal(denied.status, 400, summary(denied))
-    }
-    assert.equal(calls.length, before, "turning recurrence off blocks writes before Google is contacted")
-    const created = await call("POST", path, eventInput)
-    assert.equal(created.status, 200, summary(created))
-    assert.equal(field(created.body, "recurrence"), null)
-    assert.deepEqual(calls.at(-1)?.body, { summary: eventInput.summary, start: { dateTime: start }, end: { dateTime: end } })
-    const id = text(field(created.body, "eventId"), "ordinary event ID")
-    const updated = await call("PATCH", `${path}/${id}`, { summary: "Updated planning meeting", sendUpdates: "none" })
-    assert.equal(updated.status, 200, summary(updated))
-    assert.equal(field(updated.body, "event", "summary"), "Updated planning meeting")
-    assert.deepEqual(calls.at(-1)?.body, { summary: "Updated planning meeting" })
-  })
 })
