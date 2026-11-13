@@ -37,6 +37,7 @@ import { OpenWorkWebAccessGate } from "../domains/cloud/openwork-web-access-gate
 import { OrgOnboardingPage } from "../domains/cloud/org-onboarding-page";
 import { ChatDeepLinkListener } from "./chat-deep-link-listener";
 import { NewProvidersListener } from "./new-providers-listener";
+import { LowStorageNotifier } from "./low-storage-notifier";
 import { AutomationFailureNotifier } from "@/react-app/domains/automations/automation-failure-notifier";
 import { useDesktopFontZoomBehavior } from "./font-zoom";
 import { LoadingOverlay } from "./loading-overlay";
@@ -684,6 +685,7 @@ export function AppRoot() {
       */}
       <NewProvidersListener />
       <AutomationFailureNotifier />
+      <LowStorageNotifier />
       <DevProfilerOverlay />
       <ReactRenderWatchdogOverlay />
     </>
