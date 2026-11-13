@@ -1,3 +1,4 @@
+import { startMcpEventWorker } from "./mcp-events/worker.js"
 import { Server } from "node:http"
 import { DEN_HTTP_KEEP_ALIVE_TIMEOUT_MS, serveDenHttp } from "./http-server.js"
 import { DEN_SHUTDOWN_DRAIN_MS, installGracefulShutdown, trackEventStreams } from "./graceful-shutdown.js"
@@ -26,6 +27,7 @@ import { startConfigBlobWorker } from "./config-blobs/worker.js"
 
 const stopSlackAssistantWorker = startSlackAssistantWorker()
 const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()
+const stopMcpEventWorker = startMcpEventWorker()
 const stopWorkbotProactiveWorker = startWorkbotProactiveWorker()
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopBillingInvitationExpiryLoop = startBillingInvitationExpiryLoop()
@@ -65,6 +67,7 @@ async function stopBackgroundLoops() {
     stopSlackAssistantWorker(),
     stopSlackDesktopHandoffWorker(),
     stopWorkbotProactiveWorker(),
+    stopMcpEventWorker(),
     stopCloudIdleStopLoop(),
     stopWorkerProvisioningReconcileLoop(),
     stopGithubSyncWorker(),

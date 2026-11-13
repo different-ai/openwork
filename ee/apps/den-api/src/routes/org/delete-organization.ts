@@ -107,6 +107,9 @@ import {
   WorkspaceBootstrapTable,
   WorkspaceClaimTable,
   HeadlessResumeGrantTable,
+  McpEventReceiptTable,
+  McpEventSubscriptionTable,
+  McpEventTurnTable,
   HeadlessResumeRevocationTable,
   SandboxOrganizationTable,
 } from "@openwork-ee/den-db/schema"
@@ -652,6 +655,9 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(FeatureUsageTable).where(eq(FeatureUsageTable.organization_id, organizationId))
         await deleteOrganizationFeatureIntroStates(tx, organizationId)
         await deleteOrganizationRemoteDevices(tx, organizationId)
+        await tx.delete(McpEventReceiptTable).where(eq(McpEventReceiptTable.organizationId, organizationId))
+        await tx.delete(McpEventSubscriptionTable).where(eq(McpEventSubscriptionTable.organizationId, organizationId))
+        await tx.delete(McpEventTurnTable).where(eq(McpEventTurnTable.organizationId, organizationId))
         await deleteHeadlessSessionIndexForOrganization(tx, organizationId)
         // Resume grants are useless once the members are gone (the exchange needs an active member); delete them too.
         await unlessResumeTableMissing("headless_resume_grant", () => tx.delete(HeadlessResumeGrantTable).where(eq(HeadlessResumeGrantTable.organizationId, organizationId)))

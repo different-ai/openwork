@@ -42,6 +42,7 @@ import {
   ENTERPRISE_MCP_RESOURCE_URI_LIMIT_BYTES,
 } from "./resource-catalog.js"
 import { assertEnterpriseMcpToolArguments } from "./tool-input.js"
+import { advertisesEvents, observeLegacyEventCapability, withEventRoutingHeaders } from "./events-compat.js"
 
 const connectionSchema = z.object({
   id: z.string().trim().min(1),
@@ -93,6 +94,7 @@ type Session = {
   controller: AbortController
   requestOptions: RequestOptions
   lifecycle: EnterpriseMcpLifecycle
+  legacyEventsAdvertised: () => boolean
   /** Set once the server was asked to end the session. */
   releaseAttempted?: boolean
 }
@@ -179,7 +181,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
   } = parsedOptions
   const explicitOperationTimeoutMs = options.operationTimeoutMs
   const clock: EnterpriseMcpClock = options.clock ?? { now: () => Date.now() }
-  const configuredFetch: EnterpriseMcpFetch = options.fetch
+  const configuredFetch: EnterpriseMcpFetch = options.webhookEvents ? withEventRoutingHeaders(options.fetch) : options.fetch
 
   function emitDiagnostic(event: Parameters<NonNullable<EnterpriseMcpClientOptions["diagnosticSink"]>>[0]): void {
     try {
@@ -328,9 +330,12 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       fetch: oauthProvider ? oauthProvider.exclusiveRefreshFetch(observer.fetch) : observer.fetch,
       requestInit: requestInit(input.connection.authorization),
     })
+    const legacyEventsAdvertised = options.webhookEvents ? observeLegacyEventCapability(transport) : () => false
     const capabilities = {
+      ...(options.webhookEvents ? { events: {} } : {}),
       extensions: {
         [MCP_APP_EXTENSION]: { mimeTypes: [MCP_APP_MIME_TYPE] },
+        ...(options.webhookEvents ? { "io.modelcontextprotocol/events": {} } : {}),
       },
     }
     const client = new Client(
@@ -356,6 +361,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       controller,
       requestOptions,
       lifecycle: { expiresAt: configuredExpiresAt, signal: requestSignal },
+      legacyEventsAdvertised,
     }
   }
 
@@ -666,6 +672,26 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
         },
         id: authorizationId,
         reason: input.reason,
+      })
+    },
+
+    async requestEvents(input) {
+      if (!options.webhookEvents) throw new Error("MCP webhook events are not enabled for this client.")
+      return runConnectedOperation({
+        connection: input.connection,
+        redirectUri: input.redirectUri,
+        operationPhase: "protocol-initialize",
+        operation: async (session) => {
+          let advertised = session.legacyEventsAdvertised() || advertisesEvents(session.client.getServerCapabilities())
+          if (!advertised && session.client.getProtocolEra() === "modern") {
+            // Auto-negotiation owns the transport observer while discovering. Preserve the
+            // ChatGPT top-level alias with an explicit schema on this read-only fallback.
+            const discovery = await session.client.request({ method: "server/discover" }, z.record(z.string(), z.unknown()), session.requestOptions)
+            advertised = advertisesEvents(discovery.capabilities)
+          }
+          if (!advertised) throw new Error("The MCP server does not advertise Events support.")
+          return session.client.request({ method: input.method, params: input.params }, z.record(z.string(), z.unknown()), session.requestOptions)
+        },
       })
     },
 
