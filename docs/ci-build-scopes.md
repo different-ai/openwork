@@ -256,3 +256,64 @@ Offline regression tests (no Render credentials or network calls):
 ```sh
 node --test .github/scripts/render-build-filters.test.mjs
 ```
+
+## Production deploys
+
+`.github/workflows/production-deploy.yml` deploys dev to production as the last
+step after a dev push, instead of Render's and Vercel's own Git auto-deploys,
+which start the moment a commit lands and do not wait for its checks.
+
+For each dev push it:
+
+1. Waits until the quick check and the API contract passed on that exact
+   commit. A failure stops the run; nothing deploys.
+2. Plans each target in `.github/scripts/production-deploy.mjs` by comparing
+   the commit with the one the target runs now, using the build inputs in
+   `build-inputs.mjs` (`native-*` for Render, `vercel-*` for Vercel). Unknown
+   live state or comparison deploys; a target already on a newer dev commit is
+   never moved backwards. Den API is held back (the run goes red) while Den DB
+   Migrate's latest run failed.
+3. Deploys the core services (`api-private`, `inference-private`) and waits
+   until they are live, then `workbot`, `client-web` and the Vercel projects
+   (`openwork-den`, `openwork-app`, `openwork-landing`, `openwork-diagnostics`).
+   Render deploys pin `commitId`; Vercel deploys build the checked-out commit
+   with `vercel deploy --prod`.
+
+Runs never overlap. GitHub keeps only the newest pending run, so pushes that
+land during a deploy go out together in the next one; that is why the plan
+compares with what is live rather than with the previous push.
+
+`den-api-env.yml` and `dev-daytona-snapshot.yml` redeploy the commit Den API
+already runs, never the dev head, so they cannot release an unchecked commit.
+
+### Rollout
+
+The workflow starts in **dry run**: it waits for the same checks and writes
+its plan to the run summary, compared with the previous push (the providers'
+auto-deploys have usually made the commit live already), without deploying.
+
+1. Create the `production-deploy` environment with `RENDER_API_KEY` (the
+   Different Ai Inc workspace) and `VERCEL_TOKEN` (access to the four
+   projects). Without them a dry run still plans, but cannot read or verify
+   what is live.
+2. Watch dry runs for a few days: every target should be found and verified
+   (service name, workspace, repo, branch; project name and root directory),
+   and its decisions should match the deploys Render and Vercel made.
+3. Switch, in one change:
+   - Render: set Auto-Deploy to **Off** on `api-private`, `inference-private`,
+     `workbot` and `client-web`, and on the suspended services that still have
+     it on (`api`, `inference`, `inference-west`, `den-api-west`,
+     `den-legacy-migrator-temp`, `den-mysql-core`).
+   - Vercel: add `"git": { "deploymentEnabled": { "dev": false } }` to the
+     `vercel.json` of `ee/apps/den-web`, `apps/app`, `ee/apps/landing` and
+     `ee/apps/diagnostics`. PR previews keep building.
+   - Set the repository variable `PRODUCTION_DEPLOY_MODE` to `deploy`.
+4. To deploy a dev commit by hand, or to roll forward after a fix, run
+   **Actions → Production deploy → Run workflow** with mode `deploy` and an
+   optional commit.
+
+To roll back the switch, unset `PRODUCTION_DEPLOY_MODE` and turn the providers'
+auto-deploys back on. For an emergency rollback of one service, use Render's
+or Vercel's own rollback, and land the fix or revert on dev before the next
+push: the next deploy of that service replaces the rollback with the newer dev
+commit.

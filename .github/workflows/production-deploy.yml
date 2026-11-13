@@ -1,0 +1,214 @@
+name: Production deploy
+
+# Deploys dev to production on Render and Vercel as the last step after a dev
+# push, once the checks every dev push runs have passed on that exact commit:
+# the quick check and the API contract, plus Den DB Migrate before Den API.
+# Core services (Den API, inference) go live before the services that call
+# them (Workbot, client web, the Vercel apps). Each service deploys only when
+# its build inputs changed since the commit it runs now, at exactly this
+# commit, never at the branch head. See "Production deploys" in
+# docs/ci-build-scopes.md.
+#
+# Mode: vars.PRODUCTION_DEPLOY_MODE, "dry-run" unless set to "deploy". A dry
+# run waits for the same checks and writes the plan to the run summary,
+# compared with the previous push, without deploying. Switch to "deploy" only
+# after turning off Render's and Vercel's own auto-deploys for dev.
+#
+# Required configuration, on the production-deploy environment:
+#   secrets.RENDER_API_KEY   Render API key for the Different Ai Inc workspace
+#   secrets.VERCEL_TOKEN     Vercel token with access to the four projects
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run plans only; deploy deploys"
+        type: choice
+        options:
+          - dry-run
+          - deploy
+        default: dry-run
+      sha:
+        description: "Commit on dev to deploy (default: the dev head this run starts from)"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+
+# One deploy at a time, in push order. GitHub keeps only the newest pending
+# run, so pushes during a deploy are deployed together by the next one: the
+# plan compares with what is live, not with the previous push.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Wait for checks and plan
+    if: github.repository == 'different-ai/openwork' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production-deploy
+      deployment: false
+    outputs:
+      mode: ${{ steps.target.outputs.mode }}
+      sha: ${{ steps.target.outputs.sha }}
+      core: ${{ steps.plan.outputs.core }}
+      edge: ${{ steps.plan.outputs.edge }}
+      blocked: ${{ steps.plan.outputs.blocked }}
+    steps:
+      # The deploy scripts come from the dev commit this run started on.
+      - name: Checkout dev with history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - name: Choose the commit and mode
+        id: target
+        env:
+          INPUT_SHA: ${{ inputs.sha }}
+          INPUT_MODE: ${{ inputs.mode }}
+          VAR_MODE: ${{ vars.PRODUCTION_DEPLOY_MODE }}
+        run: |
+          set -euo pipefail
+          sha="${INPUT_SHA:-$GITHUB_SHA}"
+          sha="$(git rev-parse --verify "${sha}^{commit}")"
+          if ! git merge-base --is-ancestor "$sha" "$GITHUB_SHA"; then
+            echo "::error::$sha is not on dev; production deploys only dev commits."
+            exit 1
+          fi
+          mode="${INPUT_MODE:-${VAR_MODE:-dry-run}}"
+          [ "$mode" = "deploy" ] || mode="dry-run"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Production deploy ($mode) of $sha"
+      - name: Wait for the dev checks to pass on this commit
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.target.outputs.sha }}
+        run: node .github/scripts/production-deploy.mjs gate --sha "$SHA" --wait-minutes 20
+      - name: Plan
+        id: plan
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          SHA: ${{ steps.target.outputs.sha }}
+          MODE: ${{ steps.target.outputs.mode }}
+          MIGRATIONS: ${{ steps.gate.outputs.migrations }}
+          # A dry run runs beside the providers' own auto-deploys, which have
+          # usually made this commit live already: compare with the previous push.
+          BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
+        run: |
+          set -euo pipefail
+          base=""
+          if [ "$MODE" = "dry-run" ] && [ -n "$BEFORE" ] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then base="$BEFORE"; fi
+          node .github/scripts/production-deploy.mjs plan --sha "$SHA" --mode "$MODE" --migrations "$MIGRATIONS" ${base:+--base "$base"}
+
+  deploy-core:
+    name: Deploy ${{ matrix.target }}
+    needs: plan
+    if: needs.plan.outputs.mode == 'deploy' && needs.plan.outputs.core != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment:
+      name: production-deploy
+      deployment: false
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.core) }}
+    steps:
+      - name: Checkout the commit to deploy
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - name: Deploy and wait until live
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          TARGET: ${{ matrix.target }}
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: node .github/scripts/production-deploy.mjs deploy --target "$TARGET" --sha "$SHA"
+
+  # Only once every core service that had to deploy is live.
+  deploy-edge:
+    name: Deploy ${{ matrix.target }}
+    needs: [plan, deploy-core]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.mode == 'deploy' &&
+      needs.plan.outputs.edge != '[]' &&
+      (needs.deploy-core.result == 'success' || needs.deploy-core.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment:
+      name: production-deploy
+      deployment: false
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.edge) }}
+    steps:
+      - name: Checkout the commit to deploy
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - name: Deploy and wait until live
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          TARGET: ${{ matrix.target }}
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: node .github/scripts/production-deploy.mjs deploy --target "$TARGET" --sha "$SHA"
+
+  # One result for the run: red when a check, a deploy or a blocked target failed.
+  result:
+    name: Production deploy result
+    needs: [plan, deploy-core, deploy-edge]
+    if: always() && github.repository == 'different-ai/openwork' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every selected step to succeed
+        env:
+          PLAN: ${{ needs.plan.result }}
+          CORE: ${{ needs.deploy-core.result }}
+          EDGE: ${{ needs.deploy-edge.result }}
+          BLOCKED: ${{ needs.plan.outputs.blocked }}
+        run: |
+          set -euo pipefail
+          echo "plan=$PLAN core=$CORE edge=$EDGE blocked=${BLOCKED:-[]}"
+          [ "$PLAN" = "success" ] || { echo "::error::The checks or the plan did not pass; nothing was deployed."; exit 1; }
+          for result in "$CORE" "$EDGE"; do
+            case "$result" in success|skipped) ;; *) echo "::error::A deploy did not succeed ($result)."; exit 1 ;; esac
+          done
+          if [ -n "$BLOCKED" ] && [ "$BLOCKED" != "[]" ]; then
+            echo "::error::Held back until Den DB Migrate passes: $BLOCKED"
+            exit 1
+          fi

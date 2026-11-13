@@ -178,6 +178,15 @@ export function buildInputPatterns(target, options = {}) {
       "ee/apps/gateway/src/models/base.json", "ee/apps/gateway/src/models/base-v2.json",
       CI_WORKFLOW, ".github/scripts/classify-ci-changes.mjs",
     ]; break;
+    // Vercel production projects, deployed by production-deploy.yml. Each
+    // builds its app from the repository root with the root .vercelignore.
+    case "vercel-den-web": patterns = [...closure("@openwork-ee/den-web"), ".vercelignore"]; break;
+    case "vercel-app": patterns = [
+      ...closure("@openwork/app"), "apps/server/src/mcp-app-sandbox.ts", "apps/desktop/package.json", ".vercelignore",
+    ]; break;
+    // The landing build command also builds packages/email, which it does not declare.
+    case "vercel-landing": patterns = [...closure("@openwork-ee/landing", "@openwork/email"), ".vercelignore"]; break;
+    case "vercel-diagnostics": patterns = [...closure("@openwork-ee/diagnostics"), ".vercelignore"]; break;
     case "review": patterns = [
       ...closure("@openwork/review-app"), "apps/app/src/styles/colors.css",
       ".vercelignore", ".github/workflows/review-app-deploy.yml",
