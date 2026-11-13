@@ -3097,7 +3097,7 @@ export function SessionRoute() {
     },
   });
   const handleArchiveSession = async (sessionId: string, archived: boolean, workspaceId: string) => {
-    await archiveSessionInWorkspace(workspaceId, sessionId, archived);
+    return archiveSessionInWorkspace(workspaceId, sessionId, archived);
   };
   archiveSessionRef.current = handleArchiveSession;
 

@@ -104,6 +104,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  archivedSessionCompose: {
+    label: "Continue archived conversations",
+    description: "Write a follow-up in an archived conversation and unarchive it when you send.",
+    category: "experience",
+    added: "2026-11-13",
+    since: "2026-11",
+    author: "yomgui",
+    docs: "docs/features/archived-session-compose/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   nativeMcpEvents: {
     label: "Session and computer MCP events",
     description: "Subscribe to changes in your remote sessions and computers through MCP Events.",

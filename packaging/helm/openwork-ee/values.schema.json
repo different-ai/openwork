@@ -61,6 +61,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "archivedSessionCompose": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Continue archived conversations: Write a follow-up in an archived conversation and unarchive it when you send. Renders DEN_FEATURE_ARCHIVED_SESSION_COMPOSE."
+            },
             "nativeMcpEvents": {
               "enum": [
                 "",
