@@ -214,6 +214,12 @@ export interface LocalProviderOptions {
   native?: EngineV2NativeProviders;
   /** Where catalog providers' environment keys are read from, as the v1 engine does. */
   environment?: NodeJS.ProcessEnv;
+  /**
+   * Called when the v1 engine cannot describe the providers that need it. Those
+   * providers are then skipped as `metadata` and every other one still
+   * resolves; without it the failure rejects.
+   */
+  onCatalogError?: (error: Error) => void;
 }
 
 /**
@@ -257,11 +263,20 @@ export async function resolveLocalProviders(
   }
   if (!wanted.length || !config.opencodeBaseUrl) return resolved;
   const url = new URL("/provider", config.opencodeBaseUrl);
-  const response = await loopbackFetch(url.toString(), { headers: {
-    Authorization: `Basic ${Buffer.from(`${config.opencodeUsername}:${config.opencodePassword}`).toString("base64")}`,
-  }, signal: AbortSignal.timeout(10_000) });
-  if (!response.ok) throw new Error("Could not read locally connected provider metadata");
-  const value: unknown = await response.json();
+  let value: unknown;
+  try {
+    const response = await loopbackFetch(url.toString(), { headers: {
+      Authorization: `Basic ${Buffer.from(`${config.opencodeUsername}:${config.opencodePassword}`).toString("base64")}`,
+    }, signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) throw new Error("Could not read locally connected provider metadata");
+    value = await response.json();
+  } catch (error) {
+    if (!options.onCatalogError) throw error;
+    // One engine that cannot answer must not take every other provider with it.
+    options.onCatalogError(error instanceof Error ? error : new Error("Could not read locally connected provider metadata"));
+    return [...resolved, ...wanted.map((id): LocalProvider => ({ id, status: "skipped", reason: "metadata" }))]
+      .sort((left, right) => left.id.localeCompare(right.id));
+  }
   const catalog = new Map((record(value) && Array.isArray(value.all) ? value.all : []).flatMap(provider =>
     record(provider) && typeof provider.id === "string" ? [[provider.id, provider] as const] : []));
   for (const id of wanted) {

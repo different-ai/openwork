@@ -1026,7 +1026,13 @@ export function createEngineV2Preview(options: {
     // "Only models you provide": the providers v1 omits from `enabled_providers`
     // never reach v2 either, whether configured or connected on this computer.
     const allowsProvider = organizationProviderGate(globalRuntime.managedPolicy);
-    const localAuth = await readLocalProviderAuth();
+    // A source that cannot be read costs only its own providers: the rest of
+    // the mirror still reaches the engine, and the reason stays in the status.
+    const unreadable: string[] = [];
+    const localAuth = await readLocalProviderAuth().catch((error: unknown) => {
+      unreadable.push(errorMessage(error));
+      return { apiKeys: new Map<string, string>(), signIns: new Set<string>() };
+    });
     const localKeys = allowsProvider
       ? new Map([...localAuth.apiKeys].filter(([id]) => allowsProvider(id)))
       : localAuth.apiKeys;
@@ -1038,6 +1044,7 @@ export function createEngineV2Preview(options: {
     const userFile = await userConfigProviders(configured, allowsProvider, native, localKeys, credentials, undefined, environment);
     const local = await localProviderDefinitions(config, localAuth, { ...configured, ...userFile.claimed }, {
       allows: allowsProvider, native, environment,
+      onCatalogError: () => { unreadable.push("Could not read locally connected provider metadata"); },
     });
     const blockedConfigured = Object.keys(configured).filter(id => allowsProvider && !allowsProvider(id));
     const combinedProviders = { ...local.providers, ...Object.fromEntries(Object.entries(configured)
@@ -1093,7 +1100,7 @@ export function createEngineV2Preview(options: {
     for (const directory of mcpLocations.keys()) void ensureWorkspaceReady(directory).catch(() => undefined);
     const catalog = await waitForEngineV2Catalog(active, workspaceDir, specs, CATALOG_MIRROR_TIMEOUT_MS, ownsGateway);
     currentCatalogModelIds = catalog.modelIds;
-    lastError = [...templates.errors, ...userFile.errors].map(error => error.message)
+    lastError = [...unreadable, ...[...templates.errors, ...userFile.errors].map(error => error.message)]
       .concat(catalog.lastError ? [catalog.lastError] : []).join("\n") || undefined;
   }
 
