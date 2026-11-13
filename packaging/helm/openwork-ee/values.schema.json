@@ -111,6 +111,16 @@
               ],
               "description": "Desktop: import connections from OpenCode: Settings shows how many connections a person set up in their own OpenCode config are not in OpenWork, with an Import from OpenCode action. Importing copies them into OpenWork once, like adding each by hand, then shows each one's real state and anything that was left out. The person's OpenCode files are never changed. Off, Settings does not look at the OpenCode config. Renders DEN_FEATURE_IMPORT_OPENCODE_CONNECTIONS."
             },
+            "activationLocalSetup": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Get set up: count what works on this device: The Get set up checklist also checks off a model provider and a connection that work on the person's own device, without setting them up again in OpenWork, and inviting a teammate becomes optional while they are the only person in the organization, so someone working alone can finish setup. Turning it off restores the earlier checklist at once; nothing is lost. Renders DEN_FEATURE_ACTIVATION_LOCAL_SETUP."
+            },
             "denGreySidebar": {
               "enum": [
                 "",

@@ -3,6 +3,7 @@
 import { Popover } from "@base-ui/react/popover";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ACTIVATION_OPTIONAL_DETAIL,
   ACTIVATION_STEP_TITLES,
   activationChecklistPresentation,
   activationProgress,
@@ -180,7 +181,7 @@ function SetupPopover({ state, presentation, onHide }: { state: ActivationState;
             <ol className="flex flex-col">
               {steps.map((step) => {
                 const status = rowState(step);
-                const line = step.done ? step.detail : step.lockedReason;
+                const line = step.done ? step.detail : step.lockedReason ?? (step.optional ? ACTIVATION_OPTIONAL_DETAIL : undefined);
                 return (
                   <li key={step.id} data-testid={`workbot-setup-step-${step.id}`} data-state={status} className="flex min-h-11 items-center gap-2.5 border-t border-[var(--wb-hairline)] px-2.5 py-2 first:border-t-0">
                     <StepMark state={status} />

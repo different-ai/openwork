@@ -4,8 +4,12 @@ import type { ActivationClientEvent, ActivationState } from "@openwork/types/den
 import { createDenClient, denOriginComparisonKey } from "@/app/lib/den";
 import { readGatewayUsageScope, subscribeGatewayUsageScope } from "@/app/lib/gateway-usage-scope";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
+import { AUTO_PROVIDER_ID } from "@/react-app/domains/models/model-catalog";
+import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import { providerCredentialScope, useProviderCredentialHealth } from "@/react-app/domains/connections/provider-auth/credential-health";
 import { useDenAuth } from "../den-auth-provider";
-import { activationHiddenStorageKey, createActivationReporter, draftUsesSkill } from "./activation-model";
+import { useOrgFeature } from "../use-org-feature";
+import { activationHiddenStorageKey, createActivationReporter, draftUsesSkill, hasDeviceConnection, hasVerifiedDeviceProvider } from "./activation-model";
 import { createActivationCache } from "./activation-cache";
 
 /**
@@ -53,6 +57,20 @@ export function useActivation() {
     pendingFirstAnswer = null;
     void reportActivationEvent("first_response", durationMs);
   }, [state, prefixKey]);
+  // `activationLocalSetup`: what already works on this device is reported, only for the organization it is on for.
+  const localSetup = useOrgFeature("activationLocalSetup");
+  useEffect(() => {
+    if (!authorized || !localSetup) return;
+    localSetupKey = prefixKey;
+    // Connection statuses are read once a minute and may have arrived before the feature was known.
+    reportDeviceConnection();
+    return () => { if (localSetupKey === prefixKey) localSetupKey = null; };
+  }, [authorized, localSetup, prefixKey]);
+  // A provider set up on this device that has served an answer works, however it was set up: no need to save its key again.
+  const deviceProviderWorks = useProviderCredentialHealth((health) => hasVerifiedDeviceProvider(health, managedProvider));
+  useEffect(() => {
+    if (state && localSetup && deviceProviderWorks) void reportActivationEvent("own_provider");
+  }, [state, localSetup, deviceProviderWorks]);
   const denOrigin = denOriginComparisonKey(scope.baseUrl);
   const hiddenKey = authorized && denOrigin && organizationId && principalId
     ? activationHiddenStorageKey({ origin: denOrigin, organizationId, principalId })
@@ -106,6 +124,33 @@ export function reportActivationEvent(step: ActivationClientEvent, durationMs?: 
   const queryKey = activationCache.key(scope);
   if (!queryKey) return Promise.resolve(false);
   return report({ ...scope, source: scope, queryKey, key: JSON.stringify(queryKey) }, step, durationMs);
+}
+
+/** Providers the organization or OpenWork supplies: Den counts those itself. */
+function managedProvider(providerId: string): boolean {
+  return isCloudManagedProviderKey(providerId) || providerId === AUTO_PROVIDER_ID;
+}
+
+/** The checklist scope `activationLocalSetup` is on for, while its card is mounted; null means off. */
+let localSetupKey: string | null = null;
+
+/** Whether the last connection statuses read from an engine on this device held a connection of the person's own. */
+let deviceConnectionSeen = false;
+
+/**
+ * The connection statuses of the engine that serves chats were read. With `activationLocalSetup`, a connection of
+ * the person's own that is connected in an engine on this device is reported; once Den counts it, nothing is sent.
+ */
+export function noteActivationConnectionStatuses(engineBaseUrl: string, statuses: Readonly<Record<string, { status: string }>>) {
+  deviceConnectionSeen = providerCredentialScope(engineBaseUrl) === "device" && hasDeviceConnection(statuses);
+  reportDeviceConnection();
+}
+
+function reportDeviceConnection() {
+  if (!deviceConnectionSeen || !localSetupKey) return;
+  const scope = readGatewayUsageScope();
+  if (!scope.token || !scope.organizationId || localSetupKey !== JSON.stringify(activationQueryPrefix(scope))) return;
+  void reportActivationEvent("connector");
 }
 
 const skillRuns = new Set<string>();

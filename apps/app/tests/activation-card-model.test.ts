@@ -7,6 +7,8 @@ import {
   activationHiddenStorageKey,
   createActivationReporter,
   draftUsesSkill,
+  hasDeviceConnection,
+  hasVerifiedDeviceProvider,
   shouldReportActivationEvent,
 } from "../src/react-app/domains/cloud/activation/activation-model"
 
@@ -126,4 +128,62 @@ test("Hide setup removes the card entirely, even after Den counts it dismissed",
   const key = (principalId: string, organizationId = "org_a") => activationHiddenStorageKey({ origin: "https://den.example", organizationId, principalId })
   expect(key("member_a")).not.toBe(key("member_b"))
   expect(key("member_a")).not.toBe(key("member_a", "org_b"))
+})
+
+test("an optional step keeps its row and action, is not counted, and is never next", () => {
+  const alone: ActivationState = {
+    steps: ids.map((id) => ({ id, done: id !== "invite_teammate" && id !== "connector", ...(id === "invite_teammate" ? { optional: true } : {}) })),
+    dismissed: false,
+  }
+  const model = activationCardModel(alone)
+  expect(model).toMatchObject({ presentation: "full", done: 4, total: 5, next: "Connect an app" })
+  if (model.presentation === "hidden") throw new Error("expected a card")
+  expect(model.rows[1]).toEqual({ id: "invite_teammate", title: "Invite a teammate", state: "open", line: "Optional while you work alone", action: { kind: "invite", label: "Invite" } })
+  // Everything that applies is done: nothing left to show.
+  const finished: ActivationState = { ...alone, steps: alone.steps.map((step) => (step.id === "connector" ? { ...step, done: true } : step)) }
+  expect(activationCardModel(finished).presentation).toBe("hidden")
+  // Without the marker (an older Den, or the feature off) the same step counts as before.
+  expect(activationCardModel(state(["first_response", "use_skill", "own_provider", "gateway_provider"]))).toMatchObject({ done: 4, total: 6, next: "Invite a teammate" })
+})
+
+test("a provider counts as working on this device only after it served an answer here and is the person's own", () => {
+  const managed = (id: string) => id.startsWith("lpr_") || id === "openwork" || id === "openwork-free"
+  const key = (workspace: string, provider: string) => JSON.stringify([workspace, provider])
+  const scopes = { local: "device", remote: "https://worker.example" }
+  const verified = { status: "verified" }
+  expect(hasVerifiedDeviceProvider({ entries: { [key("local", "opencode-go")]: verified }, workspaceScopes: scopes }, managed)).toBe(true)
+  expect(hasVerifiedDeviceProvider({ entries: {}, workspaceScopes: scopes }, managed)).toBe(false)
+  // Rejected or never used: not working.
+  expect(hasVerifiedDeviceProvider({ entries: { [key("local", "anthropic")]: { status: "rejected" } }, workspaceScopes: scopes }, managed)).toBe(false)
+  // The organization's or OpenWork's models, and the engine's built-in ones, are not the person's own setup.
+  for (const provider of ["lpr_123", "openwork", "openwork-free", "opencode"]) {
+    expect(hasVerifiedDeviceProvider({ entries: { [key("local", provider)]: verified }, workspaceScopes: scopes }, managed)).toBe(false)
+  }
+  // A remote workspace's provider is not on this device; an unknown workspace proves nothing.
+  expect(hasVerifiedDeviceProvider({ entries: { [key("remote", "anthropic")]: verified }, workspaceScopes: scopes }, managed)).toBe(false)
+  expect(hasVerifiedDeviceProvider({ entries: { [key("gone", "anthropic")]: verified, "not json": verified, '"text"': verified }, workspaceScopes: scopes }, managed)).toBe(false)
+})
+
+test("a connection counts on this device only when the engine reports the person's own one connected", () => {
+  expect(hasDeviceConnection({ linear: { status: "connected" } })).toBe(true)
+  expect(hasDeviceConnection({ linear: { status: "needs_auth" }, notion: { status: "failed" }, github: { status: "disabled" } })).toBe(false)
+  // Organization connections are Den's to count.
+  expect(hasDeviceConnection({ "openwork-cloud": { status: "connected" }, "openwork-direct-slack-c1ca24": { status: "connected" } })).toBe(false)
+  expect(hasDeviceConnection({})).toBe(false)
+  expect(hasDeviceConnection(null)).toBe(false)
+})
+
+test("a device connection is reported once while its step is open, and never once Den counts it", async () => {
+  const sent: string[] = []
+  let current: ActivationState | null = state(["first_response"])
+  const report = createActivationReporter<{ key: string }>({
+    readState: () => current,
+    send: async (_scope, step) => { sent.push(step); return state(["first_response", "connector"]) },
+    onState: (_scope, next) => { current = next },
+  })
+  expect(await Promise.all([report({ key: "a" }, "connector"), report({ key: "a" }, "connector")])).toEqual([true, false])
+  expect(await report({ key: "a" }, "connector")).toBe(false)
+  expect(sent).toEqual(["connector"])
+  current = null
+  expect(await report({ key: "a" }, "connector")).toBe(false)
 })
