@@ -7,6 +7,7 @@ import { memberPermissionsForOrganizationContext } from "../../middleware/member
 import { checkMemberPermission, type PermissionCheckOptions, type PermissionCheckResult } from "../../permissions/check.js"
 import type { MemberPermissions } from "../../permissions/effective.js"
 import { env } from "../../env.js"
+import { invitationEmailProof } from "../../invitation-email.js"
 import { denTypeIdSchema } from "../../openapi.js"
 import {
   normalizeOrganizationRoleName,
@@ -121,6 +122,17 @@ const createNanoid = customAlphabet("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefg
 
 export function buildInvitationLink(inviteToken: string) {
   return new URL(`/join-org?invite=${encodeURIComponent(inviteToken)}`, getInvitationOrigin()).toString()
+}
+
+/**
+ * The join link for the invitation email only. It adds the proof that the
+ * link reached the invited mailbox (invitation-email.ts), so it must never be
+ * returned by an API or shown to the inviter.
+ */
+export function buildInvitationEmailLink(inviteToken: string, email: string) {
+  const link = new URL(buildInvitationLink(inviteToken))
+  link.searchParams.set("inviteProof", invitationEmailProof({ inviteToken, email }))
+  return link.toString()
 }
 
 export function ensureOwner(c: PrivilegedOrgRouteContext) {

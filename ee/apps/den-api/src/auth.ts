@@ -63,7 +63,7 @@ import { fetchCimdMetadataResource, isCimdClientIdUrlAllowed } from "./mcp/cimd-
 import { withLoopbackRedirectRelaxation } from "./mcp/cimd-loopback-redirects.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
-import { organizationInviteEmailProps } from "./invitation-email.js";
+import { invitationEmailProofMatches, organizationInviteEmailProps } from "./invitation-email.js";
 // Read while this module loads: take them from the import-free module, never
 // from api-keys.ts, which is in an import cycle with this file.
 import {
@@ -512,14 +512,21 @@ function readSignUpInvite(ctx: { request?: Request; query?: unknown; body?: unkn
   return readRequestQueryParam(ctx.request, "invite") ?? readStringProperty(ctx.query, "invite") ?? readStringProperty(ctx.body, "invite");
 }
 
+function readSignUpInviteProof(ctx: { request?: Request; query?: unknown; body?: unknown } | null | undefined) {
+  if (!ctx) return null;
+  return readRequestQueryParam(ctx.request, "inviteProof") ?? readStringProperty(ctx.query, "inviteProof") ?? readStringProperty(ctx.body, "inviteProof");
+}
+
 /**
  * Whether signing up from an invitation link counts as verifying the email
- * for every organization. Only the join token proves it, never the
- * invitation id, which every member can see; the invitation must be pending,
- * unexpired and addressed to this email.
+ * for every organization. Only the link in the invitation email proves it:
+ * that link carries a proof made for the join token and the invited address
+ * (invitation-email.ts). The join token alone does not, because the inviter
+ * can read it, and neither does the invitation id, which every member can
+ * see. The invitation must be pending, unexpired and addressed to this email.
  */
-async function invitationLinkVerifiesEmail(input: { inviteToken: string | null; email: string }) {
-  if (!input.inviteToken) {
+async function invitationLinkVerifiesEmail(input: { inviteToken: string | null; inviteProof: string | null; email: string }) {
+  if (!input.inviteToken || !invitationEmailProofMatches({ inviteToken: input.inviteToken, email: input.email, proof: input.inviteProof })) {
     return false;
   }
 
@@ -916,7 +923,7 @@ export const auth = betterAuth({
             throw new APIError("FORBIDDEN", { message: SCIM_DEPROVISIONED_SIGN_IN_MESSAGE });
           }
           const verifiedByInvitation = context?.path === "/sign-up/email"
-            && await invitationLinkVerifiesEmail({ inviteToken: readSignUpInvite(context), email });
+            && await invitationLinkVerifiesEmail({ inviteToken: readSignUpInvite(context), inviteProof: readSignUpInviteProof(context), email });
           // The /setup administrator's email is one the operator configured,
           // and the one-time setup code proves the person signing up is that
           // operator. Like an invitation link, that vouches for the address,

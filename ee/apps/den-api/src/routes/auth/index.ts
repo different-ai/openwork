@@ -33,7 +33,7 @@ import {
 } from "../../initial-admin-bootstrap.js"
 import { getInvalidMcpOAuthRedirectUris, isAllowedMcpOAuthRedirectUri, MCP_OAUTH_REDIRECT_URI_ERROR_DESCRIPTION } from "../../mcp/oauth-client-policy.js"
 import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
-import { publicRoute, queryValidator, tokenRoute } from "../../middleware/index.js"
+import { ORGANIZATION_BOUND_SESSION_MESSAGE, publicRoute, queryValidator, tokenRoute } from "../../middleware/index.js"
 import { checkOAuthTokenRateLimit, recordOAuthTokenFailure, type OAuthTokenFailureBudgets } from "../../oauth-token-rate-limit.js"
 import {
   getOAuthTokenFailureLogFields,
@@ -49,7 +49,7 @@ import { timeScimDiagnosticStage } from "../../observability/scim-diagnostics.js
 import { getAuthRequestEmail, getSingleOrgEmailSignupPolicyViolation, type SingleOrgEmailSignupPolicyViolation } from "../../single-org-signup-policy.js"
 import { samlResponsePolicyMiddleware } from "../../sso-saml-response-middleware.js"
 import { authorizeOrganizationSsoCallback, failOrganizationSsoTestIntent } from "../../sso-test-lifecycle.js"
-import { getRequestSession, readSignedSessionCookieToken, revokeBearerSession, type AuthContextVariables } from "../../session.js"
+import { getRequestSession, readSignedSessionCookieToken, requestHasOrganizationBoundSession, revokeBearerSession, type AuthContextVariables } from "../../session.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import { AUTH_RATE_LIMIT_POLICIES, authRateLimitedResponse, checkAuthRateLimit } from "../../auth-rate-limits.js"
 import { betterAuthRequest, requestClientIpKey, resolveRequestClientIp } from "../../request-client-ip.js"
@@ -785,8 +785,22 @@ async function checkEmailAuthRateLimit(request: Request, invitationSignupAllowed
   return authRateLimitedResponse(result)
 }
 
+/**
+ * Better Auth's own endpoints act on the whole account (password, sessions,
+ * organizations, consent). A session bound to one organization may only read
+ * itself and sign out there.
+ */
+function organizationBoundSessionMayCall(request: Request) {
+  const path = getBetterAuthProxyPath(new URL(request.url).pathname)
+  const method = request.method.toUpperCase()
+  return (method === "GET" && path === "/get-session") || (method === "POST" && path === "/sign-out")
+}
+
 async function handleAuthRequest(c: Context) {
   const request = c.req.raw
+  if (requestHasOrganizationBoundSession(c) && !organizationBoundSessionMayCall(request)) {
+    return Response.json({ error: "forbidden", message: ORGANIZATION_BOUND_SESSION_MESSAGE }, { status: 403 })
+  }
   const observabilityRequest = request.method === "POST"
     && getBetterAuthProxyPath(new URL(request.url).pathname) === "/oauth2/token"
     ? request.clone()

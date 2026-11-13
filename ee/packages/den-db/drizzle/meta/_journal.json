@@ -1401,6 +1401,13 @@
       "when": 1794528647377,
       "tag": "0200_native_mcp_events",
       "breakpoints": true
+    },
+    {
+      "idx": 201,
+      "version": "5",
+      "when": 1794602214480,
+      "tag": "0201_handoff_grant_without_token",
+      "breakpoints": true
     }
   ]
 }

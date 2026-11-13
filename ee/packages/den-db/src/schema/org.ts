@@ -9,7 +9,14 @@ export const DesktopHandoffGrantTable = mysqlTable(
   {
     id: varchar("id", { length: 64 }).notNull().primaryKey(),
     user_id: denTypeIdColumn("user", "user_id").notNull(),
-    session_token: text("session_token").notNull(),
+    // The signed-in session the grant was created from. The exchange gives the
+    // recipient a session of its own, so the grant never holds a token.
+    session_id: denTypeIdColumn("session", "session_id"),
+    // Set when the recipient's session must work in this organization only.
+    organization_id: denTypeIdColumn("organization", "organization_id"),
+    // No longer written. Rows from before grants stopped holding tokens are
+    // cleared when exchanged and deleted once expired.
+    session_token: text("session_token"),
     expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
     consumed_at: timestamp("consumed_at", { fsp: 3 }),
     created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),

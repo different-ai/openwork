@@ -22,8 +22,17 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   const apiKey = c.get("apiKey")
   const apiKeyScopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
   const headerOrganizationId = getRequestScopedOrganizationId(c.req.raw.headers)
-  const scopedOrganizationId = apiKeyScopedOrganizationId ?? headerOrganizationId
   const session = c.get("session")
+  // A session bound to one organization (session-token.ts) acts there only,
+  // like an API key: the request cannot name another organization.
+  const sessionScopedOrganizationId = session?.organizationScopeId ?? null
+  if (sessionScopedOrganizationId && headerOrganizationId && headerOrganizationId !== sessionScopedOrganizationId) {
+    return c.json({
+      error: "forbidden",
+      message: "This sign-in works in one organization only.",
+    }, 403) as never
+  }
+  const scopedOrganizationId = apiKeyScopedOrganizationId ?? sessionScopedOrganizationId ?? headerOrganizationId
   const userId = normalizeDenTypeId("user", user.id)
 
   let organizationId = scopedOrganizationId ?? c.get("activeOrganizationId") ?? null

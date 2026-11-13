@@ -14,6 +14,30 @@ import { SetupFrame } from "./setup-frame";
 import { SetupFacts, SetupPanelBody, SetupSkeletonRows } from "./setup-frame-parts";
 import { TemporaryAuthNotice } from "./temporary-auth-notice";
 import { MemberAuthCheckError } from "./member-auth-guard";
+import { DenButton } from "./ui/button";
+
+/** Shown before signing in to a website an organization approved: nothing is sent until the person continues. */
+function WebsiteSignInConfirmation() {
+  const { user, authError, webAuthConfirmation, confirmWebAuthHandoff, cancelWebAuthHandoff } = useDenFlow();
+  if (!webAuthConfirmation) {
+    return null;
+  }
+
+  const organization = webAuthConfirmation.organizationName || "Your organization";
+  return (
+    <div className="grid gap-5" data-testid="web-handoff-confirmation">
+      <h1 className="den-title-lg">Sign in to {webAuthConfirmation.host}?</h1>
+      <p className="den-copy">
+        {organization} approved this website. It will be signed in as {user?.email ?? "you"} and can work in {organization} only.
+      </p>
+      {authError ? <p className="den-copy" role="alert">{authError}</p> : null}
+      <div className="flex flex-wrap gap-3">
+        <DenButton type="button" onClick={confirmWebAuthHandoff}>Continue</DenButton>
+        <DenButton type="button" variant="secondary" onClick={cancelWebAuthHandoff}>Cancel</DenButton>
+      </div>
+    </div>
+  );
+}
 
 function SessionStatusPanel({ mode }: { mode: "checking" | "redirecting" }) {
   const status = mode === "checking"
@@ -54,7 +78,7 @@ export function AuthScreen({ agentSignIn = false }: { agentSignIn?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const routingRef = useRef(false);
-  const { user, runtimeConfigLoaded, sessionHydrated, memberAuthCheckStatus, desktopAuthRequested, setupPending, authError, webAuthRequested, resolveUserLandingRoute } = useDenFlow();
+  const { user, runtimeConfigLoaded, sessionHydrated, memberAuthCheckStatus, desktopAuthRequested, setupPending, authError, webAuthRequested, webAuthConfirmation, resolveUserLandingRoute } = useDenFlow();
   const hasResolvedSession = runtimeConfigLoaded && sessionHydrated && Boolean(user) && !authError && (!desktopAuthRequested || setupPending) && !webAuthRequested;
 
   useEffect(() => {
@@ -98,6 +122,8 @@ export function AuthScreen({ agentSignIn = false }: { agentSignIn?: boolean }) {
             <MemberAuthCheckError />
           ) : !runtimeConfigLoaded || !sessionHydrated ? (
             <SessionStatusPanel mode="checking" />
+          ) : webAuthConfirmation && user ? (
+            <WebsiteSignInConfirmation />
           ) : hasResolvedSession ? (
             <SessionStatusPanel mode="redirecting" />
           ) : (
