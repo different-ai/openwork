@@ -633,6 +633,9 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
   // this, as on hosts that cannot ask, sign-in fields stay with the person.
   approveCredential = /** @type {((sessionId: string, request: { site: string }, signal: AbortSignal) => Promise<boolean>) | undefined} */ (undefined),
   fileChooserMs = 5000,
+  // After a takeover or cancellation stops the agent's navigation, page navigation stays guarded this long
+  // (and while any agent operation is still unwinding), so a late task redirect cannot land; then the tab is the person's.
+  navigationReleaseMs = 1000,
   // With a budget, open and navigate wait up to this long for the page to load and stop changing, and an observation
   // or extract that a still-loading page invalidated is retried once. 0 keeps the original behavior.
   loadSettleMs = 0,
@@ -669,8 +672,10 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (signal?.aborted) lifetime.abort(signal.reason);
     else signal?.addEventListener("abort", () => lifetime.abort(signal.reason), { once: true, signal: lifetime.signal });
     const controller = new AbortController();
-    const scope = { tab, sessionId, controller, lifetime, control, manual: false,
+    const scope = { tab, sessionId, controller, lifetime, control, manual: false, abortedAt: 0,
       signal: AbortSignal.any([lifetime.signal, controller.signal, control.controller.signal]) };
+    if (scope.signal.aborted) scope.abortedAt = Date.now();
+    else scope.signal.addEventListener("abort", () => { scope.abortedAt = Date.now(); }, { once: true });
     previous?.controller.abort();
     navigations.set(tab.tabId, scope);
     return scope;
@@ -693,12 +698,25 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     // Give it a synchronous final ownership/cancellation check.
     return () => checkNavigation(scope);
   }
+  /**
+   * Whether a stopped scope no longer guards its tab. A takeover or cancellation
+   * aborts the scope; once every agent operation in that conversation has
+   * unwound and the release delay has passed, nothing queued by the agent can
+   * still navigate, so links, sign-in forms and their redirects belong to the
+   * person. A new agent operation tracks a fresh scope and is guarded again.
+   */
+  function released(scope) {
+    if (!scope.abortedAt || Date.now() - scope.abortedAt < navigationReleaseMs) return false;
+    return !tabsFor(scope.sessionId).some((item) => states.get(item.tabId)?.controller);
+  }
   function navigationGuard(tabId) {
     const scope = navigations.get(tabId);
-    // Pausing alone must not turn a late task redirect into manual browsing.
-    // Only explicit app-toolbar navigation enables manual mode.
-    // Page input (including trusted events) can come from queued automation.
+    // Pausing alone must not turn a late task redirect into manual browsing:
+    // right after a takeover, page input can still come from queued automation.
+    // Explicit app-toolbar navigation enables manual mode at once; otherwise
+    // the tab is released to the person after the stopped task settles.
     if (!scope || (scope.manual && pausedSessions.has(scope.sessionId) && ownerOf(tabId) === scope.sessionId)) return null;
+    if (released(scope)) return null;
     return (url) => authorizeNavigation(scope, url);
   }
   function manualNavigation(tabId) {
