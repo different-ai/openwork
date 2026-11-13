@@ -5,6 +5,7 @@ import type { CapabilityUsageSource } from "@openwork-ee/den-db/schema"
 import { Effect } from "effect"
 import type { Hono } from "hono"
 import { z } from "zod"
+import { connectionActionAppSchemaVersion } from "@openwork/types/connection-action-app"
 import type { FeatureMap } from "../features.js"
 import { markFeaturesUsed } from "../feature-usage.js"
 import { AuditUnavailableError, auditUnavailableToolResult, runMcpServiceAction, serviceAuditResourceId, serviceErrorStatus, toolResultStatus, type McpAuditPrincipal } from "../audit/mcp-service-audit.js"
@@ -40,6 +41,7 @@ import {
 import {
   connectedConnectionActionPayload,
   connectionActionPayloadFromStatus,
+  connectionActionPayloadSchema,
   connectionActionAppMeta,
   connectionActionTextFallback,
 } from "./connection-action.js"
@@ -551,8 +553,15 @@ const catalogSource: CapabilitySource = {
         query: normalizeToolRecord(input.query),
         body,
       },
+      includePayload: true,
     })
-    return result
+    const reply = { isError: result.isError, content: result.content }
+    // A Den route that refused for a connection reports it; show the same card as a connection tool would.
+    const status = result.isError && isRecord(result.payload) ? result.payload.connectionStatus : undefined
+    const card = isRecord(status) ? connectionActionPayloadSchema.safeParse({ ...status, schemaVersion: connectionActionAppSchemaVersion }) : null
+    return card?.success
+      ? { ...reply, structuredContent: card.data, _meta: connectionActionAppMeta(card.data.connectionId) }
+      : reply
   },
 }
 

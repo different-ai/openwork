@@ -105,9 +105,10 @@ import {
 } from "../../capability-sources/external-mcp-connections.js"
 import { evaluateToolPolicy } from "../../capability-sources/external-mcp-tool-policy.js"
 import { credentialPromptSchema, type CredentialPrompt } from "@openwork/types/den/credential-prompt"
+import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-connection-action"
 import { credentialPromptResponseFields, mcpConnectionKeyPrompt, mcpConnectionMemberKeyPrompt, mcpConnectionSharedSwitchPrompt } from "../../credential-prompt.js"
-import { memberApiKeyUsable, usesMemberApiKey, validMemberApiKey } from "../../capability-sources/member-api-key.js"
-import { externalMcpAppResourceUri } from "../../mcp/external-capabilities.js"
+import { usesMemberApiKey, validMemberApiKey } from "../../capability-sources/member-api-key.js"
+import { buildExternalConnectionStatus, externalMcpAppResourceUri, memberCredentialGap, type ExternalConnectionStatus } from "../../mcp/external-capabilities.js"
 import { EXECUTE_CAPABILITY_TOOL_NAME, SEARCH_CAPABILITIES_TOOL_NAME } from "../../mcp/search.js"
 import { listNativeProviderUsableEntries } from "../../capability-sources/native-provider-connections.js"
 import { getNativeOAuthProvider } from "../../capability-sources/provider-registry.js"
@@ -746,6 +747,14 @@ const connectionToolRunResponseSchema = z.object({
 const connectionNotReadySchema = z.object({
   error: z.literal("connection_not_ready"),
   message: z.string(),
+  // The same report search and execute return, so a client can show its connection card.
+  connectionStatus: openworkCloudMcpConnectionActionSchema.extend({
+    message: z.string(),
+    action: openworkCloudMcpConnectionActionSchema.shape.action.extend({
+      label: z.string(),
+      url: z.string().url().optional(),
+    }),
+  }).optional(),
 }).meta({ ref: "ExternalMcpConnectionNotReadyError" })
 
 const connectionToolPolicyBlockedSchema = z.object({
@@ -966,16 +975,20 @@ async function connectedAccountStatesForConnections(input: {
 
 type ExternalMcpToolCredentialContext =
   | { ok: true; member?: { orgMembershipId: DenTypeId<"member"> } }
-  | { ok: false; message: string }
+  | { ok: false; message: string; connectionStatus: ExternalConnectionStatus }
 
 async function resolveExternalMcpToolCredential(
   connection: ExternalMcpConnectionRow,
   orgMembershipId: DenTypeId<"member">,
 ): Promise<ExternalMcpToolCredentialContext> {
   if (connection.oauthIssuerReviewRequiredAt) {
+    const message = "A workspace admin must review this MCP connection's changed OAuth issuer before its tools can be used."
     return {
       ok: false,
-      message: "A workspace admin must review this MCP connection's changed OAuth issuer before its tools can be used.",
+      message,
+      connectionStatus: buildExternalConnectionStatus({
+        connection, state: "reauth_required", errorCode: "unauthorized", message, actionOwner: "organization_admin",
+      }),
     }
   }
   if (connection.credentialMode === "per_member") {
@@ -984,14 +997,19 @@ async function resolveExternalMcpToolCredential(
       orgMembershipId,
       providerId: connection.id,
     })
-    return (usesMemberApiKey(connection) ? memberApiKeyUsable(account) : account?.accessToken)
-      ? { ok: true, member: { orgMembershipId } }
-      : { ok: false, message: "Connect your account before using this MCP's tools." }
+    const gap = memberCredentialGap(connection, account)
+    return gap
+      ? { ok: false, message: "Connect your account before using this MCP's tools.", connectionStatus: gap.status }
+      : { ok: true, member: { orgMembershipId } }
   }
 
-  return isConnectionConnected(connection)
-    ? { ok: true }
-    : { ok: false, message: "Connect this MCP before using its tools." }
+  if (isConnectionConnected(connection)) return { ok: true }
+  const message = "Connect this MCP before using its tools."
+  return {
+    ok: false,
+    message,
+    connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
+  }
 }
 
 async function checkConnectionReadiness(connection: ExternalMcpConnectionRow, memberId: DenTypeId<"member">, requestId: string) {
@@ -3058,7 +3076,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       if (!connection) return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
       if (connection.kind !== "external_mcp") return c.json({ error: "invalid_request", message: "This connection does not support readiness checks." }, 400)
       const credential = await resolveExternalMcpToolCredential(connection, payload.currentMember.id)
-      if (!credential.ok) return c.json({ error: "connection_not_ready", message: credential.message }, 409)
+      if (!credential.ok) return c.json({ error: "connection_not_ready", message: credential.message, connectionStatus: credential.connectionStatus }, 409)
       return c.json({ readiness: await checkConnectionReadiness(connection, payload.currentMember.id, c.get("requestId")) })
     },
   )
@@ -3114,6 +3132,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({
           error: "connection_not_ready",
           message: credential.message,
+          connectionStatus: credential.connectionStatus,
         }, 409)
       }
 
@@ -3197,6 +3216,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({
           error: "connection_not_ready",
           message: credential.message,
+          connectionStatus: credential.connectionStatus,
         }, 409)
       }
 
@@ -3303,6 +3323,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({
           error: "connection_not_ready",
           message: credential.message,
+          connectionStatus: credential.connectionStatus,
         }, 409)
       }
 
