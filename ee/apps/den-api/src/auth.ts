@@ -56,6 +56,7 @@ import { auditBetterAuthAfter, auditBetterAuthBefore, auditBetterAuthRefusal, au
 import { auditUserUpdateAfter, auditUserUpdateBefore, recordAccountDeleted, recordIdentityLinked, recordIdentityUnlinked } from "./audit/domain/account.js";
 import { auditSessionMethod, auditSessionRevokeReason, recordSessionCreated, recordSessionRevoked } from "./audit/domain/sessions.js";
 import { SCIM_TOKEN_STORAGE_STRATEGY } from "./scim-token-storage.js";
+import { SCIM_EMAIL_CHANGE_REFUSAL, scimEmailChangeAllowed } from "./scim-email-change.js";
 import { createScimExistingUserLinkCheck } from "./scim-existing-user-linking.js";
 import { isUserKnownToScimOrganization, releaseStaleScimAccountForCreate } from "./scim-reprovisioning.js";
 import { fetchCimdMetadataResource, isCimdClientIdUrlAllowed } from "./mcp/cimd-policy.js";
@@ -933,6 +934,17 @@ export const auth = betterAuth({
       },
       update: {
         before: async (user, context) => {
+          // SCIM PUT and PATCH write the user row here, whatever the request
+          // looked like, so this is where an email change is refused.
+          if (typeof user.email === "string" && context?.path === "/scim/v2/Users/:userId") {
+            const userId = readStringProperty(context.params, "userId");
+            const allowed = userId !== null && await scimEmailChangeAllowed({
+              userId: normalizeDenTypeId("user", userId),
+              email: user.email,
+              resolveOrganizationId: () => scimRequestOrganizationId(context.headers?.get("authorization")),
+            });
+            if (!allowed) throw new APIError("BAD_REQUEST", SCIM_EMAIL_CHANGE_REFUSAL);
+          }
           // Audit: remember which profile fields change (src/audit/domain/account.ts).
           if (env.auditCaptureEnabled) auditUserUpdateBefore(user, context);
           return {

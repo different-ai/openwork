@@ -150,6 +150,10 @@ For the OpenWork Labs test tenant, the OpenWork SAML fields are:
     - Enable group object provisioning when Entra groups should manage OpenWork teams.
     - Use a matching attribute that OpenWork can filter by, normally
       `userName` mapped from `userPrincipalName` or `mail`.
+    - A later change to `userName` renames the user's OpenWork email only when
+      the old and the new address are both on an email domain this organization
+      verified for SSO. Any other email change is refused with a SCIM
+      `mutability` error and the rest of that update is not applied.
 9. In OpenWork, enable **Create teams from SCIM groups** if provisioned groups
    should create and manage matching teams. Leave it off to retain group metadata
    without changing teams.
