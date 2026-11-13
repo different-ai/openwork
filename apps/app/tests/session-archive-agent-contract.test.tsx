@@ -10,7 +10,10 @@ import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../src/react-
 import type { RouteSession, RouteWorkspace } from "../src/react-app/shell/route-workspaces";
 import type { OpenworkControlAPI, OpenworkControlAction } from "../src/react-app/shell/control/control-provider";
 
-mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({ useCheckDesktopRestriction: () => () => false }));
+mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({
+  useCheckDesktopRestriction: () => () => false,
+  useDesktopRestriction: () => false,
+}));
 mock.module("../src/react-app/domains/cloud/den-auth-provider", () => ({ useDenAuth: () => ({ isSignedIn: false }) }));
 
 // The archive hook talks to a real (fake) engine over HTTP; happy-dom's fetch

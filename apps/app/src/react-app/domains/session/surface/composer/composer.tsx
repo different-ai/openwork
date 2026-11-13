@@ -78,6 +78,8 @@ type ComposerProps = {
   mentions: Record<string, ComposerMentionKind>;
   onDraftChange: (value: string) => void;
   onSend: () => void | Promise<void>;
+  /** The round send button's accessible name and tooltip. */
+  sendLabel?: string;
   onSteer: () => void | Promise<void>;
   onQueue: () => void | Promise<void>;
   onStop: () => void | Promise<void>;
@@ -1737,7 +1739,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                           ? "Finishing dictation"
                           : props.submissionPreparing
                             ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
-                            : t("composer.run_task")
+                            : props.sendLabel ?? t("composer.run_task")
                   }
                 />
               </div>
