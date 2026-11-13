@@ -144,6 +144,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  activationLocalSetup: {
+    label: "Get set up: count what works on this device",
+    description: "The Get set up checklist also checks off a model provider and a connection that work on the person's own device, without setting them up again in OpenWork, and inviting a teammate becomes optional while they are the only person in the organization, so someone working alone can finish setup. Turning it off restores the earlier checklist at once; nothing is lost.",
+    category: "experience",
+    added: "2026-11-13",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/activation-local-setup/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   denGreySidebar: {
     label: "Den: grey sidebar, white pages",
     description: "The Den dashboard shows its sidebar on a light grey band and every page on white, like the admin dashboard pictured on the website, instead of a white sidebar beside lightly tinted pages. Only colours change: navigation, page layouts and every control stay where they are. Turning it off restores the earlier colours at once.",

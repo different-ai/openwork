@@ -18,6 +18,11 @@ export const activationStepSchema = z.object({
   detail: z.string().max(200).optional(),
   /** The caller cannot do this step: who can, e.g. "Avery manages AI Gateway". */
   lockedReason: z.string().max(200).optional(),
+  /**
+   * The step does not apply to this person right now (inviting a teammate while they are the only person in the
+   * organization). It stays listed with its action, but is not counted until it is done, so it never blocks finishing.
+   */
+  optional: z.boolean().optional(),
 })
 export type ActivationStep = z.infer<typeof activationStepSchema>
 
@@ -29,7 +34,7 @@ export const activationStateSchema = z.object({
 export type ActivationState = z.infer<typeof activationStateSchema>
 
 /** What a client may report: steps only it can observe, and hiding the checklist. */
-export const ACTIVATION_CLIENT_EVENTS = ["first_response", "use_skill", "own_provider", "dismiss"] as const
+export const ACTIVATION_CLIENT_EVENTS = ["first_response", "use_skill", "own_provider", "connector", "dismiss"] as const
 export const activationEventRequestSchema = z.object({
   step: z.enum(ACTIVATION_CLIENT_EVENTS),
   /** first_response only: how long the first answer took. */
@@ -53,20 +58,27 @@ export function orderedActivationSteps(state: Pick<ActivationState, "steps">): A
   return ACTIVATION_STEP_IDS.map((id) => state.steps.find((step) => step.id === id) ?? { id, done: false })
 }
 
+/** Shown under an optional step, on every surface. */
+export const ACTIVATION_OPTIONAL_DETAIL = "Optional while you work alone"
+
+/** An unfinished optional step is left out of the count; once done it counts like any other. */
 export function activationProgress(state: Pick<ActivationState, "steps">) {
-  const steps = orderedActivationSteps(state)
+  const steps = orderedActivationSteps(state).filter((step) => step.done || !step.optional)
   const done = steps.filter((step) => step.done).length
   return { done, total: steps.length, complete: done === steps.length }
 }
 
-/** The step the person can act on next: the first unfinished one that is not locked, else the first unfinished one. */
+/**
+ * The step the person can act on next: the first unfinished one that is not locked, else the first unfinished one.
+ * Optional steps are never "next": they wait in the list.
+ */
 export function nextActivationStep(state: Pick<ActivationState, "steps">): ActivationStep | null {
-  const open = orderedActivationSteps(state).filter((step) => !step.done)
+  const open = orderedActivationSteps(state).filter((step) => !step.done && !step.optional)
   return open.find((step) => !step.lockedReason) ?? open[0] ?? null
 }
 
 /**
- * Where a surface shows the checklist: nowhere before the first answer (never before) and once all six are done;
+ * Where a surface shows the checklist: nowhere before the first answer (never before) and once every counted step is done;
  * one quiet "Next" line after the person hides it; otherwise the full card or chip.
  */
 export function activationChecklistPresentation(state: ActivationState | null | undefined): "hidden" | "next" | "full" {

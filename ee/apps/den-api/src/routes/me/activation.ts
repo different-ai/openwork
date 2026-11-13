@@ -45,7 +45,7 @@ export function registerMeActivationRoutes<T extends { Variables: AuthContextVar
       operationId: "recordMyActivationEvent",
       "x-mcp": false,
       summary: "Report a Get set up step this app observed",
-      description: "Records a step only the client can see (its first answer, a provider key saved on the device, a local skill run) or that the member hid the checklist. Repeats are ignored. Returns the updated checklist.",
+      description: "Records a step only the client can see (its first answer, a model provider or connection working on the device, a local skill run) or that the member hid the checklist. Repeats are ignored. Returns the updated checklist.",
       responses: {
         200: jsonResponse("The updated checklist.", activationResponseSchema),
         400: jsonResponse("The event is not one a client may report.", invalidRequestSchema),
@@ -60,7 +60,7 @@ export function registerMeActivationRoutes<T extends { Variables: AuthContextVar
       if (!organizationContext) return c.json({ error: "organization_not_found" }, 404)
       const organizationId = organizationContext.organization.id
       const memberId = organizationContext.currentMember.id
-      await recordActivationEvent({ organizationId, memberId }, c.req.valid("json"), "app")
+      await recordActivationEvent({ organizationId, memberId, userId: organizationContext.currentMember.userId }, c.req.valid("json"), "app")
       const memberTeams = await listTeamsForMember({ organizationId, memberId })
       c.header("Cache-Control", "no-store")
       return c.json(await readActivationState({ organizationContext, memberTeams }))
