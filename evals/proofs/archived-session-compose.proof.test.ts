@@ -1,6 +1,7 @@
 import { expect } from "vitest";
 import { z } from "zod";
 import { spec, type Probe } from "@openwork/testkit";
+import { go } from "@openwork/behaviors";
 import { archivedSessionCompose, archivedSessionComposeOff } from "../worlds/archived-session-compose.ts";
 
 const test = spec.world(archivedSessionCompose, {
@@ -50,11 +51,11 @@ async function read(probe: Probe, path: string) {
 testOff("a member outside the rollout still restores an archived conversation before writing", async ({ world, user, probe, step, evidence }) => {
   const baseline = messagesOf(world.initial.messages);
   await step("before: an archived conversation is read-only outside the rollout", async () => {
-    await user.navigate(world.route);
+    await go(world.app, world.route);
     await user.see(archivedBanner, { timeoutMs: 60_000 });
     await user.see({ text: "This conversation is read-only. Restore it to continue; previous work will not restart." });
     await user.notSee("composer");
-    const org = await probe.api(world.den.admin, "/v1/org");
+    const org = await probe.api(world.member, "/v1/org");
     expect(org.response.status).toBe(200);
     const features = z.object({ features: z.object({ archivedSessionCompose: z.boolean().optional() }) }).parse(org.body).features;
     const archived = archivedOf(await read(probe, world.sessionPath));
@@ -113,11 +114,11 @@ test("a member in the rollout drafts in an archive and explicitly sends one foll
   };
 
   await step("after: the enabled archived conversation offers a composer without restoring first", async () => {
-    await user.navigate(world.route);
+    await go(world.app, world.route);
     await user.see("composer", { editable: true, timeoutMs: 60_000 });
     await user.see({ text: hint });
     await user.see({ text: world.original.reply });
-    const org = await probe.api(world.den.admin, "/v1/org");
+    const org = await probe.api(world.member, "/v1/org");
     expect(org.response.status).toBe(200);
     const features = z.object({ features: z.object({ archivedSessionCompose: z.boolean() }) }).parse(org.body).features;
     const archived = archivedOf(await read(probe, world.sessionPath));

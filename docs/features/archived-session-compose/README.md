@@ -22,8 +22,13 @@ does not change agent commands, automatic sends, queued work or archive rules.
 ## Failure and rollback
 
 If unarchiving fails, the draft and attachments stay in the composer and no
-message is sent. Once unarchiving succeeds, ordinary send errors use the normal
-chat recovery behavior; the conversation is not silently archived again.
+message is sent. Restoration has a 15-second deadline; cancellation or a changed
+conversation/account releases its send slot even if the network request stalls.
+A late restoration receipt never sends the follow-up. The agent and account
+selection are captured when the person sends, not after the wait.
+
+Once unarchiving succeeds, ordinary send errors use the normal chat recovery
+behavior; the conversation is not silently archived again.
 
 Turn the feature off through the normal Features controls to restore the
 read-only archived view. Existing drafts and history are retained. Conversations

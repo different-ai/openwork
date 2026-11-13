@@ -2633,7 +2633,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         archiveConsent = () => isCurrent() && verified() && !sessionWorkHeld(props.opencodeBaseUrl, props.sessionId);
       } catch {
         if (isCurrent()) setArchiveComposeError({ owner: sessionOwner,
-          message: "Couldn't unarchive this conversation. Your draft is saved. Try sending again.",
+          message: "Your follow-up wasn't sent. Your draft is saved. Try sending again.",
         });
         return;
       } finally {

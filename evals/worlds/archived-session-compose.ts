@@ -14,14 +14,24 @@ function dataOf(value: unknown): unknown {
 }
 
 async function archivedConversation(seed: Seed, enabled: boolean) {
-  const { den, webPort } = await denForAppWeb(seed);
+  const adminEmail = "archive-rollout-admin@example.test";
+  const { den, webPort } = await denForAppWeb(seed, {
+    // A prepared Den's platform allowlist belongs to its bootstrap identity,
+    // not a newly seeded org admin. Own the Den and name that identity explicitly.
+    env: { DEN_BOOTSTRAP_ADMIN_EMAILS: adminEmail },
+    org: {
+      name: "Archive review fixture",
+      admin: { name: "Rollout operator", email: adminEmail },
+      members: { member: { name: "Review member", email: "archive-review-member@example.test" } },
+    },
+  });
   if (enabled) await enableOrganizationCapabilities(seed, den.admin, { archivedSessionCompose: true });
   const original = { prompt: "Summarize the earlier review notes.", reply: "The earlier review is complete." };
   const followup = { prompt: "Add a short next-step checklist to these review notes.", reply: "The next-step checklist is ready." };
   const token = randomUUID();
   const { app, workspace } = await signedInAppWeb(seed, {
     name: enabled ? "archived-session-compose" : "archived-session-compose-off",
-    den, webPort, engine: "v2", workspacePath: seed.tmpPath("archived-session-compose"),
+    den, webPort, as: "member", engine: "v2", workspacePath: seed.tmpPath("archived-session-compose"),
     env: { OPENWORK_TOKEN: token },
     mocks: { agent: seed.mock({ isolatedProcessEnv: true, agentWorkloads: [original, followup].map(turn => ({
       promptMarker: turn.prompt, latestUserTurn: true, finalReply: turn.reply, steps: [],
@@ -95,9 +105,11 @@ async function archivedConversation(seed: Seed, enabled: boolean) {
   };
   await reload(app);
   return {
-    app, den, workspace, session, active, otherArchived, group, original, followup,
+    app, den, member: den.members.member, workspace, session, active, otherArchived, group, original, followup,
     enabled, initial, sessionsPath, sessionPath, groupsPath,
-    route: `${app.webUrl.replace(/\/$/, "")}/workspace/${encodeURIComponent(workspace.workspaceId)}/session/${encodeURIComponent(session.sessionId)}`,
+    // go() takes an app route and waits for the mounted router after reload;
+    // do not start a second document navigation while the entry graph is loading.
+    route: `/workspace/${encodeURIComponent(workspace.workspaceId)}/session/${encodeURIComponent(session.sessionId)}`,
     // Read-only model HTTP witness; never prepares a new turn during an act.
     requests: () => mock.agentRequests(),
   };
