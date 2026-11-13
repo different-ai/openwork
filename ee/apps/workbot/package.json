@@ -36,14 +36,14 @@
     "test:calendar-connections": "esbuild scripts/calendar-connections.test.ts --bundle --conditions=development --platform=node --format=cjs --jsx=automatic --external:react --external:react-dom --external:@tanstack/react-query --external:zod --outfile=node_modules/.cache/calendar-connections.test.cjs && node node_modules/.cache/calendar-connections.test.cjs"
   },
   "dependencies": {
-    "@hono/node-server": "2.1.5",
+    "@hono/node-server": "2.1.6",
     "@openwork-ee/headless-protocol": "workspace:*",
     "@openwork-ee/workbot-server": "workspace:*",
     "@openwork-ee/workbot-ui": "workspace:*",
     "@openwork/types": "workspace:*",
     "@sentry/node": "10.64.0",
     "@tanstack/react-query": "^5.96.2",
-    "hono": "4.13.11",
+    "hono": "4.13.16",
     "react": "catalog:",
     "react-dom": "catalog:",
     "zod": "^4.6.6",
