@@ -366,7 +366,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
       >
         <div className={`px-4 ${collapsed ? "py-2" : "border-b border-dls-border py-3"}`}>
           <div className={`flex gap-2.5 ${collapsed ? "items-center" : "items-start"}`}>
-            <div className={`flex size-5 shrink-0 items-center justify-center rounded-full border border-blue-7/30 bg-blue-3/20 text-blue-11 ${collapsed ? "" : "mt-0.5"}`}>
+            <div className={`flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-3 text-blue-11 ${collapsed ? "" : "mt-0.5"}`}>
               <HelpCircle size={12} />
             </div>
             {collapsed ? (
@@ -395,14 +395,14 @@ export function QuestionPanel(props: QuestionPanelProps) {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className={`shrink-0 text-gray-10 ${collapsed ? "-mr-2" : "-mt-1"}`}
+                  className={`shrink-0 text-gray-10 aria-expanded:text-gray-10 aria-expanded:hover:text-foreground ${collapsed ? "-mr-2" : "-mt-1"}`}
                 />
               }
               data-question-collapse-toggle=""
             >
               {collapsed ? <ChevronUp data-icon="inline-start" /> : <ChevronDown data-icon="inline-start" />}
               {collapsed ? t("question_modal.expand") : t("question_modal.collapse")}
-              <span className="text-[11px] text-gray-9" aria-hidden="true">{questionCollapseChordLabel()}</span>
+              <span className="text-[11px] font-normal text-gray-9" aria-hidden="true">{questionCollapseChordLabel()}</span>
             </CollapsibleTrigger>
             {props.onDismiss && !collapsed ? (
               <Button

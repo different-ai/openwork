@@ -252,9 +252,9 @@ function QuestionCard({ pending, computer, busy, error, onSubmit, collapsible }:
                   : t("session.remote_answer_question_on", { computer })}
             </span>
           </span>
-          <CollapsibleTrigger render={<Button variant="ghost" size="xs" />} data-question-collapse-toggle="">
+          <CollapsibleTrigger render={<Button variant="ghost" size="xs" className="text-muted-foreground aria-expanded:text-muted-foreground aria-expanded:hover:text-foreground" />} data-question-collapse-toggle="">
             {minimized ? t("question_modal.expand") : t("question_modal.collapse")}
-            <span className="text-muted-foreground" aria-hidden="true">{questionCollapseChordLabel()}</span>
+            <span className="text-[11px] font-normal text-muted-foreground" aria-hidden="true">{questionCollapseChordLabel()}</span>
           </CollapsibleTrigger>
         </div>
       ) : (
