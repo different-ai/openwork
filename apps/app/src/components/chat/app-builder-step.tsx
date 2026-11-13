@@ -13,15 +13,20 @@ import {
 import { appBuilderResultFailed } from "@/react-app/domains/apps/built-mcp-app-model";
 import { BuiltAppChatPreview } from "@/react-app/domains/apps/built-app-chat-preview";
 import { DetailsToggle, TechnicalDetailsPanel } from "./capability-call-line";
+import { toolErrorMessage } from "@/components/tools/error-attribution";
 import type { DynamicToolUIPart } from "ai";
 
 /**
  * Den's build rejection, shortened to what changed: "MCP App compilation
  * failed. Generated MCP Apps cannot use timers. Use …" → "Can't use timers".
+ * A JSON error body reads as its message, never as JSON.
  */
 export function appBuildProblem(part: DynamicToolUIPart): string | null {
   if (part.state !== "output-error" || !part.errorText.trim()) return null;
-  const sentences = part.errorText.replace(/\s+/g, " ").trim().split(/(?<=\.)\s+/);
+  const { code, message } = toolErrorMessage(part.errorText);
+  // Den names the existing Plugin and its id; the row already shows the title.
+  if (code === "duplicate_plugin") return "An artifact with this name already exists";
+  const sentences = message.replace(/\s+/g, " ").trim().split(/(?<=\.)\s+/);
   const reason = sentences.find((sentence) => !/compilation failed|^error:/i.test(sentence)) ?? sentences[0] ?? "";
   return reason
     .replace(/^Generated MCP Apps cannot /i, "Can’t ")
