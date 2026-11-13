@@ -525,7 +525,6 @@ export default {
   "settings.group_workspace": "工作区",
   "settings.hide_titlebar": "隐藏标题栏",
   "settings.hide_titlebar_desc": "隐藏窗口标题栏。适用于平铺式窗口管理器。",
-  "settings.join_discord": "加入Discord",
   "settings.language": "语言",
   "settings.language.description": "选择你的首选语言",
   "settings.last_error": "最后错误",

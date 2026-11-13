@@ -109,15 +109,6 @@
       "override": null
     },
     {
-      "host": "discord.gg",
-      "kind": "link-only",
-      "components": ["renderer"],
-      "purpose": "Community link from Settings.",
-      "requirement": "optional",
-      "blockedEffect": "The Discord community link will not open.",
-      "override": null
-    },
-    {
       "host": "ghcr.io",
       "kind": "subprocess",
       "components": ["den"],

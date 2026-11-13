@@ -1,5 +1,3 @@
-[![Discord](https://img.shields.io/badge/discord-加入-5865F2?logo=discord&logoColor=white)](https://discord.gg/VEhNQXxYMB)
-
 [English](../README.md) | 简体中文 | [其他语言](./README.md)
 
 # OpenWork

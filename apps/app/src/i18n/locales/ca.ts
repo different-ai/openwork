@@ -521,7 +521,6 @@ export default {
   "settings.group_workspace": "Workspace",
   "settings.hide_titlebar": "Amaga la barra de títol",
   "settings.hide_titlebar_desc": "Amaga la barra de títol de la finestra. Útil en gestors de finestres en mosaic",
-  "settings.join_discord": "Uneix-te a Discord",
   "settings.language": "Llengua",
   "settings.language.description": "Tria l'idioma que prefereixes",
   "settings.last_error": "Últim error",

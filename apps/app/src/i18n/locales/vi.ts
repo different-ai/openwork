@@ -522,7 +522,6 @@ export default {
   "settings.group_workspace": "Workspace",
   "settings.hide_titlebar": "Ẩn thanh tiêu đề",
   "settings.hide_titlebar_desc": "Ẩn thanh tiêu đề cửa sổ. Hữu ích cho trình quản lý cửa sổ xếp gạch",
-  "settings.join_discord": "Tham gia Discord",
   "settings.language": "Ngôn ngữ",
   "settings.language.description": "Chọn ngôn ngữ ưa thích",
   "settings.last_error": "Lỗi cuối",
