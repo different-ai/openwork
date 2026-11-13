@@ -28,13 +28,14 @@ included too, even when only a manifest is copied.
 Missing history, incomplete file lists, unknown inputs, or failed comparisons
 must select work rather than skip it. Push classification compares the full
 `before` to `sha` range with both rename ends and deletions, not only the latest
-commit. PRs run only the quick check (`quick-check.yml`): its classifier checks
+commit. PRs run the quick check (`quick-check.yml`): its classifier checks
 paginated file counts and head consistency, and selects the Den API auth tests
 when their inputs change (`den-api-tests`). Its `openwork-tests-required`
 context requires the always-run static and typecheck jobs to succeed, and the
 Den job to succeed when selected and be skipped otherwise. "Build and core
-checks" runs the rest on dev pushes with the same rule in
-`openwork-tests-full`.
+checks" (`ci-tests.yml`) also runs on PRs, narrowed to the unit tests the PR's
+files affect, with the same rule in `openwork-tests-full`. It does not run on
+dev pushes.
 
 ### EE publication and cancellation
 

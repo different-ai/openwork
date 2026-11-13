@@ -28,8 +28,8 @@ it decides the world you can build.
 
 | If the spec… | Name / tag | CI lane |
 | --- | --- | --- |
-| proves your change (default) | `evals/proofs/<name>.proof.test.ts` | the dev push that adds or changes it ("Core journeys"); on demand with `PR change proof` |
-| changes one of the nine core journeys in `evals/journeys.ts` | `evals/core/<journey>.e2e.test.ts` | core journeys on every dev push and nightly |
+| proves your change (default) | `evals/proofs/<name>.proof.test.ts` | on demand only, with `PR change proof` |
+| changes one of the nine core journeys in `evals/journeys.ts` | `evals/core/<journey>.e2e.test.ts` | core journeys nightly and on demand |
 | needs a reviewer to reopen the *running* browser at a screenshot | add `{ tags: ["checkpoints"] }` to the `test(...)` options | protected checkpoint lane on Freestyle (not run by manual proof runs) |
 
 Tag `checkpoints` only when a still image cannot show what the reviewer has to

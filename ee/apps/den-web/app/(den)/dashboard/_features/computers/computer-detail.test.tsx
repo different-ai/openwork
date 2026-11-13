@@ -25,7 +25,7 @@ const desktop = organizationComputerDetailResponseSchema.parse({
   events: [],
   runner: { computerId: "cmp_install1", capabilities: ["remote-session", "automations"], appVersion: "0.14.2", lastSeenAt: reported, workspaces: 3, inventoryUpdatedAt: reported },
   session: null,
-  features: { remoteComputers: false, sandboxGateway: false },
+  features: { remoteDevices: true, computerUse: true, remoteComputers: false, browserUse: true, sandboxGateway: false },
 });
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
 
