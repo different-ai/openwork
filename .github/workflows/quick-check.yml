@@ -100,6 +100,7 @@ jobs:
           .github/scripts/build-inputs.test.mjs
           .github/scripts/classify-ci-changes.test.mjs
           .github/scripts/require-quick-check.test.mjs
+          .github/scripts/production-deploy.test.mjs
           .github/scripts/typecheck-shipped.test.mjs
           .github/scripts/docs-validation.test.mjs
           .github/scripts/ee-image-inputs.test.mjs
