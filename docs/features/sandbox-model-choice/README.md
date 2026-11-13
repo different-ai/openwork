@@ -45,5 +45,11 @@ owner can edit in Settings › AI Gateway whether the feature is on or off.
 
 ## How to check it
 
-`ee/apps/den-api/test/api/sandbox-organizations-models.api.test.ts` covers the list of models to choose from, a
-sandbox created with its own list, an unknown model id, and the feature being off.
+No automated test covers it. By hand, on a deployment with a sandbox model key:
+
+1. With the feature off, the **New sandbox** form shows the models as a read-only line, and
+   `GET /v1/admin/sandbox-orgs/models` answers 404.
+2. Turn the feature on under **Everyone**. The Models line becomes a picker filled in with the deployment's list.
+3. Remove a model, create the sandbox and join it: only the models left in the picker can be used.
+4. Send `modelIds` with an id that is not in the catalog to `POST /v1/admin/sandbox-orgs`: it answers 400 naming
+   the id, and no sandbox is created.

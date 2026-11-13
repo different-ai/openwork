@@ -57,8 +57,7 @@
   ],
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json && node --test test/production-exports.test.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --conditions=development --test src/*.test.ts"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@openwork/types": "workspace:*",
