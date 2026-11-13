@@ -1,5 +1,7 @@
 # Open artifacts from Workbot chat (`workbotApps`)
 
+> **Generally available:** `workbotApps` is retired; its enabled behavior is standard on Cloud and self-hosted. Actual settings, permissions, billing rules and consent remain enforced. Rollout/off-state instructions below are historical; see [the retirement guide](../globally-enabled-retirement/README.md).
+
 - **Feature key:** `workbotApps`
 - **Deployments:** cloud and self-hosted (`everywhere`), off by default
 - **Author:** @reachjalil

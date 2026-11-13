@@ -5,7 +5,7 @@ import { z } from "zod";
 import { workbotHost } from "./host";
 
 /**
- * An App built in OpenWork, running in the panel beside the chat (`workbotApps`). Workbot's server opens the App from
+ * An App built in OpenWork, running in the panel beside the chat. Workbot's server opens the App from
  * its own MCP server as the person and hands back its page; this component puts the page in an opaque-origin frame
  * and answers the frame's MCP Apps requests. The App's tools run through the server, as the person. The App never
  * gets this page's origin, sign-in or conversation.

@@ -103,7 +103,7 @@ function verifies(delivery: typeof deliveries[number], key: string) {
 }
 
 test("flag off hides methods and capability; existing computer reports and reads still work", async () => {
-  assert.equal((await den.setFeature(org.orgId, "remoteDevices", true)).status, 200)
+
   await report("resumed")
   const devices = await den.request(token, "GET", "/v1/workbot/devices")
   deviceId = text(field(list(field(devices.body, "devices")).find(device => device.workbotChat === "0123456789abcdef"), "id"), "computer")

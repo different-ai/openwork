@@ -19,7 +19,6 @@ class Recognition {
   abort() { this.aborted = true; }
   words(text: string) { this.onresult?.({ results: [[{ transcript: text }]] }); }
 }
-mock.module("../src/react-app/domains/session/surface/composer/use-native-dictation-feature", () => ({ useNativeDictationFeature: () => true }));
 mock.module("../src/react-app/domains/session/surface/composer/desktop-speech-dictation", () => ({
   useDesktopSpeechDictation: () => ({ recognition: Recognition, local: true }),
 }));

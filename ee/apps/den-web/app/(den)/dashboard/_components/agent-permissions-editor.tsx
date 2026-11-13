@@ -42,7 +42,6 @@ import {
   getEveryoneBrowserRoute,
   getOrgAccessFlags,
   permissionLockReason,
-  orgFeatureEnabled,
   type DenOrgContext,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -408,14 +407,12 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
   editable: boolean;
   onChange: (settings: AgentPermissionSettings) => void;
 }) {
-  const { orgContext } = useOrgDashboard();
-  const fileSendsEnabled = orgFeatureEnabled(orgContext, "fileSendPermissions");
   const scope = teamScopeOf(team === null ? null : { id: scopeId, name: team });
   return (
     <div className="min-w-0" data-testid="agent-permissions-editor" data-scope={scopeId}>
       {/* The standard list panel; each group brings its own top and bottom padding. */}
       <ItemPanel className="!py-0">
-        {visibleAgentPermissionGroups(area, fileSendsEnabled).map((group) => (
+        {visibleAgentPermissionGroups(area).map((group) => (
           <div key={group.label} className="pb-1">
             <h3 className="pb-1 pt-3 text-[12px] font-medium text-[var(--dls-text-secondary)]">{group.label}</h3>
             {group.definitions.map((definition) => {
@@ -436,7 +433,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
           </div>
         ))}
       </ItemPanel>
-      <TryRequest area={area} fileSendsEnabled={fileSendsEnabled} everyone={team === null ? settings : everyone} team={team === null ? null : { name: team, settings: settings }} />
+      <TryRequest area={area} everyone={team === null ? settings : everyone} team={team === null ? null : { name: team, settings: settings }} />
     </div>
   );
 }
@@ -684,10 +681,10 @@ function PatternLine({ list, label, noun, testId, kind, patterns, inherited, edi
 // Try a request
 // ---------------------------------------------------------------------------
 
-function TryRequest({ area, fileSendsEnabled, everyone, team }: { area: AgentPermissionsArea; fileSendsEnabled: boolean; everyone: AgentPermissionSettings; team: { name: string; settings: AgentPermissionSettings } | null }) {
-  const kinds = visibleAgentPermissionTryKinds(area, fileSendsEnabled);
+function TryRequest({ area, everyone, team }: { area: AgentPermissionsArea; everyone: AgentPermissionSettings; team: { name: string; settings: AgentPermissionSettings } | null }) {
+  const kinds = visibleAgentPermissionTryKinds(area);
   const [selectedAction, setAction] = useState<AgentPermissionAction>(kinds[0]?.action ?? "shell");
-  // A rollout refresh can hide the selected kind without remounting this draft.
+  // Changing the selected area can hide the selected kind without remounting this draft.
   const action = kinds.find((entry) => entry.action === selectedAction)?.action ?? kinds[0]?.action ?? "shell";
   const [value, setValue] = useState("");
   const kind = kinds.find((entry) => entry.action === action);

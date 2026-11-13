@@ -15,7 +15,6 @@ import {
   getBrandAppearanceRoute,
   getMcpConnectionsRoute,
   getOrgAccessFlags,
-  orgFeatureEnabled,
   type DenOrgContext,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -61,7 +60,7 @@ type TeamOnlyScope = Extract<TeamScope, { kind: "team" }>;
 
 /** The Workbot tab shows with settings per team on, for people who can view Workbot's settings. */
 export function workbotTabVisible(orgContext: DenOrgContext | null): boolean {
-  if (!orgContext || !orgFeatureEnabled(orgContext, "workbotTeamSettings")) return false;
+  if (!orgContext) return false;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
   return access.canViewModelsSettings || access.canManageModelsSettings;
 }

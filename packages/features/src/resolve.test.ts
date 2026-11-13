@@ -90,8 +90,8 @@ test("managed deployments stays cloud-only even when every control enables it", 
   assert.equal(selfHosted.source, "unavailable")
 })
 
-test("Your agent's unfinished rollout honors explicit overrides and kill switches", () => {
-  const parents = ["workbotProactive"] satisfies Array<keyof typeof FEATURES>
+test("unfinished rollouts honor explicit overrides and kill switches", () => {
+  const parents = ["browserDemonstrations"] satisfies Array<keyof typeof FEATURES>
   for (const key of parents) {
     for (const deployment of ["cloud", "self_hosted"] satisfies Array<FeatureContext["deployment"]>) {
       const context = { ...base, deployment }

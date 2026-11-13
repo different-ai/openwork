@@ -4,8 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode, useEffect, useState } from "react";
 import { Laptop, Compass, KeyRound, Layers, MessageCircle, ScrollText, ShieldCheck, SquareTerminal, Users } from "lucide-react";
 import type { TabItem } from "../../_components/ui/tabs";
-import { getMembersRoute, getMembersTeamsRoute, getOrgAccessFlags, orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
-import { markFeatureUsed } from "../../_lib/feature-usage";
+import { getMembersRoute, getMembersTeamsRoute, getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
 import { DenButton } from "../../_components/ui/button";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
 import { DesktopSuggestionsPanel } from "./desktop-suggestions-panel";
@@ -106,7 +105,6 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
   });
   const memberCount = team?.memberIds.length ?? 0;
   // The team's name and people are edited in the same form as on Members › Teams.
-  const consistentInteractions = orgFeatureEnabled(orgContext, "denPageConsistency");
   const canEditTeam = Boolean(team && viewerAccess?.canManageTeams && !team.managedByScim && (!team.grantsOrganizationAdmin || viewerAccess.canManageAdminTeams));
   const editTeamLockedReason = team?.managedByScim
     ? "Managed by your identity provider. Ask your identity provider administrator to change this team."
@@ -145,8 +143,8 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
 
   return (
     <TeamPageFrame sidebar={sidebar} title={team?.name ?? "Team"} memberCount={memberCount} backHref={getMembersTeamsRoute(orgSlug)}
-      action={consistentInteractions && team ? canEditTeam
-        ? <LinkButton size="sm" variant="secondary" href={`${getMembersRoute(orgSlug)}?tab=teams&editTeam=${encodeURIComponent(teamId)}`} onClick={() => markFeatureUsed("denPageConsistency")} data-testid="team-edit">Edit team</LinkButton>
+      action={team ? canEditTeam
+        ? <LinkButton size="sm" variant="secondary" href={`${getMembersRoute(orgSlug)}?tab=teams&editTeam=${encodeURIComponent(teamId)}`} data-testid="team-edit">Edit team</LinkButton>
         : <span className="flex flex-col items-end gap-1"><DenButton size="sm" variant="secondary" disabled title={editTeamLockedReason} data-testid="team-edit-locked">Edit team</DenButton><span className="max-w-72 text-right text-[12px] text-[var(--dls-text-secondary)]">{editTeamLockedReason}</span></span>
         : undefined}>
       <TeamSections

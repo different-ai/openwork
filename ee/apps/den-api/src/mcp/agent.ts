@@ -771,7 +771,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       toolShapes,
       remoteSessionStatus: Boolean(memberIdentity),
       canSendSlackMessages: slackSendAsBotAvailable(capabilityContext),
-      myAgent: Boolean(memberIdentity && organizationFeatures.workbotProactive && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
+      myAgent: Boolean(memberIdentity && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
       myAgentBrief: organizationFeatures.workbotAgentBrief,
       skillsExtension,
       nativeEvents: Boolean(auditPrincipal && organizationFeatures.nativeMcpEvents),
@@ -782,7 +782,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     if (auditPrincipal && organizationFeatures.nativeMcpEvents) registerNativeMcpEvents(server, auditPrincipal, c.req.raw, principal.scopes.has(DEN_MCP_WRITE_SCOPE))
     if (skillsExtension) registerSkillsExtension(server, loadResolvedSkills)
     // Your agent's own background check (workbotAgentBrief) may ask for one extra check; no other caller sees it.
-    if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true, workbotProactive: organizationFeatures.workbotProactive, workbotAgentBrief: organizationFeatures.workbotAgentBrief })) {
+    if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true, workbotAgentBrief: organizationFeatures.workbotAgentBrief })) {
       registerAgentCheckRequestTool(server, { organizationId, memberId: memberIdentity.orgMembershipId, userId: normalizeDenTypeId("user", principal.userId), audit: auditPrincipal })
     }
     if (organizationFeatures.mcpThreadEvents && auditPrincipal) {

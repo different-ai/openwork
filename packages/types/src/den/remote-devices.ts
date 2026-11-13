@@ -2,7 +2,7 @@ import { z } from "zod"
 import { remoteSessionAccessModeSchema } from "@openwork/types/automations"
 
 /**
- * Remote devices (feature `remoteDevices`): Den's registry of the computers a
+ * Remote devices: Den's access-controlled registry of the computers a
  * member can reach through OpenWork. One row per computer and organization:
  *
  * - `desktop`: a computer running OpenWork Desktop signed in to the
@@ -376,7 +376,7 @@ export const organizationComputerDetailResponseSchema = z.object({
     activeTurnSince: timestampSchema.nullable(),
     deletedAt: timestampSchema.nullable(),
   }).nullable(),
-  /** Feature state for the owner (or the organization for a shared computer), so a rollout gap is obvious. */
+  /** Remaining rollout state plus fixed compatibility values for graduated computer/browser capabilities. */
   features: z.object({
     remoteDevices: z.boolean(),
     computerUse: z.boolean(),

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mapFeatures } from "@openwork/features";
 import type { DenOrgContext } from "../../_lib/den-org";
 import { myAgentAvailable } from "./my-agent-availability";
 
@@ -7,34 +8,20 @@ function context(overrides: Partial<Pick<DenOrgContext, "capabilities" | "featur
   return {
     organization: { id: "org_1", name: "Acme", slug: "acme" },
     capabilities: { auditLogs: false, installLinks: false, mcpConnections: false, appMcpServers: false, workflows: true, openworkWeb: false, cloud: false, workbot: true },
-    features: { workbotProactive: true } as DenOrgContext["features"],
+    features: mapFeatures(() => false),
     ...overrides,
   } as unknown as DenOrgContext;
 }
 
-test("My bot is available only when Workbot capability and the Your agent rollout is on", () => {
+test("My bot is available when Workbot capability is on", () => {
   assert.equal(myAgentAvailable(context({})), true);
   assert.equal(myAgentAvailable(null), false);
   assert.equal(myAgentAvailable(undefined), false);
 });
 
-test("missing Workbot capability hides My bot even when Your agent is on", () => {
+test("missing Workbot capability hides My bot regardless of rollout data", () => {
   assert.equal(
     myAgentAvailable(context({ capabilities: { auditLogs: false, installLinks: false, mcpConnections: false, appMcpServers: false, workflows: true, openworkWeb: false, cloud: false, workbot: false } })),
-    false,
-  );
-});
-
-test("turning the Your agent rollout off hides My bot even when Workbot is advertised", () => {
-  assert.equal(
-    myAgentAvailable(context({ features: { workbotProactive: false } as DenOrgContext["features"] })),
-    false,
-  );
-});
-
-test("missing rollout reports from an older server default off, hiding My bot", () => {
-  assert.equal(
-    myAgentAvailable(context({ features: {} as DenOrgContext["features"] })),
     false,
   );
 });

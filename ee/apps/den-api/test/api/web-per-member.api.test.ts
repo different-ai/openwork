@@ -34,18 +34,10 @@ async function cloudInstanceStatus(member: Member, orgId: string) {
   return { status: response.status, error: field(response.body, "error") }
 }
 
-test("without webPerMember, every member has Web and nobody can be left out", async () => {
-  const org = await workspaceWithWeb("Flag off")
-  const refused = await setWeb(org.owner, org.orgId, org.designer.memberId, false)
-  assert.equal(refused.status, 404, summary(refused))
-  assert.equal(field(refused.body, "error"), "feature_disabled")
-  assert.deepEqual(await webAccess(org.designer, org.orgId), { hasAccess: true, memberHasAccess: true })
-  assert.equal(await memberWeb(org.owner, org.orgId, org.designer.memberId), true)
-})
 
-test("an admin chooses who gets Web; the others are refused a Web computer and turning the feature off gives Web back", async () => {
+test("an admin chooses who gets Web; retired rollout writes cannot grant a Web computer", async () => {
   const org = await workspaceWithWeb("Chosen")
-  assert.equal((await den.setFeature(org.orgId, "webPerMember", true)).status, 200)
+
 
   // A member can't change who gets Web.
   const byMember = await setWeb(org.analyst, org.orgId, org.designer.memberId, false)
@@ -68,9 +60,9 @@ test("an admin chooses who gets Web; the others are refused a Web computer and t
   assert.equal(field(turnedOn.body, "webUsers"), 3)
   assert.deepEqual(await webAccess(org.designer, org.orgId), { hasAccess: true, memberHasAccess: true })
 
-  // Kill switch: stored choices are ignored and everyone has Web again.
+  // Retired controls cannot override a member's saved Web entitlement.
   await setWeb(org.owner, org.orgId, org.designer.memberId, false)
   assert.equal((await den.setFeature(org.orgId, "webPerMember", false)).status, 200)
-  assert.deepEqual(await webAccess(org.designer, org.orgId), { hasAccess: true, memberHasAccess: true })
-  assert.notEqual((await cloudInstanceStatus(org.designer, org.orgId)).error, "openwork_web_access_required")
+  assert.deepEqual(await webAccess(org.designer, org.orgId), { hasAccess: true, memberHasAccess: false })
+  assert.deepEqual(await cloudInstanceStatus(org.designer, org.orgId), { status: 403, error: "openwork_web_access_required" })
 })

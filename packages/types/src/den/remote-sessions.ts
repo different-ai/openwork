@@ -8,7 +8,7 @@ import {
 } from "@openwork/types/automations"
 
 /**
- * Sessions across a member's computers (feature `remoteSessionAccess`).
+ * Sessions across a member's computers, governed by organization policy and per-device consent.
  *
  * A remote caller (another computer, Den, Workbot, an agent acting for the
  * person) reaches a session on a computer only through a remote-session
@@ -73,7 +73,7 @@ export const organizationRemoteSessionSettingsResponseSchema = z.object({
   settings: organizationRemoteSessionSettingsSchema,
   /** Whether the caller may change it (organization owners and admins). */
   canEdit: z.boolean(),
-  /** `all` can be chosen: the organization has feature `remoteSessionAccess`. Absent from older servers, where it always could. */
+  /** Compatibility capability: current servers always offer `all`; policy and per-device consent still decide actual access. */
   allowsAll: z.boolean().default(true),
   /** A computer whose owner has not chosen takes nothing (feature `remoteTasksOptIn`). Absent from older servers. */
   optIn: z.boolean().default(false),

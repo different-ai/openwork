@@ -16,7 +16,6 @@ import type {
 import { t } from "../../../../i18n";
 import {
   createDenClient,
-  markFeatureUsed,
   readDenSettings,
   resolveDenBaseUrls,
   type DenOrgLlmProvider,
@@ -335,7 +334,6 @@ export type ProviderAuthStoreSnapshot = {
 };
 
 type CreateProviderAuthStoreOptions = {
-  claudeAgentEnabled?: () => boolean;
   /** Test seam: how often the Claude Code check is read, how long a repeat check waits for a late problem, and when it gives up. */
   claudeCheckTiming?: { pollMs?: number; settleMs?: number; timeoutMs?: number; followUpMs?: number; signInPollMs?: number };
   /** Test seam. By default OpenWork runs Claude Code's sign-in only from the desktop app, on a workspace on this computer whose server it started. */
@@ -446,11 +444,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   };
   /**
    * Claude Code sign-in is offered only when the person can use it: the
-   * feature is on, the organization allows personal providers, and a workspace
+   * organization allows personal providers, and a workspace
    * engine is reachable. Otherwise nothing about it is shown or read.
    */
   const claudeAvailable = () => {
-    if (!options.claudeAgentEnabled?.()) return false;
     if (isProviderAddRestrictedByDesktopPolicy({ providerId: CLAUDE_AGENT_PROVIDER_ID, checkRestriction: options.checkDesktopAppRestriction })) return false;
     const target = nativeTarget();
     return Boolean(target.workspaceId && target.client);
@@ -1865,7 +1862,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         // Deliberately one POST: a timeout is uncertain, not permission to replay it.
         await client.connectClaudeAgent(workspaceId);
         if (!current()) return;
-        markFeatureUsed("claudeAgentProvider");
         integration = await client.claudeAgentIntegration(workspaceId);
         if (!current()) return;
         if (!integration.connections.length) throw new Error("Claude Code connection was not returned by the server. Check again before retrying.");
@@ -2857,7 +2853,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   }
 
   /**
-   * Den feature shareDeviceProvider: the person confirmed sharing the key saved
+   * The person confirmed sharing the key saved
    * on this device for `providerId` with everyone in their organization. This
    * computer's own server reads and sends the key; the app never holds it.
    * `verifiedToken` is the newer sign-in from "Confirm it's you", when Den asked.
@@ -2877,7 +2873,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       throw new Error("The active account or organization changed, or its session could not be delivered. Nothing was shared.");
     }
     const result = await client.shareDeviceProvider(providerId, orgId, verifiedToken);
-    markFeatureUsed("shareDeviceProvider");
     // The share stands whatever happens next; bring the new provider into this app too.
     if (isCurrent()) {
       await Promise.allSettled([refreshCloudOrgProviders({ force: true }), runCloudProviderSync("manual")]);

@@ -27,9 +27,9 @@ function ready(context: AutomationsDenContext) {
 }
 
 /** The member's computers. Refreshes every minute while the page is visible, on focus and when the sign-in changes. */
-export function useRemoteDevicesQuery(context: AutomationsDenContext, enabled: boolean) {
+export function useRemoteDevicesQuery(context: AutomationsDenContext) {
   const queryClient = useQueryClient()
-  const active = enabled && context.ready
+  const active = context.ready
   const organizationId = context.organizationId
   useEffect(() => {
     if (!active) return

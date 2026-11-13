@@ -19,7 +19,6 @@ import {
 import { agentPermissionPolicyChangedEvent, type AgentPermissionAuditScope } from "../../audit/domain/agent-permissions.js"
 import { appendDomainChanges } from "../../audit/domain/legacy.js"
 import { auditChangeCapture, type AuditChangeCapture } from "../../audit/request-capture.js"
-import { getOrganizationFeatures } from "../../features.js"
 import { jsonValidator, orgMemberRoute, paramValidator, requireOrgPermission } from "../../middleware/index.js"
 import {
   emptyResponse,
@@ -79,10 +78,9 @@ function editorSupport(c: { req: { header(name: string): string | undefined } })
 }
 
 /** Old editors cannot replace permissions they do not understand. */
-async function policyVisibility(payload: ResourceOrganizationContext, supports: EditorSupport) {
-  const features = await getOrganizationFeatures(payload.organization.id, { userId: payload.currentMember.userId })
+function policyVisibility(supports: EditorSupport) {
   const uploadsEnabled = supports.browserUploads
-  const fileSendsEnabled = features.fileSendPermissions && supports.fileSends
+  const fileSendsEnabled = supports.fileSends
   const preserveKeys: AgentPermissionKey[] = [
     ...(uploadsEnabled ? [] : ["browserUploads"] satisfies AgentPermissionKey[]),
     ...(fileSendsEnabled ? [] : ["fileSends"] satisfies AgentPermissionKey[]),
@@ -107,7 +105,7 @@ async function savePolicy(
   const team = input.teamId ? await findOrganizationTeam(payload.organization.id, input.teamId) : null
   if (input.teamId && !team) return c.json({ error: "team_not_found" }, 404)
 
-  const visibility = await policyVisibility(payload, input.supports)
+  const visibility = policyVisibility(input.supports)
   const save = () => saveAgentPermissionPolicy({
     organizationId: payload.organization.id,
     teamId: input.teamId,
@@ -155,7 +153,7 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
     async (c) => {
       const payload = c.get("organizationContext")
       if (!payload) return c.json({ error: "organization_not_found" }, 404)
-      const visibility = await policyVisibility(payload, editorSupport(c))
+      const visibility = policyVisibility(editorSupport(c))
       const policies = await listAgentPermissionPolicies(payload.organization.id)
       return c.json({
         everyone: {
@@ -182,7 +180,7 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
     describeRoute({
       tags: ["Agent Permissions"],
       summary: "Set everyone's agent permissions",
-      description: "Replaces the agent permissions that apply to every member. A permission left out uses its default: Allow for existing permissions, Ask first without administrator authority for browser uploads and files sent to connected accounts. Members' apps pick up the change the next time they refresh their organization's settings. Requires the agent_permissions.manage permission with a recent sign-in. Browser upload settings are ignored and preserved unless the client sends X-OpenWork-Browser-Upload-Permissions: 1. Settings for files sent to connected accounts follow the same rule with fileSendPermissions and X-OpenWork-File-Send-Permissions: 1.",
+      description: "Replaces the agent permissions that apply to every member. A permission left out uses its default: Allow for existing permissions, Ask first without administrator authority for browser uploads and files sent to connected accounts. Members' apps pick up the change the next time they refresh their organization's settings. Requires the agent_permissions.manage permission with a recent sign-in. Browser upload settings are ignored and preserved unless the client sends X-OpenWork-Browser-Upload-Permissions: 1. Settings for files sent to connected accounts follow the same rule with X-OpenWork-File-Send-Permissions: 1.",
       responses: {
         200: jsonResponse("Everyone's agent permissions saved.", agentPermissionPolicyResponseSchema),
         400: jsonResponse("A permission or pattern was not valid.", invalidRequestSchema),
@@ -250,7 +248,7 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
       if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
       const team = await findOrganizationTeam(payload.organization.id, normalizeDenTypeId("team", c.req.valid("param").teamId))
       if (!team) return c.json({ error: "team_not_found" }, 404)
-      const visibility = await policyVisibility(payload, editorSupport(c))
+      const visibility = policyVisibility(editorSupport(c))
       await saveAgentPermissionPolicy({
         organizationId: payload.organization.id,
         teamId: team.id,

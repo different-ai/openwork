@@ -1,5 +1,7 @@
 # Workbot: Your agent
 
+> **Generally available:** `workbotProactive` is retired; its enabled behavior is standard on Cloud and self-hosted. Actual settings, permissions, billing rules and consent remain enforced. Rollout/off-state instructions below are historical; see [the retirement guide](../globally-enabled-retirement/README.md).
+
 Feature `workbotProactive` (cloud and self-hosted, off by default). Author: `benjaminshafii`.
 It also needs Workbot on the deployment (`DEN_WORKBOT_URL`), the headless runner (`DEN_HEADLESS_RUNNER_URL`) and, for
 the default destination, the Workbot Slack app (Slack assistant) installed for the organization.

@@ -1,6 +1,8 @@
 # Completed rollout retirement
 
-This cleanup retires 37 temporary switches whose registry default is on and whose Cloud deployment rollout was enabled, available and not killed at audit time. It preserves the enabled implementation, not the off-state fallback. A globally enabled flag with a false registry default is **not** automatically classified as GA.
+The first pass retired 37 temporary switches whose registry default was on and whose Cloud deployment rollout was enabled, available and not killed at audit time. It preserved the enabled implementation, not the off-state fallback.
+
+A [second pass retires 18 additional globally enabled rollouts](../globally-enabled-retirement/README.md), even though their code defaults still said false. Retirement is based on the actual completed rollout and review of overrides, not a stale code default. There are now 55 retired switches across these two passes; the current retained registry is listed below.
 
 ## Retired switches
 
@@ -20,7 +22,7 @@ GA does not mean unrestricted. Authentication, membership, roles, public-artifac
 
 `standardCodeMode` no longer chooses an interpreter by rollout. Previously saved Workflows still use their recorded interpreter; retirement does not rewrite them.
 
-The 42 remaining flags are default-off rollouts or operational controls. This change does not enable them, change production rollout rows or promote them based solely on their age. In particular, managed deployments and administrator recovery remain separately controlled.
+After the second pass, 26 flags remain: unfinished rollouts and operational controls, including the two MCP event rollouts added since the first pass. They are not promoted based on age or merely having an organization override. In particular, managed deployments and administrator recovery remain separately controlled.
 
 ## Compatibility
 
@@ -93,7 +95,7 @@ SELECT * FROM resolved WHERE before_enabled = 0;
 
 Keep all results private. Review every intentionally disabled subject before rollout; removing a gate must not silently bypass a safety decision. Do not automatically change overrides or delete their history. Refresh this comparison immediately before deployment.
 
-## Verification
+## First-pass verification
 
 - Feature registry tests, including retirement and ignored operator-lock regression coverage, pass. The two new retirement tests fail against the original registry and pass after cleanup.
 - Desktop app, local server, Den API, Den web and Workbot typechecks pass on Node 24.22.1.
@@ -109,47 +111,31 @@ Revert this code change to restore the switches and their checks. Their historic
 
 ## Flags intentionally retained
 
-These entries all still have `default: false`. Promotion requires a separate rollout decision; this audit does not infer GA from a production override.
+These remain controlled rollouts or operational switches. Neither a stale code default nor a single-organization override is sufficient evidence of GA. The 18 deployment-wide completed rollouts listed in the second-pass guide are no longer in this registry.
 
 | Key | Feature |
 | --- | --- |
+| `nativeMcpEvents` | Session and computer MCP events |
+| `mcpThreadEvents` | MCP thread events |
 | `remoteDesktopDeviceLogin` | Remote desktop device sign-in |
-| `claudeAgentProvider` | Claude Code sign-in |
-| `webPerMember` | OpenWork Web per member |
-| `localModelsPolicy` | AI Gateway: limit local models (Ollama, LM Studio) |
-| `shareDeviceProvider` | Desktop: share a provider key with your organization |
-| `singleOpenWorkModelsRow` | Desktop: one OpenWork Models row you can turn off |
 | `followUpSuggestions` | Desktop: suggested follow-ups |
-| `passwordSignInGoogle` | Sign-in: offer Google alongside a password |
-| `signInEmailSync` | Sign-in: account email follows Google or SSO |
-| `ssoOidcSetupCheck` | SSO: check the OIDC issuer during setup |
 | `denGreySidebar` | Den: grey sidebar, white pages |
-| `denPageConsistency` | Den: predictable page interactions |
 | `teamSettingsSidebar` | Den: team sections in a sidebar |
 | `administratorRecovery` | Deploy-time administrator recovery |
-| `nativeDictation` | Native dictation |
 | `connectionMcpServers` | Connect: an MCP server for each connection |
 | `opencodeV2Only` | OpenCode v2 only |
 | `managedDeployments` | Managed deployments |
 | `workbotDocuments` | Workbot Documents |
 | `workbotDocumentEditing` | Workbot Documents: editing |
 | `workbotWorkspaceAssistant` | Workbot: workspace assistant |
-| `workbotScrollToBottom` | Workbot: scroll to latest messages |
 | `workbotProfileComputers` | Workbot: Computers in its profile |
-| `workbotApps` | Workbot: open artifacts from chat |
 | `workbotCalmChat` | Workbot: calm chat look |
-| `workbotProactive` | Workbot: Your agent |
 | `workbotAgentBrief` | Workbot: Your agent's brief and check rhythm |
 | `workbotAgentCheckGate` | Workbot: Your agent skips checks when nothing new arrived |
 | `workbotAgentSendCheck` | Workbot: Your agent checks each message before sending |
 | `workbotSettingsTabs` | Workbot: settings in tabs |
-| `workbotTeamSettings` | Workbot: settings per team |
-| `workbotUsageAnalytics` | Workbot: cost in Analytics |
-| `fileSendPermissions` | Connected accounts: one permission for files the agent sends |
 | `browserDemonstrations` | Workbot: teach browser tasks |
 | `remoteComputers` | Desktop: computer use on remote computers |
-| `remoteDevices` | Computers |
-| `remoteSessionAccess` | Desktop: other devices can open sessions started on a computer |
 | `remoteTasksOptIn` | Desktop: other devices reach a computer only after its owner allows it |
 | `sandboxGateway` | Workbot: computers through the sandbox gateway |
 | `sandboxSlack` | Sandboxes: sample Slack for Workbot |

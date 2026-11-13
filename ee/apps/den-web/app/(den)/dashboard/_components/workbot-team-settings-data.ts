@@ -22,7 +22,7 @@ export function workbotTeamSettingsQueryKey(orgId: string): string[] {
   return [...workbotSettingsQueryKey(orgId), "teams"];
 }
 
-/** Everyone's Workbot settings (on or off, model, name, and whether members' agents are on while they are available) and what each team changed (the `workbotTeamSettings` feature). */
+/** Everyone's Workbot settings (on or off, model, name, and whether members' agents are on while they are available) and what each team changed . */
 export function useWorkbotTeamSettings(orgId: string, enabled = true) {
   return useQuery({
     queryKey: workbotTeamSettingsQueryKey(orgId),

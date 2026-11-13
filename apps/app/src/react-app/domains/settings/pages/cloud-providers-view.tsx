@@ -100,9 +100,9 @@ export type CloudProvidersViewProps = {
   onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
   onOpenDen?: () => void;
   onOpenModelConnections?: () => void;
-  /** Den feature shareDeviceProvider: what to offer while nothing is shared with the organization. */
+  /** Device provider sharing: what to offer while nothing is shared with the organization. */
   shareEmptyState?: OrganizationShareEmptyState;
-  /** Turn off / Turn on on the organization's OpenWork Models row (singleOpenWorkModelsRow). */
+  /** Turn off / Turn on on the organization's OpenWork Models row. */
   openWorkModelsToggle?: OpenWorkModelsToggle;
 };
 

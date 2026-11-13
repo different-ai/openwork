@@ -195,12 +195,11 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
     describeMemberRoute({
       tags: ["Automations"],
       summary: "Attach to a session started on one of the member's computers",
-      description: "Makes a session that was started on one of the member's own computers reachable from other devices, like one started remotely. The organization's ceiling and that computer's owner must both allow every session; otherwise 409 session_access_denied and nothing is queued. Returns state attached with the commandId that already reaches the session, or queued with a commandId to follow through status until the computer has attached. Repeating the call returns the same command. Other refusals: 404 unknown_computer (not one of the member's computers), 409 remote_access_off (the computer, or the organization, takes nothing from other devices), 409 desktop_update_required, 503 desktop_offline. Same result as the remote-session:attach capability. Requires the remoteSessionAccess feature.",
+      description: "Makes a session that was started on one of the member's own computers reachable from other devices, like one started remotely. The organization's ceiling and that computer's owner must both allow every session; otherwise 409 session_access_denied and nothing is queued. Returns state attached with the commandId that already reaches the session, or queued with a commandId to follow through status until the computer has attached. Repeating the call returns the same command. Other refusals: 404 unknown_computer (not one of the member's computers), 409 remote_access_off (the computer, or the organization, takes nothing from other devices), 409 desktop_update_required, 503 desktop_offline. Same result as the remote-session:attach capability. Requires active membership and a session-access-capable computer whose owner and organization both allow all sessions.",
       "x-mcp": false,
       responses: { 200: jsonResponse("The session is attached, or the attach is queued.", remoteSessionAttachResponseSchema), ...commonResponses },
     }),
     orgMemberRoute(),
-    requireFeature("remoteSessionAccess"),
     jsonValidator(remoteSessionAttachRequestSchema.meta({ ref: "RemoteSessionAttachRequest" })),
     async (c) => {
       const result = await run(c.get("organizationContext"), c.req.raw.signal, "attach", c.req.valid("json"))
@@ -214,7 +213,7 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
     describeMemberRoute({
       tags: ["Automations"],
       summary: "List the member's sessions across their computers",
-      description: "The signed-in member's own sessions, newest first, and the computers they are on. reach reachable: read, follow up, stop and answer it through its commandId and sessionId. connecting: a start or an attach is queued for the computer. attachable: the computer reports a session that was started on it, listed only while the organization's ceiling and that computer's owner both allow every session; attach first. Each computer says what applies there: chosen (its owner has chosen on it), access (their choice, or until they choose off under the organization's opt-in and created without it) and effectiveAccess (that capped by the ceiling). optIn says whether the opt-in applies. Sessions on a computer whose effectiveAccess is off are left out until it is allowed again. Never lists another member's computers or sessions. Requires the remoteSessionAccess or the remoteTasksOptIn feature; with the opt-in alone the ceiling is created at most, so no attachable session is listed.",
+      description: "The signed-in member's own sessions, newest first, and the computers they are on. reach reachable: read, follow up, stop and answer it through its commandId and sessionId. connecting: a start or an attach is queued for the computer. attachable: the computer reports a session that was started on it, listed only while the organization's ceiling and that computer's owner both allow every session; attach first. Each computer says what applies there: chosen (its owner has chosen on it), access (their choice, or until they choose off under the organization's opt-in and created without it) and effectiveAccess (that capped by the ceiling). optIn says whether the opt-in applies. Sessions on a computer whose effectiveAccess is off are left out until it is allowed again. Never lists another member's computers or sessions. Requires active organization membership; the organization ceiling, computer owner choice, and supported runner capabilities still constrain every session.",
       "x-mcp": false,
       responses: {
         200: jsonResponse("The member's computers and sessions.", memberSessionListResponseSchema),
@@ -223,7 +222,6 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
       },
     }),
     orgMemberRoute(),
-    requireAnyFeature(["remoteSessionAccess", "remoteTasksOptIn"]),
     async (c) => {
       const context = c.get("organizationContext")
       if (!context) return c.json({ error: "organization_not_found" }, 404)

@@ -79,7 +79,7 @@ test("a screen step keeps the last show Workbot gave, and background work has no
   assert.deepEqual(steps.map((step) => [step.label, step.shown ?? null]), [["Using my computer", true], ["Working on my computer", null], ["Using my computer", false]])
 })
 
-test("an App built in OpenWork shows among a reply's outputs, once, and only with workbotApps", () => {
+test("an App built in OpenWork shows among a reply's outputs, once", () => {
   const app = { id: "cob_01kq8z0000000000000000000a", title: "Hello World Wave" }
   const call = (id: string, name: string) => ({ id, name, input: {} })
   const snapshot = {
@@ -94,9 +94,7 @@ test("an App built in OpenWork shows among a reply's outputs, once, and only wit
       { messageId: "wb_app", role: "assistant", text: "Your app is ready.", createdAt: 150, toolCalls: [] },
     ],
   } satisfies RunnerSnapshot
-  const [off] = buildWorkbotTurns(snapshot)
-  assert.deepEqual(off?.outputs, [], "off: the reply is as before")
-  const [on] = buildWorkbotTurns(snapshot, new Map(), new Map(), { apps: true })
+  const [on] = buildWorkbotTurns(snapshot)
   assert.deepEqual(on?.outputs, [{ id: `app:${app.id}`, name: "Hello World Wave 2.0", mediaType: "application/vnd.openwork.app", size: 0, updatedAt: 130 }])
 })
 

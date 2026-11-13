@@ -1372,7 +1372,6 @@ async function commandRefusal(
   return desktopSessionRefusal(deps, callerScope(input), runner, command.kind, identity)
 }
 
-const ATTACH_FEATURE_DISABLED_MESSAGE = "Reaching sessions that were started on a computer is not turned on for your organization."
 const ATTACH_UPDATE_REQUIRED_MESSAGE = "That computer needs an OpenWork update before a session started on it can be reached from another device."
 const ATTACH_OFFLINE_MESSAGE = "That computer is not connected. Start OpenWork there and try again."
 const ATTACH_DEFAULT_TITLE = "Session"
@@ -1390,7 +1389,6 @@ async function attachDesktopSession(
 ): Promise<RemoteSessionToolResult> {
   const scope = callerScope(input)
   const policy = await sessionAccessPolicy(deps, scope)
-  if (!policy.enabled) return errorResult({ error: "feature_disabled", message: ATTACH_FEATURE_DISABLED_MESSAGE, retryable: false })
   const organizationOff = remoteAccessOffReason(policy, null)
   if (organizationOff) return remoteAccessOff(organizationOff, {})
   const targets = await (deps.desktopTargets ?? defaultDesktopTargets)({ ...scope, sessions: true })

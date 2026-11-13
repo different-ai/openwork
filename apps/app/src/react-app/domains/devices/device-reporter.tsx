@@ -9,22 +9,20 @@ import { isElectronRuntime } from "@/app/lib/runtime-env"
 import { desktopRunnerId } from "@/react-app/domains/automations/automation-runner-identity"
 import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
-import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature"
 import { denSignInKey, markThisComputerDisconnected, useThisComputerDisconnected } from "./computer-connection-store"
 import { DEVICE_REPORT_POLL_MS, createDeviceReporter, deviceReportFailure, type DeviceReportOutcome } from "./device-report"
 import { useThisDeviceStore } from "./this-device-store"
 import { remoteDevicesQueryKey } from "./use-remote-devices"
 
 /**
- * Keeps this desktop in its organization's devices list (`remoteDevices`):
+ * Keeps this desktop in its organization's devices list:
  * who it is and how its computer use is doing, at launch, when that changes
- * and every few minutes. Mounted once per window. With the feature off,
- * signed out, or disconnected from the organization, it calls nothing: no
+ * and every few minutes. Mounted once per window.
+ * When signed out or disconnected from the organization, it calls nothing: no
  * desktop command and no request to Den.
  */
 export function DeviceReporter() {
-  const enabled = useDesktopFeature("remoteDevices")
-  return enabled && isElectronRuntime() ? <ActiveDeviceReporter /> : null
+  return isElectronRuntime() ? <ActiveDeviceReporter /> : null
 }
 
 function ActiveDeviceReporter() {

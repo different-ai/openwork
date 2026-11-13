@@ -9,11 +9,10 @@ import { DenPageHeader } from "../../../_components/ui/page-header";
 import { AUTOMATION_CARD_CLASS, CARD_TITLE_CLASS, DASHBOARD_PAGE_CLASS } from "../../../_components/ui/dashboard-styles";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { RowListSkeleton } from "../computers/computer-rows";
-import { getAnalyticsRoute, getLibraryUsageRoute, getWorkbotUsageRoute, getWorkflowRunsRoute, orgFeatureEnabled } from "../../../_lib/den-org";
+import { getAnalyticsRoute, getLibraryUsageRoute, getWorkbotUsageRoute, getWorkflowRunsRoute } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useLibraryUsageAvailable } from "../library-usage/use-library-usage";
 import { useFeatureIntroUnseen, type FeatureIntroKey } from "../feature-intros";
-import { markFeatureUsed } from "../../../_lib/feature-usage";
 
 type AnalyticsView = "adoption" | "library" | "workbot" | "workflows";
 type AnalyticsViewLink = { id: AnalyticsView; label: string; href: string; icon: typeof BarChart3 };
@@ -44,7 +43,6 @@ export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }:
   const { orgContext } = useOrgDashboard();
   const libraryUsage = useLibraryUsageAvailable();
   const introUnseen = useFeatureIntroUnseen();
-  const consistentInteractions = orgFeatureEnabled(orgContext, "denPageConsistency");
   const adoption: AnalyticsViewLink = { id: "adoption", label: "Usage & adoption", href: getAnalyticsRoute(orgSlug), icon: BarChart3 };
   const library: AnalyticsViewLink = { id: "library", label: "Plugins & connectors", href: getLibraryUsageRoute(orgSlug), icon: Blocks };
   // What Workbot spends on models, for the people who can see usage, where Workbot is available.
@@ -53,9 +51,9 @@ export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }:
   const pages = [
     adoption,
     ...(libraryUsage ? [library] : []),
-    ...(libraryUsage && orgContext?.capabilities.workbot && orgFeatureEnabled(orgContext, "workbotUsageAnalytics") ? [workbot] : []),
-    // Personal run history remains reachable by existing links; disabling the rollout restores its normal tab.
-    ...((!consistentInteractions || active === "workflows") && orgContext?.capabilities.workflows && orgContext.entitlements.analytics ? [workflows] : []),
+    ...(libraryUsage && orgContext?.capabilities.workbot ? [workbot] : []),
+    // Personal run history remains reachable by existing links.
+    ...((active === "workflows") && orgContext?.capabilities.workflows && orgContext.entitlements.analytics ? [workflows] : []),
   ];
   return <header className="grid gap-6">
     <div data-dashboard-flat-header>
@@ -65,7 +63,6 @@ export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }:
     </div>
     <nav aria-label="Analytics views" className="flex flex-wrap gap-x-6 border-b border-[var(--den-list-line)]">
       {pages.map(({ id, label, href, icon: Icon }) => <Link key={id} href={href} aria-current={active === id ? "page" : undefined}
-        onClick={() => { if (consistentInteractions) markFeatureUsed("denPageConsistency"); }}
         className={`-mb-px focus-visible:outline-offset-4 ${underlineTabClassName(active === id)}`}>
         <Icon className="h-4 w-4" aria-hidden="true" />{label}
         {active !== id && introUnseen(ANALYTICS_VIEW_INTROS[id]) ? <UnseenDot /> : null}

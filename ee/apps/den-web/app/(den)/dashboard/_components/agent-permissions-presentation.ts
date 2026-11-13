@@ -30,14 +30,13 @@ const EDITOR_GROUPS: readonly { label: string; sections: readonly AgentPermissio
   { label: "Skills and MCP servers", sections: ["extensions"] },
 ];
 
-export function visibleAgentPermissionGroups(area: AgentPermissionsArea, fileSendsEnabled = false) {
+export function visibleAgentPermissionGroups(area: AgentPermissionsArea) {
   const groups = area === "browser" ? [{ label: "Websites", sections: ["web"] }] : EDITOR_GROUPS;
   return groups.map((group) => ({
     label: group.label,
     definitions: agentPermissionDefinitions.filter((definition) =>
       group.sections.includes(definition.section)
-      && inArea(area, definition.key)
-      && (fileSendsEnabled || definition.key !== "fileSends")),
+      && inArea(area, definition.key)),
   })).filter((group) => group.definitions.length > 0);
 }
 
@@ -51,8 +50,8 @@ const TRY_KINDS: readonly { action: AgentPermissionAction; label: string; placeh
   { action: "mcp", label: "Local MCP server", placeholder: "issue-tracker" },
 ];
 
-export function visibleAgentPermissionTryKinds(area: AgentPermissionsArea, fileSendsEnabled = false) {
-  const keys = visibleAgentPermissionGroups(area, fileSendsEnabled).flatMap((group) => group.definitions.map((definition) => definition.key));
+export function visibleAgentPermissionTryKinds(area: AgentPermissionsArea) {
+  const keys = visibleAgentPermissionGroups(area).flatMap((group) => group.definitions.map((definition) => definition.key));
   return TRY_KINDS.filter((entry) => agentPermissionDefinitions.some((definition) => definition.action === entry.action && keys.includes(definition.key)));
 }
 

@@ -40,7 +40,7 @@ const { and, eq } = await import("@openwork-ee/den-db/drizzle")
 const { AGENT_TEMPLATE_PATH } = await import("../../src/workbot-proactive/template.js")
 
 const SECRETS = { byok: "sk-whole-byok-SECRET-1", gateway: "sk-whole-gateway-SECRET-1", oauth: "whole-oauth-client-SECRET-1", oidc: "whole-oidc-client-SECRET-1" }
-const FEATURES = ["workbotProactive", "workbotTeamSettings"]
+const FEATURES: string[] = []
 const skillMarkdown = (name: string, body: string) => `---\nname: ${name}\ndescription: A skill of the whole-org round trip.\n---\n\n${body}\n`
 
 type Api = ReturnType<typeof den.as>

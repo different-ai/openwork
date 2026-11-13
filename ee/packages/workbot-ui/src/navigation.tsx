@@ -64,7 +64,7 @@ function destinations(props: NavigationProps, rail = false): Destination[] {
     ...(host.documents === true ? [{ label: "Documents", icon: FileText, selected: props.page === "documents", onClick: () => props.onPage("documents") }] : []),
     ...(host.calendar === true ? [{ label: "Calendar", icon: CalendarDays, selected: props.page === "calendar", onClick: () => props.onPage("calendar") }] : []),
     // The computers the person can reach, where Devices is on. Workbot's own computer still opens from the chat.
-    ...(host.devices === true && !(host.profileComputers === true) ? [{ label: "Devices", icon: MonitorSmartphone, selected: props.page === "devices", onClick: () => props.onPage("devices") }] : []),
+    ...(!(host.profileComputers === true) ? [{ label: "Devices", icon: MonitorSmartphone, selected: props.page === "devices", onClick: () => props.onPage("devices") }] : []),
   ];
 }
 

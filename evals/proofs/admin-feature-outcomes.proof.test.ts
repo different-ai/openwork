@@ -23,24 +23,21 @@ test("a platform admin sees, per feature across organizations, whether backgroun
     await member.screenshot();
   });
 
-  await step("the admin opens Features: each background feature shows organizations on, members using, runs, its days and one health label", async () => {
+  await step("the admin opens Features: surviving features show adoption while retired outcome rows stay absent", async () => {
     await admin.see({ role: "heading", label: "Features" }, { timeoutMs: 60_000 });
-    // The schedule-trigger outcome features are retired (GA): no rows. Your agent is the remaining outcome feature.
-    await admin.see({ testId: "admin-feature-usage-toggle-workbotProactive" });
+    // Retired background features are no longer rollout rows, even with stored outcomes.
+    await admin.notSee({ testId: "admin-feature-usage-toggle-workbotProactive" });
     // Historical usage is preserved in the store, but cannot resurrect a retired rollout.
     await admin.notSee({ testId: "admin-feature-usage-toggle-slackSendAsBot" });
     await admin.notSee({ testId: "admin-feature-usage-toggle-settledSessions" });
     await admin.notSee({ testId: "admin-feature-usage-toggle-computerUse" });
     const health = async (key: string) => (await adminProbe.dom(`[data-testid="admin-feature-usage-health-${key}"]`)).elements[0]?.text ?? "";
     const labels = {
-      agent: await health("workbotProactive"),
       adoptionOnly: await health("workbotDocuments"),
       unused: await health("remoteComputers"),
     };
-    const bars = await adminProbe.dom('[data-testid="admin-feature-usage-bars"]');
-    const failed = await adminProbe.dom('[data-testid="admin-feature-usage-bars"] [data-failed="true"]');
-    const ok = labels.agent === "Healthy" && labels.adoptionOnly === "In use" && labels.unused === "Not used" && bars.elements.length >= 1 && failed.elements.length >= 1;
-    evidence.recordAssertionEvidence("Health reads in plain words", `${JSON.stringify(labels)}; day bars=${bars.elements.length}; failed days marked=${failed.elements.length}`, ok);
+    const ok = labels.adoptionOnly === "In use" && labels.unused === "Not used";
+    evidence.recordAssertionEvidence("Health reads in plain words", JSON.stringify(labels), ok);
     expect(ok).toBe(true);
     await admin.screenshot();
   });

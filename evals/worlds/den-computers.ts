@@ -20,7 +20,7 @@ export async function denComputersWorld(seed: Seed) {
       members: { manager: { name: "Alex Morgan" }, owner: { name: "Casey Rivera" }, member: { name: "Riley Chen" }, foreign: { name: "Foreign Owner" } },
     } });
     if (!den.database) throw new Error("Computers proof requires a disposable local database, never an attached Den");
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { remoteDevices: true, remoteComputers: true });
+    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { remoteComputers: true });
     const request = (session: DenSession, path: string, body?: unknown, method = body === undefined ? "GET" : "POST", org = organizationId) =>
       denFetch(session, path, { method, headers: { authorization: `Bearer ${session.token}`, "x-openwork-org-id": org }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const send = async (session: DenSession, path: string, body?: unknown, method?: string, org?: string) => {
@@ -67,7 +67,6 @@ export async function denComputersWorld(seed: Seed) {
       workspaces: [{ workspaceId: "workspace-fieldnotes", name: "Fieldnotes", active: true, engine: "v2", defaultModel: null, models: [] }],
     }, "PUT");
     const foreignOrg = z.object({ organization: z.object({ id: z.string() }) }).parse(await send(den.members.foreign, "/v1/org", { name: "Foreign Organization" })).organization.id;
-    await enableOrganizationCapabilities(seed, den.admin, { remoteDevices: true }, foreignOrg);
     const foreign = await register(den.members.foreign, "FOREIGN confidential Mac", "mac_host", false, foreignOrg);
     // Seed-only registration records in this world's disposable DB: never provision a paid host.
     // The product has no local-worker registration POST; all inventory reads remain real API/UI.
@@ -88,7 +87,6 @@ export async function denComputersWorld(seed: Seed) {
       async detail(id: string) { return organizationComputerDetailResponseSchema.parse(await send(adminSession, `/v1/org/computers/${id}`)); },
       async personal() { return remoteDeviceListResponseSchema.parse(await send(memberSession, "/v1/remote-devices")).devices; },
       async roles() { return { admin: contextSchema.parse(await send(adminSession, "/v1/org")).currentMember.role, owner: contextSchema.parse(await send(ownerSession, "/v1/org")).currentMember.role }; },
-      async setEnabled(enabled: boolean) { await send(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, { capabilities: { remoteDevices: enabled } }, "PUT"); },
       async [Symbol.asyncDispose]() { await stack.disposeAsync(); },
     };
   } catch (error) { await stack.disposeAsync(); throw error; }

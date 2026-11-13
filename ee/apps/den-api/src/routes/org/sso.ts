@@ -11,7 +11,6 @@ import { auditChangeCapture, type AuditChangeCapture } from "../../audit/request
 import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
-import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { enterprisePlanRequiredSchema, xmlResponse } from "../../openapi.js"
 import {
   deleteOrganizationSsoConnection,
@@ -58,7 +57,6 @@ import type { OrgRouteVariables } from "./shared.js"
 type SsoConnection = typeof SsoConnectionTable.$inferSelect
 type OrganizationPayload = NonNullable<OrgRouteVariables["organizationContext"]>
 
-const OIDC_SETUP_CHECK = "ssoOidcSetupCheck"
 // Private addresses are reachable only where the deployment allows them (dev mode, or the operator's opt-in).
 const oidcDiscoveryFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
 
@@ -415,7 +413,7 @@ export async function registerConnection(request: RegistrationRequest): Promise<
 
   const previous = request.capture ? await getSsoConnectionAuditState(request.target === undefined ? await getOrganizationSsoConnection(payload.organization.id) : request.target) : null
   let data = parsed.data
-  if ("clientId" in data && await organizationFeatureEnabled(payload.organization.id, OIDC_SETUP_CHECK, { userId: payload.currentMember.userId })) {
+  if ("clientId" in data) {
     if (data.skipDiscovery) {
       // Manual endpoints skip discovery, so nothing else would catch a
       // discovery URL saved as the issuer; sign-in then fails on every token.
@@ -663,7 +661,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     describeRoute({
       tags: ["SSO"],
       summary: "Check an OIDC issuer or discovery URL",
-      description: "Reads the identity provider's OIDC discovery document from an issuer or a discovery URL and reports the issuer and endpoints found, or why none were. Nothing is saved. Requires ssoOidcSetupCheck.",
+      description: "Reads the identity provider's OIDC discovery document from an issuer or a discovery URL and reports the issuer and endpoints found, or why none were. Nothing is saved. Requires permission to manage SSO settings.",
       security: [{ bearerAuth: [] }],
       responses: {
         200: { description: "What the provider's discovery document says, or why it could not be read", content: { "application/json": { schema: resolver(oidcCheckResponseSchema) } } },
@@ -674,7 +672,6 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       },
     }),
     orgMemberRoute(),
-    requireFeature(OIDC_SETUP_CHECK),
     requireOrgPermission("sso.manage"),
     async (c) => {
       const payload = c.get("organizationContext")

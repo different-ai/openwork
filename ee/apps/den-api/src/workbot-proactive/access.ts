@@ -4,7 +4,7 @@ import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { readWorkbotProactiveSettings, type WorkbotProactiveSettings } from "@openwork/types/den/workbot-proactive"
 import { db } from "../db.js"
 import { env } from "../env.js"
-import { getOrganizationFeatures, organizationFeatureEnabled } from "../features.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { headlessRunnerConfig } from "../headless-runner/client.js"
 import { workbotOrigin } from "../workbot/config.js"
 import { listOrganizationsWithTeamAgents, resolveMemberWorkbotSettings } from "../workbot/team-settings.js"
@@ -23,11 +23,8 @@ import { listOrganizationsWithTeamAgents, resolveMemberWorkbotSettings } from ".
 
 export async function proactiveAllowed(organizationId: string, userId?: string) {
   if (workbotOrigin() === null) return false
-  if (!userId) return organizationFeatureEnabled(organizationId, "workbotProactive")
-  // The same cached feature read as before; the member's teams are read only while workbotTeamSettings is on.
-  const features = await getOrganizationFeatures(organizationId, { userId })
-  if (!features.workbotProactive) return false
-  return !features.workbotTeamSettings || (await resolveMemberWorkbotSettings({ organizationId, userId, featureOn: true })).enabled
+  if (!userId) return true
+  return (await resolveMemberWorkbotSettings({ organizationId, userId })).enabled
 }
 
 /**
@@ -92,8 +89,6 @@ export async function listAgentCandidates(): Promise<{ organizationId: DenTypeId
   const candidates: { organizationId: DenTypeId<"organization">; memberIds: DenTypeId<"member">[] }[] = []
   for (const organization of organizations) {
     if (!(await proactiveAllowed(organization.id))) continue
-    // A team's policy counts only while the feature is on; off, it is kept and ignored.
-    if (organization.teamsOnly && !(await organizationFeatureEnabled(organization.id, "workbotTeamSettings"))) continue
     const members = await db
       .select({ id: MemberTable.id })
       .from(MemberTable)

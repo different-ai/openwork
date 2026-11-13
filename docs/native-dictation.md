@@ -1,5 +1,7 @@
 # Dictation
 
+> **Generally available:** `nativeDictation` is retired; its enabled behavior is standard on Cloud and self-hosted. Actual settings, permissions, billing rules and consent remain enforced. Rollout/off-state instructions below are historical; see [the retirement guide](features/globally-enabled-retirement/README.md).
+
 Status: proposed, behind `nativeDictation`, off by default for cloud and
 self-hosted deployments. Enable through the existing Features controls in
 `/admin`; this change does not enable a live rollout.

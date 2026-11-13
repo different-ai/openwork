@@ -29,7 +29,7 @@ export function registerOrgDeviceProviderShareRoutes<T extends { Variables: OrgR
       operationId: "getDeviceShareOptions",
       "x-mcp": false,
       summary: "Check which providers on the caller's device can be shared with the organization",
-      description: "Read-only. For the provider ids in providerIds (comma-separated, at most 20), says whether the caller may add each to AI Gateway for everyone with the one API key saved on their device: shareable, already shared (an active organization provider exists for it) or unsupported (not in the catalog, or it needs more than one key or settings a person chooses). canShare needs the Manage Gateway providers permission and enabled Gateway management; otherwise blocker says which is missing, managerName names an owner who can, and providers is empty. verificationRequired is true when adding the provider would first ask for a recent sign-in. Never reads or returns a key. Requires a signed-in user session and the shareDeviceProvider feature.",
+      description: "Read-only. For the provider ids in providerIds (comma-separated, at most 20), says whether the caller may add each to AI Gateway for everyone with the one API key saved on their device: shareable, already shared (an active organization provider exists for it) or unsupported (not in the catalog, or it needs more than one key or settings a person chooses). canShare needs the Manage Gateway providers permission and enabled Gateway management; otherwise blocker says which is missing, managerName names an owner who can, and providers is empty. verificationRequired is true when adding the provider would first ask for a recent sign-in. Never reads or returns a key. Requires a signed-in user session. Gateway permissions, recent sign-in and organization management settings still apply.",
       responses: {
         200: jsonResponse("What the caller can share.", deviceShareOptionsSchema.meta({ ref: "DeviceShareOptions" })),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -44,7 +44,6 @@ export function registerOrgDeviceProviderShareRoutes<T extends { Variables: OrgR
       if (!actor) return c.json({ error: "organization_not_found" }, 404)
       // Not requireFeature(): Settings reads this on every visit, which is not a use
       // of the feature. The app reports the use when a person actually shares.
-      if (!actor.features.shareDeviceProvider) return c.json({ error: "feature_disabled", feature: "shareDeviceProvider" }, 404)
       c.header("Cache-Control", "no-store")
       const organizationId = actor.organization.id
       const blocker = !(await hasPermission(c, "gateway_providers.manage")) ? "no_permission" as const

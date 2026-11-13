@@ -4,10 +4,9 @@ import {
   withOrganizationRemoteSessionSettings,
 } from "@openwork/types/den/remote-sessions"
 import type { Hono } from "hono"
-import { z } from "zod"
 import { automationRepository } from "../../automations/repository.js"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
-import { requireAnyFeature, type FeatureMap } from "../../features.js"
+import type { FeatureMap } from "../../features.js"
 import { jsonValidator, orgMemberRoute, requireOrgPermission } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { updateOrganizationMetadata } from "../../organization-metadata.js"
@@ -19,12 +18,10 @@ const path = "/v1/org/remote-session-settings"
 const describeSettingsRoute = (options: DescribeRouteOptions & { "x-mcp": false }) => describeRoute(options)
 const settingsInputSchema = organizationRemoteSessionSettingsSchema.strict().meta({ ref: "OrganizationRemoteSessionSettingsInput" })
 const notFound = jsonResponse("The organization was not found, or it uses neither Devices, sessions on members' computers nor the opt-in for tasks from other devices.", notFoundSchema)
-const featureDisabledSchema = z.object({ error: z.literal("feature_disabled"), feature: z.literal("remoteSessionAccess") })
 
 /** The setting belongs to both access features; an organization with Devices also has it, to turn remote access off for everyone. */
-const requireSettingFeature = requireAnyFeature(["remoteSessionAccess", "remoteTasksOptIn", "remoteDevices"])
 
-/** The setting as it applies: a stored `all` reads as `created` while `remoteSessionAccess` is off. */
+/** The setting as it applies: the stored organization ceiling always applies. */
 function settingsResponse(features: FeatureMap, metadata: unknown, canEdit: boolean) {
   const policy = remoteSessionAccessPolicy({ features, metadata })
   return { settings: { access: policy.ceiling }, canEdit, allowsAll: policy.enabled, optIn: policy.optIn }
@@ -41,7 +38,7 @@ export function registerOrgRemoteSessionSettingsRoutes<T extends { Variables: Or
     describeSettingsRoute({
       tags: ["Organizations"],
       summary: "Get remote session settings",
-      description: "Returns the widest access members may choose for their own computers: off (nobody's computer takes anything from other devices), created (tasks can be started on a computer from other devices, and only those sessions reached) or all (also sessions started on the computer itself, once attached). Each member still chooses per computer in OpenWork, and the narrower of the two applies. allowsAll says whether all can be chosen (the remoteSessionAccess feature); a stored all reads as created while it cannot. optIn says whether a computer whose owner has not chosen takes nothing (the remoteTasksOptIn feature). Any member can read it; canEdit says whether the caller can change it. Requires one of the remoteDevices, remoteSessionAccess or remoteTasksOptIn features.",
+      description: "Returns the widest access members may choose for their own computers: off (nobody's computer takes anything from other devices), created (tasks can be started on a computer from other devices, and only those sessions reached) or all (also sessions started on the computer itself, once attached). Each member still chooses per computer in OpenWork, and the narrower of the two applies. allowsAll is always true; all can be chosen by an authorized editor, but access still requires both the organization ceiling and the computer owner to allow it. optIn says whether a computer whose owner has not chosen takes nothing (the remoteTasksOptIn feature). Any member can read it; canEdit says whether the caller can change it. Requires active organization membership.",
       "x-mcp": false,
       responses: {
         200: jsonResponse("Remote session settings returned.", organizationRemoteSessionSettingsResponseSchema),
@@ -50,7 +47,6 @@ export function registerOrgRemoteSessionSettingsRoutes<T extends { Variables: Or
       },
     }),
     orgMemberRoute(),
-    requireSettingFeature,
     async (c) => {
       c.header("Cache-Control", "no-store")
       const context = c.get("organizationContext")
@@ -63,7 +59,7 @@ export function registerOrgRemoteSessionSettingsRoutes<T extends { Variables: Or
     describeSettingsRoute({
       tags: ["Organizations"],
       summary: "Set remote session settings",
-      description: "Sets the widest access members may choose for their own computers: off, created or all. Lowering it applies at once. To created: sessions that were started on a computer stop being listed and can no longer be read, followed up, stopped or answered from other devices, whatever a member chose, and have to be attached again if it is raised later; sessions started remotely are not affected. To off: also no task can be started on anyone's computer from another device and no session there is reached, answered with 409 remote_access_off, until it is raised again. all needs the remoteSessionAccess feature: without it the request answers 409 feature_disabled and nothing is saved. Requires Edit organization settings and one of the remoteDevices, remoteSessionAccess or remoteTasksOptIn features.",
+      description: "Sets the widest access members may choose for their own computers: off, created or all. Lowering it applies at once. To created: sessions that were started on a computer stop being listed and can no longer be read, followed up, stopped or answered from other devices, whatever a member chose, and have to be attached again if it is raised later; sessions started remotely are not affected. To off: also no task can be started on anyone's computer from another device and no session there is reached, answered with 409 remote_access_off, until it is raised again. Requires Edit organization settings. Each computer still enforces its owner's choice and its supported runner capabilities.",
       "x-mcp": false,
       responses: {
         200: jsonResponse("Remote session settings saved.", organizationRemoteSessionSettingsResponseSchema),
@@ -71,20 +67,16 @@ export function registerOrgRemoteSessionSettingsRoutes<T extends { Variables: Or
         401: jsonResponse("Authentication required.", unauthorizedSchema),
         403: jsonResponse("The caller cannot edit organization settings.", forbiddenSchema),
         404: notFound,
-        409: jsonResponse("all was asked for and the organization does not have the remoteSessionAccess feature.", featureDisabledSchema),
       },
     }),
     orgMemberRoute(),
-    requireSettingFeature,
     requireOrgPermission("organization.update"),
     jsonValidator(settingsInputSchema),
     async (c) => {
       c.header("Cache-Control", "no-store")
       const settings = c.req.valid("json")
       const context = c.get("organizationContext")
-      if (settings.access === "all" && !context.features.remoteSessionAccess) {
-        return c.json({ error: "feature_disabled" as const, feature: "remoteSessionAccess" as const }, 409)
-      }
+
       const organizationId = context.organization.id
       const metadata = await updateOrganizationMetadata(organizationId, (current) => withOrganizationRemoteSessionSettings(current, settings))
       // Den stops showing reported sessions the moment the ceiling drops; it also stops

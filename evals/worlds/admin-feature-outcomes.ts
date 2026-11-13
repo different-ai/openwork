@@ -47,8 +47,8 @@ export async function adminFeatureOutcomesWorld(seed: Seed) {
     });
     if (!set.response.ok) throw new Error(`Could not turn features on (${set.response.status}).`);
   };
-  // Your agent is the remaining background outcome feature; the schedule-trigger outcome features are retired (GA).
-  await turnOn(acmeId, ["workbotProactive", "workbotDocuments"]);
+  // Only the non-GA document feature needs rollout setup; historical agent outcomes remain stored.
+  await turnOn(acmeId, ["workbotDocuments"]);
 
   // Your agent: daily counters for every member, and one member's check records.
   await sql("INSERT INTO agent_instance (member_id, organization_id, next_wake_at) VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 30 DAY))", [acmeMember.id, acmeId]);

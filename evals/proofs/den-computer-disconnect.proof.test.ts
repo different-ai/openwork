@@ -140,12 +140,4 @@ test("an admin and a computer's owner each disconnect a signed-in computer from 
     evidence.recordAssertionEvidence("Colours only, and reversible", `denGreySidebar on: the shell marks itself and the pages render on white; off: marked shells=${restored}`, restored === 0);
   });
 
-  await step("with Computers off, the new actions are gone too", async () => {
-    await world.setFeature("remoteDevices", false);
-    const owner = await world.memberRequest(`/v1/remote-devices/${rileyMac.deviceId}/disconnect`, {});
-    const team = await world.adminRequest(`/v1/org/computers/${alexMac.deviceId}/disconnect`, {});
-    expect(owner.response.status).toBe(404);
-    expect(team.response.status).toBe(404);
-    evidence.recordAssertionEvidence("Rollout gate", `remoteDevices=false; owner disconnect=${owner.response.status}; admin disconnect=${team.response.status}`, owner.response.status === 404 && team.response.status === 404);
-  });
 });

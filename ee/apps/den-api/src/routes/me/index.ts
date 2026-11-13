@@ -516,7 +516,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       // so file-send rules reach only desktops that ask for them.
       const supportsFileSends = c.req.header("X-OpenWork-File-Send-Permissions") === "1"
       const uploadRules: AgentPermissionRule[] = supportsBrowserUploads ? rules : withoutBrowserUploadRules(rules)
-      const deliveredRules: AgentPermissionRule[] = features.fileSendPermissions && supportsFileSends ? uploadRules : withoutFileSendRules(uploadRules)
+      const deliveredRules: AgentPermissionRule[] = supportsFileSends ? uploadRules : withoutFileSendRules(uploadRules)
       // Published clients drop unknown actions. Refuse browsing conservatively
       // rather than silently dropping an active managed upload permission.
       if (!supportsBrowserUploads && rules.some((rule) => rule.action === "browser_upload")) {
@@ -534,7 +534,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         ...desktopPolicy,
         // Local models (Ollama, LM Studio) get their own switch only with the
         // rollout on; otherwise they follow the provider setting, as before.
-        allowLocalModels: features.localModelsPolicy ? desktopPolicy.allowLocalModels : desktopPolicy.allowCustomProviders,
+        allowLocalModels: desktopPolicy.allowLocalModels,
         // The Automations page shows when either kind is allowed; only Desktop Automations make this desktop a runner.
         automationsEnabled: env.automations.enabled && (automations.desktop || automations.cloud),
         desktopAutomationsEnabled: automations.desktop,
@@ -550,7 +550,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         removeOpencodeZen: true,
         agentPermissions,
         ...(supportsBrowserUploads ? { browserUploadPermissions: { enabled: true, organizationId: organization.id, memberId: currentMember.id } } : {}),
-        ...(supportsFileSends ? { fileSendPermissions: { enabled: features.fileSendPermissions, organizationId: organization.id, memberId: currentMember.id } } : {}),
+        ...(supportsFileSends ? { fileSendPermissions: { enabled: true, organizationId: organization.id, memberId: currentMember.id } } : {}),
         ...(defaultModel ? { defaultModel } : {}),
         ...(Array.isArray(metadata.allowedDesktopVersions)
           ? { allowedDesktopVersions: metadata.allowedDesktopVersions }

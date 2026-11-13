@@ -24,14 +24,6 @@ test("a person sees only their Workbot computers, including an honest unavailabl
     return response.ok ? listSchema.parse(await response.json()).devices : null;
   };
 
-  await step("before: Workbot has no Devices page and its server refuses the list", async () => {
-    await person.see({ text: "Acme AI Gateway is working." });
-    await person.notSee({ role: "button", label: "Devices" });
-    const refused = await world.call("/v1/workbot/devices");
-    evidence.recordAssertionEvidence("Devices is off until it is rolled out", `GET /v1/workbot/devices → ${refused.status}; no Devices entry in the navigation`, refused.status === 403);
-    expect(refused.status).toBe(403);
-    await person.screenshot();
-  });
 
   await step("after: Devices lists the person's own Mac and the Mac sandbox their admin shared", async () => {
     await world.setEnabled(true);
@@ -66,16 +58,4 @@ test("a person sees only their Workbot computers, including an honest unavailabl
     await person.screenshot();
   });
 
-  await step("turning Devices off removes the page and refuses the personal Workbot list", async () => {
-    await world.setEnabled(false);
-    await person.navigate(new URL("/", await personProbe.url()).toString());
-    await reloadWhenDevices(false);
-    await person.see({ text: "Acme AI Gateway is working." });
-    await person.notSee({ role: "button", label: "Devices" });
-    const refused = await world.call("/v1/workbot/devices");
-    const ok = refused.status === 403;
-    evidence.recordAssertionEvidence("Devices is off for the signed-in person", `GET /v1/workbot/devices → ${refused.status}; no Devices navigation`, ok);
-    expect(ok).toBe(true);
-    await person.screenshot();
-  });
 });

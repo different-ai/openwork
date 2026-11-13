@@ -1,4 +1,3 @@
-import { denFetch } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -53,13 +52,6 @@ export async function passwordSignInGoogle(seed: Seed) {
     den, web, mobile, account,
     socialRequests: () => [...socialRequests],
     async [Symbol.asyncDispose]() { network.close(); },
-    async rollout(enabled: boolean, killed = false) {
-      const result = await denFetch(den.admin, "/v1/admin/features/passwordSignInGoogle", {
-        method: "PUT",
-        headers: { authorization: `Bearer ${den.admin.token}`, "content-type": "application/json" },
-        body: JSON.stringify({ enabled, killed }),
-      });
-      if (!result.response.ok) throw new Error(`Change sign-in rollout: ${result.text}`);
-    },
+
   };
 }

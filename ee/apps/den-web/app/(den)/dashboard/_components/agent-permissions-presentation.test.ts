@@ -11,7 +11,7 @@ function visibleKeys(area: "all" | "agents" | "browser") {
 test("agent panels always include harness controls, outside folders and computer use", () => {
   const groups = visibleAgentPermissionGroups("agents");
   assert.equal(groups[0]?.label, "Commands and files");
-  assert.deepEqual(groups[0]?.definitions.map((definition) => definition.key), ["commands", "fileEdits", "externalFolders"]);
+  assert.deepEqual(groups[0]?.definitions.map((definition) => definition.key), ["commands", "fileEdits", "externalFolders", "fileSends"]);
   assert.equal(groups[1]?.label, "Computer use");
   assert.deepEqual(groups[1]?.definitions.map((definition) => definition.key), ["computerUse", "computerFiles", "computerClipboard", "appScripting"]);
   assert.equal(visibleKeys("agents").includes("websites"), false);
@@ -83,16 +83,14 @@ test("upload defaults are distinct from explicit Ask without changing existing c
   }
 });
 
-test("file sends have their own gate, sit with the other file permissions and let the member decide by default", () => {
-  const keys = (area: "all" | "agents" | "browser", fileSends: boolean) =>
-    visibleAgentPermissionGroups(area, fileSends).flatMap(group => group.definitions.map(definition => definition.key));
-  for (const area of ["all", "agents", "browser"] satisfies ("all" | "agents" | "browser")[]) {
-    assert.equal(keys(area, false).includes("fileSends"), false);
-    assert.equal(visibleAgentPermissionTryKinds(area, false).some(kind => kind.action === "file_send"), false);
-  }
-  assert.equal(keys("agents", true).includes("fileSends"), true);
-  assert.equal(keys("browser", true).includes("fileSends"), false);
-  assert.equal(visibleAgentPermissionTryKinds("agents", true).some(kind => kind.action === "file_send"), true);
+test("file sends sit with file permissions and let the member decide by default", () => {
+  const keys = (area: "all" | "agents" | "browser") =>
+    visibleAgentPermissionGroups(area).flatMap(group => group.definitions.map(definition => definition.key));
+  assert.equal(keys("agents").includes("fileSends"), true);
+  assert.equal(keys("all").includes("fileSends"), true);
+  assert.equal(keys("browser").includes("fileSends"), false);
+  assert.equal(visibleAgentPermissionTryKinds("agents").some(kind => kind.action === "file_send"), true);
+  assert.equal(visibleAgentPermissionTryKinds("browser").some(kind => kind.action === "file_send"), false);
   assert.deepEqual([...agentPermissionDefinitions].filter(definition => agentPermissionMemberDecides(definition.key)).map(definition => definition.key), ["browserUploads", "fileSends"]);
 });
 

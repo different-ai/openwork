@@ -19,12 +19,11 @@ test("audit draft validation rejects invalid dates and reversed ranges without s
   }
 });
 
-test("automatic audit searches are rollout gated and never request invalid ranges", () => {
-  assert.equal(pendingAuditSearch(false, { searchId: "draft-id", action: "organization.updated" }), null);
-  assert.equal(pendingAuditSearch(true, { searchId: "  applied-id  " }, "applied-id"), null);
-  assert.equal(pendingAuditSearch(true, { searchId: "draft-id", from: "invalid" }), null);
-  assert.equal(pendingAuditSearch(true, { searchId: "draft-id", from: "2026-11-12T12:00", to: "2026-11-11T12:00" }), null);
-  assert.equal(pendingAuditSearch(true, { searchId: "  draft-id  " })?.searchId, "draft-id");
+test("automatic audit searches are debounced and never request invalid ranges", () => {
+  assert.equal(pendingAuditSearch({ searchId: "  applied-id  " }, "applied-id"), null);
+  assert.equal(pendingAuditSearch({ searchId: "draft-id", from: "invalid" }), null);
+  assert.equal(pendingAuditSearch({ searchId: "draft-id", from: "2026-11-12T12:00", to: "2026-11-11T12:00" }), null);
+  assert.equal(pendingAuditSearch({ searchId: "  draft-id  " })?.searchId, "draft-id");
 });
 
 test("valid audit drafts normalize IDs and local date endpoints, retaining every facet", () => {
@@ -62,7 +61,7 @@ test("same-organization refresh preserves edits and updates untouched fields", (
   assert.deepEqual(refreshedDraft(["1.2.4", "1.2.3"], saved.desktopVersions, ["1.2.5"], true, sameStringSet), ["1.2.5"]);
 });
 
-test("organization changes and rollout-off initialization reset drafts to saved values", () => {
+test("organization changes and initial loading reset drafts to saved values", () => {
   assert.equal(refreshedDraft("My draft", "Saved name", "Other workspace", false), "Other workspace");
   assert.deepEqual(refreshedDraft(["old-version"], ["saved-version"], ["new-version"], false, sameStringSet), ["new-version"]);
   assert.equal(refreshedDraft("", undefined, "Loaded workspace", true), "Loaded workspace");

@@ -33,8 +33,6 @@ export type WorkbotHost = {
   browserDemonstrations?: boolean
   /** Explicit document editing is enabled; omitted means preview only. */
   documentEditing?: boolean
-  /** Native dictation entry point; omitted means off. Speech stays with the OS. */
-  nativeDictation?: boolean
   /** Contextual chat and workspace navigation. Omitted means off. */
   workspaceAssistant?: boolean
   /** Offers to open documents a reply mentions and keeps the chat open beside them. Needs workspaceAssistant. */
@@ -53,8 +51,6 @@ export type WorkbotHost = {
   verifyDocumentIdentity?(): Promise<boolean>
   /** The retained owner remains mounted, but this host authorization fact masks it. */
   documentAuthorization?: "signin" | "blocked" | "disabled"
-  /** Reading earlier messages keeps its place, with a return-to-latest button (`workbotScrollToBottom`). Off when unset. */
-  scrollToBottom?: boolean
   /** Moves Devices into the profile as Computers (`workbotProfileComputers`). Off when unset. */
   profileComputers?: boolean
   /**
@@ -62,11 +58,6 @@ export type WorkbotHost = {
    * text, and compact browser and file cards (`workbotCalmChat`). Looks only; off when unset.
    */
   calmChat?: boolean
-  /**
-   * The Devices page: the computers the person can reach through OpenWork (their own desktops, Workbot's cloud
-   * computers, registered virtual computers), read-only (`remoteDevices`). Off when unset.
-   */
-  devices?: boolean
   /** The person can start side chats next to their main chat (on while Workbot is on). Off when unset. */
   sideChats?: boolean
   /**

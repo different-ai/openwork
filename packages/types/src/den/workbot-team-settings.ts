@@ -12,8 +12,7 @@ import { z } from "zod"
  * Workbot settings chosen by organization admins for one team (Den › Members ›
  * Teams › a team › Workbot), on top of the organization's own: the default
  * model, Workbot's name, whether Workbot is on at all and the policy for its
- * members' agents (`agent`, only while `workbotProactive` is on too).
- * Available while the `workbotTeamSettings` feature is on.
+ * members' agents (`agent`). Team policy and member opt-outs still apply.
  *
  * A team stores only what it overrides. In its settings a key that is absent
  * means "use the organization's"; a key that is present is the team's own
@@ -183,7 +182,7 @@ export const workbotTeamSettingsWriteSchema = z
     model: workbotTeamModelSettingSchema.optional(),
     name: workbotTeamNameSettingSchema.optional(),
     enabled: workbotTeamEnabledSettingSchema.optional(),
-    /** Needs `workbotProactive` as well. */
+    /** Restore the organization's policy for this team's agents. */
     agent: workbotTeamAgentInheritSchema.optional(),
   })
   .meta({ ref: "WorkbotTeamSettingsWrite" })
@@ -207,8 +206,8 @@ export const workbotTeamSettingsTeamSchema = z
     name: workbotTeamNameSettingSchema,
     enabled: workbotTeamEnabledSettingSchema,
     /**
-     * Present only while `workbotProactive` is on: whether the team follows the
-     * organization's policy for members' agents, and, under the policy the
+     * Whether the team follows the organization's policy for members' agents,
+     * and, under the policy the
      * team has now (its own, or the organization's), whether agents are on
      * and whether they read the calendar.
      */
@@ -227,8 +226,7 @@ export const workbotTeamSettingsViewSchema = z
     /**
      * The organization's values, which teams without their own use: null is the deployment's default model, or no
      * name set; `enabled` is whether Workbot is on for everyone; `agentEnabled` is whether members' agents are on
-     * for everyone and `agentCalendar` whether they read the calendar, both present only while `workbotProactive`
-     * is on.
+     * for everyone and `agentCalendar` whether they read the calendar. Older servers may omit the agent fields.
      */
     organization: z.object({
       model: z.string().nullable(),

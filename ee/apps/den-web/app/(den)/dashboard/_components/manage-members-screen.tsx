@@ -22,7 +22,6 @@ import {
   getNewRoleRoute,
   getTeamRoute,
   type DenOrgMember,
-  orgFeatureEnabled,
   permissionLockReason,
 } from "../../_lib/den-org";
 import { type OrgLimitError, type OrgPaymentRequiredError, getOrgLimitError, getOrgPaymentRequiredError } from "../../_lib/den-flow";
@@ -130,7 +129,7 @@ export function ManageMembersScreen() {
   const [teamFilter, setTeamFilter] = useState("");
 
   // Admins choose who gets OpenWork Web (and is billed for it) where the organization has Web.
-  const webPerMember = orgFeatureEnabled(orgContext, "webPerMember") && (orgContext?.capabilities.openworkWeb ?? false);
+  const webPerMember = (orgContext?.capabilities.openworkWeb ?? false);
   const webMemberCount = (orgContext?.members ?? []).filter((member) => member.openworkWeb).length;
   const memberRoleLane = "flex w-36 @2xl:w-44";
   const memberJoinedLane = "hidden w-28 @2xl:block";
@@ -468,7 +467,7 @@ export function ManageMembersScreen() {
               {`Inviting someone with another role is locked. ${permissionLockReason("members.update")}`}
             </p>
           )}
-          {showInviteForm && orgFeatureEnabled(orgContext, "shareDeviceProvider") ? (
+          {showInviteForm ? (
             <InviteModelAccessPreview
               key={orgContext.organization.id}
               orgId={orgContext.organization.id}

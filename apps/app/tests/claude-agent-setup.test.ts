@@ -23,8 +23,7 @@ const PROBLEMS: Record<Exclude<Login, "ok">, { status: "needs_auth"; message: st
  * its models and, when the login is not usable, reports a problem on the
  * active reference. `probeReads` is how many integration reads that takes.
  */
-function fixture(input: { enabled?: boolean; workspace?: string | null; legacyFails?: boolean; uncertainPost?: boolean; catalogFails?: boolean; login?: Login; probeReads?: number; settleMs?: number; timeoutMs?: number; signIn?: SignIn[]; beforeRequest?: (request: Request, integration: ClaudeAgentIntegration) => void | Promise<void> } = {}) {
-  let enabled = input.enabled ?? true;
+function fixture(input: { workspace?: string | null; legacyFails?: boolean; uncertainPost?: boolean; catalogFails?: boolean; login?: Login; probeReads?: number; settleMs?: number; timeoutMs?: number; signIn?: SignIn[]; beforeRequest?: (request: Request, integration: ClaudeAgentIntegration) => void | Promise<void> } = {}) {
   let workspace = input.workspace === undefined ? "workspace" : input.workspace;
   let login: Login = input.login ?? "ok";
   const requests: Request[] = [];
@@ -86,7 +85,7 @@ function fixture(input: { enabled?: boolean; workspace?: string | null; legacyFa
   let server = createOpenworkServerClient({ baseUrl: "http://localhost:8787", token: "fixture-server-token", hostToken: "fixture-host" });
   const client = createClientV2("http://localhost:8787/opencode2", "/workspace", {});
   const store = createProviderAuthStore({
-    claudeAgentEnabled: () => enabled, nativeOpenworkClient: () => server, nativeWorkspaceId: () => workspace,
+    nativeOpenworkClient: () => server, nativeWorkspaceId: () => workspace,
     claudeCheckTiming: { pollMs: 1, settleMs: input.settleMs ?? 15, timeoutMs: input.timeoutMs ?? 400, followUpMs: 60_000, signInPollMs: 1 },
     claudeSignInAvailable: () => input.signIn !== undefined,
     client: () => client, providers: () => [], providerDefaults: () => ({}), providerConnectedIds: () => [], disabledProviders: () => [],
@@ -96,7 +95,7 @@ function fixture(input: { enabled?: boolean; workspace?: string | null; legacyFa
     openworkServer: { getSnapshot: () => ({ openworkServerStatus: "connected", openworkServerClient: server, openworkServerCapabilities: {} }) },
     setProviders: () => {}, setProviderDefaults: () => {}, setProviderConnectedIds: () => {}, setDisabledProviders: () => {}, markOpencodeConfigReloadRequired: () => {},
   });
-  return { store, requests, server, setToken: (token: string) => { server = createOpenworkServerClient({ baseUrl: server.baseUrl, token }); }, setPolicyBlocked: () => { policyBlocked = true; }, integration: () => integration, setLogin: (next: Login) => { login = next; }, setEnabled: (next: boolean) => { enabled = next; }, setWorkspace: (next: string) => { workspace = next; }, cleanup: () => { store.dispose(); fetch.mockRestore(); } };
+  return { store, requests, server, setToken: (token: string) => { server = createOpenworkServerClient({ baseUrl: server.baseUrl, token }); }, setPolicyBlocked: () => { policyBlocked = true; }, integration: () => integration, setLogin: (next: Login) => { login = next; }, setWorkspace: (next: string) => { workspace = next; }, cleanup: () => { store.dispose(); fetch.mockRestore(); } };
 }
 const posts = (f: ReturnType<typeof fixture>) => f.requests.filter((request) => request.method === "POST");
 const deletes = (f: ReturnType<typeof fixture>) => f.requests.filter((request) => request.method === "DELETE").map((request) => request.url.split("/").at(-1));
@@ -206,28 +205,6 @@ test("Claude Code is offered as a way to connect Anthropic, next to its API key,
   } finally { failed.cleanup(); }
 });
 
-test("with the feature off nothing about Claude Code is shown, read or changed", async () => {
-  const f = fixture({ enabled: false });
-  try {
-    f.store.syncFromOptions();
-    await f.store.openProviderAuthModal();
-    const snapshot = f.store.getSnapshot();
-    expect(snapshot.claudeAgent).toBeUndefined();
-    expect(snapshot.providerAuthMethods.anthropic).toEqual([{ type: "api", label: "API key", methodIndex: 0 }]);
-    expect(snapshot.providerAuthMethods["claude-agent"]).toBeUndefined();
-    expect(snapshot.providerAuthProviders.some((provider) => provider.id === "claude-agent")).toBe(false);
-    expect(snapshot.providerAuthError).toBeNull();
-    await expect(f.store.connectClaudeAgent()).rejects.toThrow("not available");
-    expect(f.requests.some((request) => request.url.includes("/api/integration") || request.url.includes("/credential/"))).toBe(false);
-  } finally { f.cleanup(); }
-  // Without the feature, a failing sign-in list fails exactly as it did before Claude Code existed.
-  const failed = fixture({ enabled: false, legacyFails: true });
-  try {
-    await failed.store.openProviderAuthModal();
-    expect(failed.store.getSnapshot().providerAuthError ?? "").not.toContain("Other provider connections could not be loaded");
-  } finally { failed.cleanup(); }
-});
-
 test("external connect uses the workspace proxy and server token, never a secret or legacy OAuth", async () => {
   const f = fixture();
   try {
@@ -271,11 +248,11 @@ test("an uncertain external POST is never replayed", async () => {
   } finally { f.cleanup(); }
 });
 
-test("turning the feature off hides Claude Code and does not mutate stored connections", async () => {
+test("blocking personal providers hides Claude Code and does not mutate stored connections", async () => {
   const f = fixture();
   try {
     await f.store.connectClaudeAgent();
-    f.setEnabled(false);
+    f.setPolicyBlocked();
     f.store.syncFromOptions();
     expect(f.store.getSnapshot().claudeAgent).toBeUndefined();
     const nativeRequests = () => f.requests.filter((request) => request.url.includes("/api/integration") || request.url.includes("/credential/"));
@@ -298,25 +275,21 @@ test("without a workspace Claude Code is not offered and no root integration end
   } finally { f.cleanup(); }
 });
 
-test("feature and policy changes during discovery prevent a new external POST", async () => {
-  for (const restriction of ["feature", "policy"]) {
-    const f = fixture({ beforeRequest: (request) => {
-      if (!request.url.endsWith("/api/integration")) return;
-      if (restriction === "feature") f.setEnabled(false);
-      else f.setPolicyBlocked();
-    } });
-    try {
-      await f.store.connectClaudeAgent();
-      expect(f.requests.some((request) => request.method === "POST" || request.method === "DELETE")).toBe(false);
-      expect(f.store.getSnapshot().claudeAgent).toBeUndefined();
-    } finally { f.cleanup(); }
-  }
+test("policy changes during discovery prevent a new external POST", async () => {
+  const f = fixture({ beforeRequest: (request) => {
+    if (request.url.endsWith("/api/integration")) f.setPolicyBlocked();
+  } });
+  try {
+    await f.store.connectClaudeAgent();
+    expect(f.requests.some((request) => request.method === "POST" || request.method === "DELETE")).toBe(false);
+    expect(f.store.getSnapshot().claudeAgent).toBeUndefined();
+  } finally { f.cleanup(); }
 });
 
-test("turning the feature off after POST stops cleanup writes without undoing the dispatched action", async () => {
+test("blocking personal providers after POST stops cleanup writes without undoing the dispatched action", async () => {
   let reads = 0;
   const f = fixture({ beforeRequest: (request) => {
-    if (request.url.endsWith("/api/integration") && ++reads === 2) f.setEnabled(false);
+    if (request.url.endsWith("/api/integration") && ++reads === 2) f.setPolicyBlocked();
   } });
   try {
     f.integration().connections.push({ type: "credential", id: "old-reference", label: "Claude Code", method: "external" });

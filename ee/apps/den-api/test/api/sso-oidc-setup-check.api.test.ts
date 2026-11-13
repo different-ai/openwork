@@ -36,20 +36,6 @@ function issuerProblem(body: unknown) {
   return { message: field(first, "message"), path: field(first, "path") }
 }
 
-test("flag off: the check route is off, and a discovery URL saved as the issuer is stored as the provider's issuer", async () => {
-  const off = await den.setFeature(orgId, "ssoOidcSetupCheck", false)
-  assert.equal(off.status < 300, true, summary(off))
-
-  const check = await asOwner("POST", "/v1/sso/oidc/check", { issuer: idp.issuer })
-  assert.equal(check.status, 404, summary(check))
-  assert.equal(field(check.body, "error"), "feature_disabled")
-
-  const saved = await asOwner("POST", "/v1/sso/oidc", registration({ issuer: discoveryUrl }))
-  // Since #7306 the well-known suffix is stripped on every save, flag or not:
-  // the discovery URL itself is never stored as the issuer.
-  assert.equal(saved.status, 201, summary(saved))
-  assert.equal(field(saved.body, "connection", "issuer"), idp.issuer)
-})
 
 test("flag on: the check reports the issuer and endpoints behind an issuer or a discovery URL", async () => {
   const changed = await den.setFeature(orgId, "ssoOidcSetupCheck", true)

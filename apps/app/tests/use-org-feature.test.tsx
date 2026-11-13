@@ -24,7 +24,7 @@ beforeEach(() => {
   Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__");
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   queryClient.setQueryData(["den", "org-features", orgId], {
-    nativeDictation: true, remoteComputers: true,
+    followUpSuggestions: true, remoteComputers: true,
   });
   const client = createDenClient({ baseUrl: "https://den.example.test", token: "test-token" });
   spyOn(client, "getOrgFeatures").mockResolvedValue({});
@@ -51,10 +51,10 @@ async function renderFeatures(options: { desktopOnly?: boolean; active?: boolean
   document.body.append(host);
   root = createRoot(host);
   function Features() {
-    const dictation = useOrgFeature("nativeDictation", options);
+    const dictation = useOrgFeature("followUpSuggestions", options);
     const computer = useOrgFeature("remoteComputers");
     const missing = useOrgFeature("missingFeature");
-    const state = useOrgFeatureState("nativeDictation", options);
+    const state = useOrgFeatureState("followUpSuggestions", options);
     return <div data-dictation={dictation} data-computer={computer} data-missing={missing} data-state={state.data} />;
   }
   await act(async () => {
@@ -69,7 +69,7 @@ test("desktop-only features ignore a shared true cache on a non-Electron window,
   expect(node?.getAttribute("data-state")).toBe("false");
   expect(node?.getAttribute("data-computer")).toBe("true");
   expect(context.client?.getOrgFeatures).not.toHaveBeenCalled();
-  expect(queryClient.getQueryData(["den", "org-features", orgId])).toMatchObject({ nativeDictation: true });
+  expect(queryClient.getQueryData(["den", "org-features", orgId])).toMatchObject({ followUpSuggestions: true });
 });
 
 test("a desktop-only feature remains available from the same cache in Electron", async () => {
@@ -85,7 +85,7 @@ for (const guard of ["signed-out", "missing-client", "missing-organization"]) {
     if (guard === "missing-client") context = { ...context, client: null };
     if (guard === "missing-organization") {
       context = { ...context, organizationId: null };
-      queryClient.setQueryData(["den", "org-features", null], { nativeDictation: true, remoteComputers: true });
+      queryClient.setQueryData(["den", "org-features", null], { followUpSuggestions: true, remoteComputers: true });
     }
     const node = await renderFeatures();
     expect(node?.getAttribute("data-dictation")).toBe("false");
@@ -105,7 +105,7 @@ test("cache updates turn off the feature without keeping a previous true selecti
   const node = await renderFeatures();
   expect(node?.getAttribute("data-dictation")).toBe("true");
   await act(async () => {
-    queryClient.setQueryData(["den", "org-features", orgId], { nativeDictation: false });
+    queryClient.setQueryData(["den", "org-features", orgId], { followUpSuggestions: false });
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   expect(node?.getAttribute("data-dictation")).toBe("false");

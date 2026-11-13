@@ -1,7 +1,6 @@
 import { workbotUsageResponseSchema } from "@openwork/types/den/workbot-usage"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
-import { requireFeature } from "../../features.js"
 import { orgMemberRoute, requireOrgPermission } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { readWorkbotUsage } from "../../workbot/usage.js"
@@ -27,7 +26,6 @@ export function registerOrgWorkbotUsageRoutes<T extends { Variables: OrgRouteVar
       },
     }),
     orgMemberRoute(),
-    requireFeature("workbotUsageAnalytics"),
     requireOrgPermission("usage_analytics.view"),
     async (c) => c.json(await readWorkbotUsage(c.get("organizationContext").organization.id), 200),
   )

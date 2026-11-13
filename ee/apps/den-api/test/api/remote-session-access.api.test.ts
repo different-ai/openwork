@@ -162,34 +162,9 @@ async function agentFinds(token: string, query: string) {
 
 let attachCommandId = ""
 
-test("while the feature is off every new route answers as if it did not exist, and nothing about sessions reaches a computer", async () => {
-  for (const [as, method, path, body] of [
-    [asMilo, "GET", "/v1/sessions", undefined],
-    [asMilo, "GET", "/v1/org/remote-session-settings", undefined],
-    [asOwner, "PATCH", "/v1/org/remote-session-settings", { access: "all" }],
-    [asMilo, "POST", "/v1/remote-sessions/attach", attachBody],
-  ] as const) {
-    const call = await as(method, path, body)
-    assert.equal(call.status, 404, `${method} ${path}: ${summary(call)}`)
-    assert.equal(field(call.body, "error"), "feature_disabled")
-  }
-  const report = await laptop.call("PUT", "/v1/session-runners/sessions", { access: "all", sessions: [localSession] })
-  assert.deepEqual([report.status, field(report.body, "error")], [404, "feature_disabled"], summary(report))
-  assert.equal((await runnerRow(laptop.computerId)).sessions, null, "nothing is stored while the feature is off")
-  const work = await laptop.call("GET", "/v1/session-runners/work")
-  assert.equal(work.status, 200, summary(work))
-  assert.equal(field(work.body, "sessionAccess"), undefined)
-
-  // The agent's capability does not exist either.
-  const token = await den.mintMcpToken(milo, orgId)
-  assert.equal((await agentFinds(token, "remote session attach")).includes("remote-session:attach"), false)
-  const executed = await den.callMcpTool(token, "execute_capability", { name: "remote-session:attach", body: attachBody })
-  assert.equal(executed.isError, true, executed.raw)
-  assert.equal((await db.select().from(RemoteSessionCommandTable)).length, 0)
-})
 
 test("the organization allows only sessions started remotely until someone who can edit its settings raises the ceiling", async () => {
-  assert.equal((await den.setFeature(orgId, "remoteSessionAccess", true)).status, 200)
+
 
   // Edit organization settings is the owner's (and super admins') until it is granted to others.
   for (const [as, canEdit] of [[asMilo, false], [asAdmin, false], [asOwner, true]] as const) {
@@ -615,17 +590,13 @@ test("an offline computer cannot be attached, and says so", async () => {
   assert.equal(sessionsOf(await asMilo("GET", "/v1/sessions")).computers.find((entry) => entry.computerId === laptop.computerId)?.online, false)
 })
 
-test("an app that goes back to a version without session access keeps nothing it reported, and the kill switch closes everything", async () => {
+test("an app that goes back to a version without session access keeps nothing it reported, and remotely started sessions remain reachable", async () => {
   await connectComputer(milo, laptop.runnerId, RELEASED, "Milo's MacBook Pro")
   const downgraded = await runnerRow(laptop.computerId)
   assert.deepEqual([downgraded.session_access, downgraded.sessions, downgraded.sessions_updated_at], [null, null, null])
   const computer = sessionsOf(await asMilo("GET", "/v1/sessions")).computers.find((entry) => entry.computerId === laptop.computerId)
   assert.deepEqual([computer?.supportsAccess, computer?.access, computer?.effectiveAccess], [false, "created", "created"])
 
-  assert.equal((await den.setFeature(orgId, "remoteSessionAccess", false)).status, 200)
-  assert.equal((await asMilo("GET", "/v1/sessions")).status, 404)
-  assert.deepEqual(errorOf(await asMilo("POST", "/v1/remote-sessions/read", { sessionId: LOCAL_SESSION, workspaceId: WORKSPACE })),
-    { status: 409, error: "session_access_denied", message: ORGANIZATION_DENIED })
   // Sessions started remotely work as they always have.
   const remote = await asMilo("POST", "/v1/remote-sessions/read", { commandId: remoteOnLaptopId })
   assert.deepEqual([remote.status, field(remote.body, "state")], [200, "delivered"], summary(remote))

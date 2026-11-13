@@ -43,7 +43,6 @@ import { activationEventRequestSchema } from "@openwork/types/den/activation"
 import { activationResponseSchema } from "../routes/me/activation.js"
 import { readActivationState, recordActivationEvent } from "../activation.js"
 import { remoteDeviceListResponseSchema, remoteDeviceWorkbotReportSchema } from "@openwork/types/den/remote-devices"
-import { markFeaturesUsed } from "../feature-usage.js"
 import { listMemberRemoteDevices, reportWorkbotComputer } from "../remote-devices.js"
 
 /**
@@ -295,7 +294,6 @@ async function withWorkbotSettings(resolved: Resolved): Promise<Member> {
     memberId: resolved.memberId,
     userId: resolved.user.id,
     organization: resolved.organization,
-    featureOn: features.workbotTeamSettings,
   })
   return { ...resolved, features, workbot }
 }
@@ -495,7 +493,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         calendar: on,
         documents: on && features.workbotDocuments,
         documentEditing: on && features.workbotDocuments && features.workbotDocumentEditing,
-        nativeDictation: features.nativeDictation,
+        nativeDictation: true,
         workspaceAssistant: on && features.workbotWorkspaceAssistant,
         guidedNavigation: on && features.workbotWorkspaceAssistant,
         // Fixed response-only values for independently released Workbot clients.
@@ -515,11 +513,11 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         usageRecovery: true,
         activationChecklist: true,
         sideChats: on,
-        scrollToBottom: features.workbotScrollToBottom,
-        profileComputers: features.workbotProfileComputers && features.remoteDevices,
-        openworkApps: features.workbotApps,
+        scrollToBottom: true,
+        profileComputers: features.workbotProfileComputers,
+        openworkApps: true,
         calmChat: features.workbotCalmChat,
-        devices: on && features.remoteDevices,
+        devices: on,
         commandPalette: true,
         model,
         gatewayModels: true,
@@ -588,9 +586,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
     const auditBlocked = await attributeWorkbot(c, resolved)
     if (auditBlocked) return auditBlocked
     if (!resolved.scopes.has(DEN_MCP_READ_SCOPE) || (write && !resolved.scopes.has(DEN_MCP_WRITE_SCOPE))) return c.json({ error: "insufficient_scope" }, 403)
-    if (!resolved.features.remoteDevices) return c.json({ error: "feature_disabled", feature: "remoteDevices" }, 404)
     const actor = { organizationId: resolved.organization.id, memberId: normalizeDenTypeId("member", resolved.memberId) }
-    markFeaturesUsed({ organizationId: actor.organizationId, memberId: actor.memberId, keys: ["remoteDevices"] })
     return actor
   }
   const deviceResponses = {
@@ -869,7 +865,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         // Credential minting still reauthorizes the exact model for this member on every turn.
         // "Not allowed" in the admin's Workbot settings covers the chat as well as Workbot's own checks.
         // The member's own policy: their team's when it has one (already resolved with their Workbot settings).
-        const scopes = features.workbotProactive ? workbotTurnLimitScopes(memberAgentSettings(resolved.workbot, organization.metadata).sources) : []
+        const scopes = workbotTurnLimitScopes(memberAgentSettings(resolved.workbot, organization.metadata).sources)
         const { token, resumeGrant, modelAccess, indexCapability } = await mintHeadlessTurnCredentials({
           ...principal, ttlMs, readOnly, sessionId, messageId, model, indexKind: "workbot", memberId: resolved.memberId,
           ...(scopes.length ? { scopes } : {}),

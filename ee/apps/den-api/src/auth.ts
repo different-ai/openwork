@@ -18,7 +18,6 @@ import { getInitialActiveOrganizationIdForUser } from "./active-organization.js"
 import { db } from "./db.js";
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js";
 import { env } from "./env.js";
-import { deploymentFeatureEnabled } from "./features.js";
 import { appLogger } from "./observability/logger.js";
 import {
   deleteMcpOAuthGrantFamilyForSession,
@@ -897,9 +896,7 @@ export const auth = betterAuth({
     (database) => hashSessionTokens(drizzleAdapter(database, { provider: "mysql", schema }), { secret: env.betterAuthSecret }),
   ),
   account: DEN_ACCOUNT_CONFIG,
-  user: denUserConfig({
-    emailFollowsProvider: () => deploymentFeatureEnabled("signInEmailSync"),
-  }),
+  user: denUserConfig(),
   session: {
     expiresIn: DEN_SESSION_EXPIRES_IN_SECONDS,
     updateAge: DEN_SESSION_UPDATE_AGE_IN_SECONDS,

@@ -31,9 +31,7 @@ async function contextFor(orgId: string, actor: Member): Promise<ConfigAreaConte
   return { db, organizationId: orgId, actor: { userId: actor.userId, memberId: actor.memberId }, deployment: "self_hosted", features: await getOrganizationFeatures(orgId, { userId: actor.userId }) }
 }
 
-async function enable(orgId: string, ...features: Array<"workbotTeamSettings">) {
-  for (const feature of features) assert.equal((await den.setFeature(orgId, feature, true)).status, 200, feature)
-}
+
 
 async function rows(orgId: string) {
   return db.$primary.select({ id: WorkbotTeamSettingTable.id, teamId: WorkbotTeamSettingTable.teamId, settings: WorkbotTeamSettingTable.settings })
@@ -60,7 +58,6 @@ function resolved(item: ConfigItem, teamId: string) {
 const owner = await den.signUp("Workbot Teams Owner")
 const source = await den.createOrg(owner, "Workbot Teams Source")
 const as = den.as(owner, source.orgId)
-await enable(source.orgId, "workbotTeamSettings")
 const research = await den.createTeam(owner, source.orgId, "Research", [])
 const design = await den.createTeam(owner, source.orgId, "Design", [])
 await den.createTeam(owner, source.orgId, "Untouched", [])
@@ -73,7 +70,7 @@ const sourceCtx = await contextFor(source.orgId, source.owner)
 test("registered, owning workbot_team_setting, behind workbotTeamSettings", () => {
   assert.equal(getConfigArea("workbot.team-settings"), workbotTeamSettingsArea)
   assert.deepEqual(workbotTeamSettingsArea.tables, ["workbot_team_setting"])
-  assert.equal(workbotTeamSettingsArea.feature, "workbotTeamSettings")
+  assert.equal(workbotTeamSettingsArea.feature, undefined)
   assert.deepEqual(workbotTeamSettingsArea.dependsOn, ["members.teams", "ai-gateway.providers"])
 })
 
@@ -141,7 +138,6 @@ test("update writes only the keys the plan changes", async () => {
 test("round trip into a second organization: the team is found by name; a step limit in an older file is read and never applied", async () => {
   const targetOwner = await den.signUp("Workbot Teams Target Owner")
   const target = await den.createOrg(targetOwner, "Workbot Teams Target")
-  await enable(target.orgId, "workbotTeamSettings")
   const targetResearch = await den.createTeam(targetOwner, target.orgId, "research", [])
   const targetCtx = await contextFor(target.orgId, target.owner)
   const blob = byTeam(await workbotTeamSettingsArea.exportItems(sourceCtx), "Research")
@@ -201,7 +197,6 @@ test("round trip into a second organization: the team is found by name; a step l
 test("only a step limit, which Workbot no longer has: the create is skipped at plan time", async () => {
   const otherOwner = await den.signUp("Workbot Teams Preflight Owner")
   const org = await den.createOrg(otherOwner, "Workbot Teams Preflight")
-  await enable(org.orgId, "workbotTeamSettings")
   const teamId = await den.createTeam(otherOwner, org.orgId, "Ops", [])
   const ctx = await contextFor(org.orgId, org.owner)
   const item = { name: "Ops", spec: { team: { $ref: `members.teams/${teamId}`, name: "Ops" }, settings: { maxSteps: 10 } } }
@@ -215,7 +210,7 @@ test("only a step limit, which Workbot no longer has: the create is skipped at p
   assert.deepEqual(await rows(org.orgId), [])
 })
 
-test("workbot.settings carries whether Workbot is on for everyone, applied only where workbotTeamSettings is on", async () => {
+test("workbot.settings carries whether Workbot is on for everyone, always applied", async () => {
   const switchOwner = await den.signUp("Workbot Switch Owner")
   const org = await den.createOrg(switchOwner, "Workbot switch org")
   const ctx = await contextFor(org.orgId, org.owner)
@@ -226,12 +221,6 @@ test("workbot.settings carries whether Workbot is on for everyone, applied only 
     kind: "update", targetId: org.orgId, previous, item: { name: previous.name, spec: { ...previous.spec, enabled: false } }, changes: [{ path: "enabled" }], secretPaths: [],
   })
 
-  const off = await turnOff(before)
-  assert.deepEqual(off.steps, [])
-  assert.match(off.warnings?.join(" ") ?? "", /per team aren't on/)
-  assert.equal((await workbotSettingsArea.exportItems(ctx))[0]?.spec.enabled, true)
-
-  await enable(org.orgId, "workbotTeamSettings")
   assert.deepEqual((await turnOff(before)).steps, [{ action: "set", target: "enabled", detail: "off" }])
   const [after] = await workbotSettingsArea.exportItems(ctx)
   assert.deepEqual(after?.spec, { ...before.spec, enabled: false })

@@ -18,6 +18,12 @@ const graduated = [
   "workbotQuietCalendar", "workbotSlackAnswerReply", "browserUploadPermissions",
   "agentHarnessPermissions", "computerUse", "computerSessionHistory", "parallelComputerUse",
   "browserUse", "remoteSessionPush", "sandboxMicrosoft365", "standardCodeMode", "outlookAttachments",
+  "claudeAgentProvider", "webPerMember", "localModelsPolicy",
+  "shareDeviceProvider", "singleOpenWorkModelsRow", "passwordSignInGoogle",
+  "signInEmailSync", "ssoOidcSetupCheck", "denPageConsistency",
+  "nativeDictation", "workbotScrollToBottom", "workbotApps",
+  "workbotProactive", "workbotTeamSettings", "workbotUsageAnalytics",
+  "fileSendPermissions", "remoteDevices", "remoteSessionAccess",
 ]
 
 test("completed November rollouts are retired rather than permanently enabled flags", () => {

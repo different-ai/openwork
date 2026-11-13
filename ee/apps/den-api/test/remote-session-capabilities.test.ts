@@ -19,7 +19,7 @@ process.env.DEN_BASE_URL ??= "http://127.0.0.1:3005"
 
 const { DEFAULT_REMOTE_SESSION_DEPS, executeRemoteSessionCapability, listMemberRemoteSessions, listRemoteSessionCapabilities, searchRemoteSessionCapabilities } = await import("../src/mcp/remote-session-capabilities.js")
 const { automationRunnerRowId } = await import("../src/automations/repository.js")
-const { computerSessionAccess, remoteAccessOffReason, remoteDeviceAccess, remoteSessionAccessInUse, remoteSessionAccessPolicy, runnerAccessCapabilities, storedRunnerSessionReport } =
+const { computerSessionAccess, remoteAccessOffReason, remoteDeviceAccess, remoteSessionAccessPolicy, runnerAccessCapabilities, storedRunnerSessionReport } =
   await import("../src/remote-sessions/access.js")
 const organizationId = createDenTypeId("organization")
 const userId = createDenTypeId("user")
@@ -465,10 +465,9 @@ function accessDeps(options: {
 
 const attachBody = { computerId: "synthetic-computer", workspaceId: "synthetic-workspace", sessionId: "ses_local" }
 
-test("attach is refused, in order, by the feature, the organization, ownership, the app, presence and the computer's owner", async () => {
+test("attach is refused, in order, by the organization, ownership, the app, presence and the computer's owner", async () => {
   const stale = Date.now() - 60 * 60_000
   for (const [name, options, error, retryable] of [
-    ["feature off", { policy: { enabled: false, optIn: false, devices: false, ceiling: "created" }, computers: [] }, "feature_disabled", false],
     ["organization ceiling", { policy: { enabled: true, optIn: false, devices: false, ceiling: "created" }, computers: [] }, "session_access_denied", false],
     ["someone else's computer", { computers: [openComputer({ computerId: "another-computer" })] }, "unknown_computer", false],
     ["an app without session access", { computers: [openComputer({ capabilities: accessCapabilities.slice(0, 4), lastSeenAt: stale, sessionAccess: "created" })] }, "desktop_update_required", false],
@@ -678,18 +677,14 @@ test("one rule says what applies on a computer: the owner's choice where the app
   assert.deepEqual(runnerAccessCapabilities(accessCapabilities), accessOnly)
   assert.deepEqual(runnerAccessCapabilities(undefined), older)
 
-  // The stored ceiling: off applies whatever the features say, all only with its feature.
+  // GA access still honors the organization ceiling and the retained owner opt-in.
   const stored = (access: string) => ({ remoteSessions: { access } })
-  const features = (remoteSessionAccess: boolean, remoteTasksOptIn: boolean, remoteDevices = false) => ({ remoteSessionAccess, remoteTasksOptIn, remoteDevices })
-  assert.deepEqual(remoteSessionAccessPolicy({ features: features(false, false), metadata: stored("all") }), noFeatures)
-  assert.deepEqual(remoteSessionAccessPolicy({ features: features(true, true), metadata: stored("all") }), { enabled: true, optIn: true, devices: false, ceiling: "all" })
-  assert.deepEqual(remoteSessionAccessPolicy({ features: features(false, false), metadata: stored("off") }), organizationOff)
-  assert.deepEqual(remoteSessionAccessPolicy({ features: features(true, false), metadata: stored("off") }), { enabled: true, optIn: false, devices: false, ceiling: "off" })
-  assert.deepEqual(remoteSessionAccessPolicy({ features: features(false, true), metadata: null }), optIn)
-  const devicesOnly = remoteSessionAccessPolicy({ features: features(false, false, true), metadata: stored("all") })
-  assert.deepEqual(devicesOnly, { enabled: false, optIn: false, devices: true, ceiling: "created" })
-  // Computers are told the policy and report while any of it is in use, Devices included: it shows what applies on each.
-  assert.deepEqual([noFeatures, optIn, organizationOff, allowAll, devicesOnly].map(remoteSessionAccessInUse), [false, true, true, true, true])
+  for (const remoteTasksOptIn of [false, true]) {
+    for (const ceiling of ["off", "created", "all"]) {
+      assert.deepEqual(remoteSessionAccessPolicy({ features: { remoteTasksOptIn }, metadata: stored(ceiling) }), { enabled: true, optIn: remoteTasksOptIn, devices: true, ceiling })
+    }
+  }
+
 })
 
 test("a device record says what applies on a computer, and why when something other than its owner's choice decides it", () => {

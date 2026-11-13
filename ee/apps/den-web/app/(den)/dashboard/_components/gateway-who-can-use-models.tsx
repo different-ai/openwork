@@ -8,7 +8,7 @@ import { DenChip } from "../../_components/ui/chip";
 import { AUTOMATION_CARD_CLASS } from "../../_components/ui/dashboard-styles";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getOrgAccessFlags, orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
+import { getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useOrgDesktopPolicies } from "./desktop-policy-data";
 import { readModelAccessState, saveModelAccess, type ModelAccessMode } from "./model-access-policy";
@@ -32,7 +32,6 @@ function Option({ testId, checked, title, description, onSelect, children }: {
 
 export function GatewayWhoCanUseModels() {
   const { orgId, orgContext, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
-  const localSwitch = orgContext ? orgFeatureEnabled(orgContext, "localModelsPolicy") : false;
   // Model access is a desktop policy: owners by default. Others see it, locked with why (DESIGN P4).
   const canChange = orgContext
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canManageDesktopPolicies
@@ -58,14 +57,14 @@ export function GatewayWhoCanUseModels() {
   const keys = managed
     ? `Members can't add their own keys${state.adminException ? ", admins can" : ""}`
     : "Members can also add their own keys on their device";
-  const consequence = localSwitch ? `${keys}. Local models ${state.localAllowed ? "on" : "off"}` : keys;
+  const consequence = `${keys}. Local models ${state.localAllowed ? "on" : "off"}`;
 
   async function save() {
     setError(null);
     setSaving(true);
     try {
       await runReauthableAction("save-model-access", async () => {
-        await saveModelAccess(state, { mode, adminException, zenAllowed, ...(localSwitch ? { localAllowed } : {}) });
+        await saveModelAccess(state, { mode, adminException, zenAllowed, localAllowed });
         await reloadPolicies();
       });
       setOpen(false);
@@ -130,7 +129,7 @@ export function GatewayWhoCanUseModels() {
                 </span>
                 <DenSwitch checked={zenAllowed} onChange={setZenAllowed} aria-label="Free starter model" />
               </div>
-              {localSwitch ? (
+              {(
                 <div className="flex items-center gap-3 rounded-[12px] border border-gray-200 bg-white px-4 py-3" data-testid="gateway-model-access-local">
                   <Laptop className="h-4 w-4 shrink-0 text-gray-500" aria-hidden="true" />
                   <span className="min-w-0 flex-1">
@@ -139,7 +138,7 @@ export function GatewayWhoCanUseModels() {
                   </span>
                   <DenSwitch checked={localAllowed} onChange={setLocalAllowed} aria-label="Local models" />
                 </div>
-              ) : null}
+              )}
             </div>
             <div className="mt-4 flex items-center justify-between gap-3">
               <span className="text-[11px] text-gray-400">Takes effect next time members open OpenWork</span>

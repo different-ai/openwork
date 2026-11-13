@@ -491,7 +491,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     orgMode: runtimeConfig.orgMode,
     runtimeConfigLoaded,
 
-    remoteDevices: orgFeatureEnabled(orgContext, "remoteDevices"),
     managedDeployments: orgFeatureEnabled(orgContext, "managedDeployments"),
     canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
 

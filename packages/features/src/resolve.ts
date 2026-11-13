@@ -126,6 +126,14 @@ export const RETIRED_FEATURE_KEYS = [
   "computerSessionHistory", "parallelComputerUse", "browserUse",
   "remoteSessionPush", "sandboxMicrosoft365", "standardCodeMode",
   "outlookAttachments",
+  // Generally available (2026-11): deployment-wide rollouts graduate even when the
+  // old registry default lagged behind. Actual settings, entitlements and consent remain enforced.
+  "claudeAgentProvider", "webPerMember", "localModelsPolicy",
+  "shareDeviceProvider", "singleOpenWorkModelsRow", "passwordSignInGoogle",
+  "signInEmailSync", "ssoOidcSetupCheck", "denPageConsistency",
+  "nativeDictation", "workbotScrollToBottom", "workbotApps",
+  "workbotProactive", "workbotTeamSettings", "workbotUsageAnalytics",
+  "fileSendPermissions", "remoteDevices", "remoteSessionAccess",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

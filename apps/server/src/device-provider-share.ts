@@ -4,16 +4,16 @@ import { ApiError } from "./errors.js";
 
 /**
  * Share an API key saved on this computer with the signed-in person's
- * organization (Den feature `shareDeviceProvider`).
+ * organization.
  *
  * The person confirms in the app; the app then asks this server, which reads
  * the key from this computer's own credential store and sends it straight to
  * the Den it is signed in to. The key never passes through the app's window,
  * is never logged and is never returned.
  *
- * Den decides everything else: whether the feature is on, whether the person
- * manages AI Gateway, whether the provider can be served from one key and
- * whether the organization already has it. This server only asks first, so a
+ * Den decides everything else: whether the person manages AI Gateway,
+ * whether the provider can be served from one key and whether the organization
+ * already has it. This server only asks first, so a
  * key is never sent when the answer would be no.
  */
 
@@ -86,7 +86,6 @@ function refused(status: number, body: unknown): ApiError {
   if (status === 403 && code === "reauth") return new ApiError(403, "verification_required", "Confirm it's you in your browser, then share.");
   if (status === 403 && code === "gateway_not_enabled") return new ApiError(409, "gateway_unavailable", "AI Gateway is not set up for this OpenWork yet.");
   if (status === 403) return new ApiError(403, "forbidden", "Only people who manage AI Gateway can share a provider.");
-  if (status === 404 && code === "feature_disabled") return new ApiError(404, "feature_disabled", "Sharing from this device is not available for your organization.");
   return new ApiError(502, "share_failed", "OpenWork Cloud could not share this provider. Nothing was shared.");
 }
 

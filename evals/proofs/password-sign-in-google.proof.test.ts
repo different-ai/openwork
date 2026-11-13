@@ -10,21 +10,8 @@ const test = spec.world(passwordSignInGoogle, {
 test("a password member can choose Google without losing password sign-in", async ({ world, user, probe, step, evidence }) => {
   const member = user.on(world.web);
 
-  await step("before: with the rollout off a fresh browser offers only the password and its reset link", async () => {
-    await member.see({ role: "textbox", label: /^email$/i }, { timeoutMs: 60_000 });
-    await member.type({ role: "textbox", label: /^email$/i }, world.account.email);
-    await member.click({ role: "button", label: "Next" });
-    await member.see({ role: "textbox", label: /^password$/i });
-    await member.see({ role: "button", label: "Forgot password?" });
-    await member.notSee({ role: "button", label: "Continue with Google" });
-    const passwords = await probe.on(world.web).dom('input[name="password"]');
-    evidence.recordAssertionEvidence("Default-off preserves password-only sign-in", `Password fields=${passwords.elements.length}; Google is absent`, passwords.elements.length === 1);
-    await member.screenshot();
-  });
 
-  await step("after: enabling the rollout offers Google below the unchanged password form", async () => {
-    await world.rollout(true);
-    await member.reload();
+  await step("Google is offered below the unchanged password form", async () => {
     await member.see({ role: "textbox", label: /^email$/i }, { timeoutMs: 60_000 });
     await member.type({ role: "textbox", label: /^email$/i }, world.account.email);
     await member.click({ role: "button", label: "Next" });
@@ -72,17 +59,4 @@ test("a password member can choose Google without losing password sign-in", asyn
     await member.screenshot();
   });
 
-  await step("turning off everywhere restores password-only on the next lookup", async () => {
-    await world.rollout(true, true);
-    const mobile = user.on(world.mobile);
-    await mobile.navigate(world.den.ref.webUrl);
-    await mobile.see({ role: "textbox", label: /^email$/i }, { timeoutMs: 60_000 });
-    await mobile.type({ role: "textbox", label: /^email$/i }, world.account.email);
-    await mobile.click({ role: "button", label: "Next" });
-    await mobile.see({ role: "textbox", label: /^password$/i });
-    await mobile.notSee({ role: "button", label: "Continue with Google" });
-    const passwords = await probe.on(world.mobile).dom('input[name="password"]');
-    evidence.recordAssertionEvidence("The kill switch removes only the new alternative", `Password fields=${passwords.elements.length}; Google is absent after a new lookup`, passwords.elements.length === 1);
-    await mobile.screenshot();
-  });
 });

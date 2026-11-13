@@ -10,7 +10,7 @@ import { computerTabLabel, computerViews, workbotHost } from "./host";
 export const DeviceComputerNavigationContext = createContext<((chat: string) => (() => void) | null) | undefined>(undefined);
 
 /**
- * Devices (`remoteDevices`): the computers the person can reach through OpenWork, read-only. Their own computers
+ * Devices: the computers the person can reach through OpenWork, read-only. Their own computers
  * running OpenWork Desktop, then the cloud ones (Workbot's computer for a chat, registered virtual computers). Each row
  * says what it is and whether it can be reached; Workbot's own computers open in the Computer view. Naming and
  * removing a computer happen in OpenWork Desktop.

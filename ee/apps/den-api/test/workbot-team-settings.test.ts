@@ -234,28 +234,17 @@ const organizationValues = {
 }
 const never = async (): Promise<never> => { throw new Error("must not be read") }
 
-test("with the feature off a member gets the organization's values and no team is read", async () => {
-  const off: Deps = { metadata: async () => metadata, featureOn: async () => false, memberId: never, teams: never, rows: never }
-  assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, memberId, userId }, off), organizationValues)
-  // A caller that already holds the organization and its features reads nothing at all.
-  const nothing: Deps = { metadata: never, featureOn: never, memberId: never, teams: never, rows: never }
-  assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, memberId, organization: { metadata }, featureOn: false }, nothing), organizationValues)
-  // A switch saved while the feature was on is kept but ignored: everyone has Workbot again.
-  const savedOff = { organization: { metadata: { ...metadata, workbot: { ...metadata.workbot, enabled: false } } } }
-  assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, memberId, ...savedOff, featureOn: false }, nothing), organizationValues)
-})
 
-test("with the feature on Workbot is off for a member when the organization or their teams turn it off", async () => {
+test("Workbot is off for a member when the organization or their teams turn it off", async () => {
   const teams = [{ id: "tem_1", name: "Research" }, { id: "tem_2", name: "Sales" }]
   const deps = (rows: { teamId: string; settings: unknown }[], organizationOn = true): Deps => ({
     metadata: async () => organizationOn ? metadata : { ...metadata, workbot: { ...metadata.workbot, enabled: false } },
-    featureOn: never,
     memberId: never,
     teams: async () => teams,
     rows: async () => rows,
   })
   const resolve = async (rows: { teamId: string; settings: unknown }[], organizationOn = true) => {
-    const resolved = await resolveMemberWorkbotSettings({ organizationId: orgId, memberId, featureOn: true }, deps(rows, organizationOn))
+    const resolved = await resolveMemberWorkbotSettings({ organizationId: orgId, memberId }, deps(rows, organizationOn))
     return { enabled: resolved.enabled, from: resolved.enabledFrom }
   }
   assert.deepEqual(await resolve([]), { enabled: true, from: fromOrganization })
@@ -266,26 +255,25 @@ test("with the feature on Workbot is off for a member when the organization or t
   assert.deepEqual(await resolve(differ), { enabled: true, from: { kind: "organization", teamConflict: true } })
   assert.deepEqual(await resolve(differ, false), { enabled: false, from: { kind: "organization", teamConflict: true } })
   // A member of no team, or one who cannot be found, has the organization's switch.
-  assert.equal((await resolveMemberWorkbotSettings({ organizationId: orgId, memberId, featureOn: true }, { ...deps([], false), teams: async () => [] })).enabled, false)
-  assert.equal((await resolveMemberWorkbotSettings({ organizationId: orgId, featureOn: true }, { ...deps([], false), teams: never, rows: never })).enabled, false)
+  assert.equal((await resolveMemberWorkbotSettings({ organizationId: orgId, memberId }, { ...deps([], false), teams: async () => [] })).enabled, false)
+  assert.equal((await resolveMemberWorkbotSettings({ organizationId: orgId }, { ...deps([], false), teams: never, rows: never })).enabled, false)
 })
 
 test("a step limit saved for the organization or a team reaches no member", async () => {
   const limited = { ...metadata, workbot: { ...metadata.workbot, maxSteps: 500 } }
   const teams = [{ id: "tem_1", name: "Research" }, { id: "tem_2", name: "Sales" }]
   const rows = [{ teamId: "tem_1", settings: { maxSteps: 100 } }, { teamId: "tem_2", settings: { maxSteps: 0 } }]
-  for (const featureOn of [true, false]) {
-    const deps: Deps = { metadata: async () => limited, featureOn: never, memberId: never, teams: featureOn ? async () => teams : never, rows: featureOn ? async () => rows : never }
+  for (const featureOn of [true]) {
+    const deps: Deps = { metadata: async () => limited, memberId: never, teams: featureOn ? async () => teams : never, rows: featureOn ? async () => rows : never }
     // Teams that only differ in a retired step limit are no conflict either.
-    assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, memberId, featureOn }, deps), organizationValues, String(featureOn))
+    assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, memberId }, deps), organizationValues, String(featureOn))
   }
 })
 
-test("with the feature on a member gets their teams' values, found from the member or the user", async () => {
+test("a member gets their teams' values, found from the member or the user", async () => {
   const seen: string[] = []
   const on: Deps = {
     metadata: async () => metadata,
-    featureOn: async (_organizationId, user) => { seen.push(`enabled:${user}`); return true },
     memberId: async (_organizationId, user) => { seen.push(`member:${user}`); return memberId },
     teams: async (member) => { seen.push(`teams:${member.memberId}`); return [{ id: "tem_1", name: "Research" }, { id: "tem_2", name: "Sales" }] },
     rows: async (_organizationId, teamIds) => { seen.push(`rows:${teamIds.join(",")}`); return [{ teamId: "tem_1", settings: { model: "gateway/research", name: "Scout" } }] },
@@ -296,33 +284,32 @@ test("with the feature on a member gets their teams' values, found from the memb
     agent: null, agentFrom: fromOrganization,
   }
   assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, userId }, on), expected)
-  assert.deepEqual(seen, [`enabled:${userId}`, `member:${userId}`, `teams:${memberId}`, "rows:tem_1,tem_2"])
+  assert.deepEqual(seen, [`member:${userId}`, `teams:${memberId}`, "rows:tem_1,tem_2"])
   seen.length = 0
-  assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, memberId, userId, featureOn: true }, on), expected)
+  assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, memberId, userId }, on), expected)
   assert.deepEqual(seen, [`teams:${memberId}`, "rows:tem_1,tem_2"])
 
   const conflicting: Deps = { ...on, rows: async () => [{ teamId: "tem_1", settings: { model: "gateway/research" } }, { teamId: "tem_2", settings: { model: "gateway/sales" } }] }
-  assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, memberId, featureOn: true }, conflicting), {
+  assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, memberId }, conflicting), {
     ...organizationValues, modelFrom: { kind: "organization", teamConflict: true },
   })
 })
 
 test("a member who cannot be found or a failed read gives the organization's values instead of failing the chat", async () => {
-  const base: Deps = { metadata: async () => metadata, featureOn: async () => true, memberId: async () => memberId, teams: async () => [{ id: "tem_1", name: "Research" }], rows: never }
+  const base: Deps = { metadata: async () => metadata, memberId: async () => memberId, teams: async () => [{ id: "tem_1", name: "Research" }], rows: never }
   const warn = console.warn
   const warnings: unknown[][] = []
   console.warn = (...args: unknown[]) => { warnings.push(args) }
   try {
     assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, userId }, base), organizationValues)
     assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, userId }, { ...base, teams: never }), organizationValues)
-    assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, userId }, { ...base, featureOn: never }), organizationValues)
-    assert.equal(warnings.length, 3)
+    assert.equal(warnings.length, 2)
     // No member, no teams and no rows are ordinary answers, not failures.
     assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, userId }, { ...base, memberId: async () => null, teams: never }), organizationValues)
     assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId }, { ...base, memberId: never, teams: never }), organizationValues)
     assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, memberId }, { ...base, teams: async () => [] }), organizationValues)
     assert.deepEqual(await resolveMemberWorkbotSettings({ organizationId: orgId, memberId }, { ...base, rows: async () => [] }), organizationValues)
-    assert.equal(warnings.length, 3)
+    assert.equal(warnings.length, 2)
   } finally {
     console.warn = warn
   }
@@ -435,50 +422,50 @@ const everyoneTemplate = { ...DEFAULT_AGENT_TEMPLATE, instructions: "Everyone's 
 const agentMetadata = { ...metadata, workbot: { ...metadata.workbot, proactive: { ...agentsOn, dailyCap: 2 } } }
 const everyonePolicy = { settings: { ...agentsOn, dailyCap: 2 }, template: everyoneTemplate, from: fromOrganization }
 
-test("with the feature off, or no team with its own, a member's agent follows Everyone's policy and template", async () => {
+test("with no team with its own, a member's agent follows Everyone's policy and template", async () => {
   const seen: string[] = []
-  const off: Deps = { metadata: async () => { seen.push("metadata"); return agentMetadata }, featureOn: async () => false, memberId: never, teams: never, rows: never, template: async () => { seen.push("template"); return everyoneTemplate } }
+  const off: Deps = { metadata: async () => { seen.push("metadata"); return agentMetadata }, memberId: never, teams: async () => [], rows: never, template: async () => { seen.push("template"); return everyoneTemplate } }
   assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId, userId }, off), everyonePolicy)
   // Exactly Everyone's two reads, as before the feature; no team is read.
   assert.deepEqual(seen, ["metadata", "template"])
   // The team half alone reads nothing at all while the feature is off: the worker asks it before every wake.
-  const nothing: Deps = { metadata: never, featureOn: async () => false, memberId: never, teams: never, rows: never, template: never }
+  const nothing: Deps = { metadata: never, memberId: never, teams: never, rows: never, template: never }
   assert.deepEqual(await resolveMemberTeamAgent({ organizationId: orgId, memberId }, nothing), { agent: null, agentFrom: fromOrganization })
   assert.equal(teamAgentPolicy({ agent: null, agentFrom: fromOrganization }), null)
 
-  const on = (rows: { teamId: string; settings: unknown }[]): Deps => ({ ...off, featureOn: async () => true, teams: async () => [{ id: "tem_1", name: "Research" }, { id: "tem_2", name: "Design" }], rows: async () => rows })
+  const on = (rows: { teamId: string; settings: unknown }[]): Deps => ({ ...off, teams: async () => [{ id: "tem_1", name: "Research" }, { id: "tem_2", name: "Design" }], rows: async () => rows })
   assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId }, on([])), everyonePolicy)
   assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId }, on([{ teamId: "tem_1", settings: { name: "Scout" } }])), everyonePolicy)
   assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId }, on([{ teamId: "tem_1", settings: { agent: { settings: "unreadable" } } }])), everyonePolicy)
   // A caller that holds the organization reads only the template.
   seen.length = 0
-  assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId, organization: { metadata: agentMetadata }, featureOn: false }, { ...off, metadata: never }), everyonePolicy)
+  assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId, organization: { metadata: agentMetadata } }, { ...off, metadata: never }), everyonePolicy)
   assert.deepEqual(seen, ["template"])
 })
 
 test("a member of a team with its own agent policy gets the team's, whole; teams that differ or fail give Everyone's", async () => {
   const research = teamAgent({ enabled: false, dailyCap: 5, sources: { calendar: "off", connections: {} } }, { instructions: "Research only.", version: 2 })
   const teams = [{ id: "tem_1", name: "Research" }, { id: "tem_2", name: "Design" }]
-  const deps = (rows: { teamId: string; settings: unknown }[]): Deps => ({ metadata: async () => agentMetadata, featureOn: never, memberId: never, teams: async () => teams, rows: async () => rows, template: async () => everyoneTemplate })
+  const deps = (rows: { teamId: string; settings: unknown }[]): Deps => ({ metadata: async () => agentMetadata, memberId: never, teams: async () => teams, rows: async () => rows, template: async () => everyoneTemplate })
   const own = { settings: research.settings, template: { ...DEFAULT_AGENT_TEMPLATE, instructions: "Research only.", version: 2, versionId: versionA }, from: fromTeams("Research") }
   // The team's policy, sources and template together; Everyone's are not read at all.
-  assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId, featureOn: true }, { ...deps([{ teamId: "tem_1", settings: { agent: research } }]), metadata: never, template: never }), own)
+  assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId }, { ...deps([{ teamId: "tem_1", settings: { agent: research } }]), metadata: never, template: never }), own)
   // A team's policy saved with email, team chat and picked apps reads without them, like the organization's.
   const before = { ...research, settings: { ...research.settings, sources: { calendar: "off", email: "everyone", chat: "members", coreConnections: { calendar: ["gws_1"] }, coreDefaults: { calendar: "gws_1" }, connections: {} } } }
-  assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId, featureOn: true }, { ...deps([{ teamId: "tem_1", settings: { agent: before } }]), metadata: never, template: never }), own)
+  assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId }, { ...deps([{ teamId: "tem_1", settings: { agent: before } }]), metadata: never, template: never }), own)
   // Two teams with the same policy agree; two that differ give Everyone's, marked as a conflict.
-  const agreed = await resolveMemberAgentPolicy({ organizationId: orgId, memberId, featureOn: true }, deps([{ teamId: "tem_1", settings: { agent: research } }, { teamId: "tem_2", settings: { agent: { ...research, template: { ...research.template, version: 9 } } } }]))
+  const agreed = await resolveMemberAgentPolicy({ organizationId: orgId, memberId }, deps([{ teamId: "tem_1", settings: { agent: research } }, { teamId: "tem_2", settings: { agent: { ...research, template: { ...research.template, version: 9 } } } }]))
   assert.deepEqual([agreed.settings, agreed.from], [research.settings, fromTeams("Design", "Research")])
   const differing = [{ teamId: "tem_1", settings: { agent: research } }, { teamId: "tem_2", settings: { agent: teamAgent() } }]
-  assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId, featureOn: true }, deps(differing)), { ...everyonePolicy, from: teamConflict })
+  assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId }, deps(differing)), { ...everyonePolicy, from: teamConflict })
   // A version id that is not one is recorded as none, never passed on.
-  const unversioned = await resolveMemberAgentPolicy({ organizationId: orgId, memberId, featureOn: true }, deps([{ teamId: "tem_1", settings: { agent: { ...research, template: { ...research.template, versionId: "not-an-id" } } } }]))
+  const unversioned = await resolveMemberAgentPolicy({ organizationId: orgId, memberId }, deps([{ teamId: "tem_1", settings: { agent: { ...research, template: { ...research.template, versionId: "not-an-id" } } } }]))
   assert.equal(unversioned.template.versionId, null)
 
   // A caller that already resolved the member's Workbot settings pays for no second team read.
-  const workbot = await resolveMemberWorkbotSettings({ organizationId: orgId, memberId, featureOn: true }, deps([{ teamId: "tem_1", settings: { agent: research, name: "Scout" } }]))
+  const workbot = await resolveMemberWorkbotSettings({ organizationId: orgId, memberId }, deps([{ teamId: "tem_1", settings: { agent: research, name: "Scout" } }]))
   assert.deepEqual([workbot.name, workbot.agent, workbot.agentFrom], ["Scout", research, fromTeams("Research")])
-  assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId, workbot }, { metadata: never, featureOn: never, memberId: never, teams: never, rows: never, template: never }), own)
+  assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId, workbot }, { metadata: never, memberId: never, teams: never, rows: never, template: never }), own)
   assert.deepEqual(memberAgentSettings(workbot, agentMetadata), research.settings)
   assert.deepEqual(memberAgentSettings({ agent: null, agentFrom: fromOrganization }, agentMetadata), everyonePolicy.settings)
 
@@ -487,9 +474,9 @@ test("a member of a team with its own agent policy gets the team's, whole; teams
   const warnings: unknown[][] = []
   console.warn = (...args: unknown[]) => { warnings.push(args) }
   try {
-    assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId, featureOn: true }, { ...deps([]), rows: never }), everyonePolicy)
-    assert.deepEqual(await resolveMemberTeamAgent({ organizationId: orgId, memberId }, { ...deps([]), featureOn: never }), { agent: null, agentFrom: fromOrganization })
-    assert.equal(warnings.length, 2)
+    assert.deepEqual(await resolveMemberAgentPolicy({ organizationId: orgId, memberId }, { ...deps([]), rows: never }), everyonePolicy)
+    assert.deepEqual(await resolveMemberTeamAgent({ organizationId: orgId, memberId }, { ...deps([]), teams: async () => [] }), { agent: null, agentFrom: fromOrganization })
+    assert.equal(warnings.length, 1)
   } finally {
     console.warn = warn
   }

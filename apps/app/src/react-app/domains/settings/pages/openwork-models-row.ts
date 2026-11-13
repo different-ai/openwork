@@ -7,8 +7,6 @@ export const ORG_OPENWORK_MODELS_PROVIDER_ID = "openwork";
 export const OPENWORK_MODELS_PROVIDER_IDS: readonly string[] = [ORG_OPENWORK_MODELS_PROVIDER_ID, AUTO_PROVIDER_ID];
 
 export type OpenWorkModelsRowInput = {
-  /** `singleOpenWorkModelsRow` is on. Off keeps the previous rows exactly. */
-  enabled: boolean;
   /** The organization includes OpenWork Models for this member. */
   fromOrganization: boolean;
   /**
@@ -49,9 +47,6 @@ export type OpenWorkModelsRowPlan = {
  *   Admins keep Turn off; members see that their organization manages it.
  */
 export function planOpenWorkModelsRow(input: OpenWorkModelsRowInput): OpenWorkModelsRowPlan {
-  if (!input.enabled) {
-    return { showDeviceRow: true, orgRowToggle: false, orgRowManaged: false, orgTurnedOff: false, clearStaleTurnOff: false, hideFromDisabledList: new Set() };
-  }
   const personDecides = !input.managedByOrganization || input.isOrganizationAdmin;
   const savedTurnOff = input.disabledProviders.includes(ORG_OPENWORK_MODELS_PROVIDER_ID);
   return {

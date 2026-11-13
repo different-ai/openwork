@@ -2,7 +2,7 @@ import { z } from "zod"
 
 /**
  * Sharing an API key a person already saved on their device with their
- * organization (feature `shareDeviceProvider`). Den answers what the caller may
+ * organization. Den answers what the caller may
  * share (`GET /v1/inference-providers/device-share-options`); the desktop's own
  * server then sends the key, so it never passes through the app's window.
  */

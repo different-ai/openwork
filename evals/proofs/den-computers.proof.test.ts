@@ -105,18 +105,5 @@ test("an ordinary organization admin manages Computers in the Den team dashboard
     evidence.recordAssertionEvidence("No admin list for members; personal scope is unchanged", `org list=${list.response.status}; org detail=${detail.response.status}; personal list=${personal.map(device => device.label).join(", ")}; direct management URL redirects to team home`, list.response.status === 403 && detail.response.status === 403 && personal.length === 2 && personal.every(device => [world.devices.windows.id, world.devices.shared.id].includes(device.id)));
     await member.screenshot();
   });
-  await step("the feature gate also locks the normal org admin out", async () => {
-    await world.setEnabled(false);
-    const disabled = await world.adminRequest("/v1/org/computers");
-    expect(disabled.response.status).toBe(404);
-    await admin.reload();
-    await admin.see({ testId: "computers-locked" });
-    await admin.notSee({ testId: "dashboard-nav-computers" });
-    await admin.notSee({ testId: "dashboard-nav-my-computers" });
-    await member.navigate(world.url("/dashboard/my-computers"));
-    await member.see({ testId: "my-computers-locked" }, { timeoutMs: 60_000 });
-    await member.notSee({ text: "Riley's Windows laptop" });
-    evidence.recordAssertionEvidence("Team management requires both permission and rollout", `remoteDevices=false; org-admin API=${disabled.response.status}; team page and My Computers locked, both navigation entries absent`, disabled.response.status === 404);
-    await admin.screenshot();
-  });
+
 });

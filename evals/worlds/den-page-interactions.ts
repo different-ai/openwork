@@ -1,8 +1,7 @@
 import type { Seed } from "@openwork/env";
 import { isRecord, records } from "./library.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
-/** A rollout-enabled owner, an opted-out administrator, and a read-only teammate in one isolated organization. */
+/** An owner, another administrator, and a read-only teammate in one isolated organization. */
 export async function denPageInteractionsWorld(seed: Seed) {
   const den = await seed.den({
     org: { name: "Page consistency studio", admin: { name: "Page Owner" }, members: {
@@ -25,12 +24,7 @@ export async function denPageInteractionsWorld(seed: Seed) {
   const promotion = await seed.api(den.admin, `/v1/members/${legacyId}/role`, {
     method: "POST", headers: scope, body: JSON.stringify({ role: "super-admin" }),
   });
-  if (!promotion.response.ok) throw new Error(`Cannot prepare opted-out administrator: ${promotion.text}`);
-  await enableOrganizationCapabilities(seed, den.admin, { denPageConsistency: true }, organizationId);
-  const override = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/members/${legacyId}/capabilities`, {
-    method: "PUT", body: JSON.stringify({ capabilities: { denPageConsistency: false } }),
-  });
-  if (!override.response.ok) throw new Error(`Cannot prepare rollout boundary: ${override.text}`);
+  if (!promotion.response.ok) throw new Error(`Cannot prepare administrator: ${promotion.text}`);
   const team = await seed.api(den.admin, "/v1/teams", {
     method: "POST", headers: scope, body: JSON.stringify({ name: "Readers", memberIds: [viewerId] }),
   });

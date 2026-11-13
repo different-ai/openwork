@@ -21,7 +21,6 @@ import {
 import { db } from "../../db.js"
 import { withDesktopDeviceClaimRequest } from "../../desktop-device-login.js"
 import { env } from "../../env.js"
-import { deploymentFeatureEnabled } from "../../features.js"
 import { findDomainSsoRequirement, listOrganizationSsoSignInOptions, ssoSignInUrl } from "../../organization-sso-access.js"
 import { resolveLoginSsoRouting } from "../../sso-routing.js"
 import {
@@ -1205,7 +1204,6 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
       // membership. Never add an alternative to an SSO-only response.
       const offerGoogleOnPassword = nextStep === "password"
         && Boolean(env.google.clientId && env.google.clientSecret)
-        && await deploymentFeatureEnabled("passwordSignInGoogle")
       return c.json({
         email, nextStep, allowPublicSignup, allowInvitationSignup,
         ...(offerGoogleOnPassword ? { offerGoogleOnPassword: true } : {}),

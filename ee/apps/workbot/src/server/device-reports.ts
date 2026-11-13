@@ -1,7 +1,7 @@
 import { remoteDeviceWorkbotReportSchema, type RemoteDeviceWorkbotEvent, type RemoteDeviceWorkbotReport } from "@openwork/types/den/remote-devices"
 
 /**
- * What Workbot tells Den's devices registry (`remoteDevices`) about a chat's cloud computer: that a view of it was
+ * What Workbot tells Den's devices registry about a chat's cloud computer: that a view of it was
  * opened, that it was paused, resumed, rebuilt or handed back, that it could not connect, or that it went with its
  * chat. Fixed names and codes only: never a URL, a screen, or the text of an error.
  *

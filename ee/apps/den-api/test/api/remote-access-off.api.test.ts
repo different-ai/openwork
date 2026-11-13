@@ -177,43 +177,21 @@ const transcript = { action: "read", result: { title: "Triage the inbox", status
 const remoteRead = { sessionId: REMOTE_SESSION, workspaceId: WORKSPACE }
 let remoteCommandId = ""
 
-test("with none of it turned on, every computer takes tasks as before and nothing about access is exchanged", async () => {
-  for (const [as, method, path, body] of [
-    [asMilo, "GET", SETTINGS, undefined],
-    [asOwner, "PATCH", SETTINGS, { access: "off" }],
-    [asMilo, "GET", "/v1/sessions", undefined],
-  ] as const) {
-    const call = await as(method, path, body)
-    assert.deepEqual([call.status, field(call.body, "error")], [404, "feature_disabled"], `${method} ${path}: ${summary(call)}`)
-  }
-  for (const computer of [laptop, olivesOldMac]) {
-    const work = await computer.call("GET", "/v1/session-runners/work")
-    assert.equal(work.status, 200, summary(work))
-    assert.equal(field(work.body, "sessionAccess"), undefined, computer.label)
-  }
-  const report = await laptop.call("PUT", "/v1/session-runners/sessions", { access: "off", sessions: [] })
-  assert.deepEqual([report.status, field(report.body, "error")], [404, "feature_disabled"], summary(report))
-  assert.equal(await storedAccess(laptop), null)
 
-  assert.deepEqual(await targetAccess(milo), { "Milo's MacBook Pro": "created", "Milo's Mac Studio": "created" })
-  assert.deepEqual(await targetAccess(olive), { "Olive's MacBook Air": "created", "Olive's old Mac mini": "created", "Olive's Mac Studio": "created" })
-  assert.deepEqual(outcome(await startTask(milo, { computerId: laptop.computerId })), { state: "queued", computerId: laptop.computerId })
-  assert.deepEqual(outcome(await startTask(olive, { computerId: olivesOldMac.computerId })), { state: "queued", computerId: olivesOldMac.computerId })
-})
+test("the organization's setting exists with Devices alone; all still requires the organization and owner to allow access", async () => {
 
-test("the organization's setting exists with Devices alone; all needs sessions on members' computers", async () => {
-  assert.equal((await den.setFeature(orgId, "remoteDevices", true)).status, 200)
   for (const [as, canEdit] of [[asMilo, false], [asAdmin, false], [asOwner, true]] as const) {
     const read = await as("GET", SETTINGS)
     assert.equal(read.status, 200, summary(read))
-    assert.deepEqual(settingsOf(read), { settings: { access: "created" }, canEdit, allowsAll: false, optIn: false })
+    assert.deepEqual(settingsOf(read), { settings: { access: "created" }, canEdit, allowsAll: true, optIn: false })
   }
   const all = await asOwner("PATCH", SETTINGS, { access: "all" })
-  assert.deepEqual([all.status, all.body], [409, { error: "feature_disabled", feature: "remoteSessionAccess" }], summary(all))
+  assert.equal(all.status, 200, summary(all))
+  assert.equal((await asOwner("PATCH", SETTINGS, { access: "created" })).status, 200)
   assert.deepEqual(settingsOf(await asOwner("GET", SETTINGS)).settings, { access: "created" }, "nothing was saved")
   assert.equal((await asOwner("PATCH", SETTINGS, { access: "sometimes" })).status, 400)
   // The member's own list of sessions belongs to the two access features, not to Devices.
-  assert.equal((await asMilo("GET", "/v1/sessions")).status, 404)
+  assert.equal((await asMilo("GET", "/v1/sessions")).status, 200)
 })
 
 test("with Devices alone, each desktop's record says what other devices may do there", async () => {
@@ -262,7 +240,7 @@ test("with Devices alone, each desktop's record says what other devices may do t
 })
 
 test("an owner turns one computer off: nothing is started there and none of its sessions is reached, until they allow it again", async () => {
-  assert.equal((await den.setFeature(orgId, "remoteSessionAccess", true)).status, 200)
+
   assert.deepEqual(workOf(await laptop.call("GET", "/v1/session-runners/work")).sessionAccess, { ceiling: "created", optIn: false })
   remoteCommandId = await seedRemoteSession(milo, laptop, REMOTE_SESSION)
   assert.ok(sessionsOf(await asMilo("GET", "/v1/sessions")).sessions.some((session) => session.commandId === remoteCommandId))
@@ -348,14 +326,13 @@ test("a task that was already waiting when its computer turned off fails there, 
 
 test("an organization owner turns tasks from other devices off for everyone, with or without the features", async () => {
   // Neither access feature is on: the setting is reached through Devices.
-  assert.equal((await den.setFeature(orgId, "remoteSessionAccess", false)).status, 200)
   for (const as of [asMilo, asAdmin]) {
     const denied = await as("PATCH", SETTINGS, { access: "off" })
     assert.deepEqual([denied.status, field(denied.body, "requiredPermission")], [403, "organization.update"], summary(denied))
   }
   const lowered = await asOwner("PATCH", SETTINGS, { access: "off" })
   assert.equal(lowered.status, 200, summary(lowered))
-  assert.deepEqual(settingsOf(lowered), { settings: { access: "off" }, canEdit: true, allowsAll: false, optIn: false })
+  assert.deepEqual(settingsOf(lowered), { settings: { access: "off" }, canEdit: true, allowsAll: true, optIn: false })
   assert.deepEqual(settingsOf(await asMilo("GET", SETTINGS)).settings, { access: "off" })
 
   // It reaches the computers that can be told, and whatever they report is kept as off.
@@ -423,9 +400,10 @@ test("the opt-in can be on for some members only: the team's list applies each o
 
 test("with the opt-in a computer takes nothing until its owner allows it there", async () => {
   assert.equal((await den.setFeature(orgId, "remoteTasksOptIn", true)).status, 200)
-  assert.deepEqual(settingsOf(await asOlive("GET", SETTINGS)), { settings: { access: "created" }, canEdit: false, allowsAll: false, optIn: true })
+  assert.deepEqual(settingsOf(await asOlive("GET", SETTINGS)), { settings: { access: "created" }, canEdit: false, allowsAll: true, optIn: true })
   const all = await asOwner("PATCH", SETTINGS, { access: "all" })
-  assert.deepEqual([all.status, field(all.body, "error"), field(all.body, "feature")], [409, "feature_disabled", "remoteSessionAccess"])
+  assert.equal(all.status, 200, summary(all))
+  assert.equal((await asOwner("PATCH", SETTINGS, { access: "created" })).status, 200)
 
   // Olive never chose anywhere. Her laptop can be asked; her other two run apps that cannot be.
   assert.deepEqual(workOf(await olivesLaptop.call("GET", "/v1/session-runners/work")).sessionAccess, { ceiling: "created", optIn: true })
@@ -457,7 +435,7 @@ test("with the opt-in a computer takes nothing until its owner allows it there",
   )
   assert.deepEqual(before.sessions, [], "the tasks she had started on them are left out while they take nothing")
   const attach = await asOlive("POST", "/v1/remote-sessions/attach", { computerId: olivesLaptop.computerId, workspaceId: WORKSPACE, sessionId: "ses_local" })
-  assert.deepEqual([attach.status, field(attach.body, "error")], [404, "feature_disabled"], "reaching sessions started on a computer still needs its own feature")
+  assert.deepEqual([attach.status, field(attach.body, "error")], [409, "remote_access_off"], "an owner who has not opted in still blocks attach")
 
   // The laptop says nobody chose yet: it stays off, and Den keeps nothing as her choice.
   await reports(olivesLaptop, "off", false)
@@ -504,7 +482,7 @@ test("without the opt-in a computer whose owner has not chosen takes tasks, as b
     assert.deepEqual(outcome(await startTask(olive, { computerId: computer.computerId })), { state: "queued", computerId: computer.computerId })
   }
   assert.deepEqual(outcome(await startTask(olive, { computerId: olivesLaptop.computerId })), agentRefused(COMPUTER_OFF))
-  assert.equal((await asOlive("GET", "/v1/sessions")).status, 404)
+  assert.equal((await asOlive("GET", "/v1/sessions")).status, 200)
 
   // A disconnected desktop takes nothing from anyone: its record says nothing about remote access.
   const record = devicesOf(await asOlive("GET", "/v1/remote-devices")).find((device) => device.label === "Olive's Mac Studio")
@@ -515,9 +493,9 @@ test("without the opt-in a computer whose owner has not chosen takes tasks, as b
   assert.equal((await deviceAccess(asOlive))["Olive's Mac Studio"], null)
   assert.equal((await teamAccess())["Olive's Mac Studio"], null)
 
-  // With Devices off too, the organization uses none of it and nothing is exchanged with its computers.
-  assert.equal((await den.setFeature(orgId, "remoteDevices", false)).status, 200)
-  assert.equal((await asOwner("GET", SETTINGS)).status, 404)
-  assert.equal(field((await olivesLaptop.call("GET", "/v1/session-runners/work")).body, "sessionAccess"), undefined)
+  // GA session policy remains exchanged; the owner's saved choice still holds.
+  assert.equal((await asOwner("GET", SETTINGS)).status, 200)
+  assert.deepEqual(field((await olivesLaptop.call("GET", "/v1/session-runners/work")).body, "sessionAccess"), { ceiling: "created", optIn: false })
   assert.deepEqual(outcome(await startTask(olive, { computerId: olivesLaptop.computerId })), agentRefused(COMPUTER_OFF), "her choice still holds")
+
 })

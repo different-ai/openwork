@@ -15,8 +15,6 @@ const BASE_URL = "http://localhost:3000"
 const PASSWORD = "Correct-Horse-Battery-Staple-42!"
 const SSO_PROVIDER_ID = "acme"
 
-// Feature `signInEmailSync`, switched per test.
-let emailFollowsProvider = false
 
 /**
  * An identity as the stand-in providers read it from a token: "email", or
@@ -76,7 +74,7 @@ const auth = betterAuth({
     },
   },
   account: DEN_ACCOUNT_CONFIG,
-  user: denUserConfig({ emailFollowsProvider: () => emailFollowsProvider }),
+  user: denUserConfig(),
   plugins: [sso({ domainVerification: { enabled: true } })],
 })
 const context = await auth.$context
@@ -160,12 +158,7 @@ async function userIdForEmail(email: string) {
 }
 
 async function withEmailFollowingProvider<T>(run: () => Promise<T>) {
-  emailFollowsProvider = true
-  try {
-    return await run()
-  } finally {
-    emailFollowsProvider = false
-  }
+  return run()
 }
 
 /** Starts SSO sign-in, then completes the real OIDC callback; returns where it redirected. */
@@ -244,17 +237,6 @@ test("SSO never creates a user whose email is outside the provider's verified do
 // A person renamed in the company directory keeps their Google id, while SSO
 // whose subject is the email (the default SAML NameID) sees a new identity.
 
-test("off: an account keeps its old email when Google reports a new one, and SSO under the new email creates a second account", async () => {
-  const userId = await googleAccount("google-rename-off|old-off@acme.test")
-
-  assert.equal(await googleAccount("google-rename-off|new-off@acme.test"), userId)
-  assert.deepEqual(await storedUser(userId), { email: "old-off@acme.test", emailVerified: true })
-
-  assert.equal((await signInWithSso("new-off@acme.test")).pathname, "/signed-in")
-  const second = await userIdForEmail("new-off@acme.test")
-  assert.ok(second)
-  assert.notEqual(second, userId)
-})
 
 test("on: an account follows its Google email, so SSO under the new email opens the same account", async () => {
   const userId = await googleAccount("google-rename|old@acme.test")

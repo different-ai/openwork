@@ -57,7 +57,7 @@ test("a confirmed share asks Den first, then sends this computer's key for every
 
 test("the key is not read when Den says no", async () => {
   const cases: Array<{ name: string; options: { status: number; body: unknown }; expected: [number, string] }> = [
-    { name: "feature off", options: { status: 404, body: { error: "feature_disabled", feature: "shareDeviceProvider" } }, expected: [404, "feature_disabled"] },
+    { name: "older Den without sharing", options: { status: 404, body: { error: "not_found" } }, expected: [502, "share_failed"] },
     { name: "a member", options: { status: 200, body: { canShare: false, blocker: "no_permission", managerName: "Avery Owner", verificationRequired: false, providers: [] } }, expected: [403, "forbidden"] },
     { name: "no AI Gateway", options: { status: 200, body: { canShare: false, blocker: "gateway_unavailable", managerName: null, verificationRequired: false, providers: [] } }, expected: [409, "gateway_unavailable"] },
     { name: "already shared", options: shareable("shared"), expected: [409, "already_shared"] },

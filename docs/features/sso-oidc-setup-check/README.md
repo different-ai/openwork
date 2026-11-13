@@ -1,5 +1,7 @@
 # SSO: check the OIDC issuer during setup
 
+> **Generally available:** `ssoOidcSetupCheck` is retired; its enabled behavior is standard on Cloud and self-hosted. Actual settings, permissions, billing rules and consent remain enforced. Rollout/off-state instructions below are historical; see [the retirement guide](../globally-enabled-retirement/README.md).
+
 - Feature: `ssoOidcSetupCheck`
 - Deployments: cloud and self-hosted; default **off**
 - Owner: `benjaminshafii`

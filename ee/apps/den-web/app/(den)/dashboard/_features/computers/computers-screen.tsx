@@ -10,7 +10,7 @@ import { DenPageHeader } from "../../../_components/ui/page-header";
 import { DenSelect } from "../../../_components/ui/select";
 import { DenSegmented } from "../../../_components/ui/segmented";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
-import { getOrgAccessFlags, orgFeatureEnabled, permissionLockReason } from "../../../_lib/den-org";
+import { getOrgAccessFlags, permissionLockReason } from "../../../_lib/den-org";
 import { useDenToast } from "../../_components/den-toast";
 import { FilterInput } from "../../_components/item-list";
 import { TeamsListLocked } from "../../_components/teams-list-row";
@@ -44,7 +44,7 @@ export function ComputersScreen() {
   const { orgId, orgContext } = useOrgDashboard();
   if (!orgId || !orgContext) return <ComputersSkeleton />;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
-  if (!access.canViewComputers || !orgFeatureEnabled(orgContext, "remoteDevices")) return <section className="space-y-4" data-testid="computers-locked">
+  if (!access.canViewComputers) return <section className="space-y-4" data-testid="computers-locked">
     <DenPageHeader size="compact" title="Computers" />
     <p className={`flex items-start gap-2 text-[13px] ${secondaryText}`}><LockKeyhole size={16} strokeWidth={1.5} aria-hidden className="mt-0.5 shrink-0" />
       {!access.canViewComputers ? permissionLockReason("computers.view") : "Computers is not enabled for this organization. Ask an organization owner or admin about availability."}

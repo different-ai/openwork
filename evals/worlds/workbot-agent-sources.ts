@@ -1,7 +1,7 @@
 import { denFetch } from "@openwork/behaviors";
 import { queryDenDatabase, type Seed } from "@openwork/env";
 import { healthFixture } from "./den-service-readiness.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 import { chatAs } from "./workbot-agent-library.ts";
 import { ENCRYPTION_KEY } from "./workbot-proactive.ts";
 
@@ -36,7 +36,7 @@ export async function workbotAgentSourcesWorld(seed: Seed) {
         DEN_DB_ENCRYPTION_KEY: ENCRYPTION_KEY,
       },
     });
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { workbotProactive: true });
+    const organizationId = await seededOrganizationId(seed, den.admin);
     const enabled = await seed.api(den.admin, "/v1/org/workbot-settings/proactive", { method: "PUT", body: JSON.stringify({ enabled: true }) });
     if (!enabled.response.ok) throw new Error(`Turning on Your agent failed: ${enabled.text.slice(0, 300)}`);
     await seed.nativeConnector(den.admin, {

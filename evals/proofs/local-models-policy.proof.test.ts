@@ -67,7 +67,8 @@ test("the owner turns off local models for Acme while keeping personal keys; an 
 
   await step("Riley's app permissions show local models blocked and personal keys still allowed", async () => {
     await user.navigate(world.accountUrl);
-    await user.click({ role: "tab", label: "App permissions" }, { timeoutMs: WITHIN });
+    await user.see({ role: "tab", label: "App permissions" }, { timeoutMs: WITHIN });
+    await user.click({ role: "tab", label: "App permissions" });
     const rowText = async (key: string) => (await probe.dom(`[data-testid="app-permission-${key}"]`)).elements[0]?.text ?? "";
     const blocked = await probe.eventually(() => rowText("allowLocalModels"), { within: WITHIN, label: "local models row", until: (value) => value.includes("Blocked") });
     const keys = await rowText("allowCustomProviders");

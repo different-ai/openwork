@@ -96,8 +96,6 @@ export type BuildDashboardNavSectionsInput = {
   /** The managedDeployments feature is on for this organization. */
   managedDeployments?: boolean;
   desktopPolicyScreenRemoved?: boolean;
-  /** My Computers for every member and the team inventory for admins; remoteDevices is off by default. */
-  remoteDevices?: boolean;
   /** Workbot's settings are on Members › Teams › Everyone for this viewer, so Manage has no Workbot entry. */
   workbotSettingsInTeams?: boolean;
   /** Explicit server capability, independent of organization role permissions. */
@@ -118,7 +116,6 @@ export function buildDashboardNavSections({
   libraryNeedsSignIn = 0,
   managedDeployments = false,
   desktopPolicyScreenRemoved = false,
-  remoteDevices = false,
   workbotSettingsInTeams = false,
   canManageDeploymentServices = false,
   workbotEntry = { kind: "open" },
@@ -148,7 +145,7 @@ export function buildDashboardNavSections({
       ? [{ href: getAutomationsRoute(orgSlug), label: "My Automations", icon: CalendarClock }]
       : []),
     // Every member sees their own and shared computers; the team-wide list is Manage › Computers.
-    ...(remoteDevices && orgSlug
+    ...(orgSlug
       ? [{ href: getMyComputersRoute(orgSlug), label: "My Computers", icon: MonitorSmartphone, testId: "dashboard-nav-my-computers" }]
       : []),
     ...(showWeb
@@ -164,7 +161,7 @@ export function buildDashboardNavSections({
         { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug, badge: "MCPs" },
         { href: getAiGatewayRoute(orgSlug), label: "AI Gateway", icon: Sparkles },
         ...(!desktopPolicyScreenRemoved ? [{ href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop }] : []),
-        ...(remoteDevices ? [{ href: getComputersRoute(orgSlug), label: "Computers", icon: Laptop, testId: "dashboard-nav-computers" }] : []),
+        { href: getComputersRoute(orgSlug), label: "Computers", icon: Laptop, testId: "dashboard-nav-computers" },
         ...(!workbotSettingsInTeams ? [{ href: getWorkbotSettingsRoute(orgSlug), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot-settings" }] : []),
         ...(managedDeployments ? [{ href: getDeploymentsRoute(orgSlug), label: "Deployments", icon: Server }] : []),
       ].filter((item) => canOpen(item.href))

@@ -36,7 +36,6 @@ import { computerDisconnectedBody, dropDisconnectedRunner, findDisconnection, re
 import { env } from "../../env.js"
 import {
   readRemoteSessionAccessPolicy,
-  remoteSessionAccessInUse,
   runnerAccessCapabilities,
   storedRunnerSessionReport,
   type RemoteSessionAccessPolicy,
@@ -97,15 +96,14 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
   const sessionAccessFor = async (identity: { organizationId: string; ownerMemberId: string; capabilities: readonly string[] }) => {
     const runner = runnerAccessCapabilities(identity.capabilities)
     if (!runner.accessCapable && !runner.choiceCapable) return null
-    const policy = await readSessionAccess(identity)
-    return remoteSessionAccessInUse(policy) ? policy : null
+    return readSessionAccess(identity)
   }
   /**
    * Attaches reach sessions that were started on the computer: only a runner
-   * that can refuse one takes them, and only while `remoteSessionAccess` is on.
+   * that can refuse one takes them; the organization ceiling and owner choice still apply.
    */
   const attachesAllowed = (identity: Parameters<typeof sessionAccessFor>[0], policy: RemoteSessionAccessPolicy | null) =>
-    policy?.enabled === true && runnerAccessCapabilities(identity.capabilities).accessCapable
+    policy !== null && runnerAccessCapabilities(identity.capabilities).accessCapable
   const takesAttaches = async (identity: Parameters<typeof sessionAccessFor>[0]) => attachesAllowed(identity, await sessionAccessFor(identity))
   const toldPolicy = (policy: RemoteSessionAccessPolicy) => ({ ceiling: policy.ceiling, optIn: policy.optIn })
 
@@ -276,7 +274,7 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
     path,
     runnerRoute({
       summary: "Discover Automation runner work",
-      description: "Returns the runs and remote-session commands currently assignable to this runner. Runners with remote_session_access_v1 or remote_session_choice_v1 also get sessionAccess, the organization's ceiling and whether a computer whose owner has not chosen takes nothing (optIn), while remoteSessionAccess, remoteTasksOptIn or remoteDevices is on for the member or the organization's ceiling is off. Runners with remote_session_access_v1 get their attach commands while remoteSessionAccess is on.",
+      description: "Returns the runs and remote-session commands currently assignable to this runner. Runners with remote_session_access_v1 or remote_session_choice_v1 also get sessionAccess, the organization's ceiling and whether a computer whose owner has not chosen takes nothing (optIn), for registered runners that support session access or the owner's choice. Only runners with remote_session_access_v1 get attach commands; the organization ceiling and computer owner's choice still constrain access.",
       responses: { 200: jsonResponse("Available work items.", automationRunnerWorkResponseSchema) },
     }),
     async (c) => {
@@ -373,12 +371,12 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
         + "and no sessions either way, whatever was sent. From a runner whose owner can choose, Den keeps the access only when chosen is true; until "
         + "then the organization's default applies. From a runner whose owner cannot, Den keeps created at most while remoteTasksOptIn is on, when "
         + "that computer takes nothing whatever it reports. A report kept as anything but all also detaches the attach commands this runner delivered. "
-        + "The response carries the current ceiling and opt-in. Taken while remoteSessionAccess, remoteTasksOptIn or remoteDevices is on for the "
-        + "member, or the organization's ceiling is off.",
+        + "The response carries the current ceiling and opt-in. Requires a registered runner for this "
+        + "member with a supported session access or owner-choice capability.",
       responses: {
         200: jsonResponse("The report was stored.", runnerSessionReportResponseSchema),
         403: jsonResponse("The runner registered neither remote_session_access_v1 nor remote_session_choice_v1.", runnerErrorSchema),
-        404: jsonResponse("The organization uses neither sessions on members' computers, the opt-in nor Devices and has not turned remote access off, or the runner is not registered.", runnerErrorSchema),
+        404: jsonResponse("The runner is not registered.", runnerErrorSchema),
       },
     }),
     jsonValidator(runnerSessionReportSchema),
