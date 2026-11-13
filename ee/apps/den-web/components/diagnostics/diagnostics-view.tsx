@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, CircleAlert, Copy, Lock, RefreshCw, TriangleAlert } from "lucide-react";
-import type { MouseEvent, ReactNode } from "react";
+import type { MouseEvent } from "react";
 import type { DiagnosticsAttention, OrgDiagnostics } from "@openwork/types/den/diagnostics";
 import { DenButton } from "../../app/(den)/_components/ui/button";
 import { DenNotice } from "../../app/(den)/_components/ui/notice";
@@ -9,7 +9,7 @@ import { DenSkeleton } from "../../app/(den)/_components/ui/skeleton";
 import { DIAGNOSTICS_COPY, SECTION_TITLES, attentionCopy, attentionCountLabel, checkedAgoLabel } from "./diagnostics-copy";
 import { diagnosticsRowId, formatAgo, latestCheckedAt, orderAttention, overallStatus, type OverallStatus } from "./diagnostics-data";
 import { DiagnosticsSkeletonRow } from "./diagnostics-row";
-import { ConnectorsSection, DesktopSection, InstallationSection, NetworkSection, ProvidersSection } from "./diagnostics-sections";
+import { ConnectorsSection, DesktopSection, InstallationSection, ProvidersSection } from "./diagnostics-sections";
 import type { DiagnosticsFailure } from "./diagnostics-transport";
 
 export type DiagnosticsViewProps = {
@@ -27,8 +27,6 @@ export type DiagnosticsViewProps = {
   onCheckNow: () => void;
   onCopyReport: () => void;
   onRetry: () => void;
-  /** Advanced › Network check content, mounted only when its row is opened. */
-  renderNetworkCheck: (canRun: boolean) => ReactNode;
 };
 
 const DOT_CLASSES: Record<OverallStatus["kind"] | "error", string> = {
@@ -168,7 +166,6 @@ export function DiagnosticsView(props: DiagnosticsViewProps) {
           <ProvidersSection report={report} now={now} orgSlug={orgSlug} />
           <ConnectorsSection report={report} now={now} orgSlug={orgSlug} />
           <InstallationSection report={report} now={now} orgSlug={orgSlug} />
-          <NetworkSection report={report} renderNetworkCheck={props.renderNetworkCheck} />
         </>
       ) : loadFailure && !loading ? (
         <div className="mt-6"><FailureNotice failure={loadFailure} onRetry={props.onRetry} /></div>

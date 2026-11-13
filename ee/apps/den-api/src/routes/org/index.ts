@@ -22,7 +22,6 @@ import { registerOrgMcpAppCatalogRoutes } from "./mcp-app-catalog.js"
 import { registerDeleteOrganizationRoutes } from "./delete-organization.js"
 import { registerOrgDiagnosticsRoutes } from "./diagnostics.js"
 import { registerOrgDesktopPolicyRoutes } from "./desktop-policies.js"
-import { registerOrgEgressDiagnosticRoutes } from "./egress-diagnostics.js"
 import { registerOrgInventoryRevisionRoutes } from "./inventory-revision.js"
 import { registerOrgFeatureUsageRoutes } from "./feature-usage.js"
 import { registerOrgInvitationRoutes } from "./invitations.js"
@@ -101,7 +100,6 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgDesktopPolicyRoutes(app)
   registerOrgConfigBlobRoutes(app)
   registerOrgAgentPermissionRoutes(app)
-  registerOrgEgressDiagnosticRoutes(app)
   registerOrgInferenceRoutes(app)
   registerModelsAnalyticsRoutes(app)
   registerLibraryUsageRoutes(app)

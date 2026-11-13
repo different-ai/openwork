@@ -237,7 +237,7 @@ export async function recoverAdministratorsFromEnv() {
         await connection.query("UPDATE organization SET team_membership_revision=UUID() WHERE id=?", [org])
         await connection.commit()
         changed++
-        console.log(`APPLIED — these ${people.length} members now have the 14 permissions`)
+        console.log(`APPLIED — these ${people.length} members now have the 13 permissions`)
         log({ event: "administrator_recovery_applied", organization: target.organization, team, role: { id: set, name: "Restored administrator permissions" }, peopleCount: people.length })
         printRoster(people)
         console.log(`UNDO — Members > Roles: unlink or delete Restored administrator permissions (${set}). Disabling or removing the recovery setting stops future runs; it does not revoke these permissions.`)

@@ -276,18 +276,6 @@ export const PERMISSIONS = {
     defaultOn: ADMIN,
     sensitive: true,
   },
-  "egress_diagnostics.view": {
-    area: "security",
-    label: "View network diagnostics",
-    defaultOn: ADMIN,
-  },
-  "egress_diagnostics.manage": {
-    area: "security",
-    label: "Run network diagnostics",
-    description: "Configure and run outbound network diagnostics.",
-    defaultOn: OWNER_ONLY,
-    sensitive: true,
-  },
 
   // Desktop app
   "desktop_policies.view": {

@@ -5,7 +5,6 @@ import { diagnosticsReportText } from "../../../../components/diagnostics/diagno
 import { DiagnosticsView } from "../../../../components/diagnostics/diagnostics-view";
 import { useOrgDiagnostics } from "../../../../components/diagnostics/use-org-diagnostics";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { EgressDiagnosticsCard } from "./egress-diagnostics-card";
 
 const COPIED_MS = 1_600;
 const CLOCK_MS = 30_000;
@@ -57,7 +56,6 @@ function DiagnosticsContent({ orgId, orgSlug }: { orgId: string; orgSlug: string
       onCheckNow={diagnostics.checkNow}
       onCopyReport={() => void copyReport()}
       onRetry={diagnostics.refresh}
-      renderNetworkCheck={(canRun) => <EgressDiagnosticsCard variant="embedded" canView canManage={canRun} />}
     />
   );
 }

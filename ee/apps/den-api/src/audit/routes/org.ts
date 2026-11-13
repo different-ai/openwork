@@ -255,9 +255,6 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   userOrgs("DELETE", "/v1/workers/:id", "tenant_external", "worker.delete", "worker.management", "worker", "id", { external: "cloud_runtime (Daytona deprovision)" }),
 
   // Diagnostics
-  member("GET", "/v1/diagnostics/egress", "tenant_read", "diagnostics.egress.read", "diagnostics", "diagnostic", null),
-  member("POST", "/v1/diagnostics/egress", "tenant_external", "diagnostics.egress.run", "diagnostics", "diagnostic", null, { external: "diagnostics_origin (egress probe)" }),
-  member("PUT", "/v1/diagnostics/egress/token", "tenant_change", "diagnostics.egress_token.update", "diagnostics", "diagnostic_credential", null, { notes: "Stores a diagnostics credential; never snapshotted." }),
   member("POST", "/v1/diagnostics/desktop-startup", "tenant_signal", "diagnostics.desktop_startup.report", "diagnostics", "desktop_startup_report", null, { notes: "One report per desktop launch for the calling member: step timings and a fixed failure code only. Idempotent per attemptId; rate limited per member. High volume." }),
 
   // Managed deployments (customer-cloud installs)

@@ -182,10 +182,6 @@ export type DenOrgAccessFlags = {
   canViewDeployments: boolean;
   canViewUsageAnalytics: boolean;
   canManageDeployments: boolean;
-  /** `egress_diagnostics.view` */
-  canViewEgressDiagnostics: boolean;
-  /** `egress_diagnostics.manage` */
-  canManageEgressDiagnostics: boolean;
   /** `billing.view` */
   canViewBilling: boolean;
   /** `billing.manage`: start a subscription in checkout. */
@@ -742,8 +738,6 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
     canViewDeployments: can("deployments.view"),
     canViewUsageAnalytics: can("usage_analytics.view"),
     canManageDeployments: can("deployments.manage"),
-    canViewEgressDiagnostics: can("egress_diagnostics.view"),
-    canManageEgressDiagnostics: can("egress_diagnostics.manage"),
     canViewBilling: can("billing.view"),
     canManageBilling: can("billing.manage"),
     canOpenBillingPortal: can("billing_portal.use"),
