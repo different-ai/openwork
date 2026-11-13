@@ -10,6 +10,8 @@
     "check:agent-links": "node scripts/check-agent-links.mjs",
     "check:shadow-ai": "node scripts/check-shadow-ai.mjs",
     "check:governance-browser": "node scripts/check-governance-browser.mjs",
+    "check:sovereign-ai": "node --test lib/sovereign-ai.test.mjs",
+    "check:sovereign-ai-browser": "node scripts/check-sovereign-ai-browser.mjs",
     "check:product-pages": "node scripts/check-product-pages.mjs",
     "eval:agents": "node scripts/agent-discovery-eval.mjs",
     "prices:update": "node scripts/update-model-prices.mjs",
