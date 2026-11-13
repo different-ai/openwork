@@ -1288,6 +1288,25 @@ function remoteSessionStatusSources(input: RemoteSessionExecuteInput, deps: Remo
   }
 }
 
+/** Compact, read-only event observation. Reuse access checks without queuing desktop read requests. */
+export async function readRemoteSessionEventStatus(
+  scope: { organizationId: DenTypeId<"organization">; userId: string },
+  reference: { commandId?: string; sessionId?: string },
+  deps: RemoteSessionExecuteDeps = DEFAULT_REMOTE_SESSION_DEPS,
+): Promise<RemoteSessionToolResult> {
+  const input: RemoteSessionExecuteInput = { ...scope, action: "status", hasWriteScope: false, body: reference }
+  const desktop = reference.sessionId ? await findDesktopSession(input, reference, deps) : null
+  const commandId = reference.commandId ?? desktop?.commandId
+  if (commandId) {
+    const command = await deps.commandStore.get({ ...scope, createdByUserId: scope.userId, commandId })
+    if (!command) return errorResult({ error: "unknown_command" })
+    const refusal = await commandRefusal(deps, input, command)
+    if (refusal) return refusal
+  }
+  const body = remoteSessionStatusRequestSchema.parse({ threads: [commandId ? { commandId } : reference], waitMs: 0 })
+  return jsonResult(await readRemoteSessionStatus(body, remoteSessionStatusSources(input, deps), { signal: AbortSignal.timeout(10_000) }))
+}
+
 type CallerScope = { organizationId: DenTypeId<"organization">; userId: string }
 
 function callerScope(input: Pick<RemoteSessionExecuteInput, "organizationId" | "userId">): CallerScope {

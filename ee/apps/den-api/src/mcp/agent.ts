@@ -1,3 +1,4 @@
+import { registerNativeMcpEvents } from "../native-mcp-events/mcp.js"
 import { eventThreadForPrincipal } from "../mcp-events/context.js"
 import { registerMcpEventTools } from "../mcp-events/tools.js"
 import { createAgentMcpServer, WORKFLOW_SAVE_INSTRUCTIONS } from "./agent-server.js"
@@ -773,10 +774,12 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       myAgent: Boolean(memberIdentity && organizationFeatures.workbotProactive && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
       myAgentBrief: organizationFeatures.workbotAgentBrief,
       skillsExtension,
+      nativeEvents: Boolean(auditPrincipal && organizationFeatures.nativeMcpEvents),
       skills: skillsExtension && advertisesInstructions && !listsSkillsNatively ? await loadRemoteSkills() : undefined,
       engine: engineTools,
       services: engineTools && advertisesInstructions ? await loadConnectServices(capabilityContext) : undefined,
     })
+    if (auditPrincipal && organizationFeatures.nativeMcpEvents) registerNativeMcpEvents(server, auditPrincipal, c.req.raw, principal.scopes.has(DEN_MCP_WRITE_SCOPE))
     if (skillsExtension) registerSkillsExtension(server, loadResolvedSkills)
     // Your agent's own background check (workbotAgentBrief) may ask for one extra check; no other caller sees it.
     if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true, workbotProactive: organizationFeatures.workbotProactive, workbotAgentBrief: organizationFeatures.workbotAgentBrief })) {

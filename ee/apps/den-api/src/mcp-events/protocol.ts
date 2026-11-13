@@ -62,7 +62,7 @@ export function canonicalArguments(value: unknown): string {
 /** The runner durably deduplicates a turn by messageId, including after an ambiguous network failure. */
 export const eventMessageId = (subscriptionId: string, eventId: string) => `wb_event_${createHash("sha256").update(JSON.stringify([subscriptionId, eventId])).digest("base64url")}`
 
-export function eventPrompt(instruction: string, source: { connectionId: string; name: string }, event: McpEventDelivery): string {
+export function eventPrompt(instruction: string, source: { connectionId: string | null; name: string }, event: McpEventDelivery): string {
   return [
     "type" in event
       ? event.type === "gap" ? "An MCP watch missed events. Tell the person that its history may be incomplete. Read authoritative source state if needed within existing permissions; do not automatically resubscribe."

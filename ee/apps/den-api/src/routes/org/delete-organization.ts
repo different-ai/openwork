@@ -107,6 +107,8 @@ import {
   WorkspaceBootstrapTable,
   WorkspaceClaimTable,
   HeadlessResumeGrantTable,
+  McpNativeSubscriptionTable,
+  McpNativeDeliveryTable,
   McpEventReceiptTable,
   McpEventSubscriptionTable,
   McpEventTurnTable,
@@ -655,6 +657,8 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(FeatureUsageTable).where(eq(FeatureUsageTable.organization_id, organizationId))
         await deleteOrganizationFeatureIntroStates(tx, organizationId)
         await deleteOrganizationRemoteDevices(tx, organizationId)
+        await tx.delete(McpNativeDeliveryTable).where(eq(McpNativeDeliveryTable.organizationId, organizationId))
+        await tx.delete(McpNativeSubscriptionTable).where(eq(McpNativeSubscriptionTable.organizationId, organizationId))
         await tx.delete(McpEventReceiptTable).where(eq(McpEventReceiptTable.organizationId, organizationId))
         await tx.delete(McpEventSubscriptionTable).where(eq(McpEventSubscriptionTable.organizationId, organizationId))
         await tx.delete(McpEventTurnTable).where(eq(McpEventTurnTable.organizationId, organizationId))

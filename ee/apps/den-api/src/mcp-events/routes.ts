@@ -20,7 +20,11 @@ export function registerMcpEventRoutes<T extends Env>(app: Hono<T>) {
       413: { description: "Body exceeds 256 KiB or the complete event prompt exceeds 100,000 characters." }, 503: { description: "Not durably accepted; retry later." },
     },
   }), signedWebhookRoute, (c) => receiveMcpEvent(c.req.raw, c.req.param("subscriptionId"), {
-    find: (id) => /^[a-f0-9]{48}$/.test(id) ? findSubscription(id) : Promise.resolve(null),
+    find: async (id) => {
+      const subscription = /^[a-f0-9]{48}$/.test(id) ? await findSubscription(id) : null
+      // Internal sources enter the receipt queue directly and have no public webhook credential.
+      return subscription?.source === "connection" ? subscription : null
+    },
     enabled: async (subscription) => {
       try { return (await eventAccess(subscription, subscription.scopes)).connections.some((connection) => connection.id === subscription.connectionId) } catch (error) { if (error instanceof EventAccessError) return false; throw error }
     },

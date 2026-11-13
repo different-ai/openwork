@@ -157,6 +157,7 @@ export function createAgentMcpServer(options: {
   toolShapes?: boolean
   /** Advertise the MCP Skills Extension (SEP-2640); its handlers are registered by the caller. */
   skillsExtension?: boolean
+  nativeEvents?: boolean
   /** The member's skills, listed after the instructions as far as AGENT_MCP_INSTRUCTIONS_MAX_CHARS allows. */
   skills?: readonly RemoteSkillDescriptor[]
   /** The full view is for OpenWork's own engine (`connectEngineTools`, engine-tool-view.ts). */
@@ -187,6 +188,7 @@ export function createAgentMcpServer(options: {
       ...(options.skillsExtension ? {
         extensions: { ...workflowArtifactAppServerCapabilities.extensions, [SKILLS_EXTENSION_ID]: {} },
       } : {}),
+      ...(options.nativeEvents ? { events: {}, extensions: { ...workflowArtifactAppServerCapabilities.extensions, ...(options.skillsExtension ? { [SKILLS_EXTENSION_ID]: {} } : {}), "io.modelcontextprotocol/events": {} } } : {}),
       tools: { listChanged: true },
       resources: { listChanged: true },
     },

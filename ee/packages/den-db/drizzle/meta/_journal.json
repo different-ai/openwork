@@ -1394,6 +1394,13 @@
       "when": 1794527207554,
       "tag": "0199_mcp_event_control_notices",
       "breakpoints": true
+    },
+    {
+      "idx": 200,
+      "version": "5",
+      "when": 1794528647377,
+      "tag": "0200_native_mcp_events",
+      "breakpoints": true
     }
   ]
 }

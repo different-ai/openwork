@@ -124,6 +124,8 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   workflow_run: { reason: "runtime" },
   remote_session_command: { reason: "runtime" },
   remote_session_request: { reason: "runtime" },
+  mcp_native_subscription: { reason: "runtime" },
+  mcp_native_delivery: { reason: "runtime" },
   mcp_event_turn: { reason: "runtime" },
   mcp_event_subscription: { reason: "runtime", note: "finite personal chat subscriptions with encrypted callback credentials" },
   mcp_event_receipt: { reason: "runtime" },

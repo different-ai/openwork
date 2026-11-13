@@ -2,7 +2,7 @@ import { z } from "zod"
 import { HEADLESS_MAX_PROMPT_CHARS } from "@openwork-ee/headless-protocol"
 import { controlSchema, eventPrompt, eventSchema, MAX_EVENT_BYTES, verifyWebhook, type McpEvent, type McpEventControl } from "./protocol.js"
 
-export type WebhookSubscription = { id: string; name: string; connectionId: string; instruction: string; remoteId: string | null; secret: string; status: string; expiresAt: Date }
+export type WebhookSubscription = { id: string; name: string; connectionId: string | null; instruction: string; remoteId: string | null; secret: string; status: string; expiresAt: Date }
 export type WebhookDeps<S extends WebhookSubscription> = {
   find: (id: string) => Promise<S | null>
   enabled: (subscription: S) => Promise<boolean>

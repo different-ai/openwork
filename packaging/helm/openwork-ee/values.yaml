@@ -26,6 +26,7 @@ config:
   #   "false" off for everyone; /admin shows "Set by deployment config"
   # The /admin kill switch still turns a feature off, even when locked on.
   features:
+    nativeMcpEvents: ""           # default off · Subscribe to changes in your remote sessions and computers through MCP Events.
     mcpThreadEvents: ""           # default off · Subscribe a hosted chat to signed webhook events from its connected MCP servers.
     remoteDesktopDeviceLogin: ""  # default off · Sign a remote OpenWork desktop into an organization by approving a code on another computer.
     claudeAgentProvider: ""       # default off · Connect Claude through the Claude Code login on this computer, without an Anthropic API key.
