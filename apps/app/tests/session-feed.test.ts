@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { WorkspaceSessionGroup } from "../src/app/types";
 import { buildSessionFeed, feedKeyBetween, type SessionFeedContext } from "../src/react-app/domains/session/sidebar/session-feed";
+import { FEED_GROUP_BY_OPTIONS, FEED_SORT_BY_OPTIONS } from "../src/react-app/domains/session/sidebar/session-management-store";
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = new Date(2026, 9, 29, 15, 0).getTime();
@@ -19,6 +20,8 @@ function group(workspaceId: string, sessions: ReturnType<typeof session>[]): Wor
 function feed(groups: WorkspaceSessionGroup[], overrides: Partial<SessionFeedContext> = {}) {
   return buildSessionFeed(groups, {
     pinnedIds: new Set(),
+    attachedSideChatKeys: new Set(),
+    selectedSessionId: null,
     unreadIds: new Set(),
     workedAtById: {},
     placementById: {},
@@ -81,6 +84,63 @@ describe("sidebar feed", () => {
     const result = feed(groups, { pinnedIds: new Set(["today-new"]) });
     expect(all(result)).not.toContain("today-new");
     expect(all(result)).not.toContain("child");
+  });
+
+  test("attached side chats leave no Feed entries or sort keys between visible rows", () => {
+    const history = [group("lounge", [
+      session("above", NOW), session("side-a", NOW - 1),
+      session("side-b", NOW - 2), session("below", NOW - 3),
+    ])];
+    const attachedSideChatKeys = new Set([JSON.stringify(["lounge", "side-a"]), JSON.stringify(["lounge", "side-b"])]);
+    for (const status of [undefined, "idle", "thinking", "responding", "error"]) {
+      const result = feed(history, { attachedSideChatKeys, statusById: status ? { "side-a": status, "side-b": status } : {} });
+      expect(all(result)).toEqual(["above", "below"]);
+      expect([...result.sortKeyById.keys()]).not.toContain("side-a");
+      expect([...result.sortKeyById.keys()]).not.toContain("side-b");
+    }
+  });
+
+  test("all grouping and ordering choices exclude hidden slots, including an all-hidden Feed", () => {
+    const history = [group("lounge", [session("above", NOW), session("side", NOW - 1), session("below", NOW - 2)])];
+    for (const groupBy of FEED_GROUP_BY_OPTIONS) {
+      for (const sortBy of FEED_SORT_BY_OPTIONS) {
+        expect(all(feed(history, { groupBy, sortBy, attachedSideChatKeys: new Set([JSON.stringify(["lounge", "side"])]) }))).toEqual(["above", "below"]);
+        const attachedSideChatKeys = new Set(["above", "side", "below"].map(id => JSON.stringify(["lounge", id])));
+        expect(feed(history, { groupBy, sortBy, attachedSideChatKeys }).sections).toEqual([]);
+      }
+    }
+  });
+
+  test("selection and waiting restore attached side chats without changing their order", () => {
+    const history = [group("lounge", [session("above", NOW), session("side", NOW - 1), session("below", NOW - 2)])];
+    const attachedSideChatKeys = new Set([JSON.stringify(["lounge", "side"])]);
+    expect(all(feed(history, { attachedSideChatKeys, selectedSessionId: "side" }))).toEqual(["above", "side", "below"]);
+    expect(all(feed(history, { attachedSideChatKeys, statusById: { side: "waiting" } }))).toEqual(["above", "side", "below"]);
+    expect(all(feed(history, { attachedSideChatKeys, selectedSessionId: "above", statusById: { side: "idle" } }))).toEqual(["above", "below"]);
+    expect(all(feed(history))).toEqual(["above", "side", "below"]);
+  });
+
+  test("an attachment is scoped to its workspace and cannot leave an empty day section", () => {
+    const history = [group("lounge", [session("side", MIDNIGHT - 1)]), group("flow", [session("side", NOW)])];
+    const result = feed(history, { attachedSideChatKeys: new Set([JSON.stringify(["lounge", "side"])]) });
+    expect(result.sections.map(({ section }) => section)).toEqual(["today"]);
+    expect(result.sections[0]?.entries.map(({ group }) => group.workspace.id)).toEqual(["flow"]);
+  });
+
+  test("pinned folders allocate rows only for visible attachments and retain waiting attention", () => {
+    const options: Partial<SessionFeedContext> = {
+      attachedSideChatKeys: new Set([JSON.stringify(["lounge", "side"])]),
+      feedFolders: [{ workspaceId: "lounge", groupId: "later" }],
+      groupsByWorkspace: { lounge: { groups: [{ id: "later", label: "Later" }], assignments: { side: "later" } } },
+      unreadIds: new Set(["side"]),
+    };
+    const history = [group("lounge", [session("side", NOW)])];
+    const hidden = feed(history, options);
+    expect(hidden.folders[0]?.entries).toEqual([]);
+    expect(hidden.folders[0]?.attention).toBeNull();
+    const waiting = feed(history, { ...options, statusById: { side: "waiting" } });
+    expect(ids(waiting.folders[0]?.entries ?? [])).toEqual(["side"]);
+    expect(waiting.folders[0]?.attention).toBe("needs-you");
   });
 
   test("a pinned session that is waiting stays in Pinned, out of the feed", () => {
