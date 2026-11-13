@@ -17,6 +17,7 @@ export { default as remoteComputers } from "@openwork/features/flags/remote-comp
 export { default as remoteDesktopDeviceLogin } from "@openwork/features/flags/remote-desktop-device-login"
 export { default as remoteTasksOptIn } from "@openwork/features/flags/remote-tasks-opt-in"
 export { default as sandboxGateway } from "@openwork/features/flags/sandbox-gateway"
+export { default as sandboxModelChoice } from "@openwork/features/flags/sandbox-model-choice"
 export { default as workbotAgentBrief } from "@openwork/features/flags/workbot-agent-brief"
 export { default as workbotAgentCheckGate } from "@openwork/features/flags/workbot-agent-check-gate"
 export { default as workbotAgentSendCheck } from "@openwork/features/flags/workbot-agent-send-check"

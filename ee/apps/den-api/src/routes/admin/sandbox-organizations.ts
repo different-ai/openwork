@@ -1,12 +1,12 @@
 import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { sandboxCreatedSchema, sandboxCreateInputSchema, sandboxCreditInputSchema, sandboxExtendInputSchema, sandboxJoinRoleInputSchema, sandboxListSchema } from "@openwork/types/den/sandbox-organizations"
+import { sandboxCreatedSchema, sandboxCreateInputSchema, sandboxCreditInputSchema, sandboxExtendInputSchema, sandboxJoinRoleInputSchema, sandboxListSchema, sandboxModelOptionsSchema } from "@openwork/types/den/sandbox-organizations"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { env } from "../../env.js"
 import { adminRoute, jsonValidator } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { resolvePublicOrigin } from "../../capability-sources/generic-oauth.js"
-import { addMicrosoft365ToSandbox, addSlackToSandbox, closeSandbox, createSandbox, extendSandbox, listSandboxes, rotateSandboxLink, SandboxInputError, sandboxDefaults, setSandboxCredit, setSandboxJoinRole } from "../../sandbox-organizations.js"
+import { addMicrosoft365ToSandbox, addSlackToSandbox, closeSandbox, createSandbox, extendSandbox, listSandboxes, rotateSandboxLink, SandboxInputError, sandboxDefaults, sandboxModelOptions, setSandboxCredit, setSandboxJoinRole } from "../../sandbox-organizations.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const base = "/v1/admin/sandbox-orgs"
@@ -22,10 +22,17 @@ export function registerAdminSandboxOrganizationRoutes<T extends { Variables: Au
   app.get(base, describeRoute({ tags: ["Admin"], summary: "List sandbox organizations", description: "Lists try-it-out organizations with their join link, members, connectors and when they end. Sandboxes whose time ran out are closed first. Platform administrators only.", responses: { 200: jsonResponse("Sandbox organizations.", sandboxListSchema), ...errors } }), adminRoute(), async c => {
     c.header("Cache-Control", "no-store")
     if (env.features.deployment !== "cloud") return c.json({ enabled: false, sandboxes: [] })
-    return c.json({ enabled: true, sandboxes: await listSandboxes(), defaults: sandboxDefaults() })
+    return c.json({ enabled: true, sandboxes: await listSandboxes(), defaults: await sandboxDefaults() })
   })
 
-  app.post(base, describeRoute({ tags: ["Admin"], summary: "Create a sandbox organization", description: "Creates an organization owned by the calling admin on the Enterprise plan until the sandbox ends, with included models, AI Gateway models for everyone (the sandbox's own OpenRouter key capped at creditUsd when the deployment mints them), Free Auto until the sandbox closes or expires, one per-person OAuth connector for each fictional workplace app, and a join link that, until the sandbox ends, makes people who join super admins unless joinRole chooses admin or member. Platform administrators only.", responses: { 200: jsonResponse("Sandbox created.", sandboxCreatedSchema), ...errors } }), adminRoute(), jsonValidator(sandboxCreateInputSchema), async c => {
+  app.get(`${base}/models`, describeRoute({ tags: ["Admin"], summary: "List models a new sandbox can get", description: "Lists the sandbox provider's catalog models the AI Gateway supports, to choose from as modelIds when creating a sandbox. available is false when the catalog could not be read; ids can still be sent and are checked on create. 404 when sandboxModelChoice is off or the deployment has no sandbox model key. Platform administrators only.", responses: { 200: jsonResponse("Models to choose from.", sandboxModelOptionsSchema), ...errors } }), adminRoute(), async c => {
+    c.header("Cache-Control", "no-store")
+    if (env.features.deployment !== "cloud") return c.json(disabled, 404)
+    const options = await sandboxModelOptions()
+    return options ? c.json(options) : c.json({ error: "not_found", message: "Choosing a sandbox's models is not turned on for this deployment." }, 404)
+  })
+
+  app.post(base, describeRoute({ tags: ["Admin"], summary: "Create a sandbox organization", description: "Creates an organization owned by the calling admin on the Enterprise plan until the sandbox ends, with included models, AI Gateway models for everyone (the sandbox's own OpenRouter key capped at creditUsd when the deployment mints them; the deployment's list, or modelIds when sandboxModelChoice is on, else 400), Free Auto until the sandbox closes or expires, one per-person OAuth connector for each fictional workplace app, and a join link that, until the sandbox ends, makes people who join super admins unless joinRole chooses admin or member. Platform administrators only.", responses: { 200: jsonResponse("Sandbox created.", sandboxCreatedSchema), ...errors } }), adminRoute(), jsonValidator(sandboxCreateInputSchema), async c => {
     if (env.features.deployment !== "cloud") return c.json(disabled, 404)
     try {
       const sandbox = await createSandbox(normalizeDenTypeId("user", c.get("user").id), c.req.valid("json"), { callbackBaseUrl: resolvePublicOrigin(c.req.raw, env.apiPublicUrl) })
