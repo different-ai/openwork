@@ -101,6 +101,16 @@
               ],
               "description": "Desktop: suggested follow-ups: After a reply finishes, the empty message box can show a suggested next message in gray. Tab fills it in; typing anything else ignores it. A small model writes the suggestion, and nothing shows when it has no clear next step to offer. Renders DEN_FEATURE_FOLLOW_UP_SUGGESTIONS."
             },
+            "importOpencodeConnections": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: import connections from OpenCode: Settings shows how many connections a person set up in their own OpenCode config are not in OpenWork, with an Import from OpenCode action. Importing copies them into OpenWork once, like adding each by hand, then shows each one's real state and anything that was left out. The person's OpenCode files are never changed. Off, Settings does not look at the OpenCode config. Renders DEN_FEATURE_IMPORT_OPENCODE_CONNECTIONS."
+            },
             "denGreySidebar": {
               "enum": [
                 "",

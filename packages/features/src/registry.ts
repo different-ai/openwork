@@ -144,6 +144,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  importOpencodeConnections: {
+    label: "Desktop: import connections from OpenCode",
+    description: "Settings shows how many connections a person set up in their own OpenCode config are not in OpenWork, with an Import from OpenCode action. Importing copies them into OpenWork once, like adding each by hand, then shows each one's real state and anything that was left out. The person's OpenCode files are never changed. Off, Settings does not look at the OpenCode config.",
+    category: "experience",
+    added: "2026-11-13",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/import-opencode-connections/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   denGreySidebar: {
     label: "Den: grey sidebar, white pages",
     description: "The Den dashboard shows its sidebar on a light grey band and every page on white, like the admin dashboard pictured on the website, instead of a white sidebar beside lightly tinted pages. Only colours change: navigation, page layouts and every control stay where they are. Turning it off restores the earlier colours at once.",
