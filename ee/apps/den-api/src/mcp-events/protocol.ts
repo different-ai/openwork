@@ -12,7 +12,7 @@ export const eventSchema = z.object({
 })
 export type McpEvent = z.infer<typeof eventSchema>
 export const controlSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("gap"), cursor: z.string().min(1).max(8192) }),
+  z.object({ type: z.literal("gap"), cursor: z.string().min(1).max(8192).nullable().default(null) }),
   z.object({ type: z.literal("terminated"), error: z.object({ code: z.number().int(), message: z.string().max(4000), data: z.json().optional() }) }),
 ])
 export type McpEventControl = z.infer<typeof controlSchema>
@@ -33,7 +33,7 @@ export const eventListSchema = z.object({
 export const subscribedSchema = z.object({
   id: z.string().min(1).max(512),
   refreshBefore: z.iso.datetime({ offset: true }).nullable(),
-  cursor: z.string().nullable(),
+  cursor: z.string().nullable().default(null),
   truncated: z.boolean(),
 })
 

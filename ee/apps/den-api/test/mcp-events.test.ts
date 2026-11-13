@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { createHmac } from "node:crypto"
 import { test } from "node:test"
-import { canonicalArguments, eventMessageId, eventPrompt, verifyWebhook, MAX_EVENT_BYTES } from "../src/mcp-events/protocol.js"
+import { canonicalArguments, subscribedSchema, controlSchema, eventMessageId, eventPrompt, verifyWebhook, MAX_EVENT_BYTES } from "../src/mcp-events/protocol.js"
 import { receiveMcpEvent, type WebhookSubscription } from "../src/mcp-events/receiver.js"
 
 const now = 1_800_000_000_000
@@ -105,4 +105,13 @@ test("signed gap and termination notices reach the durable control handler", asy
   assert.equal((await receiveMcpEvent(signed(JSON.stringify({ type: "gap", cursor: "fresh" })), subscription.id, deps({ acceptControl: async () => { throw new Error("unavailable") } }))).status, 503)
   const wrong = signed(JSON.stringify({ type: "terminated", error: { code: -32024, message: "Forbidden" } })); wrong.headers.set("x-mcp-subscription-id", "other")
   assert.equal((await receiveMcpEvent(wrong, subscription.id, deps())).status, 400)
+})
+
+
+test("absent and null cursors are equivalent on non-replay subscriptions and gap controls", () => {
+  const fields = { id: "subscription", refreshBefore: null, truncated: false }
+  assert.equal(subscribedSchema.parse(fields).cursor, null)
+  assert.equal(subscribedSchema.parse({ ...fields, cursor: null }).cursor, null)
+  assert.equal(controlSchema.parse({ type: "gap" }).cursor, null)
+  assert.equal(controlSchema.parse({ type: "gap", cursor: null }).cursor, null)
 })
