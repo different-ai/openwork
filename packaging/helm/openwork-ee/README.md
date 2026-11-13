@@ -393,7 +393,7 @@ helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
 
 ### Features
 
-OpenWork features are declared once, in `packages/features/src/registry.ts`,
+OpenWork features are declared once, one file each under `packages/features/src/flags`,
 and rolled out along several dimensions: which products a feature exists on,
 on or off for everyone, per-organization overrides, and a kill switch.
 Platform admins change these in `/admin` without a redeploy. As the operator,
@@ -412,19 +412,23 @@ config:
   deployment config" for it. The `/admin` kill switch still turns it off.
 
 Each key renders `DEN_FEATURE_<KEY>` for den-api. Features that are not part
-of self-hosted installs have no key, so they can't be turned on here. A key
-that isn't declared in `values.schema.json` fails `helm install`.
+of self-hosted installs have no key, so they can't be turned on here. With the
+published chart, a key that isn't a feature fails `helm install`. A chart
+installed from a checkout accepts any key, and den-api ignores the ones it
+does not know with a warning in its log.
 
 `config.deployment` (`DEN_DEPLOYMENT`) is `self_hosted` unless this is
 OpenWork Cloud. Don't change it on a customer install.
 
-See [`config.features` in values.yaml](./values.yaml) for supported keys,
-defaults and descriptions. The
-[feature registry](../../../packages/features/src/registry.ts) is the source
-of truth.
+For supported keys, defaults and descriptions, run
+`helm show values oci://ghcr.io/different-ai/charts/openwork-ee` and read
+`config.features`. The [feature registry](../../../packages/features/src/flags)
+is the source of truth.
 
-The `config.features` block and values schema are generated: run
-`pnpm features:sync` after changing the registry.
+The chart in git lists no feature keys, so adding a feature never changes it.
+The publish workflow writes every key into `values.yaml` and
+`values.schema.json` before packaging. To see the same in a checkout, run
+`node scripts/features-sync.mjs --chart` and do not commit the result.
 
 ### Automations settings
 
