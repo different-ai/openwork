@@ -1413,7 +1413,7 @@ export default {
   "welcome.organization_server_link": "Usi OpenWork on-premises?",
   "welcome.organization_server_saved": "Server dell'organizzazione salvato. Accedi per continuare.",
   "welcome.organization_server_url_label": "URL del server dell'organizzazione",
-  "welcome.organization_server_url_placeholder": "https://openwork.tuaazienda.com",
+  "welcome.organization_server_url_placeholder": "https://openwork.tua-azienda.example",
   "welcome.team_signin": "Entri in un team? Accedi",
   "welcome.use_cloud": "Usa OpenWork Cloud",
   "welcome.use_cloud_subtitle": "Accedi per OpenWork ospitato e le funzioni per i team",
