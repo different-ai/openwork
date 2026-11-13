@@ -1,34 +1,14 @@
 // CI selection policy only; build inputs live in build-inputs.mjs. Keep the
 // classifier pure so its fail-open and required-check behavior can be tested
 // without GitHub, package installs, or a desktop build.
-// PR selection for "Build and core checks", which gates merges beside the quick
-// check (quick-check.yml). `core` selects the unit-test jobs and the desktop
-// build check.
-const CHECKS = ["core", "den_api", "snapshot", "docs"];
-// Jobs and the selection output each one follows. Every selected job must
-// succeed and every unselected job must be skipped.
-export const REQUIRED_JOBS = {
-  core_app: "core",
-  core_headless: "core",
-  core_workbot: "core",
-  core_den: "core",
-  core_evals: "core",
-  desktop_build: "core",
-  den_api: "den_api",
-  snapshot: "snapshot",
-  docs: "docs",
-};
-// PR quick-check selection: the Den API auth and permission tests run when
-// Den API inputs change. Typecheck and static checks always run.
+// Quick-check selection: on a PR the Den API auth and permission tests run
+// when Den API inputs change. Everything else always runs.
 export const QUICK_CHECKS = ["den_quick"];
-// The Update Models workflow refreshes both snapshots (models.dev v1 and v2) together.
-const SNAPSHOTS = new Set(["ee/apps/gateway/src/models/base.json", "ee/apps/gateway/src/models/base-v2.json"]);
 const STATUSES = new Set(["added", "modified", "removed", "renamed", "copied", "changed", "unchanged"]);
 const objectId = (value) => typeof value === "string" && /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i.test(value) && !/^0+$/.test(value);
 const safePath = (value) => typeof value === "string" && value.length > 0
   && !/[\\\0-\x1f\x7f]/u.test(value)
   && value.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
-const full = () => ({ lane: "full", core: true, den_api: true, snapshot: true, docs: true });
 
 function changesFrom(files) {
   if (!Array.isArray(files)) return null;
@@ -46,47 +26,10 @@ function changesFrom(files) {
   return changes;
 }
 
-/** A null/incomplete listing or failed input calculation selects every check. */
-export function classifyCiChanges({ eventName, files }, isAffected) {
-  // Only PRs are narrowed; schedules, manual runs and anything unexpected run
-  // every check.
-  if (eventName !== "pull_request") return full();
-  const changes = changesFrom(files);
-  if (!changes) return full();
-
-  // A deleted or renamed snapshot fails validation instead of silently
-  // passing a fast lane.
-  const snapshotOnly = changes.length > 0 && changes.every((change) => SNAPSHOTS.has(change.filename)
-    && !change.previous_filename
-    && (change.status === "modified" || change.status === undefined));
-  if (snapshotOnly) return { lane: "snapshot", core: false, den_api: false, snapshot: true, docs: false };
-
-  const paths = [...new Set(changes.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean)))];
-  const docsOnly = paths.length > 0 && paths.every((path) => path.startsWith("packages/docs/"));
-  const affected = (target) => {
-    const result = isAffected(target, paths);
-    if (typeof result !== "boolean") throw new Error(`Invalid input selection for ${target}`);
-    return result;
-  };
-  try {
-    const core = affected("core");
-    const selected = {
-      core,
-      // The full Den API security suite runs whenever unit tests run.
-      den_api: core,
-      snapshot: affected("models"),
-      docs: affected("docs"),
-    };
-    return { lane: docsOnly ? "docs" : CHECKS.some((check) => selected[check]) ? "affected" : "none", ...selected };
-  } catch {
-    return full();
-  }
-}
-
 /** PR quick check: which conditional quick jobs run. Unknown or incomplete diffs select them. */
 export function classifyQuickChanges({ eventName, files, expectedCount }, isAffected) {
-  // A dev push was already tested as a PR; a manual run checks everything.
-  if (eventName === "push") return { den_quick: false };
+  // Only PRs are narrowed. A dev push runs everything: its result is what the
+  // alpha build and the release require of that commit.
   if (eventName !== "pull_request") return { den_quick: true };
   const changes = changesFrom(files);
   if (!changes || !Number.isSafeInteger(expectedCount) || expectedCount < 0 || expectedCount > 3000
@@ -120,29 +63,7 @@ export async function pullRequestChanges({ github, owner, repo, number, head }) 
   }
 }
 
-/** The stable required context must check the actual booleans, not a lane label. */
-export function assertSelectedChecks({ classification, selected, results }) {
-  if (classification !== "success") throw new Error("Changed-file classification did not succeed; blocking merge.");
-  const jobs = Object.keys(REQUIRED_JOBS);
-  for (const [values, keys] of [[selected, CHECKS], [results, jobs]]) {
-    if (!values || Object.keys(values).length !== keys.length || Object.keys(values).some((key) => !keys.includes(key))) {
-      throw new Error("Missing or unexpected selected-check outputs; blocking merge.");
-    }
-  }
-  for (const check of CHECKS) {
-    const value = selected[check];
-    if (value !== true && value !== false && value !== "true" && value !== "false") {
-      throw new Error(`Invalid selection for ${check}; blocking merge.`);
-    }
-  }
-  for (const job of jobs) {
-    const value = selected[REQUIRED_JOBS[job]];
-    const expected = value === true || value === "true" ? "success" : "skipped";
-    if (results[job] !== expected) throw new Error(`${job}: expected ${expected}, received ${results[job]}; blocking merge.`);
-  }
-}
-
-/** The PR quick check's required context: always-run checks pass, selected ones pass, unselected ones skip. */
+/** The quick check's required context: always-run checks pass, selected ones pass, unselected ones skip. */
 export function assertQuickChecks({ classification, always, selected, results }) {
   if (classification !== "success") throw new Error("Changed-file classification did not succeed; blocking merge.");
   if (!always || Object.keys(always).length === 0) throw new Error("Missing always-run quick checks; blocking merge.");

@@ -24,6 +24,7 @@ const graduated = [
   "nativeDictation", "workbotScrollToBottom", "workbotApps",
   "workbotProactive", "workbotTeamSettings", "workbotUsageAnalytics",
   "fileSendPermissions", "remoteDevices", "remoteSessionAccess",
+  "workbotSettingsTabs", "sandboxSlack", "sandboxModelChoice",
 ]
 
 test("completed November rollouts are retired rather than permanently enabled flags", () => {
@@ -34,6 +35,11 @@ test("completed November rollouts are retired rather than permanently enabled fl
     assert.equal(retired.has(key), true, key)
     assert.equal(featureKeySchema.safeParse(key).success, false, key)
   }
+})
+
+test("the abandoned team settings sidebar is retired", () => {
+  assert.equal(featureKeySchema.safeParse("teamSettingsSidebar").success, false)
+  assert.ok(RETIRED_FEATURE_KEYS.includes("teamSettingsSidebar"))
 })
 
 test("old operator locks cannot turn graduated features off or enter the active feature map", () => {

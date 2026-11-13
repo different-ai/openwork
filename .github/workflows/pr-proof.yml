@@ -6,7 +6,7 @@ name: PR change proof
 #   gh workflow run pr-proof.yml --ref <branch> -f pr=<number>
 # Manual runs use the secret-free lanes only (changed specs and packaged
 # specs); the core journeys run on every dev push and nightly (core-journeys.yml),
-# and changed specs run nightly in "Build and core checks".
+# and changed specs run nightly in "Nightly regression".
 on:
   workflow_dispatch:
     inputs:

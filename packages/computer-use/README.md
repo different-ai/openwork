@@ -352,11 +352,21 @@ a Windows chat starts on it.
 | Command | Purpose |
 | --- | --- |
 | `openwork-computer-use --check` | Prints `{protocol: "openwork.computer-use.windows/1", ok, reason, supported, session, integrity}` and exits. |
-| `openwork-computer-use serve --host-pid N` | Prints `{"type":"ready",...}`, then answers `windows`, `focus`, `capture`, `input` and `status` in order; `cancel` is answered at once and stops running input. It exits when stdin closes. |
+| `openwork-computer-use serve --host-pid N` | Prints `{"type":"ready",...}`, then answers `windows`, `apps`, `focus`, `capture`, `input` and `status` in order; `cancel` is answered at once and stops running input. It exits when stdin closes. |
 
 - Targets are app windows only; there is no whole-screen session. A window is
   identified by its handle, process id and process start time, so a restarted
   app never matches an old observation.
+- `computer_discover` also lists installed apps that are not open, and
+  `computer_open` starts one, waits up to 15 seconds for its window and then
+  attaches, as on a Mac. Installed means what the helper's `apps` request
+  lists: Start menu shortcuts that run a program with no arguments, and the app
+  aliases Windows keeps for packaged apps (Notepad and Paint on Windows 11).
+  The app id is the program's file name, the same id its open windows have.
+  The desktop starts the listed program directly, with no shell and no
+  arguments, and never from a path or command the agent supplies; excluded
+  apps (below) are not listed. An app that shows no window in time returns
+  `app_window_timeout`; one that is not installed returns `app_not_found`.
 - OpenWork's own windows are hidden. Terminals, code editors, password managers,
   security settings, apps in another Windows session, apps running with higher
   privileges than OpenWork (as administrator) and capture-protected windows are

@@ -1,4 +1,4 @@
-/** The tabs Workbot's settings are split into, with `workbotSettingsTabs` on and members' agents available. */
+/** The tabs Workbot's settings are split into, when members' agents are available. */
 export type WorkbotSettingsTab = "general" | "agents" | "context";
 
 export const WORKBOT_SETTINGS_TABS: readonly { value: WorkbotSettingsTab; label: string }[] = [
@@ -38,7 +38,7 @@ export function workbotSettingsTabForHash(hash: string, agentHealthAnchor: strin
 }
 
 /**
- * What a setting does, shown from the "i" beside its label with `workbotSettingsTabs` on. Only for settings whose
+ * What a setting does, shown from the "i" beside its label in the standard tabbed settings. Only for settings whose
  * effect the label can't say: most rows explain themselves and have no "i".
  */
 export const WORKBOT_SETTING_HELP = {

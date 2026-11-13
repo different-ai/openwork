@@ -6,7 +6,7 @@ A shared layout and list system for organization pages. It reuses the Computers 
 
 - Lists and analytics: centred 1200px outer column.
 - Item pages, settings and forms: centred 760px measure, centred in the workspace **beside** the sidebar.
-- Team and role pages: centred 860px measure; the existing grouped-sidebar variant keeps its wider frame.
+- Team and role pages: centred 860px measure.
 - Lists: 48px content plus a hairline; 32px identity tile; 13px name and 12px secondary line. Expanded/wrapped content can grow.
 - Library, Connectors and Plugins: bounded name/description lane followed by sharing state; the menu stays at the far edge. Grouping by kind stays specific to Library.
 - Headers and toolbar controls: 32px. Summaries/charts reuse the Automations card treatment.
@@ -29,7 +29,7 @@ Turning it off restores the earlier interactions. No data is migrated or deleted
 
 ## Deliberate boundaries
 
-- Team pages still open on Role. The existing `teamSettingsSidebar` flag remains independent; changing the default section is not part of this work.
+- Team pages open on Role and use horizontal tabs; the `teamSettingsSidebar` experiment was removed.
 - Old Workflow Runs addresses and redirects keep working, with an active tab when opened directly. Individual workflow run history is untouched.
 - The two plugin-sharing editors share rows, icons, add/remove controls and Base UI popovers, but not their selection/authorization models. The audience editor adds viewer access as a draft; the grant editor assigns viewer/editor roles to one target and retains invitation, creator and grant metadata. Flattening these into one authorization model would lose information.
 - Stored audit outcomes are not rewritten. “Unknown” remains the server's value; unknown mutation attempts are not relabelled as reads.

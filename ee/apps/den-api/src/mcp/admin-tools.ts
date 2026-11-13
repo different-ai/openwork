@@ -9,7 +9,7 @@ import { adminOrganizationPlanInputSchema, setOrganizationPlanByAdmin } from "..
 import { readFeatureRollouts } from "@openwork-ee/den-db/organization-features"
 import { updateFeatureRollout, updateOrganizationFeatureOverrides } from "../features.js"
 import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { SANDBOX_MAX_CREDIT_USD, SANDBOX_MAX_DAYS, SANDBOX_MAX_MEMBERS, sandboxCreateInputSchema } from "@openwork/types/den/sandbox-organizations"
+import { SANDBOX_MAX_CREDIT_USD, SANDBOX_MAX_DAYS, SANDBOX_MAX_MEMBERS, SANDBOX_MAX_MODELS, sandboxCreateInputSchema } from "@openwork/types/den/sandbox-organizations"
 import { closeSandbox, createSandbox, extendSandbox, listSandboxes, sandboxDefaults, setSandboxCredit } from "../sandbox-organizations.js"
 import { FEATURE_KEYS, featureAvailableOn, featureDefinition, featureDocsUrl, featureKeySchema, featureRollout, resolveFeature } from "@openwork/features"
 import { runPlatformAdminPlatformAction, runPlatformAdminServiceAction, type PlatformAdminAuditActor } from "../audit/mcp-service-audit.js"
@@ -838,7 +838,7 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
     },
     async () => run(async () => {
       await sandboxesOn()
-      return { sandboxes: await listSandboxes(), defaults: sandboxDefaults() }
+      return { sandboxes: await listSandboxes(), defaults: await sandboxDefaults() }
     }),
   )
 
@@ -854,15 +854,17 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
         allowedEmailDomains: z.array(z.string()).max(20).optional().describe("Only people with these email domains can join; omitted means anyone with the link"),
         joinRole: z.enum(["member", "admin", "super-admin"]).optional().describe("What people who join become; default super-admin"),
         withConnectors: z.boolean().optional().describe("Add the fictional workplace connectors (default true)"),
+        modelIds: z.array(z.string()).min(1).max(SANDBOX_MAX_MODELS).optional().describe("AI Gateway models this sandbox gets, as ids from the sandbox provider's catalog; omitted uses the deployment's list (defaults.gatewayModels). Needs a sandbox model key on the deployment: den_sandbox_list returns defaults.modelChoice true."),
       }),
     },
-    async ({ name, days, memberLimit, creditUsd, allowedEmailDomains, joinRole, withConnectors }) =>
+    async ({ name, days, memberLimit, creditUsd, allowedEmailDomains, joinRole, withConnectors, modelIds }) =>
       writeScopeMissing("den_sandbox_create") ?? run(async () => {
         await sandboxesOn()
         const input = sandboxCreateInputSchema.safeParse({
           name, days, memberLimit, allowedEmailDomains: allowedEmailDomains ?? [], joinRole,
-          connectorBaseUrl: withConnectors === false ? null : sandboxDefaults().workplaceUrl,
+          connectorBaseUrl: withConnectors === false ? null : (await sandboxDefaults()).workplaceUrl,
           ...(creditUsd === undefined ? {} : { creditUsd }),
+          ...(modelIds === undefined ? {} : { modelIds }),
         })
         if (!input.success) throw new Error(input.error.issues[0]?.message ?? "Invalid sandbox.")
         const admin = requireAdmin()

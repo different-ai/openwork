@@ -184,6 +184,8 @@ export function buildInputPatterns(target, options = {}) {
     ]; break;
     case "helm": patterns = [
       "packaging/**", ".devcontainer/**", "scripts/tests/node-runtime-baseline.test.mjs",
+      // The published chart lists every feature key, written at packaging time.
+      "packages/features/**", "scripts/features-sync.mjs",
       "apps/server/package.json", "apps/desktop/package.json", EE_WORKFLOW, EE_SELECTION,
     ]; break;
     case "swift": return [
