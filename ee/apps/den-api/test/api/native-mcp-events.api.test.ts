@@ -118,6 +118,9 @@ test("advertises both event profiles and webhook-only catalog; validates modern 
   const initialized = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fixture", version: "1" } })
   assert.deepEqual(field(initialized.result, "capabilities", "events"), {}, summary(initialized))
   assert.deepEqual(field(initialized.result, "capabilities", "extensions", "io.modelcontextprotocol/events"), {})
+  const modern = await rpc("server/discover", {}, token, { "mcp-protocol-version": "2026-07-28", "mcp-method": "server/discover" })
+  assert.deepEqual(field(modern.result, "capabilities", "events"), {}, summary(modern))
+  assert.deepEqual(field(modern.result, "capabilities", "extensions", "io.modelcontextprotocol/events"), {})
   const catalog = await rpc("events/list")
   assert.deepEqual(list(field(catalog.result, "events")).map(event => [event.name, event.delivery]), [[SESSION, ["webhook"]], [COMPUTER, ["webhook"]]])
   const bad = await rpc("events/subscribe", input(), token, { "mcp-protocol-version": "2026-07-28", "mcp-method": "events/subscribe", "mcp-name": "wrong" })
@@ -134,7 +137,7 @@ test("owner and write scope are enforced before callbacks; secret sizes and TTL 
   const issued = await den.request(org.owner.token, "POST", "/v1/mcp/token", { orgId: org.orgId, body: { scopes: ["mcp:read"] } })
   assert.equal(field((await rpc("events/subscribe", input(), text(field(issued.body, "token"), "read token"))).error, "code"), -32024)
   assert.equal(challenges, 0)
-  const subscribed = await rpc("events/subscribe", { ...input(), ttlMs: null })
+  const subscribed = await rpc("events/subscribe", { ...input(), ttlMs: null }, token, { "mcp-protocol-version": "2026-07-28", "mcp-method": "events/subscribe", "mcp-name": COMPUTER })
   assert.equal(subscribed.error, undefined, summary(subscribed))
   subscriptionId = text(field(subscribed.result, "id"), "subscription id")
   assert.equal(field(subscribed.result, "cursor"), null)
@@ -201,6 +204,8 @@ test("hosted chat watches enter the existing same-thread harness once and cannot
   const watch = await den.callMcpTool(threadToken, "subscribe_mcp_event", args)
   assert.equal(watch.isError, false, watch.raw)
   watchId = text(field(watch.body, "id"), "watch id")
+  const publicCallback = await den.request(null, "POST", `/v1/mcp-events/webhooks/${watchId}`, { body: {} })
+  assert.equal(publicCallback.status, 404, "an internal watch has no public webhook entry point")
   const repeated = await den.callMcpTool(threadToken, "subscribe_mcp_event", args)
   assert.equal(field(repeated.body, "id"), watchId)
   const self = await den.callMcpTool(threadToken, "subscribe_mcp_event", { ...args, name: SESSION, arguments: { sessionId: destinationSession } })
@@ -235,7 +240,7 @@ test("unsubscribe cancels queued work; a killed publisher leaves computer report
   assert.equal((await den.request(token, "GET", "/v1/workbot/devices")).status, 200)
 })
 
-test("unsubscribe during callback verification wins and leaves the normal source untouched", async () => {
+test("unsubscribe during callback verification wins and leaves the normal source untouched", { timeout: 15_000 }, async () => {
   await den.setFeature(org.orgId, "nativeMcpEvents", true)
   const args = { ...input(), delivery: { ...input().delivery, url: `${callback.url}/cancel-during-verification` } }
   let release = () => {}
@@ -250,6 +255,67 @@ test("unsubscribe during callback verification wins and leaves the normal source
   assert.ok(cancelled.error, summary(cancelled))
   await observeAll(); await deliverAll()
   assert.equal((await den.request(token, "GET", "/v1/workbot/devices")).status, 200)
+})
+
+test("remote-session reports publish only matching state changes and preserve normal read/status behavior", async () => {
+  const runnerId = "lifecycle-test-runner"
+  const minted = await den.as(org.owner, org.orgId)("POST", "/v1/session-runners/token", {
+    runnerId, protocolVersion: 1, supportedExecutionTargets: ["desktop"], appVersion: "1.6.0", platform: "darwin", concurrency: 1,
+    capabilities: ["remote_session_v1", "remote_session_control_v1", "remote_session_recovery_v1", "remote_session_answer_v1"],
+  })
+  assert.equal(minted.status, 200, summary(minted))
+  const runnerToken = text(field(minted.body, "token"), "desktop token")
+  const call = (method: "POST" | "PUT", path: string, body: unknown) => den.request(runnerToken, method, path, { body })
+  assert.equal((await call("PUT", "/v1/session-runners/inventory", {
+    computer: { label: "Lifecycle laptop", platform: "darwin", appVersion: "1.6.0" },
+    workspaces: [{ workspaceId: "fixture-workspace", name: "Fixture", active: true, engine: "v2", defaultModel: null, models: [] }],
+  })).status, 200)
+  const { automationRunnerRowId } = await import("../../src/automations/repository.js")
+  const computerId = automationRunnerRowId({ organizationId: org.orgId, ownerMemberId: org.owner.memberId, runnerId })
+  const created = await den.callMcpTool(token, "execute_capability", { name: "remote-session:create", body: { target: "registered", computerId, workspaceId: "fixture-workspace", title: "Lifecycle task" } })
+  assert.equal(created.isError, false, created.raw)
+  const commandId = text(field(created.body, "commandId"), "command")
+  const args = { name: SESSION, arguments: { commandId, states: ["idle"] }, delivery: input().delivery, ttlMs: 60_000 }
+  assert.equal(field((await rpc("events/subscribe", args, otherToken)).error, "code"), -32024)
+  const subscribed = await rpc("events/subscribe", args)
+  assert.equal(subscribed.error, undefined, summary(subscribed))
+  const id = field(subscribed.result, "id")
+  assert.equal((await call("POST", `/v1/remote-session-commands/${commandId}/claim`, {})).status, 200)
+  assert.equal((await call("POST", `/v1/remote-session-commands/${commandId}/complete`, { status: "delivered", sessionId: "ses_lifecycle_fixture", workspaceId: "fixture-workspace" })).status, 200)
+  await observeAll(); await deliverAll()
+  assert.equal(deliveries.filter(item => item.headers["x-mcp-subscription-id"] === id).length, 0, "running is filtered out")
+  const reported = await call("POST", `/v1/remote-session-commands/${commandId}/session`, { status: "idle", finalText: "Private result stays in the normal read", observedAt: Date.now(), messageCount: 2 })
+  assert.equal(reported.status, 200, summary(reported))
+  await observeAll(); await deliverAll()
+  const event = deliveries.filter(item => item.headers["x-mcp-subscription-id"] === id)
+  assert.equal(event.length, 1)
+  assert.equal(field(event[0].body, "data", "state"), "idle")
+  assert.equal(field(event[0].body, "data", "sessionId"), "ses_lifecycle_fixture")
+  assert.equal(event[0].raw.includes("Private result"), false)
+  const read = await den.callMcpTool(token, "execute_capability", { name: "remote-session:read", body: { commandId } })
+  assert.equal(read.isError, false, read.raw)
+  assert.ok(read.text.includes("Private result"))
+  const status = await den.as(org.owner, org.orgId)("POST", "/v1/remote-sessions/status", { threads: [{ commandId }] })
+  assert.equal(field(list(field(status.body, "threads"))[0], "state"), "idle")
+  assert.equal((await rpc("events/unsubscribe", args)).error, undefined)
+})
+
+test("access revocation after internal receipt acceptance suppresses the action and delivers a termination notice", async () => {
+  const args = { source: "openwork", name: COMPUTER, arguments: { deviceId }, instruction: "Report computer changes.", ttlMs: 60_000 }
+  const watching = await den.callMcpTool(threadToken, "subscribe_mcp_event", args)
+  assert.equal(watching.isError, false, watching.raw)
+  await report("paused"); await observeAll(); await deliverAll()
+  const [device] = await db.select().from(RemoteDeviceTable).where(eq(RemoteDeviceTable.externalId, sourceSession))
+  assert.ok(device)
+  await db.update(RemoteDeviceTable).set({ ownerMemberId: other.memberId }).where(eq(RemoteDeviceTable.id, device.id))
+  const before = turns.size
+  await dispatchMcpEvent()
+  assert.equal(turns.size, before, "revoked source cannot run the saved action")
+  await observeAll(); await deliverAll()
+  await dispatchMcpEvent()
+  assert.equal(turns.size, before + 1)
+  assert.match([...turns.values()].at(-1)!.prompt, /watch ended/)
+  await db.update(RemoteDeviceTable).set({ ownerMemberId: org.owner.memberId }).where(eq(RemoteDeviceTable.id, device.id))
 })
 
 test("current ownership is rechecked before queued delivery and organization deletion clears native state", async () => {

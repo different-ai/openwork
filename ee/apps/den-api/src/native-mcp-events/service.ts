@@ -7,7 +7,7 @@ import { db } from "../db.js"
 import { canonicalArguments, MAX_SUBSCRIPTION_TTL_MS } from "../mcp-events/protocol.js"
 import { checkRateLimit } from "../utils/rate-limit.js"
 import { markFeaturesUsed } from "../feature-usage.js"
-import { fingerprint, nativeNameSchema, NativeEventError } from "./protocol.js"
+import { fingerprint, NativeEventError } from "./protocol.js"
 import { nativeAccess, readNativeSource, type NativeActor } from "./sources.js"
 import { verifyCallback } from "./webhook.js"
 
@@ -18,11 +18,11 @@ export const signingSecretSchema = z.string().max(94).regex(/^whsec_[A-Za-z0-9+/
   return bytes.length >= 24 && bytes.length <= 64 && bytes.toString("base64") === encoded
 }, "Use a Standard Webhooks secret containing 24–64 random bytes")
 export const subscribeSchema = z.object({
-  name: nativeNameSchema, arguments: z.record(z.string(), z.json()),
+  name: z.string().min(1).max(256), arguments: z.record(z.string(), z.json()),
   delivery: z.object({ mode: z.literal("webhook"), url: z.string().url().max(2048), secret: signingSecretSchema }),
   cursor: z.string().max(8192).nullable().optional(), ttlMs: z.number().int().positive().nullable().optional(),
 })
-export const unsubscribeSchema = z.object({ name: nativeNameSchema, arguments: z.record(z.string(), z.json()), delivery: z.object({ mode: z.literal("webhook"), url: z.string().url().max(2048) }) })
+export const unsubscribeSchema = z.object({ name: z.string().min(1).max(256), arguments: z.record(z.string(), z.json()), delivery: z.object({ mode: z.literal("webhook"), url: z.string().url().max(2048) }) })
 export const subscriptionIdentity = (actor: NativeActor, name: string, args: unknown, destination: string) => fingerprint([actor.organizationId, actor.userId, name, args, destination])
 const summary = (row: NativeSubscription) => ({ resultType: "complete" as const, id: row.id, refreshBefore: row.expiresAt.toISOString(), cursor: null, truncated: false })
 type SubscribeInput = Omit<z.infer<typeof subscribeSchema>, "delivery"> & {

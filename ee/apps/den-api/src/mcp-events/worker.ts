@@ -1,3 +1,4 @@
+import { NativeEventError } from "../native-mcp-events/protocol.js"
 import { markFeaturesUsed } from "../feature-usage.js"
 import { appLogger } from "../observability/logger.js"
 import { eventAccess, EventAccessError, requireEventThread } from "./context.js"
@@ -32,6 +33,9 @@ export async function dispatchMcpEvent() {
   } catch (error) {
     if (error instanceof EventAccessError) {
       await stopSubscription(receipt.subscriptionId)
+      await finishEvent(receipt.id, "skipped")
+    } else if (error instanceof NativeEventError) {
+      // The publisher sends its termination notice separately; never retry a now-forbidden occurrence.
       await finishEvent(receipt.id, "skipped")
     } else {
       await retryEvent(receipt.id, receipt.attempts)

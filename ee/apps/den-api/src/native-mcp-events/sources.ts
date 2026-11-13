@@ -5,7 +5,7 @@ import { z } from "zod"
 import { db } from "../db.js"
 import { organizationFeatureEnabled } from "../features.js"
 import { readRemoteSessionEventStatus } from "../mcp/remote-session-capabilities.js"
-import { SESSION_EVENT, computerArguments, denied, nativeNameSchema, sessionArguments } from "./protocol.js"
+import { SESSION_EVENT, computerArguments, denied, NativeEventError, nativeNameSchema, sessionArguments } from "./protocol.js"
 
 export type NativeActor = { organizationId: string; userId: string; memberId: string }
 export async function nativeAccess(actor: NativeActor) {
@@ -19,7 +19,7 @@ const statusSchema = z.object({ threads: z.array(z.object({ state: z.enum(["star
 
 /** Reuse the existing authorization paths. Reading a source never starts a session or provisions a computer. */
 export async function readNativeSource(actor: NativeActor, name: string, args: unknown, originSessionId?: string) {
-  nativeNameSchema.parse(name)
+  if (!nativeNameSchema.safeParse(name).success) throw new NativeEventError(-32023, "Unknown event", { kind: "event" })
   await nativeAccess(actor)
   if (name === SESSION_EVENT) {
     const input = sessionArguments.parse(args)

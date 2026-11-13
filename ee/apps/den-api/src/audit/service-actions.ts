@@ -43,10 +43,12 @@ export const auditServiceActionDeclarations = [
   },
   {
     action: "native_mcp_event.subscribe", kind: "mcp_event.subscription", class: "tenant_external", resource: { type: "mcp_native_subscription", idFrom: null }, origin: "mcp",
+    external: "subscriber MCP webhook endpoint",
     tools: ["events/subscribe"], callSites: ["src/native-mcp-events/mcp.ts:subscribe"], notes: "Creates or refreshes a finite owner-scoped event subscription. Callback credentials are never captured.",
   },
   {
     action: "native_mcp_event.unsubscribe", kind: "mcp_event.subscription", class: "tenant_external", resource: { type: "mcp_native_subscription", idFrom: null }, origin: "mcp",
+    external: "subscriber MCP webhook endpoint",
     tools: ["events/unsubscribe"], callSites: ["src/native-mcp-events/mcp.ts:unsubscribe"], notes: "Stops a native event watch belonging to the verified MCP caller.",
   },
   {
