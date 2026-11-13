@@ -1,3 +1,4 @@
+import { readNativeMcpEventOutcomes } from "./native-mcp-events.js"
 import { readMcpEventOutcomes } from "./mcp-events.js"
 import { featureHasOutcomes, type FeatureKey, type OutcomeFeatureKey } from "@openwork/features"
 import type { FeatureOutcomeReader } from "./outcomes.js"
@@ -13,6 +14,7 @@ import { readAgentOutcomes } from "./workbot-proactive.js"
 export const FEATURE_OUTCOME_READERS = {
   workbotProactive: readAgentOutcomes,
   mcpThreadEvents: readMcpEventOutcomes,
+  nativeMcpEvents: readNativeMcpEventOutcomes,
 } satisfies Record<OutcomeFeatureKey, FeatureOutcomeReader>
 
 export function featureOutcomeReader(key: FeatureKey): FeatureOutcomeReader | null {

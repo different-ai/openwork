@@ -104,6 +104,12 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  nativeMcpEvents: {
+    label: "Session and computer MCP events",
+    description: "Subscribe to changes in your remote sessions and computers through MCP Events.",
+    category: "connect", added: "2026-11-12", since: "2026-11", author: "reachjalil",
+    docs: "docs/features/native-mcp-events/README.md", deployments: everywhere, default: false, outcomes: true,
+  },
   mcpThreadEvents: {
     label: "MCP thread events",
     description: "Subscribe a hosted chat to signed webhook events from its connected MCP servers.",

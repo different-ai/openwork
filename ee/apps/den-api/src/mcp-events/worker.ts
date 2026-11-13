@@ -14,9 +14,13 @@ export async function dispatchMcpEvent() {
       return true
     }
     const { connections, scopes } = await eventAccess(subscription, subscription.scopes)
-    if (!connections.some((connection) => connection.id === subscription.connectionId)) throw new EventAccessError("Connection no longer available")
-    const { runner } = await requireEventThread(subscription, scopes)
     const event = deliverySchema.parse(JSON.parse(receipt.payload))
+    if (subscription.source === "openwork") {
+      const native = await import("../native-mcp-events/sources.js")
+      if ("type" in event) await native.nativeAccess(subscription)
+      else await native.readNativeSource(subscription, subscription.name, JSON.parse(subscription.arguments), subscription.sessionId)
+    } else if (!connections.some((connection) => connection.id === subscription.connectionId)) throw new EventAccessError("Connection no longer available")
+    const { runner } = await requireEventThread(subscription, scopes)
     const delivered = await handOffEvent(receipt.id, subscription, async () => {
       const sent = await runner.sendTurn({ organizationId: subscription.organizationId, userId: subscription.userId }, {
         sessionId: subscription.sessionId, messageId: receipt.id,

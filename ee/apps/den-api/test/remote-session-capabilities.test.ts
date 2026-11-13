@@ -1201,3 +1201,67 @@ test("a detached command's receipt says so without the session's content, and is
   assert.equal((await call("attach", attachBody, dependencies)).payload.state, "queued")
   assert.equal(attached.length, 1)
 })
+
+for (const by of ["command", "session"] as const) {
+  test(`MCP event observation by ${by} reuses desktop access without queuing a read or provisioning Cloud`, async () => {
+    const { readRemoteSessionEventStatus } = await import("../src/mcp/remote-session-capabilities.js")
+    const current: RemoteSessionCommand = { ...command(), status: "delivered", kind: "attach", claimedByRunnerId: "synthetic-runner", sessionId: "ses_local" }
+    let allowed = true
+    const dependencies = deps({
+      sessionAccess: async () => allowAll,
+      commandStore: {
+        ...DEFAULT_REMOTE_SESSION_DEPS.commandStore,
+        findDesktopSession: async input => { assert.equal(input.createdByUserId, userId); return { ...detachedSession, commandId: current.id, detached: false } },
+        get: async input => { assert.equal(input.createdByUserId, userId); return current },
+        getMany: async () => [current],
+      },
+      desktopRunner: async () => ({ ...sharingRunner, sessionAccess: allowed ? "all" : "off" }),
+      requestStore: { ...DEFAULT_REMOTE_SESSION_DEPS.requestStore, enqueue: async () => { throw new Error("An observation must not enqueue a desktop command") } },
+      resolveRuntime: async () => { throw new Error("An observation must not provision Cloud") },
+    })
+    const reference = by === "command" ? { commandId: current.id } : { sessionId: "ses_local" }
+    const observed = await readRemoteSessionEventStatus({ organizationId, userId }, reference, dependencies)
+    assert.equal(observed.isError, undefined)
+    assert.ok(observed.structuredContent)
+    assert.ok(Array.isArray(observed.structuredContent.threads))
+    assert.equal(observed.structuredContent.threads[0].state, "running")
+    allowed = false
+    const refused = await readRemoteSessionEventStatus({ organizationId, userId }, reference, dependencies)
+    assert.equal(refused.isError, true)
+    assert.equal(refused.structuredContent?.error, "session_access_denied")
+  })
+}
+
+test("MCP event observation scopes Cloud status to the current owner and never provisions a missing runtime", async () => {
+  const { readRemoteSessionEventStatus } = await import("../src/mcp/remote-session-capabilities.js")
+  let allowed = true
+  let reads = 0
+  const dependencies = deps({
+    getOpenWorkWebAccess: async () => ({ hasAccess: allowed }),
+    commandStore: { ...DEFAULT_REMOTE_SESSION_DEPS.commandStore, findDesktopSession: async () => null },
+    resolveRuntime: async input => {
+      assert.equal(input.userId, userId)
+      assert.equal(input.organizationId, organizationId)
+      assert.equal(input.readyBudgetMs, 0)
+      assert.notEqual(input.provisionIfMissing, true)
+      return { ok: true, runtime: { workerId: "w", baseUrl: "http://127.0.0.1:1", workspaceId: "ws", clientToken: "c", hostToken: "h" } }
+    },
+    createClient: () => ({
+      createThread: async () => { throw new Error("Observation must not create a thread") },
+      sendTurn: async () => { throw new Error("Observation must not send a prompt") },
+      getThreadSnapshot: async threadId => {
+        reads++
+        return { threadId, title: "Task", directory: null, status: { type: "idle" }, todos: [], messages: [{ id: "msg_reply", role: "assistant", parentId: null, createdAt: 1000, error: null, usage: null, parts: [{ id: "p1", type: "text", text: "Done" }] }] }
+      },
+    }),
+  })
+  const observed = await readRemoteSessionEventStatus({ organizationId, userId }, { sessionId: "ses_cloud" }, dependencies)
+  assert.ok(Array.isArray(observed.structuredContent?.threads))
+  assert.equal(observed.structuredContent.threads[0].state, "idle")
+  assert.equal(reads, 1)
+  allowed = false
+  const refused = await readRemoteSessionEventStatus({ organizationId, userId }, { sessionId: "ses_cloud" }, dependencies)
+  assert.ok(Array.isArray(refused.structuredContent?.threads))
+  assert.equal(refused.structuredContent.threads[0].error.code, "openwork_web_access_required")
+  assert.equal(reads, 1)
+})

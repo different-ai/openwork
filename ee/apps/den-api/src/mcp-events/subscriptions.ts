@@ -37,7 +37,7 @@ export async function listEvents(thread: EventThread, scopes: readonly string[],
 }
 
 export function subscriptionSummary(row: EventSubscription) {
-  return { id: row.id, connectionId: row.connectionId, name: row.name, incomplete: row.incomplete, status: row.expiresAt.getTime() <= Date.now() ? "expired" : row.status, expiresAt: row.expiresAt.toISOString(), instruction: row.instruction }
+  return { id: row.id, source: row.source, connectionId: row.connectionId, name: row.name, incomplete: row.incomplete, status: row.expiresAt.getTime() <= Date.now() ? "expired" : row.status, expiresAt: row.expiresAt.toISOString(), instruction: row.instruction }
 }
 
 export async function listSubscriptions(thread: EventThread) {
@@ -76,7 +76,7 @@ export async function subscribe(thread: EventThread, originalScopes: readonly st
       return same
     }
     if (existing.length >= 10) throw new EventAccessError("This chat already has ten active subscriptions. Unsubscribe one first.")
-    const value = { id, organizationId: thread.organizationId, userId: thread.userId, memberId: thread.memberId, sessionId: thread.sessionId, connectionId: normalizeDenTypeId("externalMcpConnection", input.connectionId), name: input.name, arguments: argumentsJson, instruction: input.instruction, secret: `whsec_${randomBytes(32).toString("base64")}`, callbackUrl: `${publicOrigin()}/v1/mcp-events/webhooks/${id}`, remoteId: null, cursor: null, incomplete: false, model: thread.model, scopes, status: "pending", expiresAt, createdAt: now }
+    const value = { id, source: "connection", organizationId: thread.organizationId, userId: thread.userId, memberId: thread.memberId, sessionId: thread.sessionId, connectionId: normalizeDenTypeId("externalMcpConnection", input.connectionId), name: input.name, arguments: argumentsJson, instruction: input.instruction, secret: `whsec_${randomBytes(32).toString("base64")}`, callbackUrl: `${publicOrigin()}/v1/mcp-events/webhooks/${id}`, remoteId: null, cursor: null, incomplete: false, model: thread.model, scopes, status: "pending", expiresAt, createdAt: now }
     await tx.insert(Subscription).values(value)
     return value
   })
@@ -104,8 +104,13 @@ export async function unsubscribe(thread: EventThread, scopes: readonly string[]
   const row = await findSubscription(id)
   if (!row || row.organizationId !== thread.organizationId || row.memberId !== thread.memberId || row.sessionId !== thread.sessionId) throw new EventAccessError("That subscription does not belong to this chat.")
   await stopSubscription(id)
+  if (row.source === "openwork") {
+    if (row.remoteId) await (await import("../native-mcp-events/service.js")).stopNativeSubscription(row.remoteId)
+    return { id, status: "stopped", remoteStopped: true }
+  }
   let remoteStopped = false
   try {
+    if (!row.connectionId) throw new Error("Missing connection")
     const { connection } = await connectionFor(thread, scopes, row.connectionId)
     await requestExternalMcpEvents({ connection, member: { orgMembershipId: thread.memberId }, redirectUri: `${publicOrigin()}/v1/mcp-connections/${connection.id}/connect/callback`, method: "events/unsubscribe", params: { name: row.name, arguments: JSON.parse(row.arguments), delivery: { mode: "webhook", url: row.callbackUrl } } })
     remoteStopped = true

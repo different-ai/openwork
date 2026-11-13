@@ -61,6 +61,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "nativeMcpEvents": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Session and computer MCP events: Subscribe to changes in your remote sessions and computers through MCP Events. Renders DEN_FEATURE_NATIVE_MCP_EVENTS."
+            },
             "mcpThreadEvents": {
               "enum": [
                 "",

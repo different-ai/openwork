@@ -1,3 +1,4 @@
+import { startNativeEventWorker } from "./native-mcp-events/worker.js"
 import { startMcpEventWorker } from "./mcp-events/worker.js"
 import { Server } from "node:http"
 import { DEN_HTTP_KEEP_ALIVE_TIMEOUT_MS, serveDenHttp } from "./http-server.js"
@@ -28,6 +29,7 @@ import { startConfigBlobWorker } from "./config-blobs/worker.js"
 const stopSlackAssistantWorker = startSlackAssistantWorker()
 const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()
 const stopMcpEventWorker = startMcpEventWorker()
+const stopNativeEventWorker = startNativeEventWorker()
 const stopWorkbotProactiveWorker = startWorkbotProactiveWorker()
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopBillingInvitationExpiryLoop = startBillingInvitationExpiryLoop()
@@ -68,6 +70,7 @@ async function stopBackgroundLoops() {
     stopSlackDesktopHandoffWorker(),
     stopWorkbotProactiveWorker(),
     stopMcpEventWorker(),
+    stopNativeEventWorker(),
     stopCloudIdleStopLoop(),
     stopWorkerProvisioningReconcileLoop(),
     stopGithubSyncWorker(),
