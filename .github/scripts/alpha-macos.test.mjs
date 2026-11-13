@@ -10,6 +10,40 @@ const workflow = readFileSync(new URL("../workflows/alpha-macos-aarch64.yml", im
 const macPublish = workflow.split("\n  publish-alpha-macos-aarch64:\n")[1]?.split("\n  publish-alpha-windows-x64:\n")[0];
 const macBuild = workflow.split("\n  build-alpha-macos-aarch64:\n")[1]?.split("\n  publish-alpha-macos-aarch64:\n")[0];
 
+test("macOS defaults to six-core Blacksmith with a bounded GitHub comparison runner", () => {
+  const input = workflow.split("      macos_runner:\n")[1]?.split(/\n      \w+:\n/)[0];
+  assert.ok(input, "A manual build must be able to compare both runners on the same ref");
+  assert.match(input, /type: choice/);
+  assert.match(input, /default: blacksmith-6vcpu-macos-26/);
+  assert.deepEqual([...input.matchAll(/^          - (.+)$/gm)].map(match => match[1]), ["blacksmith-6vcpu-macos-26", "macos-26"]);
+  // Map the input to known labels; an API dispatch must not route signing
+  // credentials to an arbitrary runner label.
+  assert.ok(macBuild.includes("runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.macos_runner == 'macos-26' && 'macos-26' || 'blacksmith-6vcpu-macos-26' }}"));
+  assert.match(macPublish, /inputs.publish == true/);
+  assert.match(workflow, /description: "Publish the packaged build[^\n]*\n        required: false\n        type: boolean\n        default: false/);
+});
+
+test("macOS build and publication have no Windows dependency or shared publication lock", () => {
+  const jobs = new Map([...workflow.matchAll(/^  ([a-z][a-z0-9-]*):\n([\s\S]*?)(?=^  [a-z][a-z0-9-]*:\n|$(?![\s\S]))/gm)].map(match => [match[1], match[2]]));
+  function dependencies(name, visited = new Set()) {
+    assert.ok(jobs.has(name), `Unknown dependency: ${name}`);
+    if (visited.has(name)) return visited;
+    visited.add(name);
+    const needs = jobs.get(name).match(/^    needs: (.+)$/m)?.[1] ?? "";
+    for (const dependency of needs.replace(/[\[\]]/g, "").split(",").map(value => value.trim()).filter(Boolean)) {
+      dependencies(dependency, visited);
+    }
+    return visited;
+  }
+  for (const name of ["build-alpha-macos-aarch64", "publish-alpha-macos-aarch64"]) {
+    assert.ok([...dependencies(name)].every(dependency => !dependency.includes("windows")), name);
+  }
+  assert.doesNotMatch(workflow.split("\njobs:\n")[0], /^concurrency:/m);
+  assert.doesNotMatch(macBuild, /^    concurrency:/m);
+  assert.match(macPublish, /group: alpha-macos-/);
+  assert.match(jobs.get("publish-alpha-windows-x64"), /group: alpha-windows-/);
+});
+
 test("Mac helper cache is exact to native inputs, architecture and toolchain", () => {
   const cache = macBuild.split("      - name: Cache native macOS helpers\n")[1]?.split("\n      - name:")[0];
   assert.ok(cache, "Missing native helper cache");
