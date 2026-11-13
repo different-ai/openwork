@@ -1,21 +1,22 @@
 import { randomBytes } from "node:crypto"
-import { and, desc, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
-import { AuthSessionTable, AuthUserTable, CloudRuntimeInstanceTable, DesktopHandoffGrantTable, MemberTable, WorkerTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { and, desc, eq, gt, isNull, lt } from "@openwork-ee/den-db/drizzle"
+import { AuthSessionTable, AuthUserTable, CloudRuntimeInstanceTable, DesktopHandoffGrantTable, MemberTable, OrganizationTable, WorkerTable } from "@openwork-ee/den-db/schema"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { cloudHostingAvailable } from "../../capability-sources/cloud-hosting.js"
 import { recordDesktopHandoffCreated, recordSessionHandedOff } from "../../audit/domain/sessions.js"
 import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/request-capture.js"
-import { sessionTokenMatches } from "../../session-token.js"
-import { jsonValidator, publicRoute, userSessionRoute } from "../../middleware/index.js"
+import { createOrganizationSessionToken, createSessionToken, sessionTokenDigest, sessionTokenMatches } from "../../session-token.js"
+import { isPlatformAdminUserId, jsonValidator, publicRoute, userSessionRoute } from "../../middleware/index.js"
 import { db } from "../../db.js"
 import { env, type DenOrgMode } from "../../env.js"
-import { ensurePersonalOrganizationForUser, resolveUserOrganizations, setSessionActiveOrganization } from "../../orgs.js"
+import { ensurePersonalOrganizationForUser, resolveUserOrganizations } from "../../orgs.js"
 import { findMemberOrganizationsApprovingWebOrigin, isWebOriginApprovedForOrganization } from "../../organization-web-origins.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, notFoundSchema, ssoRequiredSchema, unauthorizedSchema } from "../../openapi.js"
-import { findSsoAccessBlock, ssoRequiredErrorBody } from "../../organization-sso-access.js"
+import { carrySessionSsoProofs, findSsoAccessBlock, ssoRequiredErrorBody } from "../../organization-sso-access.js"
+import { userSessionExpiresAt } from "../../session-security-lifetime.js"
 import type { AuthContextVariables } from "../../session.js"
 import { enforceRateLimit } from "../../utils/rate-limit.js"
 import { CLOUD_INSTANCE_BACKEND } from "../../workers/cloud-constants.js"
@@ -24,6 +25,7 @@ const createGrantSchema = z.object({
   next: z.string().trim().max(128).optional().describe("Optional continuation hint for handoff clients."),
   desktopScheme: z.literal("openwork").optional().describe("The registered OpenWork desktop URL scheme."),
   returnUrl: z.string().trim().max(2048).optional().describe("Optional HTTPS web return URL, validated server-side. Accepted in multi-organization mode, and on single-organization installs with OpenWork Web on for the configured gateway origin only."),
+  confirmed: z.boolean().optional().describe("True once the person confirmed signing in to a website their organization approved. Without it, such a return URL answers 409 confirmation_required and no grant is created."),
 }).meta({ ref: "DesktopHandoffGrantCreateBody" })
 
 const exchangeGrantSchema = z.object({
@@ -76,6 +78,22 @@ const invalidReturnUrlSchema = z.object({
 }).meta({ ref: "DesktopHandoffInvalidReturnUrlError" })
 
 const createGrantBadRequestSchema = z.union([invalidRequestSchema, invalidReturnUrlSchema]).meta({ ref: "DesktopHandoffCreateBadRequest" })
+
+const confirmationRequiredSchema = z.object({
+  error: z.literal("confirmation_required"),
+  message: z.string(),
+  returnHost: z.string(),
+  organizationName: z.string(),
+}).meta({ ref: "DesktopHandoffConfirmationRequiredError" })
+
+const organizationWebsiteRefusedSchema = z.object({
+  error: z.literal("forbidden"),
+  message: z.string(),
+}).meta({ ref: "DesktopHandoffOrganizationWebsiteRefusedError" })
+
+// Expired grants are deleted a day later, a few at a time as new ones are created.
+const HANDOFF_GRANT_RETENTION_MS = 24 * 60 * 60 * 1000
+const HANDOFF_GRANT_PURGE_BATCH = 200
 
 const HANDOFF_STATUS_RATE_LIMIT_WINDOW_MS = 60 * 1000
 const HANDOFF_STATUS_RATE_LIMIT_MAX = 240
@@ -366,7 +384,11 @@ async function getCloudSignedPreviewUrls(organizationId: WorkerOrgId) {
 
 type WebHandoffApproval = {
   returnUrl: string
-  /** The organization whose approval matched, when the session should become active in it. */
+  /**
+   * The organization whose own approval matched. The website then receives a
+   * session that works in this organization only, after the person confirms.
+   * Null for the deployment's gateway and OpenWork Cloud previews.
+   */
   organizationId: WorkerOrgId | null
 }
 
@@ -471,12 +493,13 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       tags: ["Authentication"],
       security: [{ bearerAuth: [] }],
       summary: "Create desktop handoff grant",
-      description: "Creates a short-lived handoff grant for a signed-in web user. Desktop clients receive an OpenWork deep link; approved Cloud web clients also receive a validated return URL.",
+      description: "Creates a short-lived handoff grant for a signed-in web user. Desktop clients receive an OpenWork deep link; approved Cloud web clients also receive a validated return URL. A website an organization approved needs the person's confirmation first, and its grant exchanges for a session that works in that organization only.",
       responses: {
         200: jsonResponse("Desktop handoff grant created successfully.", desktopHandoffGrantResponseSchema),
         400: jsonResponse("The handoff request body or Cloud web return URL was invalid.", createGrantBadRequestSchema),
         401: jsonResponse("The caller must be signed in to create a desktop handoff grant.", unauthorizedSchema),
-        403: jsonResponse("The organization requires SSO and this session did not sign in through it.", ssoRequiredSchema),
+        403: jsonResponse("The organization requires SSO and this session did not sign in through it, or a platform administrator asked to sign in to an organization's website.", z.union([ssoRequiredSchema, organizationWebsiteRefusedSchema])),
+        409: jsonResponse("The return URL is a website an organization approved, and the person has not confirmed signing in to it yet. No grant was created.", confirmationRequiredSchema),
       },
     }),
     userSessionRoute(),
@@ -490,7 +513,8 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
 
     const input = c.req.valid("json")
     let approvedReturnUrl: string | null = null
-    let activateOrganizationId: WorkerOrgId | null = null
+    // Set when an organization approved the website: its session is bound to that organization.
+    let boundOrganizationId: WorkerOrgId | null = null
     if (input.returnUrl !== undefined) {
       const approval = await resolveWebHandoffApproval({
         returnUrl: input.returnUrl,
@@ -504,41 +528,66 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         }, 400)
       }
       approvedReturnUrl = approval.returnUrl
-      if (approval.organizationId && approval.organizationId !== session.activeOrganizationId) activateOrganizationId = approval.organizationId
+      boundOrganizationId = approval.organizationId
     }
 
     // never hand a session to the desktop inside an
     // organization that requires SSO unless the session signed in through it.
-    const ssoBlock = await findSsoAccessBlock({ sessionId: session.id, organizationId: activateOrganizationId ?? session.activeOrganizationId })
+    const ssoBlock = await findSsoAccessBlock({ sessionId: session.id, organizationId: boundOrganizationId ?? session.activeOrganizationId })
     if (ssoBlock) {
       return c.json(ssoRequiredErrorBody(ssoBlock), 403)
     }
 
-    // Audit: the grant hands over this session in its organization. With a
+    if (boundOrganizationId && approvedReturnUrl) {
+      // Platform authority follows the person, not the session, in places an
+      // organization-bound session can still reach, so it never leaves OpenWork.
+      if (await isPlatformAdminUserId(user.id)) {
+        return c.json({
+          error: "forbidden",
+          message: "Platform administrators cannot sign in to an organization's website with this account.",
+        }, 403)
+      }
+      // The website is the organization's choice, not OpenWork's: the person
+      // sees where they are signing in before any grant exists.
+      if (input.confirmed !== true) {
+        const [organization] = await db.select({ name: OrganizationTable.name }).from(OrganizationTable)
+          .where(eq(OrganizationTable.id, boundOrganizationId)).limit(1)
+        return c.json({
+          error: "confirmation_required",
+          message: "Confirm signing in to this website.",
+          returnHost: new URL(approvedReturnUrl).host,
+          organizationName: organization?.name ?? "",
+        }, 409)
+      }
+    }
+
+    // Audit: the grant hands over a session in its organization. With a
     // verified active membership there the request is attributed before any
     // write (intent fails closed); without one the request stays platform
     // evidence and desktop_handoff.created fans out to every membership.
-    const handoffOrganizationId = await verifiedHandoffOrganization(user.id, activateOrganizationId ?? session.activeOrganizationId)
+    const handoffOrganizationId = await verifiedHandoffOrganization(user.id, boundOrganizationId ?? session.activeOrganizationId)
     if (handoffOrganizationId) {
       const attribution = auditSessionUserAttribution(user.id, handoffOrganizationId.memberId)
       const audited = attribution ? await attributeAuditRequest(c, { organizationId: handoffOrganizationId.organizationId, ...attribution }) : { ok: true as const }
       if (!audited.ok) return audited.response
     }
-    // The grant hands over this session, so make it active in the approving
-    // organization before the web instance exchanges it.
-    if (activateOrganizationId) {
-      await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), activateOrganizationId)
-    }
 
+    // The grant names the signed-in session and never holds its token: the
+    // exchange gives the recipient a session of its own.
     const grant = randomBytes(24).toString("base64url")
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000)
     await db.insert(DesktopHandoffGrantTable).values({
       id: grant,
       user_id: normalizeDenTypeId("user", user.id),
-      session_token: session.token,
+      session_id: normalizeDenTypeId("session", session.id),
+      organization_id: boundOrganizationId,
       expires_at: expiresAt,
       consumed_at: null,
     })
+    await db.delete(DesktopHandoffGrantTable)
+      .where(lt(DesktopHandoffGrantTable.expires_at, new Date(Date.now() - HANDOFF_GRANT_RETENTION_MS)))
+      .limit(HANDOFF_GRANT_PURGE_BATCH)
+      .catch(() => undefined)
 
     await recordDesktopHandoffCreated({ userId: user.id, sessionId: session.id, organizationId: handoffOrganizationId?.organizationId ?? null, expiresAt, returnUrlApproved: approvedReturnUrl !== null })
 
@@ -606,7 +655,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       tags: ["Authentication"],
       security: [],
       summary: "Exchange desktop handoff grant",
-      description: "Exchanges a one-time desktop handoff grant for the user's session token and basic profile so the desktop app can sign the user in.",
+      description: "Exchanges a one-time desktop handoff grant for a new session token and basic profile so the recipient can sign the user in. The session is the recipient's own, created from the signed-in session the grant names.",
       responses: {
         200: jsonResponse("Desktop handoff grant exchanged successfully.", desktopHandoffExchangeResponseSchema),
         400: jsonResponse("The handoff exchange request body was invalid.", invalidRequestSchema),
@@ -619,9 +668,15 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     const input = c.req.valid("json")
 
     const now = new Date()
+    const userAgent = c.req.header("user-agent")?.trim().slice(0, 512) || null
     const exchange = await db.transaction(async (tx) => {
       const grants = await tx
-        .select({ sessionToken: DesktopHandoffGrantTable.session_token, userId: DesktopHandoffGrantTable.user_id })
+        .select({
+          sessionId: DesktopHandoffGrantTable.session_id,
+          legacySessionToken: DesktopHandoffGrantTable.session_token,
+          organizationId: DesktopHandoffGrantTable.organization_id,
+          userId: DesktopHandoffGrantTable.user_id,
+        })
         .from(DesktopHandoffGrantTable)
         .where(
           and(
@@ -637,15 +692,22 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         return null
       }
 
-      // The grant holds the client's token; the session row may hold only its hash.
+      // The signed-in session the grant was created from must still be live.
+      // A grant written before grants stopped holding tokens names it by token.
+      const createdFrom = grant.sessionId
+        ? eq(AuthSessionTable.id, grant.sessionId)
+        : grant.legacySessionToken ? sessionTokenMatches(grant.legacySessionToken) : null
+      if (!createdFrom) {
+        return null
+      }
       const rows = await tx
         .select({
           session: AuthSessionTable,
           user: AuthUserTable,
         })
         .from(AuthSessionTable)
-        .innerJoin(AuthUserTable, eq(AuthUserTable.id, grant.userId))
-        .where(and(sessionTokenMatches(grant.sessionToken), gt(AuthSessionTable.expiresAt, now)))
+        .innerJoin(AuthUserTable, eq(AuthUserTable.id, AuthSessionTable.userId))
+        .where(and(createdFrom, eq(AuthSessionTable.userId, grant.userId), gt(AuthSessionTable.expiresAt, now)))
         .limit(1)
 
       const row = rows[0]
@@ -656,7 +718,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       const consumedAt = new Date()
       await tx
         .update(DesktopHandoffGrantTable)
-        .set({ consumed_at: consumedAt })
+        .set({ consumed_at: consumedAt, session_token: null })
         .where(
           and(
             eq(DesktopHandoffGrantTable.id, input.grant),
@@ -680,15 +742,37 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         return null
       }
 
+      // The recipient's own session. It keeps the sign-in time of the session
+      // it came from, so it is no fresher for step-up checks and ends by the
+      // same maximum length. One for an organization's website is bound to
+      // that organization by its token (session-token.ts).
+      const token = grant.organizationId ? createOrganizationSessionToken(grant.organizationId) : createSessionToken()
+      const sessionId = createDenTypeId("session")
+      const expiresAt = await userSessionExpiresAt(row.session.userId, now, row.session.createdAt)
+      const activeOrganizationId = grant.organizationId ?? row.session.activeOrganizationId
+      await tx.insert(AuthSessionTable).values({
+        id: sessionId,
+        userId: row.session.userId,
+        activeOrganizationId,
+        activeTeamId: grant.organizationId ? null : row.session.activeTeamId,
+        token: sessionTokenDigest(token),
+        expiresAt,
+        createdAt: row.session.createdAt,
+        ipAddress: null,
+        userAgent,
+      })
+
       return {
-        token: grant.sessionToken,
-        session: { id: row.session.id, userId: row.session.userId, expiresAt: row.session.expiresAt },
+        token,
+        createdFromSessionId: row.session.id,
+        boundOrganizationId: grant.organizationId,
+        session: { id: sessionId, userId: row.session.userId, expiresAt },
         user: {
           id: row.user.id,
           email: row.user.email,
           name: row.user.name,
         },
-        activeOrganizationId: row.session.activeOrganizationId,
+        activeOrganizationId,
       }
     })
 
@@ -722,14 +806,23 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         })
       }
       const activeOrg = resolved.orgs.find((org) => org.id === resolved.activeOrgId) ?? null
-      organization = activeOrg ? { id: activeOrg.id, slug: activeOrg.slug, name: activeOrg.name } : null
+      // A bound session names its own organization or none: never another one.
+      organization = activeOrg && (!exchange.boundOrganizationId || activeOrg.id === exchange.boundOrganizationId)
+        ? { id: activeOrg.id, slug: activeOrg.slug, name: activeOrg.name }
+        : null
     } catch {
       organization = null
     }
 
-    // The desktop signs in with the handed-over (existing) web session: no
-    // second session.created; session.handed_off in the session's
-    // organization, or every active membership when it has none.
+    // An organization that requires SSO opens only from a session that signed
+    // in through it; the new session keeps the proofs of the one it came from.
+    // Without them the new session simply cannot open such an organization.
+    await carrySessionSsoProofs({ fromSessionId: exchange.createdFromSessionId, toSessionId: exchange.session.id, userId: exchange.session.userId })
+      .catch(() => undefined)
+
+    // The recipient's session comes from a signed-in web session, not a new
+    // sign-in: session.handed_off in the session's organization, or every
+    // active membership when it has none.
     await recordSessionHandedOff({ ...exchange.session, activeOrganizationId: exchange.activeOrganizationId })
 
     return c.json({

@@ -83,9 +83,10 @@ export async function recordSessionCreated(session: unknown, method: AuditSessio
 }
 
 /**
- * Desktop handoff exchange: the desktop receives an EXISTING web session, so
- * no second session.created; `session.handed_off` (method desktop_handoff) in
- * the session's organization, or every active membership when it has none.
+ * Desktop handoff exchange: the recipient receives a session of its own made
+ * from an EXISTING signed-in web session, not from a new sign-in, so no
+ * session.created; `session.handed_off` (method desktop_handoff) for the new
+ * session in its organization, or every active membership when it has none.
  */
 export async function recordSessionHandedOff(session: Readonly<{ id: string; userId: string; expiresAt: Date; activeOrganizationId: string | null }>): Promise<void> {
   if (!env.auditCaptureEnabled) return

@@ -33,6 +33,7 @@ import {
   rememberDesktopHandoffGrant,
 } from "../_lib/desktop-handoff";
 import {
+  PENDING_ORG_INVITATION_PROOF_STORAGE_KEY,
   PENDING_ORG_INVITATION_STORAGE_KEY,
   PENDING_WORKSPACE_CLAIM_STORAGE_KEY,
   getInferenceRoute,
@@ -106,6 +107,10 @@ type DenFlowContextValue = {
   continueSetup: (organizationId: string | null, route: string) => void;
   completeSetup: (organizationId: string) => Promise<boolean>;
   webAuthRequested: boolean;
+  /** Set when the return website is one an organization approved: the person confirms it before signing in there. */
+  webAuthConfirmation: { host: string; organizationName: string } | null;
+  confirmWebAuthHandoff: () => void;
+  cancelWebAuthHandoff: () => void;
   desktopRedirectUrl: string | null;
   desktopRedirectBusy: boolean;
   retryDesktopAuthHandoff: () => void;
@@ -143,6 +148,16 @@ function getPendingOrgInvitationId() {
 
   const invitationId = window.sessionStorage.getItem(PENDING_ORG_INVITATION_STORAGE_KEY)?.trim() ?? "";
   return invitationId || null;
+}
+
+/** The emailed link's proof, only when it was stored for this invitation. */
+function getPendingOrgInvitationProof(invitationId: string | null) {
+  if (typeof window === "undefined" || !invitationId) {
+    return null;
+  }
+
+  const [storedFor, proof] = (window.sessionStorage.getItem(PENDING_ORG_INVITATION_PROOF_STORAGE_KEY) ?? "").split("\n");
+  return storedFor === invitationId && proof ? proof : null;
 }
 
 function getPendingWorkspaceClaimToken() {
@@ -225,6 +240,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [desktopRedirectUrl, setDesktopRedirectUrl] = useState<string | null>(null);
   const desktopAuthRequested = Boolean(continuation?.desktopScheme || desktopRedirectUrl);
   const [desktopRedirectAttempted, setDesktopRedirectAttempted] = useState(false);
+  const [webAuthConfirmation, setWebAuthConfirmation] = useState<{ host: string; organizationName: string } | null>(null);
   const [webRedirectBusy, setWebRedirectBusy] = useState(false);
   const [webRedirectAttempted, setWebRedirectAttempted] = useState(false);
   const [runtimeConfig, setRuntimeConfig] = useState<DenWebRuntimeConfig>(EMPTY_RUNTIME_CONFIG);
@@ -620,7 +636,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     return typeof returnUrl === "string" && returnUrl.trim() ? returnUrl.trim() : null;
   }
 
-  async function completeWebAuthHandoff() {
+  async function completeWebAuthHandoff(confirmed = false) {
     if (!webAuthRequested || webRedirectBusy) {
       return;
     }
@@ -643,8 +659,18 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       const { response, payload } = await requestJson("/api/auth/desktop-handoff", {
         method: "POST",
         headers,
-        body: JSON.stringify({ returnUrl: webAuthReturnUrl })
+        body: JSON.stringify(confirmed ? { returnUrl: webAuthReturnUrl, confirmed: true } : { returnUrl: webAuthReturnUrl })
       });
+
+      // A website an organization approved: nothing is handed over until the
+      // person confirms it by name.
+      if (response.status === 409 && isRecord(payload) && payload.error === "confirmation_required" && typeof payload.returnHost === "string") {
+        setWebAuthConfirmation({
+          host: payload.returnHost,
+          organizationName: typeof payload.organizationName === "string" ? payload.organizationName : "",
+        });
+        return;
+      }
 
       if (!response.ok) {
         setAuthError(getErrorMessage(payload, `Web handoff failed with ${response.status}.`));
@@ -785,8 +811,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       if (trimmedEmail && await redirectToRequiredSso(trimmedEmail)) {
         return null;
       }
+      const pendingInvitationProof = getPendingOrgInvitationProof(pendingInvitationId);
       const endpoint = submitMode === "sign-up" && pendingInvitationId
-        ? `/api/auth/sign-up/email?invite=${encodeURIComponent(pendingInvitationId)}`
+        ? `/api/auth/sign-up/email?invite=${encodeURIComponent(pendingInvitationId)}${pendingInvitationProof ? `&inviteProof=${encodeURIComponent(pendingInvitationProof)}` : ""}`
         : submitMode === "sign-up"
           ? "/api/auth/sign-up/email"
           : "/api/auth/sign-in/email";
@@ -980,6 +1007,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     if (typeof window !== "undefined") {
       window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
       window.sessionStorage.removeItem(PENDING_ORG_INVITATION_STORAGE_KEY);
+      window.sessionStorage.removeItem(PENDING_ORG_INVITATION_PROOF_STORAGE_KEY);
       window.sessionStorage.removeItem(PENDING_WORKSPACE_CLAIM_STORAGE_KEY);
     }
   }
@@ -1060,6 +1088,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     const invitationId = params.get("invite")?.trim() ?? "";
     if (invitationId) {
       window.sessionStorage.setItem(PENDING_ORG_INVITATION_STORAGE_KEY, invitationId);
+      const invitationProof = params.get("inviteProof")?.trim() ?? "";
+      if (invitationProof) {
+        window.sessionStorage.setItem(PENDING_ORG_INVITATION_PROOF_STORAGE_KEY, `${invitationId}\n${invitationProof}`);
+      }
     }
 
     const requestedIntent = normalizeAuthIntentParam(params.get("intent"));
@@ -1265,6 +1297,15 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     continueSetup,
     completeSetup,
     webAuthRequested,
+    webAuthConfirmation,
+    confirmWebAuthHandoff: () => {
+      void completeWebAuthHandoff(true);
+    },
+    cancelWebAuthHandoff: () => {
+      setWebAuthConfirmation(null);
+      setWebAuthRequested(false);
+      setWebAuthReturnUrl(null);
+    },
     desktopRedirectUrl,
     desktopRedirectBusy,
     retryDesktopAuthHandoff: () => {

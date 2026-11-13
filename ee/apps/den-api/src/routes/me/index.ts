@@ -4,7 +4,7 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { withoutAgentHarnessRules, withoutBrowserUploadRules, withoutFileSendRules, type AgentPermissionRule } from "@openwork/types/den/agent-permissions"
 import { BILLING_PLAN_TIERS } from "@openwork/types/den/billing-plans"
 import { desktopConfigSchema } from "@openwork/types/den/desktop-policies"
-import type { Hono } from "hono"
+import type { Hono, MiddlewareHandler } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { OPENWORK_DOWNLOAD_URL } from "../../CONSTS.js"
@@ -14,7 +14,7 @@ import { cache } from "../../cache.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { automationAvailabilityFor, headlessAutomationsConfigured } from "../../automations/organization-availability.js"
-import { authenticatedRoute, jsonValidator, orgMemberRoute, userSessionRoute, type OrganizationContextVariables, type UserOrganizationsContext } from "../../middleware/index.js"
+import { authenticatedRoute, jsonValidator, ORGANIZATION_BOUND_SESSION_MESSAGE, orgMemberRoute, userSessionRoute, type OrganizationContextVariables, type UserOrganizationsContext } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, ssoRequiredSchema, unauthorizedSchema } from "../../openapi.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSummary } from "../../orgs.js"
@@ -99,6 +99,29 @@ const updateProfileSchema = z.object({
 const updateProfileResponseSchema = z.object({
   user: z.object({}).passthrough(),
 }).meta({ ref: "UpdateCurrentUserProfileResponse" })
+
+/**
+ * A session bound to one organization (session-token.ts) is always active
+ * there. Clients still name their organization after signing in, so naming
+ * the bound one succeeds without a write; any other is refused.
+ */
+const keepBoundSessionOrganization: MiddlewareHandler<{ Variables: AuthContextVariables }> = async (c, next) => {
+  const user = c.get("user")
+  const boundOrganizationId = c.get("session")?.organizationScopeId
+  if (!user?.id || !boundOrganizationId) {
+    return next()
+  }
+
+  const requested = setActiveOrganizationSchema.safeParse(await c.req.json().catch(() => null))
+  const resolved = await resolveUserOrganizations({ activeOrganizationId: boundOrganizationId, userId: normalizeDenTypeId("user", user.id) })
+  const bound = resolved.orgs.find((org) => org.id === boundOrganizationId)
+  const named = requested.success && bound
+    && (requested.data.organizationId ? requested.data.organizationId === bound.id : requested.data.organizationSlug === bound.slug)
+  if (!bound || !named) {
+    return c.json({ error: "forbidden", message: ORGANIZATION_BOUND_SESSION_MESSAGE }, 403)
+  }
+  return c.json({ activeOrgId: bound.id, activeOrgSlug: bound.slug })
+}
 
 const setActiveOrganizationSchema = z.object({
   organizationId: denTypeIdSchema("organization").optional(),
@@ -428,6 +451,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         403: jsonResponse("The caller cannot switch this kind of session, or the organization requires SSO and this session did not sign in through it (sso_required).", forbiddenSchema.or(ssoRequiredSchema)),
       },
     }),
+    keepBoundSessionOrganization,
     userSessionRoute(),
     jsonValidator(setActiveOrganizationSchema),
     async (c) => {

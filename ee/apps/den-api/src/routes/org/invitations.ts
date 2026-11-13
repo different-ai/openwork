@@ -29,6 +29,7 @@ import { organizationInviteEmailProps } from "../../invitation-email.js"
 import type { ResourceActionContext, ResourceOrganizationContext } from "./declarative.js"
 import type { OrgRouteVariables } from "./shared.js"
 import {
+  buildInvitationEmailLink,
   buildInvitationLink,
   createInvitationId,
   createInvitationToken,
@@ -565,7 +566,7 @@ export async function createInvitationAction(
         to: email,
         template: "organizationInvite",
         props: organizationInviteEmailProps({
-          inviteLink: buildInvitationLink(inviteToken),
+          inviteLink: buildInvitationEmailLink(inviteToken, email),
           inviterName: user.name,
           inviterEmail: user.email,
           inviteeEmail: email,

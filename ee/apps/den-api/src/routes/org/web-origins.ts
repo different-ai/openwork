@@ -120,7 +120,7 @@ export function registerOrgWebOriginRoutes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Organizations"],
       summary: "Approve a web origin",
-      description: "Approves one exact HTTPS origin (scheme, host, and optional port) for this organization. Approved origins can receive web sign-in handoffs for this organization and make credentialed browser requests to the Den API.",
+      description: "Approves one exact HTTPS origin (scheme, host, and optional port) for this organization. Approved origins can receive web sign-in handoffs for this organization and make credentialed browser requests to the Den API. A member confirms each handoff, and the origin receives a session that works in this organization only.",
       responses: {
         201: jsonResponse("The web origin was approved.", organizationWebOriginDocumentSchema),
         400: jsonResponse("The origin was not an exact HTTPS origin.", approveWebOriginBadRequestSchema),

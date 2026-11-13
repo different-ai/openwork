@@ -446,6 +446,8 @@ export type DenManagedBrandAsset = {
 };
 
 export const PENDING_ORG_INVITATION_STORAGE_KEY = "openwork:web:pending-org-invitation";
+// The proof from the invitation email's link, kept with the invitation it was made for.
+export const PENDING_ORG_INVITATION_PROOF_STORAGE_KEY = "openwork:web:pending-org-invitation-proof";
 export const PENDING_WORKSPACE_CLAIM_STORAGE_KEY = "openwork:web:pending-workspace-claim";
 
 function isRecord(value: unknown): value is Record<string, unknown> {

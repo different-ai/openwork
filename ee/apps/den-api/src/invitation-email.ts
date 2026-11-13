@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from "node:crypto"
 import type { OrganizationInviteEmailProps } from "@openwork/email"
 import { env } from "./env.js"
 
@@ -63,4 +64,26 @@ function hostOf(url: string) {
   } catch {
     return url
   }
+}
+
+/**
+ * Proof that an invitation link came from the invited mailbox.
+ *
+ * The inviter can read the join token (to share the link by hand), so the
+ * token alone cannot show that whoever signs up owns the invited address.
+ * Only the emailed link carries this value, made from the token and the
+ * address with the server secret; no API returns it. Signing up with it marks
+ * the email verified; without it the person verifies their email as usual.
+ */
+export function invitationEmailProof(input: { inviteToken: string; email: string }, secret: string = env.betterAuthSecret): string {
+  return createHmac("sha256", secret)
+    .update(`openwork-invitation-email-proof:${input.inviteToken}:${input.email.trim().toLowerCase()}`)
+    .digest("base64url")
+}
+
+export function invitationEmailProofMatches(input: { inviteToken: string; email: string; proof: string | null | undefined }, secret: string = env.betterAuthSecret): boolean {
+  if (!input.proof) return false
+  const expected = new Uint8Array(Buffer.from(invitationEmailProof(input, secret)))
+  const presented = new Uint8Array(Buffer.from(input.proof))
+  return expected.length === presented.length && timingSafeEqual(expected, presented)
 }
