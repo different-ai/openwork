@@ -112,6 +112,8 @@ const sessionSchema = z.object({
   /** Navigation lists only pages; Files and Apps live in the profile (`workbotProfileNav`); older Dens omit it: off. */
   profileNav: z.boolean().optional(),
   profileComputers: z.boolean().optional(),
+  /** Devices rows say what Workbot is doing on each computer (`workbotDeviceActivity`); older Dens omit it: off. */
+  deviceActivity: z.boolean().optional(),
   /** Apps built in OpenWork show as cards and open beside the chat (`workbotApps`); older Dens omit it: off. */
   openworkApps: z.boolean().optional(),
   /** Meetings own the calendar grid, runs are quiet dots (`workbotQuietCalendar`); older Dens omit it: off. */
@@ -515,6 +517,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         sideChats: on,
         scrollToBottom: true,
         profileComputers: features.workbotProfileComputers,
+        deviceActivity: features.workbotDeviceActivity,
         openworkApps: true,
         calmChat: features.workbotCalmChat,
         devices: on,

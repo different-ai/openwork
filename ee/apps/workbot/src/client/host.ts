@@ -27,6 +27,8 @@ export const meSchema = z.object({
   /** Side chats are on for this person (while Workbot is on). */
   sideChats: z.boolean().default(false),
   profileComputers: z.boolean().default(false),
+  /** Devices rows say what Workbot is doing on each computer (`workbotDeviceActivity`); absent means off. */
+  deviceActivity: z.boolean().default(false),
   /** Calm chat look (`workbotCalmChat`); absent means off. */
   calmChat: z.boolean().default(false),
   denUrl: z.string().nullable(),
@@ -154,6 +156,7 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     },
     sideChats: me.sideChats,
     profileComputers: me.profileComputers,
+    deviceActivity: me.deviceActivity,
     calmChat: me.calmChat,
     account: { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace },
     identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,

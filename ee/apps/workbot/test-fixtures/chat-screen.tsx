@@ -34,6 +34,8 @@ const host: WorkbotHost = {
   computer: search.get("computer") === "1",
   scrollToBottom: search.get("scroll") === "1",
   calmChat: search.get("calm") === "1",
+  // Devices rows say what Workbot is doing on each computer (`?deviceActivity=1`).
+  deviceActivity: search.get("deviceActivity") === "1",
   // Documents and Calendar as Den turns them on for a workspace with the assistant (`?documents=1&calendar=1`).
   documents: search.get("documents") === "1",
   documentEditing: search.get("documents") === "1",

@@ -4,7 +4,9 @@ import { REMOTE_DEVICE_AVAILABILITY_LABELS, remoteDeviceTypeLabel, type RemoteDe
 import { Cloud, Laptop, Monitor } from "lucide-react";
 import { createContext } from "react";
 import { useWorkbotDevices } from "./data";
+import { deviceWork, type DeviceWork } from "./device-work";
 import { computerTabLabel, computerViews, workbotHost } from "./host";
+import { remoteJobActive, useWorkbotRemoteJobs } from "./remote-jobs";
 
 /** The screen owns the same-chat/side-chat and unsaved-draft guards for every Devices surface. */
 export const DeviceComputerNavigationContext = createContext<((chat: string) => (() => void) | null) | undefined>(undefined);
@@ -12,8 +14,8 @@ export const DeviceComputerNavigationContext = createContext<((chat: string) => 
 /**
  * Devices: the computers the person can reach through OpenWork, read-only. Their own computers
  * running OpenWork Desktop, then the cloud ones (Workbot's computer for a chat, registered virtual computers). Each row
- * says what it is and whether it can be reached; Workbot's own computers open in the Computer view. Naming and
- * removing a computer happen in OpenWork Desktop.
+ * says what it is, whether it can be reached and what Workbot is doing there now; Workbot's own computers open in the
+ * Computer view. Naming and removing a computer happen in OpenWork Desktop.
  */
 
 const row = "flex min-h-14 items-center gap-3 border-b border-[var(--wb-row-line)] py-2.5 last:border-b-0";
@@ -64,7 +66,7 @@ function DeviceIcon({ device }: { device: RemoteDevice }) {
   return <Icon size={16} strokeWidth={1.5} aria-hidden className="shrink-0 text-[var(--wb-muted)]" />;
 }
 
-function DeviceRow({ device, onOpen }: { device: RemoteDevice; onOpen: (() => void) | null }) {
+function DeviceRow({ device, work, onOpen }: { device: RemoteDevice; work: DeviceWork | null; onOpen: (() => void) | null }) {
   const host = workbotHost();
   const detail = deviceStatusLine(device);
   const openLabel = computerTabLabel(host) === "Browser" ? "Open Workbot's browser" : "Open Workbot's computer";
@@ -75,8 +77,13 @@ function DeviceRow({ device, onOpen }: { device: RemoteDevice; onOpen: (() => vo
       <span className="flex min-w-0 flex-wrap gap-x-3 text-[12px] leading-4 text-[var(--wb-muted)]">
         <span>{remoteDeviceTypeLabel(device)}</span>
         {device.access === "shared" ? <span>Shared with your organization</span> : null}
-        {device.kind === "desktop" && device.computerId !== null ? <span>Takes tasks from Workbot</span> : null}
+        {!work && device.kind === "desktop" && device.computerId !== null ? <span>Takes tasks from Workbot</span> : null}
       </span>
+      {/* What Workbot is doing there now: the breathing dot the chat uses for live work, amber when it waits on the person. */}
+      {work ? <span className="flex min-w-0 items-center gap-1.5 pt-0.5 text-[12px] leading-4 text-[var(--wb-text)]" data-workbot-device-work={work.needsYou ? "needs-you" : "working"} title={work.detail ?? undefined}>
+        <span aria-hidden className={`size-1.5 shrink-0 rounded-full ${work.needsYou ? "bg-[var(--wb-status-attention)]" : "workbot-presence-dot"}`} />
+        <span className="truncate">{work.label}{work.detail ? ` · ${work.detail}` : ""}</span>
+      </span> : null}
     </span>
     <span className="flex min-w-0 max-w-[45%] shrink-0 flex-col items-end">
       <span className="flex items-center gap-1.5 text-[12.5px] text-[var(--wb-text)]"><span aria-hidden className={`size-1.5 shrink-0 rounded-full ${AVAILABILITY_DOT[device.availability]}`} />{REMOTE_DEVICE_AVAILABILITY_LABELS[device.availability]}</span>
@@ -102,6 +109,11 @@ function DevicesSkeleton() {
 export function WorkbotDevices({ computerFor }: { computerFor?: (workbotChat: string) => (() => void) | null }) {
   const host = workbotHost();
   const devices = useWorkbotDevices();
+  // What Workbot is doing on each computer (`workbotDeviceActivity`), from the read the header and the profile already
+  // share: this chat's remote tasks, to say which computer each is on. Off: rows are as they were, and nothing is read.
+  const activity = host.deviceActivity === true;
+  const remote = useWorkbotRemoteJobs(activity);
+  const active = (remote.data?.jobs ?? []).filter(remoteJobActive);
   const groups = deviceGroups(devices.data ?? []);
   const canOpen = computerViews(host).length > 0;
   const opener = (device: RemoteDevice) => canOpen && device.provider === "workbot" && device.workbotChat !== null ? computerFor?.(device.workbotChat) ?? null : null;
@@ -120,7 +132,7 @@ export function WorkbotDevices({ computerFor }: { computerFor?: (workbotChat: st
           {devices.isError ? <p role="status" className="pb-2 text-[12px] leading-4 text-[var(--wb-muted)]">Couldn&apos;t load your computers. <button type="button" className="rounded font-medium text-[var(--wb-text)] underline underline-offset-2 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" onClick={() => void devices.refetch()}>Try again</button></p> : null}
           {groups.map(group => <section key={group.id} aria-label={groups.length > 1 ? group.label : undefined} className="pb-5 last:pb-0">
             {groups.length > 1 ? <h2 className="pb-1 pt-2 text-[12px] font-medium text-[var(--wb-muted)]">{group.label}</h2> : null}
-            <ul>{group.devices.map(device => <DeviceRow key={device.id} device={device} onOpen={opener(device)} />)}</ul>
+            <ul>{group.devices.map(device => <DeviceRow key={device.id} device={device} work={activity ? deviceWork(device, active) : null} onOpen={opener(device)} />)}</ul>
           </section>)}
           <p className="pt-4 text-[12px] leading-4 text-[var(--wb-muted)]">Add or remove computers in OpenWork Desktop, under Settings › Devices.</p>
         </>}

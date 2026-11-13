@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 import { createServer } from "vite"
 import { ARTIFACT_BYTES, exaAt, GOOGLE_EVENTS, googleAt, OPENWORK_APP_ID, OPENWORK_APP_OPENED, scenarios, type FixtureThread, type FixtureTurn } from "./chat-screen-scenarios.js"
 import { fixtureRemoteJobs, fixtureStaleRemoteJobs } from "./remote-jobs.js"
+import { fixtureDevices } from "./devices.js"
 import { AUTOMATIONS, fixtureAutomationRuns, fixtureMeetings, fixtureRunRange } from "./calendar-fixture.js"
 
 // Observes real client requests; the fixture never changes browser controls or rendered UI.
@@ -176,6 +177,8 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
     if (name === "remote-stale") return json(response, 200, { jobs: fixtureStaleRemoteJobs(), hasEarlier: false, statusError: "unavailable" })
     return json(response, 200, { jobs: name === "remote" ? fixtureRemoteJobs(remoteStopped) : [], hasEarlier: false })
   }
+  // Devices: with `remote`, its tasks run on one of the listed computers and Workbot works in its own chat.
+  if (path === "/v1/workbot/devices") return json(response, 200, { devices: fixtureDevices(name === "remote") })
   if (path.startsWith("/v1/workbot/remote-jobs/")) {
     if (request.method === "POST" && path.endsWith("/stop")) { remoteStopped = true; return json(response, 200, { state: "stopped" }) }
     return json(response, 200, { state: "ready", canStop: !remoteStopped, messageId: "fixture-user", messages: [
@@ -273,7 +276,7 @@ const vite = await createServer({
         const url = request.url ?? "/"
         if (url === "/fixture/browser-witness") { json(response, 200, browserRequests); return }
         if (url.startsWith("/v1/workbot")) { void answer(request, response); return }
-        if (url === "/" || url.startsWith("/?") || url.startsWith("/documents") || url.startsWith("/browser") || url.startsWith("/computer")) {
+        if (url === "/" || url.startsWith("/?") || url.startsWith("/documents") || url.startsWith("/devices") || url.startsWith("/browser") || url.startsWith("/computer")) {
           void server.transformIndexHtml(url, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" /><title>Workbot</title></head><body style="margin:0"><div id="root"></div><script type="module" src="/@fs/${entry}"></script></body></html>`)
             .then((html) => { response.setHeader("Content-Type", "text/html"); response.end(html) })
           return
