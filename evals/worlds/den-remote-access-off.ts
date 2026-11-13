@@ -45,7 +45,7 @@ export async function denRemoteAccessOffWorld(seed: Seed) {
       members: { owner: { name: "Casey Rivera" }, manager: { name: "Alex Morgan" }, member: { name: "Riley Chen" } },
     } });
     if (!den.database) throw new Error("The remote access proof requires a disposable local database, never an attached Den");
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { remoteDevices: true, remoteTasksOptIn: true });
+    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { remoteTasksOptIn: true });
     const request = (session: DenSession, path: string, body?: unknown, method = body === undefined ? "GET" : "POST") =>
       denFetch(session, path, { method, headers: { authorization: `Bearer ${session.token}`, "x-openwork-org-id": organizationId }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const send = async (session: DenSession, path: string, body?: unknown, method?: string) => {

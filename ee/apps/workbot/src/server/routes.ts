@@ -174,8 +174,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   const workbotFor = (member: Member, desktopViews = desktopViewsOf(member.den)) =>
     createWorkbot({
       client: runnerClientFor(member),
-      remoteTasks: member.den.remoteTasks,
-      apps: member.den.openworkApps,
       remoteStatus: input => den.remoteStatus(member.accessToken, input),
       remoteRead: input => den.remoteRead(member.accessToken, input),
       remoteStop: input => den.remoteStop(member.accessToken, input),
@@ -187,9 +185,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       workspaceAssistant: async () => member.den.workspaceAssistant,
       // Opening a document on request needs Documents too; Den still checks the member's Drive access on open.
       guidedNavigation: async () => member.den.guidedNavigation && member.den.documents === true,
-      driveFiles: async () => member.den.driveFiles,
-      workingStatus: async () => member.den.workingStatus,
-      quickReply: async () => member.den.quickReply,
       connectors: () => connectors(`${member.den.organization.id}:${member.den.memberId}`, member.accessToken),
       sandboxGateway: member.den.sandboxGateway,
       browserRecovery: member.den.browserRecovery,
@@ -270,7 +265,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     } catch { return c.json({ error: "teaching_unavailable", message: save.success ? "Couldn't confirm the skill was saved. Check your skill library before trying another save." : "Couldn't update the demonstration. Reconnect and check its current state." }, 409) }
   })
 
-
   app.get("/v1/workbot/me", async (c) => {
     const member = c.get("member")
     const { den: who } = member
@@ -293,27 +287,30 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       // Older clients still read this field; the Browser view now always uses the page stream.
       browserLiveView: who.enabled && who.browser,
       documentEditing: who.enabled && who.documents === true && who.documentEditing,
-      nativeDictation: who.enabled && who.nativeDictation,
+      nativeDictation: who.enabled,
       workspaceAssistant: who.enabled && who.workspaceAssistant,
       guidedNavigation: who.enabled && who.workspaceAssistant && who.guidedNavigation,
       usageRecovery: who.enabled,
       activationChecklist: who.enabled,
       canSchedule: who.enabled && who.canSchedule,
       sideChats: who.enabled && who.sideChats,
+      // Response-only compatibility for UI bundles loaded before these presentation rollouts became standard.
       // Signing out and switching workspace don't depend on Workbot being on for this workspace.
-      accountMenu: who.accountMenu,
-      workingStatus: who.enabled && who.workingStatus,
-      quickReply: who.enabled && who.quickReply,
-      browserChat: who.enabled && who.browser && who.browserChat,
-      instantOpen: who.enabled && who.instantOpen,
-      scrollToBottom: who.enabled && who.scrollToBottom,
-      profileSheet: who.enabled && who.profileSheet,
-      centeredProfile: who.enabled && who.centeredProfile,
-      browserPreview: who.enabled && who.browserPreview,
-      remoteTasks: who.enabled && who.remoteTasks,
-      profileNav: who.enabled && who.profileSheet && who.profileNav,
-      quietCalendar: who.enabled && who.calendar === true && who.quietCalendar,
-      devices: who.enabled && who.devices,
+      accountMenu: true,
+      workingStatus: who.enabled,
+      quickReply: who.enabled,
+      browserChat: who.enabled && who.browser,
+      instantOpen: who.enabled,
+      profileSheet: who.enabled,
+      centeredProfile: who.enabled,
+      browserPreview: who.enabled && (who.browser || who.computer),
+      remoteTasks: who.enabled,
+      profileNav: who.enabled,
+      quietCalendar: who.enabled && who.calendar === true,
+      scrollToBottom: who.enabled,
+      profileComputers: who.enabled && who.profileComputers,
+      calmChat: who.enabled && who.calmChat,
+      devices: who.enabled,
       commandPalette: true,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })
@@ -347,12 +344,12 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     const viewer = z.object({ view: z.enum(["browser", "computer"]), control: z.boolean().default(false), wake: z.boolean().default(false) }).strict().safeParse(raw)
     const action = z.object({ action: z.enum(["continue", "pause", "resume", "rebuild"]) }).strict().safeParse(raw)
     if (operation === "viewer" ? !viewer.success : !action.success) return c.json({ error: "invalid_request" }, 400)
-    // Each view is its own rollout: the browser (browserUse) and the native desktop apps (computerUse).
+    // Den determines which views this deployment and member may use.
     const requestedView = viewer.success ? viewer.data.view : null
     const client = runnerClientFor(member)
-    // Den's devices registry hears what happens to this chat's computer (`remoteDevices`), going by Den's latest
+    // Den's devices registry hears what happens to this chat's computer, going by Den's latest
     // answer for this person. Never awaited: a report that fails or is slow changes nothing here.
-    let devices = member.den.devices
+    let devices: boolean = member.den.enabled
     const report = createComputerReporter({ enabled: () => devices, send: body => den.reportComputer(member.accessToken, body) })
     /** The chat's computer, once this request knows which runner session it is. */
     let computer: { sessionId: string; chat: WorkbotChat } | null = null
@@ -365,7 +362,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       const fresh = await den.session(member.accessToken)
       const views = desktopViewsOf(fresh)
       const allowed = fresh.enabled && (requestedView ? views.includes(requestedView) : views.length > 0) && fresh.organization.id === member.den.organization.id && fresh.memberId === member.den.memberId
-      devices = allowed && fresh.devices
+      devices = allowed
       return allowed ? views : null
     }
     try {
@@ -470,7 +467,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   app.get("/v1/workbot/devices", async (c) => {
     c.header("Cache-Control", "no-store")
     const member = c.get("member")
-    if (!member.den.enabled || !member.den.devices) return c.json({ error: "feature_disabled" }, 403)
+    if (!member.den.enabled) return c.json({ error: "feature_disabled" }, 403)
     const result = await den.devices(member.accessToken)
     return new Response(JSON.stringify(result.payload), { status: result.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } })
   })
@@ -553,7 +550,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       const workbot = workbotFor(member)
       // Where Devices is on, the chat's computer leaves Den's registry with it. Its runner session is looked up before
       // the chat goes (the same lookup removing it makes, remembered), and a lookup that fails only skips the report.
-      const sessionId = member.den.devices && WORKBOT_CHAT_ID.test(chatId) ? await workbot.sessionIdOf(actorOf(member), chatId).catch(() => null) : null
+      const sessionId = WORKBOT_CHAT_ID.test(chatId) ? await workbot.sessionIdOf(actorOf(member), chatId).catch(() => null) : null
       const result = await workbot.removeChat(actorOf(member), chatId)
       if (!result.ok) return c.json({ error: result.code }, result.code === "busy" ? 409 : 404)
       if (sessionId) createComputerReporter({ enabled: () => true, send: body => den.reportComputer(member.accessToken, body) })({ sessionId, chat: chatId }, { event: "removed" })
@@ -606,7 +603,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         ...connection,
         connectUrl: connection.ready || !denWeb ? connection.connectUrl : workbotConnectionUrl(denWeb, member.den.organization.id, connection.id),
       })),
-      ...(listed.apps && member.den.profileSheet ? { apps: listed.apps.map((app) => ({
+      ...(listed.apps ? { apps: listed.apps.map((app) => ({
         ...linked(app),
         // Bundled Den assets live on Den, not on the standalone Workbot origin.
         iconCandidates: app.iconCandidates?.map((src) => src.startsWith("/integrations/") || src === "/openwork-mark.svg" ? (denWeb ? new URL(src, denWeb).href : null) : src).filter((src): src is string => src !== null),
@@ -619,7 +616,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     c.header("Cache-Control", "no-store")
     const member = c.get("member")
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
-    if (!member.den.remoteTasks) return c.json({ error: "feature_disabled" }, 404)
     const scope = chatOf(c)
     if (scope.refused) return scope.refused
     try {
@@ -634,7 +630,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     c.header("Cache-Control", "no-store")
     const member = c.get("member")
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
-    if (!member.den.remoteTasks) return c.json({ error: "feature_disabled" }, 404)
     const scope = chatOf(c)
     if (scope.refused) return scope.refused
     const key = c.req.param("key")
@@ -651,7 +646,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     c.header("Cache-Control", "no-store")
     const member = c.get("member")
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
-    if (!member.den.remoteTasks) return c.json({ error: "feature_disabled" }, 404)
     const scope = chatOf(c)
     if (scope.refused) return scope.refused
     const body = z.object({ messageId: z.string().trim().min(1).max(240) }).strict().safeParse(await c.req.json().catch(() => null))
@@ -667,14 +661,13 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   })
 
   /**
-   * An App built in OpenWork, for the panel beside the chat (`workbotApps`): its page and what opening it answered.
+   * An App built in OpenWork, for the panel beside the chat: its page and what opening it answered.
    * Workbot asks the App's own server as the member, so Den decides whether they may use it.
    */
   app.post("/v1/workbot/apps/:appId/open", bodyLimit({ maxSize: 1024 }), async (c) => {
     c.header("Cache-Control", "no-store")
     const member = c.get("member")
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
-    if (!member.den.openworkApps) return c.json({ error: "feature_disabled" }, 404)
     const appId = mcpAppIdSchema.safeParse(c.req.param("appId"))
     if (!appId.success) return c.json({ error: "invalid_request" }, 400)
     try {
@@ -690,7 +683,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     c.header("Cache-Control", "no-store")
     const member = c.get("member")
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
-    if (!member.den.openworkApps) return c.json({ error: "feature_disabled" }, 404)
     const appId = mcpAppIdSchema.safeParse(c.req.param("appId"))
     const body = z.object({ name: z.string().min(1).max(200), arguments: z.record(z.string(), z.unknown()).default({}) }).strict().safeParse(await c.req.json().catch(() => null))
     if (!appId.success || !body.success) return c.json({ error: "invalid_request" }, 400)
@@ -702,11 +694,10 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     }
   })
 
-  /** What Workbot remembers about the person, read-only, for its profile (`workbotProfileSheet`). */
+  /** What Workbot remembers about the person, read-only, for its profile. */
   app.get("/v1/workbot/memory", async (c) => {
     const member = c.get("member")
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
-    if (!member.den.profileSheet) return c.json({ error: "feature_disabled" }, 404)
     try {
       return c.json({ files: await workbotFor(member).readMemory(actorOf(member)) })
     } catch (error) {

@@ -1,5 +1,7 @@
 # Workbot: chat beside the browser
 
+> **Generally available:** `workbotBrowserChat` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 Feature key: `workbotBrowserChat` · Deployments: cloud and self-hosted · Default: off · Author: @benjaminshafii
 
 Needs browser use (`browserUse` with `remoteComputers`). Den only reports it on when browser use is on for the member.

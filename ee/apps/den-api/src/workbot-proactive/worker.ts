@@ -1,5 +1,5 @@
 import { libraryConnectorLink } from "../agent-links.js"
-import { markFeaturesUsed, type MarkFeaturesUsed } from "../feature-usage.js"
+import { markFeaturesUsed } from "../feature-usage.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
 import { readMemberGmailArrivals, readMemberGoogleCalendar } from "../routes/org/google-workspace.js"
@@ -115,20 +115,6 @@ export async function wakeMemberAgent(row: AgentInstanceRow, deps: AgentBriefWak
   return brief ? wakeAgentBrief(row, deps) : wakeAgent(row, deps)
 }
 
-/**
- * One wake. A pass that ran (the agent looked for the member) is the member using Your agent, for /admin › Features:
- * no request marks background work. Skips (off, snoozed, outside hours, nothing due) are not uses.
- */
-export async function wakeAndMarkUse(
-  row: AgentInstanceRow,
-  wake: (row: AgentInstanceRow) => Promise<AgentWakeOutcome>,
-  markUsed: MarkFeaturesUsed = markFeaturesUsed,
-): Promise<AgentWakeOutcome> {
-  const outcome = await wake(row)
-  if (outcome.status === "ran") markUsed({ organizationId: row.organizationId, memberId: row.memberId, keys: ["workbotProactive"] })
-  return outcome
-}
-
 /** Gives every active member of an organization where agents are on, for everyone or for a team, an agent row. */
 export async function discoverAgents() {
   for (const candidate of await listAgentCandidates()) await ensureAgentInstances(candidate.organizationId, candidate.memberIds)
@@ -154,7 +140,7 @@ export function startWorkbotProactiveWorker(deps: AgentBriefWakeDeps = defaultAg
       if (capacity <= 0) return
       for (const row of await claimDueAgents(capacity, new Date(now))) {
         running += 1
-        void wakeAndMarkUse(row, (claimed) => wakeMemberAgent(claimed, deps))
+        void wakeMemberAgent(row, deps)
           .catch(async () => {
             appLogger.warn("workbot_agent_wake_failed", { member_id: row.memberId })
             await deps.settle(row, { nextWakeAt: new Date(deps.now() + 15 * 60_000), failures: row.failures + 1 }).catch(() => false)

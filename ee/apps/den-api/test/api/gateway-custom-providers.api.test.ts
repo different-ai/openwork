@@ -1,5 +1,5 @@
 /**
- * AI Gateway custom OpenAI-compatible providers (feature gatewayCustomProviders): an admin fetches the
+ * AI Gateway custom OpenAI-compatible providers: an admin fetches the
  * provider's models, tests one through AI Gateway, adds the provider and edits it. Den talks to a fake
  * OpenAI-compatible upstream (an operator-approved local origin) and a fake AI Gateway; the public model
  * catalog it reads is synthetic. The API key never comes back in a response.
@@ -57,24 +57,8 @@ const baseUrl = `${upstream.url}/v1`
 const org = await den.createOrg(await den.signUp("Acme Custom Owner"), "Acme custom providers")
 const teammate = await den.newMember(org.owner, org.orgId, "Acme Custom Teammate")
 const owner = den.as(org.owner, org.orgId)
-const enabled = await den.setFeature(org.orgId, "gatewayCustomProviders", true)
-assert.equal(enabled.status, 200, summary(enabled))
 
 const houseModel = { id: "acme/house-model", name: "Acme House", attachment: false, reasoning: false, tool_call: false, structured_output: false, temperature: true, modalities: { input: ["text"], output: ["text"] }, limit: { context: 32000, output: 8192 } }
-
-test("with the feature off every custom route answers 404 feature_disabled", { timeout: 60_000 }, async () => {
-  const other = await den.createOrg(await den.signUp("Other Custom Owner"), "Other custom org")
-  const call = den.as(other.owner, other.orgId)
-  for (const [method, path, body] of [
-    ["POST", "/v1/inference-providers/custom/discover-models", { baseUrl, apiKey: KEY }],
-    ["POST", "/v1/inference-providers/custom/test-connection", { baseUrl, apiKey: KEY, model: houseModel }],
-    ["POST", "/v1/inference-providers/custom", { name: "Nope", baseUrl, apiKey: KEY, models: [houseModel] }],
-  ] as const) {
-    const response = await call(method, path, body)
-    assert.equal(response.status, 404, `${path}: ${summary(response)}`)
-    assert.equal(field(response.body, "error"), "feature_disabled")
-  }
-})
 
 test("discovery reads detailed, basic and broken /models answers", { timeout: 60_000 }, async () => {
   upstreamMode = "detailed"

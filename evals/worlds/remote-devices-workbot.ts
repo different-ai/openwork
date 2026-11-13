@@ -76,7 +76,7 @@ export async function remoteDevicesWorkbotWorld(seed: Seed) {
       web,
       call: signed.call,
       /** Workbot's computer and Devices, on or off together for the seeded organization. */
-      setEnabled: (value: boolean) => enableWorkbot(workbot.den, { computerUse: value, browserUse: value, remoteComputers: value, remoteDevices: value }),
+      setEnabled: (value: boolean) => enableWorkbot(workbot.den, { remoteComputers: value }),
       /** What the person's signed-in OpenWork Desktop sends on launch, through the route it uses. */
       desktopSignsIn: () => send("PUT", "/v1/remote-devices/this-computer", {
         installId: "devices-proof-macbook", label: "Alex's MacBook Pro", platform: "darwin", appVersion: "1.5.0", osVersion: "25.1.0", arch: "arm64",

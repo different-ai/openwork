@@ -20,7 +20,7 @@ export function previousPreview(body, reviewUrl) {
   } catch { return undefined; }
 }
 
-export function renderPreviewCard({ repo, sha, status, conclusion, title, reportUrl, logUrl, previous, now = new Date().toISOString() }) {
+export function renderPreviewCard({ repo, sha, status, conclusion, title, reportUrl, logUrl, previous, notice, now = new Date().toISOString() }) {
   const commit = `[\`${sha.slice(0, 7)}\`](https://github.com/${repo}/commit/${sha})`;
   const ready = Boolean(reportUrl);
   const label = ready ? (conclusion === "success" ? "🟢 Ready · evidence passed" : "🔴 Ready · evidence needs attention")
@@ -36,6 +36,7 @@ export function renderPreviewCard({ repo, sha, status, conclusion, title, report
     lines.push(status === "completed" ? title : "A preview for this commit is being prepared.");
     if (previous) lines.push("", `**Previous evidence — out of date:** [Open report for \`${previous.sha.slice(0, 7)}\`](${previous.url}). It does not verify the current run.`);
   }
+  if (notice) lines.push("", notice);
   if (report) lines.push("", `<!-- openwork-evidence-report:${JSON.stringify(report)} -->`);
   return lines.join("\n");
 }

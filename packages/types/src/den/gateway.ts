@@ -276,6 +276,47 @@ export interface GatewayLiteLlmSyncResult {
   issued?: { people: number; keys: number; notInLiteLlm: number; noKeyToMirror: number; noModels: number; errors: number; removed: number };
 }
 
+/** Why OpenWork has no working TrueFoundry token for an allowed person yet. */
+export type GatewayTrueFoundryAttentionReason = "not_in_truefoundry" | "user_inactive" | "token_limit" | "no_models" | "error";
+
+/**
+ * TrueFoundry provider state for management views. Every person uses a
+ * personal access token OpenWork created for their TrueFoundry user, so
+ * TrueFoundry owns budgets and OpenWork does not price or limit usage.
+ */
+export interface GatewayTrueFoundryStatus {
+  /** Control plane root, never a key. */
+  controlPlaneUrl: string | null;
+  /** OpenAI-compatible gateway base the AI Gateway forwards to. */
+  gatewayBaseUrl: string | null;
+  /** Add allowed people missing from TrueFoundry as TrueFoundry users. */
+  createMissingUsers: boolean;
+  /** The TrueFoundry admin key is stored. */
+  hasAdminKey: boolean;
+  lastSyncedAt: string | null;
+  lastSyncError: string | null;
+  modelCount: number;
+  /** People with a working token and at least one model. */
+  activeMemberCount: number;
+  /** TrueFoundry users OpenWork added because they were missing. */
+  createdUserCount: number;
+  /** People OpenWork has no working token for (first 50 in attention). */
+  attentionCount: number;
+  attention: Array<{ memberId: string; name: string | null; email: string | null; reason: GatewayTrueFoundryAttentionReason; message: string | null }>;
+}
+
+export interface GatewayTrueFoundrySyncResult {
+  modelCount: number;
+  people: number;
+  tokensCreated: number;
+  usersCreated: number;
+  notInTrueFoundry: number;
+  noModels: number;
+  tokenLimit: number;
+  errors: number;
+  removed: number;
+}
+
 export interface GatewayProviderCredentialCounts {
   total: number;
   active: number;
@@ -289,6 +330,7 @@ export interface GatewayProviderDetails extends GatewayProviderSummary {
   credentialSets: GatewayCredentialSet[];
   accessGrants: GatewayAccessGrant[];
   litellm?: GatewayLiteLlmStatus;
+  truefoundry?: GatewayTrueFoundryStatus;
   /** Custom OpenAI-compatible providers, for callers who hold Manage Gateway providers. Never the key. */
   custom?: GatewayCustomProviderStatus;
 }

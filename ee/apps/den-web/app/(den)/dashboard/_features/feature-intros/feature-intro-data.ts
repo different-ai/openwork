@@ -19,7 +19,7 @@ export function featureIntroStatesQueryKey(orgId: string): string[] {
   return ["feature-intros", orgId];
 }
 
-/** Loads only while the `featureIntros` flag is on for the organization. */
+/** Loads only once the organization is loaded. */
 export function useFeatureIntroStates(orgId: string | null, enabled: boolean) {
   return useQuery({
     queryKey: featureIntroStatesQueryKey(orgId ?? ""),

@@ -13,6 +13,7 @@ import { ASK_WITHOUT_WAITING, askArgs } from "./opencode-plugins/openwork-agent-
 import { askWithoutWaiting } from "./opencode-v2-background-questions.js";
 import { loopbackFetch } from "./server-fetch.js";
 import type { PrepareDriveUpload } from "./extensions/approved-drive-upload.js";
+import type { FileSendApprovals, FileSendPolicy } from "./file-send-approval.js";
 
 const requestSchema = z.object({
   name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read", "openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft", ASK_WITHOUT_WAITING, ...DRIVE_FILE_ACTIONS]),
@@ -47,6 +48,10 @@ export type EngineApproval = {
   subject: string; nothing: string;
   /** Only a host-witnessed session choice may reuse this exact scoped rule. */
   sessionApproval?: { resource: string; remembered: boolean };
+  /** What "always" saves in the engine, for prompts whose remembering this host owns. */
+  save?: string[];
+  /** The engine's request id, once the question is showing. */
+  asked?: (requestId: string) => void;
 };
 
 /**
@@ -71,7 +76,7 @@ export async function askEngineApproval(engine: EngineConnection | undefined, ap
       body: JSON.stringify({
         action: approval.action,
         resources: approval.sessionApproval ? [...approval.resources, approval.sessionApproval.resource] : approval.resources,
-        save: approval.sessionApproval ? [...approval.resources, approval.sessionApproval.resource] : [], metadata: approval.metadata,
+        save: approval.sessionApproval ? [...approval.resources, approval.sessionApproval.resource] : approval.save ?? [], metadata: approval.metadata,
         source: { type: "tool", messageID: approval.messageId, id: approval.callId }, ...(approval.agent ? { agent: approval.agent } : {}),
       }),
     });
@@ -80,6 +85,7 @@ export async function askEngineApproval(engine: EngineConnection | undefined, ap
     if (created.data.data.effect === "deny") throw new Error(`Your permissions do not allow ${subject}, so ${nothing}.`);
     if (created.data.data.effect === "allow" && approval.sessionApproval?.remembered) return "remembered";
     if (created.data.data.effect !== "ask") throw new Error(`${subject[0]?.toUpperCase()}${subject.slice(1)} was not shown to you for approval, so ${nothing}.`);
+    approval.asked?.(created.data.data.id);
     const reader = events.body.pipeThrough(new TextDecoderStream()).getReader();
     let buffered = "";
     for (;;) {
@@ -195,6 +201,12 @@ export async function createV2ContextBridge(
   hostRequest: (path: string, init?: RequestInit) => Promise<unknown>,
   engine?: () => EngineConnection | undefined,
   prepareDriveUpload?: PrepareDriveUpload,
+  /**
+   * One approval for every tool that sends a local file to a connected
+   * account. `approvedRequest` is a host request marked, in this process only,
+   * as already approved in the chat.
+   */
+  fileSends?: { approvals: FileSendApprovals; approvedRequest: (path: string, init?: RequestInit) => Promise<unknown> },
 ) {
   const token = randomBytes(32).toString("base64url");
   const plugin = await OpenWorkExtensionsPreview();
@@ -219,6 +231,26 @@ export async function createV2ContextBridge(
         const signal = AbortSignal.any([request.signal, deadline, ...(init?.signal ? [init.signal] : [])]);
         signal.throwIfAborted();
         return hostRequest(path, { ...init, signal });
+      };
+      /** The shared file-send approval; asks in the calling chat only when the host has not already decided. */
+      const approveFileSend = (policy: FileSendPolicy, sessionId: string, caller: NonNullable<typeof call.caller>, send: {
+        kind: string; paths: readonly string[]; account?: string; fileIdentity?: string;
+        metadata: Record<string, unknown>; subject: string; nothing: string;
+      }) => {
+        if (!fileSends) throw new Error(`OpenWork cannot ask for your approval right now, so ${send.nothing}.`);
+        const current = engine?.();
+        return fileSends.approvals.approve(policy, {
+          kind: send.kind, directory: caller.directory, sessionId, paths: send.paths,
+          ...(caller.agent ? { agent: caller.agent } : {}), ...(current ? { engineUrl: current.url } : {}),
+          ...(send.account ? { account: send.account } : {}), ...(send.fileIdentity ? { fileIdentity: send.fileIdentity } : {}),
+        }, send.nothing, async prompt => {
+          const reply = await askEngineApproval(current, {
+            directory: caller.directory, sessionId, messageId: caller.messageId, callId: caller.callId, ...(caller.agent ? { agent: caller.agent } : {}),
+            action: send.kind, resources: prompt.resources, save: prompt.save, asked: prompt.asked,
+            metadata: { ...send.metadata, ...prompt.metadata }, subject: send.subject, nothing: send.nothing,
+          }, AbortSignal.any([request.signal, AbortSignal.timeout(APPROVAL_WAIT_MS)]));
+          return reply === "always" ? "always" : "once";
+        });
       };
       // Internal plugin discovery only: not a model-visible tool. This read
       // runs in the background and never participates in prompt admission.
@@ -255,6 +287,19 @@ export async function createV2ContextBridge(
         try {
           const path = prepared?.path ?? args.path;
           const currentEngine = engine?.();
+          const { directory } = call.caller;
+          const upload = async () => Response.json(prepared ? await prepared.upload() : await hostRequest("/experimental/extensions/call", { method: "POST", signal: request.signal, body: JSON.stringify({
+            extensionId: OPENWORK_CLOUD_UPLOADS_EXTENSION_ID, action: "drive_upload_file", args, context: { directory },
+          }) }));
+          const sendPolicy = await fileSends?.approvals.policy();
+          if (sendPolicy) {
+            await approveFileSend(sendPolicy, call.sessionId, call.caller, {
+              kind: DRIVE_UPLOAD_PERMISSION, paths: [path], subject: "this upload", nothing: "nothing was uploaded",
+              ...(args.connectionId ? { account: args.connectionId } : {}), ...(prepared?.approvalIdentity ? { fileIdentity: prepared.approvalIdentity } : {}),
+              metadata: { path, target: args.folderId ? `Google Drive folder ${args.folderId}` : "Google Drive", ...(args.connectionId ? { connectionId: args.connectionId } : {}) },
+            });
+            return await upload();
+          }
           // Keep the actual path in engine resources so path-scoped policy
           // denies still apply. Add an exact digest to prevent a saved file
           // rule authorizing another destination/account or file version. An
@@ -290,9 +335,7 @@ export async function createV2ContextBridge(
           // Healthy resumable uploads may take hours. Each network request is
           // bounded by the transport; do not add a 130-second total deadline.
           // Older embeddings stay root-bound and keep the caller's Stop signal.
-          return Response.json(prepared ? await prepared.upload() : await hostRequest("/experimental/extensions/call", { method: "POST", signal: request.signal, body: JSON.stringify({
-            extensionId: OPENWORK_CLOUD_UPLOADS_EXTENSION_ID, action: "drive_upload_file", args, context: { directory: call.caller.directory },
-          }) }));
+          return await upload();
         } finally {
           await prepared?.close();
         }
@@ -302,14 +345,19 @@ export async function createV2ContextBridge(
       if (call.name === "openwork_gmail_draft") {
         const args = gmailDraftSchema.parse(call.input);
         if (!call.sessionId || !call.caller) throw new Error("This OpenWork engine cannot ask for your approval, so no draft was created.");
-        await askEngineApproval(engine?.(), {
+        const metadata = {
+          paths: args.paths, subject: args.subject, target: args.threadId ? `Gmail reply to ${args.to}` : `Gmail draft to ${args.to}`,
+          ...(args.connectionId ? { connectionId: args.connectionId } : {}),
+        };
+        const sendPolicy = await fileSends?.approvals.policy();
+        if (sendPolicy) await approveFileSend(sendPolicy, call.sessionId, call.caller, {
+          kind: GMAIL_DRAFT_PERMISSION, paths: args.paths, metadata, subject: "this draft", nothing: "no draft was created",
+          ...(args.connectionId ? { account: args.connectionId } : {}),
+        });
+        else await askEngineApproval(engine?.(), {
           directory: call.caller.directory, sessionId: call.sessionId, messageId: call.caller.messageId, callId: call.caller.callId,
           ...(call.caller.agent ? { agent: call.caller.agent } : {}), action: GMAIL_DRAFT_PERMISSION, resources: args.paths,
-          metadata: {
-            paths: args.paths, subject: args.subject, target: args.threadId ? `Gmail reply to ${args.to}` : `Gmail draft to ${args.to}`,
-            ...(args.connectionId ? { connectionId: args.connectionId } : {}),
-          },
-          subject: "this draft", nothing: "no draft was created",
+          metadata, subject: "this draft", nothing: "no draft was created",
         }, AbortSignal.any([request.signal, AbortSignal.timeout(APPROVAL_WAIT_MS)]));
         deadline = AbortSignal.timeout(130_000);
         return Response.json(await read("/experimental/extensions/call", { method: "POST", body: JSON.stringify({
@@ -321,15 +369,20 @@ export async function createV2ContextBridge(
       if (call.name === "openwork_outlook_draft") {
         const args = outlookDraftSchema.parse(call.input);
         if (!call.sessionId || !call.caller) throw new Error("This OpenWork engine cannot ask for your approval, so no draft was created.");
-        await askEngineApproval(engine?.(), {
+        const metadata = {
+          paths: args.paths, ...(args.subject ? { subject: args.subject } : {}),
+          target: args.replyToMessageId ? "Outlook reply draft" : `Outlook draft to ${(args.to ?? []).join(", ")}`,
+          ...(args.connectionId ? { connectionId: args.connectionId } : {}),
+        };
+        const sendPolicy = await fileSends?.approvals.policy();
+        if (sendPolicy) await approveFileSend(sendPolicy, call.sessionId, call.caller, {
+          kind: OUTLOOK_DRAFT_PERMISSION, paths: args.paths, metadata, subject: "this draft", nothing: "no draft was created",
+          ...(args.connectionId ? { account: args.connectionId } : {}),
+        });
+        else await askEngineApproval(engine?.(), {
           directory: call.caller.directory, sessionId: call.sessionId, messageId: call.caller.messageId, callId: call.caller.callId,
           ...(call.caller.agent ? { agent: call.caller.agent } : {}), action: OUTLOOK_DRAFT_PERMISSION, resources: args.paths,
-          metadata: {
-            paths: args.paths, ...(args.subject ? { subject: args.subject } : {}),
-            target: args.replyToMessageId ? "Outlook reply draft" : `Outlook draft to ${(args.to ?? []).join(", ")}`,
-            ...(args.connectionId ? { connectionId: args.connectionId } : {}),
-          },
-          subject: "this draft", nothing: "no draft was created",
+          metadata, subject: "this draft", nothing: "no draft was created",
         }, AbortSignal.any([request.signal, AbortSignal.timeout(APPROVAL_WAIT_MS)]));
         deadline = AbortSignal.timeout(130_000);
         return Response.json(await read("/experimental/extensions/call", { method: "POST", body: JSON.stringify({
@@ -341,15 +394,29 @@ export async function createV2ContextBridge(
       // The host's Drive file route still has Desktop confirm saves, replaced copies and pulls outside drive/.
       if (isDriveFileAction(call.name)) {
         const { sessionId, caller } = call;
+        // Set only by the shared file-send approval: the host then saves
+        // without asking again in a Desktop dialog.
+        let pushApprovedInChat = false;
         const tools = createDriveFileTools((action, args) => {
           deadline = AbortSignal.timeout(DRIVE_FILE_CALL_MS);
-          return read("/experimental/drive-files/call", { method: "POST", body: JSON.stringify({
+          const approved = action === "drive_push_file" && pushApprovedInChat && fileSends ? fileSends.approvedRequest : undefined;
+          const send = approved
+            ? (path: string, init: RequestInit) => { const signal = AbortSignal.any([request.signal, deadline]); signal.throwIfAborted(); return approved(path, { ...init, signal }); }
+            : read;
+          return send("/experimental/drive-files/call", { method: "POST", body: JSON.stringify({
             action, args, context: { ...(sessionId ? { sessionId } : {}), ...(caller ? { directory: caller.directory, messageId: caller.messageId } : {}) },
           }) });
         });
         const refusal = DRIVE_FILE_REFUSALS[call.name] ?? { subject: "this Drive change", nothing: "nothing was changed" };
         const ask = async ({ permission, patterns, metadata }: { permission: string; patterns: string[]; metadata: Record<string, unknown> }) => {
           if (!sessionId || !caller) throw new Error(`This OpenWork engine cannot ask for your approval, so ${refusal.nothing}.`);
+          const sendPolicy = permission === "drive_push_file" ? await fileSends?.approvals.policy() : null;
+          if (sendPolicy) {
+            // A save goes back to the account the file came from.
+            await approveFileSend(sendPolicy, sessionId, caller, { kind: permission, paths: patterns, account: "source", metadata, ...refusal });
+            pushApprovedInChat = true;
+            return;
+          }
           await askEngineApproval(engine?.(), {
             directory: caller.directory, sessionId, messageId: caller.messageId, callId: caller.callId, ...(caller.agent ? { agent: caller.agent } : {}),
             action: permission, resources: patterns, metadata, ...refusal,

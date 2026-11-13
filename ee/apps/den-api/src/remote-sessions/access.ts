@@ -38,17 +38,14 @@ import { readOrganizationMetadataColumn } from "../organization-metadata.js"
  */
 export type RemoteSessionAccessPolicy = {
   /** `remoteSessionAccess` is on for this member: sessions started on a computer can be reached where both allow `all`. */
-  enabled: boolean
+  enabled: true
   /** `remoteTasksOptIn` is on for this member: a computer whose owner has not chosen takes nothing. */
   optIn: boolean
   /** `remoteDevices` is on for this member: Den shows them what applies on each of their computers. */
-  devices: boolean
+  devices: true
   /** The widest access a member may choose. */
   ceiling: RemoteSessionAccessMode
 }
-
-/** What applies in an organization that uses none of it. */
-export const DEFAULT_REMOTE_SESSION_ACCESS_POLICY: RemoteSessionAccessPolicy = { enabled: false, optIn: false, devices: false, ceiling: DEFAULT_REMOTE_SESSION_ACCESS_MODE }
 
 export const ORGANIZATION_SESSION_ACCESS_DENIED_MESSAGE = "Your organization only allows sessions that were started remotely."
 export const COMPUTER_SESSION_ACCESS_DENIED_MESSAGE =
@@ -60,25 +57,14 @@ export const COMPUTER_REMOTE_ACCESS_UPDATE_MESSAGE =
   "Update OpenWork on that computer, then allow tasks from other devices in Settings > Devices on it."
 
 /** The policy from feature states and organization metadata that were already read. */
-export function remoteSessionAccessPolicy(input: { features: Pick<FeatureMap, "remoteSessionAccess" | "remoteTasksOptIn" | "remoteDevices">; metadata: unknown }): RemoteSessionAccessPolicy {
+export function remoteSessionAccessPolicy(input: { features: Pick<FeatureMap, "remoteTasksOptIn">; metadata: unknown }): RemoteSessionAccessPolicy {
   const stored = readOrganizationRemoteSessionSettings(input.metadata).access
-  const enabled = input.features.remoteSessionAccess
   return {
-    enabled,
+    enabled: true,
     optIn: input.features.remoteTasksOptIn,
-    devices: input.features.remoteDevices,
-    ceiling: stored === "all" && !enabled ? DEFAULT_REMOTE_SESSION_ACCESS_MODE : stored,
+    devices: true,
+    ceiling: stored,
   }
-}
-
-/**
- * Whether the organization uses any of it: one of the two access features,
- * Devices (which shows each computer's access), or a ceiling of `off`. Only
- * then are computers told the policy and their reports taken: an organization
- * that never turned anything on keeps exchanging nothing about it with its desktops.
- */
-export function remoteSessionAccessInUse(policy: RemoteSessionAccessPolicy): boolean {
-  return policy.enabled || policy.optIn || policy.devices || policy.ceiling === "off"
 }
 
 /** Who the policy is read for: the signed-in person, or the member a runner belongs to. */

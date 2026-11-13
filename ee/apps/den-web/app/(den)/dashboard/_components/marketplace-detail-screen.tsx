@@ -62,7 +62,7 @@ const COMPONENT_TYPE_LABELS: Record<string, { singular: string; plural: string }
   lsp_server: { singular: "LSP server", plural: "LSP servers" },
   monitor: { singular: "monitor", plural: "monitors" },
   workflow: { singular: "Workflow", plural: "Workflows" },
-  app: { singular: "App", plural: "Apps" },
+  app: { singular: "Artifact", plural: "Artifacts" },
   settings: { singular: "setting", plural: "settings" },
 };
 
@@ -128,7 +128,7 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [actionsOpen]);
 
-  // With `featureIntros` on, a box replaces "No plugins in this collection yet" (DESIGN.md I1).
+  // Feature intro: a box replaces "No plugins in this collection yet" (DESIGN.md I1).
   // This page can't tell how many collections exist, so it clears what the list reported.
   const pluginsIntro = useFeatureIntro(
     "collections.plugins",

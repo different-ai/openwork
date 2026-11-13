@@ -4,9 +4,9 @@ import type { ModelOption, ModelRef } from "@/app/types";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ActionContextMenu } from "@/components/ui/action-context-menu";
-import { OpenWorkMark, ProviderIcon } from "@/react-app/design-system/provider-icon";
+import { ProviderIcon } from "@/react-app/design-system/provider-icon";
 import { AutoPickerRecovery, useObservedAutoAccessSnapshot } from "@/react-app/domains/cloud/auto-access-ui";
-import { autoNotOffered, autoPickerCopy, autoQuietlyUnavailable, freeAutoSwitchedOff, type AutoPickerState } from "@/app/lib/inference-access";
+import { freeAutoSwitchedOff } from "@/app/lib/inference-access";
 import type { MenuAction } from "@/components/ui/action-menu-model";
 import { Command, CommandCollection, CommandGroup, CommandGroupLabel, CommandHeader, CommandInput, CommandItem, CommandList, CommandPanel } from "@/components/ui/command";
 import { AUTO_ROUTER_GROUP, fixedModelTitle, immutableModelPin, isAutoModel, isAutoRouterModel, isPinModelShortcut, markExplicitModelChoice, modelGroups, modelMakerId, modelSource, modelStateLabel, modelSubtitle, modelTitle, orderedModelPins, retainedModelCopy, withAutoDefaultPin, MODEL_SOURCE_LABELS, type ModelGroup, type ModelPickerCatalogState, type RetainedModelSelection } from "./model-catalog";
@@ -14,7 +14,6 @@ import { modelRefKey, useModelCollectionsStore } from "@/react-app/domains/sessi
 import { PickerNotice } from "./picker-notice";
 import { resolveSearchIntent, searchIntentSummary, searchIntentTag, searchModels } from "./model-search";
 import { useModelShortcutsStore } from "@/react-app/domains/shortcuts/model-shortcuts-store";
-import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { formatChord, resolveShortcutOs } from "@/react-app/domains/shortcuts/shortcut-keys";
 
 export function ModelSourceIcon({ model }: { model: ModelRef & { source?: ModelOption["source"] } }) {
@@ -23,12 +22,11 @@ export function ModelSourceIcon({ model }: { model: ModelRef & { source?: ModelO
   return <Icon role="img" aria-label={MODEL_SOURCE_LABELS[source]} className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.5} />;
 }
 
-function ProviderMark({ model, description, retained = false, plainFreeModel = false }: { model: ModelRef & { title?: string }; description?: string; retained?: boolean; plainFreeModel?: boolean }) {
+function ProviderMark({ model, description, retained = false }: { model: ModelRef & { title?: string }; description?: string; retained?: boolean }) {
   // The maker's logo when the name says who made it; the provider is named in text beside it.
   const maker = retained ? null : modelMakerId(model);
   return <div data-slot="model-provider-mark" className="flex size-4 shrink-0 items-center justify-center">
-    {isAutoModel(model) && !plainFreeModel ? <OpenWorkMark className="size-4 text-dls-accent dark:text-foreground" />
-      : isAutoRouterModel(model) ? <Sparkles aria-hidden="true" strokeWidth={1.5} className="size-4 text-dls-accent dark:text-foreground" />
+    {isAutoRouterModel(model) ? <Sparkles aria-hidden="true" strokeWidth={1.5} className="size-4 text-dls-accent dark:text-foreground" />
       : <ProviderIcon providerId={maker ?? (retained ? undefined : model.providerID)} providerName={maker ? undefined : description} size={16} />}
   </div>;
 }
@@ -72,7 +70,6 @@ export type ModelPickerListProps = {
   onRetryAuto?: () => void | Promise<unknown>;
 };
 
-type AutoRowState = { model: ModelRef; state: AutoPickerState; code?: string | null; resetsAt?: string | null };
 export function ModelPickerList(props: ModelPickerListProps) {
   return isAutoModel(props.current) || props.options.some(isAutoModel) || props.openWorkModelsSyncing
     ? <AutoStatusModelPickerList {...props} /> : <ModelPickerRows {...props} />;
@@ -81,16 +78,10 @@ export function ModelPickerList(props: ModelPickerListProps) {
 function AutoStatusModelPickerList(props: ModelPickerListProps) {
   const snapshot = useObservedAutoAccessSnapshot();
   const status = snapshot?.data;
-  const availableAuto = props.options.find(isAutoModel);
-  const auto = isAutoModel(props.current) ? props.current : availableAuto;
-  const matches = auto && status && modelRefKey(auto) === modelRefKey(status);
-  const state: AutoPickerState = props.openWorkModelsSyncing ? "sync" : snapshot?.status === "error" ? "unavailable" : matches ? (autoQuietlyUnavailable(status) ? "ready" : autoNotOffered(status) ? "not_offered" : status.state) : "ready";
   const switchedOff = freeAutoSwitchedOff(status);
   const blockedByPolicy = props.retainedSelection !== undefined && props.retainedSelection.reason !== "unavailable" && isAutoModel(props.current);
-  // `plainFreeModel`: the free model is a row like any other. Its limit is not checked here; a send that hits it
-  // is refused and the chat says so (autoWallCopy), the same way any provider's error is shown.
-  const plainFreeModel = useDesktopFeature("plainFreeModel");
-  return <ModelPickerRows {...props} plainFreeModel={plainFreeModel} retainedSelection={switchedOff && isAutoModel(props.current) ? undefined : props.retainedSelection} options={withAutoDefaultPin(switchedOff ? props.options.filter((option) => !isAutoModel(option)) : props.options, status)} openWorkModelsSyncing={!switchedOff && !blockedByPolicy && props.openWorkModelsSyncing} autoRow={!plainFreeModel && !switchedOff && !blockedByPolicy && auto ? { model: auto, state, code: status?.code, resetsAt: status?.allowance?.resetsAt } : undefined} />;
+  // The free model is a normal row; limits are explained when a send is refused.
+  return <ModelPickerRows {...props} retainedSelection={switchedOff && isAutoModel(props.current) ? undefined : props.retainedSelection} options={withAutoDefaultPin(switchedOff ? props.options.filter((option) => !isAutoModel(option)) : props.options, status)} openWorkModelsSyncing={!switchedOff && !blockedByPolicy && props.openWorkModelsSyncing} />;
 }
 
 /** Context-menu rows show the chord that triggers the same command (DESIGN S6). */
@@ -99,9 +90,8 @@ function menuChord(label: string, chord: string) {
 }
 
 function ModelPickerRows({ options, current, query, onQueryChange, onSelect, focusAlternative = false, footer, leading, searchInputRef, autoFocusSearch = true,
-  catalogState, retainedSelection, onConnectProvider, onOpenProviderSettings, onSetWorkspaceDefault, currentBehaviorValue, openWorkModelsSyncing, onReloadWorkspace, onRetryAuto, autoRow, plainFreeModel = false,
-}: ModelPickerListProps & { autoRow?: AutoRowState; plainFreeModel?: boolean }) {
-  const display = { plainFreeModel };
+  catalogState, retainedSelection, onConnectProvider, onOpenProviderSettings, onSetWorkspaceDefault, currentBehaviorValue, openWorkModelsSyncing, onReloadWorkspace,
+}: ModelPickerListProps) {
   const favorites = useModelCollectionsStore((state) => state.favorites);
   const recent = useModelCollectionsStore((state) => state.recent);
   // A model bound to a saved shortcut in Settings shows its key on the row.
@@ -123,8 +113,7 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
   const [highlighted, setHighlighted] = useState<ModelOption | null>(null);
   const [retryBusy, setRetryBusy] = useState(false);
   const [retryFailed, setRetryFailed] = useState(false);
-  const blockedAuto = (option: ModelRef) => autoRow?.state !== undefined && autoRow.state !== "ready" && modelRefKey(option) === modelRefKey(autoRow.model);
-  const canSelect = (option: ModelOption) => !option.disabled && !blockedAuto(option) && options.some((item) => modelRefKey(item) === modelRefKey(option) && !item.disabled);
+  const canSelect = (option: ModelOption) => !option.disabled && options.some((item) => modelRefKey(item) === modelRefKey(option) && !item.disabled);
   // Options typed in the search ("fast", "high") come along; a model that lacks one is still chosen.
   const select = (option: ModelOption) => {
     if (!canSelect(option)) return;
@@ -162,9 +151,9 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
   const retained = retainedSelection && modelRefKey(retainedSelection.model) === modelRefKey(current)
     && !options.some((option) => modelRefKey(option) === modelRefKey(current) && !option.disabled) ? retainedSelection : undefined;
   const retainedCopy = retained ? retainedModelCopy(retained.reason) : null;
-  const retainedName = retained ? (fixedModelTitle(retained.model, display) ?? (retained.title ? modelTitle({ ...retained.model, title: retained.title, description: retained.description }, display) : "Saved model")) : "";
+  const retainedName = retained ? (fixedModelTitle(retained.model) ?? (retained.title ? modelTitle({ ...retained.model, title: retained.title, description: retained.description }) : "Saved model")) : "";
   const retainedVisible = retained && (!query.trim() || `${retainedName} ${retained.description ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
-  const retainedState = retained && isAutoModel(retained.model) && autoRow && autoRow.state !== "ready" ? autoPickerCopy(autoRow.state, false, undefined, autoRow.code, autoRow.resetsAt).subtitle : retainedCopy?.subtitle;
+  const retainedState = retainedCopy?.subtitle;
   const retainedSubtitle = [retained && !isAutoModel(retained.model) ? retained.description?.trim() : null, retainedState].filter(Boolean).join(" · ");
   // A saved model that was pinned stays where the person pinned it, at the top of Pinned.
   const retainedPinned = Boolean(retained && favorites.some((favorite) => modelRefKey(favorite) === modelRefKey(retained.model)));
@@ -209,15 +198,14 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
             {group.value === mergedLabel || UNLABELED_GROUPS.has(group.value) ? null : <CommandGroupLabel className="flex min-h-7 items-center">{group.value}</CommandGroupLabel>}
             <CommandCollection>{(option: ModelOption) => {
               const key = modelRefKey(option);
-              const name = modelTitle(option, display);
+              const name = modelTitle(option);
               const fixed = immutableModelPin(option);
               const active = modelRefKey(current) === key;
-              const autoState = autoRow && modelRefKey(autoRow.model) === key ? autoRow.state : undefined;
               const blocked = !canSelect(option);
-              const subtitle = autoState ? autoPickerCopy(autoState, false, undefined, autoRow?.code, autoRow?.resetsAt).subtitle : active && failed ? `${modelSubtitle(option, false, display)}${modelSubtitle(option, false, display) ? " · " : ""}availability not verified` : modelSubtitle(option, false, display);
+              const subtitle = active && failed ? `${modelSubtitle(option)}${modelSubtitle(option) ? " · " : ""}availability not verified` : modelSubtitle(option);
               // The name always wins the row. One quiet line under it carries where the model
               // comes from (only where a group mixes providers) and what is true about it now.
-              const meta = autoState || (isAutoModel(option) && !plainFreeModel) || isAutoRouterModel(option) ? subtitle
+              const meta = isAutoRouterModel(option) ? subtitle
                 : [MIXED_GROUPS.has(group.value) ? option.description?.trim() : null, modelStateLabel(option),
                   active && failed ? "Availability not verified" : null].filter(Boolean).join(" · ");
               // Options typed in the search show only where they apply; the line above the list says the rest.
@@ -237,7 +225,7 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
                 onFocus={() => setHighlighted(option)} onClick={() => select(option)}
                 onKeyDown={(event) => { if (event.key === "Enter" && event.target === event.currentTarget) { event.preventDefault(); select(option); } }}
               />}>
-                <ProviderMark model={option} description={option.description} plainFreeModel={plainFreeModel} />
+                <ProviderMark model={option} description={option.description} />
                 <span data-slot="model-label" className="min-w-0 flex-1 leading-5">
                   <span className={`block truncate${active ? " font-medium" : ""}`} title={name}>{name}</span>
                   {meta ? <span className="block truncate text-xs text-muted-foreground" title={meta}>{meta}</span> : null}
@@ -262,12 +250,11 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
       {failed ? <PickerNotice tone={verified ? "neutral" : "error"} role="alert" testId="model-catalog-error" action={<Button size="sm" variant="outline" disabled={!catalogState?.onRetry || retryBusy || catalogState.refreshing} onClick={() => void retry()}>Retry</Button>}>
         {verified ? <>Showing models from <time dateTime={verified.toISOString()}>{verified.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</time>. Couldn’t refresh just now.</> : hasOptions ? "Couldn’t load the rest of your models. Pinned models still work." : "Couldn’t load your models. Try again."}
       </PickerNotice> : null}
-      {retainedCopy && !query.trim() && !(isAutoModel(current) && autoRow && autoRow.state !== "ready") ? <PickerNotice action={<>
+      {retainedCopy && !query.trim() ? <PickerNotice action={<>
         {retained?.reason === "unavailable" && catalogState?.onRetry ? <Button size="sm" variant="outline" disabled={retryBusy || catalogState.refreshing} onClick={() => void retry()}>Refresh</Button> : null}
         {retained?.reason === "disabled" && onOpenProviderSettings ? <Button size="sm" variant="outline" onClick={onOpenProviderSettings}>AI providers</Button> : null}
       </>}>{retainedCopy.detail}</PickerNotice> : null}
-      {autoRow && autoRow.state !== "ready" ? <AutoPickerRecovery state={autoRow.state} code={autoRow.code} resetsAt={autoRow.resetsAt} onRetry={onRetryAuto} onReload={onReloadWorkspace} hasAlternatives={Boolean(alternativeKey)} />
-        : openWorkModelsSyncing ? <AutoPickerRecovery state="sync" onReload={onReloadWorkspace} /> : null}
+      {openWorkModelsSyncing ? <AutoPickerRecovery state="sync" onReload={onReloadWorkspace} /> : null}
       {empty ? <PickerNotice action={onConnectProvider ? <Button size="sm" onClick={onConnectProvider}>Connect a provider</Button> : null}>Nothing is connected in this workspace.</PickerNotice> : null}
       {focusAlternative && !alternativeKey && hasOptions && onConnectProvider ? <PickerNotice action={<Button size="sm" variant="outline" onClick={onConnectProvider}>Connect a provider</Button>}>Nothing else is connected in this workspace.</PickerNotice> : null}
       {footer}

@@ -1,4 +1,4 @@
-// The Codex CLI through the AI Gateway (feature gatewayMemberApiKeys): a Codex provider's base_url
+// The Codex CLI through the AI Gateway (member AI Gateway API keys): a Codex provider's base_url
 // points at /api/v1/codex, and every model answers as the Responses API under a name a person can set.
 import assert from "node:assert/strict"
 import { test } from "node:test"
@@ -67,7 +67,7 @@ const RESPONSES_STREAM = [
   { type: "response.completed", response: { id: "resp_up", object: "response", status: "completed", output: [{ type: "reasoning", id: "rs_1", summary: [], encrypted_content: "enc" }, { type: "message", id: "msg_1", role: "assistant", content: [{ type: "output_text", text: "From GPT" }] }], usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 } } },
 ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("")
 
-function app(rows: GatewayMemberAccessRow[], options: { enabled?: boolean } = {}) {
+function app(rows: GatewayMemberAccessRow[]) {
   const sent: Request[] = []
   const api = new Hono<{ Variables: InferenceAuthVariables & OrganizationVariables }>()
   api.use("*", async (c, next) => {
@@ -103,7 +103,6 @@ function app(rows: GatewayMemberAccessRow[], options: { enabled?: boolean } = {}
       deepseek: { npm: "@ai-sdk/openai-compatible", api: "https://api.deepseek.com/v1", env: [] },
     }),
     autoRouterReasoning: createMemoryReasoningStore(),
-    toolEndpointsEnabled: async () => options.enabled ?? true,
     now: () => now,
   })
   const responses = (body: Record<string, unknown>) => api.request("/api/v1/codex/responses", {
@@ -296,12 +295,4 @@ test("unknown names, stored responses on translated models and unknown routes ge
   assert.equal((await responses({ model: "claude-haiku-4-5", input: "hi" })).status, 200)
   assert.equal((await api.request("/api/v1/codex/chat/completions", { method: "POST", body: "{}" })).status, 404)
   assert.equal(sent.length, 1)
-})
-
-test("with member API keys off the endpoint does not exist", async () => {
-  const gpt = accessRow(openaiId, { modelId: "gpt-5-mini", name: "GPT-5 Mini" })
-  const { api, sent, responses } = app([gpt], { enabled: false })
-  assert.equal((await api.request("/api/v1/codex/models")).status, 404)
-  assert.equal((await responses({ model: name(gpt), input: "hi" })).status, 404)
-  assert.equal(sent.length, 0)
 })

@@ -34,13 +34,13 @@ function Signed({ me, authorization, refreshIdentity }: { me: Me; authorization?
 
 function App() {
   const me = useQuery({ queryKey: ["workbot", "me"], queryFn: fetchMe, staleTime: 60_000, refetchOnReconnect: "always" })
-  // While dictation is on its state is re-read every minute, so turning it off stops capture. Every pending read below
+  // Refresh authorization every minute. Every pending read below
   // locks the page, so this one runs on its own: the same person and workspace only update what is cached, and any
   // other answer goes through that locked read.
-  const dictation = me.data?.nativeDictation === true
+  const enabled = me.data?.enabled === true
   const refetchMe = me.refetch
   useEffect(() => {
-    if (!dictation) return
+    if (!enabled) return
     const timer = setInterval(() => {
       if (document.hidden) return
       void fetchMe().then(next => {
@@ -50,7 +50,7 @@ function App() {
       }, () => { /* A failed read leaves the verified state as it was; the next one tries again. */ })
     }, 60_000)
     return () => clearInterval(timer)
-  }, [dictation, refetchMe])
+  }, [enabled, refetchMe])
   const [owner, setOwner] = useState<Me | null>(null)
   const [until, setUntil] = useState<number | null>(null)
   const [identityWaiters, setIdentityWaiters] = useState<Array<(value: Me | null) => void>>([])

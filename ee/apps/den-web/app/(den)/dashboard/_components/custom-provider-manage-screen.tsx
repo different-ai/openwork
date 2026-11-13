@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
-import { LockKeyhole, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { createAuditOperationContext } from "@openwork/types/den/audit";
 import { normalizeGatewayCustomBaseUrl, type GatewayCustomDiscoveryStatus, type GatewayCustomTestResponse, type GatewayCustomUpdateRequest } from "@openwork/types/den/gateway-custom-providers";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
@@ -14,7 +14,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSecretInput } from "../../_components/ui/secret-input";
 import { DenSelect } from "../../_components/ui/select";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
-import { getAiGatewayProvidersRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getAiGatewayProvidersRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { discoverCustomProviderModels, syncCustomProviderAccess, testCustomProvider, testRequestFailure, updateCustomProvider } from "./custom-provider-data";
 import { CustomProviderModelList, useModelTemplates, type ModelListHighlight, type ModelTemplate } from "./custom-provider-model-list";
@@ -48,9 +48,8 @@ export function CustomProviderManageScreen({ provider, reload, embedded = false 
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
   const { orgId, orgSlug, orgContext, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
-  const enabled = orgFeatureEnabled(orgContext, "gatewayCustomProviders");
   const custom = provider.custom;
-  const editable = enabled && custom !== null;
+  const editable = custom !== null;
   const templates = useModelTemplates(editable ? orgId : null);
   const initialAccess = useMemo(() => savedAccess(provider), [provider]);
   const [name, setName] = useState(provider.name);
@@ -243,8 +242,7 @@ export function CustomProviderManageScreen({ provider, reload, embedded = false 
         <Heading className="min-w-0 flex-1 truncate text-[20px] font-medium tracking-[-0.02em] text-gray-900" data-testid="gateway-provider-title">{provider.name}</Heading>
         {editable ? <DenButton variant="secondary" icon={RefreshCw} loading={refetching} disabled={busy && !refetching} onClick={() => void refetch()} data-testid="custom-provider-refetch">Re-fetch models</DenButton> : null}
       </div>
-      {!enabled ? <div data-testid="custom-provider-feature-off"><DenNotice className="mt-4" tone="neutral" icon={LockKeyhole} message="Custom providers aren't turned on for your organization, so this provider can't be changed. Ask OpenWork to turn them on. You can still remove it." /></div> : null}
-      {enabled && !custom ? <DenNotice className="mt-4" tone="error" message="Could not read this provider's settings. Reload the page, or remove the provider and add it again." /> : null}
+      {!custom ? <DenNotice className="mt-4" tone="error" message="Could not read this provider's settings. Reload the page, or remove the provider and add it again." /> : null}
       {error ? <DenNotice tone="error" message={error} className="mt-4" /> : null}
       {refetchNotice ? <div data-testid="custom-provider-refetch-result"><DenNotice className="mt-4" tone={refetchNotice.tone} message={refetchNotice.message} /></div> : null}
 

@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import nativeContext from "../src/opencode-plugins/openwork-context-v2.js";
-import { computerToolsOffered } from "../src/opencode-plugins/openwork-computer-use.js";
 
 type Answer = (path: string) => { status: number; body: unknown };
 
@@ -39,12 +38,12 @@ async function register(browserUrl: string, reloadable: boolean) {
   return { names, computer, prompt: async () => { await prompt?.(); }, stop };
 }
 
-test("computer tools are offered only while the desktop has computer use on", async () => {
+test("computer tools stay available without a rollout lookup", async () => {
   let offered = false;
   const bridge = await listen(path => path === "/computer" ? { status: 200, body: { offered } } : { status: 404, body: {} });
   const native = await register(bridge.url, true);
   try {
-    assert.deepEqual(native.computer(), [], "flag off: the model never sees computer tools");
+    assert.ok(native.computer().includes("computer_open"));
     assert.ok([...native.names].some(name => name.startsWith("browser_")), "browser tools are unaffected");
 
     offered = true;
@@ -53,7 +52,7 @@ test("computer tools are offered only while the desktop has computer use on", as
 
     offered = false;
     await native.prompt();
-    assert.deepEqual(native.computer(), [], "turning it off withdraws them again");
+    assert.ok(native.computer().includes("computer_open"));
   } finally { await native.stop(); await bridge.close(); }
 });
 
@@ -65,28 +64,6 @@ test("an engine without registry reload keeps computer tools offered", async () 
   } finally { await native.stop(); await bridge.close(); }
 });
 
-test("only an explicit desktop answer of off hides computer tools", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "openwork-computer-gate-"));
-  const previous = process.env.OPENWORK_UI_CONTROL_DISCOVERY;
-  let answer: { status: number; body: unknown } = { status: 200, body: { enabled: false } };
-  const desktop = await listen(path => path === "/computer/enabled" ? answer : { status: 404, body: { ok: false } });
-  try {
-    const discovery = join(directory, "openwork-ui-control.json");
-    await writeFile(discovery, JSON.stringify({ baseUrl: desktop.url, token: "desktop" }));
-    process.env.OPENWORK_UI_CONTROL_DISCOVERY = discovery;
-    assert.equal(await computerToolsOffered(), false);
-    answer = { status: 200, body: { enabled: true } };
-    assert.equal(await computerToolsOffered(), true);
-    // A cloud worker's bridge has no such route: its tools stay as they were.
-    answer = { status: 404, body: { ok: false } };
-    assert.equal(await computerToolsOffered(), true);
-  } finally {
-    if (previous === undefined) delete process.env.OPENWORK_UI_CONTROL_DISCOVERY;
-    else process.env.OPENWORK_UI_CONTROL_DISCOVERY = previous;
-    await desktop.close();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
 
 test("a subagent's computer calls name the chat that started it and the subagent, from the engine's session tree", async () => {
   const bodies: Array<Record<string, unknown>> = [];
@@ -126,12 +103,6 @@ test("a subagent's computer calls name the chat that started it and the subagent
     assert.deepEqual(bodies.map(body => [body.sessionId, body.rootSessionId, body.agentName]),
       [["nested", "chat", "Place the photo"], ["maps-agent", "chat", "Maps"], ["untitled", "chat", "general"], ["chat", undefined, undefined]],
       "a subagent's cursor name is its description, else its agent's name; the chat's own calls name none");
-    // With parallel computer use off, nothing is looked up or sent: each session is its own chat.
-    parallel = false;
-    await prompt?.();
-    assert.doesNotMatch(tools.get("computer_open")?.description ?? "", /subagent/, "and goes with it");
-    bodies.length = 0;
-    await status.execute({}, { sessionID: "fresh-agent", agent: "general", signal: new AbortController().signal });
-    assert.deepEqual([bodies[0]?.rootSessionId, bodies[0]?.agentName], [undefined, undefined]);
+
   } finally { await stop(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });

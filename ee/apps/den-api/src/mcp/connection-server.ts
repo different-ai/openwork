@@ -29,7 +29,6 @@ import {
   type CapabilityExecuteInput,
   type ExecuteCapabilityToolResult,
 } from "./capability-registry.js"
-import { nativeOperationAvailableToCapabilities } from "./catalog-availability.js"
 import type { McpToolOperation } from "./catalog.js"
 import { denInputJsonSchema } from "./codemode-tools.js"
 import { connectionActionAppMeta, connectionActionPayloadFromStatus, connectionActionTextFallback } from "./connection-action.js"
@@ -384,7 +383,7 @@ export function createConnectionServerHandler(input: { revision: InventoryRevisi
 
 export type ConnectionServerRouteDeps = {
   verify: (request: Request, requestId: string) => Promise<McpPrincipal | Response>
-  features: (organizationId: string, userId: string) => Promise<Pick<FeatureMap, "connectionMcpServers" | "managedDeployments" | "outlookAttachments">>
+  features: (organizationId: string, userId: string) => Promise<Pick<FeatureMap, "connectionMcpServers" | "managedDeployments">>
   member: typeof resolveMcpMemberIdentity
   catalog: (app: Hono, env: unknown) => Promise<readonly McpToolOperation[]>
   sources: ConnectionServerSources
@@ -445,7 +444,7 @@ export function registerConnectionServerRoutes<T extends { Variables: RequestIdV
       connectionId: c.req.param("connectionId"),
       redirectUriBase,
       // The listed tools follow the same rollouts as execute_capability below.
-      catalog: catalog.filter((operation) => nativeOperationAvailableToCapabilities({ outlookAttachmentsEnabled: features.outlookAttachments === true }, operation)),
+      catalog,
     }, deps.sources)
     if (!connection) return connectionUnavailableResponse(c.req.raw)
 

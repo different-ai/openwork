@@ -365,7 +365,7 @@ function describeMove(wake: Extract<CalendarWake, { change: "moved" }>, moved: s
  * The short prompt Den starts each pass with: why it woke, when it last looked at each source, and what it is
  * responsible for. Calendar facts are summaries; the agent reads details itself.
  */
-/** The member's own words and quiet window, as the wake prompt carries them (`workbotProactive`). */
+/** The member's own words and quiet window, as the wake prompt carries them. */
 export type AgentPersonWishes = { preferences: AgentPreferences; quietWindow: AgentHourWindow | null }
 
 /**
@@ -449,7 +449,7 @@ export function agentWakePrompt(input: {
   instructions: string
   now: number
   timeZone: string
-  /** The member's own words, when `workbotProactive` is on for them. */
+  /** The member's own proactive instructions. */
   wishes?: AgentPersonWishes | null
 }): string {
   const { now, timeZone } = input

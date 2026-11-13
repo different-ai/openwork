@@ -139,7 +139,7 @@ async function fetchThread(chat: string | null, turns: number) {
   const { response, payload } = await requestJson(inChat(`/v1/workbot?turns=${turns}`, chat), { method: "GET" }, 30_000);
   if (!response.ok) throw new Error(getErrorMessage(payload, "Couldn't load the conversation."));
   const thread = threadSchema.parse(payload);
-  if (workbotHost().instantOpen) saveThreadSnapshot(workbotHost().identity, chat, thread);
+  saveThreadSnapshot(workbotHost().identity, chat, thread);
   return thread;
 }
 
@@ -160,15 +160,15 @@ export function prefetchWorkbotThread(queryClient: QueryClient, chat: string | n
 /**
  * The conversation's newest `turns` turns. While the live stream is connected it is re-read only when
  * the stream says something changed; without it, it polls quickly while an answer is in progress.
- * With `instantOpen`, a chat opens on the newest page kept on this device from the last visit while it is read again.
+ * A chat opens on the newest page kept on this device from the last visit while it is read again.
  */
 export function useWorkbotThread(input: { turns: number; awaiting: boolean; live: boolean }) {
   const chat = useWorkbotChat();
   return useQuery({
     queryKey: threadKey(chat, input.turns),
     queryFn: () => fetchThread(chat, input.turns),
-    // The previous window while a larger one is read; on a first open, what this device kept (instantOpen).
-    placeholderData: (previous) => previous ?? (workbotHost().instantOpen ? keptThread(chat) : undefined),
+    // The previous window while a larger one is read; on a first open, what this device kept.
+    placeholderData: (previous) => previous ?? (keptThread(chat)),
     refetchInterval: (query) => {
       const data = query.state.data;
       const busy = input.awaiting || (data?.available === true && data.status === "busy");
@@ -445,7 +445,7 @@ export function useSendWorkbotMessage() {
     mutationFn: async (input: { id: string; text: string; attachments?: string[]; context?: WorkbotViewContext; teachingId?: string; teachingStepId?: number }) => {
       if (input.text.length > MAX_MESSAGE_CHARS) throw new WorkbotSendError("That's too long for one message. Send it as a file instead.", 400);
       // Avoid racing the first streamed words on mount, but never make an unavailable stream block sending.
-      if (workbotHost().quickReply) await workbotLiveReadiness.wait(chat);
+      await workbotLiveReadiness.wait(chat);
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const { response, payload } = await requestJson(inChat("/v1/workbot/messages", chat), {
         method: "POST",
@@ -539,7 +539,7 @@ const connectionsSchema = z.object({
     nativeProviderKey: z.string().nullable().optional(),
     connectMode: z.enum(["inline", "external", "admin"]).optional(),
   })),
-  /** Every app the person can use, connected or not (`workbotProfileSheet`); older Dens leave it out. */
+  /** Every app the person can use, connected or not; older Dens leave it out. */
   apps: z.array(z.object({
     id: z.string(),
     name: z.string(),
@@ -625,14 +625,13 @@ export function useWorkbotMemory(enabled: boolean) {
 }
 
 /**
- * The computers the person can reach through OpenWork, for the Devices page (`remoteDevices`). Mounted only by that
+ * The computers the person can reach through OpenWork, for the Devices page. Mounted only by that
  * page, so the list is re-read every minute, and when the window is looked at again, only while it is on screen.
  */
 export function useWorkbotDevices() {
   const host = workbotHost();
   return useQuery({
     queryKey: ["workbot", "devices", host.identity?.organizationId, host.identity?.principalId],
-    enabled: host.devices === true,
     queryFn: async () => {
       const { response, payload } = await requestJson("/v1/workbot/devices", { method: "GET" }, 15_000);
       if (!response.ok) throw new Error("Couldn't load your computers.");

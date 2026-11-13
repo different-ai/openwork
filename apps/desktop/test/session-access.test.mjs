@@ -897,7 +897,7 @@ test("a ceiling the organization lowers stops the session reports at once", asyn
   assert.equal(den.reports().length, 4, "so the owner's wider choice changes nothing")
 })
 
-test("while Den has the feature off nothing is reported, and a 404 is not retried for ten minutes", async (t) => {
+test("an older Den without session reporting is not retried for ten minutes after a 404", async (t) => {
   let clock = 1_000_000
   const { root, local, den, runner } = await fixture(t, { now: () => clock, sessionReportMinIntervalMs: 0 })
   local.v2.workspace_a = [{ id: "ses_local", time: { updated: 1 } }]

@@ -236,7 +236,7 @@ test("a failed navigation receipt is marked uncertain and is never repeated", as
   assert.equal(opens, 1);
 });
 
-test("the broker gates programs and cancels old waits across off/on", async (t) => {
+test("the broker permits programs and reset cancels old waits", async (t) => {
   const f = browserFixture();
   const control = createComputerControl({
     adapters: [{ id: "local", label: "Local", placement: "local", protocol: COMPUTER_PROTOCOL, readiness: async () => ({ readiness: "ready", detail: "Ready" }), connect: async () => { throw new Error("Browser programs never open a native helper"); } }],
@@ -246,14 +246,10 @@ test("the broker gates programs and cancels old waits across off/on", async (t) 
   t.after(() => control.reset(true));
   /** @type {import("@openwork/computer-use/runtime").ProgramRequest & { sessionId: string }} */
   const input = { sessionId: "chat", surface: "browser", code: 'return await tools.ui.waitFor({target:{name:"Not here"},timeoutMs:5000});' };
-  assert.equal((await control.program(input)).ok, false);
-  assert.deepEqual(f.calls, []);
-  await control.setFeatureEnabled(true);
   const running = control.program(input);
   while (!f.calls.length) await new Promise(resolve => setImmediate(resolve));
   assert.equal((await control.program(input)).error.code, "program_busy");
-  await control.setFeatureEnabled(false);
-  await control.setFeatureEnabled(true);
+  await control.reset();
   const stopped = await running;
   assert.equal(stopped.ok, false);
   const count = f.calls.length;
@@ -261,26 +257,16 @@ test("the broker gates programs and cancels old waits across off/on", async (t) 
   assert.equal(f.calls.length, count);
 });
 
-test("the reported standardCodeMode feature picks the interpreter for programs that start afterwards", async (t) => {
+test("computer programs always run standard JavaScript, never a request-selected interpreter", async (t) => {
   const f = browserFixture();
-  const seen = [];
   const control = createComputerControl({
-    adapters: [{ id: "local", label: "Local", placement: "local", protocol: COMPUTER_PROTOCOL, readiness: async () => ({ readiness: "ready", detail: "Ready" }), connect: async () => { throw new Error("Browser programs never open a native helper"); } }],
-    runProgram: (request, host, signal, options) => { seen.push(options?.standardCodeMode); return runComputerProgram(request, host, signal, options); },
+    adapters: [{ id: "local", label: "Local", placement: "local", protocol: COMPUTER_PROTOCOL, readiness: async () => ({ readiness: "ready", detail: "Ready" }), connect: async () => { throw new Error("Browser programs never open a native helper"); } }], runProgram: runComputerProgram,
     browserTask: ({ operation, args }, { signal }) => f.host.browser(operation, args, signal),
   });
   t.after(() => control.reset(true));
-  await control.setFeatureEnabled(true);
-  // TypeScript annotations: OpenWork's Code Mode strips them, standard JavaScript rejects them.
-  const typed = { sessionId: "chat", surface: "browser", code: 'const found: boolean = await tools.ui.exists({target:{name:"Save"}}); return found;' };
-  assert.equal((await control.program(typed)).value, true);
-  // A program request cannot pick the interpreter.
-  assert.equal((await control.program({ ...typed, standardCodeMode: true })).value, true);
-  assert.equal(control.setStandardCodeMode(true), true);
-  const standard = await control.program(typed);
-  assert.equal(standard.ok, false);
-  assert.equal(standard.error.kind, "ParseError");
-  assert.equal(control.setStandardCodeMode(false), false);
-  assert.equal((await control.program(typed)).value, true);
-  assert.deepEqual(seen, [false, false, true, false]);
+  const typed = { sessionId: "chat", surface: "browser", code: 'const found: boolean = true; return found;' };
+  const rejected = await control.program(typed);
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.error.kind, "ParseError");
+  assert.equal((await control.program({ ...typed, code: 'return await tools.ui.exists({target:{name:"Save"}}).then(Boolean);' })).value, true);
 });

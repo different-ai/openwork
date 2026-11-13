@@ -26,6 +26,7 @@ type AlternativeLoginStep = Exclude<ResolvedLoginStep, "sso">;
 
 type LoginOption = {
   nextStep: ResolvedLoginStep;
+  offerGoogleOnPassword: boolean;
   signInPath: string | null;
   signInUrl: string | null;
   /**
@@ -35,7 +36,7 @@ type LoginOption = {
   alternativeStep: AlternativeLoginStep | null;
   ssoRequired: boolean;
   organizationName: string | null;
-  /** multipleSsoConnections: the identity providers that sign in this email; several get one button each. */
+  /** The identity providers that sign in this email; several get one button each. */
   ssoProviders: SsoProviderOption[];
 };
 
@@ -69,6 +70,7 @@ function readLoginOption(payload: unknown): LoginOption | null {
 
   return {
     nextStep: payload.nextStep,
+    offerGoogleOnPassword: payload.nextStep === "password" && payload.offerGoogleOnPassword === true,
     signInPath: typeof payload.signInPath === "string" ? payload.signInPath : null,
     signInUrl: typeof payload.signInUrl === "string" ? payload.signInUrl : null,
     alternativeStep: payload.nextStep === "sso" ? readAlternativeLoginStep(payload.alternativeStep) : null,
@@ -1124,6 +1126,20 @@ export function AuthPanel({
               {formBusy ? "Working..." : "Sign in"}
               {!formBusy ? <ArrowRight className="h-4 w-4" /> : null}
             </button>
+            {loginOption?.offerGoogleOnPassword && !hideSocialAuth && socialProviders.includes("google") ? (
+              <>
+                <div className="den-divider" aria-hidden="true">
+                  <span>or</span>
+                </div>
+                <SocialButton
+                  onClick={() => void beginSocialAuth("google", { loginHint: email.trim() })}
+                  disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+                >
+                  <GoogleLogo />
+                  <span>Continue with Google</span>
+                </SocialButton>
+              </>
+            ) : null}
           </form>
         ) : null}
 

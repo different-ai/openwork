@@ -3,8 +3,7 @@
  * slack-assistant / github-sync). Each tick analyzes what was uploaded or went
  * stale, then applies what is queued, one request per organization at a time
  * (`claimNextApply` holds the org's apply lock through the claim's lease; a
- * long apply extends it). Organizations with `configBlobs` off are skipped:
- * their requests are put back and wait until the feature is on again.
+ * long apply extends it).
  */
 import { appLogger } from "../observability/logger.js"
 import { captureException } from "../observability/runtime.js"

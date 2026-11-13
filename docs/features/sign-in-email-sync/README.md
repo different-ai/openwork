@@ -1,5 +1,7 @@
 # Sign-in: account email follows Google or SSO
 
+> **Generally available:** `signInEmailSync` is retired; its enabled behavior is standard on Cloud and self-hosted. Actual settings, permissions, billing rules and consent remain enforced. Rollout/off-state instructions below are historical; see [the retirement guide](../globally-enabled-retirement/README.md).
+
 - Feature: `signInEmailSync`
 - Deployments: cloud and self-hosted; default **off**.
 - Author: `benjaminshafii`

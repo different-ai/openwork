@@ -10,11 +10,11 @@ wraps them with organization-scoped OpenWork routes and policy:
 
 | Area | OpenWork surface | Runtime behavior |
 |---|---|---|
-| SSO management | `/dashboard/auth-security?tab=sso` (`/dashboard/sso` with `authSecuritySettings` off, and redirects there when on), `/v1/sso`, `/v1/sso/saml`, `/v1/sso/oidc` | One SSO connection per organization. Owners and security admins can create or replace it. |
+| SSO management | `/dashboard/auth-security?tab=sso` (`/dashboard/sso` redirects there), `/v1/sso`, `/v1/sso/saml`, `/v1/sso/oidc`, `/v1/sso/connections` | One or more SSO connections per organization (`/v1/sso` manages the oldest). Owners and security admins can add, replace or remove them. |
 | SAML callback | `/api/auth/sso/saml2/sp/acs/openwork-sso-<org-id>` | Better Auth consumes the response after OpenWork validates SAML response policy. |
 | SAML metadata | `/api/auth/sso/saml2/sp/metadata?providerId=openwork-sso-<org-id>` | Generated after the SAML connection is saved in OpenWork. |
 | SSO sign-in | `/sso/<org-slug>` | Starts SP-initiated SSO for one organization and redirects to Entra. |
-| SCIM management | `/dashboard/auth-security?tab=scim` (`/dashboard/scim` with `authSecuritySettings` off, and redirects there when on), `/v1/scim`, `/v1/scim/token` | Owners and security admins create or rotate an org-scoped SCIM bearer token. |
+| SCIM management | `/dashboard/auth-security?tab=scim` (`/dashboard/scim` redirects there), `/v1/scim`, `/v1/scim/token` | Owners and security admins create or rotate an org-scoped SCIM bearer token. |
 | SCIM provisioning | `/api/auth/scim/v2` | Supports SCIM user provisioning, updates, and deprovisioning. |
 
 OpenWork enforces these SAML security settings for organization SSO:

@@ -2,7 +2,7 @@
 
 import type { FeatureIntroEventType, FeatureIntroState } from "@openwork/types/den/feature-intros";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { getOrgAccessFlags, orgFeatureEnabled } from "../../../_lib/den-org";
+import { getOrgAccessFlags } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useFeatureIntroEvent, useFeatureIntroStates } from "./feature-intro-data";
 import { FEATURE_INTROS, getFeatureIntro } from "./intros";
@@ -10,7 +10,7 @@ import { introStateFor, mergeReportedFacts, rootIntroKey, type FeatureIntroFacts
 import type { FeatureIntro, FeatureIntroContext, FeatureIntroFacts, FeatureIntroKey } from "./types";
 
 type FeatureIntroRuntime = {
-  /** `featureIntros` is on and the organization is loaded. Off: every intro surface renders nothing. */
+  /** The organization is loaded. Until then every intro surface renders nothing. */
   enabled: boolean;
   /** Member state has loaded, so dots and banners can be decided. */
   loaded: boolean;
@@ -78,13 +78,13 @@ function writeSetupCache(scope: string, value: Record<string, FeatureIntroKnownS
   }
 }
 
-/** Mounted in the dashboard shell. Renders its children unchanged; gated on the `featureIntros` flag. */
+/** Mounted in the dashboard shell. Renders its children unchanged; intros start once the organization is loaded. */
 export function FeatureIntroProvider({ children }: { children: ReactNode }) {
   const { orgContext, activeOrg } = useOrgDashboard();
   const orgId = orgContext?.organization.id ?? null;
   const memberId = orgContext?.currentMember.id ?? null;
   const cacheScope = orgId && memberId ? `${orgId}:${memberId}` : null;
-  const enabled = Boolean(orgContext && orgId) && orgFeatureEnabled(orgContext, "featureIntros");
+  const enabled = Boolean(orgContext && orgId);
   const states = useFeatureIntroStates(orgId, enabled);
   const event = useFeatureIntroEvent(orgId);
   const recordEvent = event.mutate;

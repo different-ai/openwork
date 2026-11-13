@@ -94,22 +94,21 @@ const finished = {
   ],
 } satisfies RunnerSnapshot
 
-/** What the chat keeps of a finished reply: the cards it shows, with and without the flags. */
-function shownCards(turn: WorkbotTurn, flags: { quiet: boolean; preview: boolean }) {
+/** What the chat keeps of a finished reply. */
+function shownCards(turn: WorkbotTurn) {
   const work = computerWork(turn.parts, { working: false, starting: null, lastIsLive: false })
   return [...work.cards.entries()]
     .map(([surface, card]) => ({ surface, live: work.live.has(surface), showing: work.shown === surface, steps: card.steps }))
-    .filter((card) => keepsCard(card, flags))
+    .filter((card) => keepsCard(card))
 }
 
 test("the finished browser card stays in the transcript, as a record of what it opened", () => {
-  const [turn] = buildWorkbotTurns(finished) as WorkbotTurn[]
-  assert.equal(turn!.status, "done")
-  for (const flags of [{ quiet: false, preview: false }, { quiet: true, preview: false }, { quiet: true, preview: true }, { quiet: false, preview: true }]) {
-    const cards = shownCards(turn!, flags)
-    assert.deepEqual(cards.map((card) => [card.surface, card.live]), [["browser", false]], `kept with ${JSON.stringify(flags)}`)
-    assert.equal(finishedSummary("browser", cards[0]!.steps), "Opened google.com")
-  }
+  const [turn] = buildWorkbotTurns(finished)
+  assert.ok(turn)
+  assert.equal(turn.status, "done")
+  const cards = shownCards(turn)
+  assert.deepEqual(cards.map((card) => [card.surface, card.live]), [["browser", false]])
+  assert.equal(finishedSummary("browser", cards[0]!.steps), "Opened google.com")
 })
 
 test("the finished card survives a reload: it is read back from the stored conversation, not live state", () => {
@@ -118,32 +117,20 @@ test("the finished card survives a reload: it is read back from the stored conve
   const reread = threadSchema.parse(JSON.parse(JSON.stringify(thread)))
   assert.equal(reread.available, true)
   const [turn] = reread.available ? reread.turns : []
-  const cards = shownCards(turn!, { quiet: true, preview: true })
+  const cards = shownCards(turn!)
   assert.equal(cards.length, 1)
   assert.equal(cards[0]!.surface, "browser")
   assert.deepEqual(cards[0]!.steps.flatMap((step) => step.pages ?? []).map((page) => page.url), ["https://www.google.com/"])
   assert.equal(finishedSummary("browser", cards[0]!.steps), "Opened google.com")
 })
 
-test("which cards a quiet chat keeps: live screens only when shown or previewed, finished screens always, background never", () => {
-  const quiet = { quiet: true, preview: false }
-  assert.equal(keepsCard({ surface: "browser", live: true, showing: false }, quiet), false, "live work stays under Workbot's name, not pushed into the chat")
-  assert.equal(keepsCard({ surface: "browser", live: true, showing: false }, { quiet: true, preview: true }), true)
-  assert.equal(keepsCard({ surface: "browser", live: true, showing: true }, quiet), true)
-  assert.equal(keepsCard({ surface: "browser", live: false, showing: false }, quiet), true)
-  assert.equal(keepsCard({ surface: "computer", live: false, showing: false }, quiet), true)
-  assert.equal(keepsCard({ surface: "background", live: false, showing: false }, quiet), false)
-  assert.equal(keepsCard({ surface: "background", live: true, showing: false }, { quiet: true, preview: true }), false)
-  assert.equal(keepsCard({ surface: "background", live: false, showing: false }, { quiet: false, preview: false }), true)
-})
-
-test("a finished card says what it came to", () => {
-  const step = (extra: Record<string, unknown>) => ({ label: "Using the browser", icon: "computer" as const, status: "done" as const, app: null, startedAt: 1, finishedAt: 2, updates: [], ...extra })
-  const page = (id: string, title: string) => ({ id, url: `https://${title}/`, title })
-  assert.equal(finishedSummary("browser", [step({ pages: [page("a", "google.com"), page("b", "maps.google.com"), page("a", "google.com")] })]), "Opened maps.google.com and 1 more")
-  assert.equal(finishedSummary("browser", [step({ updates: ["Reading the page"] })]), "Reading the page")
-  assert.equal(finishedSummary("browser", [step({})]), "Used the browser")
-  assert.equal(finishedSummary("computer", [step({})]), "Used my computer")
+test("live and finished screen cards stay; background work only shows when explicitly watched", () => {
+  for (const surface of ["browser", "computer"] as const) {
+    for (const live of [false, true]) assert.equal(keepsCard({ surface, live, showing: false }), true)
+  }
+  assert.equal(keepsCard({ surface: "background", live: true, showing: false }), false)
+  assert.equal(keepsCard({ surface: "background", live: false, showing: false }), false)
+  assert.equal(keepsCard({ surface: "background", live: true, showing: true }), true)
 })
 
 test("one browser task stays anchored at its first action through narration, later actions and completion", () => {

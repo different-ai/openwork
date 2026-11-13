@@ -4,7 +4,7 @@ import type { AttachedSurface } from "@openwork/cdp";
 import { startBrowserSamlIdp } from "./saml-idp.ts";
 import { record, rows, text } from "./org-invite.ts";
 
-async function bootBrowser(seed: Seed, { place }: { place: Place }, mode: "optional" | "legacy" | "single") {
+async function bootBrowser(seed: Seed, { place }: { place: Place }, mode: "optional" | "single") {
   if (place.kind !== "local") throw new Error("This proof owns loopback-only synthetic services; use --local.");
   if (process.env.OPENWORK_EVAL_DEN_API_URL) throw new Error("Do not attach this synthetic proof to an existing Den; unset OPENWORK_EVAL_DEN_API_URL.");
   const idp = await startBrowserSamlIdp();
@@ -49,15 +49,11 @@ async function bootBrowser(seed: Seed, { place }: { place: Place }, mode: "optio
     await queryDenDatabase(den.database.url, "UPDATE user SET email_verified=1 WHERE email=?", [owner.email]);
     await queryDenDatabase(den.database.url, "UPDATE sso_provider SET domain_verified=1 WHERE provider_id=?", [providerId]);
     await queryDenDatabase(den.database.url, "UPDATE sso_connection SET status='enabled', test_status='succeeded' WHERE provider_id=?", [providerId]);
-    if (mode !== "legacy") {
-      const feature = await request(den.admin, `/v1/admin/organizations/${orgId}/capabilities`, { method: "PUT", body: JSON.stringify({ capabilities: { ssoPerOrganization: true } }) });
-      if (!feature.response.ok) throw new Error(`Set fixture feature: ${feature.text}`);
-    }
     idp.configure({ audience: den.ref.webUrl, acs: `${den.ref.webUrl}/api/auth/sso/saml2/sp/acs/${providerId}`, email: owner.email });
     const activated = await request(den.admin, "/v1/me/active-organization", { method: "POST", body: JSON.stringify({ organizationId: orgId }) });
     if (!activated.response.ok) throw new Error(`Select the fixture's SSO organization: ${activated.text}`);
     const signedIn = den.admin;
-    const web = await seed.web({ den, ...(mode === "single" ? { signedInAs: den.admin } : {}), startPath: mode === "single" ? "/dashboard/org-settings" : "/", headless: true, viewport: { width: 1440, height: 1000 } });
+    const web = await seed.web({ den, ...(mode === "single" ? { signedInAs: den.admin } : {}), startPath: mode === "single" ? "/dashboard/auth-security?tab=sso" : "/", headless: true, viewport: { width: 1440, height: 1000 } });
     const fresh = (path = "/", signedInAs?: DenSession) => seed.web({ den, ...(signedInAs ? { signedInAs } : {}), startPath: path, headless: true, viewport: { width: 1440, height: 1000 } });
     const sessionFor = async (surface: AttachedSurface): Promise<DenSession> => {
       const raw = await surface.client.send("Network.getCookies", { urls: [den.ref.webUrl] });
@@ -76,5 +72,4 @@ async function bootBrowser(seed: Seed, { place }: { place: Place }, mode: "optio
 }
 
 export const ssoBrowser = (seed: Seed, context: { place: Place }) => bootBrowser(seed, context, "optional");
-export const ssoLegacyBrowser = (seed: Seed, context: { place: Place }) => bootBrowser(seed, context, "legacy");
 export const ssoSingleBrowser = (seed: Seed, context: { place: Place }) => bootBrowser(seed, context, "single");

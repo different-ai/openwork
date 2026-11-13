@@ -190,8 +190,8 @@ export async function saveSettings(tx: GatewayTx, provider: GatewayProvider, set
   provider.updated_at = updated_at
 }
 
-/** Creates or refreshes the group for `key`. Admin renames survive later syncs. */
-export async function ensureGroup(tx: GatewayTx, provider: GatewayProvider, settings: LiteLlmSettings, key: string, name: string, description: string, modelIds: string[]): Promise<GroupId> {
+/** Creates or refreshes the group for `key`. Admin renames survive later syncs. Shared with TrueFoundry providers. */
+export async function ensureGroup(tx: GatewayTx, provider: GatewayProvider, settings: Pick<LiteLlmSettings, "groups">, key: string, name: string, description: string, modelIds: string[]): Promise<GroupId> {
   const known = settings.groups[key]
   const [existing] = known && isDenTypeId("gatewayModelGroup", known) ? await tx.select().from(GatewayModelGroupTable)
     .where(and(eq(GatewayModelGroupTable.id, known), eq(GatewayModelGroupTable.gateway_provider_id, provider.id))) : []
@@ -206,12 +206,12 @@ export function groupName(modelIds: string[], alias: string | null) {
 
 /**
  * Whether a member may connect their own LiteLLM key (personal) or have one
- * created (issued). Only an admin grant of this provider's access group counts
+ * created (issued, and TrueFoundry providers). Only an admin grant of this provider's access group counts
  * ("Can connect a LiteLLM key" / "Gets a LiteLLM key"). A grant of any other
  * group, such as one team's models, never makes a member eligible: otherwise
  * their key could pull them into a broader group through an automatic grant.
  */
-export async function memberEligible(tx: GatewayTx | typeof db | typeof db.$primary, provider: GatewayProvider, set: GatewaySet, memberId: GatewayMemberId, settings: LiteLlmSettings) {
+export async function memberEligible(tx: GatewayTx | typeof db | typeof db.$primary, provider: GatewayProvider, set: GatewaySet, memberId: GatewayMemberId, settings: Pick<LiteLlmSettings, "groups">) {
   const accessGroupId = settings.groups[SIGN_IN_GROUP_KEY]
   if (!accessGroupId || !isDenTypeId("gatewayModelGroup", accessGroupId)) return false
   const [member] = await tx.select({ id: MemberTable.id }).from(MemberTable)

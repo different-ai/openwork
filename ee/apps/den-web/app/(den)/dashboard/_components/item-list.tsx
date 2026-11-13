@@ -2,7 +2,7 @@
 
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Menu } from "@base-ui/react/menu";
-import { MoreHorizontal, Search } from "lucide-react";
+import { ChevronRight, MoreHorizontal, Search } from "lucide-react";
 import Link from "next/link";
 import { type ComponentProps, type ReactNode, useRef, useState } from "react";
 import { type ButtonSize, type ButtonVariant, buttonVariants, DenButton } from "../../_components/ui/button";
@@ -18,8 +18,9 @@ export function LinkButton({ variant = "secondary", size = "md", className = "",
 }
 
 /**
- * The one list used by My Library and Manage: a white panel of rows with a
- * 32px logo lane, name and description, a status lane, and an action lane.
+ * The one list used by My Library and Manage, in the Computers row language:
+ * flat rows on the page with a hairline between them, a 32px logo lane, name
+ * and description, a status lane, and an action lane. No card around it.
  */
 export function ItemSection({ title, meta, children, testId, variant = "default" }: {
   title: string;
@@ -32,9 +33,9 @@ export function ItemSection({ title, meta, children, testId, variant = "default"
   if (variant === "rule") {
     return (
       <section className="flex flex-col" data-testid={testId}>
-        <div className="flex items-center justify-between gap-4 border-b border-gray-200 pb-1.5">
-          <h2 className="text-[12px] font-medium leading-4 text-gray-700">{title}</h2>
-          {meta ? <p className="text-[12px] leading-4 text-gray-500">{meta}</p> : null}
+        <div className="flex items-center justify-between gap-4 border-b border-[var(--den-list-line)] pb-1.5">
+          <h2 className="text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{title}</h2>
+          {meta ? <p className="text-[12px] leading-4 text-[var(--dls-text-secondary)]">{meta}</p> : null}
         </div>
         {children}
       </section>
@@ -43,8 +44,8 @@ export function ItemSection({ title, meta, children, testId, variant = "default"
   return (
     <section className="flex flex-col gap-2.5" data-testid={testId}>
       <div className="flex items-center justify-between gap-4">
-        <h2 className="text-[13px] font-medium leading-4 text-gray-500">{title}</h2>
-        {meta ? <p className="text-[12px] leading-4 text-gray-500">{meta}</p> : null}
+        <h2 className="text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{title}</h2>
+        {meta ? <p className="text-[12px] leading-4 text-[var(--dls-text-secondary)]">{meta}</p> : null}
       </div>
       {children}
     </section>
@@ -58,7 +59,9 @@ export function ItemPanel({ children, className = "", variant = "divided" }: {
   variant?: "divided" | "inset";
 }) {
   return (
-    <div className={`flex flex-col rounded-2xl border border-gray-100 bg-white ${variant === "inset" ? "p-1.5" : "divide-y divide-gray-100 py-1"} ${className}`}>
+    // Both variants read as Computers rows now; "inset" is kept for callers. Rows sit flush on the page:
+    // side padding belonged to the card this used to be.
+    <div data-variant={variant} className={`flex flex-col border-t border-[var(--den-list-line)] [&>*]:border-b [&>*]:border-[var(--den-list-line)] [&>*]:px-0! ${className}`}>
       {children}
     </div>
   );
@@ -67,10 +70,10 @@ export function ItemPanel({ children, className = "", variant = "divided" }: {
 /** Placeholder rows the size of ItemRow, for an ItemPanel whose list is loading. */
 export function ItemRowsSkeleton({ label, rows = 3 }: { label: string; rows?: number }) {
   return (
-    <div role="status" aria-label={label} data-testid="item-rows-skeleton" className="flex flex-col divide-y divide-gray-100 motion-safe:animate-pulse">
+    <div role="status" aria-label={label} data-testid="item-rows-skeleton" className="flex flex-col divide-y divide-[var(--den-list-line)] motion-safe:animate-pulse">
       {Array.from({ length: rows }, (_, index) => (
-        <div key={index} aria-hidden className="flex items-center gap-3.5 px-5 py-3">
-          <span className="h-8 w-8 shrink-0 rounded-[7px] bg-gray-100" />
+        <div key={index} aria-hidden className="flex min-h-12 items-center gap-3 py-1.5">
+          <span className="h-8 w-8 shrink-0 rounded-lg bg-[var(--dls-hover)]" />
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="flex h-5 items-center"><span className="h-3 w-32 rounded bg-gray-100" /></span>
             <span className="flex h-[18px] items-center"><span className="h-2.5 w-56 max-w-full rounded bg-gray-100" /></span>
@@ -123,25 +126,25 @@ export function ItemRow({
   const body = (
     <>
       {logo ? <span className="flex shrink-0 items-center">{logo}</span> : null}
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-[14px] font-medium leading-5 text-gray-900">{title}</span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{title}</span>
         {statusOnNarrow && status ? <span className="whitespace-nowrap text-[12px] leading-4 text-muted-foreground sm:hidden">{status}</span> : null}
-        {description ? <span className={wrapDescription ? "break-words text-[13px] leading-[18px] text-gray-500" : "truncate text-[13px] leading-[18px] text-gray-500"}>{description}</span> : null}
+        {description ? <span className={wrapDescription ? "break-words text-[12px] leading-4 text-[var(--dls-text-secondary)]" : "truncate text-[12px] leading-4 text-[var(--dls-text-secondary)]"}>{description}</span> : null}
       </span>
     </>
   );
   return (
-    <div className={compact ? "flex items-center gap-3 px-3 py-3" : statusOnNarrow ? "flex items-center gap-2 px-3 py-3 sm:gap-3.5 sm:px-5" : "flex items-center gap-3.5 px-5 py-3"} data-testid={testId} data-library-integrated-row={compact || undefined}>
+    <div className={compact ? "flex min-h-12 items-center gap-3 py-1.5" : statusOnNarrow ? "flex min-h-12 items-center gap-2 py-1.5 sm:gap-3" : "flex min-h-12 items-center gap-3 py-1.5"} data-testid={testId} data-library-integrated-row={compact || undefined}>
       {href ? (
-        <Link href={href} className="flex min-w-0 flex-1 items-center gap-3.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-gray-300">
+        <Link href={href} className="flex min-w-0 flex-1 items-center gap-3 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-gray-300">
           {body}
         </Link>
       ) : (
-        <span className="flex min-w-0 flex-1 items-center gap-3.5">{body}</span>
+        <span className="flex min-w-0 flex-1 items-center gap-3">{body}</span>
       )}
       {comparison}
       {status !== undefined ? (
-        <span className={compact ? "w-14 shrink-0 truncate text-right text-[13px] text-[var(--dls-text-secondary)] sm:w-28" : "hidden w-[220px] shrink-0 truncate text-right text-[12px] leading-4 text-gray-500 sm:block"} data-item-status>
+        <span className={compact ? "w-14 shrink-0 truncate text-right text-[13px] text-[var(--dls-text-secondary)] sm:w-28" : "hidden w-[220px] shrink-0 truncate text-right text-[13px] leading-5 text-[var(--dls-text-secondary)] sm:block"} data-item-status>
           {status}
         </span>
       ) : null}
@@ -232,7 +235,7 @@ export function ItemMenu({ label, entries, size = "sm", testId }: { label: strin
   const [confirming, setConfirming] = useState<ItemMenuEntry | null>(null);
   if (entries.length === 0) return null;
   const trigger = size === "md"
-    ? "flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+    ? "flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
     : "flex h-7 w-7 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900";
   return (
     <>
@@ -278,17 +281,52 @@ export function ItemMenu({ label, entries, size = "sm", testId }: { label: strin
   );
 }
 
-/** Label and value rows under Details. */
+/** Label and value rows under Details: flat, a hairline between them, as settings rows are. */
 export function DetailRows({ rows }: { rows: { label: string; value: ReactNode; wrap?: boolean }[] }) {
   return (
-    <div className="flex flex-col divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
+    <div className="flex flex-col divide-y divide-[var(--den-list-line)] border-y border-[var(--den-list-line)]">
       {rows.map((row) => (
-        <div key={row.label} className="flex items-center justify-between gap-4 px-5 py-3 text-[13px] leading-[18px]">
-          <span className="text-gray-500">{row.label}</span>
-          <span className={row.wrap ? "min-w-0 break-words text-right font-medium text-[var(--dls-text-primary)]" : "min-w-0 truncate text-right font-medium text-gray-900"}>{row.value}</span>
+        // A long value reads as a paragraph under its label; a short one sits across from it.
+        <div key={row.label} className={`flex min-h-10 gap-x-4 gap-y-0.5 py-2 text-[13px] leading-5 ${row.wrap ? "flex-col" : "items-center justify-between"}`}>
+          <span className="shrink-0 text-[var(--dls-text-secondary)]">{row.label}</span>
+          <span className={row.wrap ? "min-w-0 max-w-[760px] break-words text-[var(--dls-text-primary)]" : "min-w-0 truncate text-right text-[var(--dls-text-primary)]"}>{row.value}</span>
         </div>
       ))}
     </div>
+  );
+}
+
+/** Disclosures one under another, sharing the hairline between them. */
+export function DisclosureGroup({ children }: { children: ReactNode }) {
+  return <div className="flex flex-col [&>section+section]:border-t-0">{children}</div>;
+}
+
+/**
+ * One collapsed part of a page: a row that names what is inside, with a
+ * chevron on the right that turns as it opens (DESIGN.md P3, S3). The one
+ * disclosure every detail page uses. Several in a row go in a `DisclosureGroup`.
+ */
+export function DisclosureSection({ label, state, open, onToggle, children, testId }: {
+  label: string;
+  /** What is set, at a glance, beside the chevron. */
+  state?: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+  testId?: string;
+}) {
+  return (
+    <section className="flex flex-col border-y border-[var(--den-list-line)]">
+      <button type="button" aria-expanded={open} onClick={onToggle} data-testid={testId}
+        className="flex min-h-12 items-center justify-between gap-4 rounded-sm py-2 text-left text-[13px] font-medium text-[var(--dls-text-primary)] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--dls-text-secondary)]">
+        {label}
+        <span className="flex items-center gap-2 font-normal text-[var(--dls-text-secondary)]">
+          {state}
+          <ChevronRight className={`h-4 w-4 transition-transform duration-150 ease-out motion-reduce:transition-none ${open ? "rotate-90" : ""}`} strokeWidth={1.5} aria-hidden />
+        </span>
+      </button>
+      {open ? <div className="border-t border-[var(--den-list-line)]">{children}</div> : null}
+    </section>
   );
 }
 

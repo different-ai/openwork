@@ -1,9 +1,9 @@
 name: Quick check
 
 # The one check every PR waits for (`openwork-tests-required`): the highest
-# risks only, in about a minute. Everything else runs after merge: unit tests,
-# full Den API security tests and the desktop build on every dev push ("Build
-# and core checks"), core journeys on dev pushes and nightly, the packaged
+# risks only, in about a minute. Unit tests, the full Den API security tests
+# and the desktop build also run on PRs ("Build and core checks"); core
+# journeys run nightly only; the packaged
 # desktop before each alpha release ("Packaged desktop smoke"). See
 # docs/ci-build-scopes.md for where each check runs.
 on:
@@ -84,6 +84,7 @@ jobs:
         run: >-
           node --test
           .github/scripts/alpha-macos.test.mjs
+          .github/scripts/desktop-helper-cache.test.mjs
           .github/scripts/alpha-windows.test.mjs
           .github/scripts/contributor-pr.test.mjs
           .github/scripts/contributor-screen.test.mjs
@@ -173,7 +174,7 @@ jobs:
   # Security-critical Den API rules (roles, tenants, API keys, sessions, OAuth,
   # audit secrets, feature rollouts) against the real app and MySQL, plus audit
   # route coverage, when Den API inputs change. The full suite runs in six
-  # shards on every dev push ("Build and core checks").
+  # shards on PRs ("Build and core checks").
   den-quick:
     name: Den API auth and permission tests
     needs: quick-select

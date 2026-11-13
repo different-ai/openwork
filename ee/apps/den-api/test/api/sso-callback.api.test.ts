@@ -21,7 +21,6 @@ const { db } = await import("../../src/db.js")
 const { SsoProviderTable } = await import("@openwork-ee/den-db/schema")
 await db.insert(SsoProviderTable).values({ id: createDenTypeId("ssoProvider"), issuer: idp.issuer, domain, userId: owner.userId, providerId, organizationId: orgId, domainVerified: true, oidcConfig: JSON.stringify({ ...idp.registration({ skipDiscovery: true }), redirectURI: `http://localhost:3005/api/auth/sso/callback/${providerId}` }) })
 await client.execute("INSERT INTO sso_connection (id, organization_id, provider_id, kind, issuer, domain, status, sign_in_path) VALUES (?, ?, ?, 'oidc', ?, ?, 'enabled', ?)", [createDenTypeId("ssoConnection"), orgId, providerId, idp.issuer, domain, "/sso/callback-test"])
-await den.setFeature(orgId, "ssoPerOrganization", true)
 
 async function oidcSignIn(person = owner): Promise<Session> {
   const started = await den.request(null, "POST", "/api/auth/sign-in/sso", { body: { providerId, loginHint: person.email, callbackURL: "http://localhost:3005/" } })
@@ -63,12 +62,10 @@ test("a real signed OIDC callback lets the owner safely require SSO", async () =
   assert.equal(rawKey.status, 403, summary(rawKey))
 })
 
-test("a real callback while the flag is off remains valid when it is enabled", async () => {
-  await den.setFeature(orgId, "ssoPerOrganization", false)
-  const legacyPassword = await den.signIn(owner.email)
-  assert.equal(legacyPassword.status, 403, summary(legacyPassword))
+test("a real callback remains valid for organization SSO enforcement", async () => {
+
   const session = await oidcSignIn()
-  await den.setFeature(orgId, "ssoPerOrganization", true)
+
   const opened = await den.as(session, orgId)("GET", "/v1/org")
   assert.equal(opened.status, 200, summary(opened))
   const password = await den.signIn(owner.email)
@@ -95,6 +92,36 @@ test("a password-approved device cannot gain SSO by redeeming after enforcement 
   }
 })
 
+test("desktop device approval requires real SSO proof and carries it to the new session", async () => {
+  const ssoSession = await oidcSignIn()
+  assert.equal((await den.as(ssoSession, orgId)("PATCH", "/v1/org", { requireSso: true })).status, 200)
+  assert.equal((await den.asPlatformAdmin("PUT", "/v1/admin/features/remoteDesktopDeviceLogin", { enabled: true })).status, 200)
+  const code = await den.request(null, "POST", "/api/auth/device/code", { body: { client_id: "openwork-desktop-device" } })
+  assert.equal(code.status, 200)
+  const decision = { userCode: field(code.body, "user_code"), decision: "approve", organizationId: orgId }
+  const password = await den.request(owner.token, "POST", "/v1/auth/device/decision", { body: decision })
+  assert.equal(password.status, 403)
+  assert.equal(field(password.body, "error"), "sso_required")
+  const approvingMe = await den.request(ssoSession.token, "GET", "/v1/me")
+  assert.equal(approvingMe.status, 200)
+  const { readSessionSsoProof } = await import("../../src/organization-sso-access.js")
+  const browserProof = await readSessionSsoProof({ sessionId: text(field(approvingMe.body, "session", "id"), "approving session"), userId: owner.userId, organizationId: orgId })
+  assert.ok(browserProof)
+  const approved = await den.request(ssoSession.token, "POST", "/v1/auth/device/decision", { body: decision })
+  assert.equal(approved.status, 200)
+  const redeemed = await den.request(null, "POST", "/api/auth/device/token", { body: { client_id: "openwork-desktop-device", device_code: field(code.body, "device_code"), grant_type: "urn:ietf:params:oauth:grant-type:device_code" } })
+  assert.equal(redeemed.status, 200)
+  const deviceToken = text(field(redeemed.body, "access_token"), "device session")
+  assert.notEqual(deviceToken, ssoSession.token)
+  const deviceMe = await den.request(deviceToken, "GET", "/v1/me")
+  assert.equal(deviceMe.status, 200)
+  const deviceProof = await readSessionSsoProof({ sessionId: text(field(deviceMe.body, "session", "id"), "device session"), userId: owner.userId, organizationId: orgId })
+  assert.deepEqual(deviceProof, browserProof, "Claim capture must retain the original provider AND authentication time")
+  const opened = await den.request(deviceToken, "GET", "/v1/org", { orgId })
+  assert.equal(opened.status, 200)
+  assert.equal((await den.asPlatformAdmin("PUT", "/v1/admin/features/remoteDesktopDeviceLogin", { enabled: false })).status, 200)
+})
+
 test("SSO authentication does not grant organization settings permission", async () => {
   const admin = await oidcSignIn()
   const member = await den.signUp("Callback Member", `member@${domain}`)
@@ -119,7 +146,7 @@ test("a real signed SAML response records provenance; a tampered response cannot
   const acs = `http://localhost:3005/api/auth/sso/saml2/sp/acs/${samlProvider}`
   await db.insert(SsoProviderTable).values({ id: createDenTypeId("ssoProvider"), issuer: audience, domain: samlDomain, userId: samlOwner.userId, providerId: samlProvider, organizationId: samlOrg, domainVerified: true, samlConfig: JSON.stringify({ issuer: audience, entryPoint: `${issuer}/sso`, cert: saml.cert, audience, callbackUrl: acs, idpMetadata: { entityID: issuer }, spMetadata: { entityID: audience }, wantAssertionsSigned: true, mapping: { email: "email", name: "displayName" } }) })
   await client.execute("INSERT INTO sso_connection (id, organization_id, provider_id, kind, issuer, domain, status, sign_in_path) VALUES (?, ?, ?, 'saml', ?, ?, 'enabled', ?)", [createDenTypeId("ssoConnection"), samlOrg, samlProvider, issuer, samlDomain, "/sso/saml-test"])
-  await den.setFeature(samlOrg, "ssoPerOrganization", true)
+
   await den.join(samlOwner, samlOrg, owner)
   for (const tamper of [true, false]) {
     const started = await den.request(null, "POST", "/api/auth/sign-in/sso", { body: { providerId: samlProvider, callbackURL: "http://localhost:3005/" } })

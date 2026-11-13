@@ -11,7 +11,7 @@ import { AuditUnavailableError, auditUnavailableToolResult, runMcpServiceAction,
 import type { AuditServiceActionName } from "../audit/service-actions.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
-import { catalogOperationAvailableToCapabilities, nativeOperationAvailableToCapabilities } from "./catalog-availability.js"
+import { catalogOperationAvailableToCapabilities } from "./catalog-availability.js"
 import type { McpToolOperation } from "./catalog.js"
 import {
   executeAdminCapability,
@@ -174,7 +174,7 @@ export type CapabilityRegistryContextInput = {
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   /** Effective features of the organization (see features.ts). */
-  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "outlookAttachments" | "remoteSessionAccess">>
+  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments">>
   /** MCP transports pass the verified caller; route and Automation contexts omit it (their route records the request). */
   audit?: McpAuditPrincipal | null
   /**
@@ -202,11 +202,7 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
   return {
     app: input.app,
     env: input.env,
-    // All capability paths (search, Code Mode, execution, saved Workflows) use this catalog.
-    // The route also checks the current rollout so a cached tool cannot bypass a kill switch.
-    catalog: input.catalog.filter((operation) => nativeOperationAvailableToCapabilities({
-      outlookAttachmentsEnabled: input.organizationFeatures.outlookAttachments === true,
-    }, operation)),
+    catalog: input.catalog,
     principal: input.principal,
     organizationId: input.organizationId,
     member: input.member,
@@ -216,7 +212,7 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     // Only a chat with the person in it may answer: never an Automation, a Workflow run or an App.
     remoteSessionAnswersAllowed: input.usageSource === "agent",
     // The same rule, and only where the organization has sessions on members' computers turned on.
-    remoteSessionAttachAllowed: input.usageSource === "agent" && input.organizationFeatures.remoteSessionAccess === true,
+    remoteSessionAttachAllowed: input.usageSource === "agent",
     resolvePlatformAdmin,
     resolveNamespaceContext,
     audit: input.audit ?? null,
@@ -793,7 +789,6 @@ const remoteSessionSource: CapabilitySource = {
     }
     // An attach is a use of the feature that no gated route sees.
     if (parsed.action === "attach") {
-      markFeaturesUsed({ organizationId: ctx.organizationId, memberId: ctx.member.orgMembershipId, keys: ["remoteSessionAccess"] })
     }
     const run = () => executeRemoteSessionCapability({
       action: parsed.action,

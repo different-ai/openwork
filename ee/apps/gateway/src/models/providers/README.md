@@ -61,7 +61,7 @@ Provider:
 
 - The id is lowercase letters, digits and dashes, matches its key, and is not
   already used by `base.json`, another file here, or a reserved id
-  (`openwork`, `amazon-bedrock-mantle`, `microsoft-foundry`, `litellm`).
+  (`openwork`, `amazon-bedrock-mantle`, `microsoft-foundry`, `litellm`, `truefoundry`).
 - `name`, `env` (API key variable names), an `https://` `api` URL, and an `npm`
   package the gateway can proxy: `@ai-sdk/openai-compatible`, `@ai-sdk/openai`,
   `@ai-sdk/anthropic`, `@ai-sdk/mistral`, `@ai-sdk/google` or

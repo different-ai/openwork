@@ -31,7 +31,7 @@ export type SsoConnectionsManagerProps = {
   onConnectionsChange?: (connections: DenOrgSsoConnection[]) => void;
 };
 
-/** multipleSsoConnections: every SSO connection with its state, one row each, and one connection at a time to set up. */
+/** Every SSO connection with its state, one row each, and one connection at a time to set up. */
 export function SsoConnectionsManager({ setupMode = false, onConnectionsChange }: SsoConnectionsManagerProps) {
   const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
   const [connections, setConnections] = useState<DenOrgSsoConnection[] | null>(null);
@@ -98,7 +98,6 @@ export function SsoConnectionsManager({ setupMode = false, onConnectionsChange }
         {selection.kind === "new" ? (
           <SsoConnectionPanel
             key="new"
-            multiple
             endpoints={ssoConnectionEndpoints(null)}
             onCreated={(connection, token) => {
               replaceConnection(connection, connection.id);
@@ -108,7 +107,6 @@ export function SsoConnectionsManager({ setupMode = false, onConnectionsChange }
         ) : (
           <SsoConnectionPanel
             key={selection.id}
-            multiple
             endpoints={ssoConnectionEndpoints(selection.id)}
             initialDomainVerificationToken={selection.token}
             onConnectionChange={(connection) => {

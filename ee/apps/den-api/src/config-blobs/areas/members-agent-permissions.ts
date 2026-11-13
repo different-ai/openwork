@@ -10,9 +10,8 @@
  *   `agent_permission_setting` row each, in one transaction on `ctx.db`, and
  *   appends the same `agent_permission_policy` audit change as the routes
  *   (routes/org/agent-permissions.ts → saveAgentPermissionPolicy). A
- *   permission whose feature is off on the target (computer use, app
- *   scripting and outside folders need `agentHarnessPermissions`; browser
- *   uploads need `browserUploadPermissions`) is left as stored there, with a
+ *   permission whose feature is off on the target (files sent to connected
+ *   accounts need `fileSendPermissions`) is left as stored there, with a
  *   warning, exactly as the routes preserve what the editor can't show.
  */
 import { and, asc, eq, inArray } from "@openwork-ee/den-db/drizzle"
@@ -20,7 +19,6 @@ import { AgentPermissionPolicyTable, AgentPermissionSettingTable, TeamTable } fr
 import { createDenTypeId, denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { FeatureMap } from "@openwork/features"
 import {
-  AGENT_HARNESS_PERMISSION_KEYS,
   agentPermissionDecisionLabels,
   agentPermissionDefinitions,
   agentPermissionSettingsSchema,
@@ -76,14 +74,6 @@ function jsonList(value: unknown): unknown {
 
 function definitionOf(key: string) {
   return agentPermissionDefinitions.find((entry) => entry.key === key) ?? null
-}
-
-/** Permissions the target can't edit because their feature is off there. */
-export function gatedAgentPermissionKeys(features: Pick<FeatureMap, "agentHarnessPermissions" | "browserUploadPermissions">): Map<AgentPermissionKey, string> {
-  const gated = new Map<AgentPermissionKey, string>()
-  if (!features.agentHarnessPermissions) for (const key of AGENT_HARNESS_PERMISSION_KEYS) gated.set(key, "agentHarnessPermissions")
-  if (!features.browserUploadPermissions) gated.set("browserUploads", "browserUploadPermissions")
-  return gated
 }
 
 type Database = Pick<ConfigAreaContext["db"], "select">
@@ -348,18 +338,12 @@ export const membersAgentPermissionsArea = defineConfigArea({
     } catch (error) {
       throw asItemError(error, [])
     }
-    const gated = gatedAgentPermissionKeys(ctx.features)
     const warnings: string[] = []
 
     if (op.kind === "delete") {
       const scope = await resolveItemScope(ctx, previousScopeSpec(op.previous))
       const desired = new Map<AgentPermissionKey, AgentPermissionSetting | null>()
       for (const definition of agentPermissionDefinitions) {
-        const flag = gated.get(definition.key)
-        if (flag) {
-          if (op.previous.spec.settings && isSet(op.previous.spec.settings, definition.key)) warnings.push(`${definition.label} was kept: ${flag} is off here.`)
-          continue
-        }
         desired.set(definition.key, null)
       }
       const result = await writeScopeSettings(ctx, { scope, desired, policyId: op.targetId })
@@ -373,11 +357,6 @@ export const membersAgentPermissionsArea = defineConfigArea({
     const pick = (keys: Iterable<AgentPermissionKey>) => {
       const desired = new Map<AgentPermissionKey, AgentPermissionSetting | null>()
       for (const key of keys) {
-        const flag = gated.get(key)
-        if (flag) {
-          if (settings[key]) warnings.push(`${definitionOf(key)?.label ?? key} was skipped: ${flag} is off here.`)
-          continue
-        }
         desired.set(key, settings[key] ?? null)
       }
       return desired

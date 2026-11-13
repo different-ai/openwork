@@ -15,7 +15,7 @@ import {
 import type { FeatureIntro, FeatureIntroFacts, FeatureIntroKey } from "./types";
 
 export type FeatureIntroResolution = {
-  /** What to render; null renders the page unchanged (flag off, no intro, loading, or set up). */
+  /** What to render; null renders the page unchanged (no intro, loading, or set up). */
   size: FeatureIntroSize | null;
   /** The intro on screen: the section's for a full screen chosen by its tab, else this one. */
   intro: FeatureIntro | null;
@@ -91,7 +91,7 @@ export function useFeatureIntro(key: FeatureIntroKey, facts: FeatureIntroFacts |
 /**
  * Wraps a page or tab body. Full screen and box replace `children` (the empty
  * state), a banner sits above them, and set up renders `children` alone.
- * With the `featureIntros` flag off it always renders `children` unchanged.
+ * Until the organization is loaded it renders `children` unchanged.
  */
 export function FeatureIntroGate({
   introKey,
@@ -118,7 +118,7 @@ export function FeatureIntroGate({
 
 /**
  * Quiet unseen dot lookup (I9), e.g. `unseen: introUnseen("ai-gateway.limits")`
- * on a `TabItem`. Always false with the flag off.
+ * on a `TabItem`. Always false until the organization is loaded.
  */
 export function useFeatureIntroUnseen(): (key: FeatureIntroKey | null | undefined) => boolean {
   const { enabled, loaded, setupFor, stateFor } = useFeatureIntroRuntime();

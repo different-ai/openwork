@@ -9,6 +9,7 @@ import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, i
 import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
 import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import { isLiteLlmProviderId, liteLlmSpendTrackingEnabled } from "@openwork-ee/utils/litellm-catalog"
+import { isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
 import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { fixedModelPricing, readModelPrice, type PricingCatalog } from "./pricing.js"
 import { GATEWAY_REQUEST_MODEL_HEADER, GATEWAY_GRANT_HEADER, type GatewayRequestOutcome, type GatewayRequestProtocol } from "@openwork/types/den/gateway"
@@ -105,7 +106,7 @@ export type GatewayDependencies = {
   mintAwsRoleCredentials: MintAwsRoleCredentials
   catalog: ProviderCatalog
   now: () => Date
-  /** Smart Model Router (feature `autoRouter`): a member's router, and Jev. */
+  /** Smart Model Router: a member's router, and Jev. */
   loadAutoRouterConfig: LoadAutoRouterConfig
   /** The Smart Routers that apply to a member, for the 3rd party tool endpoints' model lists. */
   loadMemberAutoRouters: LoadMemberAutoRouters
@@ -113,8 +114,6 @@ export type GatewayDependencies = {
   autoRouterReasoning: ReasoningStore
   /** Whether a TypeSafe key is configured; without one Smart is off. */
   autoRouterRoutingConfigured: boolean
-  /** Whether the Cursor, Claude Code and Codex endpoints (feature `gatewayMemberApiKeys`) are on for an organization. */
-  toolEndpointsEnabled: (organizationId: string) => Promise<boolean>
 }
 
 export type GatewayRouteDependencies =
@@ -832,7 +831,6 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }),
     autoRouterReasoning: input.autoRouterReasoning ?? createDbReasoningStore(),
     autoRouterRoutingConfigured: input.autoRouterRoutingConfigured ?? Boolean(env.autoRouter.typesafeApiKey),
-    toolEndpointsEnabled: input.toolEndpointsEnabled ?? (async (organizationId) => (await import("./keys.js")).toolEndpointsEnabled(organizationId)),
   }
 
   // `target` is set by the provider-less routes, which pick the provider from the model alias.
@@ -983,6 +981,10 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       spendTracking = liteLlmSpendTrackingEnabled(selection.row.credentialSet.credential_mode)
       const price = spendTracking && selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
       requestPricing = price && selection.upstreamModel ? fixedModelPricing(provider.provider_id, selection.upstreamModel, price) : undefined
+    } else if (isTrueFoundryProviderId(provider.provider_id)) {
+      // Each person's own TrueFoundry token: TrueFoundry budgets it, so record tokens only.
+      spendTracking = false
+      requestPricing = undefined
     } else if (isGatewayCustomProviderId(provider.provider_id)) {
       // Custom models are not in the models.dev snapshot: price from the saved model's cost, else record usage unpriced.
       const price = selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
@@ -1078,7 +1080,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }
 
     if (auth.kind === "signer") prepared.url.host = auth.host
-    // Per-user LiteLLM keys are budgeted by LiteLLM, so they skip OpenWork admission and limits.
+    // Per-user LiteLLM keys and TrueFoundry tokens are budgeted upstream, so they skip OpenWork admission and limits.
     const usageRejection = !spendTracking ? null : await dependencies.checkUsage({
       organizationId: identity.organizationId,
       memberId: identity.orgMembershipId,
@@ -1299,12 +1301,10 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const routers = identity.keySource === "api_key" ? await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity)) : []
     return c.json(listGatewayModels(rows, routers))
   })
-  // Cursor (feature `gatewayMemberApiKeys`): every model as Chat Completions under names a person can type.
-  const cursorOff = () => gatewayError(404, "not_found", "The Cursor endpoint is not available for this organization.")
+  // Cursor: every model as Chat Completions under names a person can type.
   api.get(cursorModelsPath, async (c) => {
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
-    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return cursorOff()
     c.header("cache-control", "no-store")
     const rows = await dependencies.loadMemberGatewayAccess(identity)
     return c.json(listCursorModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
@@ -1314,7 +1314,6 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
     const requestId = c.get("openworkRequestId")
     const finish = (response: Response) => { response.headers.set("x-openwork-request-id", requestId); return response }
-    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return finish(cursorOff())
     let body: unknown
     try {
       body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await readBoundedBody(c.req.raw)))
@@ -1339,12 +1338,10 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
   }
   for (const [path, cursorApi] of Object.entries(cursorApiPaths)) api.post(path, (c) => cursorChat(c, cursorApi))
   api.all(`${cursorPathPrefix}/*`, (c) => gatewayError(404, "not_found", `Unsupported Cursor route: ${c.req.method} ${c.req.path}.`))
-  // Claude Code (feature `gatewayMemberApiKeys`): every model as Anthropic Messages, under names a person can set.
-  const claudeCodeOff = () => claudeCodeError(404, "not_found_error", "The Claude Code endpoint is not available for this organization.")
+  // Claude Code: every model as Anthropic Messages, under names a person can set.
   api.get(claudeCodeModelsPath, async (c) => {
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
-    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return claudeCodeOff()
     c.header("cache-control", "no-store")
     const rows = await dependencies.loadMemberGatewayAccess(identity)
     return c.json(listClaudeCodeModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
@@ -1361,7 +1358,6 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
   api.post(claudeCodeCountTokensPath, async (c) => {
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
-    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return claudeCodeOff()
     const body = await claudeCodeBody(c)
     return body instanceof Response ? body : c.json(claudeCodeCountTokens(body))
   })
@@ -1370,7 +1366,6 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
     const requestId = c.get("openworkRequestId")
     const finish = (response: Response) => { response.headers.set("x-openwork-request-id", requestId); return response }
-    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return finish(claudeCodeOff())
     const body = await claudeCodeBody(c)
     if (body instanceof Response) return finish(body)
     return finish(await handleClaudeCodeMessages({
@@ -1387,12 +1382,10 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }))
   })
   api.all(`${claudeCodePathPrefix}/*`, (c) => claudeCodeError(404, "not_found_error", `Unsupported Claude Code route: ${c.req.method} ${c.req.path}.`))
-  // Codex CLI (feature `gatewayMemberApiKeys`): every model as the Responses API, with Codex's own model catalog.
-  const codexOff = () => gatewayError(404, "not_found", "The Codex endpoint is not available for this organization.")
+  // Codex CLI: every model as the Responses API, with Codex's own model catalog.
   api.get(codexModelsPath, async (c) => {
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
-    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return codexOff()
     c.header("cache-control", "no-store")
     const rows = await dependencies.loadMemberGatewayAccess(identity)
     return c.json(listCodexModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
@@ -1402,7 +1395,6 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
     const requestId = c.get("openworkRequestId")
     const finish = (response: Response) => { response.headers.set("x-openwork-request-id", requestId); return response }
-    if (!await dependencies.toolEndpointsEnabled(identity.organizationId)) return finish(codexOff())
     let body: unknown
     try {
       body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await readBoundedBody(c.req.raw)))

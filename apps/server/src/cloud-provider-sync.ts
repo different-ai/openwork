@@ -178,7 +178,7 @@ type DenProviderConnection = DenProvider & {
 
 const gatewayProviderSource = "openwork_gateway";
 /**
- * The organization's Smart Routers (feature `autoRouter`): one runtime provider
+ * The organization's Smart Routers: one runtime provider
  * with one model per router that applies to the member; the Gateway picks the
  * real model for every prompt.
  */

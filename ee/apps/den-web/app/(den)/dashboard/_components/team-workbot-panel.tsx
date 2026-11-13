@@ -1,11 +1,11 @@
 "use client";
 
+import { COMPACT_INPUT_CLASS } from "../../_components/ui/dashboard-styles";
 import Link from "next/link";
 import { useId, useState, type FormEvent, type ReactNode } from "react";
 import type { WorkbotSettings } from "@openwork/types/den/workbot-settings";
 import { WORKBOT_TEAM_NAME_MAX_LENGTH, type WorkbotTeamSettingsTeam, type WorkbotTeamSettingsWrite } from "@openwork/types/den/workbot-team-settings";
 import { DenButton } from "../../_components/ui/button";
-import { DenCard } from "../../_components/ui/card";
 import { DenCombobox } from "../../_components/ui/combobox";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
@@ -15,7 +15,6 @@ import {
   getBrandAppearanceRoute,
   getMcpConnectionsRoute,
   getOrgAccessFlags,
-  orgFeatureEnabled,
   type DenOrgContext,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -61,7 +60,7 @@ type TeamOnlyScope = Extract<TeamScope, { kind: "team" }>;
 
 /** The Workbot tab shows with settings per team on, for people who can view Workbot's settings. */
 export function workbotTabVisible(orgContext: DenOrgContext | null): boolean {
-  if (!orgContext || !orgFeatureEnabled(orgContext, "workbotTeamSettings")) return false;
+  if (!orgContext) return false;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
   return access.canViewModelsSettings || access.canManageModelsSettings;
 }
@@ -160,6 +159,7 @@ function WorkbotModelPicker({ saved, settings, disabled, onPick }: {
   return (
     <div className="w-80 min-w-0 max-w-full" data-testid="team-workbot-model-picker">
       <DenCombobox
+        className="h-8! text-[13px]!"
         ariaLabel="Default model"
         value={value}
         options={workbotModelPickerOptions(settings, saved)}
@@ -185,7 +185,7 @@ function CalendarRow({ orgId, scope, canEdit, chip }: { orgId: string; scope: Ag
   const policy = useWorkbotProactive(orgId, Boolean(orgId), scope);
   const save = useSaveWorkbotProactive(orgId, scope);
   return (
-    <SettingRow
+    <SettingRow flush
       label="Calendar"
       labelId={labelId}
       stateLine={policy.data ? <span data-testid="team-workbot-calendar-state">{calendarStateLine(policy.data)}</span> : null}
@@ -227,8 +227,8 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit,
   return (
     <>
       {parts.general ? (<>
-      <DenCard size="comfortable" className="divide-y divide-gray-100 overflow-hidden !p-0" data-section="everyone-workbot-settings">
-        <SettingRow
+      <div className="divide-y divide-[var(--den-list-line)] border-y border-[var(--den-list-line)]" data-section="everyone-workbot-settings">
+        <SettingRow flush
           label="Workbot"
           labelId={ids.enabled}
           aside={help ? <HelpTip label="Workbot">{WORKBOT_SETTING_HELP.enabled}</HelpTip> : null}
@@ -244,7 +244,7 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit,
             </>
           )}
         </SettingRow>
-        <SettingRow label="Default model" labelId={ids.model}>
+        <SettingRow flush label="Default model" labelId={ids.model}>
           {view.isError || models.isError ? <Unavailable /> : !data || !settings ? <FieldSkeleton className="w-80" /> : (
             <>
               {/* The same value and save as Manage › Workbot, so the two pages never disagree. */}
@@ -257,7 +257,7 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit,
             </>
           )}
         </SettingRow>
-        <SettingRow label="Name" labelId={ids.name}>
+        <SettingRow flush label="Name" labelId={ids.name}>
           {view.isError ? <Unavailable /> : !data ? <FieldSkeleton className="w-40" /> : (
             <>
               <span className="text-[13px] text-gray-900" data-testid="team-workbot-everyone-name">{workbotDisplayName(data.organization.name)}</span>
@@ -273,7 +273,7 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit,
         {data && workbotAgentsShown(data) ? (
           <CalendarRow orgId={orgId} scope={scope} canEdit={canEdit} />
         ) : null}
-      </DenCard>
+      </div>
 
       {saveError ? <p role="alert" className="px-1 text-[13px] text-red-700">{saveError}</p> : null}
       {saved ? (
@@ -436,8 +436,8 @@ function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, par
   return (
     <>
       {parts.general ? (<>
-      <DenCard size="comfortable" className="divide-y divide-gray-100 overflow-hidden !p-0" data-section="team-workbot-settings">
-        <SettingRow
+      <div className="divide-y divide-[var(--den-list-line)] border-y border-[var(--den-list-line)]" data-section="team-workbot-settings">
+        <SettingRow flush
           label="Workbot"
           labelId={ids.enabled}
           aside={help ? <HelpTip label="Workbot">{WORKBOT_SETTING_HELP.enabled}</HelpTip> : null}
@@ -457,7 +457,7 @@ function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, par
             </>
           )}
         </SettingRow>
-        <SettingRow label="Default model" labelId={ids.model}>
+        <SettingRow flush label="Default model" labelId={ids.model}>
           {view.isError ? <Unavailable /> : !data || !row ? <FieldSkeleton className="w-80" /> : (
             <>
               <ScopeChip scope={scope} changed={!row.model.inherit} />
@@ -475,7 +475,7 @@ function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, par
             </>
           )}
         </SettingRow>
-        <SettingRow label="Name" labelId={ids.name}>
+        <SettingRow flush label="Name" labelId={ids.name}>
           {view.isError ? <Unavailable /> : !data || !row ? <FieldSkeleton className="w-64" /> : (
             <>
               <ScopeChip scope={scope} changed={!row.name.inherit} />
@@ -493,6 +493,7 @@ function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, par
               <form className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2" aria-label="Workbot's name for this team" onSubmit={(event) => void saveName(event)}>
                 <div className="w-64 min-w-0 max-w-full">
                   <DenInput
+                    className={COMPACT_INPUT_CLASS}
                     type="text"
                     aria-labelledby={ids.name}
                     value={nameDraft ?? shownName}
@@ -516,8 +517,8 @@ function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, par
         {data && row && workbotAgentsShown(data) ? (
           <CalendarRow orgId={orgId} scope={scope} canEdit={canEdit} chip={<ScopeChip scope={scope} changed={workbotTeamCalendarChanged(data, row)} />} />
         ) : null}
-        <ConflictLine count={row?.conflictingMemberCount ?? 0} setting={WORKBOT_CONFLICT_SETTING} testId="team-workbot-conflicts" />
-      </DenCard>
+        <ConflictLine flush count={row?.conflictingMemberCount ?? 0} setting={WORKBOT_CONFLICT_SETTING} testId="team-workbot-conflicts" />
+      </div>
 
       {saveError ? <p role="alert" className="px-1 text-[13px] text-red-700">{saveError}</p> : null}
       {saved ? (

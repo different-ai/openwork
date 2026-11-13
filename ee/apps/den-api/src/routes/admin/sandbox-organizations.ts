@@ -82,7 +82,7 @@ export function registerAdminSandboxOrganizationRoutes<T extends { Variables: Au
     }
   })
 
-  app.post(`${base}/:sandboxId/microsoft-365`, updated("Add sample Microsoft 365 to a sandbox", "Adds one per-person Microsoft 365 connector signed in at the sandbox's sample work apps, so Workbot can read each member's sample mail, calendar and files. Needs an open sandbox with a sample work apps address and Sandboxes: sample Microsoft 365 (sandboxMicrosoft365) on for its organization. Does nothing when it is already there; existing Outlook, Calendar and Drive connectors are kept. Platform administrators only."), adminRoute(), async c => {
+  app.post(`${base}/:sandboxId/microsoft-365`, updated("Add sample Microsoft 365 to a sandbox", "Adds one per-person Microsoft 365 connector signed in at the sandbox's sample work apps, so Workbot can read each member's sample mail, calendar and files. Needs an open sandbox with a sample work apps address and a cloud deployment. Does nothing when it is already there; existing Outlook, Calendar and Drive connectors are kept. Platform administrators only."), adminRoute(), async c => {
     if (env.features.deployment !== "cloud") return c.json(disabled, 404)
     const id = c.req.param("sandboxId")
     if (!isDenTypeId("sandboxOrganization", id)) return c.json({ error: "invalid_request", message: "Invalid sandbox id." }, 400)

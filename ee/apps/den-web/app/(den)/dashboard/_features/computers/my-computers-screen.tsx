@@ -3,12 +3,11 @@
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
-import { LockKeyhole } from "lucide-react";
 import { remoteDeviceTypeLabel, type RemoteDevice, type RemoteDeviceAccess, type RemoteDeviceEvent } from "@openwork/types/den/remote-devices";
 import { DenButton } from "../../../_components/ui/button";
 import { DenPageHeader } from "../../../_components/ui/page-header";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
-import { getComputersRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../../_lib/den-org";
+import { getComputersRoute, getOrgAccessFlags } from "../../../_lib/den-org";
 import { useDenToast } from "../../_components/den-toast";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { FeatureIntroGate } from "../feature-intros/feature-intro-gate";
@@ -124,15 +123,9 @@ export function MyComputersScreen() {
   const [openId, setOpenId] = useState("");
   const [adding, setAdding] = useState(false);
   const memberId = orgContext?.currentMember.id ?? "";
-  const enabled = Boolean(orgId && orgContext && orgContext.organization.id === orgId && orgFeatureEnabled(orgContext, "remoteDevices"));
+  const enabled = Boolean(orgId && orgContext && orgContext.organization.id === orgId);
   const query = useMyComputers(orgId ?? "", memberId, enabled);
   if (!orgId || !orgContext) return <div aria-busy="true" aria-label="My Computers"><DenSkeleton className="mb-8 h-6 w-36" /><RowListSkeleton rows={3} /></div>;
-  if (!orgFeatureEnabled(orgContext, "remoteDevices")) return <section className="space-y-4" data-testid="my-computers-locked">
-    <DenPageHeader size="compact" title="My Computers" />
-    <p className={`flex items-start gap-2 text-[13px] ${secondaryText}`}><LockKeyhole size={16} strokeWidth={1.5} aria-hidden className="mt-0.5 shrink-0" />
-      Computers is not enabled for this organization. Ask an organization owner or admin about availability.
-    </p>
-  </section>;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
   const devices = query.data ?? [];
   const now = Date.now();

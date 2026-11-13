@@ -38,7 +38,7 @@ import {
   runFailure,
   splitRestoreIssues,
 } from "./config-blobs-model";
-import { ConfigCounts, ConfigStatusChip, useConfigBlobsFeature } from "./config-blobs-parts";
+import { ConfigCounts, ConfigStatusChip, useConfigOrgReady } from "./config-blobs-parts";
 import { changeRequestByline } from "./config-change-list";
 import {
   MatchStep,
@@ -54,7 +54,7 @@ const PLAN_READY_STATUSES: readonly ConfigChangeRequestSummary["status"][] = ["n
 const CANCELLABLE: readonly ConfigChangeRequestSummary["status"][] = ["uploaded", "analyzing", "needs_review", "approved", "stale"];
 
 export function ConfigChangeRequestScreen({ changeRequestId }: { changeRequestId: string }) {
-  const { ready } = useConfigBlobsFeature();
+  const { ready } = useConfigOrgReady();
   const { orgId, activeOrg } = useOrgDashboard();
   const detail = useConfigChangeRequest(ready ? orgId : null, changeRequestId);
   const request = detail.data?.changeRequest ?? null;

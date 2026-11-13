@@ -36,7 +36,6 @@ import { computerDisconnectedBody, dropDisconnectedRunner, findDisconnection, re
 import { env } from "../../env.js"
 import {
   readRemoteSessionAccessPolicy,
-  remoteSessionAccessInUse,
   runnerAccessCapabilities,
   storedRunnerSessionReport,
   type RemoteSessionAccessPolicy,
@@ -53,11 +52,10 @@ import {
 } from "../../automations/runner-notification-poll.js"
 import { appLogger } from "../../observability/logger.js"
 import { readOrganizationEnginePolicy } from "../engine-policy.js"
-import { organizationFeatureEnabled } from "../../features.js"
 import { onRemoteSessionWork } from "../../remote-sessions/work-signal.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 
-/** Desktops that send this header want queued remote-session tasks announced (feature remoteSessionPush). */
+/** Desktops that send this header want queued remote-session tasks announced. */
 const REMOTE_SESSION_PUSH_HEADER = "x-openwork-remote-session-push"
 /** Longest a push stream waits before checking for pending commands queued on another Den instance. */
 const REMOTE_SESSION_PUSH_CHECK_MS = 5_000
@@ -77,8 +75,6 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
     service?: SessionRunnerService
     automationService?: Pick<AutomationService, "discoverDesktopRunnerWork" | "runnerNotifications">
     commandStore?: RemoteSessionCommandStore
-    /** Whether remoteSessionPush is on for an organization; defaults to the feature registry. */
-    remoteSessionPushEnabled?: (organizationId: string) => Promise<boolean>
     requestStore?: RemoteSessionRequestStore
     readEnginePolicy?: typeof readOrganizationEnginePolicy
     /** What the runner's organization lets other devices do on its members' computers; defaults to remote-sessions/access.ts. */
@@ -100,15 +96,14 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
   const sessionAccessFor = async (identity: { organizationId: string; ownerMemberId: string; capabilities: readonly string[] }) => {
     const runner = runnerAccessCapabilities(identity.capabilities)
     if (!runner.accessCapable && !runner.choiceCapable) return null
-    const policy = await readSessionAccess(identity)
-    return remoteSessionAccessInUse(policy) ? policy : null
+    return readSessionAccess(identity)
   }
   /**
    * Attaches reach sessions that were started on the computer: only a runner
-   * that can refuse one takes them, and only while `remoteSessionAccess` is on.
+   * that can refuse one takes them; the organization ceiling and owner choice still apply.
    */
   const attachesAllowed = (identity: Parameters<typeof sessionAccessFor>[0], policy: RemoteSessionAccessPolicy | null) =>
-    policy?.enabled === true && runnerAccessCapabilities(identity.capabilities).accessCapable
+    policy !== null && runnerAccessCapabilities(identity.capabilities).accessCapable
   const takesAttaches = async (identity: Parameters<typeof sessionAccessFor>[0]) => attachesAllowed(identity, await sessionAccessFor(identity))
   const toldPolicy = (policy: RemoteSessionAccessPolicy) => ({ ceiling: policy.ceiling, optIn: policy.optIn })
 
@@ -187,10 +182,9 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
     "/v1/automation-runners/events",
     runnerRoute({
       summary: "Stream Automation runner notifications",
-      description: "Server-sent events stream that tells a desktop runner when work or cancellations are available. Send Last-Event-ID to resume from a cursor. A desktop runner that sends X-OpenWork-Remote-Session-Push: 1 also hears remote_session_work_available when a remote-session task is queued for it, or gets 404 while the remoteSessionPush feature is off.",
+      description: "Server-sent events stream that tells a desktop runner when work or cancellations are available. Send Last-Event-ID to resume from a cursor. A desktop runner that sends X-OpenWork-Remote-Session-Push: 1 also hears remote_session_work_available when a remote-session task is queued for it,.",
       responses: {
         200: textResponse("Server-sent event stream (text/event-stream)."),
-        404: jsonResponse("Remote-session push was requested but is not enabled for this organization.", runnerErrorSchema),
       },
     }),
     async (c) => {
@@ -200,14 +194,8 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
       if (!audited.ok) return audited.response
       const requestedCursor = Number(c.req.header("Last-Event-ID") ?? "0")
       let cursor = Number.isSafeInteger(requestedCursor) && requestedCursor >= 0 ? requestedCursor : 0
-      const pushEnabled = options.remoteSessionPushEnabled ?? ((organizationId: string) => organizationFeatureEnabled(organizationId, "remoteSessionPush"))
-      // Desktops that ask for remote-session pushes learn at once when the feature is off,
-      // so they fall back to polling instead of holding a stream open for nothing.
       const wantsPush = c.req.header(REMOTE_SESSION_PUSH_HEADER) === "1"
         && identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)
-      if (wantsPush && !await pushEnabled(identity.organizationId)) {
-        return c.json({ error: "feature_disabled", message: "Remote-session push is not enabled for this organization." }, 404)
-      }
       // An attach is announced like a new task, to runners that can take one.
       let announceAttach = wantsPush && await takesAttaches(identity)
       return streamSSE(c, async (stream) => {
@@ -231,8 +219,6 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
             if (Date.now() - lastOwnerCheckAt >= 15_000) {
               // An inactive owner or a disconnected computer ends the stream; reconnecting is told why.
               if (await service.runnerStanding(identity) !== "active") break
-              // The kill switch ends the stream; the desktop reconnects, gets 404 and polls.
-              if (wantsPush && !await pushEnabled(identity.organizationId)) break
               announceAttach = wantsPush && await takesAttaches(identity)
               lastOwnerCheckAt = Date.now()
             }
@@ -288,7 +274,7 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
     path,
     runnerRoute({
       summary: "Discover Automation runner work",
-      description: "Returns the runs and remote-session commands currently assignable to this runner. Runners with remote_session_access_v1 or remote_session_choice_v1 also get sessionAccess, the organization's ceiling and whether a computer whose owner has not chosen takes nothing (optIn), while remoteSessionAccess, remoteTasksOptIn or remoteDevices is on for the member or the organization's ceiling is off. Runners with remote_session_access_v1 get their attach commands while remoteSessionAccess is on.",
+      description: "Returns the runs and remote-session commands currently assignable to this runner. Runners with remote_session_access_v1 or remote_session_choice_v1 also get sessionAccess, the organization's ceiling and whether a computer whose owner has not chosen takes nothing (optIn), for registered runners that support session access or the owner's choice. Only runners with remote_session_access_v1 get attach commands; the organization ceiling and computer owner's choice still constrain access.",
       responses: { 200: jsonResponse("Available work items.", automationRunnerWorkResponseSchema) },
     }),
     async (c) => {
@@ -385,12 +371,12 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
         + "and no sessions either way, whatever was sent. From a runner whose owner can choose, Den keeps the access only when chosen is true; until "
         + "then the organization's default applies. From a runner whose owner cannot, Den keeps created at most while remoteTasksOptIn is on, when "
         + "that computer takes nothing whatever it reports. A report kept as anything but all also detaches the attach commands this runner delivered. "
-        + "The response carries the current ceiling and opt-in. Taken while remoteSessionAccess, remoteTasksOptIn or remoteDevices is on for the "
-        + "member, or the organization's ceiling is off.",
+        + "The response carries the current ceiling and opt-in. Requires a registered runner for this "
+        + "member with a supported session access or owner-choice capability.",
       responses: {
         200: jsonResponse("The report was stored.", runnerSessionReportResponseSchema),
         403: jsonResponse("The runner registered neither remote_session_access_v1 nor remote_session_choice_v1.", runnerErrorSchema),
-        404: jsonResponse("The organization uses neither sessions on members' computers, the opt-in nor Devices and has not turned remote access off, or the runner is not registered.", runnerErrorSchema),
+        404: jsonResponse("The runner is not registered.", runnerErrorSchema),
       },
     }),
     jsonValidator(runnerSessionReportSchema),

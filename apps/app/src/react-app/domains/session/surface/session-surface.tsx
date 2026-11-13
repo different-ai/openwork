@@ -66,6 +66,7 @@ import { ReactSessionComposer } from "./composer/composer";
 import { sessionComposerDiagnosticReasons } from "./composer/composer-diagnostics";
 import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
 import { useSessionModelSelection } from "./session-model-store";
+import { useRestoreSessionModel } from "./use-restore-session-model";
 import { getSessionAgentSelection, useSessionAgentSelection } from "./session-mode-memory";
 import type { ProviderCatalog } from "./use-model-behavior";
 import type { ModelAvailability } from "./model-availability";
@@ -797,7 +798,7 @@ export type SessionSurfaceProps = {
   activePermission?: PendingPermission | null;
   activePermissionSourceTitle?: string | null;
   permissionReplyBusy?: boolean;
-  respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
+  respondPermission?: (requestID: string, reply: "once" | "always" | "reject", remember?: "always") => void;
   activeQuestion?: PendingQuestion | null;
   questionReplyBusy?: boolean;
   respondQuestion?: (requestID: string, answers: string[][] | null) => void | Promise<void>;
@@ -1539,6 +1540,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const currentSnapshot = fullSnapshot ?? openingHistory.snapshot;
   // Auto replies recorded before this view opened name their model too.
   const snapshotSession = currentSnapshot?.session;
+  useRestoreSessionModel(props.sessionId, snapshotSession);
+  const sessionModelPending = !sessionModel.hasSessionOverride && snapshotSession?.id !== props.sessionId;
   useEffect(() => {
     if (snapshotSession?.id === props.sessionId) useAutoRouteStore.getState().publish(props.sessionId, autoRoutesFromSession(snapshotSession));
   }, [snapshotSession, props.sessionId]);
@@ -2277,7 +2280,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Commands the agent left running, listed under the Agents list until each exits.
   const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[props.workspaceId]?.running);
   const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
-  const composerBackgroundTasksEnabled = useDesktopFeature("composerBackgroundTasks");
   const followUpSuggestionsEnabled = useDesktopFeature("followUpSuggestions");
   const followUpSuggestion = useFollowUpSuggestion({
     enabled: followUpSuggestionsEnabled && !archived && !snapshot?.session.parentID,
@@ -2287,7 +2289,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     settled: !composerBusy && !error && !props.activePermission && !props.activeQuestion && queuedItems.length === 0,
     model: sessionModel.selectedModel,
   });
-  const backgroundTasksShown = composerBackgroundTasksEnabled && backgroundShells.length > 0 && !archived;
+  const backgroundTasksShown = backgroundShells.length > 0 && !archived;
 
   useEffect(() => {
     if (!hasFullHistory || admissionOutcome !== "unresolved") {
@@ -2456,6 +2458,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setError(null);
     try {
       if (archived || !archiveStateKnown) throw new Error("This session is read-only. Restore it before sending.");
+      if (sessionModelPending) throw new Error("The conversation's model is still loading. Retry shortly.");
       const identity = readDenSettings();
       const freeBlock = nextDraft.mode === "shell" ? null : isAutoModel(sessionModel.selectedModel) && props.openWorkModelsSyncing
         ? { outcome: "blocked", reason: "auto-access", wall: { state: "sync" } } satisfies AutoAccessBlock
@@ -2544,7 +2547,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       pendingSendsRef.current.delete(submissionId);
       setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
-  }, [snapshot?.session.parentID, archived, archiveStateKnown, interruptionClient, openingHistory.readSendHistory, props.onSendDraft, props.opencodeBaseUrl, props.selectedAgent, props.sessionId, props.workspaceId, props.workspaceRoot, removeQueuedDraftFromStore, renderedMessages.length, sessionOwner, setError, props.client, props.openWorkModelsSyncing, sessionModel.selectedModel, rejectedOwner, localRejectedRuntime, baseRenderedMessages]);
+  }, [snapshot?.session.parentID, archived, archiveStateKnown, sessionModelPending, interruptionClient, openingHistory.readSendHistory, props.onSendDraft, props.opencodeBaseUrl, props.selectedAgent, props.sessionId, props.workspaceId, props.workspaceRoot, removeQueuedDraftFromStore, renderedMessages.length, sessionOwner, setError, props.client, props.openWorkModelsSyncing, sessionModel.selectedModel, rejectedOwner, localRejectedRuntime, baseRenderedMessages]);
 
   const clearComposer = useCallback(() => {
     clearPersistedDraft();
@@ -2679,7 +2682,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (model.transitionState !== "idle") return;
     if (archived || !archiveStateKnown || archiveHeld) return;
     if (chatStreaming) return;
-    if (sessionModelUnavailable) return;
+    if (sessionModelUnavailable || sessionModelPending) return;
     const sourceComposer = autoSendPayload?.composer;
     if (sourceComposer) {
       if (!sourceComposer.draft.trim() && !sourceComposer.attachments.length) return;
@@ -2691,7 +2694,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!draft.trim() && !attachments.length) return;
     if (!consumeComposerAutoSend(props.sessionId)) return;
     void handleSend();
-  }, [archived, archiveStateKnown, archiveHeld, attachments.length, autoSendPayload, chatStreaming, draft, handleSend, model.transitionState, sessionModelUnavailable, props.sessionId, sessionOwner]);
+  }, [archived, archiveStateKnown, archiveHeld, attachments.length, autoSendPayload, chatStreaming, draft, handleSend, model.transitionState, sessionModelUnavailable, sessionModelPending, props.sessionId, sessionOwner]);
 
   // Queue: hold a snapshot of the composer and clear it. The drain effect sends
   // it once the session reports idle; a steer-tagged row is dispatched as soon
@@ -2997,7 +3000,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [checkUnknownAdmission, observationProbeVersion, opencodeClient, props.opencodeBaseUrl, props.sessionId, props.workspaceId, queuedDrainState, sessionOwner, snapshotQuery.refetch]);
 
   useEffect(() => {
-    if (sendingQueued) return;
+    if (sendingQueued || sessionModelPending) return;
     if (archived || !archiveStateKnown) return;
     if (sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     if (cloudQueueBlockedRef.current) return;
@@ -3034,7 +3037,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         if (getQueuedSendGeneration(props.sessionId) !== generation) nextDraft.attachments.forEach(revokeAttachmentPreview);
       }
     })();
-  }, [archived, archiveStateKnown, autoSending, chatStreaming, cloudQueueRetryVersion, liveStatus.type, props.opencodeBaseUrl, props.sessionId, queuedDrainState, queuedItems, sendDraft, sendingQueued, sessionOwner, stopping]);
+  }, [archived, archiveStateKnown, autoSending, chatStreaming, cloudQueueRetryVersion, liveStatus.type, props.opencodeBaseUrl, props.sessionId, queuedDrainState, queuedItems, sendDraft, sendingQueued, sessionModelPending, sessionOwner, stopping]);
 
   useEffect(() => {
     if (props.cloudMcpSubmissionState.status !== "failed") {
@@ -3182,13 +3185,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     label: "Send the composer prompt",
     description: "Send the draft of the composer the person currently has focused to that session. Focus-bound: if focus moved since composer.set_text, the draft goes to the newly focused session. Disabled while that session is mid-turn. To message another session use session.send.",
     sideEffect: "mutation",
-    disabled: archived || !archiveStateKnown || archiveHeld || sessionModelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle" || queuedDrainState.phase.kind === "admission_unknown",
+    disabled: archived || !archiveStateKnown || archiveHeld || sessionModelPending || sessionModelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle" || queuedDrainState.phase.kind === "admission_unknown",
     targetRef: composerShellRef,
     execute: async () => {
       await handleSend();
       return true;
     },
-  }), [archived, archiveStateKnown, archiveHeld, attachments.length, draft, handleSend, model.transitionState, queuedDrainState.phase.kind, sessionModelUnavailable]);
+  }), [archived, archiveStateKnown, archiveHeld, attachments.length, draft, handleSend, model.transitionState, queuedDrainState.phase.kind, sessionModelUnavailable, sessionModelPending]);
   useControlAction(props.isControlTarget ? composerSendControlAction : null);
 
   const composerStopControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -3974,7 +3977,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
                         activityStatus={effectiveActivityStatus}
                         retryStatus={liveStatus.type === "retry" ? liveStatus : null}
                         syncHealth={runSyncHealth}
-                        backgroundTasksInComposer={composerBackgroundTasksEnabled}
                       />
                     </MessageListProvider>
                   </EnvironmentVariableProvider>
@@ -4078,11 +4080,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
         followUpDefault={local.prefs.followUpDefault}
         submissionPreparing={preparingCloudTools || sending || autoSending}
         queuedCount={queuedItems.length}
-        disabled={!archiveStateKnown || archiveHeld || model.transitionState !== "idle" || sessionModelUnavailable || queuedDrainState.phase.kind === "admission_unknown"}
+        disabled={!archiveStateKnown || archiveHeld || model.transitionState !== "idle" || sessionModelPending || sessionModelUnavailable || queuedDrainState.phase.kind === "admission_unknown"}
         disabledReasons={sessionComposerDiagnosticReasons({
           archiveStateKnown,
           archiveHeld,
-          modelTransitioning: model.transitionState !== "idle",
+          modelTransitioning: model.transitionState !== "idle" || sessionModelPending,
           modelUnavailable: sessionModelUnavailable,
           admissionUnknown: queuedDrainState.phase.kind === "admission_unknown",
         })}
@@ -4114,6 +4116,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         modelVariant={sessionModel.modelVariant}
         modelBehaviorOptions={sessionModel.modelBehaviorOptions}
         onModelVariantChange={handleModelVariantChange}
+        modelSelectionPending={sessionModelPending}
         agentLabel={sessionAgent.selectedAgent === props.selectedAgent ? props.agentLabel : sessionAgent.selectedAgent ? sessionAgent.selectedAgent.charAt(0).toUpperCase() + sessionAgent.selectedAgent.slice(1) : t("session.default_agent")}
         selectedAgent={sessionAgent.selectedAgent}
         listAgents={props.listAgents}

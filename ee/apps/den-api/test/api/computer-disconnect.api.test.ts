@@ -194,16 +194,6 @@ function runnerCalls(computer: Computer, commandId: string, requestId: string) {
   ] as const
 }
 
-test("while Devices is off the new routes answer as if they did not exist", async () => {
-  for (const [as, method, path] of [
-    [asMilo, "POST", `/v1/remote-devices/${UNKNOWN_DEVICE}/disconnect`],
-    [asOwner, "POST", `/v1/org/computers/${UNKNOWN_DEVICE}/disconnect`],
-    [asOwner, "DELETE", `/v1/org/computers/${UNKNOWN_DEVICE}`],
-  ] as const) {
-    const call = await as(method, path)
-    assert.deepEqual([call.status, field(call.body, "error")], [404, "feature_disabled"], `${method} ${path}: ${summary(call)}`)
-  }
-})
 
 let laptop: Computer
 let olivesLaptop: Computer
@@ -212,8 +202,7 @@ let remoteCommandId = ""
 const remoteRead = { sessionId: REMOTE_SESSION, workspaceId: WORKSPACE }
 
 test("a member disconnects their own computer: Den refuses that install at once and fails the work that was going through it", async () => {
-  assert.equal((await den.setFeature(orgId, "remoteDevices", true)).status, 200)
-  assert.equal((await den.setFeature(orgId, "remoteSessionAccess", true)).status, 200)
+
   assert.equal((await asOwner("PATCH", "/v1/org/remote-session-settings", { access: "all" })).status, 200)
   laptop = await connectComputer(milo, "milo-laptop-install", "Milo's MacBook Pro")
   olivesLaptop = await connectComputer(olive, "olive-laptop-install", "Olive's MacBook Air")
@@ -474,7 +463,7 @@ test("disconnecting a member's computer needs Disconnect team computers and a re
 
 test("an admin reaches only signed-in desktops of current members in their own organization", async () => {
   // Another organization's computer does not exist here.
-  assert.equal((await den.setFeature(elsewhere.orgId, "remoteDevices", true)).status, 200)
+
   const foreign = await connectComputer(elsewhere.owner, "zed-laptop-install", "Zed's laptop", elsewhere.orgId)
   for (const [method, path] of [["POST", `/v1/org/computers/${foreign.deviceId}/disconnect`], ["DELETE", `/v1/org/computers/${foreign.deviceId}`]] as const) {
     assert.equal((await asAdmin(method, path)).status, 404, `${method} ${path}`)
@@ -558,7 +547,7 @@ test("the team list leaves out desktops nobody has heard from for a month, excep
   assert.equal(teamOf(await asAdmin("GET", "/v1/org/computers?stale=include&availability=online")).devices.some((device) => device.id === quiet.deviceId), false)
 })
 
-test("deleting an organization takes its disconnections with it, and turning Devices off closes the routes", async () => {
+test("deleting an organization takes its disconnections with it", async () => {
   const foreign = (await db.select().from(RemoteDeviceTable).where(eq(RemoteDeviceTable.organizationId, normalizeDenTypeId("organization", elsewhere.orgId))))[0]
   assert.ok(foreign)
   assert.equal((await asElsewhere("POST", `/v1/remote-devices/${foreign.id}/disconnect`)).status, 200)
@@ -568,12 +557,4 @@ test("deleting an organization takes its disconnections with it, and turning Dev
   assert.ok(deleted.status < 300, summary(deleted))
   assert.equal((await db.select().from(ComputerDisconnectionTable).where(eq(ComputerDisconnectionTable.organizationId, elsewhereId))).length, 0)
 
-  assert.equal((await den.setFeature(orgId, "remoteDevices", false)).status, 200)
-  for (const [as, method, path] of [
-    [asMilo, "POST", `/v1/remote-devices/${laptop.deviceId}/disconnect`],
-    [asAdmin, "POST", `/v1/org/computers/${laptop.deviceId}/disconnect`],
-    [asAdmin, "DELETE", `/v1/org/computers/${laptop.deviceId}`],
-  ] as const) {
-    assert.equal((await as(method, path)).status, 404, `${method} ${path}`)
-  }
 })

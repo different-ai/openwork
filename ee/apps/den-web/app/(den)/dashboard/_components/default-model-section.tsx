@@ -11,7 +11,6 @@ import {
 import { useId, useState, type ReactNode } from "react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton } from "../../_components/ui/button";
-import { DenCard } from "../../_components/ui/card";
 import { DenCombobox, type DenComboboxOption } from "../../_components/ui/combobox";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
@@ -147,6 +146,7 @@ function DefaultModelPicker({ scope, label, canManage, settings, saved, inherit,
     control = (
       <div className="w-80 min-w-0 max-w-full" data-testid="default-model-picker">
         <DenCombobox
+          className="h-8! text-[13px]!"
           ariaLabel={label}
           value={valueOf(saved)}
           options={comboboxOptions({ options: options.data ?? { options: [], unavailableSources: [] }, saved, inherit })}
@@ -198,13 +198,13 @@ function DefaultModelPicker({ scope, label, canManage, settings, saved, inherit,
         />
       ) : null}
 
-      <DenCard size="comfortable" className="divide-y divide-gray-100 overflow-hidden !p-0" data-section={scope.kind === "team" ? "team-default-model" : "org-default-model"}>
-        <SettingRow label={label} labelId={labelId}>
+      <div className="divide-y divide-[var(--den-list-line)] border-b border-[var(--den-list-line)]" data-section={scope.kind === "team" ? "team-default-model" : "org-default-model"}>
+        <SettingRow flush label={label} labelId={labelId}>
           {settings ? <ScopeChip scope={scope} changed={saved !== null} /> : null}
           {control}
         </SettingRow>
-        <ConflictLine count={conflictCount} setting="model" />
-      </DenCard>
+        <ConflictLine flush count={conflictCount} setting="model" />
+      </div>
 
       {saveError ? <p role="alert" className="px-1 text-[13px] text-red-700">{saveError}</p> : null}
       {savedChange ? (

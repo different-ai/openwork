@@ -1,20 +1,17 @@
 "use client";
 
-import { Dialog } from "@base-ui/react/dialog";
-import { Check, ChevronRight, CircleSlash, CircleX, Clock3, Globe, Monitor, X } from "lucide-react";
+import { Check, ChevronRight, CircleSlash, CircleX, Clock3, Globe, Monitor } from "lucide-react";
 import { useEffect, useId, useState, type ReactNode } from "react";
-import { useRetainedSurface, workbotHost } from "./host";
+import { calmChat } from "./host";
 import { useBrowserPreview } from "./browser-preview-context";
 import { useStopWorkbotTask } from "./data";
 import { ConnectorIcon } from "./connector-line";
 import type { ActivityStep, ActivityTask, WorkbotActivity } from "./activity";
 import { ProfileSheet } from "./profile-sheet";
 import { OpenWorkMark } from "./mark";
-import { RemoteJobs, useWorkbotRemoteJobs } from "./remote-jobs";
-import { SheetGrabber, useSheetDrag } from "./sheet-drag";
 
 /**
- * Workbot's working state, out of the chat (`workingStatus`): its name in the header carries a quiet line saying what
+ * Workbot's working state, out of the chat: its name in the header carries a quiet line saying what
  * it is doing now, and tapping the name opens the task sheet with the steps behind it. Three levels, each on request:
  * the status line, the sheet, then the live screen ("Watch"). The chat keeps only what Workbot says. Background tasks
  * are one row each; their steps open inside the row.
@@ -52,19 +49,17 @@ function StatusIcon({ activity, size = 12 }: { activity: WorkbotActivity; size?:
 
 /**
  * The assistant's name, and under it what it is doing now with how long it has taken. Tapping it opens the same sheet
- * as the avatar on a wide screen (ProfileBadge): the profile where it is on (`profileSheet`), else the task sheet.
+ * as the avatar on a wide screen (ProfileBadge): the profile.
  * Nothing to say: just the name, still opening the sheet when there are tasks to look back on.
  */
 export function WorkingName({ name, activity, mark, phone = false }: { name: string; activity: WorkbotActivity; mark: ReactNode; /** The phone header's pill: centred, and always opens its sheet. */ phone?: boolean }) {
   const [open, setOpen] = useState(false);
   const now = useTicking(activity.working && activity.since !== null);
-  // With the profile, the name always opens it; otherwise only when there is work to look at. On a phone it always
-  // opens, like the avatar it stands in for, and the sheet says plainly when nothing is running.
-  const profile = workbotHost().profileSheet === true;
-  const openable = phone || profile || activity.working || activity.tasks.length > 0;
+  // The name and desktop avatar always open the same profile.
+
   const title = <span className="truncate text-[15px] font-semibold leading-5 tracking-[-0.015em] text-[var(--wb-text)]">{name}</span>;
   return <>
-    <button type="button" disabled={!openable} onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={activity.working ? `${name}: ${activity.label}. Show what ${name} is doing` : profile ? `${name}: open profile` : `${name}: show recent tasks`}
+    <button type="button" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={activity.working ? `${name}: ${activity.label}. Show what ${name} is doing` : `${name}: open profile`}
       className="flex min-w-0 items-center gap-2 rounded-lg py-0.5 pl-1.5 pr-1.5 text-left transition-colors duration-150 enabled:hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] disabled:cursor-default" data-workbot-working-name>
       {mark}
       <span className={`flex min-w-0 flex-col ${phone ? "items-center" : ""}`}>
@@ -76,22 +71,38 @@ export function WorkingName({ name, activity, mark, phone = false }: { name: str
         </span> : null}
       </span>
     </button>
-    {profile ? <ProfileSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} mark={mark} /> : <TaskSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} />}
+    {<ProfileSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} mark={mark} />}
   </>;
 }
 
 export { elapsed, StatusIcon };
 
 /**
- * The profile at the top centre (`profileSheet`), as a person shows in a messaging app: Workbot's avatar (the
+ * The profile at the top centre, as a person shows in a messaging app: Workbot's avatar (the
  * OpenWork mark), its name on a pill just under it (never overlapping: over a glass header the two would blend), and in the pill what it is doing now. The first level of what it is
  * doing (status), then the profile on tap (tasks, what it can use, its computer, memory), then the live view.
  */
 export function ProfileBadge({ name, activity }: { name: string; activity: WorkbotActivity }) {
   const [open, setOpen] = useState(false);
-  const profile = workbotHost().profileSheet === true;
+
+  const label = activity.working ? `${name}: ${activity.label}. Show what ${name} is doing` : `${name}: open profile`;
+  const sheet = <ProfileSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} />;
+  // Calm look: one inline pill on every screen: a small avatar, the name, a green dot that breathes while Workbot
+  // works, and what it is doing now.
+  if (calmChat()) return <>
+    <button type="button" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={label}
+      className="flex h-9 min-w-0 max-w-full items-center gap-2 rounded-full bg-[var(--wb-surface)] pl-1.5 pr-3.5 shadow-[0_0_0_1px_var(--wb-ring)] transition-shadow duration-150 hover:shadow-[0_0_0_1px_var(--wb-disabled)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-profile-pill>
+      <span aria-hidden className="grid size-6 shrink-0 place-items-center rounded-full bg-[var(--wb-chip)]"><OpenWorkMark width={10} height={13} /></span>
+      <span className="shrink-0 text-[13px] font-semibold leading-4 tracking-[-0.01em] text-[var(--wb-text)]">{name}</span>
+      <span className="flex min-w-0 items-center gap-1.5 text-[12px] leading-4 text-[var(--wb-muted)]" role="status" aria-live="polite" data-workbot-status-line>
+        <span aria-hidden className={`workbot-live-dot size-1.5 shrink-0 rounded-full ${activity.working ? "is-working" : ""}`} />
+        {activity.working ? <span key={activity.label} className="workbot-subtitle-enter min-w-0 max-w-[260px] truncate">{activity.label}</span> : null}
+      </span>
+    </button>
+    {sheet}
+  </>;
   return <>
-    <button type="button" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={activity.working ? `${name}: ${activity.label}. Show what ${name} is doing` : profile ? `${name}: open profile` : `${name}: show recent tasks`}
+    <button type="button" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={label}
       className="group flex flex-col items-center rounded-[18px] focus-visible:outline-none" data-workbot-profile-badge>
       <span aria-hidden className="relative grid size-9 place-items-center rounded-full bg-[var(--wb-surface)] shadow-[0_0_0_1px_var(--wb-ring),var(--wb-card-shadow)] transition-transform duration-150 ease-out group-active:scale-[0.96] motion-reduce:transition-none">
         <OpenWorkMark width={15} height={19} />
@@ -104,7 +115,7 @@ export function ProfileBadge({ name, activity }: { name: string; activity: Workb
         </span> : null}
       </span>
     </button>
-    {profile ? <ProfileSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} /> : <TaskSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} />}
+    {<ProfileSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} />}
   </>;
 }
 
@@ -204,22 +215,6 @@ function TaskRow({ task }: { task: ActivityTask }) {
   </li>;
 }
 
-/**
- * The task sheet: whether Workbot is at work, on what, since when, the steps of the reply in progress and one row per
- * background task. A bottom sheet on phones (it reaches the bottom edge, so nothing behind shows through), a panel
- * under the name on wider screens.
- */
-/** What the sheet leads with: the reply in progress, else the first unfinished task. */
-function sheetLead(activity: WorkbotActivity) {
-  const openTasks = activity.tasks.filter((task) => taskIsOpen(task) && !task.quiet);
-  const lead = activity.main ? null : openTasks[0] ?? null;
-  return {
-    // Idle with nothing to look back on: say so plainly rather than titling an empty list "Recent tasks".
-    title: activity.main ? (activity.main.request.trim() || "Your message") : lead?.title ?? (activity.tasks.length > 0 ? "Recent tasks" : "Nothing running right now"),
-    since: activity.main?.since ?? lead?.startedAt ?? null,
-  };
-}
-
 /** The reply's steps, then one row per background task: the body of the task sheet, and the profile's Tasks tab. */
 export function ActivityDetails({ name, activity }: { name: string; activity: WorkbotActivity }) {
   return <>
@@ -249,35 +244,4 @@ export function WatchButton({ watch, onDone }: { watch: "browser" | "computer"; 
     className="flex h-9 w-full items-center justify-center gap-2 rounded-full bg-[var(--wb-chip)] text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-watch>
     <Monitor size={14} aria-hidden />Watch the screen
   </button>;
-}
-
-/** Without the profile (`profileSheet` off), the sheet the name and the avatar both open, on every screen size. */
-export function TaskSheet({ open, onClose, name, activity }: { open: boolean; onClose(): void; name: string; activity: WorkbotActivity }) {
-  const surface = useRetainedSurface(open);
-  const { title, since } = sheetLead(activity);
-  const watch = activity.watch;
-  const remote = useWorkbotRemoteJobs(open);
-  const drag = useSheetDrag(onClose);
-  return <Dialog.Root open={surface.open} onOpenChange={(next) => { if (!next) onClose(); }}>
-    <Dialog.Portal {...surface.portal}>
-      <Dialog.Backdrop className="fixed inset-0 z-40 bg-[var(--wb-ink)]/25 transition-opacity duration-200 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none sm:bg-[var(--wb-ink)]/10" />
-      <Dialog.Popup ref={drag.popupRef} className="workbot fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col overflow-hidden rounded-t-[24px] bg-[var(--wb-surface)] pb-[env(safe-area-inset-bottom)] shadow-[var(--wb-panel-shadow)] outline-none workbot-sheet-motion transition-transform data-[ending-style]:translate-y-full data-[starting-style]:translate-y-full motion-reduce:transition-none sm:inset-x-auto sm:bottom-auto sm:left-4 sm:top-14 sm:max-h-[min(36rem,calc(100dvh-5rem))] sm:w-[420px] sm:rounded-[16px] sm:data-[ending-style]:translate-y-0 sm:data-[ending-style]:opacity-0 sm:data-[starting-style]:translate-y-0 sm:data-[starting-style]:opacity-0" data-workbot-task-sheet data-workbot-phone-sheet>
-        <div {...drag.handle} className="relative flex shrink-0 touch-none select-none items-start justify-between gap-3 px-5 pb-4 pt-5 sm:touch-auto sm:select-auto">
-          <SheetGrabber />
-          <div className="flex min-w-0 flex-col gap-2">
-            {activity.working ? <span className="w-fit rounded-md bg-[var(--wb-ink)] px-2 py-0.5 text-[12px] font-medium text-[var(--wb-on-ink)]">In progress</span> : null}
-            <Dialog.Title className="line-clamp-2 text-[16px] font-semibold leading-[22px] text-[var(--wb-text)]">{title}</Dialog.Title>
-            {activity.working ? <Dialog.Description className="text-[13px] leading-[18px] text-[var(--wb-muted)]">{activity.label}{since ? ` · since ${clock(since)}` : ""}</Dialog.Description> : <Dialog.Description className="text-[13px] leading-[18px] text-[var(--wb-muted)]">{activity.tasks.length > 0 ? `${name} isn't working on anything right now.` : `When you hand ${name} a bigger job, its progress shows here.`}</Dialog.Description>}
-          </div>
-          <Dialog.Close aria-label="Close" className="grid size-8 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] shadow-[0_0_0_1px_var(--wb-ring)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-sheet-close><X size={15} strokeWidth={1.75} aria-hidden /></Dialog.Close>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto pb-4">
-          <ActivityDetails name={name} activity={activity} />
-          <RemoteJobs jobs={remote.data?.jobs ?? []} statusError={remote.data?.statusError} />
-          {workbotHost().remoteTasks && remote.isError && !remote.data ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]">Couldn&apos;t check remote tasks just now. <button type="button" className="underline" onClick={() => void remote.refetch()}>Try again</button></p> : null}
-        </div>
-        {watch === "computer" ? <div className="shrink-0 border-t border-[var(--wb-hairline)] px-5 py-3"><WatchButton watch={watch} onDone={onClose} /></div> : null}
-      </Dialog.Popup>
-    </Dialog.Portal>
-  </Dialog.Root>;
 }

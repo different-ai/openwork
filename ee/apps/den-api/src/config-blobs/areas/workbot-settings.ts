@@ -34,7 +34,6 @@ import { configRefSchema, type ConfigRef } from "@openwork/types/den/config-blob
 import { readWorkbotModel } from "@openwork/types/den/workbot-settings"
 import { readWorkbotEnabled } from "@openwork/types/den/workbot-team-settings"
 import { z } from "zod"
-import { organizationFeatureEnabled } from "../../features.js"
 import { RUNNER_UNAVAILABLE_MESSAGE, UNKNOWN_MODEL_MESSAGE, saveWorkbotDefaultModel } from "../../routes/org/workbot-settings.js"
 import { saveWorkbotEnabledForEveryone } from "../../routes/org/workbot-team-settings.js"
 import { defineConfigArea, type ConfigAreaContext, type ConfigItem } from "../area.js"
@@ -125,11 +124,8 @@ export const workbotSettingsArea = defineConfigArea({
     if (!current) throw steps.fail("organization_not_found", "The organization no longer exists.", undefined, 404)
     const modelChanges = wantsModel && current.spec.model !== next
     const nextEnabled = parsed.data.enabled
-    let enabledChanges = wantsEnabled && current.spec.enabled !== nextEnabled
-    if (enabledChanges && !await organizationFeatureEnabled(ctx.organizationId, "workbotTeamSettings", { userId: ctx.actor.userId })) {
-      warnings.push("Whether Workbot is on for everyone wasn't changed: Workbot settings per team aren't on for this organization.")
-      enabledChanges = false
-    }
+    const enabledChanges = wantsEnabled && current.spec.enabled !== nextEnabled
+
 
     if (modelChanges) {
       await steps.run({ action: "set", target: "model", detail: next ?? "default" }, "model", async () => {

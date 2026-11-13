@@ -121,7 +121,7 @@ function clearStripeReturnParameters() {
 export default function WebPage() {
   const { orgContext, orgBusy, activeOrg, runReauthableAction } = useOrgDashboard();
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
-  // Feature intros (flag `featureIntros`): OpenWork Web answers `?` only; the page is its own next step.
+  // Feature intros: OpenWork Web answers `?` only; the page is its own next step.
   useFeatureIntro("web", orgContext ? {} : null);
   const orgId = orgContext?.organization.id ?? null;
   const webAvailable = runtimeConfigLoaded

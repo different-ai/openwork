@@ -12,7 +12,6 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { findOrganizationTeamForDefaultModel } from "../../default-model.js"
-import { getOrganizationFeatures, requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, paramValidator, requireOrgPermission } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { updateOrganizationMetadata } from "../../organization-metadata.js"
@@ -54,8 +53,7 @@ const AGENTS_OFF_MESSAGE = "Members' agents aren't on for this organization."
  * (`workbotProactive`, on a deployment with Workbot). One cached feature read.
  */
 async function shownGroups(organizationId: string, userId: string): Promise<{ agents: boolean }> {
-  const features = await getOrganizationFeatures(organizationId, { userId })
-  return { agents: features.workbotProactive && workbotOrigin() !== null }
+  return { agents: workbotOrigin() !== null }
 }
 
 /**
@@ -102,7 +100,7 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       tags: ["Organizations"],
       summary: "Get Workbot settings per team",
       description:
-        "Returns the organization's Workbot default model (null is the deployment's default model), Workbot name (null when the organization set none) and whether Workbot is on for everyone, and for each team, by name, whether it uses the organization's value or its own for each of the three. With members' agents on (workbotProactive), `organization.agentEnabled` says whether they are on for everyone and each team carries `agent`: `inherit` (the team follows the organization's policy for members' agents) `enabled` (agents are on under the policy the team has now) and `calendar` (whether its agents read the calendar under that policy, with `organization.agentCalendar` the choice for everyone); the team's own policy is read and saved at `/v1/org/workbot-settings/teams/{teamId}/agent`. A member on several teams whose own values for a setting differ gets the organization's value for it; conflictingMemberCount counts them per team. Requires View OpenWork Models settings or Manage OpenWork Models, and the Workbot settings per team feature.",
+        "Returns the organization's Workbot default model (null is the deployment's default model), Workbot name (null when the organization set none) and whether Workbot is on for everyone, and for each team, by name, whether it uses the organization's value or its own for each of the three. With members' agents on (workbotProactive), `organization.agentEnabled` says whether they are on for everyone and each team carries `agent`: `inherit` (the team follows the organization's policy for members' agents) `enabled` (agents are on under the policy the team has now) and `calendar` (whether its agents read the calendar under that policy, with `organization.agentCalendar` the choice for everyone); the team's own policy is read and saved at `/v1/org/workbot-settings/teams/{teamId}/agent`. A member on several teams whose own values for a setting differ gets the organization's value for it; conflictingMemberCount counts them per team. Requires View OpenWork Models settings or Manage OpenWork Models.",
       responses: {
         200: jsonResponse("Workbot settings per team returned.", workbotTeamSettingsViewSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -111,7 +109,6 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       },
     }),
     orgMemberRoute(),
-    requireFeature("workbotTeamSettings"),
     requireWorkbotSettingsRead,
     async (c) => {
       c.header("Cache-Control", "no-store")
@@ -126,7 +123,7 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       tags: ["Organizations"],
       summary: "Set a team's Workbot settings",
       description:
-        "Changes one team's Workbot default model, Workbot name, whether Workbot is on for the team (`enabled`), or several; a setting left out is kept. For each, `{ inherit: true }` makes the team use the organization's value again and `{ inherit: false, value }` sets the team's own: a model from the caller's supported, credential-ready AI Gateway models (null is the deployment's default model), a name of 1 to 40 characters, or true or false for `enabled`. With members' agents on (workbotProactive), `agent: { inherit: true }` removes the team's own policy for its members' agents so they follow the organization's again from their next check (the team's own policy is saved with `PUT /v1/org/workbot-settings/teams/{teamId}/agent`); without it `agent` answers 400. The team's members get it from their next message or run, in Workbot, the Slack assistant and cloud Automations set to the cloud default; a member on several teams whose own values differ gets the organization's. `enabled` covers the Workbot app and Your agent only, never the Slack assistant, Automations or the desktop app. A team's model selects a model and never grants access to it. Requires the Manage OpenWork Models permission, which also governs the team's Workbot name and switch, a recent sign-in and the Workbot settings per team feature.",
+        "Changes one team's Workbot default model, Workbot name, whether Workbot is on for the team (`enabled`), or several; a setting left out is kept. For each, `{ inherit: true }` makes the team use the organization's value again and `{ inherit: false, value }` sets the team's own: a model from the caller's supported, credential-ready AI Gateway models (null is the deployment's default model), a name of 1 to 40 characters, or true or false for `enabled`. With members' agents on (workbotProactive), `agent: { inherit: true }` removes the team's own policy for its members' agents so they follow the organization's again from their next check (the team's own policy is saved with `PUT /v1/org/workbot-settings/teams/{teamId}/agent`); without it `agent` answers 400. The team's members get it from their next message or run, in Workbot, the Slack assistant and cloud Automations set to the cloud default; a member on several teams whose own values differ gets the organization's. `enabled` covers the Workbot app and Your agent only, never the Slack assistant, Automations or the desktop app. A team's model selects a model and never grants access to it. Requires the Manage OpenWork Models permission, which also governs the team's Workbot name and switch and a recent sign-in.",
       responses: {
         200: jsonResponse("Workbot settings per team saved.", workbotTeamSettingsViewSchema),
         400: jsonResponse("The model is not one the runner serves, members' agents aren't on for this organization, or the request was invalid.", z.union([unknownModelSchema, invalidRequestSchema])),
@@ -137,7 +134,6 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       },
     }),
     orgMemberRoute(),
-    requireFeature("workbotTeamSettings"),
     requireOrgPermission("inference.manage"),
     paramValidator(teamParamsSchema),
     jsonValidator(workbotTeamSettingsWriteSchema),
@@ -168,7 +164,7 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       tags: ["Organizations"],
       summary: "Get the settings for a team's members' agents",
       description:
-        "Returns how members' agents work for one team's members, in the same shape as `GET /v1/org/workbot-settings/proactive` plus `inherit`. A team either follows the organization's policy (`inherit: true`: the organization's settings, sources, brief and template are returned, so they can be shown as the team's current values) or has its own complete one (`inherit: false`): on/off, working hours, the daily limit, members' starting choice, the destination, what agents may read (`settings.sources`, with `sourceConnections` grouped under the team's policy), the brief (with workbotAgentBrief) and the \"Your agent\" template, whose `version` counts the team's own template saves. The team's members follow its policy from their next check; a member on several teams whose own policies differ follows the organization's. Requires the Workbot settings per team and workbotProactive features, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
+        "Returns how members' agents work for one team's members, in the same shape as `GET /v1/org/workbot-settings/proactive` plus `inherit`. A team either follows the organization's policy (`inherit: true`: the organization's settings, sources, brief and template are returned, so they can be shown as the team's current values) or has its own complete one (`inherit: false`): on/off, working hours, the daily limit, members' starting choice, the destination, what agents may read (`settings.sources`, with `sourceConnections` grouped under the team's policy), the brief (with workbotAgentBrief) and the \"Your agent\" template, whose `version` counts the team's own template saves. The team's members follow its policy from their next check; a member on several teams whose own policies differ follows the organization's. Requires Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
       responses: {
         200: jsonResponse("The team's agent settings returned.", workbotTeamAgentViewSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -177,8 +173,6 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       },
     }),
     orgMemberRoute(),
-    requireFeature("workbotTeamSettings"),
-    requireFeature("workbotProactive"),
     requireWorkbotDeployed,
     requireWorkbotSettingsRead,
     paramValidator(teamParamsSchema),
@@ -203,7 +197,7 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       tags: ["Organizations"],
       summary: "Get the tools a team's members' agents may use on a connection",
       description:
-        "With Your agent's brief on (workbotAgentBrief): every tool one of the organization's connections lists and whether the team's members' agents may call it, in the same shape as `GET /v1/org/workbot-settings/proactive/sources/{connectionId}/tools`, decided with the admin's per-tool choices (`sources.toolOverrides`) of the team's own policy, or the organization's while the team follows it. An MCP connection's tools are listed with the caller's own account. Agents only ever read. Requires the Workbot settings per team, workbotProactive and workbotAgentBrief features, Workbot on this deployment, View OpenWork Models settings or Manage OpenWork Models, and View connections.",
+        "With Your agent's brief on (workbotAgentBrief): every tool one of the organization's connections lists and whether the team's members' agents may call it, in the same shape as `GET /v1/org/workbot-settings/proactive/sources/{connectionId}/tools`, decided with the admin's per-tool choices (`sources.toolOverrides`) of the team's own policy, or the organization's while the team follows it. An MCP connection's tools are listed with the caller's own account. Agents only ever read. Requires the workbotAgentBrief feature, Workbot on this deployment, View OpenWork Models settings or Manage OpenWork Models, and View connections.",
       responses: {
         200: jsonResponse("The connection's tools returned.", agentConnectionToolsDocumentSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -212,8 +206,6 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       },
     }),
     orgMemberRoute(),
-    requireFeature("workbotTeamSettings"),
-    requireFeature("workbotProactive"),
     requireWorkbotDeployed,
     requireWorkbotSettingsRead,
     requireOrgPermission("connections.view"),
@@ -242,7 +234,7 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       tags: ["Organizations"],
       summary: "Change the settings for a team's members' agents",
       description:
-        "Changes any subset of how members' agents work for one team's members, with the same body and the same checks as `PUT /v1/org/workbot-settings/proactive`: policy fields, `sources` (only the organization's own connections, each where it can serve; an MCP only with reviewed read tools unless workbotAgentBrief is on; a core source's default must stay allowed), `brief` (400 without workbotAgentBrief), `responsibilities` and `instructions`. The change is merged onto the team's own policy. A team that followed the organization starts from the organization's policy, sources, brief and template as they are now, and this first save makes that copy the team's own: from then on it no longer follows the organization's changes. A change to responsibilities or instructions adds one to the team's template `version`. The team's members follow it from their next check, including when agents are off for everyone and on for this team; a member on several teams whose own policies differ follows the organization's. Members' own choices are kept. To follow the organization again, send `agent: { inherit: true }` to `PUT /v1/org/workbot-settings/teams/{teamId}`. Returns the team's policy with `inherit: false`. Requires the Workbot settings per team and workbotProactive features, Workbot on this deployment and Manage OpenWork Models.",
+        "Changes any subset of how members' agents work for one team's members, with the same body and the same checks as `PUT /v1/org/workbot-settings/proactive`: policy fields, `sources` (only the organization's own connections, each where it can serve; an MCP only with reviewed read tools unless workbotAgentBrief is on; a core source's default must stay allowed), `brief` (400 without workbotAgentBrief), `responsibilities` and `instructions`. The change is merged onto the team's own policy. A team that followed the organization starts from the organization's policy, sources, brief and template as they are now, and this first save makes that copy the team's own: from then on it no longer follows the organization's changes. A change to responsibilities or instructions adds one to the team's template `version`. The team's members follow it from their next check, including when agents are off for everyone and on for this team; a member on several teams whose own policies differ follows the organization's. Members' own choices are kept. To follow the organization again, send `agent: { inherit: true }` to `PUT /v1/org/workbot-settings/teams/{teamId}`. Returns the team's policy with `inherit: false`. Requires Workbot on this deployment and Manage OpenWork Models.",
       responses: {
         200: jsonResponse("The team's agent settings saved.", workbotTeamAgentViewSchema),
         400: jsonResponse("The request was invalid, or the workday would end before it starts.", z.union([invalidHoursSchema, invalidRequestSchema])),
@@ -252,8 +244,6 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       },
     }),
     orgMemberRoute(),
-    requireFeature("workbotTeamSettings"),
-    requireFeature("workbotProactive"),
     requireWorkbotDeployed,
     requireOrgPermission("inference.manage"),
     paramValidator(teamParamsSchema),
@@ -295,7 +285,7 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       tags: ["Organizations"],
       summary: "Set Workbot settings for everyone",
       description:
-        "Changes the organization's own Workbot settings that teams can override; a setting left out is kept. `enabled` turns Workbot on or off for every member whose teams do not set their own: off, those members' Workbot app says it isn't on, their Workbot routes are refused and Your agent stops checking and messaging for them; the Slack assistant, Automations and the desktop app are not affected. A team with its own `enabled` keeps it, and a member on several teams whose own values differ gets this one. Returns the same view as the per-team routes. Requires the Manage OpenWork Models permission, a recent sign-in and the Workbot settings per team feature.",
+        "Changes the organization's own Workbot settings that teams can override; a setting left out is kept. `enabled` turns Workbot on or off for every member whose teams do not set their own: off, those members' Workbot app says it isn't on, their Workbot routes are refused and Your agent stops checking and messaging for them; the Slack assistant, Automations and the desktop app are not affected. A team with its own `enabled` keeps it, and a member on several teams whose own values differ gets this one. Returns the same view as the per-team routes. Requires the Manage OpenWork Models permission and a recent sign-in.",
       responses: {
         200: jsonResponse("Workbot settings for everyone saved.", workbotTeamSettingsViewSchema),
         400: jsonResponse("The request was invalid.", invalidRequestSchema),
@@ -305,7 +295,6 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       },
     }),
     orgMemberRoute(),
-    requireFeature("workbotTeamSettings"),
     requireOrgPermission("inference.manage"),
     jsonValidator(workbotEveryoneSettingsWriteSchema),
     async (c) => {

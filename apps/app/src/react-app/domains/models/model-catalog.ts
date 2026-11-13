@@ -60,17 +60,15 @@ export function modelTriggerSettings(input: {
 export const AUTO_MODEL_ID = "openai/gpt-6-luna";
 export const AUTO_PROVIDER_ID = "openwork-free";
 export const FREE_MODEL_NAME = "OpenWork Free";
-/** The engine's own name for the free model, used when it is listed like any other model (feature `plainFreeModel`). */
+/** The free model's engine name, also used when no title has been loaded. */
 export const FREE_MODEL_ENGINE_TITLE = "GPT-6 Luna";
-/** `plainFreeModel`: the free model is named, marked and described like every other model. */
-export type ModelDisplayOptions = { plainFreeModel?: boolean };
 /** The picker group that holds only Smart Router models, above everything else, without a label. */
 export const AUTO_ROUTER_GROUP = "Smart";
 /** What a Smart Router model is called when the engine reports no name for it. */
 export const SMART_MODEL_FALLBACK_NAME = "Smart";
 
 /**
- * One of the organization's Smart Routers (feature `autoRouter`): the Gateway
+ * One of the organization's Smart Routers: the Gateway
  * picks the real model for every prompt. Every router is a model of the one
  * `openwork-auto` provider, named "Smart: <router name>". Not OpenWork Free.
  */
@@ -133,8 +131,8 @@ export function isAutoModel(model: ModelRef | null | undefined) {
  * Router's own name ("Smart: Engineering") when it is known; undefined
  * otherwise.
  */
-export function fixedModelTitle(model: ModelRef & { title?: string }, display: ModelDisplayOptions = {}): string | undefined {
-  if (isAutoModel(model)) return display.plainFreeModel ? (model.title?.trim() && model.title.trim() !== model.modelID ? undefined : FREE_MODEL_ENGINE_TITLE) : FREE_MODEL_NAME;
+export function fixedModelTitle(model: ModelRef & { title?: string }): string | undefined {
+  if (isAutoModel(model)) return model.title?.trim() && model.title.trim() !== model.modelID ? undefined : FREE_MODEL_ENGINE_TITLE;
   if (isAutoRouterModel(model)) {
     const title = model.title?.trim();
     return title && title !== model.modelID && autoRouterIdFromModel(title) === null ? title : undefined;
@@ -154,8 +152,8 @@ function isOpaqueModelId(value: string) {
 }
 
 /** A model's display name: its title, never an opaque gateway id (then "<Provider> model"). */
-export function modelTitle(model: ModelRef & { title?: string; description?: string }, display: ModelDisplayOptions = {}) {
-  const fixed = fixedModelTitle(model, display);
+export function modelTitle(model: ModelRef & { title?: string; description?: string }) {
+  const fixed = fixedModelTitle(model);
   if (fixed) return fixed;
   // A Smart model's id (`openwork-smart-…`) is never a name a person reads.
   if (isAutoRouterModel(model)) return SMART_MODEL_FALLBACK_NAME;
@@ -202,8 +200,7 @@ export function modelStateLabel(model: ModelOption): string | null {
   return null;
 }
 
-export function modelSubtitle(model: ModelOption, exhausted = false, display: ModelDisplayOptions = {}) {
-  if (isAutoModel(model) && !display.plainFreeModel) return exhausted ? "Limit used up" : "Free with a usage limit";
+export function modelSubtitle(model: ModelOption) {
   if (isAutoRouterModel(model)) return "Picks the best model for each task";
   // Gateway models assigned to the member that wait on their own provider sign-in.
   if (model.gatewayAuthorization) return [model.description?.trim(), "Sign-in required"].filter(Boolean).join(" · ");

@@ -6,6 +6,8 @@
 import type { WorkspaceSessionGroup } from "../../../../app/types";
 import type { FeedFolder, FeedGroupBy, FeedPlacement, FeedSortBy, WorkspaceGroupState } from "./session-management-store";
 import { sessionCreatedAt, sessionLastActivityAt } from "./session-activity";
+import { workbenchSessionKey } from "../chat/workbench-store";
+import { shouldHideAttachedSideChat } from "./side-chat-status";
 import {
   getRootSessions,
   isActiveWorkSessionStatus,
@@ -43,6 +45,9 @@ export type SessionFeed = {
 
 export type SessionFeedContext = {
   pinnedIds: ReadonlySet<string>;
+  /** Hidden attachments must leave the list before virtual row slots are allocated. */
+  attachedSideChatKeys: ReadonlySet<string>;
+  selectedSessionId: string | null;
   unreadIds: ReadonlySet<string>;
   workedAtById: Readonly<Record<string, number>>;
   placementById: Readonly<Record<string, FeedPlacement>>;
@@ -89,7 +94,11 @@ export function buildSessionFeed(groups: readonly WorkspaceSessionGroup[], conte
   };
   for (const group of groups) {
     const roots = getRootSessions(partitionArchivedSessions(group.sessions).active)
-      .filter((session) => !context.pinnedIds.has(session.id));
+      .filter((session) => !context.pinnedIds.has(session.id) && !shouldHideAttachedSideChat(
+        context.attachedSideChatKeys.has(workbenchSessionKey({ workspaceId: group.workspace.id, sessionId: session.id })),
+        context.selectedSessionId === session.id,
+        context.statusById?.[session.id],
+      ));
     for (const session of roots) {
       const folder = folderFor(group.workspace.id, session.id);
       (folder ? folder.entries : listed).push({ group, session });

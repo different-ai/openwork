@@ -159,7 +159,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
     describeRoute({
       tags: ["Members"],
       summary: "Turn OpenWork Web on or off for a member",
-      description: "Chooses whether a member or pending invitation has OpenWork Web. The organization's OpenWork Web subscription bills only the people who have it, so the Stripe quantity follows each change, prorated on the next invoice. Needs the webPerMember feature.",
+      description: "Chooses whether a member or pending invitation has OpenWork Web. The organization's OpenWork Web subscription bills only the people who have it, so the Stripe quantity follows each change, prorated on the next invoice. Requires permission to manage members. The organization subscription and each member's assigned Web entitlement still apply.",
       responses: {
         200: jsonResponse("OpenWork Web was turned on or off for the member.", memberOpenWorkWebResponseSchema),
         400: jsonResponse("The request was invalid.", invalidRequestSchema),
@@ -170,7 +170,6 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
       },
     }),
     orgPermissionRoute("billing.manage"),
-    requireFeature("webPerMember"),
     paramValidator(orgMemberParamsSchema),
     jsonValidator(updateMemberOpenWorkWebSchema),
     async (c) => {

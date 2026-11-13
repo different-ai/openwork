@@ -7,12 +7,11 @@ import type { Seed } from "@openwork/env";
 import { close, isRecord, listen, sendJson } from "./openwork-server-cli.ts";
 import { writeClaudeAgentExecutable } from "./claude-agent-executable.ts";
 
-type Scenario = "disabled" | "logged-out" | "saved" | "missing";
+type Scenario = "logged-out" | "saved" | "missing";
 
 /** Real app + upstream v2 integration, isolated HOME, synthetic Claude executable.
- * The signed-out deployment changes only the rollout response, never engine APIs. */
+ * The signed-out deployment never changes engine APIs. */
 async function claudeAgentProvider(seed: Seed, scenario: Scenario) {
-  const enabled = scenario !== "disabled";
   const deployment = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
     response.setHeader("access-control-allow-origin", request.headers.origin ?? "*");
@@ -20,7 +19,7 @@ async function claudeAgentProvider(seed: Seed, scenario: Scenario) {
     response.setHeader("access-control-allow-headers", "authorization,content-type");
     response.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
     if (request.method === "OPTIONS") { response.writeHead(204); response.end(); return; }
-    if (path === "/v1/features") return sendJson(response, 200, { features: { claudeAgentProvider: enabled } });
+    if (path === "/v1/features") return sendJson(response, 200, { features: {} });
     if (path === "/api/auth/get-session") return sendJson(response, 200, null);
     sendJson(response, 404, { error: { message: "Unexpected deployment route" } });
   });
@@ -87,7 +86,6 @@ async function claudeAgentProvider(seed: Seed, scenario: Scenario) {
   }
 }
 
-export const claudeAgentDisabled = (seed: Seed) => claudeAgentProvider(seed, "disabled");
 export const claudeAgentLoggedOut = (seed: Seed) => claudeAgentProvider(seed, "logged-out");
 export const claudeAgentSaved = (seed: Seed) => claudeAgentProvider(seed, "saved");
 export const claudeAgentMissing = (seed: Seed) => claudeAgentProvider(seed, "missing");

@@ -2,12 +2,11 @@
 
 import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, FileText, Globe, Lock, MessageCircle, Monitor, Pencil, Presentation, X } from "lucide-react";
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
-import { computerTabLabel, computerViews, setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
+import { calmChat, computerTabLabel, computerViews, setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
-import { clearThreadSnapshots } from "./thread-cache";
 import { chatTitle, RemoveChatButton, SideChatTitle, useChatLocation } from "./chats";
 import { DesktopNavigation, MobileNavigation, type NavigationProps } from "./navigation";
-import { AppsSheet, ProfileSheet, type ProfileTab } from "./profile-sheet";
+import { ProfileSheet, type ProfileTab } from "./profile-sheet";
 import {
   useEditWorkbotMessage,
   useRetryWorkbotMessage,
@@ -29,13 +28,12 @@ import {
   type LiveText,
   type WorkbotAttachment,
   type WorkbotLiveStore,
-  type WorkbotPart,
   type WorkbotStep,
   type WorkbotTask,
   type WorkbotThread,
   type WorkbotTurn,
 } from "./data";
-import { AppMark, AttachButton, FilesButton, FilesPanel, SentAttachments, UploadTray, useFileDrop, type Upload } from "./files";
+import { AppMark, AttachButton, FilesPanel, SentAttachments, UploadTray, useFileDrop, type Upload } from "./files";
 import { createComposerState, type ComposerState, type Pending } from "./composer-state";
 import { browserTask, computerWork, finishedSummary, keepsCard, type ComputerSurface } from "./computer-work";
 import { BrowserExperience, useBrowserPreview, type BrowserPreviewTask } from "./browser-preview";
@@ -49,12 +47,12 @@ import { ModelRecovery, AccessRecovery } from "./model-recovery";
 import { hasAnsweredTurn, WorkbotSetupChip } from "./activation";
 import { WorkbotCalendar } from "./lazy-surfaces";
 import { WorkbotDocuments } from "./documents";
-import { WorkbotDevices } from "./devices";
+import { DeviceComputerNavigationContext, WorkbotDevices } from "./devices";
 import { LastGlimpse, LiveGlimpse, WorkbotComputer } from "./computer";
 import { readBrowserSkillRunPrompt, type BrowserTeachingContext } from "@openwork/types/browser-demonstration";
 import { readWorkbotCorrectionPrompt, workbotCorrectionPrompt, workbotContextLabel, workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import type { DocumentOpenOutcome, DocumentOpenRequest } from "@openwork/documents";
-import { ComputerNavigationContext, ComputerOffer, DockedChat, DocumentNavigationContext, DocumentNavigationStatus, DocumentOffers, type DocumentNavigationState, OpenDocumentContext, SentContext, useWideScreen, WorkspaceNavigationContext } from "./workspace";
+import { ComputerNavigationContext, DockedChat, DocumentNavigationContext, DocumentNavigationStatus, DocumentOffers, type DocumentNavigationState, OpenDocumentContext, SentContext, useWideScreen, WorkspaceNavigationContext } from "./workspace";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNativeDictation } from "@openwork/ui/react";
 import { WorkbotDictation } from "./native-dictation";
@@ -85,6 +83,10 @@ const PAGE_TURNS = 30;
 const MAX_TURNS = 200;
 const earlierWindow = (current: number) => Math.min(MAX_TURNS, current < PAGE_TURNS ? PAGE_TURNS : current + PAGE_TURNS);
 const COLUMN = "min-w-0 w-full max-w-[800px]";
+/** The calm look (`calmChat`) reads in a narrower column, like a note rather than a page. */
+const column = () => (calmChat() ? "min-w-0 w-full max-w-[560px]" : COLUMN);
+/** The calm look's message text: 13/21 on a wide screen, 14/21 on a phone. */
+const CALM_TEXT = "text-[14px] leading-[21px] sm:text-[13px]";
 
 /**
  * A phone or tablet keyboard: no hover and a coarse pointer, the same test the page uses for its touch layout. There
@@ -114,9 +116,6 @@ type ChatNavigation = {
 /** The Workbot page. `host` is the app it lives in: signed-in requests, the person, their apps (see WorkbotHost). */
 export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   setWorkbotHost(host);
-  // Pages kept on this device are only for people with instantOpen; turning it off forgets them.
-  const instantOpen = host.instantOpen === true;
-  useEffect(() => { if (!instantOpen) clearThreadSnapshots(); }, [instantOpen]);
   const sideChats = host.sideChats === true;
   const composers = useMemo(() => new Map<string | null, ComposerState>(), [host.identity?.organizationId, host.identity?.principalId]);
   const positions = useMemo(() => new Map<string | null, ConversationScrollState>(), [host.identity?.organizationId, host.identity?.principalId]);
@@ -170,8 +169,8 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const [filesOpen, setFilesOpen] = useState(false);
   // Once activated, keep this shell mounted even when the flag is revoked: draft editors must survive.
   const [teaching, setTeaching] = useState<BrowserTeachingContext>();
-  // Chat beside the browser (`workbotBrowserChat`) needs the same shell as the floating chat: one conversation, many views.
-  const browserChat = host.browserChat === true && host.browser === true;
+  // Chat beside the browser needs the same shell as the floating chat: one conversation, many views.
+  const browserChat = host.browser === true;
   const [workspaceShell, setWorkspaceShell] = useState(host.workspaceAssistant === true || host.browserDemonstrations === true || browserChat);
   useEffect(() => { if (host.workspaceAssistant || host.browserDemonstrations || browserChat) setWorkspaceShell(true); }, [host.workspaceAssistant, host.browserDemonstrations, browserChat]);
   const wideScreen = useWideScreen();
@@ -339,7 +338,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     // A foreground answer wins; otherwise name the newest genuinely active job, local or remote.
     if (!local.main && away && (!localTask || (away.since ?? 0) >= (localTask.startedAt ?? 0))) return { ...local, working: true, label: away.label, icon: "computer" as const, since: away.since, watch: null };
     return local;
-  }, [host.browser, host.workingStatus, host.profileSheet, host.remoteTasks, data, liveStatus, activityNow, remote.data]);
+  }, [host.browser, data, liveStatus, activityNow, remote.data]);
   const addFiles = composerState.add;
   const openFiles = filesEnabled ? () => { if (!workspaceShell && tab !== "home") setTab("home"); setFilesOpen(true); } : undefined;
   const chatListEnabled = navigation !== null;
@@ -392,9 +391,8 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     />
   );
   const dragging = useFileDrop(filesEnabled, addFiles);
-  const [appsOpen, setAppsOpen] = useState(false);
-  // `profileNav`: the navigation lists only pages; Files and Apps are tabs of Workbot's profile, opened from its logo.
-  const profileNav = host.profileNav === true && host.profileSheet === true;
+  // The navigation lists only pages; Files and Apps are tabs of Workbot's profile, opened from its logo.
+
   const [profileTab, setProfileTab] = useState<ProfileTab | null>(null);
   // The browser viewer keeps a 480px conversation beside it. Its chosen panel temporarily discloses navigation
   // through the same drawer, rather than squeezing the conversation behind a second 324px sidebar.
@@ -405,24 +403,21 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     onRetry: () => void paletteChats.refetch(),
     onOpenChat: navigation ? next => { if (!documentsDirty) { setTab("home"); navigation.openChat(next); } } : undefined,
     drafts: documentsDirty,
-    onFiles: openFiles,
-    onApps: () => setAppsOpen(true),
     onOpen: () => void paletteChats.refetch(),
     // On phones the palette stays in the header even with the drawer closed, keeping Cmd/Ctrl+K available.
     search: showDesktopNavigation ? palette : undefined,
     onSearch: showDesktopNavigation ? undefined : () => document.querySelector<HTMLButtonElement>("[data-workbot-palette-trigger]")?.click(),
     account: <AccountAvatar userName={user?.name ?? null} />,
-    ...(profileNav ? { onProfile: () => setProfileTab("tasks"), assistantName: data?.name ?? "Workbot" } : {}),
+    onProfile: () => setProfileTab("tasks"), assistantName: data?.name ?? "Workbot",
   };
   const mobileNavigation = !showDesktopNavigation ? <MobileNavigation {...navigationProps} /> : null;
   // The chat's header and message box float over its conversation (floating-chrome.ts); other views keep them solid.
   const chrome = useFloatingChrome();
-  const layout = (children: ReactNode, floating = false) => <div className={`workbot workbot-layout flex min-h-0 min-w-0 bg-[var(--wb-bg)] antialiased ${floating ? "is-floating-chrome" : ""}`}>
+  const layout = (children: ReactNode, floating = false) => <DeviceComputerNavigationContext.Provider value={computerFor}><div className={`workbot workbot-layout flex min-h-0 min-w-0 bg-[var(--wb-bg)] antialiased ${floating ? "is-floating-chrome" : ""}`} data-workbot-look={calmChat() ? "calm" : undefined}>
     {showDesktopNavigation && <DesktopNavigation {...navigationProps} />}
     <div className="workbot-layout-main flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
-    <AppsSheet open={appsOpen} onClose={() => setAppsOpen(false)} name={data?.name ?? "Workbot"} />
-    {profileNav ? <ProfileSheet open={profileTab !== null} initialTab={profileTab ?? "tasks"} onClose={() => setProfileTab(null)} name={data?.name ?? "Workbot"} activity={activity} /> : null}
-  </div>;
+    {<ProfileSheet open={profileTab !== null} initialTab={profileTab ?? "tasks"} onClose={() => setProfileTab(null)} name={data?.name ?? "Workbot"} activity={activity} />}
+  </div></DeviceComputerNavigationContext.Provider>;
 
   useEffect(() => {
     if (greetingAwaited && (start.isError || start.data?.started === false || (data?.turns.length ?? 0) > 0)) setGreetingAwaited(false);
@@ -516,14 +511,14 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       requestAnimationFrame(() => requestAnimationFrame(focusComposer));
     } : null;
     const attached = askContext && !browserPreview?.visible ? <AttachedContext context={askContext} onRemove={() => setAskContext(null)} /> : null;
-    const composer = <DraftComposer state={composerState} teaching={teaching} name={name} busy={busy} stopping={stop.isPending} filesEnabled={filesEnabled} nativeDictation={host.nativeDictation}
+    const composer = <DraftComposer state={composerState} teaching={teaching} name={name} busy={busy} stopping={stop.isPending} filesEnabled={filesEnabled}
       onSend={text => submit(text)} onStop={() => stop.mutate()} autoFocus={false} disabled={!data && !loading} />;
     const firstName = user?.name?.trim().split(/\s+/)[0] ?? null;
     const home = !data && !loading ? <div className="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center text-[13px] text-[var(--wb-muted)]" role="status"><p>Couldn't load your conversation.</p><button type="button" className="rounded-lg px-3 py-2 underline focus-visible:shadow-[var(--wb-focus)]" onClick={() => void thread.refetch()}>Try again</button></div>
       : welcome === "showing" ? <Welcome name={name} firstName={firstName} onBegin={() => { if (start.isIdle) { setGreetingAwaited(true); start.mutate(); } }} onDone={() => setWelcome("done")} />
       : data && empty && side ? <SideChatStart name={name} organizationName={data.organizationName}>{attached}{composer}</SideChatStart>
       : data && empty && !starting ? <FirstOpen name={name} organizationName={data.organizationName} firstName={firstName} onSuggestion={text => submit(text)} error={start.isError ? start.error instanceof WorkbotSendError && start.error.accessReason ? <AccessRecovery reason={start.error.accessReason} onRetry={() => { setGreetingAwaited(true); start.mutate(); }} /> : <ErrorLine action={{ label: "Try again", onClick: () => { setGreetingAwaited(true); start.mutate(); } }}>{HELLO_FAILED}</ErrorLine> : null}>{attached}{composer}</FirstOpen>
-      : <>{conversation}<div ref={chrome.bottom} className="workbot-chrome-bottom absolute inset-x-0 bottom-0 z-20 flex justify-center px-3" data-workbot-floating-composer><FloatingGlass edge="bottom" /><div className={COLUMN}>{attached}{composer}</div></div></>;
+      : <>{conversation}<div ref={chrome.bottom} className="workbot-chrome-bottom absolute inset-x-0 bottom-0 z-20 flex justify-center px-3" data-workbot-floating-composer><FloatingGlass edge="bottom" /><div className={column()}>{attached}{composer}</div></div></>;
     // Only the conversation itself floats its header and message box; a welcome, first open or error stays as it was.
     const floating = tab === "home" && Boolean(data || loading) && welcome !== "showing" && !(data && empty && (side || !starting));
     return <>
@@ -534,7 +529,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       <DocumentNavigationContext.Provider value={guided && host.documents ? { status: navigationStatus, open: followNavigation } : null}>
         {layout(<div ref={chrome.frame} className="relative flex min-h-0 flex-1 flex-col" data-workbot-workspace>
           <WorkbotHeader floating={floating ? chrome.top : undefined} name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} activity={activity} wide={wideScreen}
-            files={filesEnabled && !profileNav ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
+
             chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
             page={pageTitle} action={askAbout ? <AskWorkbotButton name={name} onClick={askAbout} /> : null}
             remove={navigation?.chat && data && data.turns.length > 0 ? <RemoveChatButton disabled={documentsDirty} chatId={navigation.chat} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
@@ -550,7 +545,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
             {host.calendar && (calendarVisited || tab === "calendar") && <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={name} onContextChange={setCalendarContext} />}
           </div>
           <div className="flex min-h-0 min-w-0 flex-1 border-t border-[var(--wb-hairline)]" style={{ display: tab === "devices" ? undefined : "none" }} hidden={tab !== "devices"}>
-            {host.devices === true && tab === "devices" && <WorkbotDevices computerFor={computerFor} />}
+            {tab === "devices" && <WorkbotDevices computerFor={computerFor} />}
           </div>
           <div className="flex min-h-0 min-w-0 flex-1" style={{ display: tab === "computer" ? undefined : "none" }} hidden={tab !== "computer"}>
             {computerVisited && tab === "computer" && !browserPreview?.visible && computerViews(host).length > 0 && <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} onViewChange={setComputerView} onContextChange={setBrowserContext} />}
@@ -567,14 +562,14 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       </OpenDocumentContext.Provider>
     </>;
   }
-  if ((tab === "calendar" && host.calendar) || tab === "documents" || (tab === "devices" && host.devices === true) || (tab === "computer" && computerViews(host).length > 0)) {
+  if ((tab === "calendar" && host.calendar) || tab === "documents" || (tab === "devices") || (tab === "computer" && computerViews(host).length > 0)) {
     return layout(
       <div className="flex min-h-0 flex-1 flex-col">
         <WorkbotHeader
           name={data?.name ?? "Workbot"}
           organizationName={data?.organizationName ?? ""}
           userName={user?.name ?? null}
-          files={null}
+
           chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
           page={tab === "documents" ? "Documents" : tab === "calendar" ? "Calendar" : tab === "devices" ? "Devices" : computerTabLabel(host)}
           answered={hasAnsweredTurn(data?.turns)}
@@ -635,7 +630,6 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const composer = (
     <DraftComposer
       state={composerState}
-      nativeDictation={host.nativeDictation}
       name={shown.name}
       busy={busy}
       stopping={stop.isPending}
@@ -656,7 +650,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
         name={shown.name}
         organizationName={shown.organizationName}
         userName={user?.name ?? null}
-        files={filesEnabled && !profileNav ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
+
         chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
         title={navigation && chatId ? <SideChatTitle title={navigation.title} onBack={() => navigation.openChat(null)} /> : null}
         remove={navigation && chatId && shown.turns.length > 0 ? <RemoveChatButton chatId={chatId} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
@@ -725,7 +719,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           />
           <div ref={chrome.bottom} className="workbot-chrome-bottom absolute inset-x-0 bottom-0 z-20 flex justify-center px-3 sm:px-10" data-workbot-floating-composer>
             <FloatingGlass edge="bottom" />
-            <div className={COLUMN}>
+            <div className={column()}>
               {composer}
             </div>
           </div>
@@ -789,6 +783,14 @@ const LOADING_THREAD: Extract<WorkbotThread, { available: true }> = { available:
 
 /** Where the thread will be while it is first read: a few lines in the shape of a conversation. */
 function ThreadPlaceholder() {
+  if (calmChat()) return (
+    <div className="flex flex-col gap-[3px] pb-8" role="progressbar" aria-busy="true" aria-label="Loading conversation">
+      <span className="ml-auto h-[41px] w-48 rounded-2xl bg-[var(--wb-user-bubble)]" />
+      <span className="mt-6 h-3.5 w-[70%] rounded bg-[var(--wb-chip)]" />
+      <span className="mt-2 h-3.5 w-[58%] rounded bg-[var(--wb-chip)]" />
+      <span className="mt-2 h-3.5 w-[40%] rounded bg-[var(--wb-chip)]" />
+    </div>
+  );
   return (
     <div className="flex flex-col gap-[3px] pb-8" role="progressbar" aria-busy="true" aria-label="Loading conversation">
       <span className="ml-auto h-[38px] w-48 rounded-[20px] rounded-br-md bg-[var(--wb-bubble)]" />
@@ -813,7 +815,7 @@ type WorkbotTab = WorkbotPaletteTab;
 
 /** The pages this person has, in the header's order. */
 function paletteTabs(host: WorkbotHost): WorkbotTab[] {
-  return ["home", ...(host.calendar ? ["calendar" as const] : []), ...(host.documents ? ["documents" as const] : []), ...(host.devices === true ? ["devices" as const] : [])];
+  return ["home", ...(host.calendar ? ["calendar" as const] : []), ...(host.documents ? ["documents" as const] : []), "devices"];
 }
 
 /** Puts the caret in the message box on screen (the Home composer, or the workspace chat's). */
@@ -848,11 +850,10 @@ function useWorkbotTab(beforeLeave?: (next: WorkbotTab) => boolean, preserveSear
   beforeLeaveRef.current = beforeLeave;
   const [tab, setTabState] = useState<WorkbotTab>(tabFromLocation);
   const computerEnabled = computerViews(workbotHost()).length > 0;
-  const devicesEnabled = workbotHost().devices === true;
   useEffect(() => {
     // A page this person doesn't have (from a link, or turned off since) opens Home instead.
-    if ((!computerEnabled && tab === "computer") || (!devicesEnabled && tab === "devices")) { window.history.replaceState(null, "", `/${preserveSearch ? window.location.search : ""}`); setTabState("home"); }
-  }, [computerEnabled, devicesEnabled, tab, preserveSearch]);
+    if (!computerEnabled && tab === "computer") { window.history.replaceState(null, "", `/${preserveSearch ? window.location.search : ""}`); setTabState("home"); }
+  }, [computerEnabled, tab, preserveSearch]);
   useEffect(() => {
     const sync = () => {
       const next = tabFromLocation();
@@ -875,7 +876,6 @@ function WorkbotHeader(props: {
   name: string;
   organizationName: string;
   userName: string | null;
-  files: ReactNode;
   /** Opens the list of chats, before the name (main chat, where side chats are on). */
   chats?: ReactNode;
   /** Replaces the mark and name: a side chat's back button and name. */
@@ -909,18 +909,21 @@ function WorkbotHeader(props: {
   );
   // Phones show the chat, not a persona: Workbot's name with what it is doing, which opens the same sheet as the avatar.
   const phone = props.wide === false;
+  // The calm look has one inline pill on every screen, so the header is one row tall.
+  const calm = calmChat();
+  const short = phone || calm;
   return (
-    <header ref={props.floating} className={`grid shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 px-3 sm:px-5 ${phone ? "min-h-14 items-center py-1.5" : "min-h-[84px] items-start pb-2 pt-2"} ${props.floating ? "workbot-chrome-top absolute inset-x-0 top-0 z-20" : ""}`} data-workbot-profile-header data-workbot-floating-header={props.floating ? "" : undefined}>
+    <header ref={props.floating} className={`grid shrink-0 ${calm ? "grid-cols-[1fr_minmax(0,auto)_1fr]" : "grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"} gap-2 px-3 sm:px-5 ${short ? "min-h-14 items-center py-1.5" : "min-h-[84px] items-start pb-2 pt-2"} ${props.floating ? "workbot-chrome-top absolute inset-x-0 top-0 z-20" : ""}`} data-workbot-profile-header data-workbot-floating-header={props.floating ? "" : undefined}>
       {props.floating ? <FloatingGlass edge="top" /> : null}
-      <div className={`flex min-w-0 items-center ${props.floating ? "gap-2" : "gap-1"} ${phone ? "" : "pt-2"}`} data-workbot-header-side>
+      <div className={`flex min-w-0 items-center ${props.floating ? "gap-2" : "gap-1"} ${short ? "" : "pt-2"}`} data-workbot-header-side>
         {props.chats}{props.search}
         <div className="hidden min-w-0 lg:contents">{props.nav}</div>
       </div>
       <div className="flex min-w-0 flex-col items-center gap-1">
-        <h1 className="min-w-0 max-w-full">{phone ? <WorkingName name={name} activity={props.activity} mark={null} phone /> : <ProfileBadge name={name} activity={props.activity} />}</h1>
+        <h1 className="min-w-0 max-w-full">{phone && !calm ? <WorkingName name={name} activity={props.activity} mark={null} phone /> : <ProfileBadge name={name} activity={props.activity} />}</h1>
         {props.title ? <div className="flex max-w-[150px] items-center gap-1 text-[12px]">{props.title}</div> : null}
       </div>
-      <div className={`flex min-w-0 items-center justify-end gap-1 sm:gap-2.5 ${phone ? "" : "pt-2"}`} data-workbot-header-side>
+      <div className={`flex min-w-0 items-center justify-end gap-1 sm:gap-2.5 ${short ? "" : "pt-2"}`} data-workbot-header-side>
         {props.remove}
         <div className="hidden sm:contents"><WorkbotSetupChip answered={props.answered === true} /></div>
       </div>
@@ -979,6 +982,7 @@ function Intro(props: { name: string; organizationName: string; firstName: strin
   const hello = hour < 12 ? "Morning" : hour < 18 ? "Hi" : "Evening";
   // Phones open straight on the conversation: no avatar, name and "Set up by" card above it.
   const wide = useWideScreen();
+  const calm = calmChat();
   return (
     <>
       {wide ? <WhoYouAreTalkingTo name={props.name} organizationName={props.organizationName} /> : null}
@@ -987,13 +991,13 @@ function Intro(props: { name: string; organizationName: string; firstName: strin
         <div className="flex flex-col gap-[3px]">
           <Timestamp at={props.at} />
           <div className="flex">
-            <p className="max-w-[520px] rounded-bl-md rounded-[20px] bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[var(--wb-assistant-shadow)]">
+            <p className={`max-w-[520px] rounded-bl-md rounded-[20px] bg-[var(--wb-surface)] px-4 py-2.5 ${calm ? CALM_TEXT : "text-[15px] leading-[22px]"} text-[var(--wb-text)] shadow-[var(--wb-assistant-shadow)]`}>
               {hello}{props.firstName ? ` ${props.firstName}` : ""}.{seeing ? ` I can already see your ${seeing}.` : ""}
             </p>
           </div>
           {props.followed ? null : (
             <div className="flex">
-              <p className="max-w-[520px] rounded-tl-md rounded-[20px] bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[var(--wb-assistant-shadow)]">
+              <p className={`max-w-[520px] rounded-tl-md rounded-[20px] bg-[var(--wb-surface)] px-4 py-2.5 ${calm ? CALM_TEXT : "text-[15px] leading-[22px]"} text-[var(--wb-text)] shadow-[var(--wb-assistant-shadow)]`}>
                 What can I take off your plate today?
               </p>
             </div>
@@ -1019,7 +1023,7 @@ function FirstOpen(props: { name: string; organizationName: string; firstName: s
   const [now] = useState(() => Date.now());
   return (
     <div className="flex flex-1 items-center justify-center overflow-y-auto px-4 pb-18 sm:px-10">
-      <div className={`${COLUMN} flex flex-col gap-1`}>
+      <div className={`${column()} flex flex-col gap-1`}>
         <Intro name={props.name} organizationName={props.organizationName} firstName={props.firstName} at={now} />
         {/* A hello that couldn't start says so right under the greeting, where the hello would have been. */}
         {props.error}
@@ -1059,7 +1063,7 @@ function SideChatStart(props: { name: string; organizationName: string; children
   const wide = useWideScreen();
   return (
     <div className="flex flex-1 items-center justify-center overflow-y-auto px-4 pb-18 sm:px-10">
-      <div className={`${COLUMN} flex flex-col gap-1`}>
+      <div className={`${column()} flex flex-col gap-1`}>
         {wide ? <WhoYouAreTalkingTo name={props.name} organizationName={props.organizationName} /> : null}
         {props.children}
       </div>
@@ -1152,7 +1156,7 @@ function Conversation(props: {
       className="workbot-scroll min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
     >
       <div ref={content} className="workbot-scroll-content flex min-h-full flex-col items-center justify-end px-4 sm:px-10">
-        <div className={`${COLUMN} flex flex-col`}>
+        <div className={`${column()} flex flex-col`}>
           {props.loading ? <ThreadPlaceholder /> : props.hasEarlier && props.earlierLimit ? (
             <p className="mb-6 text-center text-[12px] text-[var(--wb-muted)]" role="status">History limit reached. Earlier messages aren&apos;t available here.</p>
           ) : props.hasEarlier ? (
@@ -1209,7 +1213,7 @@ function Conversation(props: {
         </div>
       </div>
     </div>
-    {workbotHost().scrollToBottom === true && <ScrollToBottom visible={far} onClick={latest} />}
+    <ScrollToBottom visible={far} onClick={latest} />
     </div>
   );
 }
@@ -1260,7 +1264,7 @@ function UserBubble({ text, muted = false, reaction = null, action }: { text: st
           <p>Correction to your message{visible.correction.sentAt !== null ? ` from ${new Date(visible.correction.sentAt).toLocaleString()}` : ""}</p>
           {visible.correction.quote && <blockquote className="line-clamp-3 border-l-2 border-[var(--wb-hairline)] pl-2" title={visible.correction.quote}>{visible.correction.quote}{visible.correction.quote.length === 1000 ? "…" : ""}</blockquote>}
         </div>}
-        <p className={`whitespace-pre-wrap break-words rounded-[20px] bg-[var(--wb-user-bubble)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] transition-opacity duration-150 ${muted ? "opacity-60" : ""}`}>
+        <p className={`whitespace-pre-wrap break-words bg-[var(--wb-user-bubble)] text-[var(--wb-text)] ${calmChat() ? `rounded-[20px] px-4 py-2.5 ${CALM_TEXT}` : "rounded-[20px] px-4 py-2.5 text-[15px] leading-[22px]"} transition-opacity duration-150 ${muted ? "opacity-60" : ""}`}>
           {visible.text}
         </p>
         {action ? <span className={ownAction}>{action}</span> : null}
@@ -1426,7 +1430,7 @@ function CopyAnswer({ text }: { text: string }) {
 function AssistantBubble({ children, trailing = null }: { children: ReactNode; trailing?: ReactNode }) {
   return (
     <div className="flex items-end gap-1 py-[3px]">
-      <div className="flex w-fit min-w-0 max-w-full flex-col overflow-x-auto rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 py-2.5 shadow-[var(--wb-assistant-shadow)] sm:max-w-[600px]" data-workbot-assistant-text>
+      <div className={`flex w-fit min-w-0 max-w-full flex-col overflow-x-auto rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 py-2.5 shadow-[var(--wb-assistant-shadow)] sm:max-w-[600px]`} data-workbot-assistant-text>
         {children}
       </div>
       {trailing}
@@ -1450,7 +1454,7 @@ function WaitingSlot({ children }: { children?: ReactNode }) {
 function TypingDots() {
   return (
     <div className="workbot-row-enter flex py-[3px]" role="status" aria-label="Workbot is processing">
-      <div className="flex h-9 items-center gap-[5px] rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 shadow-[var(--wb-assistant-shadow)]">
+      <div className={`flex h-9 items-center gap-[5px] rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 shadow-[var(--wb-assistant-shadow)]`}>
         <span aria-hidden className="workbot-typing-dot" />
         <span aria-hidden className="workbot-typing-dot" />
         <span aria-hidden className="workbot-typing-dot" />
@@ -1564,22 +1568,6 @@ function useTaskClock(turns: WorkbotTurn[] | undefined) {
 }
 
 /**
- * Workbot's computer: a slim laptop with a soft blue screen whose two lines write themselves while it works.
- * Sized for the 16px slot (DESIGN V5); the motion stops for reduced motion (V6).
- */
-/** Workbot's computer; its screen "writes" only while it is working (V6). */
-function ComputerGlyph({ working = true }: { working?: boolean }) {
-  return (
-    <svg viewBox="0 0 16 16" width={16} height={16} fill="none" className={`workbot-computer ${working ? "is-working" : ""}`}>
-      <rect x="2.25" y="3" width="11.5" height="8" rx="1.75" className="workbot-computer-screen" strokeWidth={1.25} />
-      <path d="M1.5 13h13" className="workbot-computer-stand" strokeWidth={1.25} strokeLinecap="round" />
-      <path className="workbot-computer-line" d="M4.75 6h3.5" strokeWidth={1.25} strokeLinecap="round" />
-      <path className="workbot-computer-line" d="M4.75 8.25h5.5" strokeWidth={1.25} strokeLinecap="round" />
-    </svg>
-  );
-}
-
-/**
  * A little person at Workbot's computer: while it works they type (hands tapping, head nodding along, lines
  * appearing on the screen); when it's done they sit back. Only motion that means "working" (DESIGN V6).
  */
@@ -1658,8 +1646,6 @@ function StreamingText({ text, instant = false }: { text: string; instant?: bool
   );
 }
 
-
-
 /** An app the turn used, for the "Using …" line: Workbot's computer or a connected app. */
 type UsedApp = { key: string; name: string; computer: boolean };
 
@@ -1702,7 +1688,6 @@ function useHeld<T>(value: T, key: string, minMs: number): T {
   return shown.value;
 }
 
-
 /** A computer update stays at least this long, so quick commands read as one calm change. */
 const UPDATE_HOLD_MS = 1_600;
 
@@ -1735,6 +1720,24 @@ function BrowserTaskCard({ turn, steps, working }: { turn: WorkbotTurn; steps: W
   const update = preview?.update;
   useEffect(() => { update?.(task); }, [update, task.id, task.title, task.status, task.reason]);
   const watchable = workbotHost().browser === true;
+  const statusLine = <>{status === "working" ? "Working" : status === "failed" ? "Failed" : "Completed"} · {title}</>;
+  // Calm look: one white row with a hairline ring: a small picture of the page, what happened, and a quiet way in.
+  if (calmChat()) return <section className="w-full max-w-[480px] rounded-xl bg-[var(--wb-surface)] p-2.5 shadow-[0_0_0_1px_var(--wb-ring)]" aria-label="Browser activity" data-workbot-browser-card={status}>
+    <div className="flex min-w-0 items-center gap-3">
+      <span aria-hidden={!watchable || working} className={`relative grid h-10 w-16 shrink-0 place-items-center overflow-hidden rounded-lg bg-[var(--wb-chip)] ${status === "completed" ? "text-[var(--wb-browser-success)]" : status === "failed" ? "text-[var(--wb-danger)]" : "text-[var(--wb-browser-working)]"}`}>
+        <Globe size={18} strokeWidth={1.7} aria-hidden />
+        {watchable && !working ? <span className="absolute inset-0 grid"><LastGlimpse view="browser" taskId={turn.id} /></span> : null}
+      </span>
+      <div className="min-w-0 flex-1">
+        <h3 className="text-[13px] font-medium leading-[18px] text-[var(--wb-text)]">Browser</h3>
+        <p className="truncate text-[12px] leading-4 text-[var(--wb-muted)]" role="status">{statusLine}</p>
+      </div>
+      <button type="button" onClick={() => preview?.open(task)} disabled={!watchable || !preview} className="flex h-8 shrink-0 items-center rounded-full bg-[var(--wb-surface)] px-3 text-[12px] font-medium text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] transition-colors duration-150 hover:bg-[var(--wb-chip)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">Open preview</button>
+    </div>
+    {reason ? <p className="px-0.5 pt-2 text-[12px] leading-4 text-[var(--wb-danger)]">{reason}</p> : null}
+    {watchable && working ? <LiveGlimpse view="browser" taskId={turn.id} previewOnly /> : null}
+    {!watchable ? <p className="px-0.5 pt-2 text-[12px] leading-4 text-[var(--wb-muted)]">Browser access is off for your organization.</p> : null}
+  </section>;
   return <section className="w-full max-w-[480px] rounded-[20px] bg-[var(--wb-bubble)] p-3" aria-label="Browser activity" data-workbot-browser-card={status}>
     <div className="flex min-w-0 items-center gap-2.5 px-1 pb-1">
       <span aria-hidden className={`relative grid size-10 shrink-0 place-items-center rounded-[10px] ${status === "completed" ? "bg-[var(--wb-browser-success-bg)] text-[var(--wb-browser-success)]" : status === "failed" ? "bg-[var(--wb-surface)] text-[var(--wb-danger)]" : "bg-[var(--wb-browser-working-bg)] text-[var(--wb-browser-working)]"}`}>
@@ -1777,9 +1780,9 @@ function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, s
   const starting = surface === "background" ? "Running in the background" : "Starting up";
   // Finished work on a screen, with the inline preview or the working status: a compact record that stays in the
   // conversation, never a live view. One tap opens the full view.
-  if (!live && surface !== "background" && (workbotHost().browserPreview || workbotHost().workingStatus)) return <FinishedSurfaceCard surface={surface} steps={steps} watchable={watchable} task={task} />;
+  if (!live && surface !== "background") return <FinishedSurfaceCard surface={surface} steps={steps} watchable={watchable} task={task} />;
   // A thumbnail is a glance, never a takeover: one button opens the full view only on the person's tap.
-  if (workbotHost().browserPreview && live && watchable && surface !== "background") return <section className="workbot-row-enter w-full max-w-[480px] rounded-[20px] bg-[var(--wb-chip)] p-3" aria-label="Computer activity" data-workbot-computer-card>
+  if (live && watchable && surface !== "background") return <section className="workbot-row-enter w-full max-w-[480px] rounded-[20px] bg-[var(--wb-chip)] p-3" aria-label="Computer activity" data-workbot-computer-card>
     <div className="flex min-w-0 items-center gap-2.5 px-1 pb-1">
       <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[var(--wb-surface)] text-[var(--wb-text)]"><Monitor size={20} strokeWidth={1.7} /></span>
       <div className="min-w-0">
@@ -1859,8 +1862,6 @@ function AppLogos({ apps }: { apps: UsedApp[] }) {
   );
 }
 
-
-
 /** An answer as it is written, without a closing "Next:" line, which becomes buttons once the answer is done. */
 function withoutNextLine(text: string) {
   const lines = text.split("\n");
@@ -1886,7 +1887,6 @@ function replyProgress(turn: WorkbotTurn, live: LiveText | null) {
   const lastIsLive = working && last?.kind === "steps" && !liveText;
   return { working, liveText, starting, lastIsLive };
 }
-
 
 /** True only once `flag` has held for `ms`: the typing bubble doesn't flash for a beat between two steps. */
 function useSettled(flag: boolean, ms: number) {
@@ -1936,8 +1936,8 @@ const TurnView = memo(function TurnView(props: {
   const { working, liveText, starting, lastIsLive } = replyProgress(turn, streamed);
   // Browser tasks use one persistent card, never the parallel computer/background cards.
   const browserWork = starting?.surface === "browser" || turn.parts.some(part => part.kind === "steps" && part.steps.some(step => step.surface === "browser"));
-  const quiet = browserWork || workbotHost().workingStatus === true;
-  const visibleTasks = turn.tasks.filter((task) => !props.watcherIds.has(task.id) && (!quiet || task.status === "failed" || task.status === "stopped"));
+
+  const visibleTasks = turn.tasks.filter((task) => !props.watcherIds.has(task.id) && (task.status === "failed" || task.status === "stopped"));
   // A message still sending waits on its files first, in the place the dots take next.
   const uploading = pending !== null && !pending.failed && pending.uploads.some((upload) => upload.status === "uploading");
   // An answer watched while it was written keeps revealing at its pace once it's stored; answers already done when the
@@ -1978,7 +1978,7 @@ const TurnView = memo(function TurnView(props: {
     // Apps used beside computer work show as logos on its card; on their own, as a quiet line.
     here.forEach((surface, at) => {
       const item = card(surface, at === here.length - 1 ? usedApps(apps, null) : []);
-      if (!browserWork && keepsCard(item, { quiet, preview: workbotHost().browserPreview === true })) items.push(item);
+      if (!browserWork && keepsCard(item)) items.push(item);
     });
   });
   if (working && streamed) {
@@ -1990,11 +1990,11 @@ const TurnView = memo(function TurnView(props: {
   if (live && liveText) items.push({ kind: "text", key: `text-${live.step}`, text: liveText });
   for (const surface of work.trailing) {
     const item = card(surface);
-    if (!browserWork && keepsCard(item, { quiet, preview: workbotHost().browserPreview === true })) items.push(item);
+    if (!browserWork && keepsCard(item)) items.push(item);
   }
   // Only once the server's conversation has accepted it: acknowledge without waiting for the model's first token.
   // Real words replace this acceptance line; it never claims the browser opened or a background job started.
-  const acknowledgement = (browserWork || workbotHost().quickReply) && !pending && !items.some((item) => item.kind === "text" && item.text.trim()) ? firstReply(turn) : null;
+  const acknowledgement = !pending && !items.some((item) => item.kind === "text" && item.text.trim()) ? firstReply(turn) : null;
   if (acknowledgement) items.splice(browserWork ? 1 : 0, 0, { kind: "text", key: "accepted", text: acknowledgement });
   // The connected apps as a quiet logo stack under the answer. The header reads the same summary for its status,
   // so it names the same current connector; names and tool details in the chat are disclosed only on hover/tap.
@@ -2010,7 +2010,7 @@ const TurnView = memo(function TurnView(props: {
   // Quiet: the dots mean only "a reply is coming" before Workbot has said or done anything. Once it is at work, the
   // status line under its name says so; dots for minutes would read as someone typing.
   const atWork = parts.some((part) => part.kind === "steps") || Boolean(live?.working);
-  const dots = !acknowledgement && (quiet ? waiting && items.length === 0 && !atWork : waiting && (fresh || settled));
+  const dots = !acknowledgement && (waiting && items.length === 0 && !atWork);
   const [held, setHeld] = useState(false);
   // Whether there are words yet, not the words: this runs when they start, not again for every word streamed.
   const writing = liveText !== "";
@@ -2024,7 +2024,6 @@ const TurnView = memo(function TurnView(props: {
   // One computer, so only the newest reply that used its screen offers to open it, already while it works. Commands run
   // in the background leave nothing on the screen to open.
   const onScreen = (step: WorkbotStep) => step.icon === "computer" && !step.background;
-  const usedComputer = props.latest && ((starting !== null && !starting.background) || parts.some((part) => part.kind === "steps" && part.steps.some(onScreen)));
   return (
     <>
       <SentAttachments attachments={turn.attachments} localUrls={pending ? { ...props.previews, ...pendingAttachments(pending).urls } : props.previews} />
@@ -2046,7 +2045,7 @@ const TurnView = memo(function TurnView(props: {
               <StreamingText text={item.text} instant={item.key === "accepted" || !(props.newestText && index === lastText && watched.current)} />
             </AssistantBubble>
           ) : (
-            <div key={item.key} className="py-1 pl-1">
+            <div key={item.key} className={item.surface === "browser" && calmChat() ? "py-2" : "py-1 pl-1"}>
               {item.surface === "browser" ? <BrowserTaskCard turn={turn} steps={item.steps} working={working} /> : <SurfaceCard surface={item.surface} steps={item.steps} live={item.live} showing={item.showing} others={item.others} switchTo={item.switchTo} starting={item.update} task={{ id: `computer:${turn.id}`, ...browserTask(item.steps, { working: working && item.live, title: turn.text.trim() || "Computer task", status: turn.status, what: "computer task" }) }} />}
             </div>
           ),
@@ -2056,7 +2055,6 @@ const TurnView = memo(function TurnView(props: {
       </div>
       <DocumentOffers links={offers} />
       <DocumentNavigationStatus receipts={turn.navigation} />
-      {usedComputer && !browserWork && !workbotHost().browserPreview ? <ComputerOffer /> : null}
       {turn.outputs.length ? <ArtifactCards files={turn.outputs} /> : null}
       {/* Quiet: running and finished tasks live in the task sheet (the report says it's done); one that failed or was
           stopped stays here with its way forward. */}
@@ -2088,7 +2086,6 @@ const TurnView = memo(function TurnView(props: {
     </>
   );
 });
-
 
 function duration(ms: number) {
   const seconds = Math.max(0, Math.round(ms / 1_000));
@@ -2231,7 +2228,6 @@ function DraftComposer({ state, ...props }: { state: ComposerState } & Omit<Para
 
 export function WorkbotComposer(props: {
   teaching?: BrowserTeachingContext;
-  nativeDictation?: boolean;
   text: string;
   onText: (text: string) => void;
   name: string;
@@ -2251,7 +2247,7 @@ export function WorkbotComposer(props: {
   const browserPreview = useBrowserPreview();
   const input = useRef<HTMLTextAreaElement>(null);
   const touch = useTouchKeyboard();
-  const dictation = useNativeDictation({ enabled: props.nativeDictation === true, text, onText: props.onText,
+  const dictation = useNativeDictation({ enabled: !props.disabled, text, onText: props.onText,
     selection: () => ({ start: input.current?.selectionStart ?? text.length, end: input.current?.selectionEnd ?? text.length }),
     focusInput: () => input.current?.focus() });
   const hasFiles = props.uploads.length > 0;
@@ -2276,7 +2272,7 @@ export function WorkbotComposer(props: {
 
   const sendNow = () => {
     if (!canSend || props.disabled) return;
-    props.onSend(props.nativeDictation === true ? dictation.commit() : text);
+    props.onSend(dictation.commit());
     input.current?.focus();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -2329,9 +2325,9 @@ export function WorkbotComposer(props: {
           enterKeyHint={touch ? "enter" : "send"}
           placeholder={props.teaching ? "Explain this step or ask a question" : `Message ${props.name}`}
           aria-label={`Message ${props.name}`}
-          className="max-h-[200px] min-h-9 min-w-0 flex-1 resize-none bg-transparent px-1.5 py-[7px] text-[16px] leading-[22px] text-[var(--wb-text)] outline-none placeholder:text-[var(--wb-faint)] sm:py-[9px] sm:text-[14px] sm:leading-[18px]"
+          className={`max-h-[200px] min-h-9 min-w-0 flex-1 resize-none bg-transparent px-1.5 py-[7px] text-[16px] leading-[22px] text-[var(--wb-text)] outline-none placeholder:text-[var(--wb-faint)] sm:py-[9px] sm:leading-[18px] ${calmChat() ? "sm:text-[13px]" : "sm:text-[14px]"}`}
         />
-        {props.nativeDictation === true ? <WorkbotDictation dictation={dictation} disabled={props.disabled} text={text} /> : null}
+        <WorkbotDictation dictation={dictation} disabled={props.disabled} text={text} />
         <button
           type="button"
           onClick={showStop ? props.onStop : sendNow}

@@ -51,6 +51,7 @@ import {
   GatewayKeyTable,
   GatewayCredentialSetTable,
   GatewayLiteLlmIssuedKeyTable,
+  GatewayTrueFoundryUserTable,
   GatewayModelGroupTable,
   GatewayModelGroupModelTable,
   GatewayProviderAccessTable,
@@ -106,6 +107,11 @@ import {
   WorkspaceBootstrapTable,
   WorkspaceClaimTable,
   HeadlessResumeGrantTable,
+  McpNativeSubscriptionTable,
+  McpNativeDeliveryTable,
+  McpEventReceiptTable,
+  McpEventSubscriptionTable,
+  McpEventTurnTable,
   HeadlessResumeRevocationTable,
   SandboxOrganizationTable,
 } from "@openwork-ee/den-db/schema"
@@ -574,6 +580,8 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           await tx.delete(GatewayProviderOauthStateTable).where(inArray(GatewayProviderOauthStateTable.gateway_provider_id, gatewayProviderIds))
           // Keys OpenWork created in a customer's LiteLLM outlive this record; that proxy is not ours to change.
           await tx.delete(GatewayLiteLlmIssuedKeyTable).where(inArray(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, gatewayProviderIds))
+          // Tokens OpenWork created in a customer's TrueFoundry tenant likewise stay there.
+          await tx.delete(GatewayTrueFoundryUserTable).where(inArray(GatewayTrueFoundryUserTable.gateway_provider_id, gatewayProviderIds))
           const groups = await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, gatewayProviderIds))
           if (groups.length) await tx.delete(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id)))
           await tx.delete(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.gateway_provider_id, gatewayProviderIds))
@@ -649,6 +657,11 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(FeatureUsageTable).where(eq(FeatureUsageTable.organization_id, organizationId))
         await deleteOrganizationFeatureIntroStates(tx, organizationId)
         await deleteOrganizationRemoteDevices(tx, organizationId)
+        await tx.delete(McpNativeDeliveryTable).where(eq(McpNativeDeliveryTable.organizationId, organizationId))
+        await tx.delete(McpNativeSubscriptionTable).where(eq(McpNativeSubscriptionTable.organizationId, organizationId))
+        await tx.delete(McpEventReceiptTable).where(eq(McpEventReceiptTable.organizationId, organizationId))
+        await tx.delete(McpEventSubscriptionTable).where(eq(McpEventSubscriptionTable.organizationId, organizationId))
+        await tx.delete(McpEventTurnTable).where(eq(McpEventTurnTable.organizationId, organizationId))
         await deleteHeadlessSessionIndexForOrganization(tx, organizationId)
         // Resume grants are useless once the members are gone (the exchange needs an active member); delete them too.
         await unlessResumeTableMissing("headless_resume_grant", () => tx.delete(HeadlessResumeGrantTable).where(eq(HeadlessResumeGrantTable.organizationId, organizationId)))

@@ -80,6 +80,7 @@ export const reviewSchema = z
   .object({
     schemaVersion: z.literal(1),
     title: z.string().min(1),
+    notice: z.string().optional(),
     gitSha: sha,
     createdAt: z.iso.datetime(),
     gaps: z.array(z.string()),

@@ -23,13 +23,14 @@ test("a configured VM names its provider and id for the devices list, and nothin
   assert.ok(adapters.every((adapter) => Object.isFrozen(adapter.device)));
   assert.doesNotMatch(JSON.stringify(adapters), /secret/);
 
-  // The broker accepts them and reports the same names, unprobed while no chat uses them.
+  // The broker accepts them and reports the same names. Only the VM chats use is
+  // probed (nothing answers here, so it reads unavailable); the other stays unprobed.
   const control = createComputerControl({ adapters, readRemoteFeatureEnabled: async () => true, platform: "darwin" });
   t.after(() => control.reset(true));
   await control.setRemoteEnabled(true);
   const snapshot = await control.devices();
   assert.deepEqual(snapshot.computers.map(({ id, readiness, provider, externalId }) => ({ id, readiness, provider, externalId })), [
-    { id: "freestyle-vm", readiness: null, provider: "freestyle", externalId: "vm-1" },
+    { id: "freestyle-vm", readiness: "unavailable", provider: "freestyle", externalId: "vm-1" },
     { id: "daytona-sandbox", readiness: null, provider: "daytona", externalId: "sandbox-1" },
   ]);
   assert.doesNotMatch(JSON.stringify(snapshot), /secret/);

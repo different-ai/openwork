@@ -271,18 +271,18 @@ test("round trip into a second organization: refs resolve there, preferred ids a
   }
 })
 
-test("agent permissions: a permission whose feature is off on the target is skipped with a warning", async () => {
-  assert.equal(targetCtx.features.agentHarnessPermissions, false, "fixture: harness permissions are off")
-  const result = await membersAgentPermissionsArea.apply(targetCtx, {
+test("agent permissions: computer use permissions import without a rollout override", async () => {
+  const gatedCtx = await contextFor(target.orgId, target.owner)
+  const result = await membersAgentPermissionsArea.apply(gatedCtx, {
     kind: "update",
-    targetId: (await membersAgentPermissionsArea.exportItems(targetCtx))[0]!.id,
-    previous: (await membersAgentPermissionsArea.exportItems(targetCtx))[0]!,
+    targetId: (await membersAgentPermissionsArea.exportItems(gatedCtx))[0]!.id,
+    previous: (await membersAgentPermissionsArea.exportItems(gatedCtx))[0]!,
     item: { name: "Everyone", key: "everyone", spec: { team: null, settings: { commands: { decision: "ask", allow: ["npm test *"], block: ["rm -rf *"] }, fileEdits: { decision: "allow" }, webSearch: { decision: "deny" }, computerUse: { decision: "deny" } } } },
     changes: [{ path: "settings.computerUse", to: { decision: "deny" } }],
     secretPaths: [],
   })
-  assert.deepEqual(result.steps, [])
-  assert.ok(result.warnings?.some((warning) => warning.includes("agentHarnessPermissions")), JSON.stringify(result.warnings))
+  assert.ok(result.steps.length > 0)
+  assert.deepEqual(result.warnings ?? [], [])
 })
 
 test("delete removes the scope's configuration", async () => {
@@ -299,7 +299,6 @@ test("delete removes the scope's configuration", async () => {
 })
 
 test("prompts: importing (dry run or upload) needs prompts.view as well as prompts.manage, so a plan never shows prompt text to a manager who can't view it", async () => {
-  assert.equal((await den.setFeature(source.orgId, "configBlobs", true)).status, 200)
   const exported = await ok(apiA("GET", "/v1/config-blobs/export?areas=members.prompts"), "export prompts")
   const blob = JSON.parse(JSON.stringify(exported.body))
   assert.ok(JSON.stringify(blob).includes("Confidential house rules"), "the owner's export carries the text")

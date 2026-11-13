@@ -1,5 +1,7 @@
 # Workbot: settings per team
 
+> **Generally available:** `workbotTeamSettings` is retired; its enabled behavior is standard on Cloud and self-hosted. Actual settings, permissions, billing rules and consent remain enforced. Rollout/off-state instructions below are historical; see [the retirement guide](../globally-enabled-retirement/README.md).
+
 Feature key: `workbotTeamSettings` · Deployments: cloud and self-hosted · Default: off · Author: @reachjalil
 
 ## What it does

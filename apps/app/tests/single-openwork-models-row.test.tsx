@@ -4,15 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { AiSettingsView, type AiSettingsViewProps } from "../src/react-app/domains/settings/pages/ai-view";
 import { planOpenWorkModelsRow } from "../src/react-app/domains/settings/pages/openwork-models-row";
 
-const member = { enabled: true, fromOrganization: true, managedByOrganization: false, isOrganizationAdmin: false };
-
-test("flag off keeps today's rows", () => {
-  const plan = planOpenWorkModelsRow({ enabled: false, fromOrganization: true, managedByOrganization: false, isOrganizationAdmin: false, disabledProviders: ["openwork", "openwork-free"] });
-  expect(plan.showDeviceRow).toBe(true);
-  expect(plan.orgRowToggle).toBe(false);
-  expect(plan.orgTurnedOff).toBe(false);
-  expect(plan.hideFromDisabledList.size).toBe(0);
-});
+const member = { fromOrganization: true, managedByOrganization: false, isOrganizationAdmin: false };
 
 test("an organization that pays for OpenWork Models replaces the free row on this device", () => {
   const plan = planOpenWorkModelsRow({ ...member, disabledProviders: [] });

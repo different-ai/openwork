@@ -49,8 +49,6 @@ import {
   getMarketplacesRoute,
   getMarketplaceOnboardingRoute,
   getPluginsRoute,
-  getSsoRoute,
-  getScimRoute,
   getAuthSecurityRoute,
   getWorkflowRunsRoute,
   getWebRoute,
@@ -88,6 +86,9 @@ const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
 function sidebarRoleLabel(role: string): string {
   return getOrgAccessFlags(role, false).isAdmin ? BUILT_IN_ROLES.admin.label : BUILT_IN_ROLES.member.label;
 }
+
+/** The top bar and the sidebar's logo row share one height, so their bottom borders line up. */
+const SHELL_BAR_HEIGHT = "h-[52px]";
 
 function OrgMark({ name }: { name: string }) {
   const initials = useMemo(() => {
@@ -152,7 +153,7 @@ export function SidebarBrandMark({
   if (metadata === undefined) {
     return (
       <div
-        className="h-10 w-10 rounded-xl"
+        className="h-8 w-8 rounded-lg"
         aria-label="Loading organization icon"
         data-sidebar-brand-icon="loading"
       />
@@ -163,14 +164,14 @@ export function SidebarBrandMark({
   if (!iconUrl || failedUrl === iconUrl) {
     return (
       <div data-sidebar-brand-icon="fallback">
-        <OpenWorkMark />
+        <OpenWorkMark className="h-8 w-auto" />
       </div>
     );
   }
 
   return (
     <div
-      className="h-10 w-10 overflow-hidden rounded-xl"
+      className="h-8 w-8 overflow-hidden rounded-lg"
       data-sidebar-brand-icon={loadedUrl === iconUrl ? "ready" : "loading"}
     >
       <img
@@ -265,12 +266,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getAuthSecurityRoute(orgSlug))) {
     return "Auth & Security";
-  }
-  if (pathname.startsWith(getScimRoute(orgSlug))) {
-    return "SCIM";
-  }
-  if (pathname.startsWith(getSsoRoute(orgSlug))) {
-    return "SSO";
   }
   if (pathname.startsWith(getAutomationsRoute(orgSlug))) {
     return "My Automations";
@@ -496,10 +491,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     orgMode: runtimeConfig.orgMode,
     runtimeConfigLoaded,
 
-    remoteDevices: orgFeatureEnabled(orgContext, "remoteDevices"),
     managedDeployments: orgFeatureEnabled(orgContext, "managedDeployments"),
-    authSecuritySettings: orgFeatureEnabled(orgContext, "authSecuritySettings"),
-    configBlobs: orgFeatureEnabled(orgContext, "configBlobs"),
     canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
 
     desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),
@@ -680,8 +672,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
   const sidebarContent = (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-[var(--den-shell-line)] px-4 pb-4 pt-5">
-        <div className="flex items-center justify-between gap-3">
+      {/* Same height as the top bar so the two bottom borders form one line (SHELL_BAR_HEIGHT). */}
+      <div className={`flex ${SHELL_BAR_HEIGHT} shrink-0 items-center border-b border-[var(--den-shell-line)] px-4`}>
+        <div className="flex w-full items-center justify-between gap-3">
           <SidebarBrandMark
             metadata={orgContext?.organization.metadata}
             organizationName={activeOrg?.name ?? runtimeConfig.singleOrgName}
@@ -844,8 +837,8 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[52px] shrink-0 items-center justify-between border-b border-[var(--den-shell-line)] bg-[var(--den-shell-topbar)] px-4 md:px-6">
-          <div className="flex min-w-0 items-center gap-3">
+        <header className={`flex ${SHELL_BAR_HEIGHT} shrink-0 items-center justify-between border-b border-[var(--den-shell-line)] bg-[var(--den-shell-topbar)] px-4 md:px-8`}>
+          <div className="flex min-w-0 items-center gap-3 md:hidden">
             <button
               type="button"
               className="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 md:hidden"
@@ -854,11 +847,12 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
             >
               <Menu className="h-5 w-5" />
             </button>
-            <span className="truncate text-[14px] tracking-[-0.1px] text-gray-900">{pageTitle}</span>
+            {/* Phones only: there the sidebar is closed. On a desktop the sidebar and the page's own heading already say where you are. */}
+            <span className="truncate text-[14px] tracking-[-0.1px] text-gray-900 md:hidden">{pageTitle}</span>
           </div>
 
           <>
-              <div className="flex shrink-0 justify-center px-2 lg:min-w-0 lg:flex-1 lg:px-4">
+              <div className="flex shrink-0 justify-center px-2 md:justify-start md:px-0 lg:min-w-0 lg:flex-1 lg:pr-4">
                 <DenSearchBar
                   ref={searchBarRef}
                   onOpen={() => handleCommandPaletteOpenChange(true)}

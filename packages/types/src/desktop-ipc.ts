@@ -304,7 +304,10 @@ export type NukeReceipt = {
 };
 
 export type DesktopFetchInit = {
+  /** Caller-owned opt-in for aborting a finite request beyond the default GET/PATCH methods. */
+  cancellable?: boolean;
   transferId?: string;
+  redirect?: "error";
   method?: string;
   headers?: Record<string, string>;
   body?: string;
@@ -561,18 +564,12 @@ export type DesktopCommandMap = {
   computerChatImage: { args: [input: { sessionId: string; path: string }]; result: { data: Uint8Array<ArrayBuffer>; contentType: string } | null };
   computerListFileGrants: { args: []; result: { enabled: boolean; grants: Array<{ id: string; origin: string; folder: string; blocked?: boolean }> } };
   computerRemoveFileGrant: { args: [id: string]; result: { ok: boolean } };
-  computerSetFeatureEnabled: { args: [enabled: boolean]; result: boolean };
-  agentQuestionsSetEnabled: { args: [enabled: boolean]; result: boolean };
   computerSetRemoteEnabled: { args: [enabled: boolean]; result: boolean };
-  /** Reports the `standardCodeMode` feature: computer programs that start afterwards run as standard JavaScript. */
-  computerSetStandardCodeMode: { args: [enabled: boolean]; result: boolean };
-  /** Reports the `parallelComputerUse` feature: a chat's subagents work on its computer as part of it. */
-  computerSetParallelAgents: { args: [enabled: boolean]; result: boolean };
   /** Whether the agent's cursor, frame and pill on this Mac show up in screen recordings. */
   computerRecordableOverlay: { args: []; result: boolean };
   /** Shows them in screen recordings from the next app the agent starts using, until OpenWork quits. */
   computerSetRecordableOverlay: { args: [enabled: boolean]; result: boolean };
-  /** Compatibility-only no-op for older renderers; returns the computerUse state. */
+  /** Compatibility-only no-op for older renderers; returns true. */
   computerSetBackgroundEnabled: { args: [enabled: boolean]; result: boolean };
   computerResetPermission: { args: [permission: ComputerPermission]; result: { setupId: string } };
   computerEndTurn: { args: [sessionId: string]; result: boolean };

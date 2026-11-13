@@ -33,7 +33,6 @@ async function connectOidc(orgId: string, idp: StartedMockIdpLab, connectionDoma
   const providerId = `sso-${createDenTypeId("ssoProvider")}`
   await db.insert(SsoProviderTable).values({ id: createDenTypeId("ssoProvider"), issuer: idp.issuer, domain, userId: owner.userId, providerId, organizationId: orgId, domainVerified: true, oidcConfig: JSON.stringify({ ...idp.registration({ skipDiscovery: true }), redirectURI: `http://localhost:3005/api/auth/sso/callback/${providerId}` }) })
   await client.execute("INSERT INTO sso_connection (id, organization_id, provider_id, kind, issuer, domain, status, sign_in_path) VALUES (?, ?, ?, 'oidc', ?, ?, 'enabled', ?)", [createDenTypeId("ssoConnection"), orgId, providerId, idp.issuer, connectionDomain, `/sso/${providerId}`])
-  await den.setFeature(orgId, "ssoPerOrganization", true)
   return providerId
 }
 
@@ -127,7 +126,7 @@ test("the rollout migration keeps SSO required for organizations that have it to
       await db.insert(SsoProviderTable).values({ id: createDenTypeId("ssoProvider"), issuer: idpA.issuer, domain: `${providerId}.example`, userId: owner.userId, providerId, organizationId: orgId, domainVerified: true })
       await client.execute("INSERT INTO sso_connection (id, organization_id, provider_id, kind, issuer, domain, status, sign_in_path) VALUES (?, ?, ?, 'oidc', ?, ?, 'enabled', ?)", [createDenTypeId("ssoConnection"), orgId, providerId, idpA.issuer, `${providerId}.example`, `/sso/${providerId}`])
     }
-    if (input.flag !== undefined) await den.setFeature(orgId, "ssoPerOrganization", input.flag)
+    if (input.flag !== undefined) await client.execute("INSERT INTO organization_feature (organization_id, feature_key, enabled, source) VALUES (?, 'ssoPerOrganization', ?, 'platform')", [orgId, input.flag])
     return orgId
   }
   async function requireSso(orgId: string) {
@@ -165,23 +164,9 @@ test("the rollout migration keeps SSO required for organizations that have it to
   assert.equal((await requireSso(rolledOutOff)).required, true)
 })
 
-test("turning SSO on while the flag is off stores that it is required", async () => {
-  const { orgId } = await den.createOrg(owner, "Enable while flag off")
+test("turning SSO on leaves it optional until an admin requires it", async () => {
+  const { orgId } = await den.createOrg(owner, "Enable optional SSO")
   await client.execute("UPDATE organization SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.plan', JSON_OBJECT('tier', 'enterprise', 'source', 'manual')) WHERE id = ?", [orgId])
-  const providerId = `sso-${createDenTypeId("ssoProvider")}`
-  const enableDomain = `${providerId}.example`
-  await db.insert(SsoProviderTable).values({ id: createDenTypeId("ssoProvider"), issuer: idpA.issuer, domain: enableDomain, userId: owner.userId, providerId, organizationId: orgId, domainVerified: true })
-  await client.execute("INSERT INTO sso_connection (id, organization_id, provider_id, kind, issuer, domain, status, sign_in_path, config_revision, test_status, last_tested_revision) VALUES (?, ?, ?, 'oidc', ?, ?, 'disabled', ?, 'r1', 'succeeded', 'r1')", [createDenTypeId("ssoConnection"), orgId, providerId, idpA.issuer, enableDomain, `/sso/${providerId}`])
-  const enabled = await den.as(owner, orgId)("POST", "/v1/sso/enable")
-  assert.equal(enabled.status, 204, summary(enabled))
-  const org = await den.as(owner, orgId)("GET", "/v1/org")
-  assert.match(String(field(org.body, "organization", "metadata")), /"requireSso":true/)
-})
-
-test("turning SSO on with the flag on leaves it optional until an admin requires it", async () => {
-  const { orgId } = await den.createOrg(owner, "Enable while flag on")
-  await client.execute("UPDATE organization SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.plan', JSON_OBJECT('tier', 'enterprise', 'source', 'manual')) WHERE id = ?", [orgId])
-  await den.setFeature(orgId, "ssoPerOrganization", true)
   const providerId = `sso-${createDenTypeId("ssoProvider")}`
   const enableDomain = `${providerId}.example`
   await db.insert(SsoProviderTable).values({ id: createDenTypeId("ssoProvider"), issuer: idpA.issuer, domain: enableDomain, userId: owner.userId, providerId, organizationId: orgId, domainVerified: true })

@@ -73,7 +73,7 @@ async function setStoredModel(orgId: string, model: string) {
 const owner = await den.signUp("Brand Owner")
 const source = await den.createOrg(owner, "Brand Source")
 const as = den.as(owner, source.orgId)
-assert.equal((await den.setFeature(source.orgId, "workbotProactive", true)).status, 200)
+
 await ok(as("PUT", "/v1/org/workbot-settings/proactive", {
   enabled: true, leadMinutes: 30, startHour: 9, dailyCap: 5, membersStart: "opted_out",
   sources: { calendar: "members" }, responsibilities: { meeting_prep: false }, instructions: "Keep it short.",
@@ -224,7 +224,7 @@ test("update writes only what the plan's changes name", async () => {
 test("round trip into a second organization; brand bytes identical; a model the applier can't use fails on its field", async () => {
   const targetOwner = await den.signUp("Brand Target Owner")
   const target = await den.createOrg(targetOwner, "Brand Target")
-  assert.equal((await den.setFeature(target.orgId, "workbotProactive", true)).status, 200)
+
   const targetCtx = await contextFor(target.orgId, target.owner)
 
   for (const area of [workbotProactiveArea, settingsAuditArea, settingsBrandArea]) {
@@ -301,7 +301,7 @@ test("workbot.settings reads a step limit from a file exported before, applies t
   // The step limit alone: nothing is written.
   assert.deepEqual((await apply(["maxSteps"])).steps, [])
   // With another setting: that one is applied, the step limit is not.
-  assert.equal((await den.setFeature(org.orgId, "workbotTeamSettings", true)).status, 200)
+
   assert.deepEqual((await apply(["maxSteps", "enabled"])).steps, [{ action: "set", target: "enabled", detail: "off" }])
   const after = await only(workbotSettingsArea, ctx)
   assert.deepEqual(after.spec, { ...before.spec, enabled: false })

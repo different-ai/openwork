@@ -14,7 +14,7 @@ import type { ActivityStep, ActivityTask, WorkbotActivity } from "../../../packa
 const base: WorkbotHost = {
   requestJson: async () => ({ response: new Response(), payload: {} }),
   prepare: async path => ({ url: path, headers: new Headers(), credentials: "same-origin" }),
-  user: null, useConnectedApps: () => [], appIcons: () => [], homeHref: "/", workingStatus: true,
+  user: null, useConnectedApps: () => [], appIcons: () => [], homeHref: "/",
 };
 const render = (node: ReactElement) => renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}>{node}</QueryClientProvider>);
 const count = (markup: string, text: string) => markup.split(text).length - 1;
@@ -43,7 +43,7 @@ assert.equal(taskStatusLine(tasks[3]!), "Stopped");
 assert.equal(taskTime(tasks[2]!), new Date(at + 60_000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }), "ended tasks show when they ended");
 
 // The sheet body (the profile's Tasks tab and the task sheet): one row per task, no step rows until a row is opened.
-setWorkbotHost({ ...base, profileSheet: true });
+setWorkbotHost(base);
 const details = render(<ActivityDetails name="Workbot" activity={idle} />);
 assert.equal(count(details, "data-workbot-sheet-task="), 4, "one row per background task");
 assert.equal(count(details, "data-workbot-task-line"), 4, "each row has exactly one status line");
@@ -60,15 +60,13 @@ assert.equal(count(withMain, "data-workbot-sheet-task="), 4);
 
 // Phone and desktop open the same sheet: the phone's name pill and the desktop avatar say and do the same thing.
 const label = (markup: string) => /aria-label="([^"]*)"/.exec(markup)?.[1];
-for (const profileSheet of [true, false]) {
-  setWorkbotHost({ ...base, profileSheet });
-  for (const activity of [idle, { ...idle, tasks: [] }]) {
-    const phone = render(<WorkingName name="Workbot" activity={activity} mark={null} phone />);
-    const desktop = render(<ProfileBadge name="Workbot" activity={activity} />);
-    assert.equal(label(phone), label(desktop), `same sheet on phone and desktop (profileSheet ${profileSheet}, ${activity.tasks.length} tasks)`);
-    assert.equal(label(phone), profileSheet ? "Workbot: open profile" : "Workbot: show recent tasks");
-    assert.ok(!phone.includes('disabled=""'), "the phone pill always opens its sheet, like the avatar");
-  }
+setWorkbotHost(base);
+for (const activity of [idle, { ...idle, tasks: [] }]) {
+  const phone = render(<WorkingName name="Workbot" activity={activity} mark={null} phone />);
+  const desktop = render(<ProfileBadge name="Workbot" activity={activity} />);
+  assert.equal(label(phone), label(desktop), `same profile on phone and desktop (${activity.tasks.length} tasks)`);
+  assert.equal(label(phone), "Workbot: open profile");
+  assert.ok(!phone.includes('disabled=""'), "the phone pill always opens its profile, like the avatar");
 }
 
 // Pulling the phone sheet down: far or fast enough closes it, a small slow pull springs back.

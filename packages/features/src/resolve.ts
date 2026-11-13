@@ -102,6 +102,38 @@ export const RETIRED_FEATURE_KEYS = [
   "lastUsedSignIn", "remoteSessionHelperView",
   // Removed, not graduated (2026-10): early restart and its download-progress window.
   "desktopUpdateDownloadWindow",
+  // Generally available (2026-11): Den feature intros, Auth & Security (with session settings and the
+  // SSO requirement on the SSO page), several SSO connections, config import and export, and AI Gateway
+  // member API keys, custom OpenAI-compatible providers and Smart Model Router (which was cloud only).
+  // Always on, on cloud and self-hosted.
+  "featureIntros", "authSecuritySettings", "sessionSecuritySettings", "ssoSettingsOnSsoPage",
+  "multipleSsoConnections", "configBlobs", "gatewayMemberApiKeys", "gatewayCustomProviders",
+  "autoRouter",
+  // Generally available (2026-11): TrueFoundry in AI Gateway, always on, on cloud and self-hosted.
+  "truefoundryGateway",
+  // Generally available (2026-11): completed default-on rollouts. Their gates are gone.
+  // Browser recovery and sample Microsoft 365 remain cloud-only, without rollout switches.
+  "googleCalendarRecurrence", "googleDrivePdfText", "plainFreeModel",
+  "settledSessions", "appToolRepair", "publicApps",
+  "appSites", "composerBackgroundTasks", "agentQuestions",
+  "steadyLiveTurn", "ssoPerOrganization", "superAdminPermissionSet",
+  "desktopPersonalConnectors", "workbotDriveFiles", "workbotAccountMenu",
+  "workbotBrowserChat", "workbotInstantOpen", "workbotBrowserRecovery",
+  "workbotQuickReply", "workbotWorkingStatus", "workbotCenteredProfile",
+  "workbotBrowserPreview", "workbotProfileSheet", "workbotRemoteTasks",
+  "workbotProfileNav", "workbotQuietCalendar", "workbotSlackAnswerReply",
+  "browserUploadPermissions", "agentHarnessPermissions", "computerUse",
+  "computerSessionHistory", "parallelComputerUse", "browserUse",
+  "remoteSessionPush", "sandboxMicrosoft365", "standardCodeMode",
+  "outlookAttachments",
+  // Generally available (2026-11): deployment-wide rollouts graduate even when the
+  // old registry default lagged behind. Actual settings, entitlements and consent remain enforced.
+  "claudeAgentProvider", "webPerMember", "localModelsPolicy",
+  "shareDeviceProvider", "singleOpenWorkModelsRow", "passwordSignInGoogle",
+  "signInEmailSync", "ssoOidcSetupCheck", "denPageConsistency",
+  "nativeDictation", "workbotScrollToBottom", "workbotApps",
+  "workbotProactive", "workbotTeamSettings", "workbotUsageAnalytics",
+  "fileSendPermissions", "remoteDevices", "remoteSessionAccess",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

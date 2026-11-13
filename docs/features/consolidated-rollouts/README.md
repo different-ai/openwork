@@ -1,5 +1,7 @@
 # Consolidated Your agent, browser and computer rollouts
 
+> **Rollout update:** `browserUse` and `computerUse` are now generally available and their rollout switches are retired. `workbotProactive` remains a separate default-off rollout. The consolidation and override comparison below document the earlier rollout; for current retirement, compatibility and deployment checks see [Completed rollout retirement](../ga-rollout-retirement/README.md).
+
 These are three independent features, not one combined computer/browser switch:
 
 | Retained feature | Included behavior | Retired independent switches |

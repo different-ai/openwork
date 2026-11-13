@@ -1,3 +1,4 @@
+import { registerMcpEventRoutes } from "./mcp-events/routes.js"
 import "./load-env.js"
 import { registerSlackAssistantRoutes } from "./slack-assistant/routes.js"
 import { registerWorkbotRoutes } from "./workbot/routes.js"
@@ -202,7 +203,7 @@ if (!env.corsHandledByEdge) {
       credentials: true,
       // Browser clients (app-web) send the Automation model-attention capability header on create/update/run;
       // without it here the preflight fails and the request never reaches Den ("Failed to fetch").
-      allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id", "X-OpenWork-Audit-Correlation", "X-OpenWork-Browser-Upload-Permissions", AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER, AUTOMATION_SCHEDULE_KINDS_HEADER],
+      allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id", "X-OpenWork-Audit-Correlation", "X-OpenWork-Browser-Upload-Permissions", "X-OpenWork-File-Send-Permissions", AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER, AUTOMATION_SCHEDULE_KINDS_HEADER],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       exposeHeaders: ["Content-Length", "Content-Disposition", "X-Audit-Next-Cursor", "X-Audit-Snapshot-Sequence", "X-Audit-Resource-Scope"],
       maxAge: 600,
@@ -310,6 +311,7 @@ registerRemoteSessionRoutes(app)
 registerOrgRoutes(app)
 registerSlackAssistantRoutes(app)
 registerWorkbotRoutes(app)
+registerMcpEventRoutes(app)
 registerHeadlessRunnerRoutes(app)
 registerVersionRoutes(app)
 registerFeatureRoutes(app)
@@ -456,7 +458,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Workflows", description: "Saved Workflows (Code Mode scripts), their versions, snapshots, and views." },
       { name: "Workflow Runs", description: "Durable Workflow run history." },
       { name: "Codemode Runs", description: "Generated Artifact views produced by Code Mode runs." },
-      { name: "Apps", description: "Saved reusable apps built from Workflows and Artifact views, and their sharing." },
+      { name: "Artifacts", description: "Reusable interactive views, including saved Workflow views, and their sharing." },
       { name: "Config Objects", description: "Versioned configuration objects (skills, workflows, and other plugin content)." },
       { name: "Plugins", description: "Plugin packages, access grants, and imports." },
       { name: "Marketplaces", description: "Marketplaces that distribute plugins to members and teams." },

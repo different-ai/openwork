@@ -65,7 +65,7 @@ function workbot(signed: () => Member, den: { list?: () => Promise<{ status: num
   }
 }
 
-test("/me says whether the Devices page is on, and an older Den that omits it means off", async () => {
+test("/me says whether the Devices page is on, and older Den rollout values are ignored", async () => {
   let signed = member("me_devices")
   const { app } = workbot(() => signed)
   const me = async () => z.object({ devices: z.boolean() }).parse(await (await app.request("/v1/workbot/me")).json())
@@ -73,12 +73,52 @@ test("/me says whether the Devices page is on, and an older Den that omits it me
   signed = member("me_devices", { enabled: false })
   assert.equal((await me()).devices, false, "Devices needs Workbot on")
   const older = denSessionSchema.parse({ user: { id: "old", name: null, email: "old@example.test" }, organization: { id: "org", name: "Workspace", brandAppName: null }, memberId: "old", enabled: true, canSchedule: false })
-  assert.equal(older.devices, false)
+  assert.equal("devices" in older, false)
   signed = { ...member("me_devices"), den: older }
-  assert.equal((await me()).devices, false)
+  assert.equal((await me()).devices, true)
 })
 
-test("the Devices list is Den's answer as it is, and is never asked for while Devices is off", async () => {
+test("retired presentation fields stay enabled for loaded UI bundles without granting computer access", async () => {
+  let signed = member("me_compatibility", {
+    calendar: true, accountMenu: false, workingStatus: false, quickReply: false, browserChat: false,
+    instantOpen: false, profileSheet: false, centeredProfile: false, browserPreview: false,
+    remoteTasks: false, profileNav: false, quietCalendar: false,
+  })
+  const { app } = workbot(() => signed)
+  const schema = z.object({
+    accountMenu: z.boolean(), workingStatus: z.boolean(), quickReply: z.boolean(), browserChat: z.boolean(),
+    instantOpen: z.boolean(), profileSheet: z.boolean(), centeredProfile: z.boolean(), browserPreview: z.boolean(),
+    remoteTasks: z.boolean(), profileNav: z.boolean(), quietCalendar: z.boolean(),
+  })
+  const me = async () => schema.parse(await (await app.request("/v1/workbot/me")).json())
+  assert.ok(Object.values(await me()).every(Boolean), "retired response fields no longer depend on rollout values")
+  signed = member("me_compatibility", { computer: false, browser: false, calendar: false })
+  assert.deepEqual(await me(), {
+    accountMenu: true, workingStatus: true, quickReply: true, browserChat: false,
+    instantOpen: true, profileSheet: true, centeredProfile: true, browserPreview: false,
+    remoteTasks: true, profileNav: true, quietCalendar: false,
+  })
+  signed = member("me_compatibility", { enabled: false })
+  const disabled = await me()
+  assert.equal(disabled.accountMenu, true, "sign-out remains available even without Workbot")
+  assert.ok(Object.entries(disabled).filter(([key]) => key !== "accountMenu").every(([, enabled]) => !enabled))
+})
+
+test("Computers moves into the profile only with its rollout and Workbot access", async () => {
+  let signed = member("profile_computers", { profileComputers: true })
+  const { app, calls } = workbot(() => signed)
+  const me = async () => z.object({ profileComputers: z.boolean() }).parse(await (await app.request("/v1/workbot/me")).json())
+  assert.equal((await me()).profileComputers, true)
+  for (const off of [{ profileComputers: false }, { enabled: false }]) {
+    signed = member("profile_computers", { profileComputers: true, ...off })
+    assert.equal((await me()).profileComputers, false)
+  }
+  signed = member("profile_computers", {})
+  assert.equal((await me()).profileComputers, false, "older Den answers omit the rollout and preserve navigation")
+  assert.equal(calls.list, 0, "checking the rollout never reads or provisions computers")
+})
+
+test("the Devices list is Den's answer as it is, and is never asked for while Workbot is off", async () => {
   let signed = member("list_devices")
   let answer: { status: number; payload: unknown } = { status: 200, payload: { devices: [device] } }
   const { app, calls } = workbot(() => signed, { list: async () => answer })
@@ -93,13 +133,13 @@ test("the Devices list is Den's answer as it is, and is never asked for while De
   assert.equal(refused.status, 404)
   assert.deepEqual(await refused.json(), { error: "feature_disabled", feature: "remoteDevices" })
   assert.equal(calls.list, 2)
-  for (const off of [member("list_devices", { devices: false }), member("list_devices", { enabled: false })]) {
+  for (const off of [member("list_devices", { enabled: false })]) {
     signed = off
     const response = await read()
     assert.equal(response.status, 403)
     assert.deepEqual(await response.json(), { error: "feature_disabled" })
   }
-  assert.equal(calls.list, 2, "Den is not asked while Devices is off for the member")
+  assert.equal(calls.list, 2, "Den is not asked while Workbot is off for the member")
 })
 
 test("opening a view of the computer reports it with the chat's session, the view and whether the person took control", async t => {
@@ -198,22 +238,9 @@ test("a computer that can't connect is reported failed with a fixed code, never 
   assert.ok(!JSON.stringify(reports).includes("Kernel") && !JSON.stringify(reports).includes("Traceback"))
 })
 
-test("nothing is reported while Devices is off, or for a view Den no longer allows", async t => {
+test("nothing is reported for a view Den no longer allows", async t => {
   runner(t)
-  let signed = member("quiet_reports", { devices: false, sideChats: true })
-  let fresh: Member | null = null
-  const { app, viewer, action, reports, calls } = workbot(() => signed, { session: async () => (fresh ?? signed).den })
-  assert.equal((await viewer({ view: "browser" })).status, 200)
-  for (const name of ["continue", "pause", "resume", "rebuild"]) assert.equal((await action(name)).status, 200)
-  assert.equal((await app.request("/v1/workbot/chats/sidechat0devices02", { method: "DELETE" })).status, 200)
-  await settle()
-  assert.equal(calls.report, 0)
-  // Devices was on a moment ago, but Den's latest answer says it is off: Den's latest answer wins.
-  signed = member("quiet_reports")
-  fresh = member("quiet_reports", { devices: false })
-  assert.equal((await viewer({ view: "browser" })).status, 200)
-  await settle()
-  assert.equal(calls.report, 0)
+  const signed = member("quiet_reports")
   // The view was allowed when the request started and revoked while the computer woke: no stream, and no report.
   let checks = 0
   const revoking = workbot(() => signed, { session: async () => (++checks === 1 ? signed.den : member("quiet_reports", { browser: false, computer: false }).den) })

@@ -6,11 +6,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
-import { DenCard } from "../../_components/ui/card";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { AUTOMATION_CARD_CLASS, CARD_TITLE_CLASS } from "../../_components/ui/dashboard-styles";
 import { DenNotice } from "../../_components/ui/notice";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
-import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute, getOrgAccessFlags, orgFeatureEnabled, type DenOrgAccessFlags } from "../../_lib/den-org";
+import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute, getOrgAccessFlags, type DenOrgAccessFlags } from "../../_lib/den-org";
 import { canOpenGatewayArea, gatewayAreaLockedMessage, type GatewayDashboardArea } from "../_lib/gateway-dashboard-access";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen, type FeatureIntroKey } from "../_features/feature-intros";
@@ -66,15 +66,15 @@ function AiGatewayOverview({ orgId }: { orgId: string }) {
   const { inferenceProviders, busy, error, reloadProviders } = useOrgInferenceProviders(orgId);
 
   if (busy) {
-    return <DenCard><p role="status" className="text-sm text-gray-500">Loading gateway providers...</p></DenCard>;
+    return <div className={`${AUTOMATION_CARD_CLASS} p-4`}><p role="status" className="text-[13px] text-[color:var(--dls-text-secondary)]">Loading gateway providers...</p></div>;
   }
 
   if (error) {
     return (
-      <DenCard className="flex flex-col items-start gap-4">
+      <div className={`${AUTOMATION_CARD_CLASS} flex flex-col items-start gap-4 p-4`}>
         <DenNotice tone="error" message={error} />
-        <DenButton variant="secondary" onClick={() => void reloadProviders()}>Retry providers</DenButton>
-      </DenCard>
+        <DenButton variant="secondary" size="sm" onClick={() => void reloadProviders()}>Retry providers</DenButton>
+      </div>
     );
   }
 
@@ -94,21 +94,21 @@ function AiGatewayOverview({ orgId }: { orgId: string }) {
 function AiGatewayNoUsage({ orgSlug }: { orgSlug: string | null }) {
   return (
     <section aria-label="Gateway usage" data-testid="gateway-usage-no-providers">
-      <DenCard className="flex flex-col items-center gap-4 px-8 py-16 text-center">
+      <div className={`${AUTOMATION_CARD_CLASS} flex flex-col items-center gap-4 p-4 py-16 text-center`}>
         <span className="flex items-center gap-2" aria-hidden="true">
           {EMPTY_STATE_PROVIDERS.map((provider) => (
             <DenBrandMark key={provider.id} name={provider.name} simpleIconSlug={getProviderIconSlug(provider.id)} className="h-7 w-7 rounded-[8px]" imageClassName="h-4 w-4" />
           ))}
         </span>
         <span className="flex flex-col gap-1">
-          <span className="text-[15px] font-medium text-gray-950">No usage yet</span>
-          <span className="text-[13px] text-gray-500">Spend and the models people use show up here after the first request.</span>
+          <span className={CARD_TITLE_CLASS}>No usage yet</span>
+          <span className="text-[13px] text-[color:var(--dls-text-secondary)]">Spend and the models people use show up here after the first request.</span>
         </span>
         <Link href={getNewAiGatewayProviderRoute(orgSlug)} className={buttonVariants({ variant: "primary", size: "sm" })} data-testid="gateway-usage-add-provider">Add provider</Link>
-        <Link href={getInferenceRoute(orgSlug)} scroll={false} className="text-[12px] text-gray-600 underline underline-offset-4 hover:text-gray-900">
+        <Link href={getInferenceRoute(orgSlug)} scroll={false} className="text-[12px] text-[color:var(--dls-text-secondary)] underline underline-offset-4 hover:text-[color:var(--dls-text-primary)]">
           Or subscribe to OpenWork Models
         </Link>
-      </DenCard>
+      </div>
     </section>
   );
 }
@@ -129,8 +129,6 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
   );
   const router = useRouter();
   const searchParams = useSearchParams();
-  // API Keys only exists where member AI Gateway API keys are on (feature `gatewayMemberApiKeys`).
-  const tabs = orgFeatureEnabled(orgContext, "gatewayMemberApiKeys") ? AI_GATEWAY_TABS : AI_GATEWAY_TABS.filter((item) => item.value !== "api-keys");
   const introUnseen = useFeatureIntroUnseen();
   const introsEnabled = useFeatureIntroRuntime().enabled;
   // Smart Routers moved into AI Providers; old links to their tab land there.
@@ -140,10 +138,10 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
   // Sub-pages (provider, router and limit forms) never show the section intro.
   const gatewayIntroFacts = useAiGatewayIntroFacts(introsEnabled && nestedContent === undefined);
   // Without an explicit tab, land on the first one this person can open.
-  const defaultTab = tabs.find((item) => canOpenAiGatewayTab(memberAccess, item.value))?.value ?? "overview";
+  const defaultTab = AI_GATEWAY_TABS.find((item) => canOpenAiGatewayTab(memberAccess, item.value))?.value ?? "overview";
   const tab = nestedContent !== undefined && nestedTab
     ? nestedTab
-    : tabs.find((item) => item.value === requestedTab)?.value ?? defaultTab;
+    : AI_GATEWAY_TABS.find((item) => item.value === requestedTab)?.value ?? defaultTab;
   const gatewayTabArea = tab === "openwork-models" ? "any" : GATEWAY_TAB_AREAS[tab];
   const access = useGatewayDashboardAccess(gatewayTabArea);
 
@@ -162,12 +160,12 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
       description={null}
     >
       <div data-testid="ai-gateway-tabs" className="mb-6">
-        <UnderlineTabs tabs={tabs.map((item) => ({ ...item, unseen: introUnseen(AI_GATEWAY_TAB_INTROS[item.value]) }))} activeTab={tab} onChange={setTab} />
+        <UnderlineTabs tabs={AI_GATEWAY_TABS.map((item) => ({ ...item, unseen: introUnseen(AI_GATEWAY_TAB_INTROS[item.value]) }))} activeTab={tab} onChange={setTab} />
       </div>
       <div
         key={tab}
         role="tabpanel"
-        aria-label={tabs.find((item) => item.value === tab)?.label}
+        aria-label={AI_GATEWAY_TABS.find((item) => item.value === tab)?.label}
         data-testid={`ai-gateway-panel-${tab}`}
       >
         {nestedContent !== undefined ? nestedContent : (

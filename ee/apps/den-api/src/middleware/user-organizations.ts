@@ -87,7 +87,7 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
     ? scopedOrgs[0]?.slug ?? null
     : resolved.activeOrgSlug
 
-  // ssoPerOrganization: never act in an organization that requires SSO from a
+  // never act in an organization that requires SSO from a
   // session that did not sign in through it. Fall back to the first
   // organization the session may open; the list itself stays complete so the
   // person can still choose it (and be sent through its SSO).

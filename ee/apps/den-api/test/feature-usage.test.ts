@@ -26,25 +26,25 @@ const settle = () => new Promise((resolve) => setImmediate(resolve))
 
 test("a member's feature is written once per UTC day per replica", async () => {
   const { mark, writes, setNow } = harness()
-  mark({ organizationId: "org", memberId: "member-a", keys: ["autoRouter", "autoRouter"] })
-  mark({ organizationId: "org", memberId: "member-a", keys: ["autoRouter"] })
+  mark({ organizationId: "org", memberId: "member-a", keys: ["claudeAgentProvider", "claudeAgentProvider"] })
+  mark({ organizationId: "org", memberId: "member-a", keys: ["claudeAgentProvider"] })
   setNow("2026-10-27T23:59:59.000Z")
-  mark({ organizationId: "org", memberId: "member-a", keys: ["autoRouter", "nativeDictation"] })
-  mark({ organizationId: "org", memberId: "member-b", keys: ["autoRouter"] })
+  mark({ organizationId: "org", memberId: "member-a", keys: ["claudeAgentProvider", "nativeDictation"] })
+  mark({ organizationId: "org", memberId: "member-b", keys: ["claudeAgentProvider"] })
   await settle()
   assert.deepEqual(writes, [
-    { memberId: "member-a", keys: ["autoRouter"], day: "2026-10-27" },
+    { memberId: "member-a", keys: ["claudeAgentProvider"], day: "2026-10-27" },
     { memberId: "member-a", keys: ["nativeDictation"], day: "2026-10-27" },
-    { memberId: "member-b", keys: ["autoRouter"], day: "2026-10-27" },
+    { memberId: "member-b", keys: ["claudeAgentProvider"], day: "2026-10-27" },
   ])
 })
 
 test("the next UTC day writes again", async () => {
   const { mark, writes, setNow } = harness()
-  mark({ organizationId: "org", memberId: "member-a", keys: ["autoRouter"] })
+  mark({ organizationId: "org", memberId: "member-a", keys: ["claudeAgentProvider"] })
   setNow("2026-10-28T00:00:01.000Z")
-  mark({ organizationId: "org", memberId: "member-a", keys: ["autoRouter"] })
-  mark({ organizationId: "org", memberId: "member-a", keys: ["autoRouter"] })
+  mark({ organizationId: "org", memberId: "member-a", keys: ["claudeAgentProvider"] })
+  mark({ organizationId: "org", memberId: "member-a", keys: ["claudeAgentProvider"] })
   await settle()
   assert.deepEqual(writes.map((write) => write.day), ["2026-10-27", "2026-10-28"])
 })
@@ -55,15 +55,15 @@ test("a failed write is retried by the next use the same day and never throws", 
   const warn = console.warn
   console.warn = () => undefined
   try {
-    assert.doesNotThrow(() => mark({ organizationId: "org", memberId: "member-a", keys: ["autoRouter"] }))
+    assert.doesNotThrow(() => mark({ organizationId: "org", memberId: "member-a", keys: ["claudeAgentProvider"] }))
     await settle()
     failing = false
-    mark({ organizationId: "org", memberId: "member-a", keys: ["autoRouter"] })
+    mark({ organizationId: "org", memberId: "member-a", keys: ["claudeAgentProvider"] })
     await settle()
   } finally {
     console.warn = warn
   }
-  assert.deepEqual(writes.map((write) => write.keys), [["autoRouter"]])
+  assert.deepEqual(writes.map((write) => write.keys), [["claudeAgentProvider"]])
 })
 
 test("nothing is written for an empty list", async () => {

@@ -286,7 +286,7 @@ function CloudProviderListItem({ actionId, row, onRetry, openWorkModelsToggle, o
 }
 
 export interface CloudProvidersSectionProps {
-  /** Den feature shareDeviceProvider: what to offer while nothing is shared with the organization. */
+  /** Device provider sharing: what to offer while nothing is shared with the organization. */
   shareEmptyState?: OrganizationShareEmptyState;
   actionError: string | null;
   actionId: string | null;

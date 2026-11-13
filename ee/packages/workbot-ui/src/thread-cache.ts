@@ -1,5 +1,5 @@
 /**
- * The newest page of each chat, kept on this device so the chat opens on it at once next time (`instantOpen`), while
+ * The newest page of each chat, kept on this device so the chat opens on it at once next time, while
  * it is read again. Kept per signed-in person, workspace and chat; only a conversation that wasn't answering when it
  * was read, so what shows first is never a reply in progress; for a week at most; and all of it goes on sign-out.
  */

@@ -8,9 +8,6 @@ after(() => den.close())
 
 const org = await den.createOrg(await den.signUp("App Site Owner"), "App site workspace")
 const mcp = await den.mintMcpToken(org.owner, org.orgId)
-const setFeature = async (key: "appSites" | "publicApps", on: boolean) => assert.equal((await den.setFeature(org.orgId, key, on)).status, 200)
-await setFeature("appSites", true)
-await setFeature("publicApps", true)
 
 async function createApp(title: string, extra: Record<string, unknown> = {}): Promise<string> {
   const created = await den.callMcpTool(mcp, "create_app", {
@@ -54,17 +51,6 @@ test("a public site opens at the public URL too", async () => {
   await isPage(publicPath("coffee-site"), "public", "friendly public URL")
   await isPage(memberPath(appId), "member", "signed-in URL")
 
-  await setFeature("appSites", false)
-  try {
-    assert.equal((await browse(publicPath(appId))).status, 405, "feature off")
-    const off = await den.callMcpTool(mcp, "create_app", {
-      title: "Off", reactSource: "export default function App() { return <p>Off</p> }", textFallback: "Off.", tools: [], site: true,
-    })
-    assert.equal(off.isError, true, off.raw)
-    assert.match(off.raw, /app_sites_off/)
-  } finally {
-    await setFeature("appSites", true)
-  }
 })
 
 /** What the site page sends once the visitor has signed in. */
@@ -89,13 +75,7 @@ test("before sign-in, the signed-in URL says nothing about whether an App exists
   // After sign-in the App's server decides: only the App made a site opens for the page.
   assert.notEqual((await asSitePage(site)).tools, undefined)
   const refused = await asSitePage(plain)
-  assert.equal(refused.error, "The App is not available.", refused.call.text)
-  await setFeature("appSites", false)
-  try {
-    assert.equal((await asSitePage(site)).error, "The App is not available.", "feature off")
-  } finally {
-    await setFeature("appSites", true)
-  }
+  assert.equal(refused.error, "The artifact is not available.", refused.call.text)
 })
 
 test("MCP clients get the answers they got before", async () => {

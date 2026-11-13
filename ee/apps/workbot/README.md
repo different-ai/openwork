@@ -29,7 +29,7 @@ open their existing destinations; capability availability and document-draft gua
 not a destination: what Workbot is doing shows under its name, and tapping the name opens the task sheet.
 Apps opens a plain sheet titled Apps. On phones (under 1024px) there is no avatar badge or "Set up by" card,
 only Workbot's name with its status where it says who is replying; tapping it opens the same sheet the avatar
-opens on desktop (the profile with `workbotProfileSheet`, else the task sheet), as a full-height sheet that is
+opens on desktop (the profile), as a full-height sheet that is
 pulled down or closed to dismiss. Background tasks are one row each (title, one status line, a time, Stop); their
 steps open inside the row.
 No empty channel or space sections are invented. Computer is not a navigation destination; browser

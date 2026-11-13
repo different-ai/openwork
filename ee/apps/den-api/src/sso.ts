@@ -421,8 +421,6 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
   target?: SsoRegistrationTarget
   /** Display name; undefined keeps the current one. */
   name?: string | null
-  /** multipleSsoConnections: domains another connection verified need no new DNS record. */
-  reuseVerifiedDomains?: boolean
 }) {
   // An OIDC issuer pasted as its discovery URL is saved as the issuer itself:
   // discovery would otherwise request the well-known path twice, and tokens
@@ -439,11 +437,12 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
       issuer: input.issuer,
       entryPoint: input.kind === "saml" ? input.entryPoint : null,
     })
-    || (input.reuseVerifiedDomains === true && await domainsVerifiedByOtherConnection({
+    // Domains another connection already verified need no new DNS record.
+    || await domainsVerifiedByOtherConnection({
       organizationId: input.organizationId,
       domains,
       exceptConnectionId: existing?.id ?? null,
-    }))
+    })
   const nameUpdate = input.name === undefined ? {} : { name: input.name }
 
   if (existing) {

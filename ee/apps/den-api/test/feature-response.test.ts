@@ -4,6 +4,61 @@ import { FEATURE_KEYS } from "@openwork/features"
 import { clientFeatures, clientFeaturesSchema } from "../src/feature-response.js"
 
 const retiredKeys = [
+  "claudeAgentProvider",
+  "webPerMember",
+  "localModelsPolicy",
+  "shareDeviceProvider",
+  "singleOpenWorkModelsRow",
+  "passwordSignInGoogle",
+  "signInEmailSync",
+  "ssoOidcSetupCheck",
+  "denPageConsistency",
+  "nativeDictation",
+  "workbotScrollToBottom",
+  "workbotApps",
+  "workbotProactive",
+  "workbotTeamSettings",
+  "workbotUsageAnalytics",
+  "fileSendPermissions",
+  "remoteDevices",
+  "remoteSessionAccess",
+
+  "googleCalendarRecurrence",
+  "googleDrivePdfText",
+  "plainFreeModel",
+  "settledSessions",
+  "appToolRepair",
+  "publicApps",
+  "appSites",
+  "composerBackgroundTasks",
+  "agentQuestions",
+  "steadyLiveTurn",
+  "ssoPerOrganization",
+  "superAdminPermissionSet",
+  "desktopPersonalConnectors",
+  "workbotDriveFiles",
+  "workbotAccountMenu",
+  "workbotBrowserChat",
+  "workbotInstantOpen",
+  "workbotQuickReply",
+  "workbotWorkingStatus",
+  "workbotCenteredProfile",
+  "workbotBrowserPreview",
+  "workbotProfileSheet",
+  "workbotRemoteTasks",
+  "workbotProfileNav",
+  "workbotQuietCalendar",
+  "workbotSlackAnswerReply",
+  "browserUploadPermissions",
+  "agentHarnessPermissions",
+  "computerUse",
+  "computerSessionHistory",
+  "parallelComputerUse",
+  "browserUse",
+  "remoteSessionPush",
+  "standardCodeMode",
+  "outlookAttachments",
+
   "engineV2ForceUpgrade", "libraryDetailBreadcrumbs", "nativeAffordanceCodeMode",
   "libraryConnectorNavigation", "mcpAppLibraries", "gatewayProviderTest", "mermaidZoom",
   "slackSendAsBot", "liveProviderSync", "browserFloatingView", "remoteSessionSubagents",
@@ -18,10 +73,12 @@ const retiredKeys = [
 ]
 
 test("API-first upgrades keep graduated behavior on for published clients", () => {
-  const features = clientFeatures({ autoRouter: false, composerSubagentTracker: false })
+  const features = clientFeatures({ claudeAgentProvider: false, composerSubagentTracker: false })
   for (const key of retiredKeys) assert.equal(features[key], true, key)
-  assert.equal(features.autoRouter, false)
+  assert.equal(features.claudeAgentProvider, true)
   assert.equal(features.composerSubagentTracker, true, "the tracker is GA despite a stale opt-out")
+  assert.equal("sandboxMicrosoft365" in features, false, "cloud-only sandbox setup is not a global compatibility feature")
+  assert.equal("workbotBrowserRecovery" in features, false, "cloud-only recovery is advertised by the deployment-checked Workbot session")
   assert.equal("sandboxOrgs" in features, false, "cloud-only sandbox availability is not advertised as a global client feature")
   assert.deepEqual(clientFeaturesSchema.parse(features), features)
 })

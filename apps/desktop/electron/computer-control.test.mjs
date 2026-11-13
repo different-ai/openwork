@@ -68,16 +68,9 @@ function fixture(options = {}) {
   return { control, calls, requests, selected, emit: value => emit(value), disconnect: () => disconnect() };
 }
 
-test("the rollout off blocks tools before connecting", async (t) => {
-  const f = fixture(); t.after(() => f.control.reset(true));
-  const result = await f.control.execute({ sessionId: "chat", name: "computer_discover", args: {} });
-  assert.equal(payload(result).code, "computer_unavailable");
-  assert.deepEqual(f.calls, []);
-});
 
-test("enabling the rollout gives a new chat access without a consent prompt", async (t) => {
+test("a new chat has access without a rollout or consent prompt", async (t) => {
   const f = fixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_discover", args: {} })).ok, true);
   assert.deepEqual(f.requests, []);
   assert.ok(f.calls.includes("computer_discover"));
@@ -85,7 +78,6 @@ test("enabling the rollout gives a new chat access without a consent prompt", as
 
 for (const remote of [false, true]) test(`${remote ? "configured remote" : "personal Mac"} opens immediately with no approval exchange`, async (t) => {
   const f = fixture({ remote, authority: async () => true }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   if (remote) { await f.control.setRemoteEnabled(true); await f.control.choose({ sessionId: "chat", targetId: "vm" }); }
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit the draft" } })).ok, true);
   assert.deepEqual(f.selected, []);
@@ -96,7 +88,6 @@ for (const remote of [false, true]) test(`${remote ? "configured remote" : "pers
 
 test("follow-ups and idle cleanup renew without approvals or replaying old input", async t => {
   const f = fixture({ idleMs: 10 }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit the draft" } });
   await f.control.endTurn({ sessionId: "chat" });
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} })).ok, true);
@@ -116,7 +107,6 @@ test("follow-ups and idle cleanup renew without approvals or replaying old input
 
 test("human takeover survives end-of-turn and idle cleanup until Continue", async t => {
   const f = fixture({ idleMs: 10 }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit the draft" } });
   await f.control.interact({ sessionId: "chat", id: "view", action: "takeover" });
   await f.control.endTurn({ sessionId: "chat" });
@@ -136,7 +126,6 @@ test("human takeover survives end-of-turn and idle cleanup until Continue", asyn
 
 test("Stop ends the current task and the next turn works without asking again", async (t) => {
   const f = fixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_discover", args: {} });
   await f.control.halt({ sessionId: "chat" });
   assert.ok(f.calls.includes("close"));
@@ -148,7 +137,6 @@ test("Stop ends the current task and the next turn works without asking again", 
 
 for (const [platform, expected] of [["win32", "local"], ["darwin", "local"], ["linux", "vm"]]) test(`a new chat on ${platform} starts on ${expected === "local" ? "this computer" : "an available VM"}`, async (t) => {
   const f = fixture({ remote: true, authority: async () => true, platform }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.setRemoteEnabled(true);
   assert.equal((await f.control.snapshot({ sessionId: "chat" })).targetId, expected);
 });
@@ -156,7 +144,6 @@ for (const [platform, expected] of [["win32", "local"], ["darwin", "local"], ["l
 test("changing computers preserves Stop until the next turn", async (t) => {
   const f = fixture({ remote: true, authority: async () => true });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.setRemoteEnabled(true);
   await f.control.choose({ sessionId: "chat", targetId: "local" });
   await f.control.execute({ sessionId: "chat", name: "computer_discover", args: {} });
@@ -171,19 +158,6 @@ test("changing computers preserves Stop until the next turn", async (t) => {
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_discover", args: {} })).ok, true);
 });
 
-test("disable then re-enable during readiness cannot revive an old request", async (t) => {
-  const probing = deferred(); const gate = deferred();
-  const f = fixture({ readiness: async () => { probing.resolve(); await gate.promise; return { readiness: "ready", detail: "Ready" }; } });
-  t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
-  const request = f.control.execute({ sessionId: "chat", name: "computer_discover", args: {} });
-  await probing.promise;
-  await f.control.setFeatureEnabled(false);
-  await f.control.setFeatureEnabled(true);
-  gate.resolve();
-  assert.equal(payload(await request).code, "computer_unavailable");
-  assert.deepEqual(f.calls, []);
-});
 
 test("a macOS permission lost mid-chat asks in the chat again and resumes from a fresh session", async (t) => {
   let readiness = "ready";
@@ -194,7 +168,6 @@ test("a macOS permission lost mid-chat asks in the chat again and resumes from a
       ? { ...text({ ok: false, code: "permissions_required", message: "Grant Accessibility.", next: "human_takeover" }), isError: true } : undefined,
   });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit the draft" } })).ok, true);
   revoked = true; readiness = "setup-required";
   const pending = f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} });
@@ -214,7 +187,6 @@ test("a turn ending during an admitted tool releases the computer as soon as tha
   const started = deferred(); const finish = deferred();
   const f = fixture({ beforeTool: async (name) => { if (name === "computer_discover") { started.resolve(); await finish.promise; } } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   const request = f.control.execute({ sessionId: "chat", name: "computer_discover", args: {} });
   await started.promise;
   await f.control.endTurn({ sessionId: "chat" });
@@ -229,7 +201,6 @@ test("VMs stay hidden until the resolved rollout enables them, then run without 
   let authorized = false;
   const f = fixture({ remote: true, authority: async () => authorized });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   assert.equal(await f.control.setRemoteEnabled(true), false);
   assert.deepEqual((await f.control.snapshot({ sessionId: "chat" })).targets.map((target) => target.id), ["local"]);
   await assert.rejects(f.control.choose({ sessionId: "chat", targetId: "vm" }), /listed computers/);
@@ -246,7 +217,6 @@ test("VMs stay hidden until the resolved rollout enables them, then run without 
 test("Settings reads this computer without a chat and picks the computer every chat uses", async (t) => {
   const f = fixture({ remote: true, authority: async () => true });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   const before = await f.control.status();
   assert.equal(before.targetId, "local");
   assert.equal(before.readiness, "ready");
@@ -269,13 +239,6 @@ test("the devices snapshot lists only this computer while remote computers are o
     remoteReadiness: async () => { probes.push("vm"); return { readiness: "ready", detail: "Ready" }; },
   });
   t.after(() => f.control.reset(true));
-  // Computer use off: listed, but no helper is started to probe it.
-  assert.deepEqual(await f.control.devices(), {
-    enabled: false, remoteEnabled: false, selectedId: "local", permissions: null,
-    computers: [{ id: "local", label: "This computer", placement: "local", readiness: null, detail: null, provider: null, externalId: null }],
-  });
-  assert.deepEqual(probes, []);
-  await f.control.setFeatureEnabled(true);
   assert.deepEqual(await f.control.devices(), {
     enabled: true, remoteEnabled: false, selectedId: "local", permissions: { accessibility: true, screenRecording: true },
     computers: [{ id: "local", label: "This computer", placement: "local", readiness: "ready", detail: null, provider: null, externalId: null }],
@@ -286,13 +249,13 @@ test("the devices snapshot lists only this computer while remote computers are o
 
 test("the devices snapshot names a configured VM and probes only this computer and the one chats use", async (t) => {
   const probes = [];
+  // A Mac: elsewhere chats start on an available VM, so it would be probed before anyone chose it.
   const f = fixture({
-    remote: true, authority: async () => true, device: { provider: "freestyle", externalId: " vm-1 " },
+    platform: "darwin", remote: true, authority: async () => true, device: { provider: "freestyle", externalId: " vm-1 " },
     readiness: async () => { probes.push("local"); return { readiness: "setup-required", detail: `  Screen Recording is off. ${"x".repeat(400)}` }; },
     remoteReadiness: async () => { probes.push("vm"); return { readiness: "unavailable", detail: "The VM is stopped. Start it and try again." }; },
   });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.setRemoteEnabled(true);
   const unselected = await f.control.devices();
   assert.equal(unselected.remoteEnabled, true);
@@ -326,7 +289,6 @@ test("a revoked VM rollout blocks the next tool before connecting", async (t) =>
   let authorized = true;
   const f = fixture({ remote: true, authority: async () => authorized });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.setRemoteEnabled(true);
   await f.control.choose({ sessionId: "chat", targetId: "vm" });
   authorized = false;
@@ -338,7 +300,6 @@ test("a revoked VM rollout blocks the next tool before connecting", async (t) =>
 
 test("unexpected helper exit renews access but a native Stop cannot be bypassed", async t => {
   const f = fixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   const open = () => f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit the draft" } });
   await open(); f.disconnect();
   await new Promise(resolve => setImmediate(resolve));
@@ -354,7 +315,6 @@ test("Stop racing turn cleanup is not rearmed by its late completion", async t =
   const started = deferred(), finish = deferred();
   const f = fixture({ beforeClose: async () => { started.resolve(); await finish.promise; } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_discover", args: {} });
   const ending = f.control.endTurn({ sessionId: "chat" }); await started.promise;
   const stopping = f.control.halt({ sessionId: "chat" }); finish.resolve();
@@ -375,7 +335,6 @@ test("native takeover cancels browser programs and neither chat can bypass it wi
     return { ok: true, tabId: "owned" };
   } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit the draft" } });
   /** @type {import("@openwork/computer-use/runtime").ProgramRequest & { sessionId: string }} */
   const input = { sessionId: "chat", surface: "browser", code: 'return await tools.ui.open({url:"https://example.com"});' };
@@ -452,7 +411,6 @@ test("screenshot false settles the act with elements only and never reaches the 
   const seen = [];
   const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? text({ ok: true, status: "dispatched", next: "observe" }) : undefined });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   const opened = payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit the draft" } }));
   assert.equal(opened.ok, true);
   seen.length = 0;
@@ -468,7 +426,6 @@ test("a drag longer than the helpers take keeps its shape in 32 of its own point
   const seen = [];
   const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? text({ ok: true, status: "dispatched", next: "observe" }) : undefined });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Draw the outline" } });
   // A closed outline: 40 points along three straight sides, back to where it started.
   const side = (from, to) => Array.from({ length: 13 }, (_, index) => ({ x: from.x + (to.x - from.x) * index / 13, y: from.y + (to.y - from.y) * index / 13 }));
@@ -498,7 +455,6 @@ test("a smooth drag curves through its points and stays where they were checked"
   const seen = [];
   const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? text({ ok: true, status: "dispatched", next: "observe" }) : undefined });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Draw a wave" } });
   // Three points of a wave: straight lines would meet at a sharp peak.
   const path = [{ x: 100, y: 400 }, { x: 300, y: 100 }, { x: 500, y: 400 }];
@@ -519,7 +475,6 @@ test("without a screenshot choice the computer decides whether the settled view 
   const seen = [];
   const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? text({ ok: true, status: "dispatched", next: "observe" }) : undefined });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   const postRead = () => seen.find((call) => call.name === "computer_observe")?.args;
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit the draft" } })).ok, true);
   assert.equal(Object.hasOwn(postRead(), "include_image"), false, "opening leaves the image to the computer");
@@ -539,7 +494,6 @@ test("input the app gave no read-back for comes back with an image to check it b
   let receipt = { ok: true, status: "dispatched", next: "observe", steps: [{ index: 0, action: "type", status: "dispatched", path: "raw_input_unverified" }] };
   const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? text(receipt) : undefined });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit the flyer" } })).ok, true);
   const act = (args, options) => { seen.length = 0; return f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", ...args } }, options); };
   const postRead = () => seen.find((call) => call.name === "computer_observe")?.args;
@@ -558,7 +512,6 @@ test("an act refused before anything was sent returns a fresh observation instea
   let refusal = { ...unsent, code: "stale_observation", message: "The window image changed. Observe before coordinate input." };
   const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? { isError: true, ...text(refusal) } : undefined });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Draw" } })).ok, true);
   const act = (args, options) => { seen.length = 0; return f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", ...args } }, options); };
 
@@ -603,7 +556,6 @@ test("after an act the model gets only changed elements, while programs and open
   const f = fixture({ seen, toolResult: (name) => name === "computer_observe" ? view()
     : name === "computer_act" ? (display = "12", text({ ok: true, status: "dispatched", next: "observe" })) : undefined });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   const opened = await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "calculator", mode: "assist", purpose: "Add", screenshot: false } });
   const openedView = opened.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {}).find((value) => value.observation_id);
   assert.equal(openedView.elements.length, 5);
@@ -653,7 +605,6 @@ test("change listing falls back to the full list on another window, filter or a 
 test("each step records computer time and the model's time since the previous step", async (t) => {
   const steps = [];
   const f = fixture({ onTiming: (_sessionId, step) => steps.push(step) }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_discover", args: {} });
   await new Promise((resolve) => setTimeout(resolve, 20));
   await f.control.execute({ sessionId: "chat", name: "computer_discover", args: {} });
@@ -677,12 +628,10 @@ async function scriptRequest(f, code) {
   throw new Error("No script request was shown.");
 }
 
-test("scripts run under the computer use flag and the chat's access, on this Mac only, without a question", async (t) => {
+test("scripts run under the chat's access, on this Mac only, without a question", async (t) => {
   const ran = [];
   const f = fixture({ remote: true, authority: async () => true, runScript: async (request) => { ran.push(request); return { ok: true, stdout: "done" }; } });
   t.after(() => f.control.reset(true));
-  assert.equal((await f.control.script({ sessionId: "chat", app: "applescript", code: "return 1" })).error.code, "computer_unavailable");
-  await f.control.setFeatureEnabled(true);
   assert.equal((await f.control.script({ sessionId: "chat", app: "terminal", code: "ls" })).error.code, "invalid_arguments");
   assert.deepEqual(await f.control.script({ sessionId: "chat", app: "applescript", code: "return 1" }), { ok: true, stdout: "done" });
   assert.deepEqual(ran, [{ app: "applescript", code: "return 1", timeoutMs: 30_000 }]);
@@ -693,7 +642,7 @@ test("scripts run under the computer use flag and the chat's access, on this Mac
   assert.equal(ran.length, 1);
 });
 
-test("turning computer use off stops a running script and one waiting for the organization's question", async (t) => {
+test("reset stops a running script and one waiting for the organization's question", async (t) => {
   const ran = [];
   let release = () => {};
   const f = fixture({ runScript: async (request, signal) => {
@@ -703,12 +652,11 @@ test("turning computer use off stops a running script and one waiting for the or
     return { ok: true };
   } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   const waiting = f.control.script({ sessionId: "chat", app: "blender", code: "result = 1" }, { approveEachScript: true });
   await scriptRequest(f, "result = 1");
   const running = f.control.script({ sessionId: "other", app: "jxa", code: "slow" });
   for (let waited = 0; !ran.includes("slow") && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
-  await f.control.setFeatureEnabled(false);
+  await f.control.reset();
   assert.equal((await waiting).error.code, "script_declined", "a pending approval ends when computer use is turned off");
   assert.equal((await running).error.code, "script_failed", "a running script is stopped");
   release();
@@ -719,7 +667,6 @@ test("organization ask shows every exact script, runs only on Run and never reme
   const ran = [];
   const f = fixture({ runScript: async input => { ran.push(input.code); return { ok: true }; } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   const declined = f.control.script({ sessionId: "chat", app: "jxa", code: "first" }, { approveEachScript: true });
   const asked = await scriptRequest(f, "first");
   assert.deepEqual(asked.script, { app: "jxa", code: "first" }, "the person sees the exact full script");
@@ -876,7 +823,6 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 test("on a parallel computer two chats each control their own window at the same time", async (t) => {
   const f = parallelFixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   assert.equal(payload(await openApp(f.control, "chat-blender", "blender")).ok, true);
   assert.equal(payload(await openApp(f.control, "chat-photoshop", "photoshop")).ok, true);
   assert.equal(f.connections(), 2, "each chat has its own helper session");
@@ -888,7 +834,6 @@ test("on a parallel computer two chats each control their own window at the same
 
 test("a window another chat holds is refused before any helper starts", async (t) => {
   const f = parallelFixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await openApp(f.control, "chat-blender", "blender");
   const result = payload(await openApp(f.control, "chat-other", "blender", "control", 11));
   assert.equal(result.code, "window_busy");
@@ -900,7 +845,6 @@ test("the chat the person watches works in view, beside OpenWork, and other chat
   const notes = [];
   const f = parallelFixture({ onOpen: (args) => opens.push(args), onNotify: (app, value) => { if (value.action === "watch") notes.push([app, value]); } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   f.control.follow({ sessionId: "chat", watching: true });
   await openApp(f.control, "chat", "blender");
   await openApp(f.control, "other-chat", "notes");
@@ -909,7 +853,7 @@ test("the chat the person watches works in view, beside OpenWork, and other chat
   // A second app in the watched chat follows too, and the agent arranges the two itself.
   await openApp(f.control, "chat", "photoshop");
   assert.deepEqual([opens[2].following, opens[2].beside], [true, false]);
-  assert.deepEqual(notes.find(([app]) => app === "blender"), ["blender", { id: "view-blender", action: "watch", following: true, beside: false }]);
+  assert.deepEqual(notes.find(([app]) => app === "blender"), ["blender", { id: "view-blender", action: "watch", following: true, beside: false, stage_count: 0 }]);
   // Another thread selected: each of the chat's helpers hears it once, and the other chat nothing.
   notes.length = 0;
   f.control.follow({ sessionId: "chat", watching: false });
@@ -927,12 +871,10 @@ test("subagents follow along while the person watches their chat, taking turns a
     onNotify: (app, value) => { if (value.action === "watch") notes.push([app, value]); },
     beforeTool: async (name, app) => { if (name === "computer_act" && app === "maps" && hold) await hold.promise; } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   const agent = (sessionId, name, args) => f.control.execute({ sessionId, rootSessionId: "chat", name, args });
   const open = (sessionId, app) => agent(sessionId, "computer_open", { app_id: app, mode: "control", purpose: `Work in ${app}` });
   const act = (sessionId) => agent(sessionId, "computer_act", { observation_id: "observation", action: { type: "click", x: 1, y: 1 } });
   const started = (app) => f.events.filter((event) => event === `${app}:computer_act:start`).length;
-  f.control.setParallelAgents(true);
   f.control.follow({ sessionId: "chat", watching: true });
   await open("maps-agent", "maps");
   assert.deepEqual([opens[0].following, opens[0].beside], [true, true], "the watched chat's only app opens in view, beside OpenWork");
@@ -957,22 +899,12 @@ test("subagents follow along while the person watches their chat, taking turns a
   hold.resolve(); await Promise.all([third, fourth]);
 });
 
-test("with parallel computer use off, watching the chat leaves its subagents in the background, as before", async (t) => {
-  const opens = [];
-  const f = parallelFixture({ onOpen: (args) => opens.push(args) }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
-  f.control.follow({ sessionId: "chat", watching: true });
-  await f.control.execute({ sessionId: "maps-agent", rootSessionId: "chat", name: "computer_open", args: { app_id: "maps", mode: "control", purpose: "Find it" } });
-  assert.deepEqual([opens[0].following, opens[0].beside], [false, true]);
-});
 
 test("while the person watches, the chat's agents' windows share one stage that re-tiles as apps open and close", async (t) => {
   const opens = [];
   const notes = [];
   const f = parallelFixture({ onOpen: (args) => opens.push(args), onNotify: (app, value) => { if (value.action === "watch") notes.push([app, value]); } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
-  f.control.setParallelAgents(true);
   const open = (sessionId, app) => f.control.execute({ sessionId, rootSessionId: "chat", name: "computer_open", args: { app_id: app, mode: "control", purpose: `Work in ${app}` } });
   const stage = (value) => [value.stage_slot, value.stage_count];
   const last = (app) => notes.filter(([name]) => name === app).at(-1)?.[1];
@@ -991,21 +923,16 @@ test("while the person watches, the chat's agents' windows share one stage that 
   // Out of view nothing is staged, so nothing moves.
   f.control.follow({ sessionId: "chat", watching: false });
   assert.deepEqual([last("maps").stage_count, last("photoshop").stage_count], [0, 0]);
-  // With parallel computer use off, no stage at all.
-  f.control.setParallelAgents(false);
-  f.control.follow({ sessionId: "maps-agent", watching: true });
-  assert.equal("stage_count" in last("maps"), false);
+
 });
 
 test("the chat's crew lists each subagent with its cursor, app, state, latest step and a live frame", async (t) => {
   let hold = null;
   const f = parallelFixture({ beforeTool: async (name, app) => { if (name === "computer_act" && app === "maps" && hold) await hold.promise; } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   const agent = (sessionId, agentName, name, args) => f.control.execute({ sessionId, rootSessionId: "chat", agentName, name, args });
   const act = (sessionId, agentName, intent) => agent(sessionId, agentName, "computer_act", { observation_id: "observation", action: { type: "click", x: 1, y: 1 }, intent });
   assert.deepEqual(await f.control.crew({ sessionId: "chat" }), [], "nothing before any agent works");
-  f.control.setParallelAgents(true);
   await agent("maps-agent", "Maps", "computer_open", { app_id: "maps", mode: "control", purpose: "Find the place" });
   await agent("slides-agent", "Slides", "computer_open", { app_id: "powerpoint", mode: "control", purpose: "Title slide" });
   await act("maps-agent", "Maps", "searching for the café");
@@ -1035,14 +962,11 @@ test("the chat's crew lists each subagent with its cursor, app, state, latest st
   await f.control.endTurn({ sessionId: "slides-agent" });
   assert.deepEqual((await f.control.crew({ sessionId: "chat" })).map((row) => row.state), ["working", "done"]);
   assert.deepEqual(await f.control.crew({ sessionId: "maps-agent" }), [], "a subagent's own thread has no crew");
-  f.control.setParallelAgents(false);
-  assert.deepEqual(await f.control.crew({ sessionId: "chat" }), [], "nothing with parallel computer use off");
 });
 
 test("a computer that is not This Mac gets no follow-along arguments", async (t) => {
   const seen = [];
   const f = fixture({ seen }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   f.control.follow({ sessionId: "chat", watching: true });
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "com.apple.TextEdit", mode: "control", purpose: "Write" } });
   const open = seen.find((call) => call.name === "computer_open_session");
@@ -1055,7 +979,6 @@ const look = (control, sessionId, session) =>
 
 test("one chat keeps several apps open, each with its own helper, and session_id picks one", async (t) => {
   const f = parallelFixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   assert.equal(payload(await openApp(f.control, "chat", "blender")).session_id, "native-blender");
   const second = await openApp(f.control, "chat", "photoshop");
   assert.equal(payload(second).session_id, "native-photoshop");
@@ -1077,7 +1000,6 @@ test("one chat keeps several apps open, each with its own helper, and session_id
 
 test("a chat opens a few apps, each window once", async (t) => {
   const f = parallelFixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   for (const app of ["blender", "photoshop", "notes"]) assert.equal(payload(await openApp(f.control, "chat", app)).ok, true);
   const again = payload(await openApp(f.control, "chat", "blender", "control", 11));
   assert.equal(again.code, "session_open");
@@ -1095,7 +1017,6 @@ test("a chat opens a few apps, each window once", async (t) => {
 
 test("end of turn, takeover and Stop cover every app in the chat", async (t) => {
   const f = parallelFixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await openApp(f.control, "chat", "blender");
   await openApp(f.control, "chat", "photoshop");
   await f.control.endTurn({ sessionId: "chat" });
@@ -1127,8 +1048,6 @@ test("subagents work in their chat's computer: one folder, one Stop and Take ove
     act: (app, args) => args.action?.type === "save_image" ? text({ ok: true, status: "dispatched", path: "file_saved", saved_file: { path: args.action.path, bytes: 42 } }) : undefined,
   });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
-  f.control.setParallelAgents(true);
   // The bridge names each subagent's chat; the model never does.
   const agent = (sessionId, name, args) => f.control.execute({ sessionId, rootSessionId: "chat", name, args });
   const open = (sessionId, app) => agent(sessionId, "computer_open", { app_id: app, mode: "control", purpose: `Work in ${app}` });
@@ -1163,27 +1082,10 @@ test("subagents work in their chat's computer: one folder, one Stop and Take ove
   assert.equal(notes(await open("maps-agent", "maps")).ok, true);
 });
 
-test("with parallel computer use off, a subagent is its own chat, as before", async (t) => {
-  const f = parallelFixture({ control: { platform: "darwin", saveFolder: async (sessionId) => `/Users/me/Downloads/OpenWork/${sessionId}` } });
-  t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
-  const open = (sessionId, app) => f.control.execute({ sessionId, rootSessionId: "chat", name: "computer_open", args: { app_id: app, mode: "control", purpose: `Work in ${app}` } });
-  const folder = (result) => Object.assign({}, ...result.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {})).save_folder;
-  assert.equal(folder(await open("maps-agent", "maps")), "/Users/me/Downloads/OpenWork/maps-agent", "its own folder");
-  assert.equal(f.control.chatOf({ sessionId: "maps-agent" }), "maps-agent");
-  await f.control.halt({ sessionId: "chat" });
-  assert.equal(payload(await f.control.execute({ sessionId: "maps-agent", rootSessionId: "chat", name: "computer_observe", args: {} })).observation_id, "observation-maps", "the chat's Stop does not reach it");
-  // Turned on later, the link counts from the next call (after the stopped chat's next turn).
-  await f.control.endTurn({ sessionId: "chat" });
-  f.control.setParallelAgents(true);
-  assert.equal(folder(await open("slides-agent", "powerpoint")), "/Users/me/Downloads/OpenWork/chat");
-});
 
 test("each subagent's cursor has its own name and a color that stays its own, and the chat keeps OpenWork's", async (t) => {
   const openwork = { name: "OpenWork", color: "#4585f2" };
   const f = parallelFixture({ control: { presence: openwork } }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
-  f.control.setParallelAgents(true);
   const open = (sessionId, app, extra = {}) => f.control.execute({ sessionId, ...extra, name: "computer_open", args: { app_id: app, mode: "control", purpose: `Work in ${app}` } });
   await open("chat", "notes");
   await Promise.all([open("maps-agent", "maps", { rootSessionId: "chat", agentName: "  Maps\n  " }), open("slides-agent", "powerpoint", { rootSessionId: "chat", agentName: "general" })]);
@@ -1201,17 +1103,9 @@ test("each subagent's cursor has its own name and a color that stays its own, an
   assert.deepEqual(f.presences.at(-1), maps);
 });
 
-test("with parallel computer use off, every helper shows the one presence, as before", async (t) => {
-  const openwork = { name: "OpenWork", color: "#4585f2" };
-  const f = parallelFixture({ control: { presence: openwork } }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
-  await f.control.execute({ sessionId: "maps-agent", rootSessionId: "chat", agentName: "Maps", name: "computer_open", args: { app_id: "maps", mode: "control", purpose: "Find it" } });
-  assert.deepEqual(f.presences, [openwork]);
-});
 
 test("a computer that is not parallel keeps one app per chat", async (t) => {
   const f = fixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit" } });
   const second = payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "mail", mode: "control", purpose: "Send" } }));
   assert.equal(second.code, "session_open");
@@ -1222,7 +1116,6 @@ test("a computer that is not parallel keeps one app per chat", async (t) => {
 for (const [where, options] of [["a Windows PC", { platform: "win32" }], ["a remote computer", { platform: "darwin", remote: true, authority: async () => true }]]) {
   test(`arranging windows is refused on ${where} before anything is sent`, async (t) => {
     const f = fixture(options); t.after(() => f.control.reset(true));
-    await f.control.setFeatureEnabled(true);
     if (options.remote) { await f.control.setRemoteEnabled(true); await f.control.choose({ sessionId: "chat", targetId: "vm" }); }
     await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit" } });
     const result = payload(await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "arrange", layout: "left_half" } } }));
@@ -1235,7 +1128,6 @@ test("on a Mac, arranging a window reaches its helper and returns a fresh look a
   const seen = [];
   const f = fixture({ platform: "darwin", seen, toolResult: (name) => name === "computer_act" ? text({ ok: true, status: "dispatched", steps: [{ action: "arrange", path: "window_arranged" }] }) : null });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit" } });
   const looks = seen.filter(({ name }) => name === "computer_observe").length;
   const result = await f.control.execute({ sessionId: "chat", name: "computer_act", args: { session_id: "native", observation_id: "observation", action: { type: "arrange", layout: "beside_openwork" } } });
@@ -1250,7 +1142,6 @@ test("control calls take turns at the keyboard and pointer, one whole call at a 
   const started = deferred(); const gate = deferred();
   const f = parallelFixture({ beforeTool: async (name, app) => { if (name === "computer_act" && app === "blender") { started.resolve(); await gate.promise; } } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await openApp(f.control, "chat-blender", "blender");
   await openApp(f.control, "chat-photoshop", "photoshop");
   const blender = click(f.control, "chat-blender");
@@ -1270,7 +1161,6 @@ test("looking without control, status and listing apps never wait for another ch
   const started = deferred(); const gate = deferred();
   const f = parallelFixture({ beforeTool: async (name, app) => { if (name === "computer_act" && app === "blender") { started.resolve(); await gate.promise; } } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await openApp(f.control, "chat-blender", "blender");
   await openApp(f.control, "chat-notes", "notes", "assist");
   const blender = click(f.control, "chat-blender");
@@ -1286,7 +1176,6 @@ test("a takeover while a chat waits its turn dispatches nothing for that chat", 
   const started = deferred(); const gate = deferred();
   const f = parallelFixture({ beforeTool: async (name, app) => { if (name === "computer_act" && app === "blender") { started.resolve(); await gate.promise; } } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await openApp(f.control, "chat-blender", "blender");
   await openApp(f.control, "chat-photoshop", "photoshop");
   const blender = click(f.control, "chat-blender");
@@ -1304,7 +1193,6 @@ test("a call cancelled while it waits its turn leaves the line for the others", 
   const started = deferred(); const gate = deferred();
   const f = parallelFixture({ beforeTool: async (name, app) => { if (name === "computer_act" && app === "blender") { started.resolve(); await gate.promise; } } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await openApp(f.control, "chat-blender", "blender");
   await openApp(f.control, "chat-photoshop", "photoshop");
   await openApp(f.control, "chat-notes", "notes");
@@ -1324,7 +1212,6 @@ test("a call cancelled while it waits its turn leaves the line for the others", 
 
 test("chats on different computers no longer block each other", async (t) => {
   const f = fixture({ remote: true, authority: async () => true }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.setRemoteEnabled(true);
   // A new chat's default computer depends on the platform; choose each one.
   for (const [sessionId, targetId] of [["chat-mac", "local"], ["chat-vm", "vm"], ["chat-other", "local"]]) await f.control.choose({ sessionId, targetId });
@@ -1339,7 +1226,6 @@ test("background sessions act at the same time instead of taking turns", async (
   const f = parallelFixture({ delivery: () => "background",
     beforeTool: async (name, app) => { if (name === "computer_act" && app === "blender") { started.resolve(); await gate.promise; } } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await openApp(f.control, "chat-blender", "blender");
   await openApp(f.control, "chat-photoshop", "photoshop");
   assert.deepEqual(f.started, [{ background: true }, { background: true }], "each helper starts with background delivery");
@@ -1355,7 +1241,6 @@ test("a session the helper keeps in front still takes turns, without holding up 
   const f = parallelFixture({ delivery: (app) => app === "photoshop" ? "background" : "foreground",
     beforeTool: async (name, app) => { if (name === "computer_act" && app === "blender") { started.resolve(); await gate.promise; } } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   for (const app of ["blender", "photoshop", "notes"]) await openApp(f.control, `chat-${app}`, app);
   const blender = click(f.control, "chat-blender");
   await started.promise;
@@ -1368,24 +1253,10 @@ test("a session the helper keeps in front still takes turns, without holding up 
   assert.ok(f.events.indexOf("blender:computer_act:end") < f.events.indexOf("notes:computer_act:start"));
 });
 
-test("older renderers cannot disable background delivery independently of computer use", async (t) => {
-  const f = parallelFixture({ delivery: () => "background" }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
-  await openApp(f.control, "chat-notes", "notes");
-  assert.equal(await f.control.setBackgroundEnabled(false), true);
-  assert.ok(!f.events.includes("notes:close"), "the obsolete child flag cannot end an active session");
-  assert.equal(payload(await f.control.execute({ sessionId: "chat-notes", name: "computer_observe", args: {} })).ok, true);
-  assert.deepEqual(f.started.at(-1), { background: true });
-  await f.control.setFeatureEnabled(false);
-  assert.ok(f.events.includes("notes:close"), "the parent switch still hands the session back");
-  assert.equal(await f.control.setBackgroundEnabled(true), false);
-  assert.equal(payload(await f.control.execute({ sessionId: "chat-notes", name: "computer_observe", args: {} })).code, "computer_unavailable");
-});
 
 test("background stays off on a computer that is not parallel", async (t) => {
   const connected = [];
   const f = fixture({ connected }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit" } })).ok, true);
   assert.deepEqual(connected, [{ background: false }]);
 });
@@ -1427,7 +1298,6 @@ async function answerFiles(f, answer) {
 
 test("confirming a file panel asks the person, then sends the press with their approval", async (t) => {
   const f = filePanelFixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
   const pending = confirmPanel(f.control);
   await answerFiles(f, "allow");
@@ -1458,7 +1328,6 @@ function openOnFileFixture(options = {}) {
 test("by default an app opens onto a file with no card, once, and renewals never reopen it", async (t) => {
   const asked = [];
   const f = openOnFileFixture({ movePolicy: async (input) => { asked.push(input); return { effect: "allow" }; } }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   assert.equal(payload(await f.openOnFile()).ok, true);
   assert.ok(!f.requests.some((request) => request?.reason === "files"), "the person is not asked");
   assert.deepEqual(asked, [{ kind: "computer_files", sessionId: "chat" }], "the organization's rule for moving files is looked up once");
@@ -1475,14 +1344,12 @@ test("by default an app opens onto a file with no card, once, and renewals never
 
 test("with no rule given, files move between apps without a card", async (t) => {
   const f = openOnFileFixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   assert.equal(payload(await f.openOnFile()).ok, true);
   assert.ok(!f.requests.some((request) => request?.reason === "files"));
 });
 
 test("an organization that asks shows the file every time, and a declined file is never opened", async (t) => {
   const f = openOnFileFixture({ movePolicy: askFirst }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   const pending = f.openOnFile();
   await f.answer("dismiss");
   const result = payload(await pending);
@@ -1497,7 +1364,6 @@ test("an organization that blocks moving files refuses opening an app onto a fil
   const message = "Your organization does not let agents move files between apps.";
   for (const movePolicy of [async () => ({ effect: "deny", message }), async () => { throw new Error("rules unavailable"); }]) {
     const f = openOnFileFixture({ movePolicy }); t.after(() => f.control.reset(true));
-    await f.control.setFeatureEnabled(true);
     const refused = payload(await f.openOnFile());
     assert.equal(refused.code, "organization_policy_denied");
     assert.match(refused.message, /organization.*Nothing was opened\./);
@@ -1508,7 +1374,6 @@ test("an organization that blocks moving files refuses opening an app onto a fil
 
 test("each chat gets its own clipboard key, which the model can never set", async (t) => {
   const f = openOnFileFixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   const open = (sessionId) => f.control.execute({ sessionId, name: "computer_open", args: { app_id: "numbers", mode: "control", purpose: "Copy the table" } });
   await open("chat");
   await f.control.execute({ sessionId: "chat", name: "computer_close", args: {} });
@@ -1527,7 +1392,6 @@ test("each chat gets its own clipboard key, which the model can never set", asyn
 test("only a Mac opens an app onto a file or keeps an agent clipboard", async (t) => {
   for (const platform of ["win32", "linux"]) {
     const f = openOnFileFixture({ platform }); t.after(() => f.control.reset(true));
-    await f.control.setFeatureEnabled(true);
     const refused = payload(await f.openOnFile());
     assert.equal(refused.code, "file_unavailable", platform);
     assert.equal(f.opens().length, 0, "nothing reached the helper");
@@ -1545,7 +1409,6 @@ test("a save the helper confirmed on disk is the only file the chat may open, an
       : { ok: true, status: "dispatched", path: "file_save_unconfirmed" });
   } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Export" } });
   const save = (id, path) => f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: id, action: { type: "save_as", path } } });
   await save("unconfirmed", "/Users/me/Desktop/ghost.pdf");
@@ -1571,7 +1434,7 @@ function saveFixture(options = {}) {
   const acts = () => seen.filter((call) => call.name === "computer_act").length;
   return { ...f, save, cards, acts };
 }
-const openForSaving = (f) => f.control.setFeatureEnabled(true).then(() => f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Make a PDF" } }));
+const openForSaving = (f) => Promise.resolve().then(() => f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Make a PDF" } }));
 
 test("a save goes ahead without a card by default, and the chat learns its own folder", async (t) => {
   const f = saveFixture(); t.after(() => f.control.reset(true));
@@ -1686,7 +1549,7 @@ function savePanelFixture(movePolicy) {
   } });
   const looks = () => seen.filter((call) => call.name === "computer_observe").map((call) => call.args.file_panel_access ?? null);
   const save = () => f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "key", key: "s", modifiers: ["command"] } } });
-  const open = () => f.control.setFeatureEnabled(true).then(() => f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Save the letter" } }));
+  const open = () => Promise.resolve().then(() => f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Save the letter" } }));
   return { ...f, looks, save, open };
 }
 
@@ -1712,7 +1575,7 @@ test("an organization that blocks file panels still keeps the agent out of one i
   assert.deepEqual(f.looks().slice(before), [null], "never looked at with access");
 });
 
-const openForPlacing = (f) => f.control.setFeatureEnabled(true).then(() => f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Place the map" } }));
+const openForPlacing = (f) => Promise.resolve().then(() => f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Place the map" } }));
 
 test("an Open panel is looked through and a file picked in it without a card by default", async (t) => {
   const asked = [];
@@ -1756,7 +1619,6 @@ test("an organization that asks shows the picked file each time, and one that bl
 
 test("declined files are never handed over", async (t) => {
   const f = filePanelFixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
   const pending = confirmPanel(f.control);
   await answerFiles(f, "dismiss");
@@ -1767,7 +1629,6 @@ test("declined files are never handed over", async (t) => {
 test("with no organization rule, files and file panels reach the app without a card", async (t) => {
   const policy = [];
   const f = filePanelFixture({ browsing: true, movePolicy: async (input) => { policy.push(input); return { effect: "allow" }; } }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} })).ok, true);
   assert.equal(payload(await confirmPanel(f.control)).status, "dispatched");
@@ -1779,7 +1640,6 @@ test("with no organization rule, files and file panels reach the app without a c
 
 test("the default broker, with no policy given, never asks about files", async (t) => {
   const f = filePanelFixture({ movePolicy: null }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
   assert.equal(payload(await confirmPanel(f.control)).status, "dispatched");
   assert.equal(f.requests.filter((request) => request?.reason === "files").length, 0);
@@ -1789,7 +1649,6 @@ test("an organization that blocks moving files refuses the handover and the pane
   const deny = async () => ({ effect: "deny", message: "Your organization's agent permissions block moving files between apps and folders (set for Contractors)." });
   for (const browsing of [false, true]) {
     const f = filePanelFixture({ browsing, movePolicy: deny }); t.after(() => f.control.reset(true));
-    await f.control.setFeatureEnabled(true);
     await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
     const refused = payload(browsing ? await f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} }) : await confirmPanel(f.control));
     assert.equal(refused.code, "organization_policy_denied");
@@ -1802,7 +1661,6 @@ test("an organization that blocks moving files refuses the handover and the pane
 
 test("a policy that cannot answer blocks moving files", async (t) => {
   const f = filePanelFixture({ movePolicy: async () => { throw new Error("offline"); } }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
   assert.equal(payload(await confirmPanel(f.control)).code, "organization_policy_denied");
   assert.deepEqual(f.acts(), [null]);
@@ -1810,7 +1668,6 @@ test("a policy that cannot answer blocks moving files", async (t) => {
 
 test("Ask first asks about every handover and offers no standing approval", async (t) => {
   const f = filePanelFixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
   const first = confirmPanel(f.control);
   await answerFiles(f, "always");
@@ -1825,7 +1682,6 @@ test("Ask first asks about every handover and offers no standing approval", asyn
 
 test("browser uploads keep their own always-allow per recipient", async (t) => {
   const f = filePanelFixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
   const first = f.control.approveFiles({ sessionId: "chat", app: "Safari", files: ["launch.mp4"] });
   await answerFiles(f, "always");
@@ -1880,7 +1736,6 @@ test("browser always is chat-only, disjoint from native approval and ignored by 
   for (const answer of ["always", "remember"]) await assert.rejects(f.control.answerRequest({ sessionId: "chat", answer, id: card.id }));
   await f.control.answerRequest({ sessionId: "chat", answer: "allow", id: card.id });
   assert.equal(await pending, "allow");
-  await f.control.setFeatureEnabled(true);
   const native = f.control.approveFiles({ sessionId: "chat", app: input.site, files: input.files });
   for (let waited = 0; !f.requests.at(-1) && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
   const nativeCard = f.requests.at(-1);
@@ -1898,7 +1753,6 @@ test("browser file requests reject invalid origins, stay isolated from native al
     assert.equal(await f.control.requestBrowserFiles({ ...input, site }), "dismiss");
   }
   assert.equal(f.requests.length, 0);
-  await f.control.setFeatureEnabled(true);
   await browserFileCard(f, f.control.approveFiles({ ...input, app: "https://example.com" }), "always");
   const controller = new AbortController();
   const pending = f.control.requestBrowserFiles({ ...input, site: "https://example.com" }, { signal: controller.signal });
@@ -1963,7 +1817,6 @@ test("typing on a canvas goes straight to the app, and a confirmed password neve
       : text({ ok: true, status: "dispatched" });
   } });
   t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "com.example.canvas", mode: "control", purpose: "Add a title" } });
   const acts = () => seen.filter((call) => call.name === "computer_act").map((call) => call.args);
   assert.equal(payload(await typeInto(f.control, { type: "type", text: "THE GEOMETRY PLAYGROUND" })).status, "dispatched");
@@ -1979,7 +1832,6 @@ test("typing on a canvas goes straight to the app, and a confirmed password neve
 
 test("typing next to a password field waits for the person to confirm the app", async (t) => {
   const f = credentialFixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "com.example.editor", mode: "control", purpose: "Sign in" } });
   const declined = typeInto(f.control, { type: "type", text: "given-password" });
   await f.answer("Editor", "dismiss");
@@ -1993,7 +1845,6 @@ test("typing next to a password field waits for the person to confirm the app", 
 
 test("text marked secret goes only to an app the person confirmed, where no field can be detected", async (t) => {
   const f = credentialFixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "com.example.editor", mode: "control", purpose: "Sign in" } });
   const declined = typeInto(f.control, { type: "type", text: "given-password", secret: true });
   await f.answer("com.example.editor", "dismiss");
@@ -2021,7 +1872,6 @@ test("text marked secret goes only to an app the person confirmed, where no fiel
 
 test("a browser app never takes a password: the site cannot be confirmed there", async (t) => {
   const f = credentialFixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   // Mac bundle ids, Windows executables and Linux window classes.
   const open = async (app) => {
     await f.control.execute({ sessionId: "chat", name: "computer_close", args: {} });
@@ -2042,7 +1892,6 @@ test("a browser app never takes a password: the site cannot be confirmed there",
 
 test("a remote computer never takes a password: a whole-screen session names no app", async (t) => {
   const f = fixture({ remote: true, authority: async () => true }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.setRemoteEnabled(true);
   await f.control.choose({ sessionId: "chat", targetId: "vm" });
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "desktop", mode: "control", purpose: "Sign in" } });
@@ -2052,7 +1901,6 @@ test("a remote computer never takes a password: a whole-screen session names no 
 
 test("allowing a file panel to be browsed never becomes a standing approval", async (t) => {
   const f = filePanelFixture({ browsing: true }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
   const look = f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} });
   for (let waited = 0; !f.requests.some((request) => request?.reason === "files") && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
@@ -2067,7 +1915,6 @@ test("allowing a file panel to be browsed never becomes a standing approval", as
 
 test("a file panel's contents reach the agent only after the person allows it", async (t) => {
   const f = filePanelFixture({ browsing: true }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
   const look = f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} });
   for (let waited = 0; !f.requests.some((request) => request?.reason === "files") && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
@@ -2080,7 +1927,6 @@ test("a file panel's contents reach the agent only after the person allows it", 
 test("a selection longer than one card can show is never approved", async (t) => {
   const many = Array.from({ length: 21 }, (_, index) => `clip-${index}.mp4`);
   const f = filePanelFixture({ files: many }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
   assert.equal(payload(await confirmPanel(f.control)).code, "files_declined");
   assert.ok(!f.requests.some((request) => request?.reason === "files"), "the person is not shown a partial list");
@@ -2089,7 +1935,6 @@ test("a selection longer than one card can show is never approved", async (t) =>
 
 test("a recipient too long to show is refused, never shortened into another's approval", async (t) => {
   const f = filePanelFixture(); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
   assert.equal(await f.control.approveFiles({ sessionId: "chat", app: `${"a".repeat(200)}.example.com`, files: ["/tmp/a.txt"] }), false);
   assert.ok(!f.requests.some((request) => request?.reason === "files"));
@@ -2097,7 +1942,6 @@ test("a recipient too long to show is refused, never shortened into another's ap
 
 test("same-named selected files are each shown and each approved", async (t) => {
   const f = filePanelFixture({ files: ["clip.mp4", "clip.mp4"] }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
   const press = confirmPanel(f.control);
   for (let waited = 0; !f.requests.some((request) => request?.reason === "files") && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
@@ -2117,7 +1961,6 @@ test("copy and paste between apps run without a card unless the organization blo
       policy.push(input);
       return effect === "deny" ? { effect, message: "Your organization's agent permissions block copying and pasting between apps (set for Everyone)." } : { effect };
     } }); t.after(() => f.control.reset(true));
-    await f.control.setFeatureEnabled(true);
     await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Copy" } });
     for (const step of [copyStep, { ...copyStep, key: "v" }]) {
       const result = payload(await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: step } }));
@@ -2132,7 +1975,6 @@ test("copy and paste between apps run without a card unless the organization blo
 test("other keys and shortcuts are not checked as copy and paste", async (t) => {
   const policy = [];
   const f = fixture({ movePolicy: async (input) => { policy.push(input); return { effect: "deny", message: "blocked" }; } }); t.after(() => f.control.reset(true));
-  await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit" } });
   for (const action of [{ type: "key", key: "c" }, { type: "key", key: "a", modifiers: ["command"] }, { type: "type", text: "copy" }]) {
     assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action } })).ok, true);

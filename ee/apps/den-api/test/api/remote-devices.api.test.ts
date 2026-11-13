@@ -63,27 +63,9 @@ async function eventsOf(as: typeof asMember, id: string) {
   return remoteDeviceDetailResponseSchema.parse(detail.body).events
 }
 
-test("every member route answers as if it did not exist while the feature is off", async () => {
-  for (const [method, path, body] of [
-    ["GET", "/v1/org/computers", undefined],
-    ["GET", "/v1/org/computers/rdv_01h2xcejqtf2nbrexx3vqjhp41", undefined],
-    ["GET", "/v1/org/computers/instances/wrk_01h2xcejqtf2nbrexx3vqjhp41", undefined],
-    ["POST", "/v1/org/computers/rdv_01h2xcejqtf2nbrexx3vqjhp41/disconnect", undefined],
-    ["DELETE", "/v1/org/computers/rdv_01h2xcejqtf2nbrexx3vqjhp41", undefined],
-    ["POST", "/v1/remote-devices/rdv_01h2xcejqtf2nbrexx3vqjhp41/disconnect", undefined],
-    ["GET", "/v1/remote-devices", undefined],
-    ["POST", "/v1/remote-devices", { label: "VM", provider: "freestyle", platform: "linux", externalId: "vm-1" }],
-    ["PUT", "/v1/remote-devices/this-computer", desktopReport()],
-  ] as const) {
-    const call = await asMember(method, path, body)
-    assert.equal(call.status, 404, `${method} ${path}: ${summary(call)}`)
-    assert.equal(field(call.body, "error"), "feature_disabled")
-  }
-  assert.equal((await db.select().from(RemoteDeviceTable)).length, 0, "nothing is stored while the feature is off")
-})
 
 test("a desktop reports itself, and what changes afterwards is recorded once", async () => {
-  assert.equal((await den.setFeature(orgId, "remoteDevices", true)).status, 200)
+
   assert.deepEqual(devicesOf(await asMember("GET", "/v1/remote-devices")), [])
 
   const first = await asMember("PUT", "/v1/remote-devices/this-computer", desktopReport())
@@ -212,7 +194,7 @@ test("virtual computers are registered by hand: for me, or by an admin for every
     assert.equal(field(again.body, "error"), "remote_device_exists")
   }
   // Another organization has its own namespace.
-  assert.equal((await den.setFeature(elsewhere.orgId, "remoteDevices", true)).status, 200)
+
   assert.equal((await asElsewhere("POST", "/v1/remote-devices", { label: "Theirs", provider: "freestyle", platform: "linux", externalId: "vm-build-01" })).status, 201)
 
   for (const body of [
@@ -467,7 +449,6 @@ test("owners and regular org admins inspect all members and shared computers, ne
     assert.equal(JSON.stringify(detail).includes("Private customer project"), false)
     assert.equal(JSON.stringify(detail).includes("private-workspace-id"), false)
     assert.equal(detail.features.remoteDevices, true)
-    assert.equal(detail.features.computerUse, false)
     assert.ok(detail.events.some((event) => event.type === "app_updated" && event.data?.to === "1.5.0"))
     const removed = (await db.select({ id: RemoteDeviceTable.id }).from(RemoteDeviceTable).where(eq(RemoteDeviceTable.externalId, workbotSessionId(orgId, member.memberId))))[0]!
     const removedDetail = organizationComputerDetailResponseSchema.parse((await as("GET", `/v1/org/computers/${removed.id}`)).body)
@@ -548,7 +529,7 @@ test("registered local and cloud OpenWork instances are bounded sanitized team i
   assert.equal((await db.select().from(RemoteDeviceTable).where(eq(RemoteDeviceTable.externalId, id))).length, 0)
 })
 
-test("events are bounded per device, and turning the feature off hides everything and keeps what is stored", async () => {
+test("events are bounded per device, and deleting an organization clears only its own inventory", async () => {
   const [device] = await db.select({ id: RemoteDeviceTable.id, organizationId: RemoteDeviceTable.organizationId }).from(RemoteDeviceTable).where(eq(RemoteDeviceTable.label, "Milo's MacBook Pro"))
   assert.ok(device)
   const base = Date.now() - 60_000
@@ -579,17 +560,6 @@ test("events are bounded per device, and turning the feature off hides everythin
   await pruneRemoteDeviceEvents(device.id)
   assert.deepEqual(await ordered(), expected, "ties retain exactly the newest ids, in stable order")
   assert.deepEqual((await eventsOf(asMember, device.id)).map((event) => event.id), expected.slice(0, 20).map((event) => event.id))
-
-  const stored = (await db.select().from(RemoteDeviceTable)).length
-  assert.equal((await den.setFeature(orgId, "remoteDevices", false)).status, 200)
-  assert.equal((await asMember("GET", "/v1/remote-devices")).status, 404)
-  assert.equal((await asMember("PUT", "/v1/remote-devices/this-computer", desktopReport())).status, 404)
-  const token = await den.mintMcpToken(member, orgId)
-  assert.equal(field((await den.request(token, "GET", "/v1/workbot/session")).body, "devices"), false)
-  assert.equal((await den.request(token, "GET", "/v1/workbot/devices")).status, 404)
-  assert.equal((await db.select().from(RemoteDeviceTable)).length, stored)
-  assert.equal((await asOwner("GET", "/v1/org/computers")).status, 404)
-  assert.equal((await asAdmin("GET", `/v1/org/computers/${device.id}`)).status, 404)
 
   // Deleting an organization takes its devices and their events with it.
   assert.equal(devicesOf(await asElsewhere("GET", "/v1/remote-devices")).length, 1)

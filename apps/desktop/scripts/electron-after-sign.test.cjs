@@ -34,7 +34,11 @@ function harness(results, signature = "Signature=CMS") {
   const commands = [];
   const reports = [];
   const notaryCalls = [];
+  const timings = [];
+  let clock = 0;
   const dependencies = {
+    now() { clock += 25; return clock; },
+    reportTiming(message) { timings.push(message); },
     runCommand(command, args) { commands.push({ command, args }); },
     async runRetry(command, args, attempts) { commands.push({ command, args, attempts }); },
     spawnNotary(command, args, options) {
@@ -49,7 +53,7 @@ function harness(results, signature = "Signature=CMS") {
     report(message) { reports.push(message); },
   };
   return {
-    commands, reports, notaryCalls,
+    commands, reports, notaryCalls, timings, dependencies,
     run() {
       return afterSign({
         electronPlatformName: "darwin",
@@ -83,6 +87,30 @@ test("Accepted submission staples with retries and verifies the signed app", asy
     { command: "spctl", args: ["--assess", "--type", "execute", "--verbose=2", appPath] },
     { command: "xcrun", args: ["stapler", "validate", appPath] },
   ]);
+  h.assertCleanedUp();
+});
+
+test("packaging timings distinguish archive, submission/wait, stapling and verification", async () => {
+  const h = harness([success({ id: "submission-id", status: "Accepted" })]);
+  await h.run();
+  assert.deepEqual(h.timings.map(line => JSON.parse(line.replace("[desktop-package-timing] ", ""))), [
+    "verify-helper", "notary-archive", "notarization-submit-and-wait", "staple", "verify-signed-app",
+  ].map(stage => ({ stage, durationMs: 25, outcome: "success" })));
+  for (const value of Object.values(environment)) assert.ok(!h.timings.join("\n").includes(value));
+});
+
+test("failed packaging stages retain their error, record failure and clean up", async () => {
+  const h = harness([]);
+  const failure = new Error("archive creation failed");
+  h.dependencies.runCommand = (command, args) => {
+    h.commands.push({ command, args });
+    if (command === "ditto") throw failure;
+  };
+  await assert.rejects(h.run(), error => error === failure);
+  assert.deepEqual(JSON.parse(h.timings.at(-1)?.replace("[desktop-package-timing] ", "") || "null"), {
+    stage: "notary-archive", durationMs: 25, outcome: "failure",
+  });
+  assert.equal(h.notaryCalls.length, 0);
   h.assertCleanedUp();
 });
 

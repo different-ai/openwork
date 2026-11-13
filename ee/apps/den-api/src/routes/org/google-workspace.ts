@@ -6,8 +6,6 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
-import { organizationFeatureEnabled } from "../../features.js"
-import { markFeaturesUsed } from "../../feature-usage.js"
 import { buildCalendarEventPayload, calendarRecurrenceMatches, createCalendarEventBodySchema } from "../../capability-sources/google-calendar-events.js"
 import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -1196,7 +1194,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Create a Google Calendar event (one-time or recurring series) as the calling member",
-      description: "Create a recurring meeting, repeat weekly, or create a one-time event on the member's primary calendar. Recurrence writes require the googleCalendarRecurrence feature; pass structured recurrence or advanced rrule (not both), a finite count/until, and an explicit IANA timeZone. eventId identifies the new series master. Set createMeetLink to request a Google Meet link.",
+      description: "Create a recurring meeting, repeat weekly, or create a one-time event on the member's primary calendar. For recurrence writes, pass structured recurrence or advanced rrule (not both), a finite count/until, and an explicit IANA timeZone. eventId identifies the new series master. Set createMeetLink to request a Google Meet link.",
       responses: {
         200: jsonResponse("Google Calendar event created.", createCalendarEventResponseSchema),
         400: jsonResponse("Invalid recurrence, missing IANA timeZone, or recurring meetings disabled.", invalidRequestSchema),
@@ -1210,10 +1208,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     async (c) => {
       const payload = c.get("organizationContext")
       const input = c.req.valid("json")
-      if ((input.recurrence !== undefined || input.rrule !== undefined)
-        && !await organizationFeatureEnabled(payload.organization.id, "googleCalendarRecurrence", { userId: payload.currentMember.userId })) {
-        return c.json({ error: "invalid_request", message: "Recurring meetings are disabled (googleCalendarRecurrence); omit recurrence/rrule to create a one-time event." }, 400)
-      }
       const token = await googleWorkspaceToken({
         organizationId: payload.organization.id,
         orgMembershipId: payload.currentMember.id,
@@ -1230,7 +1224,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
 
       const url = new URL(`${calendarApiBase()}/calendar/v3/calendars/primary/events`)
       const eventPayload = buildCalendarEventPayload(input)
-      if (eventPayload.recurrence) markFeaturesUsed({ organizationId: payload.organization.id, memberId: payload.currentMember.id, keys: ["googleCalendarRecurrence"] })
       if (input.createMeetLink) {
         url.searchParams.set("conferenceDataVersion", "1")
         eventPayload.conferenceData = buildCalendarConferenceData()
@@ -1460,7 +1453,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       const isGoogleAppsFile = file.mimeType.startsWith("application/vnd.google-apps")
       // A PDF is read as its text, so the binary model-safety limit does not apply to it.
       const readPdfText = file.mimeType === PDF_MIME_TYPE
-        && await organizationFeatureEnabled(payload.organization.id, "googleDrivePdfText", { userId: payload.currentMember.userId })
       if (
         !isGoogleAppsFile
         && !isDeclaredTextFile(file.mimeType)

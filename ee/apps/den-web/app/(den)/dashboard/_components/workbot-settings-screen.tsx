@@ -9,7 +9,6 @@ import {
   getMcpConnectionsRoute,
   getMembersTeamsRoute,
   getOrgAccessFlags,
-  orgFeatureEnabled,
   parseOrganizationMetadata,
   permissionLockReason,
 } from "../../_lib/den-org";
@@ -85,7 +84,7 @@ export function WorkbotSettingsScreen() {
   const save = useSaveWorkbotModel(orgId);
   const modelTest = useTestWorkbotDefaultModel(orgId);
   // With settings per team on, the page says how many teams changed Workbot's settings for their members.
-  const teamSettings = useWorkbotTeamSettings(orgId, orgFeatureEnabled(orgContext, "workbotTeamSettings"));
+  const teamSettings = useWorkbotTeamSettings(orgId, true);
   const teamsOverriding = teamSettings.data ? workbotTeamsOverridingCount(teamSettings.data) : 0;
   const resetTest = modelTest.reset;
   const labelId = useId();
@@ -106,7 +105,7 @@ export function WorkbotSettingsScreen() {
 
   const name = workbotDisplayName(parseOrganizationMetadata(orgContext?.organization.metadata ?? null)?.brandAppName);
   // Members' agents ride on Workbot: shown only with the rollout on and Workbot deployed here.
-  const proactive = orgFeatureEnabled(orgContext, "workbotProactive") && orgContext?.capabilities.workbot === true;
+  const proactive = orgContext?.capabilities.workbot === true;
   // Tabs split Workbot's own settings from members' agents and what they read, where there are agents to show.
   const tabs = workbotSettingsTabsEnabled(orgContext) && proactive;
   // Whether members' agents read the calendar: the calendar setting of Everyone's policy, as a row on General.

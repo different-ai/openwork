@@ -2,7 +2,7 @@ import { z } from "zod"
 import { connectorIconCandidates, connectorDisplayName } from "@openwork/types/connector-brand"
 
 /**
- * Every connector the member can use from Workbot, for the Apps list on Workbot's profile (`workbotProfileSheet`):
+ * Every connector the member can use from Workbot, for the Apps list on Workbot's profile:
  * what their organization set up and shared with them (org-wide, their teams, or them), what the plugins and skills
  * they have access to bring with them, the native ones (Google Workspace, Microsoft 365), and their own sign-ins.
  * Not the marketplace catalog. Built only from what Den already stored (credential health and the last readiness

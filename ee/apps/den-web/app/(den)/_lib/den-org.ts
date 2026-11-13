@@ -33,7 +33,7 @@ export type DenOrgMember = {
   createdAt: string | null;
   joinedAt: string | null;
   isOwner: boolean;
-  /** Whether this member has OpenWork Web (the webPerMember feature lets admins choose). */
+  /** Whether this member has OpenWork Web; admins choose. */
   openworkWeb: boolean;
   user: {
     id: string;
@@ -255,7 +255,7 @@ export type DenOrgApiKey = {
   expiresAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
-  /** `config`: a config token (feature `configBlobs`) with scopes and an optional area limit. */
+  /** `config`: a config token with scopes and an optional area limit. */
   type: DenOrgApiKeyType;
   scopes: DenConfigTokenScope[];
   /** Config tokens: the areas it may touch; null = every area. */
@@ -298,7 +298,7 @@ export type DenOrgScimHealth = {
 export type DenOrgSsoConnection = {
   id: string;
   providerId: string;
-  /** multipleSsoConnections: the saved name, or null. */
+  /** The saved name, or null. */
   name: string | null;
   /** What sign-in buttons show: the saved name, else one derived from the issuer. */
   displayName: string;
@@ -530,7 +530,7 @@ export function getSsoSettingsFromMetadata(metadata: string | null): SsoSettings
 }
 
 /**
- * sessionSecuritySettings (Auth & Security › General): "Session length"
+ * Auth & Security › General: "Session length"
  * choices in hours, matching den-api SESSION_LENGTH_HOURS.
  */
 export const SESSION_LENGTH_HOURS = [12, 24, 72, 168] as const;
@@ -573,11 +573,6 @@ export function getSessionSecuritySettingsFromMetadata(metadata: string | null):
     maxSessionLengthDays: isMaxSessionLengthDays(parsed?.maxSessionLengthDays) ? parsed.maxSessionLengthDays : DEFAULT_MAX_SESSION_LENGTH_DAYS,
     adminReauthMinutes: isAdminReauthMinutes(parsed?.adminReauthMinutes) ? parsed.adminReauthMinutes : DEFAULT_ADMIN_REAUTH_MINUTES,
   };
-}
-
-/** Whether Auth & Security › General applies: its feature and the Auth & Security page (den-api sessionSecuritySettingsApply). */
-export function sessionSecuritySettingsEnabled(orgContext: Pick<DenOrgContext, "features"> | null | undefined): boolean {
-  return orgFeatureEnabled(orgContext, "sessionSecuritySettings") && orgFeatureEnabled(orgContext, "authSecuritySettings");
 }
 
 export function getManagedBrandAssetFromMetadata(
@@ -973,7 +968,7 @@ export function getNewAiGatewayProviderRoute(orgSlug?: string | null, providerId
   return providerId ? `${base}?provider=${encodeURIComponent(providerId)}` : base;
 }
 
-/** The four-step wizard for a custom OpenAI-compatible provider (feature `gatewayCustomProviders`). */
+/** The four-step wizard for a custom OpenAI-compatible provider. */
 export function getNewAiGatewayCustomProviderRoute(orgSlug?: string | null): string {
   return `${getAiGatewayRoute(orgSlug)}/providers/new/custom`;
 }
@@ -1052,19 +1047,11 @@ export function getApiKeysRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/api-keys`;
 }
 
-export function getScimRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/scim`;
-}
-
-export function getSsoRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/sso`;
-}
-
 export type AuthSecurityTab = "general" | "sso" | "scim";
 
 /**
- * Settings › Auth & Security (feature `authSecuritySettings`): SSO and SCIM as
- * tabs, and General (sessionSecuritySettings). `setup` opens the tab's setup form directly instead of its intro.
+ * Settings › Auth & Security: General, SSO and SCIM as tabs. The old
+ * `/sso` and `/scim` pages redirect to their tab. `setup` opens the tab's setup form directly instead of its intro.
  */
 export function getAuthSecurityRoute(orgSlug?: string | null, tab?: AuthSecurityTab, options: { setup?: boolean } = {}): string {
   const base = `${getOrgDashboardRoute(orgSlug)}/auth-security`;
@@ -1084,7 +1071,7 @@ export function readConfigTab(value: string | null | undefined): ConfigTab {
   return CONFIG_TABS.find((tab) => tab === value) ?? "overview";
 }
 
-/** Settings › Config (feature `configBlobs`): overview, import, export, open changes and history. */
+/** Settings › Config: overview, import, export, open changes and history. */
 export function getConfigRoute(orgSlug?: string | null, tab?: ConfigTab): string {
   const base = `${getOrgDashboardRoute(orgSlug)}/config`;
   return tab && tab !== "overview" ? `${base}?tab=${tab}` : base;
@@ -1781,7 +1768,7 @@ export function parseOrgSsoPayload(payload: unknown): {
   return { connection, domainVerificationToken: asString(payload.domainVerificationToken) };
 }
 
-/** multipleSsoConnections: GET /v1/sso/connections. */
+/** GET /v1/sso/connections. */
 export function parseOrgSsoConnectionsPayload(payload: unknown): DenOrgSsoConnection[] {
   if (!isRecord(payload) || !Array.isArray(payload.connections)) return [];
   return payload.connections.flatMap((entry) => {

@@ -53,7 +53,6 @@ import { jsonValidator, orgMemberRoute, paramValidator, queryValidator, requireO
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { roleIncludesOwner } from "../../organization-member-guards.js"
 import { isEffectiveOrganizationAdmin, isOrganizationSuperAdminRole } from "../../organization-role-hierarchy.js"
-import { organizationFeatureEnabled } from "../../features.js"
 import type { OrganizationContext } from "../../orgs.js"
 import { ensureCurrentDefaultPermissionSets } from "../../permissions/default-sets.js"
 import type { MemberPermissions } from "../../permissions/effective.js"
@@ -382,23 +381,7 @@ function isAssignableSet(defaultKey: PermissionDefaultSetKey | null): boolean {
 
 export const SUPER_ADMIN_TEAM_ROLE_REQUIRES_SUPER_ADMIN_MESSAGE = "Only the owner or a super admin can give a team the Super admin role or take it away."
 
-/**
- * Default sets this organization shows: Super admin only with
- * `superAdminPermissionSet` on. With it off the set still exists (seeded, so
- * turning the feature on is instant) but is hidden and can't be read or edited.
- */
-function visibleDefaultSetKeys(superAdminSetVisible: boolean): readonly PermissionDefaultSetKey[] {
-  return PERMISSION_DEFAULT_SET_KEYS.filter((defaultKey) => defaultKey !== "super-admin" || superAdminSetVisible)
-}
-
-/** `superAdminPermissionSet` for this organization; read through `database` when it is a transaction. */
-function superAdminSetVisible(organizationId: OrganizationId, database: PermissionDatabase = db): Promise<boolean> {
-  return database === db
-    ? organizationFeatureEnabled(organizationId, "superAdminPermissionSet")
-    : organizationFeatureEnabled(organizationId, "superAdminPermissionSet", { database, lock: "share" })
-}
-
-function serializeDefinition(key: PermissionKey, superAdminSetShown: boolean) {
+function serializeDefinition(key: PermissionKey) {
   const definition = getPermissionDefinition(key)
   return {
     key,
@@ -407,7 +390,7 @@ function serializeDefinition(key: PermissionKey, superAdminSetShown: boolean) {
     description: definition.description ?? null,
     sensitive: definition.sensitive === true,
     lockedOn: [...(definition.lockedOn ?? [])],
-    defaultOn: visibleDefaultSetKeys(superAdminSetShown).filter((set) => isPermissionDefaultOn(definition, set)),
+    defaultOn: PERMISSION_DEFAULT_SET_KEYS.filter((set) => isPermissionDefaultOn(definition, set)),
   }
 }
 
@@ -443,12 +426,11 @@ function joinKeys(keys: readonly string[]): string | null {
 // Data access
 // ---------------------------------------------------------------------------
 
-/** One set of the organization, or null. The Super admin set reads as missing while `superAdminPermissionSet` is off. */
+/** One set of the organization, or null. */
 async function readPermissionSet(database: PermissionDatabase, organizationId: OrganizationId, permissionSetId: PermissionSetId): Promise<PermissionSetRow | null> {
   const [row] = await database.select().from(PermissionSetTable)
     .where(and(eq(PermissionSetTable.id, permissionSetId), eq(PermissionSetTable.organizationId, organizationId)))
     .limit(1)
-  if (row?.defaultKey === "super-admin" && !(await superAdminSetVisible(organizationId, database))) return null
   return row ?? null
 }
 
@@ -588,19 +570,15 @@ async function listAdminTeams(organizationId: OrganizationId) {
 }
 
 /**
- * Active (non-archived) sets: Member, Admin and Super admin defaults (Super
- * admin only with `superAdminPermissionSet` on), then team sets by name.
+ * Active (non-archived) sets: built-in defaults, then team sets by name.
  */
 async function listActiveSets(organizationId: OrganizationId): Promise<PermissionSetRow[]> {
-  const [defaults, showSuperAdmin] = await Promise.all([
-    ensureCurrentDefaultPermissionSets(organizationId),
-    superAdminSetVisible(organizationId),
-  ])
+  const defaults = await ensureCurrentDefaultPermissionSets(organizationId)
   // primary: the line above may have just created the default sets.
   const rows = await db.$primary.select().from(PermissionSetTable)
     .where(and(eq(PermissionSetTable.organizationId, organizationId), isNull(PermissionSetTable.archivedAt)))
     .orderBy(asc(PermissionSetTable.name), asc(PermissionSetTable.id))
-  const defaultRank = new Map<string, number>(visibleDefaultSetKeys(showSuperAdmin).map((defaultKey, index) => [defaults[defaultKey].id, index]))
+  const defaultRank = new Map<string, number>(PERMISSION_DEFAULT_SET_KEYS.map((defaultKey, index) => [defaults[defaultKey].id, index]))
   const rank = (row: PermissionSetRow) => defaultRank.get(row.id) ?? PERMISSION_DEFAULT_SET_KEYS.length
   return rows
     .filter((row) => row.defaultKey === null || defaultRank.has(row.id))
@@ -1562,10 +1540,9 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
     }),
     orgMemberRoute(),
     async (c) => {
-      const showSuperAdmin = await superAdminSetVisible(c.get("organizationContext").organization.id)
       return c.json({
         areas: areaEntries(),
-        permissions: PERMISSION_KEYS.map((key) => serializeDefinition(key, showSuperAdmin)),
+        permissions: PERMISSION_KEYS.map((key) => serializeDefinition(key)),
       })
     },
   )
@@ -1870,7 +1847,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
         readTeamLinks(db, organizationId, setIds),
       ])
       return c.json({
-        permission: serializeDefinition(key, sets.some((set) => set.defaultKey === "super-admin")),
+        permission: serializeDefinition(key),
         sets: sets.map((set) => {
           const defaultKey = set.defaultKey
           const status: PermissionStatus = allowedKeys(states.get(set.id), [key]).has(key) ? "allow" : "deny"

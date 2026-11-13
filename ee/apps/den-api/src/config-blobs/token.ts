@@ -4,7 +4,7 @@ import type { DenApiKeySession } from "../api-keys.js"
 import type { AuthContextVariables } from "../session.js"
 
 /**
- * Config tokens: organization API keys of type `config` (feature `configBlobs`).
+ * Config tokens: organization API keys of type `config`.
  * Design: docs/features/config-blobs/change-requests.md ("Config token").
  *
  * Storage: scopes in the Better Auth `apikey.permissions` column as

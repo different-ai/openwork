@@ -5,12 +5,12 @@ import type { ComputerPermission, ComputerStatus, DesktopCommandResult } from "@
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
 
 import { desktopBridge } from "@/app/lib/desktop";
+import type { FileSendGrants, OpenworkServerClient } from "@/app/lib/openwork-server";
 import { isElectronRuntime, isMacPlatform } from "@/app/utils";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { useDesktopFeature } from "../../session/status/use-desktop-feature";
 import {
   LayoutSection,
   LayoutSectionItemDescription,
@@ -47,17 +47,17 @@ const SEEN = "The agent sees the app window it is using, and its content goes to
 
 const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 
-/** Settings > Computer use, for the desktop app with the `computerUse` feature. */
-export function ComputerUseView() {
-  const enabled = useDesktopFeature("computerUse") && isElectronRuntime();
-  return <ComputerUseSettings enabled={enabled} />;
+/** Settings > Computer use, for the native desktop app. */
+export function ComputerUseView({ fileSends }: { fileSends?: FileSendGrantsClient | null }) {
+  const enabled = isElectronRuntime();
+  return <ComputerUseSettings enabled={enabled} fileSends={fileSends} />;
 }
 
 /**
  * Computer use is set up once, here, for every chat. Each status comes from a
  * fresh helper probe; opening a System Settings pane never grants anything.
  */
-export function ComputerUseSettings({ enabled }: { enabled: boolean }) {
+export function ComputerUseSettings({ enabled, fileSends }: { enabled: boolean; fileSends?: FileSendGrantsClient | null }) {
   const [status, setStatus] = useState<ComputerStatus | null>(null);
   const [readError, setReadError] = useState("");
   const [actionError, setActionError] = useState("");
@@ -138,6 +138,7 @@ export function ComputerUseSettings({ enabled }: { enabled: boolean }) {
       <LayoutStack>
         <Summary state="off" detail="Computer use isn't turned on in this app." />
         <RememberedFileSharing />
+        <RememberedFileSends client={fileSends} />
       </LayoutStack>
     );
   }
@@ -228,6 +229,7 @@ export function ComputerUseSettings({ enabled }: { enabled: boolean }) {
         </LayoutSection>
       ) : null}
       <RememberedFileSharing />
+      <RememberedFileSends client={fileSends} />
     </LayoutStack>
   );
 }
@@ -280,6 +282,97 @@ function Row({ className, ...props }: ComponentProps<"li">) {
 
 function RowText({ children }: { children: ReactNode }) {
   return <div className="flex min-w-0 flex-1 basis-64 flex-col gap-0.5">{children}</div>;
+}
+
+export type FileSendGrantsClient = Pick<OpenworkServerClient, "listFileSendGrants" | "removeFileSendGrant">;
+
+const FILE_SEND_KINDS: Record<string, string> = {
+  drive_upload_file: "Upload to Google Drive",
+  drive_push_file: "Save files back to their drive",
+  gmail_create_draft_with_attachments: "Attach files to Gmail drafts",
+  outlook_create_draft_with_attachments: "Attach files to Outlook drafts",
+};
+
+/** File sends this member chose to always allow. The host owns them; this only lists and removes. */
+export function RememberedFileSends({ client }: { client?: FileSendGrantsClient | null }) {
+  const [state, setState] = useState<FileSendGrants | null>(null);
+  const [error, setError] = useState("");
+  const [removing, setRemoving] = useState<string | null>(null);
+  const generation = useRef(0);
+
+  async function refresh() {
+    const current = ++generation.current;
+    setError("");
+    if (!client) { setState(null); return; }
+    try {
+      const next = await client.listFileSendGrants();
+      if (current === generation.current) setState(next);
+    } catch (cause) {
+      // Never keep showing one account's approvals after a failed read.
+      if (current === generation.current) { setState(null); setError(`Couldn't check always-allowed file sends. Try again. ${message(cause)}`); }
+    }
+  }
+  const readLatest = useEffectEvent(refresh);
+  useEffect(() => {
+    void readLatest();
+    const focus = () => { if (document.visibilityState === "visible") void readLatest(); };
+    window.addEventListener("focus", focus);
+    document.addEventListener("visibilitychange", focus);
+    window.addEventListener(denSessionUpdatedEvent, focus);
+    window.addEventListener(denSettingsChangedEvent, focus);
+    return () => {
+      generation.current++;
+      window.removeEventListener("focus", focus);
+      document.removeEventListener("visibilitychange", focus);
+      window.removeEventListener(denSessionUpdatedEvent, focus);
+      window.removeEventListener(denSettingsChangedEvent, focus);
+    };
+  }, [client]);
+
+  async function remove(id: string) {
+    if (removing || !client) return;
+    const current = ++generation.current;
+    setRemoving(id);
+    setError("");
+    try {
+      const next = await client.removeFileSendGrant(id);
+      if (current === generation.current) setState(next);
+    } catch (cause) {
+      if (current === generation.current) setError(`Couldn't remove permission. Try again. ${message(cause)}`);
+    } finally {
+      setRemoving(null);
+    }
+  }
+
+  // Nothing to manage until the member has chosen Always allow once.
+  const grants = state?.enabled ? state.grants : [];
+  if (!grants.length && !error) return null;
+  return (
+    <LayoutSection id="always-allowed-file-sends">
+      <Group title="Always-allowed file sends" count={grants.length ? `${grants.length}` : undefined}>
+        {grants.map((grant) => {
+          const kind = FILE_SEND_KINDS[grant.kind] ?? grant.kind;
+          return (
+            <Row key={grant.id} className="items-center">
+              <RowText>
+                <LayoutSectionItemTitle className="flex-wrap gap-x-3">{kind}</LayoutSectionItemTitle>
+                <LayoutSectionItemDescription className="break-all text-xs">
+                  Files in <span dir="ltr" className="font-mono">{grant.directory}</span>, with {grant.account === "source" ? "the account each file came from" : <span dir="ltr" className="font-mono">{grant.account}</span>}
+                </LayoutSectionItemDescription>
+              </RowText>
+              <Button size="sm" variant="outline" className="ml-auto shrink-0" disabled={removing !== null} aria-busy={removing === grant.id} aria-label={`Remove: ${kind} from ${grant.directory}`} onClick={() => void remove(grant.id)}>Remove</Button>
+            </Row>
+          );
+        })}
+        {error ? (
+          <Row className="items-center">
+            <div role="alert" className="min-w-0 flex-1 basis-64 text-sm text-red-11">{error}</div>
+            <Button size="sm" variant="outline" className="ml-auto shrink-0" onClick={() => void refresh()}>Try again</Button>
+          </Row>
+        ) : null}
+      </Group>
+    </LayoutSection>
+  );
 }
 
 /** Main owns identity, feature checks and grants. The renderer only lists and revokes. */

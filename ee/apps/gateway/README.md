@@ -33,7 +33,7 @@ retains its existing non-production defaults; use `.env.example` for a local set
 
 ## Smart Model Router
 
-Smart Model Router (feature `autoRouter`, cloud only) routes each OpenAI chat
+Smart Model Router routes each OpenAI chat
 request sent with model `openwork-smart-<router id>` to one of that Smart
 Router's models: Jev scores the prompt against the router's tasks, the model
 whose tasks score highest in total answers, at the thinking level Jev scores
@@ -143,7 +143,7 @@ before running the new runtime. Do not deploy it against the old table names.
   `openwork.smart_router: true`), callable only through
   `POST /api/v1/chat/completions`; desktop keys keep the plain list (the desktop
   learns routers from Den).
-- Cursor (feature `gatewayMemberApiKeys`): `GET /api/v1/cursor/models`,
+- Cursor: `GET /api/v1/cursor/models`,
   `POST /api/v1/cursor/chat/completions` and `POST /api/v1/cursor/responses`
   accept only `ow_gw_` keys. Models are named
   `openwork/<name slug>-<last 4 of the ipm_ id>[:<thinking level>]`; the name is

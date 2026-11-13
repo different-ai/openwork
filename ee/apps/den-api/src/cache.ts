@@ -662,7 +662,7 @@ async function loadActiveSessionId(sessionId: DenTypeId<"session">, now: Date) {
     return { id: normalizeDenTypeId("session", row.id), expiresAt: row.expiresAt }
   }
 
-  // Extending reads the person's session limits (sessionSecuritySettings).
+  // Extending reads the person's session limits (Auth & Security › General).
   // Lazy import: features.ts imports this module.
   let nextExpiresAt: Date
   try {

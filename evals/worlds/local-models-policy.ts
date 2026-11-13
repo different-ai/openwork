@@ -5,12 +5,12 @@ import type { Seed } from "@openwork/env";
 import { readDefaultDesktopPolicy } from "./desktop-policies.ts";
 import { isRecord } from "./library.ts";
 import { record, rows, text } from "./org-invite.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
 
 /**
- * Acme on a real isolated Den with local models under their own switch
- * (feature localModelsPolicy): Avery is the owner, Drew an admin, Riley a
+ * Acme on a real isolated Den with independent local-model policy:
+ * Avery is the owner, Drew an admin, Riley a
  * member signed in to a real desktop app (in headless Chrome). No Ollama runs
  * on this computer; nothing here needs one.
  */
@@ -20,7 +20,7 @@ export async function localModelsPolicy(seed: Seed) {
     // AI Gateway on, so its page (and Who can use models) shows; nothing calls the gateway.
     env: { GATEWAY_ENABLED: "true", GATEWAY_PROXY_BASE_URL: "http://127.0.0.1:1", GATEWAY_PUBLIC_BASE_URL: "http://127.0.0.1:1" },
   });
-  const organizationId = await enableOrganizationCapabilities(seed, den.admin, { localModelsPolicy: true });
+  const organizationId = await seededOrganizationId(seed, den.admin);
   const riley = den.members.riley;
   const drew = den.members.drew;
   if (!riley || !drew) throw new Error("Members were not seeded");

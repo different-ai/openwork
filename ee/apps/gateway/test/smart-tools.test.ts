@@ -1,4 +1,4 @@
-// Smart Routers (feature autoRouter) on the 3rd party tool endpoints (feature gatewayMemberApiKeys):
+// Smart Routers on the 3rd party tool endpoints (member AI Gateway API keys):
 // Cursor, Claude Code and Codex list the member's routers as openwork/smart-… models, and a request
 // naming one runs the Smart Model Router and answers in the tool's own protocol.
 import assert from "node:assert/strict"
@@ -120,7 +120,6 @@ function app(options: { routers?: AutoRouterConfig[]; routingConfigured?: boolea
     loadProviderCredential: async () => credential,
     catalog: createProviderCatalog({ anthropic: { npm: "@ai-sdk/anthropic", env: [] } }),
     autoRouterReasoning: createMemoryReasoningStore(),
-    toolEndpointsEnabled: async () => true,
     autoRouterRoutingConfigured: options.routingConfigured ?? true,
     loadMemberAutoRouters: async () => { routerReads++; return routers },
     loadAutoRouterConfig: async ({ routerId: id }) => routers.find((entry) => entry.id === id) ?? null,

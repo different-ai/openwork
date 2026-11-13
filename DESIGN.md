@@ -106,6 +106,10 @@ advanced options discoverable but quiet.
 - **C7** Sentence case. No ALL-CAPS eyebrow labels, no middle-dot meta strings
   as decoration, no "→" appended to buttons.
 
+- **C8** Call an interactive view built in OpenWork an artifact. Use
+  “Artifacts” for the library and “MCP Apps” for the protocol or integrations
+  that use it.
+
 ## States
 
 Every data-bearing surface designs, and the PR shows, these states where they

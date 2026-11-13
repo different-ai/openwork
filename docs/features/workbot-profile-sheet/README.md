@@ -1,5 +1,7 @@
 # Workbot: profile
 
+> **Generally available:** `workbotProfileSheet` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 Feature key: `workbotProfileSheet` · Deployments: cloud and self-hosted · Default: off · Author: @benjaminshafii
 
 Needs `workbotWorkingStatus`: Den reports it on only when both are on, since the profile opens from the name that carries the status line.

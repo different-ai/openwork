@@ -1,4 +1,4 @@
-import type { Hono, MiddlewareHandler } from "hono"
+import type { Hono } from "hono"
 import { describeRoute, resolver } from "hono-openapi"
 import { z } from "zod"
 import { and, eq } from "@openwork-ee/den-db/drizzle"
@@ -11,7 +11,6 @@ import { auditChangeCapture, type AuditChangeCapture } from "../../audit/request
 import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
-import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { enterprisePlanRequiredSchema, xmlResponse } from "../../openapi.js"
 import {
   deleteOrganizationSsoConnection,
@@ -46,27 +45,20 @@ import {
   getSsoTestPresentation,
 } from "../../sso-test-lifecycle.js"
 import { orgMemberRoute, orgPermissionRoute, requireOrgPermission } from "../../middleware/index.js"
-import { updateOrganizationSettings } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 /**
- * Organization SSO. `/v1/sso/*` manages the organization's oldest connection
- * (the only one without multipleSsoConnections). `/v1/sso/connections/*`
- * (multipleSsoConnections) lists them, adds more, and runs every action on
- * one connection by id. Tests start and cancel by their own intent id.
+ * Organization SSO. An organization may have several connections.
+ * `/v1/sso/*` manages its oldest connection (kept for older clients and API
+ * users). `/v1/sso/connections/*` lists them, adds more, and runs every
+ * action on one connection by id. Tests start and cancel by their own intent id.
  */
 
 type SsoConnection = typeof SsoConnectionTable.$inferSelect
 type OrganizationPayload = NonNullable<OrgRouteVariables["organizationContext"]>
 
-const MULTIPLE_SSO_CONNECTIONS = "multipleSsoConnections"
-const OIDC_SETUP_CHECK = "ssoOidcSetupCheck"
 // Private addresses are reachable only where the deployment allows them (dev mode, or the operator's opt-in).
 const oidcDiscoveryFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
-
-const passThrough: MiddlewareHandler = async (_c, next) => {
-  await next()
-}
 
 const invalidRequestSchema = z.object({
   error: z.literal("invalid_request"),
@@ -96,14 +88,14 @@ const forbiddenSchema = z.object({
 }).meta({ ref: "SsoForbiddenError" })
 
 const connectionNameSchema = z.string().trim().max(120).nullable().optional()
-  .describe("What sign-in buttons and the SSO page call this connection, e.g. \"Okta\". Empty or null shows a name derived from the issuer. Saved only with multipleSsoConnections.")
+  .describe("What sign-in buttons and the SSO page call this connection, e.g. \"Okta\". Empty or null shows a name derived from the issuer.")
 
 const baseRegistrationShape = {
   issuer: z.string().url(),
   domain: z.string().min(1).optional()
-    .describe("The email domain this connection signs in. With multipleSsoConnections, several domains separated by commas."),
+    .describe("The email domain this connection signs in, or several separated by commas."),
   domains: z.array(z.string().min(1)).min(1).max(20).optional()
-    .describe("multipleSsoConnections: every email domain this connection signs in. Takes precedence over domain."),
+    .describe("Every email domain this connection signs in. Takes precedence over domain."),
   name: connectionNameSchema,
 }
 
@@ -415,17 +407,13 @@ export async function registerConnection(request: RegistrationRequest): Promise<
     }
   }
 
-  const multiple = await organizationFeatureEnabled(payload.organization.id, MULTIPLE_SSO_CONNECTIONS, { userId: payload.currentMember.userId })
   const domains = normalizeSsoDomains(parsed.data.domains ?? parsed.data.domain ?? "")
   if (!domains.ok) return { ok: false, status: 400, body: invalidRequest(domains.message, ["domain"]) }
-  if (domains.domains.length > 1 && !multiple) {
-    return { ok: false, status: 400, body: invalidRequest("Enter one email domain.", ["domain"]) }
-  }
-  const name = multiple ? (parsed.data.name?.trim() || null) : undefined
+  const name = parsed.data.name?.trim() || null
 
   const previous = request.capture ? await getSsoConnectionAuditState(request.target === undefined ? await getOrganizationSsoConnection(payload.organization.id) : request.target) : null
   let data = parsed.data
-  if ("clientId" in data && await organizationFeatureEnabled(payload.organization.id, OIDC_SETUP_CHECK, { userId: payload.currentMember.userId })) {
+  if ("clientId" in data) {
     if (data.skipDiscovery) {
       // Manual endpoints skip discovery, so nothing else would catch a
       // discovery URL saved as the issuer; sign-in then fails on every token.
@@ -455,7 +443,6 @@ export async function registerConnection(request: RegistrationRequest): Promise<
     domain: serializeSsoDomains(domains.domains),
     target: request.target,
     name,
-    reuseVerifiedDomains: multiple,
   }
   let connection: SsoConnection
   try {
@@ -524,14 +511,6 @@ async function createTest(payload: OrganizationPayload, connection: SsoConnectio
 export async function enableConnection(payload: OrganizationPayload, connection: SsoConnection | null, capture: AuditChangeCapture | null) {
   const enabled = await enableOrganizationSsoConnection(connection, capture)
   if (!enabled.ok) return enabled
-  if (!await organizationFeatureEnabled(payload.organization.id, "ssoPerOrganization")) {
-    // Until ssoPerOrganization is on, enabled SSO is the only way in
-    // whatever "Require SSO" holds. Store that, so turning the flag on
-    // later keeps it required (migration 0180 did the same for
-    // organizations with SSO before). With the flag on, a new SSO
-    // connection starts optional until an admin requires it.
-    await updateOrganizationSettings({ organizationId: payload.organization.id, requireSso: true })
-  }
   await finishLegacyAuditAction(capture, {
     organizationId: payload.organization.id,
     actorUserId: payload.currentMember.userId,
@@ -598,7 +577,8 @@ const manageForbidden = { description: "The caller needs the Manage single sign-
 const viewForbidden = { description: "The caller needs the View single sign-on permission.", content: { "application/json": { schema: resolver(forbiddenSchema) } } }
 const planRequired = { description: "SSO management requires a Team or Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } }
 const organizationNotFound = { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } }
-const connectionNotFound = { description: "The connection does not exist in this organization, or multipleSsoConnections is off.", content: { "application/json": { schema: resolver(connectionNotFoundSchema) } } }
+const connectionNotFound = { description: "The connection does not exist in this organization.", content: { "application/json": { schema: resolver(connectionNotFoundSchema) } } }
+const oidcCheckUnavailable = { description: "The OIDC setup check is off for this organization.", content: { "application/json": { schema: resolver(connectionNotFoundSchema) } } }
 
 export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
@@ -606,7 +586,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     describeRoute({
       tags: ["SSO"],
       summary: "Get organization SSO connection",
-      description: "Returns the organization's SSO connection and setup URLs. With several connections (multipleSsoConnections) this is the oldest; GET /v1/sso/connections lists them all.",
+      description: "Returns the organization's SSO connection and setup URLs. With several connections this is the oldest; GET /v1/sso/connections lists them all.",
       security: [{ bearerAuth: [] }],
       responses: {
         200: { description: "Organization SSO configuration", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
@@ -634,7 +614,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     describeRoute({
       tags: ["SSO"],
       summary: "List organization SSO connections",
-      description: "Returns every SSO connection of the organization, oldest first, each with its setup URLs, domains, verification, test and enabled state. Requires multipleSsoConnections.",
+      description: "Returns every SSO connection of the organization, oldest first, each with its setup URLs, domains, verification, test and enabled state.",
       security: [{ bearerAuth: [] }],
       responses: {
         200: { description: "Organization SSO connections", content: { "application/json": { schema: resolver(ssoConnectionListResponseSchema) } } },
@@ -644,7 +624,6 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       },
     }),
     orgMemberRoute(),
-    requireFeature(MULTIPLE_SSO_CONNECTIONS),
     requireOrgPermission("sso.view"),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -658,7 +637,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     describeRoute({
       tags: ["SSO"],
       summary: "Get an SSO connection",
-      description: "Returns one SSO connection of the organization with its setup URLs, domains, verification, test and enabled state. Requires multipleSsoConnections.",
+      description: "Returns one SSO connection of the organization with its setup URLs, domains, verification, test and enabled state.",
       security: [{ bearerAuth: [] }],
       responses: {
         200: { description: "Organization SSO connection", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
@@ -668,7 +647,6 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       },
     }),
     orgMemberRoute(),
-    requireFeature(MULTIPLE_SSO_CONNECTIONS),
     requireOrgPermission("sso.view"),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -683,18 +661,17 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     describeRoute({
       tags: ["SSO"],
       summary: "Check an OIDC issuer or discovery URL",
-      description: "Reads the identity provider's OIDC discovery document from an issuer or a discovery URL and reports the issuer and endpoints found, or why none were. Nothing is saved. Requires ssoOidcSetupCheck.",
+      description: "Reads the identity provider's OIDC discovery document from an issuer or a discovery URL and reports the issuer and endpoints found, or why none were. Nothing is saved. Requires permission to manage SSO settings.",
       security: [{ bearerAuth: [] }],
       responses: {
         200: { description: "What the provider's discovery document says, or why it could not be read", content: { "application/json": { schema: resolver(oidcCheckResponseSchema) } } },
         ...sharedErrorResponses,
         402: planRequired,
         403: manageForbidden,
-        404: connectionNotFound,
+        404: oidcCheckUnavailable,
       },
     }),
     orgMemberRoute(),
-    requireFeature(OIDC_SETUP_CHECK),
     requireOrgPermission("sso.manage"),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -738,7 +715,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       describeRoute({
         tags: ["SSO"],
         summary: `Add an organization ${label} SSO connection`,
-        description: `Adds a ${label} SSO connection next to the organization's existing ones, for another identity provider or other email domains. It starts disabled: verify its domains (or reuse domains another connection already verified), test it and enable it. Requires multipleSsoConnections.`,
+        description: `Adds a ${label} SSO connection next to the organization's existing ones, for another identity provider or other email domains. It starts disabled: verify its domains (or reuse domains another connection already verified), test it and enable it.`,
         security: [{ bearerAuth: [] }],
         responses: {
           201: { description: "Organization SSO connection created", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
@@ -749,7 +726,6 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         },
       }),
       orgMemberRoute(),
-      requireFeature(MULTIPLE_SSO_CONNECTIONS),
       requireOrgPermission("sso.manage"),
       async (c) => {
         const payload = c.get("organizationContext")
@@ -764,7 +740,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       describeRoute({
         tags: ["SSO"],
         summary: `Replace an SSO connection's configuration with ${label}`,
-        description: "Replaces one connection's identity provider configuration and domains. It is disabled until its domains are verified and the new configuration is tested and enabled again. Requires multipleSsoConnections.",
+        description: "Replaces one connection's identity provider configuration and domains. It is disabled until its domains are verified and the new configuration is tested and enabled again.",
         security: [{ bearerAuth: [] }],
         responses: {
           201: { description: "Organization SSO connection updated", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
@@ -775,7 +751,6 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         },
       }),
       orgMemberRoute(),
-      requireFeature(MULTIPLE_SSO_CONNECTIONS),
       requireOrgPermission("sso.manage"),
       async (c) => {
         const payload = c.get("organizationContext")
@@ -793,7 +768,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     describeRoute({
       tags: ["SSO"],
       summary: "Rename an SSO connection",
-      description: "Changes the name sign-in buttons and the SSO page show for a connection. Its provider configuration, verification, test and enabled state stay as they are. Requires multipleSsoConnections.",
+      description: "Changes the name sign-in buttons and the SSO page show for a connection. Its provider configuration, verification, test and enabled state stay as they are.",
       security: [{ bearerAuth: [] }],
       responses: {
         200: { description: "Organization SSO connection renamed", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
@@ -803,7 +778,6 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       },
     }),
     orgMemberRoute(),
-    requireFeature(MULTIPLE_SSO_CONNECTIONS),
     requireOrgPermission("sso.manage"),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -819,11 +793,8 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
 
   for (const scope of ["primary", "connection"] as const) {
     const base = scope === "primary" ? "/v1/sso" : "/v1/sso/connections/:connectionId"
-    const which = scope === "primary" ? "the organization's SSO connection (the oldest, with several)" : "one SSO connection (multipleSsoConnections)"
+    const which = scope === "primary" ? "the organization's SSO connection (the oldest, with several)" : "one SSO connection by id"
     const notFound = scope === "primary" ? organizationNotFound : connectionNotFound
-    // Connection routes answer 404 feature_disabled before any permission
-    // check; orgMemberRoute + requireOrgPermission is orgPermissionRoute.
-    const featureGate = scope === "primary" ? passThrough : requireFeature(MULTIPLE_SSO_CONNECTIONS)
 
     app.delete(
       base,
@@ -840,7 +811,6 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         },
       }),
       orgMemberRoute(),
-      featureGate,
       requireOrgPermission("sso.manage"),
       async (c) => {
         const payload = c.get("organizationContext")
@@ -869,7 +839,6 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         },
       }),
       orgMemberRoute(),
-      featureGate,
       requireOrgPermission("sso.manage"),
       async (c) => {
         const payload = c.get("organizationContext")
@@ -898,7 +867,6 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         },
       }),
       orgMemberRoute(),
-      featureGate,
       requireOrgPermission("sso.manage"),
       async (c) => {
         const payload = c.get("organizationContext")
@@ -927,7 +895,6 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         },
       }),
       orgMemberRoute(),
-      featureGate,
       requireOrgPermission("sso.manage"),
       async (c) => {
         const payload = c.get("organizationContext")
@@ -953,7 +920,6 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         },
       }),
       orgMemberRoute(),
-      featureGate,
       requireOrgPermission("sso.view"),
       async (c) => {
         const parsed = metadataQuerySchema.safeParse(c.req.query())
@@ -994,7 +960,6 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         },
       }),
       orgMemberRoute(),
-      featureGate,
       requireOrgPermission("sso.manage"),
       async (c) => {
         const payload = c.get("organizationContext")
@@ -1030,7 +995,6 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         },
       }),
       orgMemberRoute(),
-      featureGate,
       requireOrgPermission("sso.manage"),
       async (c) => {
         const payload = c.get("organizationContext")

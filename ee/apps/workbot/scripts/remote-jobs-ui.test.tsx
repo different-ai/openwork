@@ -9,7 +9,7 @@ let requests = 0;
 const host: WorkbotHost = {
   requestJson: async () => { requests++; return { response: new Response(), payload: {} }; },
   prepare: async path => ({ url: path, headers: new Headers(), credentials: "same-origin" }),
-  user: null, useConnectedApps: () => [], appIcons: () => [], homeHref: "/", remoteTasks: true,
+  user: null, useConnectedApps: () => [], appIcons: () => [], homeHref: "/",
 };
 setWorkbotHost(host);
 const job: WorkbotRemoteJob = { key: "command:one", ref: { commandId: "one" }, title: "Review the draft", target: "registered", toolCallId: "create_1", turnId: "request", startedAt: 100, watcherTaskIds: ["watcher_exact_id"], stale: false,
@@ -122,18 +122,10 @@ async function conversationFollowed() {
   await tick();
   assert.equal(invalidated(), false, "stopped");
 }
-setWorkbotHost({ ...host, remoteTasks: false });
-assert.equal(renderToStaticMarkup(<RemoteJobs jobs={[job]} />), "", "flag-off UI masks cached data");
-const client = new QueryClient();
-client.setQueryData(["workbot", "remote-jobs", undefined, "main"], { jobs: [job], hasEarlier: false });
-function Probe() {
-  const query = useWorkbotRemoteJobs(true);
-  assert.equal(query.data, undefined, "disabled hook must not reveal previously cached jobs");
-  return null;
-}
-renderToStaticMarkup(<QueryClientProvider client={client}><Probe /></QueryClientProvider>);
+setWorkbotHost(host);
+assert.ok(renderToStaticMarkup(<RemoteJobs jobs={[job]} />).includes("data-workbot-remote-job"), "remote jobs are always visible");
 assert.equal(requests, 0);
 void conversationFollowed().then(
-  () => console.log("remote jobs UI: safe pending text, truthful states, stale retention, explicit watcher ids, default-off cache masking, polling only open tasks passed"),
+  () => console.log("remote jobs UI: safe pending text, truthful states, stale retention, explicit watcher ids, polling only open tasks passed"),
   (error: unknown) => { console.error(error); process.exitCode = 1; },
 );

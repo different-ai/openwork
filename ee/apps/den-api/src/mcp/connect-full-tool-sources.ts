@@ -242,7 +242,7 @@ export async function loadConnectFullTools(input: {
       toolName: names.get(app.appId) ?? app.appId,
       capability: buildMarketplaceCapabilityName(app.pluginId, app.appId),
       title: app.title,
-      description: `Open the App "${app.title}". ${app.description ?? ""} Its appId for read_app and update_app is ${app.appId}.`.replace(/\s+/g, " "),
+      description: `Open the artifact "${app.title}". ${app.description ?? ""} Its appId for read_app and update_app is ${app.appId}.`.replace(/\s+/g, " "),
       inputSchema: { type: "object", description: "Optional launch input the App receives." },
       annotations: { readOnlyHint: true },
     })))

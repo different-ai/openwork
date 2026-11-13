@@ -205,6 +205,7 @@
               "ai-gateway/provider-support",
               "ai-gateway/compare-litellm-bifrost",
               "ai-gateway/litellm",
+              "ai-gateway/truefoundry",
               "ai-gateway/how-requests-flow",
               "ai-gateway/auto-model-routing",
               "ai-gateway/google-agent-platform",
@@ -229,6 +230,13 @@
               "ai-gateway/token-costs",
               "ai-gateway/limits",
               "start-here/do-work-with-it/what-uses-tokens"
+            ]
+          },
+          {
+            "group": "Benchmarks",
+            "pages": [
+              "benchmarks/overview",
+              "benchmarks/how-it-was-run"
             ]
           }
         ]
@@ -286,7 +294,7 @@
         ]
       },
       {
-        "tab": "Dashboards",
+        "tab": "Artifacts",
         "pages": [
           "dashboards/overview",
           "dashboards/build-an-mcp-app"

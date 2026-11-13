@@ -2,6 +2,7 @@
 
 import { Fragment, memo, type ReactNode } from "react";
 import { googleDriveFileId } from "@openwork/types/workbot-context";
+import { calmChat } from "./host";
 import { WorkspaceLink } from "./workspace";
 import { Lexer, type MarkedToken, type Token } from "marked";
 
@@ -203,5 +204,5 @@ const MarkdownBlock = memo(function MarkdownBlock({ token }: { token: Token }) {
  * Within the bubble the text is read again in full, and only the blocks that came out differently re-render.
  */
 export const WorkbotMarkdown = memo(function WorkbotMarkdown({ text }: { text: string }) {
-  return <div className="flex flex-col gap-3 break-words text-[15px] leading-6 text-[var(--wb-text)]">{markdownBlocks(text).map((token, index) => <MarkdownBlock key={index} token={token} />)}</div>;
+  return <div className={`flex flex-col gap-3 break-words text-[var(--wb-text)] ${calmChat() ? "text-[14px] leading-[21px] sm:text-[13px]" : "text-[15px] leading-6"}`}>{markdownBlocks(text).map((token, index) => <MarkdownBlock key={index} token={token} />)}</div>;
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { getOrgAccessFlags, parseOrgContextPayload, type DenOrgAccessFlags, type DenOrgSsoConnection } from "../../../../_lib/den-org";
-import { scimIntroState, ssoIntroState, ssoIntroStateForConnections } from "../../../_components/auth-security-intro-facts";
+import { scimIntroState, ssoIntroStateForConnections } from "../../../_components/auth-security-intro-facts";
 import { matchFeatureIntro, pickIntroCta, selectIntroSize } from "../model";
 import type { FeatureIntroContext, FeatureIntroPermission } from "../types";
 import { type AuthSecurityFacts, authSecurityIntros } from "./auth-security";
@@ -38,11 +38,7 @@ test("auth & security intros match the page and its ?tab", () => {
 });
 
 test("setup states come from the SSO connection and SCIM connector", () => {
-  assert.equal(ssoIntroState(null), "none");
-  assert.equal(ssoIntroState(fakeSso()), "verify-domain");
-  assert.equal(ssoIntroState({ ...fakeSso(), status: "disabled", domainVerified: true }), "turn-on");
-  assert.equal(ssoIntroState({ ...fakeSso(), status: "enabled", domainVerified: true }), "on");
-  // multipleSsoConnections: the furthest-along connection decides.
+  // The furthest-along connection decides.
   assert.equal(ssoIntroStateForConnections([]), "none");
   assert.equal(ssoIntroStateForConnections([fakeSso(), fakeSso()]), "verify-domain");
   assert.equal(ssoIntroStateForConnections([fakeSso(), { ...fakeSso(), domainVerified: true }]), "turn-on");

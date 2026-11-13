@@ -4,7 +4,7 @@ import { denFetch, freshSession } from "@openwork/behaviors";
 import { z } from "zod";
 import { organizationComputerListResponseSchema, remoteDeviceListResponseSchema, remoteDeviceResponseSchema, remoteDeviceDetailResponseSchema } from "@openwork/types/den/remote-devices";
 import { memberSessionListResponseSchema } from "@openwork/types/den/remote-sessions";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 
 /**
  * Disconnecting a signed-in computer, in regular Den. Den, its web app, the
@@ -29,7 +29,7 @@ export async function denComputerDisconnectWorld(seed: Seed) {
     } });
     if (!den.database) throw new Error("The disconnect proof requires a disposable local database, never an attached Den");
     const database = den.database.url;
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { remoteDevices: true, remoteSessionAccess: true });
+    const organizationId = await seededOrganizationId(seed, den.admin);
     const request = (session: DenSession, path: string, body?: unknown, method = body === undefined ? "GET" : "POST") =>
       denFetch(session, path, { method, headers: { authorization: `Bearer ${session.token}`, "x-openwork-org-id": organizationId }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const send = async (session: DenSession, path: string, body?: unknown, method?: string) => {
@@ -123,7 +123,7 @@ export async function denComputerDisconnectWorld(seed: Seed) {
       },
       /** Someone signs in to OpenWork on that computer again. */
       signInAgain: (desktop: Desktop, person: "member" | "manager") => signInOn(person === "member" ? memberSession : managerSession, desktop.installId, desktop.label, desktop.appVersion),
-      async setFeature(key: "remoteDevices" | "denGreySidebar", enabled: boolean) {
+      async setFeature(key: "denGreySidebar", enabled: boolean) {
         await send(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, { capabilities: { [key]: enabled } }, "PUT");
       },
       async [Symbol.asyncDispose]() { await stack.disposeAsync(); },

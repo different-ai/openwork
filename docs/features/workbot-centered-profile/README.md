@@ -1,5 +1,7 @@
 # Workbot: centred avatar and profile
 
+> **Generally available:** `workbotCenteredProfile` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 Feature: `workbotCenteredProfile` · Cloud and self-hosted · Default **off** · Author: @benjaminshafii.
 
 The centered **header** avatar/status pill and responsive chat navigation are now the default for everyone, independently of this flag and Browser access. This flag still controls the richer profile-sheet layout and tabs; it does not enable the browser experience. See [the unified browser experience](../workbot-browser-preview/README.md).

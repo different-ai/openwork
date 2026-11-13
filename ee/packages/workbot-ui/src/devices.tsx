@@ -2,11 +2,15 @@
 
 import { REMOTE_DEVICE_AVAILABILITY_LABELS, remoteDeviceTypeLabel, type RemoteDevice, type RemoteDeviceAvailability } from "@openwork/types/den/remote-devices";
 import { Cloud, Laptop, Monitor } from "lucide-react";
+import { createContext } from "react";
 import { useWorkbotDevices } from "./data";
 import { computerTabLabel, computerViews, workbotHost } from "./host";
 
+/** The screen owns the same-chat/side-chat and unsaved-draft guards for every Devices surface. */
+export const DeviceComputerNavigationContext = createContext<((chat: string) => (() => void) | null) | undefined>(undefined);
+
 /**
- * Devices (`remoteDevices`): the computers the person can reach through OpenWork, read-only. Their own computers
+ * Devices: the computers the person can reach through OpenWork, read-only. Their own computers
  * running OpenWork Desktop, then the cloud ones (Workbot's computer for a chat, registered virtual computers). Each row
  * says what it is and whether it can be reached; Workbot's own computers open in the Computer view. Naming and
  * removing a computer happen in OpenWork Desktop.
@@ -71,7 +75,7 @@ function DeviceRow({ device, onOpen }: { device: RemoteDevice; onOpen: (() => vo
       <span className="flex min-w-0 flex-wrap gap-x-3 text-[12px] leading-4 text-[var(--wb-muted)]">
         <span>{remoteDeviceTypeLabel(device)}</span>
         {device.access === "shared" ? <span>Shared with your organization</span> : null}
-        {device.kind === "desktop" && device.computerId !== null && host.remoteTasks === true ? <span>Takes tasks from Workbot</span> : null}
+        {device.kind === "desktop" && device.computerId !== null ? <span>Takes tasks from Workbot</span> : null}
       </span>
     </span>
     <span className="flex min-w-0 max-w-[45%] shrink-0 flex-col items-end">

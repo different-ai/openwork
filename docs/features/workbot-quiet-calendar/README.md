@@ -1,5 +1,7 @@
 # Workbot: quiet calendar
 
+> **Generally available:** `workbotQuietCalendar` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 Feature: `workbotQuietCalendar` · Cloud and self-hosted · Default **off** · Author: @benjaminshafii.
 
 Workbot's Calendar for someone with many automations. Today each run is a chip that shares the day's width with meetings, so a busy day shows dozens of one-letter chips ("T.", "A.") and nothing reads.

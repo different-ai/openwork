@@ -8,8 +8,6 @@ after(() => den.close())
 
 const org = await den.createOrg(await den.signUp("Public App Owner"), "Public App workspace")
 const mcp = await den.mintMcpToken(org.owner, org.orgId)
-const setFeature = async (on: boolean) => assert.equal((await den.setFeature(org.orgId, "publicApps", on)).status, 200)
-await setFeature(true)
 
 const source = (title: string) => ({
   title,
@@ -47,7 +45,7 @@ async function anonymous(appId: string, method: string, params: Record<string, u
 
 const unavailable = async (appId: string, why: string) => {
   const refused = await anonymous(appId, "tools/list")
-  assert.equal(field(refused.error, "message"), "This App is not available.", `${why}: ${refused.call.text}`)
+  assert.equal(field(refused.error, "message"), "This artifact is not available.", `${why}: ${refused.call.text}`)
 }
 const available = async (appId: string, why: string) => {
   const served = await anonymous(appId, "tools/list")
@@ -78,7 +76,7 @@ test("an App marked public opens without signing in, and nothing else is exposed
   await unavailable(other.appId, "never marked public")
 })
 
-test("an App with tools cannot be public, and the mark needs the feature", async () => {
+test("an App with tools cannot be public", async () => {
   const withTools = await den.callMcpTool(mcp, "create_app", { ...source("Lookup"), tools: whoAmI, public: true })
   assert.equal(withTools.isError, true, withTools.raw)
   assert.match(withTools.raw, /public_app_has_tools/)
@@ -89,16 +87,6 @@ test("an App with tools cannot be public, and the mark needs the feature", async
   assert.match(addTool.raw, /public_app_has_tools/)
   await available(app.appId, "the refused update changed nothing")
 
-  await setFeature(false)
-  try {
-    const off = await den.callMcpTool(mcp, "create_app", { ...source("Off"), tools: [], public: true })
-    assert.equal(off.isError, true, off.raw)
-    assert.match(off.raw, /public_apps_off/)
-    await unavailable(app.appId, "feature off")
-  } finally {
-    await setFeature(true)
-  }
-  await available(app.appId, "feature back on")
 })
 
 test("an update keeps the mark unless it says otherwise, and unmarking stops the URL at once", async () => {
@@ -155,7 +143,6 @@ test("a friendly name serves the App, is unique across organizations, and a new 
   assert.equal(field(opened.result, "structuredContent", "app", "serverPath"), "/mcp/public/apps/visit-us")
 
   const elsewhere = await den.createOrg(await den.signUp("Other Owner"), "Other public workspace")
-  assert.equal((await den.setFeature(elsewhere.orgId, "publicApps", true)).status, 200)
   const otherMcp = await den.mintMcpToken(elsewhere.owner, elsewhere.orgId)
   const taken = await den.callMcpTool(otherMcp, "create_app", { ...source("Visit us"), tools: [], public: true, publicName: "visit-us" })
   assert.equal(taken.isError, true, taken.raw)

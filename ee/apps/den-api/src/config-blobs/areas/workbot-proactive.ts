@@ -311,7 +311,6 @@ export const workbotProactiveArea = defineConfigArea({
   specSchema: proactiveSpecSchema,
   dependsOn: [MCP_AREA],
   deployments: ["cloud", "self_hosted"],
-  feature: "workbotProactive",
   viewPermission: "inference.view",
   managePermission: "inference.manage",
   // organization.metadata.workbot.proactive (owned table: organization, by settings.general) and the "Your agent"

@@ -36,7 +36,7 @@ const INVENTORY_CONCURRENCY = 4
 const SESSION_REPORT_LIMIT = 100
 /** Sessions are read at most this often, just under the work poll so each poll may report; sent only when they changed. */
 const SESSION_REPORT_MIN_INTERVAL_MS = 55_000
-/** Den answers 404 while remoteSessionAccess is off; ask again this much later. */
+/** Older Den versions without session reporting answer 404; ask again this much later. */
 const SESSION_REPORT_DISABLED_RETRY_MS = 10 * 60_000
 /** Archived sessions count toward a v1 list's limit, so more than a report holds are read. */
 const SESSION_LIST_V1_LIMIT = 300
@@ -407,9 +407,9 @@ export const REMOTE_SESSION_REQUEST_POLL = Object.freeze({
   activeWindowMs: 30 * 60_000,
 })
 export const REMOTE_SESSION_CONTROL_CAPABILITY = "remote_session_control_v1"
-/** Asks Den's runner event stream to announce queued remote-session tasks (feature remoteSessionPush). */
+/** Asks Den's runner event stream to announce queued remote-session tasks. */
 export const REMOTE_SESSION_PUSH_HEADER = "X-OpenWork-Remote-Session-Push"
-/** Den answers 404 while remoteSessionPush is off; ask again this much later. */
+/** An older Den may not serve runner events; ask again this much later. */
 const REMOTE_SESSION_PUSH_DISABLED_RETRY_MS = 10 * 60_000
 
 /**
@@ -1383,7 +1383,6 @@ export function createDesktopAutomationRunner(options) {
   const lifecycleRequestTimeoutMs = options.lifecycleRequestTimeoutMs ?? 30_000
   const requestPoll = { ...REMOTE_SESSION_REQUEST_POLL, ...options.remoteSessionRequestPoll }
   const remoteRequestTimeoutMs = options.remoteSessionRequestTimeoutMs ?? REMOTE_SESSION_REQUEST_TIMEOUT_MS
-  const remoteSessionPush = options.remoteSessionPush === true
   const legacyBaseUrls = new Set((options.legacyBaseUrls ?? [])
     .map((value) => normalizeRunnerBaseUrl(value))
     .filter(Boolean))
@@ -1493,8 +1492,8 @@ export function createDesktopAutomationRunner(options) {
    * minute; otherwise one empty report makes Den forget what it had. A change
    * in the access in force, or in whether the owner chose, is reported at
    * once. A Den from before `off` existed would reject it, so it is told
-   * `created`; this computer refuses everything all the same. While Den
-   * answers 404 the feature is off and it is asked again ten minutes later.
+   * `created`; this computer refuses everything all the same. Older Den versions
+   * without this endpoint answer 404 and are asked again ten minutes later.
    * A failure never affects polling for work.
    */
   const reportSessions = (state) => {
@@ -1535,7 +1534,7 @@ export function createDesktopAutomationRunner(options) {
           })
         } catch (error) {
           if (error?.status !== 404) throw error
-          // Den has the feature off: ask again much later.
+          // Compatibility with Den versions without session reporting: ask again much later.
           state.sessionReportBlockedUntil = now() + SESSION_REPORT_DISABLED_RETRY_MS
           return
         }
@@ -2408,7 +2407,7 @@ export function createDesktopAutomationRunner(options) {
     }
     void connectLoop(state)
     if (state.controlCapable) void remoteSessionRequestLoop(state)
-    if (remoteSessionPush && state.controlCapable) void remoteSessionPushLoop(state)
+    if (state.controlCapable) void remoteSessionPushLoop(state)
   }
 
   /**

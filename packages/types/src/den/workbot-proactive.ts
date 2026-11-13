@@ -1,7 +1,7 @@
 import { z } from "zod"
 
 /**
- * "Your agent" (behind the `workbotProactive` feature): one persistent background agent per member that reads their
+ * "Your agent": one persistent background agent per member, governed by organization and member settings, that reads their
  * sources (their calendar and any connection they turn on, such as Google Workspace, Microsoft 365 or Slack for mail
  * and chat) on a schedule and messages them only when something needs them.
  *
@@ -533,7 +533,7 @@ export const workbotProactiveViewSchema = z.object({
 export type WorkbotProactiveView = z.infer<typeof workbotProactiveViewSchema>
 
 
-/** `GET /v1/org/workbot-settings/proactive/health` (`workbotProactive`): counts only, no members or content. */
+/** `GET /v1/org/workbot-settings/proactive/health`: counts only, no members or content. */
 export const workbotProactiveHealthSchema = z.object({
   /** The window, in days, ending today (UTC). */
   days: z.number().int().min(1),
@@ -855,7 +855,7 @@ export const memberAgentInputSchema = z
   .strict()
 export type MemberAgentInput = z.infer<typeof memberAgentInputSchema>
 
-/** `PUT /v1/me/agent` with `workbotProactive` on: the agent after the change, and exactly what was saved. */
+/** `PUT /v1/me/agent`: the agent after the change, and exactly what was saved. */
 export const memberAgentSavedSchema = memberAgentViewSchema.extend({
   saved: z.object({
     /** Sources it can't read until the member connects them: "Connect Granola" and where. */

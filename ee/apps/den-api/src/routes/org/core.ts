@@ -20,10 +20,9 @@ import { deploymentCapabilities } from "../../gateway-deployment.js"
 import { cachedOrganizationServiceReadiness } from "../../service-readiness-runtime.js"
 import { canManageDeploymentServices } from "../../middleware/admin.js"
 import { findEnterpriseAuthRequirementForEmailDomain, resolveNonSsoSignInMethodForEmail } from "../../enterprise-auth-requirement.js"
-import { organizationFeatureEnabled } from "../../features.js"
 import { findDomainSsoRequirement, sessionCanRequireOrganizationSso, ssoSignInUrl } from "../../organization-sso-access.js"
 import { organizationRequiresSsoSession } from "../../sso-routing.js"
-import { ADMIN_REAUTH_MINUTES, MAX_SESSION_LENGTH_DAYS, organizationSessionLimits, SESSION_LENGTH_HOURS, sessionSecuritySettingsApply } from "../../session-security-settings.js"
+import { ADMIN_REAUTH_MINUTES, MAX_SESSION_LENGTH_DAYS, organizationSessionLimits, SESSION_LENGTH_HOURS } from "../../session-security-settings.js"
 import { shortenMemberSessions } from "../../session-security-lifetime.js"
 import { jsonValidator, memberPermissionsForOrganizationContext, orgMemberRoute, orgPermissionRoute, publicRoute, queryValidator, resolveMemberPermissionsMiddleware, resolveMemberTeamsMiddleware, userSessionRoute } from "../../middleware/index.js"
 import { sortedPermissionKeys } from "../../permissions/effective.js"
@@ -61,13 +60,13 @@ const updateOrganizationSchema = z.object({
   allowedEmailDomains: z.array(z.string().trim().min(1).max(255)).max(100).nullable().optional(),
   allowedDesktopVersions: z.array(z.string().trim().min(1).max(32)).max(200).nullable().optional(),
   requireSso: z.boolean().optional(),
-  /** ssoPerOrganization: every email on the verified SSO domain must sign in with this organization's SSO. */
+  /** every email on the verified SSO domain must sign in with this organization's SSO. */
   restrictDomainToSso: z.boolean().optional(),
-  /** sessionSecuritySettings: hours a sign-in lasts without activity, web and desktop (12, 24, 72 or 168). */
+  /** Hours a sign-in lasts without activity, web and desktop (12, 24, 72 or 168). */
   sessionLengthHours: z.literal(SESSION_LENGTH_HOURS).optional(),
-  /** sessionSecuritySettings: days a sign-in lasts at most, however active; people sign in at least once every period (1, 7, 14, 30, 60 or 90). */
+  /** Days a sign-in lasts at most, however active; people sign in at least once every period (1, 7, 14, 30, 60 or 90). */
   maxSessionLengthDays: z.literal(MAX_SESSION_LENGTH_DAYS).optional(),
-  /** sessionSecuritySettings: minutes since sign-in before an admin must confirm their identity for sensitive changes (15, 60, 240, 480 or 1440); 0 turns it off. */
+  /** Minutes since sign-in before an admin must confirm their identity for sensitive changes (15, 60, 240, 480 or 1440); 0 turns it off. */
   adminReauthMinutes: z.literal(ADMIN_REAUTH_MINUTES).optional(),
   brandAppName: z.string().trim().min(1).max(64).nullable().optional(),
   brandLogoUrl: z.string().url().max(2048).nullable().optional(),
@@ -91,7 +90,7 @@ const resolveSsoByEmailResponseSchema = z.object({
 }).or(z.object({
   requireSso: z.literal(false),
   method: z.union([z.literal("google"), z.literal("password"), z.literal("signup")]),
-  // ssoPerOrganization: the domain's organization offers SSO as one sign-in
+  // the domain's organization offers SSO as one sign-in
   // option; `method` stays the usual way in. `ssoRequired` is the
   // organization's own Require SSO (it opens only from an SSO session).
   ssoRequired: z.boolean().optional(),
@@ -338,21 +337,13 @@ export async function updateOrganizationAction(c: ResourceActionContext, payload
         }, 400)
       }
 
-      if (input.restrictDomainToSso !== undefined && !await organizationFeatureEnabled(payload.organization.id, "ssoPerOrganization")) {
-        return c.json({ error: "feature_disabled", message: "These SSO settings are not available for this organization." }, 404)
-      }
-
       const changesSessionLimits = input.sessionLengthHours !== undefined || input.maxSessionLengthDays !== undefined
-      const changesSessionSettings = changesSessionLimits || input.adminReauthMinutes !== undefined
-      if (changesSessionSettings && !sessionSecuritySettingsApply(payload.features)) {
-        return c.json({ error: "feature_disabled", message: "Session settings are not available for this organization." }, 404)
-      }
 
       const currentMetadata = normalizeOrganizationMetadata(payload.organization.metadata).metadata
       const enablesRequireSso = (input.requireSso === true && currentMetadata.requireSso !== true)
         || (input.restrictDomainToSso === true && currentMetadata.restrictDomainToSso !== true)
       const enablesVersionPinning = Array.isArray(input.allowedDesktopVersions) && input.allowedDesktopVersions.length > 0
-      if (enablesRequireSso && await organizationFeatureEnabled(payload.organization.id, "ssoPerOrganization")) {
+      if (enablesRequireSso) {
         // Requiring SSO takes effect at once for every member, the admin too:
         // only an admin signed in through it can turn it on, so nobody locks
         // themselves out of the organization by mistake.
@@ -417,7 +408,7 @@ export async function updateOrganizationAction(c: ResourceActionContext, payload
       if (changesSessionLimits) {
         await shortenMemberSessions({
           organizationId: payload.organization.id,
-          limits: organizationSessionLimits({ features: payload.features, metadata: updated.metadata }),
+          limits: organizationSessionLimits(updated.metadata),
         })
       }
 
@@ -620,7 +611,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         402: jsonResponse("Enabling enforced SSO or desktop version controls requires an Enterprise plan.", enterprisePlanRequiredSchema),
         403: jsonResponse("The caller does not have permission to update the requested organization fields.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
-        409: jsonResponse("ssoPerOrganization: requiring SSO needs the caller's session to have signed in through this organization's SSO.", z.object({ error: z.literal("sso_session_required"), message: z.string(), signInPath: z.string(), signInUrl: z.string().url() })),
+        409: jsonResponse("requiring SSO needs the caller's session to have signed in through this organization's SSO.", z.object({ error: z.literal("sso_session_required"), message: z.string(), signInPath: z.string(), signInUrl: z.string().url() })),
       },
     }),
     orgPermissionRoute("organization.update"),
@@ -770,7 +761,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       const cloudEnabled = cloudHostingAvailable({ orgMode: env.orgMode, openworkWebEnabled: env.openworkWebEnabled })
         && (await getOpenWorkWebAccess(payload.organization.id)).hasAccess
         // With webPerMember, only members an admin gave Web get Cloud.
-        && (!payload.features.webPerMember || payload.currentMember.openworkWeb)
+        && payload.currentMember.openworkWeb
       // The directory is only loaded here, not with every org request's context.
       const [directory, ssoRows, scimRows] = await Promise.all([
         loadOrganizationDirectory(payload.organization.id),

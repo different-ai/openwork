@@ -118,7 +118,7 @@ export function ToolTesterScreen() {
       marketplaceConnectionNeedsAdminSetup(connection, presetsQuery.data ?? []),
     ))
   ), [access.canManageConnections, connectionsQuery.data, presetsQuery.data]);
-  // With `featureIntros` on: the Connectors full screen with no connector at all, else a box in place
+  // Feature intro: the Connectors full screen with no connector at all, else a box in place
   // of "No connected, testable MCP connections" (DESIGN.md I1, I2).
   const connectorsFacts = useConnectorsIntroFacts(useFeatureIntroRuntime().enabled);
   const testableKnown = Boolean(connectionsQuery.data && presetsQuery.data) && !connectionsQuery.error;

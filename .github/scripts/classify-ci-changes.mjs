@@ -1,9 +1,9 @@
 // CI selection policy only; build inputs live in build-inputs.mjs. Keep the
 // classifier pure so its fail-open and required-check behavior can be tested
 // without GitHub, package installs, or a desktop build.
-// Dev-push selection ("Build and core checks"). PRs run only the quick check
-// (quick-check.yml); everything below runs after merge. `core` selects the
-// unit-test jobs and the desktop build check.
+// PR selection for "Build and core checks", which gates merges beside the quick
+// check (quick-check.yml). `core` selects the unit-test jobs and the desktop
+// build check.
 const CHECKS = ["core", "den_api", "snapshot", "docs"];
 // Jobs and the selection output each one follows. Every selected job must
 // succeed and every unselected job must be skipped.
@@ -13,7 +13,6 @@ export const REQUIRED_JOBS = {
   core_workbot: "core",
   core_den: "core",
   core_evals: "core",
-  core_evals_lint: "core",
   desktop_build: "core",
   den_api: "den_api",
   snapshot: "snapshot",
@@ -49,14 +48,14 @@ function changesFrom(files) {
 
 /** A null/incomplete listing or failed input calculation selects every check. */
 export function classifyCiChanges({ eventName, files }, isAffected) {
-  // Only dev pushes are narrowed; schedules, manual runs and anything
-  // unexpected (this workflow no longer runs on PRs) run every check.
-  if (eventName !== "push") return full();
+  // Only PRs are narrowed; schedules, manual runs and anything unexpected run
+  // every check.
+  if (eventName !== "pull_request") return full();
   const changes = changesFrom(files);
   if (!changes) return full();
 
-  // Push diffs are --no-renames paths. A deleted snapshot fails validation
-  // instead of silently passing a fast lane.
+  // A deleted or renamed snapshot fails validation instead of silently
+  // passing a fast lane.
   const snapshotOnly = changes.length > 0 && changes.every((change) => SNAPSHOTS.has(change.filename)
     && !change.previous_filename
     && (change.status === "modified" || change.status === undefined));
@@ -73,7 +72,7 @@ export function classifyCiChanges({ eventName, files }, isAffected) {
     const core = affected("core");
     const selected = {
       core,
-      // Dev pushes run the full Den API security suite whenever unit tests run.
+      // The full Den API security suite runs whenever unit tests run.
       den_api: core,
       snapshot: affected("models"),
       docs: affected("docs"),
@@ -86,7 +85,7 @@ export function classifyCiChanges({ eventName, files }, isAffected) {
 
 /** PR quick check: which conditional quick jobs run. Unknown or incomplete diffs select them. */
 export function classifyQuickChanges({ eventName, files, expectedCount }, isAffected) {
-  // Dev pushes run the full suites in "Build and core checks"; a manual run checks everything.
+  // A dev push was already tested as a PR; a manual run checks everything.
   if (eventName === "push") return { den_quick: false };
   if (eventName !== "pull_request") return { den_quick: true };
   const changes = changesFrom(files);
@@ -118,19 +117,6 @@ export async function pullRequestChanges({ github, owner, repo, number, head }) 
     return { files, expectedCount: before.changed_files };
   } catch {
     return unknown;
-  }
-}
-
-/** Compare the entire pushed range, fetching only a missing base endpoint. */
-export function pushChanges({ base, head, readDiff, fetchBase }) {
-  if (!objectId(base) || !objectId(head)) return null;
-  try {
-    const files = readDiff({ base, head });
-    if (files !== null) return files;
-    fetchBase(base);
-    return readDiff({ base, head });
-  } catch {
-    return null;
   }
 }
 

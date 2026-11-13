@@ -43,10 +43,6 @@ test("every usable connector is listed, connected or not, Connected first; secre
   const broken = await connection({ name: "Broken Tracker", url: `${service.url}/broken/mcp`, authType: "none", credentialMode: "shared", access: { orgWide: true } })
   const ownerOnly = await connection({ name: "Owner Only", url: `${service.url}/owner/mcp`, authType: "none", credentialMode: "shared", access: { orgWide: false } })
 
-  // Without the profile the answer is as before: no `apps`.
-  assert.equal((await apps(member)).apps, undefined)
-  assert.equal((await den.setFeature(orgId, "workbotProfileSheet", true)).status, 200)
-
   // A failed stored health check (recorded by an admin's check, never on open) makes it need attention.
   unavailable = true
   try {

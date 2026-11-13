@@ -13,10 +13,9 @@ const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
 
 /**
  * One member-owned VM, one input lease, and the existing browser and computer contracts.
- * `standardCodeMode` reads the organization's feature of that name when a program starts;
- * without it programs keep OpenWork's original Code Mode.
+ * Programs always run standard JavaScript under the same VM authority checks.
  */
-export async function createCloudComputer({ directory, display = ":99", enabled, standardCodeMode = async () => false, machine, browserEndpoint, applications, onActivity = () => {}, privateBrowsing = false }) {
+export async function createCloudComputer({ directory, display = ":99", enabled, machine, browserEndpoint, applications, onActivity = () => {}, privateBrowsing = false }) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   let owner = null;
   let paused = false;
@@ -69,7 +68,6 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
   async function authorize() {
     const allowed = !closed && await enabled().catch(() => false);
     verified = allowed;
-    await control.setFeatureEnabled(allowed);
     await control.setRemoteEnabled(allowed);
     if (!allowed) {
       authoritySuspended = true;
@@ -107,7 +105,6 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
             || body.timeoutMs !== undefined && (!Number.isInteger(body.timeoutMs) || body.timeoutMs < 1000 || body.timeoutMs > 60_000)) throw failure("invalid_arguments", "Provide a surface, bounded code and a timeout from 1000 to 60000 milliseconds.");
           const { runComputerProgram } = await import("@openwork/computer-use/runtime");
           // The organization picks the interpreter; nothing in the request body can. Unreadable means the original.
-          const options = { standardCodeMode: await Promise.resolve().then(standardCodeMode).then(value => value === true, () => false) };
           assertActive();
           const signal = current.signal;
           return await runComputerProgram(body, {
@@ -121,7 +118,7 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
               const result = await browser.request({ sessionId: body.sessionId, operation, args }, { signal, recovery: body.browserRecovery === true });
               assertActive(); return result;
             },
-          }, signal, options);
+          }, signal);
         }
         if (path === "/browser/task") {
           const result = await browser.request(body, { signal: current.signal, recovery: body.browserRecovery === true });

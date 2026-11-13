@@ -36,6 +36,9 @@ import { liteLlmCatalogProvider } from "../../llm/litellm-settings.js"
 import { liteLlmMemberIssueStatus, provisionLiteLlmMember, pruneLiteLlmIssuedKeys, reconcileLiteLlmIssuedKeys, scheduleLiteLlmProvisioning } from "../../llm/litellm-issued.js"
 import { applyLiteLlmSync, connectLiteLlmMemberKey, createLiteLlmProvider, liteLlmAdminKey, updateLiteLlmIssueSettings, disconnectLiteLlmMember, emptySettings, liteLlmEndpoints, liteLlmErrorResponse, liteLlmMemberSet, planLiteLlmCatalog, planLiteLlmSync, pruneLiteLlmAssignments, readLiteLlmSettings, recordLiteLlmSyncError, replaceLiteLlmSyncKey, verifyLiteLlmKey } from "../../llm/litellm-sync.js"
 import { LITELLM_PROVIDER_ID, isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
+import { TRUEFOUNDRY_PROVIDER_ID, isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
+import { TrueFoundryError, createTrueFoundryClient, normalizeTrueFoundryEndpoints } from "../../llm/truefoundry.js"
+import { applyTrueFoundryCatalog, createTrueFoundryProvider, emptyTrueFoundrySettings, planTrueFoundryCatalog, planTrueFoundrySync, provisionTrueFoundryMember, pruneTrueFoundryMembers, readTrueFoundrySettings, reconcileTrueFoundryMembers, recordTrueFoundrySyncError, scheduleTrueFoundryProvisioning, trueFoundryCall, trueFoundryCatalogProvider, trueFoundryEndpoints, trueFoundryErrorResponse, trueFoundryMemberStatus, updateTrueFoundryProvider } from "../../llm/truefoundry-sync.js"
 import { decodeProviderCredential, readProviderEnvNames, runtimeProviderEnvNames } from "../../llm/provider-credentials.js"
 import { jsonValidator, orgMemberRoute, paramValidator, publicRoute, queryValidator, userSessionRoute } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -51,7 +54,6 @@ import { credentialPromptSchema } from "@openwork/types/den/credential-prompt"
 import { GatewayProviderUsageLimitsError, GatewayUsageError, lockUsageOrganization } from "@openwork-ee/den-db/gateway-usage-limits"
 import { GATEWAY_PROVIDER_HAS_USAGE_LIMITS, GATEWAY_PROVIDER_REMOVAL_LIMIT_ACTIONS, gatewayProviderHasUsageLimitsSchema, type GatewayProviderRemovalLimitChoice } from "@openwork/types/den/gateway-usage-limits"
 import { credentialPromptResponseFields, gatewayCredentialShape, gatewayProviderCredentialPrompt, gatewayUpstreamDestination } from "../../credential-prompt.js"
-import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { GATEWAY_CUSTOM_PROVIDER_ID, gatewayCustomCreateRequestSchema, gatewayCustomDiscoverRequestSchema, gatewayCustomDiscoverResponseSchema, gatewayCustomProviderStatusSchema, gatewayCustomTestRequestSchema, gatewayCustomTestResponseSchema, gatewayCustomTestStep, gatewayCustomUpdateRequestSchema, isGatewayCustomProviderId, type GatewayCustomModel, type GatewayCustomProviderSettings, type GatewayCustomTestResponse } from "@openwork/types/den/gateway-custom-providers"
 import { discoverCustomProviderModels } from "../../llm/custom-provider-discovery.js"
 import { checkCustomBaseUrl, customCatalogProvider, customProviderConfig, readCustomProviderSettings, sameCustomOrigin } from "../../llm/gateway-custom-provider.js"
@@ -86,7 +88,7 @@ const settingsSchema = gatewayProviderSettingsSchema
 const legacyFields = { credentialMode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES).optional(), credential: credentialSchema.optional(), apiKeys: apiKeysSchema.optional(), ...oauthFields, allMembers: z.boolean().optional(), memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() }
 const universeSchema = modelIdsSchema.describe("Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.")
 const reuseCredentialFromSchema = denTypeIdSchema("inferenceProvider").describe("Amazon Bedrock only: copy the organization AWS keys of another Amazon Bedrock provider in this organization, server-side. Mutually exclusive with credential and apiKeys.")
-const createSchema = z.object({ name: nameSchema, providerId: nameSchema, modelIds: universeSchema.default([]), settings: settingsSchema.optional(), status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(), ...legacyFields, reuseCredentialFrom: reuseCredentialFromSchema.optional(), shareFromDevice: z.literal(true).optional().describe("shareDeviceProvider feature only: atomically refuse if this organization already has an active provider for the catalog id. Requires an explicit shared API key and Everyone grant; no credential or audience mutation of existing providers.") }).strict().superRefine(singleCredential).superRefine((input, ctx) => {
+const createSchema = z.object({ name: nameSchema, providerId: nameSchema, modelIds: universeSchema.default([]), settings: settingsSchema.optional(), status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(), ...legacyFields, reuseCredentialFrom: reuseCredentialFromSchema.optional(), shareFromDevice: z.literal(true).optional().describe("Atomically refuse if this organization already has an active provider for the catalog id. Requires an explicit shared API key and Everyone grant; no credential or audience mutation of existing providers.") }).strict().superRefine(singleCredential).superRefine((input, ctx) => {
   if (input.shareFromDevice && (input.credential?.kind !== "api_key" || input.allMembers !== true || input.credentialMode === "member" || input.status === "disabled")) {
     ctx.addIssue({ code: "custom", message: "Sharing a device provider needs a shared API key, active status and explicit Everyone access." })
   }
@@ -122,8 +124,15 @@ const summarySchema = z.object({
   authorizationRequests: z.array(z.object({ credentialSetId: denTypeIdSchema("gatewayCredentialSet"), name: z.string(), authUrl: z.string(), models: z.array(modelSchema).optional() })),
   migration: z.object({ llmProviderId: denTypeIdSchema("llmProvider"), runtimeEnvNames: z.array(z.string()) }).optional(),
 }).meta({ ref: "GatewayProviderSummary" })
+const trueFoundryAttentionReason = z.enum(["not_in_truefoundry", "user_inactive", "token_limit", "no_models", "error"])
+const trueFoundryStatusSchema = z.object({ controlPlaneUrl: z.string().nullable(), gatewayBaseUrl: z.string().nullable(), createMissingUsers: z.boolean(), hasAdminKey: z.boolean(), lastSyncedAt: z.string().datetime().nullable(), lastSyncError: z.string().nullable(), modelCount: z.number().int(), activeMemberCount: z.number().int(), createdUserCount: z.number().int(), attentionCount: z.number().int(), attention: z.array(z.object({ memberId: denTypeIdSchema("member"), name: z.string().nullable(), email: z.string().nullable(), reason: trueFoundryAttentionReason, message: z.string().nullable() })) }).meta({ ref: "GatewayTrueFoundryStatus" })
+const trueFoundryKeySchema = z.string().trim().min(1).max(8192)
+const trueFoundryCreateMissingUsersSchema = z.boolean().describe("Create missing users in TrueFoundry: when an allowed person's OpenWork email is not a TrueFoundry user, add them to TrueFoundry (default member role, no invite email) and create their token. They get only TrueFoundry's default models until a TrueFoundry admin configures their teams and access.")
+const trueFoundryCreateSchema = z.object({ name: nameSchema.default("TrueFoundry"), controlPlaneUrl: z.string().trim().min(1).max(2048).describe("The address people open TrueFoundry at, e.g. https://acme.truefoundry.cloud."), gatewayUrl: z.string().trim().min(1).max(2048).optional().describe("The TrueFoundry AI Gateway base URL when it is not <controlPlaneUrl>/api/llm."), apiKey: trueFoundryKeySchema.describe("A TrueFoundry virtual account token with the tenant admin role. Write-only; never a personal access token."), createMissingUsers: trueFoundryCreateMissingUsersSchema.default(false), allMembers: z.boolean().optional(), memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() }).strict()
+const trueFoundrySyncResultSchema = z.object({ modelCount: z.number().int(), people: z.number().int(), tokensCreated: z.number().int(), usersCreated: z.number().int(), notInTrueFoundry: z.number().int(), noModels: z.number().int(), tokenLimit: z.number().int(), errors: z.number().int(), removed: z.number().int() })
+const trueFoundryMemberStatusSchema = z.object({ status: z.string(), message: z.string().nullable(), ready: z.boolean() })
 const liteLlmStatusSchema = z.object({ mode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES), keySource: z.enum(["personal", "issued"]).nullable(), issueStrategy: z.enum(["per_team", "mirror"]).nullable(), mirrorFallback: z.enum(["per_team", "error"]).nullable(), issuedMemberCount: z.number().int(), attentionCount: z.number().int(), attention: z.array(z.object({ memberId: denTypeIdSchema("member"), name: z.string().nullable(), email: z.string().nullable(), reason: z.enum(["not_in_litellm", "no_key_to_mirror", "no_models", "error"]) })), baseUrl: z.string().nullable(), spendTracking: z.boolean(), hasSyncKey: z.boolean(), lastSyncedAt: z.string().datetime().nullable(), lastSyncError: z.string().nullable(), modelCount: z.number().int(), teamCount: z.number().int(), connectedMemberCount: z.number().int() }).meta({ ref: "GatewayLiteLlmStatus" })
-const detailsSchema = summarySchema.extend({ litellm: liteLlmStatusSchema.optional(), custom: gatewayCustomProviderStatusSchema.meta({ ref: "GatewayCustomProviderStatus" }).optional().describe("Custom OpenAI-compatible providers: address, models and whether a key is stored (never the key). Only for callers who hold Manage Gateway providers."), settings: z.record(z.string(), z.unknown()), modelGroups: z.array(groupSchema), credentialSets: z.array(setSchema), accessGrants: z.array(grantSchema), oauthCallbackUrl: z.string().optional(), credentials: z.array(z.object({ id: denTypeIdSchema("inferenceProviderCredential"), credentialSetId: denTypeIdSchema("gatewayCredentialSet"), subject: z.string(), orgMembershipId: denTypeIdSchema("member").nullable(), memberName: z.string().nullable(), memberEmail: z.string().nullable(), kind: z.enum(GATEWAY_PROVIDER_CREDENTIAL_KINDS), status: z.enum(GATEWAY_PROVIDER_CREDENTIAL_STATUSES), expiresAt: z.string().datetime().nullable() })).optional().describe("Per-person credential rows. Only for callers who hold Manage Gateway providers."), credentialCounts: z.object({ total: z.number().int(), active: z.number().int(), revoked: z.number().int(), refreshFailed: z.number().int() }).optional().describe("Credential counts by status, returned instead of credentials to callers who may only view providers.") }).meta({ ref: "GatewayProviderDetails" })
+const detailsSchema = summarySchema.extend({ litellm: liteLlmStatusSchema.optional(), truefoundry: trueFoundryStatusSchema.optional().describe("TrueFoundry providers: addresses, sync state and people OpenWork has no working token for. Never a key or token."), custom: gatewayCustomProviderStatusSchema.meta({ ref: "GatewayCustomProviderStatus" }).optional().describe("Custom OpenAI-compatible providers: address, models and whether a key is stored (never the key). Only for callers who hold Manage Gateway providers."), settings: z.record(z.string(), z.unknown()), modelGroups: z.array(groupSchema), credentialSets: z.array(setSchema), accessGrants: z.array(grantSchema), oauthCallbackUrl: z.string().optional(), credentials: z.array(z.object({ id: denTypeIdSchema("inferenceProviderCredential"), credentialSetId: denTypeIdSchema("gatewayCredentialSet"), subject: z.string(), orgMembershipId: denTypeIdSchema("member").nullable(), memberName: z.string().nullable(), memberEmail: z.string().nullable(), kind: z.enum(GATEWAY_PROVIDER_CREDENTIAL_KINDS), status: z.enum(GATEWAY_PROVIDER_CREDENTIAL_STATUSES), expiresAt: z.string().datetime().nullable() })).optional().describe("Per-person credential rows. Only for callers who hold Manage Gateway providers."), credentialCounts: z.object({ total: z.number().int(), active: z.number().int(), revoked: z.number().int(), refreshFailed: z.number().int() }).optional().describe("Credential counts by status, returned instead of credentials to callers who may only view providers.") }).meta({ ref: "GatewayProviderDetails" })
 const detailsResponse = z.object({ inferenceProvider: detailsSchema })
 const connectResponse = z.object({ inferenceProvider: summarySchema.extend({ apiKey: z.string(), apiKeys: z.record(z.string(), z.string()) }) })
 const gatewayErrorSchema = z.object({ error: z.string(), message: z.string().optional() })
@@ -351,6 +360,7 @@ async function selectOAuthSet(provider: GatewayProvider, memberId: GatewayMember
  */
 function memberAttemptBinding(provider: GatewayProvider, set: GatewaySet, verifier: string): string | null {
   if (isLiteLlmProviderId(provider.provider_id)) return googleOAuthClientBinding(verifier, `litellm:${provider.id}`, set.id)
+  if (isTrueFoundryProviderId(provider.provider_id)) return googleOAuthClientBinding(verifier, `truefoundry:${provider.id}`, set.id)
   const method = gatewayMemberSignInMethod(provider.provider_id)
   return method ? memberSignInBinding(method, set, verifier) : null
 }
@@ -530,6 +540,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         if (!effectiveGatewaySummaryGrants(provider, actor.currentMember.id, reads).length) continue
         // Zero-touch LiteLLM keys: create this person's keys in the background on first use.
         if (isLiteLlmProviderId(provider.provider_id)) scheduleLiteLlmProvisioning(provider, actor.currentMember.id)
+        if (isTrueFoundryProviderId(provider.provider_id)) scheduleTrueFoundryProvisioning(provider, actor.currentMember.id)
       }
       summaries.push(await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), manage, { managerDetails }, reads))
     }
@@ -606,9 +617,6 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
           // Serialize device shares (including retries after a lost response).
           // Ordinary Gateway creation still permits intentionally separate configurations.
           await lockUsageOrganization(tx, actor.organization.id)
-          if (!await organizationFeatureEnabled(actor.organization.id, "shareDeviceProvider", { database: tx, lock: "share", userId: actor.currentMember.userId })) {
-            throw new GatewayWriteError(404, "feature_disabled", "Sharing from this device is not available for your organization.")
-          }
           const [existing] = await tx.select({ id: GatewayProviderTable.id }).from(GatewayProviderTable)
             .where(and(eq(GatewayProviderTable.organization_id, actor.organization.id), eq(GatewayProviderTable.provider_id, input.providerId), eq(GatewayProviderTable.status, "active")))
             .limit(1).for("update")
@@ -820,6 +828,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         await writeGatewayGrant(tx, provider, merged, id)
         await pruneLiteLlmAssignments(tx, provider)
         if (isLiteLlmProviderId(provider.provider_id)) await pruneLiteLlmIssuedKeys(tx, provider)
+        await pruneTrueFoundryMembers(tx, provider)
         await touch(tx, provider)
         return merged
       })
@@ -864,7 +873,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const query = c.req.valid("query")
       const set = await selectOAuthSet(provider, actor.currentMember.id, query.credentialSetId)
       const signInMethod = gatewayMemberSignInMethod(provider.provider_id)
-      if (!isLiteLlmProviderId(provider.provider_id)) {
+      if (!isLiteLlmProviderId(provider.provider_id) && !isTrueFoundryProviderId(provider.provider_id)) {
         const configurationError = signInMethod ? memberSignInConfigurationError(signInMethod, set) : "This provider does not support member sign-in."
         if (configurationError) throw new GatewayWriteError(400, "oauth_client_required", `An administrator must finish this credential set's sign-in setup. ${configurationError}`)
       }
@@ -891,7 +900,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/oauth/browser-status", route("Check browser readiness for member sign-in", "Read-only check of a ten-minute entry handle and the live signed OpenWork browser cookie, never a bearer substitute. Returns sign_in_required without a live cookie, account_mismatch for another signed-in user without revealing identities, or ready only after validating the original member, provider, credential set, OAuth client configuration and current grants. Does not consume or rotate the entry, create Google state, exchange tokens or revoke credentials. Browser-start and callback independently repeat authorization checks.", z.object({ status: z.enum(["sign_in_required", "account_mismatch", "ready"]), method: z.enum([...GATEWAY_MEMBER_SIGN_IN_METHODS, "litellm_key", "litellm_issued"]).optional().describe("Present when ready. google and microsoft: continue with browser-start. aws_sso: start AWS device sign-in with browser-aws-start, then poll browser-aws-poll. litellm_key: submit the member's LiteLLM key to browser-litellm-key. litellm_issued: OpenWork creates the key; issue reports why it has not yet, and browser-litellm-check retries."), providerName: z.string().optional(), issue: liteLlmIssueStatusSchema.optional() }), 200, true, { security: [], responses: { 403: jsonResponse("Provider access or OAuth configuration changed.", gatewayErrorSchema) } }), publicRoute, async (c, next) => {
+  app.get("/v1/inference-providers/oauth/browser-status", route("Check browser readiness for member sign-in", "Read-only check of a ten-minute entry handle and the live signed OpenWork browser cookie, never a bearer substitute. Returns sign_in_required without a live cookie, account_mismatch for another signed-in user without revealing identities, or ready only after validating the original member, provider, credential set, OAuth client configuration and current grants. Does not consume or rotate the entry, create Google state, exchange tokens or revoke credentials. Browser-start and callback independently repeat authorization checks.", z.object({ status: z.enum(["sign_in_required", "account_mismatch", "ready"]), method: z.enum([...GATEWAY_MEMBER_SIGN_IN_METHODS, "litellm_key", "litellm_issued", "truefoundry_issued"]).optional().describe("Present when ready. google and microsoft: continue with browser-start. aws_sso: start AWS device sign-in with browser-aws-start, then poll browser-aws-poll. litellm_key: submit the member's LiteLLM key to browser-litellm-key. litellm_issued: OpenWork creates the key; issue reports why it has not yet, and browser-litellm-check retries. truefoundry_issued: OpenWork creates the person's TrueFoundry key; truefoundry reports why it has not yet, and browser-truefoundry-check retries."), providerName: z.string().optional(), issue: liteLlmIssueStatusSchema.optional(), truefoundry: trueFoundryMemberStatusSchema.optional() }), 200, true, { security: [], responses: { 403: jsonResponse("Provider access or OAuth configuration changed.", gatewayErrorSchema) } }), publicRoute, async (c, next) => {
     c.header("Cache-Control", "no-store")
     c.header("Referrer-Policy", "no-referrer")
     await next()
@@ -911,7 +920,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       oauthRedirect(entry.redirect_to ?? undefined)
       const liteLlmMode = isLiteLlmProviderId(provider.provider_id) ? readLiteLlmSettings(provider.settings)?.keySource ?? "personal" : null
       const signInMethod = gatewayMemberSignInMethod(provider.provider_id)
-      const method = liteLlmMode === "issued" ? "litellm_issued" as const : liteLlmMode ? "litellm_key" as const : signInMethod ?? "google"
+      const method = isTrueFoundryProviderId(provider.provider_id) ? "truefoundry_issued" as const : liteLlmMode === "issued" ? "litellm_issued" as const : liteLlmMode ? "litellm_key" as const : signInMethod ?? "google"
       // The live signed cookie matches the entry's initiating user: attribute to
       // the provider's organization and the entry's member before any write.
       const auditBlocked = await attributeMemberOAuthEntry(c, { organizationId: provider.organization_id, userId: session.userId, memberId: entry.org_membership_id })
@@ -925,7 +934,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         return "ready"
       })
       const issue = status === "ready" && method === "litellm_issued" ? await liteLlmMemberIssueStatus(provider.id, entry.org_membership_id) : null
-      return c.json(status === "ready" ? { status, method, providerName: provider.name, ...(issue ? { issue } : {}) } : { status })
+      const truefoundry = status === "ready" && method === "truefoundry_issued" ? await trueFoundryMemberStatus(provider.id, entry.org_membership_id) : null
+      return c.json(status === "ready" ? { status, method, providerName: provider.name, ...(issue ? { issue } : {}), ...(truefoundry ? { truefoundry } : {}) } : { status })
     } catch (error) { return respond(c, error) }
   })
 
@@ -944,6 +954,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, entry.gateway_provider_id))
       const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
       if (provider && isLiteLlmProviderId(provider.provider_id)) throw new GatewayWriteError(400, "litellm_key_required", "This provider uses your own LiteLLM key, not Google sign-in.")
+      if (provider && isTrueFoundryProviderId(provider.provider_id)) throw new GatewayWriteError(400, "truefoundry_keys_managed", "OpenWork creates your TrueFoundry key for this provider; there is nothing to sign in to.")
       const method = provider ? gatewayMemberSignInMethod(provider.provider_id) : null
       if (method === "aws_sso") throw new GatewayWriteError(400, "aws_device_sign_in_required", "This provider uses AWS sign-in. Start it from the connect page.")
       if (!provider || !set || !method || attempt.clientBinding !== memberSignInBinding(method, set, attempt.verifier)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
@@ -1138,6 +1149,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
       if (isLiteLlmProviderId(provider.provider_id) && readLiteLlmSettings(provider.settings)?.keySource === "issued") throw new GatewayWriteError(409, "litellm_keys_managed", "OpenWork manages these LiteLLM keys. Ask your admin to remove your access instead.")
+      if (isTrueFoundryProviderId(provider.provider_id)) throw new GatewayWriteError(409, "truefoundry_keys_managed", "OpenWork manages these TrueFoundry keys. Ask your admin to remove your access instead.")
       const selected = c.req.valid("query").credentialSetId
       const sets = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))
       const candidates = selected ? sets.filter((set) => set.id === selected) : sets.filter((set) => set.credential_mode === "member")
@@ -1320,6 +1332,94 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
+  app.post("/v1/inference-providers/truefoundry", route("Create TrueFoundry gateway provider", "Connects the organization's TrueFoundry AI Gateway with one TrueFoundry admin key (a virtual account token with the tenant admin role) and syncs its chat models. The given audiences are granted the empty \"Gets a TrueFoundry key\" group. For each allowed person, OpenWork finds their TrueFoundry user by OpenWork email (or, with createMissingUsers, adds them), creates one personal access token owned by that user, stores it as the person's own credential and grants the shared group matching the models that token can reach. TrueFoundry budgets and logs those tokens, so OpenWork spend tracking is off. Keys are write-only. Requires the Manage Gateway providers permission and Gateway management; session callers must recently reauthenticate.", z.object({ inferenceProvider: detailsSchema, sync: trueFoundrySyncResultSchema }), 201, true), orgMemberRoute(), managementWrite, jsonValidator(trueFoundryCreateSchema), async (c) => {
+    try {
+      const actor = c.get("organizationContext")
+      const input = c.req.valid("json")
+      const endpoints = await trueFoundryCall(async () => normalizeTrueFoundryEndpoints(input.controlPlaneUrl, input.gatewayUrl))
+      const urlError = upstreamBaseUrlSettingError({ upstreamBaseUrl: endpoints.gatewayBaseUrl })
+      if (urlError) throw new GatewayWriteError(400, "invalid_settings", urlError)
+      const client = createTrueFoundryClient(endpoints)
+      const catalog = await trueFoundryCall(() => planTrueFoundryCatalog(client, input.apiKey))
+      const now = new Date()
+      const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: TRUEFOUNDRY_PROVIDER_ID, name: input.name, model_ids: [], pinned_model_ids: [], provider_config: buildProviderConfigSnapshot(trueFoundryCatalogProvider({ settings: {} })), settings: { upstreamBaseUrl: endpoints.gatewayBaseUrl, truefoundry: emptyTrueFoundrySettings(endpoints.controlPlaneUrl, "pending", input.createMissingUsers) }, credential_mode: "member", oauth_client_id: null, oauth_client_secret: null, status: "active", created_at: now, updated_at: now }
+      await db.transaction(async (tx) => {
+        const member = await liveMember(tx, actor, true)
+        await requireLiveManage(tx, actor)
+        await createTrueFoundryProvider(tx, provider, { adminKey: input.apiKey, audiences: liteLlmAudiences(input), creatorId: member.id }, catalog)
+      })
+      // Everyone allowed gets a token straight away; nobody has to connect anything.
+      const sync = await trueFoundryCall(() => reconcileTrueFoundryMembers(provider, client))
+      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync }, 201)
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.post("/v1/inference-providers/:inferenceProviderId/truefoundry/sync", route("Sync TrueFoundry models and people", "Reads the tenant's chat models with the stored TrueFoundry admin key, then for every allowed person rechecks their token's models, creates a token for people who have none yet (adding missing TrueFoundry users when createMissingUsers is on), and deletes the tokens of people who lost access or left. A failed catalog read keeps the last synced models and records the error. Requires the Manage Gateway providers permission and Gateway management.", z.object({ inferenceProvider: detailsSchema, sync: trueFoundrySyncResultSchema }), 200, false, { "x-mcp-search-aliases": ["sync truefoundry models", "refresh truefoundry keys"] }), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), async (c) => {
+    try {
+      const actor = c.get("organizationContext")
+      const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
+      if (!isTrueFoundryProviderId(before.provider_id)) throw new GatewayWriteError(409, "truefoundry_not_configured", "Only TrueFoundry providers can be synced here.")
+      const plan = await planTrueFoundrySync(before).catch(async (error: unknown) => {
+        if (error instanceof TrueFoundryError) {
+          await recordTrueFoundrySyncError(before.id, error.message)
+          throw trueFoundryErrorResponse(error)
+        }
+        throw error
+      })
+      const provider = await providerTransaction(c, async (tx, locked) => { await applyTrueFoundryCatalog(tx, locked, plan); return locked })
+      const sync = await trueFoundryCall(() => reconcileTrueFoundryMembers(provider))
+      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync })
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.patch("/v1/inference-providers/:inferenceProviderId/truefoundry", route("Update TrueFoundry admin key or missing users", "Verifies and stores a new TrueFoundry admin key, and/or turns Create missing users in TrueFoundry on or off, then syncs. The addresses are fixed; create a new provider to change them. Keys are write-only. Requires the Manage Gateway providers permission and Gateway management; session callers must recently reauthenticate.", z.object({ inferenceProvider: detailsSchema, sync: trueFoundrySyncResultSchema }), 200, true), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(z.object({ apiKey: trueFoundryKeySchema.optional(), createMissingUsers: trueFoundryCreateMissingUsersSchema.optional() }).strict().refine((input) => Object.keys(input).length > 0, "Provide apiKey or createMissingUsers.")), async (c) => {
+    try {
+      const actor = c.get("organizationContext")
+      const input = c.req.valid("json")
+      const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
+      if (!isTrueFoundryProviderId(before.provider_id) || !readTrueFoundrySettings(before.settings)) throw new GatewayWriteError(409, "truefoundry_not_configured", "Only TrueFoundry providers have a TrueFoundry key.")
+      const client = createTrueFoundryClient(await trueFoundryCall(async () => trueFoundryEndpoints(before)))
+      const apiKey = input.apiKey
+      if (apiKey !== undefined) await trueFoundryCall(() => planTrueFoundryCatalog(client, apiKey))
+      await providerTransaction(c, async (tx, provider) => updateTrueFoundryProvider(tx, provider, { adminKey: apiKey, createMissingUsers: input.createMissingUsers }))
+      // Primary: reads the key the transaction above just stored.
+      const refreshed = await getProvider(db.$primary, actor, before.id)
+      const plan = await trueFoundryCall(() => planTrueFoundrySync(refreshed, client))
+      const provider = await providerTransaction(c, async (tx, locked) => { await applyTrueFoundryCatalog(tx, locked, plan); return locked })
+      const sync = await trueFoundryCall(() => reconcileTrueFoundryMembers(provider, client))
+      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync })
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.post("/v1/inference-providers/oauth/browser-truefoundry-check", route("Retry creating the caller's TrueFoundry key from a signed-in browser", "For TrueFoundry providers. Uses the ten-minute entry handle from oauth/start plus the signed-in browser session of the same user to look the person up in TrueFoundry by email again (adding them when the provider creates missing users) and create their token. Returns the outcome; a ready token consumes the handle. Bearer authentication alone is not accepted.", trueFoundryMemberStatusSchema, 200, true, { security: [] }), publicRoute, async (c, next) => {
+    c.header("Cache-Control", "no-store")
+    c.header("Referrer-Policy", "no-referrer")
+    await next()
+  }, jsonValidator(z.object({ attempt: z.string().regex(/^entry\.[A-Za-z0-9_-]{43}$/) }).strict()), async (c) => {
+    try {
+      const input = c.req.valid("json")
+      const cookieToken = await readSignedSessionCookieToken(c)
+      const [session] = cookieToken ? await db.select().from(AuthSessionTable).where(and(sessionTokenMatches(cookieToken), gt(AuthSessionTable.expiresAt, new Date()))).limit(1) : []
+      if (!session) return c.json({ error: "browser_signin_required", message: "Sign in to OpenWork in this browser, then continue here." }, 401)
+      // Primary: oauth/start wrote this handle moments before the browser presents it.
+      const [entry] = await db.$primary.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, input.attempt)).limit(1)
+      const attempt = entry ? readGoogleOAuthAttempt(entry.code_verifier) : null
+      if (!entry || !attempt || entry.used_at || entry.expires_at.getTime() <= Date.now()) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
+      if (attempt.userId !== session.userId) throw new GatewayWriteError(403, "browser_account_mismatch", "Use the same OpenWork account that started Connect. Sign out in this browser and sign in with that account.")
+      const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, entry.gateway_provider_id))
+      const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
+      if (!provider || !set || provider.status !== "active" || !isTrueFoundryProviderId(provider.provider_id) || attempt.clientBinding !== memberAttemptBinding(provider, set, attempt.verifier)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
+      // The live signed cookie matches the entry's initiating user: attribute to
+      // the provider's organization and the entry's member before any write.
+      const auditBlocked = await attributeMemberOAuthEntry(c, { organizationId: provider.organization_id, userId: session.userId, memberId: entry.org_membership_id })
+      if (auditBlocked) return auditBlocked
+      await trueFoundryCall(() => provisionTrueFoundryMember(provider, entry.org_membership_id, { force: true }))
+      const status = await trueFoundryMemberStatus(provider.id, entry.org_membership_id)
+      if (status.ready) await db.update(GatewayProviderOauthStateTable).set({ used_at: new Date() }).where(and(eq(GatewayProviderOauthStateTable.id, entry.id), isNull(GatewayProviderOauthStateTable.used_at)))
+      return c.json(status)
+    } catch (error) { return respond(c, error) }
+  })
+
   app.post("/v1/inference-providers/migrate-from-llm-provider", route("Move an LLM provider to the inference gateway", "Atomically converts a supported shared models.dev LLM provider into a Gateway provider with its models, shared credential and audiences, then deletes the source. Returns Gateway management details; validation failure preserves the source. Per-member credentials and providers needing explicit Azure/Vertex configuration are rejected. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", detailsResponse, 201), orgMemberRoute(), managementWrite, jsonValidator(z.object({ llmProviderId: denTypeIdSchema("llmProvider") }).strict()), async (c) => {
     try {
       const actor = c.get("organizationContext")
@@ -1373,9 +1473,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
   })
 }
 
-// --- Custom OpenAI-compatible providers (feature gatewayCustomProviders) ---
+// --- Custom OpenAI-compatible providers ---
 
-const CUSTOM_FEATURE = "gatewayCustomProviders"
 const customCreateSchema = gatewayCustomCreateRequestSchema.extend({ memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() })
 const customDetailsResponse = detailsResponse
 const rateLimitedSchema = z.object({ error: z.literal("rate_limited"), retryAfterSeconds: z.number() })
@@ -1458,9 +1557,8 @@ async function writeCustomModels(tx: GatewayTx, provider: GatewayProvider) {
 }
 
 function registerCustomProviderRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
-  const flagOff = { 404: jsonResponse("Not found, or custom providers are off for this organization (feature_disabled).", z.union([notFoundSchema, z.object({ error: z.literal("feature_disabled"), feature: z.string() })])) }
 
-  app.post("/v1/inference-providers/custom/discover-models", route("Fetch models from a custom OpenAI-compatible provider", "Calls GET {baseUrl}/models on an OpenAI-compatible provider with its API key (or, with inferenceProviderId, the saved key of that custom provider, only for its saved address's origin) and returns each model with suggested models.dev-style settings, matched against the models.dev OpenRouter catalog. status is detailed (OpenRouter-style entries), basic (ids only) or unavailable (with a reason). The address must be public HTTPS or approved by the operator. 10-second timeout, 5 MB and 500 models at most. Nothing is stored. Requires the Manage Gateway providers permission, enabled Gateway management and the gatewayCustomProviders feature; a person must send it, never the agent or an API key. Limited to 20 per member and 60 per organization every ten minutes.", gatewayCustomDiscoverResponseSchema.meta({ ref: "GatewayCustomDiscoverResponse" }), 200, true, { responses: { ...flagOff, 429: jsonResponse("Too many requests. Try again later.", rateLimitedSchema) } }), orgMemberRoute(), requireFeature(CUSTOM_FEATURE), testConnectionAccess, jsonValidator(gatewayCustomDiscoverRequestSchema), async (c) => {
+  app.post("/v1/inference-providers/custom/discover-models", route("Fetch models from a custom OpenAI-compatible provider", "Calls GET {baseUrl}/models on an OpenAI-compatible provider with its API key (or, with inferenceProviderId, the saved key of that custom provider, only for its saved address's origin) and returns each model with suggested models.dev-style settings, matched against the models.dev OpenRouter catalog. status is detailed (OpenRouter-style entries), basic (ids only) or unavailable (with a reason). The address must be public HTTPS or approved by the operator. 10-second timeout, 5 MB and 500 models at most. Nothing is stored. Requires the Manage Gateway providers permission and enabled Gateway management; a person must send it, never the agent or an API key. Limited to 20 per member and 60 per organization every ten minutes.", gatewayCustomDiscoverResponseSchema.meta({ ref: "GatewayCustomDiscoverResponse" }), 200, true, { responses: { 429: jsonResponse("Too many requests. Try again later.", rateLimitedSchema) } }), orgMemberRoute(), testConnectionAccess, jsonValidator(gatewayCustomDiscoverRequestSchema), async (c) => {
     try {
       c.header("Cache-Control", "no-store")
       const actor = c.get("organizationContext")
@@ -1481,7 +1579,7 @@ function registerCustomProviderRoutes<T extends { Variables: OrgRouteVariables }
     } catch (error) { return respond(c, error) }
   })
 
-  app.post("/v1/inference-providers/custom/test-connection", route("Test a custom OpenAI-compatible provider before saving it", "Sends one short test prompt through AI Gateway to {baseUrl}/chat/completions with the unsaved API key (or, with inferenceProviderId, the saved key of that custom provider, only for its saved address's origin) and the model settings on screen. Nothing is stored and no usage is recorded. ok=false carries a message for the admin that never contains the key, and step says which setup step the failure belongs to (connection: address or key; model: that model's id or settings; null: try again later). May consume a few tokens on the provider account. Requires the Manage Gateway providers permission, enabled Gateway management and the gatewayCustomProviders feature; a person must send it, never the agent or an API key. Shares the provider test limit of 20 tests per member and 60 per organization every ten minutes.", gatewayCustomTestResponseSchema.meta({ ref: "GatewayCustomTestResponse" }), 200, true, { responses: { ...flagOff, 429: jsonResponse("Too many tests. Try again later.", rateLimitedSchema) } }), orgMemberRoute(), requireFeature(CUSTOM_FEATURE), testConnectionAccess, jsonValidator(gatewayCustomTestRequestSchema), async (c) => {
+  app.post("/v1/inference-providers/custom/test-connection", route("Test a custom OpenAI-compatible provider before saving it", "Sends one short test prompt through AI Gateway to {baseUrl}/chat/completions with the unsaved API key (or, with inferenceProviderId, the saved key of that custom provider, only for its saved address's origin) and the model settings on screen. Nothing is stored and no usage is recorded. ok=false carries a message for the admin that never contains the key, and step says which setup step the failure belongs to (connection: address or key; model: that model's id or settings; null: try again later). May consume a few tokens on the provider account. Requires the Manage Gateway providers permission and enabled Gateway management; a person must send it, never the agent or an API key. Shares the provider test limit of 20 tests per member and 60 per organization every ten minutes.", gatewayCustomTestResponseSchema.meta({ ref: "GatewayCustomTestResponse" }), 200, true, { responses: { 429: jsonResponse("Too many tests. Try again later.", rateLimitedSchema) } }), orgMemberRoute(), testConnectionAccess, jsonValidator(gatewayCustomTestRequestSchema), async (c) => {
     try {
       c.header("Cache-Control", "no-store")
       const actor = c.get("organizationContext")
@@ -1511,7 +1609,7 @@ function registerCustomProviderRoutes<T extends { Variables: OrgRouteVariables }
     } catch (error) { return respond(c, error) }
   })
 
-  app.post("/v1/inference-providers/custom", route("Create custom OpenAI-compatible gateway provider", "Adds an OpenAI-compatible provider to AI Gateway with a name, its API address (public HTTPS or operator-approved; a trailing /chat/completions is removed), one API key and its models (models.dev-shaped settings, usually from discover-models). Creates the provider, an \"All Allowed Models\" group, an organization credential set with the key and grants to allMembers, memberIds and teamIds, and returns management details. Test with custom/test-connection first; this route does not call the provider. The key is write-only. Requires the Manage Gateway providers permission, enabled Gateway management and the gatewayCustomProviders feature; session callers must recently reauthenticate.", customDetailsResponse, 201, true, { responses: flagOff }), orgMemberRoute(), requireFeature(CUSTOM_FEATURE), managementWrite, jsonValidator(customCreateSchema), async (c) => {
+  app.post("/v1/inference-providers/custom", route("Create custom OpenAI-compatible gateway provider", "Adds an OpenAI-compatible provider to AI Gateway with a name, its API address (public HTTPS or operator-approved; a trailing /chat/completions is removed), one API key and its models (models.dev-shaped settings, usually from discover-models). Creates the provider, an \"All Allowed Models\" group, an organization credential set with the key and grants to allMembers, memberIds and teamIds, and returns management details. Test with custom/test-connection first; this route does not call the provider. The key is write-only. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", customDetailsResponse, 201, true), orgMemberRoute(), managementWrite, jsonValidator(customCreateSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const input = c.req.valid("json")
@@ -1534,7 +1632,7 @@ function registerCustomProviderRoutes<T extends { Variables: OrgRouteVariables }
     } catch (error) { return respond(c, error) }
   })
 
-  app.patch("/v1/inference-providers/:inferenceProviderId/custom", route("Update custom OpenAI-compatible gateway provider", "Changes a custom provider's name, API address, API key or models and returns management details. A new address on another host needs apiKey in the same request, so a saved key is never sent to a host it was not saved for. models replaces the model list: removed models leave every group, new ones join groups that held every model, and access grants are kept. The UI tests address, key and model id changes first; this route does not call the provider. The key is write-only. Requires the Manage Gateway providers permission, enabled Gateway management and the gatewayCustomProviders feature; session callers must recently reauthenticate.", customDetailsResponse, 200, true, { responses: flagOff }), orgMemberRoute(), requireFeature(CUSTOM_FEATURE), managementWrite, paramValidator(paramsSchema), jsonValidator(gatewayCustomUpdateRequestSchema), async (c) => {
+  app.patch("/v1/inference-providers/:inferenceProviderId/custom", route("Update custom OpenAI-compatible gateway provider", "Changes a custom provider's name, API address, API key or models and returns management details. A new address on another host needs apiKey in the same request, so a saved key is never sent to a host it was not saved for. models replaces the model list: removed models leave every group, new ones join groups that held every model, and access grants are kept. The UI tests address, key and model id changes first; this route does not call the provider. The key is write-only. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", customDetailsResponse, 200, true), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(gatewayCustomUpdateRequestSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const input = c.req.valid("json")

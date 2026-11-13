@@ -5,7 +5,7 @@ import { z } from "zod";
 import { workbotHost } from "./host";
 
 /**
- * An App built in OpenWork, running in the panel beside the chat (`workbotApps`). Workbot's server opens the App from
+ * An App built in OpenWork, running in the panel beside the chat. Workbot's server opens the App from
  * its own MCP server as the person and hands back its page; this component puts the page in an opaque-origin frame
  * and answers the frame's MCP Apps requests. The App's tools run through the server, as the person. The App never
  * gets this page's origin, sign-in or conversation.
@@ -136,7 +136,7 @@ export function OpenWorkApp({ appId, title }: { appId: string; title: string }) 
   if (failed) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center" data-workbot-app-failed>
-        <p className="text-[13px] leading-5 text-[var(--wb-muted)]">This App couldn&apos;t open. It may have been removed, or not shared with you.</p>
+        <p className="text-[13px] leading-5 text-[var(--wb-muted)]">This artifact couldn&apos;t open. It may have been removed, or not shared with you.</p>
         <button
           type="button"
           onClick={() => setAttempt((current) => current + 1)}

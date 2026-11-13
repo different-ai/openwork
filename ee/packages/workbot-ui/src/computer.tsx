@@ -96,7 +96,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   // Still waiting for the computer after a while: Rebuild is offered beside the wait, not only once it has failed.
   const [slow, setSlow] = useState(false);
   const [livePage, setLivePage] = useState<ScreencastPage | null>(null);
-  const previewEnabled = Boolean(host.identity && (view === "browser" || host.browserPreview));
+  const previewEnabled = Boolean(host.identity);
   // A browser task keeps its own pictures; the computer's are kept for the view, where its cards read them.
   const frameTask = view === "browser" ? task?.id : undefined;
   const [denied, setDenied] = useState(() => viewFramesDenied(glimpseKey(chat, view)));
@@ -621,7 +621,7 @@ function watchGlimpse(host: ReturnType<typeof workbotHost>, chat: string | null,
     paused: () => set("unavailable"),
     agentPaused: () => {},
     connected: () => set("live"),
-    reconnecting: () => { if (host.identity && (view === "browser" || host.browserPreview) && shared.state !== "denied") captureFrame(container, key); set("connecting"); },
+    reconnecting: () => { if (host.identity && shared.state !== "denied") captureFrame(container, key); set("connecting"); },
     failed: (_message, denied) => set(denied ? "denied" : "unavailable"),
   });
   shared.close = () => { unsubscribe(); disconnect(); };
@@ -632,7 +632,7 @@ function watchGlimpse(host: ReturnType<typeof workbotHost>, chat: string | null,
 function releaseGlimpse(key: string, shared: SharedGlimpse) {
   shared.users -= 1;
   if (shared.users > 0) return;
-  if ((shared.view === "browser" || shared.host.browserPreview) && shared.host.identity && shared.state === "live" && !viewFramesDenied(key)) captureFrame(shared.container, key);
+  if (shared.host.identity && shared.state === "live" && !viewFramesDenied(key)) captureFrame(shared.container, key);
   shared.linger = setTimeout(() => {
     if (sharedGlimpses.get(key) === shared) sharedGlimpses.delete(key);
     shared.close();
@@ -649,7 +649,7 @@ export function LiveGlimpse({ view, onOpen, previewOnly = false, taskId }: { vie
   const host = workbotHost();
   const chat = useWorkbotChat();
   const key = glimpseKey(chat, view, taskId);
-  const previewEnabled = Boolean(host.identity && (view === "browser" || host.browserPreview));
+  const previewEnabled = Boolean(host.identity);
   const [snapshot, setSnapshot] = useState(() => previewEnabled ? lastFrame(key) : null);
   const screen = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<GlimpseState>("connecting");
@@ -716,7 +716,7 @@ export function LastGlimpse({ view, taskId, large = false }: { view: ComputerVie
   const host = workbotHost();
   const chat = useWorkbotChat();
   const key = glimpseKey(chat, view, taskId);
-  const previewEnabled = Boolean(host.identity && (view === "browser" || host.browserPreview));
+  const previewEnabled = Boolean(host.identity);
   const [snapshot, setSnapshot] = useState(() => previewEnabled ? lastFrame(key) : null);
   useLayoutEffect(() => {
     const read = () => setSnapshot(previewEnabled ? lastFrame(key) : null);

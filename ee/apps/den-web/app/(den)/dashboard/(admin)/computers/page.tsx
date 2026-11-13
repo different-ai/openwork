@@ -1,5 +1,6 @@
+import { DASHBOARD_PAGE_CLASS } from "../../../_components/ui/dashboard-styles";
 import { ComputersScreen } from "../../_features/computers/computers-screen";
 
 export default function ComputersPage() {
-  return <div className="mx-auto w-full max-w-[1200px] px-6 py-8 md:px-8"><ComputersScreen /></div>;
+  return <div className={DASHBOARD_PAGE_CLASS}><ComputersScreen /></div>;
 }

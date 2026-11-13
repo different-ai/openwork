@@ -1,4 +1,4 @@
-// Forwarding for custom OpenAI-compatible providers (feature gatewayCustomProviders):
+// Forwarding for custom OpenAI-compatible providers:
 // the saved address is the only upstream, it is re-checked on every request,
 // and usage is priced from the saved model's cost when it has one.
 import assert from "node:assert/strict"

@@ -40,7 +40,7 @@ const { and, eq } = await import("@openwork-ee/den-db/drizzle")
 const { AGENT_TEMPLATE_PATH } = await import("../../src/workbot-proactive/template.js")
 
 const SECRETS = { byok: "sk-whole-byok-SECRET-1", gateway: "sk-whole-gateway-SECRET-1", oauth: "whole-oauth-client-SECRET-1", oidc: "whole-oidc-client-SECRET-1" }
-const FEATURES = ["configBlobs", "autoRouter", "workbotProactive", "sessionSecuritySettings", "authSecuritySettings", "multipleSsoConnections", "workbotTeamSettings"]
+const FEATURES: string[] = []
 const skillMarkdown = (name: string, body: string) => `---\nname: ${name}\ndescription: A skill of the whole-org round trip.\n---\n\n${body}\n`
 
 type Api = ReturnType<typeof den.as>
@@ -295,7 +295,8 @@ test("export A: every area, no secret values", async () => {
   assert.deepEqual(exportedA.omitted ?? [], [], "nothing left out")
   assert.deepEqual([...exportedA.scope].sort(), [...CONFIG_AREA_KEYS].sort(), "all 27 areas")
   const empty = CONFIG_AREA_KEYS.filter((key) => areaItems(exportedA, key).length === 0)
-  assert.deepEqual(empty, [], "something in every area")
+  // Every feature this organization once turned on is now on for everyone, so no flag is left to export.
+  assert.deepEqual(empty, FEATURES.length ? [] : ["settings.features"], "something in every other area")
   // Task 1: the "Your agent" template rides with workbot.proactive only.
   assert.ok(!areaItems(exportedA, "plugins.skills").some((item) => item.id === templateId || item.spec.type === "agent"), JSON.stringify(areaItems(exportedA, "plugins.skills").map((item) => [item.name, item.spec.type])))
 })

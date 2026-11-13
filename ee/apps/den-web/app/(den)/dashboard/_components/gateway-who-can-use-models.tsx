@@ -5,9 +5,10 @@ import { Dialog } from "@base-ui/react/dialog";
 import { Laptop, Lock, Sparkles, Users } from "lucide-react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenChip } from "../../_components/ui/chip";
+import { AUTOMATION_CARD_CLASS } from "../../_components/ui/dashboard-styles";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getOrgAccessFlags, orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
+import { getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useOrgDesktopPolicies } from "./desktop-policy-data";
 import { readModelAccessState, saveModelAccess, type ModelAccessMode } from "./model-access-policy";
@@ -31,7 +32,6 @@ function Option({ testId, checked, title, description, onSelect, children }: {
 
 export function GatewayWhoCanUseModels() {
   const { orgId, orgContext, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
-  const localSwitch = orgContext ? orgFeatureEnabled(orgContext, "localModelsPolicy") : false;
   // Model access is a desktop policy: owners by default. Others see it, locked with why (DESIGN P4).
   const canChange = orgContext
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canManageDesktopPolicies
@@ -57,14 +57,14 @@ export function GatewayWhoCanUseModels() {
   const keys = managed
     ? `Members can't add their own keys${state.adminException ? ", admins can" : ""}`
     : "Members can also add their own keys on their device";
-  const consequence = localSwitch ? `${keys}. Local models ${state.localAllowed ? "on" : "off"}` : keys;
+  const consequence = `${keys}. Local models ${state.localAllowed ? "on" : "off"}`;
 
   async function save() {
     setError(null);
     setSaving(true);
     try {
       await runReauthableAction("save-model-access", async () => {
-        await saveModelAccess(state, { mode, adminException, zenAllowed, ...(localSwitch ? { localAllowed } : {}) });
+        await saveModelAccess(state, { mode, adminException, zenAllowed, localAllowed });
         await reloadPolicies();
       });
       setOpen(false);
@@ -77,24 +77,24 @@ export function GatewayWhoCanUseModels() {
 
   return (
     <>
-      <div className="flex items-center gap-4 rounded-[12px] border border-gray-100 bg-white px-4 py-3" data-testid="gateway-model-policy-row">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-gray-100 text-gray-500"><Users className="h-4 w-4" aria-hidden="true" /></span>
-        <p className="min-w-0 flex-1 text-[13px] font-medium text-gray-900">Who can use models</p>
-        {busy ? <span className="text-[12px] text-gray-400">Loading…</span> : (
+      <div className={`${AUTOMATION_CARD_CLASS} flex min-h-12 items-center gap-3 px-4 py-1.5`} data-testid="gateway-model-policy-row">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[var(--dls-hover)] text-[color:var(--dls-text-secondary)]"><Users size={16} strokeWidth={1.5} aria-hidden="true" /></span>
+        <p className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5 text-[color:var(--dls-text-primary)]">Who can use models</p>
+        {busy ? <span className="text-[12px] text-[color:var(--dls-text-secondary)]">Loading…</span> : (
           <>
             <DenChip size="xs" data-testid="gateway-model-policy-state">{managed ? "Only models you provide" : "Any model"}</DenChip>
-            <span className="hidden text-[12px] text-gray-500 md:inline">{consequence}</span>
+            <span className="hidden text-[12px] text-[color:var(--dls-text-secondary)] md:inline">{consequence}</span>
           </>
         )}
         {canChange ? (
           <DenButton size="sm" variant="secondary" data-testid="gateway-model-policy-open" disabled={busy} onClick={() => setOpen(true)}>Change</DenButton>
         ) : (
-          <span className="flex items-center gap-1.5 text-[12px] text-gray-500" data-testid="gateway-model-policy-locked" title={permissionLockReason("desktop_policies.manage")}>
+          <span className="flex items-center gap-1.5 text-[12px] text-[color:var(--dls-text-secondary)]" data-testid="gateway-model-policy-locked" title={permissionLockReason("desktop_policies.manage")}>
             <Lock className="h-3.5 w-3.5" aria-hidden="true" />Locked
           </span>
         )}
       </div>
-      {!canChange && !busy ? <p className="mt-2 px-1 text-[12px] text-gray-500">{permissionLockReason("desktop_policies.manage")}</p> : null}
+      {!canChange && !busy ? <p className="mt-2 px-1 text-[12px] text-[color:var(--dls-text-secondary)]">{permissionLockReason("desktop_policies.manage")}</p> : null}
 
       <Dialog.Root open={open && canChange && !reauthDialogOpen} onOpenChange={(next) => { if (saving) return; setOpen(next); setError(null); }}>
         <Dialog.Portal>
@@ -129,7 +129,7 @@ export function GatewayWhoCanUseModels() {
                 </span>
                 <DenSwitch checked={zenAllowed} onChange={setZenAllowed} aria-label="Free starter model" />
               </div>
-              {localSwitch ? (
+              {(
                 <div className="flex items-center gap-3 rounded-[12px] border border-gray-200 bg-white px-4 py-3" data-testid="gateway-model-access-local">
                   <Laptop className="h-4 w-4 shrink-0 text-gray-500" aria-hidden="true" />
                   <span className="min-w-0 flex-1">
@@ -138,7 +138,7 @@ export function GatewayWhoCanUseModels() {
                   </span>
                   <DenSwitch checked={localAllowed} onChange={setLocalAllowed} aria-label="Local models" />
                 </div>
-              ) : null}
+              )}
             </div>
             <div className="mt-4 flex items-center justify-between gap-3">
               <span className="text-[11px] text-gray-400">Takes effect next time members open OpenWork</span>

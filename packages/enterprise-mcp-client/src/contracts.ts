@@ -423,10 +423,13 @@ export type EnterpriseMcpClientOptions = {
   expirationSkewMs?: number
   clientName?: string
   clientVersion?: string
+  /** Advertise webhook events only for an explicitly enabled subscription operation. */
+  webhookEvents?: boolean
   lifecycle?: EnterpriseMcpLifecycle
 }
 
 export interface EnterpriseMcpClient {
+  requestEvents(input: EnterpriseMcpListResourcesInput & { method: "events/list" | "events/subscribe" | "events/unsubscribe"; params: Record<string, unknown> }): Promise<Record<string, unknown>>
   connect(input: EnterpriseMcpConnectInput): Promise<EnterpriseMcpConnectResult>
   completeAuthorization(input: EnterpriseMcpCompleteAuthorizationInput): Promise<void>
   abandonAuthorization(input: EnterpriseMcpAbandonAuthorizationInput): Promise<void>

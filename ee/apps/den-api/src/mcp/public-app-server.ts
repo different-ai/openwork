@@ -18,7 +18,7 @@ export const PUBLIC_MCP_APP_ROUTE = "/mcp/public/apps/:appIdOrName"
 /** MCP requests to a public App are a few hundred bytes; anything far larger is refused unread. */
 const MAX_REQUEST_BYTES = 64 * 1024
 const PUBLIC_READ_SCOPES: ReadonlySet<string> = new Set([DEN_MCP_READ_SCOPE])
-const UNAVAILABLE = "This App is not available."
+const UNAVAILABLE = "This artifact is not available."
 
 function jsonRpcError(id: string | number | null, message: string, error: string, status = 200): Response {
   return new Response(JSON.stringify({ jsonrpc: "2.0", id, error: { code: ErrorCode.InvalidRequest, message, data: { error } } }), {
@@ -84,7 +84,7 @@ export function registerPublicMcpAppRoutes<T extends { Variables: RequestIdVaria
           return { ...resource, app: served }
         },
         callTool: async () => ({ isError: true, content: [{ type: "text", text: UNAVAILABLE }] }),
-        instructions: `This is the ${served.title} App, published from OpenWork. Call ${MCP_APP_LAUNCH_TOOL_NAME} to open it. It needs no sign-in and has no other tools.`,
+        instructions: `This is the ${served.title} artifact, published from OpenWork. Call ${MCP_APP_LAUNCH_TOOL_NAME} to open it. It needs no sign-in and has no other tools.`,
       })
       const transport = new StreamableHTTPTransport()
       await server.connect(transport)

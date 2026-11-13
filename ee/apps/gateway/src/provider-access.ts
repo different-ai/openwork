@@ -178,7 +178,7 @@ export type GatewayListedModel = {
     provider_id: string
     provider_name: string
     upstream_model_id: string
-    /** Set on Smart Routers (feature `autoRouter`), whose id is `openwork-smart-<router id>`. */
+    /** Set on Smart Routers, whose id is `openwork-smart-<router id>`. */
     smart_router?: true
   }
 }

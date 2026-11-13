@@ -22,7 +22,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ChevronRight, Cloud, Laptop, MoreHorizontal } from "lucide-react";
 import { useCloudWorkspaceStatus } from "@/react-app/shell/cloud-workspace-overlay";
 import { useAutomationsDenContext, type AutomationsDenContext } from "../../automations/use-automations";
-import { useDesktopFeature } from "../../session/status/use-desktop-feature";
 import { useThisComputerDisconnected } from "../../devices/computer-connection-store";
 import { SessionAccessSection } from "../../devices/session-access-section";
 import { isThisComputer, useThisDeviceId } from "../../devices/this-device-store";
@@ -40,24 +39,20 @@ type DeviceAction = { kind: "register" } | { kind: "rename" | "disconnect" | "re
 
 export function DevicesView() {
   const context = useAutomationsDenContext();
-  const enabled = useDesktopFeature("remoteDevices");
-  const sessionAccess = useDesktopFeature("remoteSessionAccess");
   const { signOut } = useCloudWorkspaceStatus();
   // Key the contents to the sign-in, including dialogs and mutation state.
-  return <DevicesContent key={`${remoteDevicesContextQueryKey(context).join(":")}:${context.ready}`} context={context} enabled={enabled} sessionAccess={sessionAccess} organizationName={readDenSettings().activeOrgName?.trim() || null} onSignOut={signOut} />;
+  return <DevicesContent key={`${remoteDevicesContextQueryKey(context).join(":")}:${context.ready}`} context={context} organizationName={readDenSettings().activeOrgName?.trim() || null} onSignOut={signOut} />;
 }
 
-export function DevicesContent({ context, enabled, sessionAccess = false, organizationName = null, onSignOut }: { context: AutomationsDenContext; enabled: boolean; sessionAccess?: boolean; organizationName?: string | null; onSignOut?: () => void }) {
-  const query = useRemoteDevicesQuery(context, enabled);
+export function DevicesContent({ context, organizationName = null, onSignOut }: { context: AutomationsDenContext; organizationName?: string | null; onSignOut?: () => void }) {
+  const query = useRemoteDevicesQuery(context);
   const thisDeviceId = useThisDeviceId(context.organizationId);
   const disconnected = useThisComputerDisconnected();
   const [action, setAction] = useState<DeviceAction | null>(null);
   /** What the last disconnect did, until the next action. */
   const [outcome, setOutcome] = useState<string | null>(null);
   const begin = (next: DeviceAction) => { setOutcome(null); setAction(next); };
-  if (!enabled) return <p role="status" className="text-sm text-muted-foreground">Not turned on for this organization.</p>;
-  // Everyone with this page can turn their computer off; `sessionAccess` only adds opening sessions started here.
-  const sessionAccessSection = <SessionAccessSection allSessions={sessionAccess} />;
+  const sessionAccessSection = <SessionAccessSection />;
   if (!context.ready) return <LayoutStack><p role="status" className="text-sm text-muted-foreground">Sign in and select an organization in Cloud account to see your devices.</p>{sessionAccessSection}</LayoutStack>;
   const devices = query.data ?? [];
   return <LayoutStack>

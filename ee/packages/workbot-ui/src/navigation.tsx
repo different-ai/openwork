@@ -1,12 +1,12 @@
 "use client";
 
 import { Dialog } from "@base-ui/react/dialog";
-import { CalendarDays, FileText, FolderOpen, Lock, MessageCircle, MonitorSmartphone, PanelLeft, Plus, Search, Shapes, X } from "lucide-react";
+import { CalendarDays, FileText, Lock, MessageCircle, MonitorSmartphone, PanelLeft, Plus, Search, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { AccountAvatar } from "./account-menu";
 import { chatTitle, sinceLabel } from "./chats";
 import { newChatId, type WorkbotChats } from "./data";
-import { useRetainedSurface, workbotHost } from "./host";
+import { calmChat, useRetainedSurface, workbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
 import { useWorkbotViewport } from "./viewport";
 import type { WorkspacePage } from "./workspace";
@@ -25,9 +25,6 @@ export type NavigationProps = {
   /** Omit where side chats are unavailable. New chats use the same callback. */
   onOpenChat?: (chat: string | null) => void;
   drafts: boolean;
-  onFiles?: () => void;
-  /** Task progress is not a destination: it lives in the status under Workbot's name and the sheet behind it. */
-  onApps?: () => void;
   /** The real search trigger/palette. Mount only one navigation variant at a time. */
   search?: ReactNode;
   /** Optional callback alternative when the palette is mounted separately by the screen. */
@@ -38,7 +35,7 @@ export type NavigationProps = {
    * With `profileNav`: the navigation lists only full pages; the logo (and on a phone, a row with Workbot's name)
    * opens Workbot's profile, where Files and Apps live as tabs.
    */
-  onProfile?: () => void;
+  onProfile: () => void;
   /** Workbot's name for the phone row that opens its profile. */
   assistantName?: string;
 };
@@ -67,10 +64,7 @@ function destinations(props: NavigationProps, rail = false): Destination[] {
     ...(host.documents === true ? [{ label: "Documents", icon: FileText, selected: props.page === "documents", onClick: () => props.onPage("documents") }] : []),
     ...(host.calendar === true ? [{ label: "Calendar", icon: CalendarDays, selected: props.page === "calendar", onClick: () => props.onPage("calendar") }] : []),
     // The computers the person can reach, where Devices is on. Workbot's own computer still opens from the chat.
-    ...(host.devices === true ? [{ label: "Devices", icon: MonitorSmartphone, selected: props.page === "devices", onClick: () => props.onPage("devices") }] : []),
-    // Files and Apps open beside the chat rather than as pages; with the profile navigation they are profile tabs.
-    ...(props.onFiles && !props.onProfile ? [{ label: "Files", icon: FolderOpen, onClick: props.onFiles }] : []),
-    ...(props.onApps && !props.onProfile ? [{ label: "Apps", icon: Shapes, onClick: props.onApps }] : []),
+    ...(!(host.profileComputers === true) ? [{ label: "Devices", icon: MonitorSmartphone, selected: props.page === "devices", onClick: () => props.onPage("devices") }] : []),
   ];
 }
 
@@ -85,8 +79,8 @@ function NewChatButton({ props, onDone, compact = false }: { props: NavigationPr
 }
 
 /** The local filter lives at the top of desktop navigation or in the phone's bottom toolbar. */
-function ChatFilter({ value, onChange }: { value: string; onChange(value: string): void }) {
-  return <label className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-full bg-[var(--wb-chip)] px-3 text-[var(--wb-muted)] focus-within:shadow-[var(--wb-focus)]">
+function ChatFilter({ value, onChange, quiet = false }: { value: string; onChange(value: string): void; /** Calm sidebar: a plain line of text that only gains an edge when used. */ quiet?: boolean }) {
+  return <label className={`flex min-w-0 flex-1 items-center gap-2 text-[var(--wb-muted)] focus-within:shadow-[var(--wb-focus)] ${quiet ? "h-8 rounded-lg px-3 transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-within:bg-[var(--wb-surface)]" : "h-9 rounded-full bg-[var(--wb-chip)] px-3"}`}>
     <Search size={15} strokeWidth={1.5} aria-hidden className="shrink-0" />
     <input type="search" aria-label="Search side chats" placeholder="Find a chat" value={value} onChange={event => onChange(event.target.value)} className="min-w-0 flex-1 bg-transparent text-[length:var(--wb-nav-font-size,13px)] text-[var(--wb-text)] placeholder:text-[var(--wb-muted)] focus:outline-none" />
   </label>;
@@ -136,11 +130,28 @@ function Account({ account }: { account?: ReactNode }) {
 export function DesktopNavigation(props: NavigationProps) {
   const [filter, setFilter] = useState("");
   const chatView = props.page === "home";
+  // Calm look: on every page, one quiet labelled column replaces the icon rail and the list next to it, so the
+  // sidebar stays put when the person moves between Chats, Documents and Calendar.
+  if (calmChat()) {
+    const assistant = props.assistantName ?? "Workbot";
+    const page = "flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] aria-[current=page]:bg-[var(--wb-surface)] aria-[current=page]:font-medium aria-[current=page]:text-[var(--wb-text)] aria-[current=page]:shadow-[0_0_0_1px_var(--wb-ring)] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
+    return <aside className="workbot flex min-h-0 w-60 shrink-0 flex-col border-r border-[var(--wb-hairline)] bg-[var(--wb-tray)] px-2.5 pb-3 text-[var(--wb-text)] [--wb-nav-row-height:32px]" aria-label="Workbot navigation" data-workbot-desktop-navigation data-workbot-navigation-look="calm">
+      <div className="flex h-14 shrink-0 items-center">
+        <button type="button" onClick={props.onProfile} aria-label={`${assistant}'s profile`} title={`${assistant}: files, apps and what it remembers`} className="flex h-9 min-w-0 items-center gap-2.5 rounded-lg px-2.5 transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-profile-trigger><OpenWorkMark width={14} height={18} className="shrink-0" /><span className="truncate text-[14px] font-semibold tracking-[-0.01em]">{assistant}</span></button>
+      </div>
+      <nav aria-label="Workspace" className="flex flex-col gap-0.5">{destinations(props, true).map(({ label, icon: Icon, selected, disabled, onClick }) => <button key={label} type="button" onClick={onClick} disabled={disabled} title={disabled ? draftReason : undefined} aria-current={selected ? "page" : undefined} className={page}><Icon size={16} strokeWidth={1.5} aria-hidden className="shrink-0" />{label}</button>)}</nav>
+      <div className="mt-5 flex shrink-0"><ChatFilter value={filter} onChange={setFilter} quiet /></div>
+      <nav aria-label="Chats" className="mt-1">{destinations(props).slice(0, 1).map(({ label, selected, disabled, onClick }) => <button key={label} type="button" disabled={disabled} onClick={onClick} title={disabled ? draftReason : undefined} className={row} aria-current={selected ? "page" : undefined}><span className="flex-1 truncate">{label}</span>{props.chats?.main && <span className="text-[12px] tabular-nums text-[var(--wb-muted)]">{sinceLabel(props.chats.main.updatedAt)}</span>}</button>)}</nav>
+      <div className="mt-3 flex min-h-0 flex-1 flex-col"><SideChats props={props} filter={filter} /></div>
+      <div className="flex shrink-0 items-center justify-between gap-2 pl-1.5 pt-3">
+        <Account account={props.account} />
+        {props.search ?? (props.onSearch && <button type="button" onClick={props.onSearch} className={control} title="Search messages" aria-label="Search messages"><Search size={18} strokeWidth={1.5} aria-hidden /></button>)}
+      </div>
+    </aside>;
+  }
   return <aside className="workbot flex min-h-0 shrink-0 border-r border-[var(--wb-hairline)] text-[var(--wb-text)]" aria-label="Workbot navigation" data-workbot-desktop-navigation>
     <div className={`flex w-16 shrink-0 flex-col items-center gap-2 bg-[var(--wb-surface)] py-3 ${chatView ? "border-r border-[var(--wb-hairline)]" : ""}`}>
-      {props.onProfile
-        ? <button type="button" onClick={props.onProfile} aria-label={`${props.assistantName ?? "Workbot"}'s profile`} title={`${props.assistantName ?? "Workbot"}: files, apps and what it remembers`} className="mb-3 grid size-10 place-items-center rounded-full transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-profile-trigger><OpenWorkMark width={20} height={25} /></button>
-        : <span aria-hidden className="mb-3 grid size-9 place-items-center"><OpenWorkMark width={20} height={25} /></span>}
+      <button type="button" onClick={props.onProfile} aria-label={`${props.assistantName ?? "Workbot"}'s profile`} title={`${props.assistantName ?? "Workbot"}: files, apps and what it remembers`} className="mb-3 grid size-10 place-items-center rounded-full transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-profile-trigger><OpenWorkMark width={20} height={25} /></button>
       <nav aria-label="Workspace" className="flex flex-col items-center gap-2">{destinations(props, true).map(({ label, icon: Icon, selected, disabled, onClick }) => <button key={label} type="button" onClick={onClick} disabled={disabled} title={disabled ? draftReason : label} aria-label={label} aria-current={selected ? "page" : undefined} className={`${control} aria-[current=page]:bg-[var(--wb-chip)] aria-[current=page]:text-[var(--wb-text)]`}><Icon size={18} strokeWidth={1.5} aria-hidden /></button>)}</nav>
       <div className="mt-auto flex flex-col items-center gap-3 pt-4">
         {props.search ?? (props.onSearch && <button type="button" onClick={props.onSearch} className={control} title="Search messages" aria-label="Search messages"><Search size={18} strokeWidth={1.5} aria-hidden /></button>)}
@@ -174,7 +185,7 @@ export function MobileNavigation(props: NavigationProps) {
           {props.search ?? (props.onSearch && <button type="button" className={control} onClick={() => { close(); props.onSearch?.(); }} title="Search messages" aria-label="Search messages"><Search size={16} strokeWidth={1.5} aria-hidden /></button>)}
           <Dialog.Close className={control} aria-label="Close workspace navigation"><X size={16} strokeWidth={1.5} aria-hidden /></Dialog.Close>
         </div>
-        {props.onProfile ? <div className="shrink-0 px-2 pb-1"><button type="button" className={row} onClick={() => { close(); props.onProfile?.(); }} data-workbot-profile-trigger><span aria-hidden className="grid size-5 place-items-center"><OpenWorkMark width={13} height={16} /></span><span className="flex-1">{props.assistantName ?? "Workbot"}</span><span className="text-[12px] text-[var(--wb-muted)]">Files, apps, memory</span></button></div> : null}
+        <div className="shrink-0 px-2 pb-1"><button type="button" className={row} onClick={() => { close(); props.onProfile(); }} data-workbot-profile-trigger><span aria-hidden className="grid size-5 place-items-center"><OpenWorkMark width={13} height={16} /></span><span className="flex-1">{props.assistantName ?? "Workbot"}</span><span className="text-[12px] text-[var(--wb-muted)]">Files, apps, memory</span></button></div>
         <nav aria-label="Go to" className="max-h-[45dvh] shrink-0 overflow-y-auto px-2 pb-3">{destinations(props).map(({ label, icon: Icon, selected, disabled, onClick }) => <button key={label} type="button" onClick={() => { onClick(); close(); }} disabled={disabled} title={disabled ? draftReason : undefined} aria-current={selected ? "page" : undefined} className={row}><Icon size={16} strokeWidth={1.5} aria-hidden />{label}</button>)}</nav>
         <div className="flex min-h-0 flex-1 flex-col px-2"><SideChats props={props} filter={filter} onDone={close} /></div>
         <div className="mt-2 flex shrink-0 items-center gap-2 border-t border-[var(--wb-hairline)] px-3 py-3">

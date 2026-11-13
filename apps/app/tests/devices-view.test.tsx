@@ -40,7 +40,7 @@ const device = (change: Partial<RemoteDevice> = {}): RemoteDevice => ({
 });
 const pause = () => new Promise(resolve => setTimeout(resolve, 20));
 const calls: Array<{ kind: string; input?: unknown }> = [];
-async function render(options: { devices?: RemoteDevice[]; enabled?: boolean; ready?: boolean; failure?: boolean; sessionAccess?: boolean; organizationName?: string; onSignOut?: () => void; signedOut?: boolean; disconnectFailure?: boolean } = {}) {
+async function render(options: { devices?: RemoteDevice[]; ready?: boolean; failure?: boolean; organizationName?: string; onSignOut?: () => void; signedOut?: boolean; disconnectFailure?: boolean } = {}) {
   calls.length = 0;
   const devices = options.devices ?? [device(), device({ id: "vm-1", label: "Build VM", kind: "vm", provider: "daytona", availability: "paused", state: "paused", access: "shared" })];
   const client = {
@@ -54,7 +54,7 @@ async function render(options: { devices?: RemoteDevice[]; enabled?: boolean; re
   const context: AutomationsDenContext = { client, ready: options.ready ?? true, organizationId: "org-1", queryRoot: ["den", "automations", "org-1"] };
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  await act(async () => { root!.render(<QueryClientProvider client={queryClient}><DevicesContent context={context} enabled={options.enabled ?? true} sessionAccess={options.sessionAccess} organizationName={options.organizationName} onSignOut={options.onSignOut} /></QueryClientProvider>); await pause(); });
+  await act(async () => { root!.render(<QueryClientProvider client={queryClient}><DevicesContent context={context} organizationName={options.organizationName} onSignOut={options.onSignOut} /></QueryClientProvider>); await pause(); });
   await act(pause);
   return container;
 }
@@ -97,10 +97,6 @@ test("web Devices groups desktops and VMs with reported state and lazy recent ev
   await act(async () => { const details = container.querySelector("details")!; details.open = true; details.dispatchEvent(new Event("toggle")); await pause(); });
   await act(pause);
   expect(container.textContent).toContain("Computer registered");
-});
-test("off and signed-out states never fetch device data", async () => {
-  const container = await render({ enabled: false });
-  expect(container.textContent).toContain("Not turned on"); expect(calls).toHaveLength(0);
 });
 test("signed-out Devices offers sign-in direction", async () => {
   const container = await render({ ready: false });
@@ -181,7 +177,7 @@ test("the disconnected notice names no organization it does not know, and is not
 test("this computer's choice stays readable while it is disconnected", async () => {
   desktopSessionAccess(notConnected);
   connection.markThisComputerDisconnected("this sign-in");
-  const container = await render({ sessionAccess: true });
+  const container = await render({});
   expect(notice()).not.toBeNull();
   expect(container.textContent).toContain(accessHeading);
   expect(container.textContent).toContain("Start tasks here");
@@ -327,12 +323,12 @@ test("everyone with the Devices page can turn their computer off: the choice nee
   const desktop = desktopSessionAccess({});
   const container = await render();
   expect(container.textContent).toContain(accessHeading);
-  expect(offered()).toEqual(["off", "created"]);
+  expect(offered()).toEqual(["off", "created", "all"]);
   expect(container.textContent).toContain("Nothing");
   expect(container.textContent).toContain("Your other devices, Workbot and agents can't start or reach anything on this computer.");
   expect(container.textContent).toContain("Start tasks here");
   expect(container.textContent).toContain("Your other devices, Workbot and agents working for you can start tasks here and follow, continue and answer the ones they started.");
-  expect(container.textContent).not.toContain("Also open sessions I started here");
+  expect(container.textContent).toContain("Also open sessions I started here");
   expect(chosen()).toEqual(["created"]); expect(locked()).toEqual([]);
   expect(container.querySelectorAll('[data-testid="device-row"]').length).toBe(2);
   await choose("off");
@@ -340,16 +336,14 @@ test("everyone with the Devices page can turn their computer off: the choice nee
   expect(chosen()).toEqual(["off"]);
   await reset();
 
-  expect((await render({ enabled: false })).textContent).not.toContain(accessHeading);
-  await reset();
   Reflect.set(window, "__OPENWORK_ELECTRON__", undefined);
-  const web = await render({ sessionAccess: true });
+  const web = await render({});
   expect(web.textContent).not.toContain(accessHeading);
   expect(web.querySelectorAll('[data-testid="device-row"]').length).toBe(2);
 });
-test("sessions started here are a third choice where the organization offers it, or when already chosen", async () => {
+test("sessions started here remain offered with connection and policy restrictions", async () => {
   desktopSessionAccess({});
-  const container = await render({ sessionAccess: true });
+  const container = await render({});
   expect(offered()).toEqual(["off", "created", "all"]);
   expect(container.textContent).toContain("Also open sessions I started here");
   expect(container.textContent).toContain("They can also open sessions you started on this computer, continue them, stop them and answer their questions and permission requests.");
@@ -357,7 +351,7 @@ test("sessions started here are a third choice where the organization offers it,
   expect(reason("created")).toBeNull(); expect(reason("all")).toBeNull(); expect(unchosen()).toBeNull();
   await reset();
 
-  // The feature went away after the owner chose it: the choice is still shown, so it can be narrowed.
+  // An older runner cannot support the stored choice, but it can be narrowed.
   const desktop = desktopSessionAccess({ mode: "all", supported: false });
   await render();
   expect(offered()).toEqual(["off", "created", "all"]);
@@ -365,7 +359,7 @@ test("sessions started here are a third choice where the organization offers it,
   expect(reason("all")).toBe("Not in effect. Sign in again or update OpenWork to use this.");
   await choose("created");
   expect(desktop.writes).toEqual(["created"]);
-  expect(offered()).toEqual(["off", "created"]);
+  expect(offered()).toEqual(["off", "created", "all"]);
 });
 test("a computer whose owner has not chosen shows what applies and says so", async () => {
   // The organization's opt-in: nothing reaches it until its owner allows it.
@@ -415,7 +409,7 @@ test("a choice the organization or this computer's connection does not allow is 
     [notConnected, ["off", "created", "all"], { off: "Available once this computer is connected to your organization." }],
   ] as const) {
     const desktop = desktopSessionAccess(state);
-    await render({ sessionAccess: true });
+    await render({});
     const label = JSON.stringify(state);
     expect(locked(), label).toEqual([...lockedChoices]);
     for (const mode of ["off", "created", "all"] as const) expect(reason(mode), `${label} ${mode}`).toBe((reasons as Partial<Record<RemoteSessionAccessMode, string>>)[mode] ?? null);
@@ -431,7 +425,7 @@ test("a choice the organization or this computer's connection does not allow is 
 });
 test("a stored choice the organization no longer allows can still be narrowed", async () => {
   const desktop = desktopSessionAccess({ mode: "all", ceiling: "created" });
-  await render({ sessionAccess: true });
+  await render({});
   expect(chosen()).toEqual(["all"]);
   await choose("created");
   expect(desktop.writes).toEqual(["created"]);
@@ -443,7 +437,7 @@ test("a stored choice the organization no longer allows can still be narrowed", 
 });
 test("only opening sessions started here asks for confirmation; the other two apply at once", async () => {
   const desktop = desktopSessionAccess({});
-  await render({ sessionAccess: true });
+  await render({});
   await choose("off");
   expect(desktop.writes).toEqual(["off"]); expect(chosen()).toEqual(["off"]);
   expect(document.body.textContent).not.toContain("Allow all sessions");
@@ -470,7 +464,7 @@ test("only opening sessions started here asks for confirmation; the other two ap
 });
 test("a choice that could not be saved says so and shows what this computer still has", async () => {
   const desktop = desktopSessionAccess({ mode: "all" }, { failWrites: true });
-  await render({ sessionAccess: true });
+  await render({});
   await choose("off");
   expect(desktop.writes).toEqual(["off"]);
   expect(document.querySelector('[role="alert"]')?.textContent).toBe("Couldn't change this. Try again.");
@@ -481,8 +475,8 @@ test("signed out, the choices are shown locked: a choice belongs to an organizat
   const container = await render({ ready: false });
   expect(container.textContent).toContain("Cloud account"); expect(calls).toHaveLength(0);
   expect(container.textContent).toContain(accessHeading);
-  expect(offered()).toEqual(["off", "created"]);
-  expect(locked()).toEqual(["off", "created"]); expect(chosen()).toEqual([]);
+  expect(offered()).toEqual(["off", "created", "all"]);
+  expect(locked()).toEqual(["off", "created", "all"]); expect(chosen()).toEqual([]);
   expect(reason("off")).toBe("Available once this computer is connected to your organization.");
   expect(unchosen()).toBeNull();
   await choose("off");

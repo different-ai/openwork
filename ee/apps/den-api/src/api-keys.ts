@@ -6,19 +6,21 @@ import { appendDomainChanges } from "./audit/domain/legacy.js"
 import { currentAuditChangeCapture, logAuditOutcomeLost, type AuditChangeCapture } from "./audit/request-capture.js"
 import { db } from "./db.js"
 
-export const DEN_API_KEY_HEADER = "x-api-key"
-export const DEN_API_KEY_DEFAULT_PREFIX = "den_"
-export const DEN_API_KEY_RATE_LIMIT_MAX = 600
-export const DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS = 60_000
-export const DEN_API_KEY_EXPIRES_IN_DAYS = 90
-export const DEN_API_KEY_EXPIRES_IN_SECONDS = DEN_API_KEY_EXPIRES_IN_DAYS * 24 * 60 * 60
+export {
+  DEN_API_KEY_DEFAULT_PREFIX,
+  DEN_API_KEY_EXPIRES_IN_DAYS,
+  DEN_API_KEY_EXPIRES_IN_SECONDS,
+  DEN_API_KEY_HEADER,
+  DEN_API_KEY_RATE_LIMIT_MAX,
+  DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
+} from "./api-key-constants.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
 type OrganizationId = typeof MemberTable.$inferSelect.organizationId
 type OrganizationMemberId = typeof MemberTable.$inferSelect.id
 type ApiKeyId = typeof AuthApiKeyTable.$inferSelect.id
 
-/** `standard`: acts as its member everywhere. `config`: a config token (feature `configBlobs`), see config-blobs/token.ts. */
+/** `standard`: acts as its member everywhere. `config`: a config token, see config-blobs/token.ts. */
 export const DEN_API_KEY_TYPES = ["standard", "config"] as const
 export type DenApiKeyType = (typeof DEN_API_KEY_TYPES)[number]
 

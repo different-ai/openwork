@@ -3,9 +3,9 @@ import { isCloudManagedProviderKey } from "../../connections/provider-auth/cloud
 import type { ProviderCredentialHealth } from "../../connections/provider-auth/credential-health";
 
 /**
- * Sharing a key saved on this device with the organization (Den feature
- * `shareDeviceProvider`): what Settings › AI Providers shows for each row and
- * for an organization that has nothing shared yet. Pure, so the rules are
+ * Sharing a key saved on this device with the organization: what Settings › AI
+ * Providers shows for each row and for an organization that has nothing shared
+ * yet. Pure, so the rules are
  * unit-tested; Den decides who may share and what can be shared.
  */
 

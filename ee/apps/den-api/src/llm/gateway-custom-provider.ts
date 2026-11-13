@@ -1,6 +1,5 @@
 /**
- * Stored state of AI Gateway custom OpenAI-compatible providers (feature
- * `gatewayCustomProviders`) and the catalog derived from it. A custom provider
+ * Stored state of AI Gateway custom OpenAI-compatible providers and the catalog derived from it. A custom provider
  * is a gateway_providers row with provider_id GATEWAY_CUSTOM_PROVIDER_ID; its
  * models live in settings.custom.catalog, never in models.dev. Kept free of
  * gateway-matrix imports so the matrix can resolve the catalog without a cycle.

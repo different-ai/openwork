@@ -16,13 +16,10 @@ import {
   formatInstant,
   formatRangeLabel,
   formatTime,
-  layoutOverlappingBlocks,
   localDateOf,
-  minutesIntoDay,
   nextOpenSlot,
   runPlacement,
   shiftAnchor,
-  slotAt,
   startOfDay,
   weekdayOf,
   zonedParts,
@@ -38,8 +35,9 @@ import { Dialog } from "@base-ui/react/dialog";
 import { AppMark } from "./files";
 import { useMeetingsQuery, useRunsInRangeQuery } from "@openwork/calendar/react";
 import type { AutomationList, AutomationModel, AutomationRun, AutomationSchedule } from "@openwork/types/automations";
-import { Check as CheckMark, ChevronLeft, ChevronRight, Cloud, Lock, Monitor, Plus, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Cloud, Lock, Monitor, Plus, X } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+
 import { CreateAutomationCard, type CreateAnchor } from "./calendar-create";
 import { ModelPicker, ModelSummary } from "./model-picker";
 import { workbotHost, useRetainedSurface } from "./host";
@@ -56,10 +54,7 @@ import { calendarKey, useAutomationModels, useAutomationRuns, useCalendarAction,
 type ListItem = AutomationList["items"][number];
 type Selection = { kind: "automation"; automationId: string; itemKey: string | null } | { kind: "meeting"; key: string } | null;
 
-const HOUR_PX = 58;
 const PROVIDERS: readonly CalendarProviderId[] = ["google", "microsoft"];
-const DAY_START_HOUR = 8;
-const DAY_END_HOUR = 18;
 const timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
 /* ── Icons (Paper: 11px in blocks, 13px in lists) ─────────────────────────────────────────────────────────── */
@@ -99,36 +94,6 @@ const STATUS_LABEL: Record<AutomationCalendarItem["status"], string> = {
   succeeded: "Completed", failed: "Failed", cancelled: "Cancelled", skipped: "Skipped", running: "Running", upcoming: "Scheduled", blocked: "Blocked until fixed",
 };
 
-/* ── Blocks ─────────────────────────────────────────────────────────────────────────────────────────────── */
-
-function blockTone(item: AutomationCalendarItem, selected: boolean) {
-  if (selected) return "bg-[#011627] text-[#E6EDF3]";
-  if (item.status === "blocked") return "bg-[#F1F3F5] text-[#687076] shadow-[inset_0_0_0_1px_#01162714]";
-  if (item.status === "skipped" || item.status === "cancelled") return "bg-[#F1F3F5] text-[#687076]";
-  if (item.status === "upcoming" || item.status === "running") return "bg-[#DCE6EF] text-[#011627]";
-  return "bg-[#E6ECF1] text-[#011627]";
-}
-
-function AutomationBlock({ item, selected, subtitle, onSelect }: { item: AutomationCalendarItem; selected: boolean; subtitle: string | null; onSelect: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-pressed={selected}
-      aria-label={`${item.name}, ${STATUS_LABEL[item.status]}, ${formatTime(item.at, timeZone())}`}
-      data-calendar-automation={item.automationId}
-      data-calendar-status={item.status}
-      className={`flex h-full w-full flex-col gap-0.5 overflow-hidden rounded-md px-2 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${subtitle ? "py-1.5" : "justify-center"} ${blockTone(item, selected)}`}
-    >
-      <span className="flex min-w-0 items-center gap-1.25">
-        <StatusIcon item={item} selected={selected} />
-        <span className="truncate text-[11px] font-semibold leading-3.5">{item.name}</span>
-      </span>
-      {subtitle ? <span className={`truncate text-[11px] leading-3.5 ${selected ? "text-[#AFC0CF]" : "text-[#687076]"}`}>{subtitle}</span> : null}
-    </button>
-  );
-}
-
 function MeetingBlock({ event, selected, compact, onSelect }: { event: CalendarEvent; selected: boolean; compact: boolean; onSelect: () => void }) {
   const source = CALENDAR_PROVIDER_LABEL[event.provider] === "Outlook" ? "Outlook Calendar" : CALENDAR_PROVIDER_LABEL[event.provider];
   return (
@@ -151,15 +116,12 @@ function MeetingBlock({ event, selected, compact, onSelect }: { event: CalendarE
 
 /* ── Grid ──────────────────────────────────────────────────────────────────────────────────────────────── */
 
-type DayBlock =
-  | { key: string; start: number; end: number; kind: "automation"; item: AutomationCalendarItem }
-  | { key: string; start: number; end: number; kind: "meeting"; event: CalendarEvent };
+type DayBlock = { key: string; start: number; end: number; kind: "meeting"; event: CalendarEvent };
 
-function blocksForDay(day: LocalDate, zone: string, automations: readonly AutomationCalendarItem[], meetings: readonly CalendarEvent[]): DayBlock[] {
+function blocksForDay(day: LocalDate, zone: string, meetings: readonly CalendarEvent[]): DayBlock[] {
   const dayStart = startOfDay(day, zone);
   const dayEnd = startOfDay(addDays(day, 1), zone);
   const blocks: DayBlock[] = [];
-  for (const item of automations) if (item.at >= dayStart && item.at < dayEnd) blocks.push({ key: item.key, start: item.at, end: Math.min(item.end, dayEnd), kind: "automation", item });
   for (const event of meetings) {
     if (event.timing.kind !== "timed" || event.timing.end <= dayStart || event.timing.start >= dayEnd) continue;
     blocks.push({ key: event.key, start: Math.max(event.timing.start, dayStart), end: Math.min(event.timing.end, dayEnd), kind: "meeting", event });
@@ -171,144 +133,7 @@ function allDayOn(event: CalendarEvent, day: LocalDate) {
   return event.timing.kind === "all_day" && compareDates(event.timing.startDate, day) <= 0 && compareDates(event.timing.endDate, day) > 0;
 }
 
-function hourLabel(hour: number) {
-  return new Intl.DateTimeFormat("en-US", { hour: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(2024, 0, 1, hour)));
-}
-
-function subtitleFor(item: AutomationCalendarItem, automations: readonly ListItem[]): string | null {
-  if (item.status !== "blocked") return null;
-  const reason = automations.find((entry) => entry.automation.id === item.automationId)?.automation.needsAttentionReason?.message ?? "Needs attention";
-  return reason.split(/[.!]/)[0] ?? reason;
-}
-
-function TimeGrid(props: {
-  range: CalendarRange; days: LocalDate[]; zone: string; now: number;
-  automations: AutomationCalendarItem[]; meetings: CalendarEvent[]; list: readonly ListItem[];
-  selection: Selection; onSelect: (selection: Selection) => void;
-  /** Opens "New automation" at an empty slot; the card is placed near the click. */
-  onCreateAt: (anchor: CreateAnchor) => void;
-}) {
-  const today = localDateOf(props.now, props.zone);
-  const perDay = props.days.map((day) => {
-    const blocks = blocksForDay(day, props.zone, props.automations, props.meetings);
-    // Short items are drawn taller than their duration; lay them out by what is drawn so nothing overlaps.
-    const drawn = blocks.map((block) => {
-      const minutes = (block.kind === "meeting" || (block.kind === "automation" && block.item.status === "blocked") ? 57 : 27) * 60_000;
-      return { key: block.key, start: block.start, end: Math.max(block.end, block.start + minutes) };
-    });
-    return { day, blocks, placements: layoutOverlappingBlocks(drawn) };
-  });
-  // Working hours, widened to whatever this range actually holds.
-  let firstHour = DAY_START_HOUR;
-  let lastHour = DAY_END_HOUR;
-  for (const { day, blocks } of perDay) {
-    for (const block of blocks) {
-      firstHour = Math.min(firstHour, Math.floor(minutesIntoDay(block.start, day, props.zone) / 60));
-      lastHour = Math.max(lastHour, Math.ceil(minutesIntoDay(block.end, day, props.zone) / 60));
-    }
-  }
-  lastHour = Math.min(24, Math.max(lastHour, firstHour + 1));
-  const hours = Array.from({ length: lastHour - firstHour }, (_, index) => firstHour + index);
-  const top = (instant: number, day: LocalDate) => (minutesIntoDay(instant, day, props.zone) / 60 - firstHour) * HOUR_PX;
-  const allDay = props.meetings.filter((event) => event.timing.kind === "all_day");
-  const hasAllDay = props.days.some((day) => allDay.some((event) => allDayOn(event, day)));
-  return (
-    <div className="flex min-h-0 flex-1 flex-col" data-calendar-grid={props.range.view}>
-      <div className="flex border-b border-[#01162712] pl-14">
-        {props.days.map((day) => {
-          const isToday = compareDates(day, today) === 0;
-          return (
-            <div key={dateKey(day)} className="flex h-11 min-w-0 flex-1 basis-0 flex-col items-center justify-center gap-0.5 px-1 sm:flex-row sm:justify-start sm:gap-1.5 sm:px-2.5" data-calendar-day={dateKey(day)}>
-              <span className="text-[12px] font-medium leading-4 text-[#687076]">{formatDate(day, "en-US", { weekday: "short" })}</span>
-              {isToday
-                ? <span className="flex h-5.5 min-w-5.5 items-center justify-center rounded-full bg-[#011627] px-1.5 text-[12px] font-semibold leading-4 text-[#E6EDF3]">{day.day}</span>
-                : <span className="text-[13px] font-semibold leading-4 text-black">{day.day}</span>}
-            </div>
-          );
-        })}
-      </div>
-      {hasAllDay ? (
-        <div className="flex border-b border-[#01162712] pl-14" data-calendar-all-day>
-          {props.days.map((day) => (
-            <div key={`all-${dateKey(day)}`} className="flex min-w-0 flex-1 basis-0 flex-col gap-0.5 px-1 py-1">
-              {allDay.filter((event) => allDayOn(event, day)).map((event) => (
-                <div key={event.key} className="h-6.5">
-                  <MeetingBlock event={event} compact selected={props.selection?.kind === "meeting" && props.selection.key === event.key} onSelect={() => props.onSelect({ kind: "meeting", key: event.key })} />
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      ) : null}
-      <div className="min-h-0 flex-1 overflow-y-auto pt-2.5">
-        <div className="flex" style={{ height: hours.length * HOUR_PX }}>
-          <div className="flex w-14 shrink-0 flex-col">
-            {hours.map((hour) => (
-              <div key={hour} className="flex h-14.5 shrink-0 justify-end pr-2.5">
-                <span data-calendar-hour={hour} className="-mt-1.75 text-[12px] leading-4 text-[var(--wb-muted)]">{hourLabel(hour)}</span>
-              </div>
-            ))}
-          </div>
-          <div className="flex flex-1">
-            {perDay.map(({ day, blocks, placements }) => (
-              <div key={`col-${dateKey(day)}`} className="relative flex flex-1 basis-0 flex-col border-l border-[#0116270F]">
-                {hours.map((hour) => <div key={hour} className="h-14.5 shrink-0 border-t border-[#0116270F]" />)}
-                {/* Empty half hours: hover shows where a new automation would go, a click opens the card there. */}
-                {hours.flatMap((hour) => [0, 30].map((minute) => {
-                  const slot = slotAt(day, hour * 60 + minute, props.zone);
-                  const time = formatTime(slot.at, props.zone);
-                  return (
-                    <button
-                      key={`slot-${hour}-${minute}`}
-                      type="button"
-                      tabIndex={-1}
-                      aria-label={`New automation on ${formatDate(day, "en-US")} at ${time}`}
-                      data-calendar-slot={`${dateKey(day)}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`}
-                      onClick={(event) => props.onCreateAt({ slot, x: event.clientX + 12, y: event.clientY - 28 })}
-                      className="group absolute inset-x-0 z-0 pl-1 pr-1.5 focus-visible:outline-none"
-                      style={{ top: (hour - firstHour) * HOUR_PX + (minute ? HOUR_PX / 2 : 0) + 1, height: HOUR_PX / 2 - 1 }}
-                    >
-                      <span className="hidden h-full items-center gap-1.5 rounded-md border-[1.5px] border-dashed border-[#01162759] bg-[#0116270A] px-2 group-hover:flex">
-                        <Plus size={11} strokeWidth={2.25} className="shrink-0 text-[#011627]" aria-hidden />
-                        <span className="truncate text-[11px] font-semibold leading-3.5 text-[#011627]">New automation</span>
-                        <span className="shrink-0 text-[11px] leading-3.5 text-[#687076]">{time}</span>
-                      </span>
-                    </button>
-                  );
-                }))}
-                {blocks.map((block) => {
-                  const placement = placements.get(block.key) ?? { column: 0, columns: 1 };
-                  const y = Math.max(0, top(block.start, day));
-                  const subtitle = block.kind === "automation" ? subtitleFor(block.item, props.list) : null;
-                  const minHeight = block.kind === "meeting" || subtitle ? 55 : 26;
-                  const height = Math.max(top(block.end, day) - y - 2, minHeight);
-                  const width = 100 / placement.columns;
-                  const selected = block.kind === "automation"
-                    ? props.selection?.kind === "automation" && (props.selection.itemKey === block.item.key || (props.selection.itemKey === null && props.selection.automationId === block.item.automationId))
-                    : props.selection?.kind === "meeting" && props.selection.key === block.event.key;
-                  return (
-                    <div key={block.key} className="absolute pl-1 pr-1.5" style={{ top: y + 1, height, left: `${placement.column * width}%`, width: `${width}%`, zIndex: selected ? 3 : block.kind === "automation" ? 2 : 1 }}>
-                      {block.kind === "automation"
-                        ? <AutomationBlock item={block.item} subtitle={subtitle} selected={selected} onSelect={() => props.onSelect({ kind: "automation", automationId: block.item.automationId, itemKey: block.item.key })} />
-                        : <MeetingBlock event={block.event} compact={height < 50} selected={selected} onSelect={() => props.onSelect({ kind: "meeting", key: block.event.key })} />}
-                    </div>
-                  );
-                })}
-                {compareDates(day, today) === 0 && top(props.now, day) >= 0 && top(props.now, day) <= hours.length * HOUR_PX ? (
-                  <div data-calendar-now aria-hidden className="pointer-events-none absolute -left-1 right-0 z-10 flex h-0.5 items-center bg-[#E5484D]" style={{ top: top(props.now, day) }}>
-                    <span className="-ml-px size-2 shrink-0 rounded-full bg-[#E5484D]" />
-                  </div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function MonthGrid(props: { range: CalendarRange; zone: string; now: number; anchorMonth: number; automations: AutomationCalendarItem[]; meetings: CalendarEvent[]; list: readonly ListItem[]; selection: Selection; onSelect: (selection: Selection) => void; onOpenDay: (day: LocalDate) => void; /** `quietCalendar`: meetings only, then one line for the day's runs. */ quiet?: boolean }) {
+function MonthGrid(props: { range: CalendarRange; zone: string; now: number; anchorMonth: number; automations: AutomationCalendarItem[]; meetings: CalendarEvent[]; selection: Selection; onSelect: (selection: Selection) => void; onOpenDay: (day: LocalDate) => void; }) {
   const today = localDateOf(props.now, props.zone);
   return (
     <div className="min-h-0 flex-1 overflow-y-auto" data-calendar-grid="month">
@@ -319,7 +144,7 @@ function MonthGrid(props: { range: CalendarRange; zone: string; now: number; anc
         {props.range.days.map((day) => {
           const entries = [
             ...props.meetings.filter((event) => allDayOn(event, day)).map((event) => ({ kind: "meeting" as const, key: event.key, event })),
-            ...blocksForDay(day, props.zone, props.quiet ? [] : props.automations, props.meetings).sort((left, right) => left.start - right.start),
+            ...blocksForDay(day, props.zone, props.meetings).sort((left, right) => left.start - right.start),
           ];
           const isToday = compareDates(day, today) === 0;
           return (
@@ -327,13 +152,11 @@ function MonthGrid(props: { range: CalendarRange; zone: string; now: number; anc
               <button type="button" onClick={() => props.onOpenDay(day)} className={`self-start rounded-full px-1.5 text-[12px] font-semibold leading-5 ${isToday ? "bg-[#011627] text-[#E6EDF3]" : day.month === props.anchorMonth ? "text-black" : "text-[#9BA1A6]"}`}>{day.day}</button>
               {entries.slice(0, 3).map((entry) => (
                 <div key={entry.key} className="h-6.5">
-                  {entry.kind === "automation"
-                    ? <AutomationBlock item={entry.item} subtitle={null} selected={props.selection?.kind === "automation" && props.selection.itemKey === entry.item.key} onSelect={() => props.onSelect({ kind: "automation", automationId: entry.item.automationId, itemKey: entry.item.key })} />
-                    : <MeetingBlock event={entry.event} compact selected={props.selection?.kind === "meeting" && props.selection.key === entry.event.key} onSelect={() => props.onSelect({ kind: "meeting", key: entry.event.key })} />}
+                  <MeetingBlock event={entry.event} compact selected={props.selection?.kind === "meeting" && props.selection.key === entry.event.key} onSelect={() => props.onSelect({ kind: "meeting", key: entry.event.key })} />
                 </div>
               ))}
               {entries.length > 3 ? <button type="button" onClick={() => props.onOpenDay(day)} className="self-start px-1 text-[11px] text-[#687076] hover:text-black">{entries.length - 3} more</button> : null}
-              {props.quiet ? <span className="px-1"><QuietMonthDaySummary items={props.automations} day={day} zone={props.zone} /></span> : null}
+              <span className="px-1"><QuietMonthDaySummary items={props.automations} day={day} zone={props.zone} /></span>
             </div>
           );
         })}
@@ -644,18 +467,6 @@ function MeetingPanel({ event, zone, runs = [], onSelectRun, onClose }: { event:
 
 /* ── Page ──────────────────────────────────────────────────────────────────────────────────────────────── */
 
-function Legend({ checked, onToggle, children, testId, title }: { checked: boolean; onToggle: () => void; children: ReactNode; testId: string; title?: string }) {
-  return (
-    <button type="button" role="checkbox" aria-checked={checked} onClick={onToggle} data-calendar-layer={testId} title={title} className="flex shrink-0 items-center gap-1.5 rounded focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
-      {/* A real checkbox: the colour swatch alone read as broken, with on and off nearly the same. */}
-      <span aria-hidden className={`grid size-3.5 shrink-0 place-items-center rounded-[4px] transition-colors ${checked ? "bg-[#011627] text-white" : "bg-white shadow-[inset_0_0_0_1.25px_#9BA1A6]"}`}>
-        {checked ? <CheckMark size={10} strokeWidth={3} /> : null}
-      </span>
-      <span className={`text-[12px] font-medium leading-4 ${checked ? "text-black" : "text-[#687076]"}`}>{children}</span>
-    </button>
-  );
-}
-
 function blockedLabel(error: CalendarConnectionError) {
   const name = error.provider === "google" ? "Google Calendar" : "Outlook Calendar";
   if (error.kind === "auth_expired") return `Reconnect ${name}`;
@@ -665,9 +476,9 @@ function blockedLabel(error: CalendarConnectionError) {
   return null;
 }
 
-function weekdaysOnly(days: LocalDate[], automations: AutomationCalendarItem[], meetings: CalendarEvent[], zone: string) {
+function weekdaysOnly(days: LocalDate[], meetings: CalendarEvent[], zone: string) {
   const weekend = days.filter((day) => weekdayOf(day) === 0 || weekdayOf(day) === 6);
-  const busy = weekend.some((day) => blocksForDay(day, zone, automations, meetings).length > 0 || meetings.some((event) => allDayOn(event, day)));
+  const busy = weekend.some((day) => blocksForDay(day, zone, meetings).length > 0 || meetings.some((event) => allDayOn(event, day)));
   return busy ? days : days.filter((day) => weekdayOf(day) !== 0 && weekdayOf(day) !== 6);
 }
 
@@ -678,17 +489,16 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
   const [now, setNow] = useState(() => Date.now());
   const [view, setView] = useState<CalendarView>("week");
   const [anchor, setAnchor] = useState<LocalDate>(() => localDateOf(Date.now(), zone));
-  const [layers, setLayers] = useState({ automations: true, meetings: true });
   const [selection, setSelection] = useState<Selection>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [creating, setCreating] = useState<CreateAnchor | null>(null);
-  // `quietCalendar`: meetings own the grid, runs are dots, the Workbot panel opens on demand, narrow widths get an agenda.
-  const quiet = workbotHost().quietCalendar === true;
+  // Meetings own the grid, runs are dots, the Workbot panel opens on demand, narrow widths get an agenda.
+
   const [agenda, setAgenda] = useState(false);
   const [weekPanel, setWeekPanel] = useState(false);
   const runAction = useCalendarAction();
   const width = useElementWidth<HTMLDivElement>();
-  const narrow = quiet && width.width !== null && width.width < 760;
+  const narrow = width.width !== null && width.width < 760;
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
@@ -702,25 +512,18 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
   const { year, month, day } = anchor;
   const range = useMemo(() => calendarRange(view, { year, month, day }, zone, 1), [day, month, view, year, zone]);
   const list = useWorkbotAutomations();
-  const runs = useRunsInRangeQuery({ keyPrefix: calendarKey, source: sources.runs, range, automations: list.data?.items, enabled: layers.automations });
-  const google = useMeetingsQuery({ keyPrefix: calendarKey, provider: "google", transport: sources.transport, range, enabled: layers.meetings });
-  const microsoft = useMeetingsQuery({ keyPrefix: calendarKey, provider: "microsoft", transport: sources.transport, range, enabled: layers.meetings });
+  const runs = useRunsInRangeQuery({ keyPrefix: calendarKey, source: sources.runs, range, automations: list.data?.items, enabled: true });
+  const google = useMeetingsQuery({ keyPrefix: calendarKey, provider: "google", transport: sources.transport, range, enabled: true });
+  const microsoft = useMeetingsQuery({ keyPrefix: calendarKey, provider: "microsoft", transport: sources.transport, range, enabled: true });
   const meetingQueries = { google, microsoft };
 
-  const items = useMemo(() => layers.automations && list.data && runs.data
+  const items = useMemo(() => list.data && runs.data
     ? buildAutomationCalendarItems({ automations: list.data.items, runs: runs.data.runs, range, now })
-    : [], [layers.automations, list.data, now, range, runs.data]);
-  const meetings = useMemo(() => layers.meetings ? [...(google.data?.events ?? []), ...(microsoft.data?.events ?? [])] : [], [google.data, layers.meetings, microsoft.data]);
-
-  // Open on the next thing that will run, as the design shows a selection. The quiet calendar opens on nothing.
-  useEffect(() => {
-    if (quiet || selection || items.length === 0) return;
-    const next = items.find((item) => item.status === "upcoming") ?? items.at(-1);
-    if (next) setSelection({ kind: "automation", automationId: next.automationId, itemKey: next.key });
-  }, [items, quiet, selection]);
+    : [], [list.data, now, range, runs.data]);
+  const meetings = useMemo(() => [...(google.data?.events ?? []), ...(microsoft.data?.events ?? [])], [google.data, microsoft.data]);
 
   // The quiet calendar keeps a weekend only for its meetings: runs there are counted in Workbot's panel.
-  const days = view === "week" ? weekdaysOnly(range.days, quiet ? [] : items, meetings, zone) : range.days;
+  const days = view === "week" ? weekdaysOnly(range.days, meetings, zone) : range.days;
   const selectedItem = selection?.kind === "automation" ? list.data?.items.find((entry) => entry.automation.id === selection.automationId) ?? null : null;
   const selectedBlock = selection?.kind === "automation" ? items.find((item) => item.key === selection.itemKey) ?? null : null;
   const selectedMeeting = selection?.kind === "meeting" ? meetings.find((event) => event.key === selection.key) ?? null : null;
@@ -731,7 +534,6 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
     onContextChange?.({ kind: "calendar", view, start: range.start, end: range.end, timeZone: zone, ...(selected ? { selected } : {}) });
   }, [onContextChange, selectedMeeting, selectedItem, view, range.start, range.end, zone]);
   const connected = PROVIDERS.filter((provider) => meetingQueries[provider].data);
-  const meetingSource = connected.length === 2 ? "Google Calendar and Outlook" : connected[0] === "microsoft" ? "Outlook Calendar" : "Google Calendar";
   const label = view === "week" && days.length === 5 ? `${formatDate(days[0]!, "en-US", { month: "short", day: "numeric" })} – ${days[4]!.month === days[0]!.month ? formatDate(days[4]!, "en-US", { day: "numeric" }) : formatDate(days[4]!, "en-US", { month: "short", day: "numeric" })}` : formatRangeLabel(range, anchor, "en-US");
   const nowParts = zonedParts(now, zone);
   const providerStatuses = PROVIDERS.filter((provider) => {
@@ -775,9 +577,7 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            {quiet ? null : <Legend testId="automations" checked={layers.automations} onToggle={() => setLayers((current) => ({ ...current, automations: !current.automations }))}>Automations</Legend>}
-            {quiet ? null : <Legend testId="meetings" checked={layers.meetings} onToggle={() => setLayers((current) => ({ ...current, meetings: !current.meetings }))} title={`From ${meetingSource}`}>Meetings</Legend>}
-            {layers.meetings ? providerStatuses.map((provider) => {
+            {providerStatuses.map((provider) => {
               const error = meetingQueries[provider].error;
               const text = error ? blockedLabel(error) : null;
               if (!error || (unverifiedAccounts.includes(provider) && provider !== unverifiedAccounts[0])) return null;
@@ -789,14 +589,14 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
                     : <button type="button" onClick={() => void meetingQueries[provider].refetch()} className="font-medium text-black hover:underline">Couldn&apos;t load {provider === "google" ? "Google Calendar" : "Outlook"} · Try again</button>}
                 </span>
               );
-            }) : null}
-            {quiet && list.data ? <span className="ml-auto"><WorkbotStatusButton items={items} list={list.data.items} open={weekPanel && !selection} onToggle={() => { if (selection) { setSelection(null); setWeekPanel(true); } else setWeekPanel((open) => !open); }} /></span> : null}
-            <div className={`${quiet ? "" : "ml-auto "}flex shrink-0 rounded-lg bg-[#F1F3F5] p-0.5`} role="radiogroup" aria-label="Calendar view">
-              {(quiet ? (["agenda", "week", "month"] as const) : (["day", "week", "month"] as const)).map((option) => {
-                const checked = quiet ? (option === "agenda" ? agenda || narrow : !agenda && !narrow && view === option) : view === option;
+            })}
+            {list.data ? <span className="ml-auto"><WorkbotStatusButton items={items} list={list.data.items} open={weekPanel && !selection} onToggle={() => { if (selection) { setSelection(null); setWeekPanel(true); } else setWeekPanel((open) => !open); }} /></span> : null}
+            <div className={`flex shrink-0 rounded-lg bg-[#F1F3F5] p-0.5`} role="radiogroup" aria-label="Calendar view">
+              {((["agenda", "week", "month"] as const)).map((option) => {
+                const checked = (option === "agenda" ? agenda || narrow : !agenda && !narrow && view === option);
                 return (
                   <button key={option} type="button" role="radio" aria-checked={checked} onClick={() => { if (option === "agenda") { setAgenda(true); setView("week"); } else { setAgenda(false); setView(option); } }} className={`flex h-6.5 items-center px-2.5 text-[12px] leading-4 ${checked ? "rounded-md bg-white font-semibold text-black shadow-[0_0_0_1px_var(--wb-ring)]" : "font-medium text-[#687076]"}`}>
-                    {option === "agenda" ? "Agenda" : option === "day" ? "Day" : option === "week" ? "Week" : "Month"}
+                    {option === "agenda" ? "Agenda" : option === "week" ? "Week" : "Month"}
                   </button>
                 );
               })}
@@ -810,23 +610,20 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
           <div className="flex flex-1 flex-col gap-2 pl-14 pt-12" aria-busy="true">
             {Array.from({ length: 6 }, (_, index) => <div key={index} className="h-14.5 animate-pulse rounded bg-[#F4F6F7]" />)}
           </div>
-        ) : quiet && (agenda || narrow) ? (
+        ) : (agenda || narrow) ? (
           <CalendarAgenda days={range.days} zone={zone} now={now} automations={items} meetings={meetings} list={list.data?.items ?? []} selection={selection} onSelect={setSelection} busy={runAction.isPending} onRunNow={(automationId) => runAction.mutate({ kind: "run", automationId }, { onSuccess: () => setToast("Running now"), onError: (error) => setToast(error.message) })} />
         ) : view === "month" ? (
-          <MonthGrid quiet={quiet} range={range} zone={zone} now={now} anchorMonth={anchor.month} automations={items} meetings={meetings} list={list.data?.items ?? []} selection={selection} onSelect={setSelection} onOpenDay={(target) => { setAnchor(target); setView(quiet ? "week" : "day"); }} />
-        ) : quiet ? (
-          <QuietTimeGrid range={range} days={days} zone={zone} now={now} automations={items} meetings={meetings} selection={selection} onSelect={setSelection} />
+          <MonthGrid range={range} zone={zone} now={now} anchorMonth={anchor.month} automations={items} meetings={meetings} selection={selection} onSelect={setSelection} onOpenDay={(target) => { setAnchor(target); setView("week"); }} />
         ) : (
-          <TimeGrid range={range} days={days} zone={zone} now={now} automations={items} meetings={meetings} list={list.data?.items ?? []} selection={selection} onSelect={setSelection} onCreateAt={setCreating} />
+          <QuietTimeGrid range={range} days={days} zone={zone} now={now} automations={items} meetings={meetings} selection={selection} onSelect={setSelection} />
         )}
-        {list.data && list.data.items.every((entry) => entry.automation.state === "archived") && layers.automations ? (
+        {list.data && list.data.items.every((entry) => entry.automation.state === "archived") ? (
           <p className="py-4 pl-16 text-[13px] text-[#687076]" data-calendar-empty>No automations yet. Ask in Home to set up something that repeats.</p>
         ) : null}
       </div>
-      {selectedItem ? <AutomationPanel key={selectedItem.automation.id} item={selectedItem} block={selectedBlock} zone={zone} onToast={setToast} onClose={quiet ? () => setSelection(null) : undefined} />
-        : selectedMeeting ? <MeetingPanel event={selectedMeeting} zone={zone} runs={quiet ? items.filter((item) => item.run?.triggerContext?.eventId === selectedMeeting.providerEventId) : []} onSelectRun={(item) => setSelection({ kind: "automation", automationId: item.automationId, itemKey: item.key })} onClose={quiet ? () => setSelection(null) : undefined} />
-        : quiet ? (weekPanel && list.data ? <WorkbotWeekPanel days={range.days.length <= 7 ? range.days : days.slice(0, 7)} zone={zone} now={now} title={view === "month" ? "Workbot this month" : "Workbot this week"} items={items} list={list.data.items} onSelect={setSelection} busy={runAction.isPending} onRunNow={(automationId) => runAction.mutate({ kind: "run", automationId }, { onSuccess: () => setToast("Running now"), onError: (error) => setToast(error.message) })} onClose={() => setWeekPanel(false)} /> : null)
-        : <aside className="hidden w-95 shrink-0 border-l border-[#01162712] bg-white p-6 text-[13px] text-[#687076] lg:block">Pick something on the calendar to see it here.</aside>}
+      {selectedItem ? <AutomationPanel key={selectedItem.automation.id} item={selectedItem} block={selectedBlock} zone={zone} onToast={setToast} onClose={() => setSelection(null)} />
+        : selectedMeeting ? <MeetingPanel event={selectedMeeting} zone={zone} runs={items.filter((item) => item.run?.triggerContext?.eventId === selectedMeeting.providerEventId)} onSelectRun={(item) => setSelection({ kind: "automation", automationId: item.automationId, itemKey: item.key })} onClose={() => setSelection(null)} />
+        : (weekPanel && list.data ? <WorkbotWeekPanel days={range.days.length <= 7 ? range.days : days.slice(0, 7)} zone={zone} now={now} title={view === "month" ? "Workbot this month" : "Workbot this week"} items={items} list={list.data.items} onSelect={setSelection} busy={runAction.isPending} onRunNow={(automationId) => runAction.mutate({ kind: "run", automationId }, { onSuccess: () => setToast("Running now"), onError: (error) => setToast(error.message) })} onClose={() => setWeekPanel(false)} /> : null)}
       {creating ? (
         <CreateAutomationCard
           key={creating.slot.at}

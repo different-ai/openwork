@@ -255,11 +255,11 @@ test("an Outlook attachment is added once as a file attachment and never retried
   assert.equal(lost.calls.length, 1)
 })
 
-function outlookRoutes(respond: (call: Call) => Response, features: { outlookAttachments: boolean } = { outlookAttachments: true }) {
+function outlookRoutes(respond: (call: Call) => Response) {
   const graphFetch = graph(respond)
   const app = new Hono()
   const member: Parameters<typeof registerMicrosoft365Routes>[1]["memberRoute"] = async (c, next) => {
-    c.set("organizationContext", { organization: { id: "org_unit" }, currentMember: { id: "member_unit" }, features } as never)
+    c.set("organizationContext", { organization: { id: "org_unit" }, currentMember: { id: "member_unit" } } as never)
     await next()
   }
   registerMicrosoft365Routes(app as never, {
@@ -364,21 +364,4 @@ test("draft uploads refuse bad files or payloads before calling Outlook", async 
   assert.equal((await upload(newDraft, [new File([new Uint8Array(3_000_001)], "big.bin")])).status, 400)
   assert.equal((await upload({ ...newDraft, replyToMessageId: "message-1" }, [plan()])).status, 400)
   assert.equal(calls.length, 0)
-})
-
-test("with Outlook attachments off, the routes are not found and Outlook is never called", async () => {
-  const { calls, upload, get } = outlookRoutes(() => json(200, { value: [] }), { outlookAttachments: false })
-  assert.equal((await get("mail-attachments/message-1")).status, 404)
-  assert.equal((await get("mail-attachment/message-1/att-1")).status, 404)
-  assert.equal((await upload(newDraft, [plan()])).status, 404)
-  assert.equal(calls.length, 0)
-})
-
-test("Outlook attachment reads leave the capability catalog while the rollout is off", async () => {
-  const { nativeOperationAvailableToCapabilities } = await import("../src/mcp/catalog-availability.js")
-  for (const path of ["/v1/capabilities/microsoft-365/mail-attachments/{messageId}", "/v1/capabilities/microsoft-365/mail-attachment/{messageId}/{attachmentId}"]) {
-    assert.equal(nativeOperationAvailableToCapabilities({ outlookAttachmentsEnabled: false }, { path }), false)
-    assert.equal(nativeOperationAvailableToCapabilities({ outlookAttachmentsEnabled: true }, { path }), true)
-  }
-  assert.equal(nativeOperationAvailableToCapabilities({ outlookAttachmentsEnabled: false }, { path: "/v1/capabilities/microsoft-365/mail-message/{messageId}" }), true)
 })

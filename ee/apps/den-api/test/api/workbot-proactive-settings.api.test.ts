@@ -13,14 +13,9 @@ const den = await bootDen({ env: { DEN_WORKBOT_URL: "http://localhost:3020" } })
 after(() => den.close())
 const path = "/v1/org/workbot-settings/proactive"
 
-test("off until the feature is on and Workbot is deployed; then defaults, policy saved per field, template saved as versions", async () => {
+test("Workbot deployment is required; then defaults, policy saved per field, template saved as versions", async () => {
   const workspace = await den.createOrg(await den.signUp("Agent Owner"), "Agent workspace")
   const owner = den.as(workspace.owner, workspace.orgId)
-
-  const hidden = await owner("GET", path)
-  assert.equal(hidden.status, 404, summary(hidden))
-  assert.equal(field(hidden.body, "feature"), "workbotProactive")
-  assert.equal((await den.setFeature(workspace.orgId, "workbotProactive", true)).status, 200)
 
   const previous = process.env.DEN_WORKBOT_URL
   delete process.env.DEN_WORKBOT_URL
@@ -80,7 +75,7 @@ test("off until the feature is on and Workbot is deployed; then defaults, policy
 
 test("each member reads and changes only their own agent, in plain terms", async () => {
   const workspace = await den.createOrg(await den.signUp("Agent Member Owner"), "Agent members")
-  assert.equal((await den.setFeature(workspace.orgId, "workbotProactive", true)).status, 200)
+
   const owner = den.as(workspace.owner, workspace.orgId)
   assert.equal((await owner("PUT", path, { enabled: true })).status, 200)
   const member = await den.newMember(workspace.owner, workspace.orgId, "Agent member")
@@ -108,15 +103,10 @@ test("each member reads and changes only their own agent, in plain terms", async
 
 test("admins see seven days of agent health per responsibility, counts only", async () => {
   const workspace = await den.createOrg(await den.signUp("Health Owner"), "Agent health")
-  assert.equal((await den.setFeature(workspace.orgId, "workbotProactive", true)).status, 200)
+
   const owner = den.as(workspace.owner, workspace.orgId)
   const healthPath = `${path}/health`
   assert.equal((await owner("GET", healthPath)).status, 200, "the parent rollout includes agent health")
-  assert.equal((await den.setFeature(workspace.orgId, "workbotProactive", false)).status, 200)
-  const hidden = await owner("GET", healthPath)
-  assert.equal(hidden.status, 404, summary(hidden))
-  assert.equal(field(hidden.body, "feature"), "workbotProactive")
-  assert.equal((await den.setFeature(workspace.orgId, "workbotProactive", true)).status, 200)
   const repository = await import("../../src/workbot-proactive/repository.js")
   const { normalizeDenTypeId } = await import("@openwork-ee/utils/typeid")
   const organizationId = normalizeDenTypeId("organization", workspace.orgId)
@@ -177,7 +167,7 @@ test("the ledger delivers each item at most once and leases keep two instances o
 
 test("members without Manage OpenWork Models can't change agent settings; without either permission they can't read them", async () => {
   const workspace = await den.createOrg(await den.signUp("Agent Admin"), "Agent permissions")
-  assert.equal((await den.setFeature(workspace.orgId, "workbotProactive", true)).status, 200)
+
   const member = await den.newMember(workspace.owner, workspace.orgId, "Plain member")
   const call = den.as(member, workspace.orgId)
   assert.equal((await call("GET", path)).status, 403)

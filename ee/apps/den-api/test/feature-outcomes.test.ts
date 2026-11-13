@@ -24,7 +24,6 @@ const { FEATURE_OUTCOME_READERS, featureOutcomeReader } = await import("../src/f
 const { featureHealth, featureOutcomeRange, summarizeFeatureOutcomes } = await import("../src/feature-outcomes/outcomes.js")
 const { organizationsWithFeatureOn } = await import("../src/feature-outcomes/report.js")
 const { createFeatureUsageMarker } = await import("../src/feature-usage.js")
-const { wakeAndMarkUse } = await import("../src/workbot-proactive/worker.js")
 type Reading = Parameters<typeof summarizeFeatureOutcomes>[0]
 
 const NOW = new Date("2026-10-28T15:00:00.000Z")
@@ -34,7 +33,7 @@ test("every feature that declares outcomes has exactly one reader, and no reader
   assert.deepEqual([...OUTCOME_FEATURE_KEYS].sort(), [...declared].sort())
   assert.deepEqual(Object.keys(FEATURE_OUTCOME_READERS).sort(), [...declared].sort())
   for (const key of FEATURE_KEYS) assert.equal(featureOutcomeReader(key) !== null, declared.includes(key), key)
-  assert.ok(declared.length >= 1, "Your agent reports rollout outcomes; the schedule-feature outcomes are retired and GA")
+  assert.ok(declared.length >= 1, "Active connector features report rollout outcomes; the schedule-feature outcomes are retired and GA")
 })
 
 test("a range is whole UTC days ending today", () => {
@@ -119,46 +118,11 @@ test("one plain health state: not used, failing, limited, mostly skipped, health
 })
 
 test("organizations with a feature on follow the deployment state and overrides without reading each one", () => {
-  const key: FeatureKey = "workbotProactive"
+  const key: FeatureKey = "workbotAgentBrief"
   const count = (rollouts: Parameters<typeof organizationsWithFeatureOn>[0]["rollouts"], overrides = { on: 3, off: 2 }, locks = {}) =>
     organizationsWithFeatureOn({ key, environment: { deployment: "cloud", locks }, rollouts, overrides, organizations: 50 })
   assert.equal(count({}), 3, "off for everyone: the organizations turned on")
   assert.equal(count({ [key]: { enabled: true, killed: false } }), 48, "on for everyone: all but the organizations turned off")
   assert.equal(count({ [key]: { enabled: true, killed: true } }), 0, "the kill switch wins")
   assert.equal(count({}, undefined, { [key]: true }), 50, "an operator lock decides for everyone")
-})
-
-/** A marker with the real once-per-day dedupe, writing to an array; `setDay` moves its clock. */
-function recordingMarker() {
-  let now = new Date("2026-10-28T09:00:00.000Z")
-  const writes: string[] = []
-  const mark = createFeatureUsageMarker(async (input) => {
-    writes.push(...input.keys.map((key) => `${input.at.toISOString().slice(0, 10)} ${input.memberId} ${key}`))
-  }, () => now)
-  return { mark, writes, setDay: (day: string) => { now = new Date(`${day}T10:00:00.000Z`) } }
-}
-
-const settle = () => new Promise((resolve) => setImmediate(resolve))
-
-const organizationId = createDenTypeId("organization")
-const memberId = createDenTypeId("member")
-
-function agentRow(): AgentInstanceRow {
-  return {
-    memberId, organizationId, templateVersionId: null, status: null, overrides: null, snoozedUntil: null, state: null, preferences: null,
-    timeZone: null, nextWakeAt: NOW, failures: 0, leaseOwner: "lease-1", leaseUntil: NOW, createdAt: NOW, updatedAt: NOW,
-  }
-}
-
-test("Your agent: a pass that ran marks the member's use once per day; skipped wakes do not", async () => {
-  const { mark, writes, setDay } = recordingMarker()
-  const ran = async (): Promise<AgentWakeOutcome> => ({ status: "ran", reasons: ["scheduled"], reply: "quiet", delivered: null })
-  const skipped = async (): Promise<AgentWakeOutcome> => ({ status: "skipped", reason: "outside_hours" })
-  await wakeAndMarkUse(agentRow(), skipped, mark)
-  await wakeAndMarkUse(agentRow(), ran, mark)
-  await wakeAndMarkUse(agentRow(), ran, mark)
-  setDay("2026-10-29")
-  await wakeAndMarkUse(agentRow(), ran, mark)
-  await settle()
-  assert.deepEqual(writes, [`2026-10-28 ${memberId} workbotProactive`, `2026-10-29 ${memberId} workbotProactive`])
 })

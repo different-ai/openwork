@@ -1,5 +1,7 @@
 # Other devices can open sessions started on a computer (`remoteSessionAccess`)
 
+> **Generally available:** `remoteSessionAccess` is retired; its enabled behavior is standard on Cloud and self-hosted. Actual settings, permissions, billing rules and consent remain enforced. Rollout/off-state instructions below are historical; see [the retirement guide](../globally-enabled-retirement/README.md).
+
 - **Key:** `remoteSessionAccess`
 - **Deployments:** cloud and self-hosted
 - **Default:** off

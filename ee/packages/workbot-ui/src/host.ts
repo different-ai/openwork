@@ -25,18 +25,14 @@ export type WorkbotHost = {
   calendar?: boolean
   /** Documents browsing is enabled for this organization; omitted means off. */
   documents?: boolean
-  /** The Computer view of Workbot's computer: its native desktop apps (`computerUse`). Omitted means off. */
+  /** Access to the native apps on Workbot's remote computer. Omitted means unavailable. */
   computer?: boolean
-  /** The Browser view of Workbot's computer (`browserUse`), rolled out separately from `computer`. Omitted means off. */
+  /** Access to the browser on Workbot's remote computer. Omitted means unavailable. */
   browser?: boolean
-  /** The conversation stays docked beside the Browser and Computer views on wide screens (`workbotBrowserChat`). Needs `browser`. */
-  browserChat?: boolean
   /** Teach browser tasks and save private Cloud skills; omitted means off. */
   browserDemonstrations?: boolean
   /** Explicit document editing is enabled; omitted means preview only. */
   documentEditing?: boolean
-  /** Native dictation entry point; omitted means off. Speech stays with the OS. */
-  nativeDictation?: boolean
   /** Contextual chat and workspace navigation. Omitted means off. */
   workspaceAssistant?: boolean
   /** Offers to open documents a reply mentions and keeps the chat open beside them. Needs workspaceAssistant. */
@@ -55,46 +51,13 @@ export type WorkbotHost = {
   verifyDocumentIdentity?(): Promise<boolean>
   /** The retained owner remains mounted, but this host authorization fact masks it. */
   documentAuthorization?: "signin" | "blocked" | "disabled"
+  /** Moves Devices into the profile as Computers (`workbotProfileComputers`). Off when unset. */
+  profileComputers?: boolean
   /**
-   * Quiet non-browser work under its name/task sheet rather than computer/task cards (`workbotWorkingStatus`).
-   * Off when unset. Browser turns always use their own persistent task card and header status.
+   * The calm chat look: a labelled sidebar, Workbot's name and status as one pill, a narrower column, replies as plain
+   * text, and compact browser and file cards (`workbotCalmChat`). Looks only; off when unset.
    */
-  workingStatus?: boolean
-  /** Non-browser first human acknowledgment (`workbotQuickReply`). Off when unset; browser tasks acknowledge by default. */
-  quickReply?: boolean
-  /**
-   * A chat opens on the newest page this device kept from the last visit while it is read again
-   * (`workbotInstantOpen`). Off when unset; the kept pages are cleared then.
-   */
-  instantOpen?: boolean
-  /** Reading earlier messages keeps its place, with a return-to-latest button (`workbotScrollToBottom`). Off when unset. */
-  scrollToBottom?: boolean
-  /**
-   * Tapping Workbot's name opens its profile: what it is working on, what it can use, and what it remembers about the
-   * person, read-only (`workbotProfileSheet`). Off when unset.
-   */
-  profileSheet?: boolean
-  /** Rich five-tab profile (`workbotCenteredProfile`), off when unset. Browser access independently gets the centered header pill. */
-  centeredProfile?: boolean
-  /** Passive native-computer preview (`workbotBrowserPreview`), off when unset. Browser task cards/previews are default. */
-  browserPreview?: boolean
-  /** Read-only remote tasks in profile and header (`workbotRemoteTasks`). Off when unset. */
-  remoteTasks?: boolean
-  /**
-   * The navigation lists only full pages (Chats, Documents, Calendar); Files and Apps, which open beside the chat, are
-   * tabs in Workbot's profile, opened from the logo at the top of the navigation (`workbotProfileNav`). Off when unset.
-   */
-  profileNav?: boolean
-  /**
-   * Meetings own the calendar grid; automation runs are small dots at their time, each day says how many ran, and a
-   * Workbot panel opens on demand. Narrow widths get an agenda list (`workbotQuietCalendar`). Off when unset.
-   */
-  quietCalendar?: boolean
-  /**
-   * The Devices page: the computers the person can reach through OpenWork (their own desktops, Workbot's cloud
-   * computers, registered virtual computers), read-only (`remoteDevices`). Off when unset.
-   */
-  devices?: boolean
+  calmChat?: boolean
   /** The person can start side chats next to their main chat (on while Workbot is on). Off when unset. */
   sideChats?: boolean
   /**
@@ -137,6 +100,11 @@ export function computerViews(host: WorkbotHost): Array<"browser" | "computer"> 
 export function computerTabLabel(host: WorkbotHost): "Browser" | "Computer" {
   const views = computerViews(host);
   return views.length === 1 && views[0] === "browser" ? "Browser" : "Computer";
+}
+
+/** The calm chat look is on (`calmChat`). False before a host is set, so shared pieces render their usual look. */
+export function calmChat(): boolean {
+  return current?.calmChat === true
 }
 
 export function workbotHost(): WorkbotHost {

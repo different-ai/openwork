@@ -124,15 +124,13 @@ try {
   record('phoneNameOpensProfile', true);
   await screenshot('mobile-name-profile');
   await page.keyboard.press('Escape');
-  for (const quick of ['1', '0']) {
-    const start = performance.now();
-    await go('waiting', { quick });
-    const ack = page.getByText("Sure! I'll take a look in my browser and let you know what I find.", { exact: true });
-    if (quick === '1') { await ack.waitFor({ timeout: 2000 }); assert.ok(performance.now() - start < 2000); }
-    else { await page.waitForTimeout(250); assert.equal(await ack.count(), 0); }
-    record(`quickReply${quick}`, { elapsedMs: performance.now() - start, acknowledgementCount: await ack.count() });
-    await screenshot(`mobile-waiting-quick-${quick}`);
-  }
+  const start = performance.now();
+  await go('waiting');
+  const ack = page.getByText("Sure! I'll take a look in my browser and let you know what I find.", { exact: true });
+  await ack.waitFor({ timeout: 2000 });
+  assert.ok(performance.now() - start < 2000);
+  record('quickReply', { elapsedMs: performance.now() - start, acknowledgementCount: await ack.count() });
+  await screenshot('mobile-waiting-acknowledgment');
   await go('remote', { remote: '1', preview: '0', quick: '0' });
   await page.waitForFunction(() => document.querySelector('[data-workbot-profile-badge], [data-workbot-working-name]')?.textContent.includes('Checking the mobile browser flow'));
   record('remoteBadge', await page.locator(NAME).first().innerText());
@@ -157,15 +155,6 @@ try {
   assert.ok(!(await running.locator('summary').innerText()).includes('Working'));
   record('remoteStopped', await running.innerText());
   await screenshot('mobile-remote-stopped');
-  const beforeOff = report.requests.length;
-  await go('remote', { remote: '0', preview: '0', quick: '0' });
-  await openProfile();
-  await page.waitForTimeout(500);
-  const offRequests = report.requests.slice(beforeOff).filter(request => request.url.includes('/v1/workbot/remote-jobs'));
-  assert.equal(offRequests.length, 0);
-  assert.equal(await page.locator('[data-workbot-remote-job]').count(), 0);
-  record('remoteFlagOff', { remoteRequests: offRequests, rows: 0, text: await page.getByRole('tabpanel').innerText() });
-  await screenshot('mobile-remote-flag-off');
   intentionalFailure = true;
   await page.route('**/v1/workbot/memory', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'fixture_memory_unavailable' }) }));
   await go();

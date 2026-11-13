@@ -3,7 +3,7 @@ import { allocateFreePorts } from "@openwork/cdp";
 import { mkdir, realpath } from "node:fs/promises";
 import { signIn } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 import { emailLinks, invitationWitnesses, record, text } from "./org-invite.ts";
 import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
 
@@ -24,7 +24,7 @@ export async function providerShareInvite(seed: Seed) {
     },
     org: { name: organizationName, admin: { name: "Share Owner" }, members: { member: { name: "Plain Member" } } },
   });
-  const organizationId = await enableOrganizationCapabilities(seed, den.admin, { shareDeviceProvider: true });
+  const organizationId = await seededOrganizationId(seed, den.admin);
   const member = den.members.member;
   if (!member) throw new Error("Plain member was not seeded");
   const witnesses = invitationWitnesses(den.admin);

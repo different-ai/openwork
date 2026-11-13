@@ -1359,6 +1359,48 @@
       "when": 1794417781063,
       "tag": "0194_computer_disconnect",
       "breakpoints": true
+    },
+    {
+      "idx": 195,
+      "version": "5",
+      "when": 1794515541119,
+      "tag": "0195_control_center_catalog_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 196,
+      "version": "5",
+      "when": 1794521633161,
+      "tag": "0196_gateway_truefoundry_users",
+      "breakpoints": true
+    },
+    {
+      "idx": 197,
+      "version": "5",
+      "when": 1794524250690,
+      "tag": "0197_mcp_thread_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 198,
+      "version": "5",
+      "when": 1794525593338,
+      "tag": "0198_mcp_event_resume_binding",
+      "breakpoints": true
+    },
+    {
+      "idx": 199,
+      "version": "5",
+      "when": 1794527207554,
+      "tag": "0199_mcp_event_control_notices",
+      "breakpoints": true
+    },
+    {
+      "idx": 200,
+      "version": "5",
+      "when": 1794528647377,
+      "tag": "0200_native_mcp_events",
+      "breakpoints": true
     }
   ]
 }

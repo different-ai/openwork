@@ -83,7 +83,7 @@ export function pluginDirectoryIntroFacts(
 /**
  * Registers a setup-step intro (create, import, skill editor) so `?` can
  * explain the form (DESIGN.md I8). It never shows on its own and renders
- * nothing; with the flag off it does nothing.
+ * nothing.
  */
 export function PluginsSetupIntro({ introKey }: { introKey: Extract<FeatureIntroKey, "plugins.new" | "plugins.import" | "plugins.skill"> }) {
   const enabled = useFeatureIntroRuntime().enabled;

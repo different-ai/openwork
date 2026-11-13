@@ -43,7 +43,6 @@ import { activationEventRequestSchema } from "@openwork/types/den/activation"
 import { activationResponseSchema } from "../routes/me/activation.js"
 import { readActivationState, recordActivationEvent } from "../activation.js"
 import { remoteDeviceListResponseSchema, remoteDeviceWorkbotReportSchema } from "@openwork/types/den/remote-devices"
-import { markFeaturesUsed } from "../feature-usage.js"
 import { listMemberRemoteDevices, reportWorkbotComputer } from "../remote-devices.js"
 
 /**
@@ -112,10 +111,13 @@ const sessionSchema = z.object({
   remoteTasks: z.boolean().optional(),
   /** Navigation lists only pages; Files and Apps live in the profile (`workbotProfileNav`); older Dens omit it: off. */
   profileNav: z.boolean().optional(),
+  profileComputers: z.boolean().optional(),
   /** Apps built in OpenWork show as cards and open beside the chat (`workbotApps`); older Dens omit it: off. */
   openworkApps: z.boolean().optional(),
   /** Meetings own the calendar grid, runs are quiet dots (`workbotQuietCalendar`); older Dens omit it: off. */
   quietCalendar: z.boolean().optional(),
+  /** The calm chat look (`workbotCalmChat`); older Dens omit it: off. */
+  calmChat: z.boolean().optional(),
   /** The Devices page and reports about Workbot's computers (`remoteDevices`); older Dens omit it: off. */
   devices: z.boolean().optional(),
   /** Always true for older Workbot clients; the command palette is available by default. */
@@ -292,7 +294,6 @@ async function withWorkbotSettings(resolved: Resolved): Promise<Member> {
     memberId: resolved.memberId,
     userId: resolved.user.id,
     organization: resolved.organization,
-    featureOn: features.workbotTeamSettings,
   })
   return { ...resolved, features, workbot }
 }
@@ -480,42 +481,43 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         organization: { id: organization.id, name: organization.name, brandAppName: workbot.name },
         memberId,
         enabled: on,
-        // Workbot's browser and its other desktop apps share one cloud computer but are rolled out separately.
-        computer: features.computerUse && features.remoteComputers,
-        browser: features.browserUse && features.remoteComputers,
-        browserRecovery: features.workbotBrowserRecovery,
-        browserDemonstrations: features.browserDemonstrations && features.browserUse && features.remoteComputers,
+        // Workbot's browser and other native apps share remote-computer availability.
+        computer: features.remoteComputers,
+        browser: features.remoteComputers,
+        browserRecovery: env.features.deployment === "cloud",
+        browserDemonstrations: features.browserDemonstrations && features.remoteComputers,
         // Compatibility for older Workbot clients: the page stream now follows browser access.
-        browserLiveView: features.browserUse && features.remoteComputers,
+        browserLiveView: features.remoteComputers,
         sandboxGateway: features.sandboxGateway,
         canSchedule,
         calendar: on,
         documents: on && features.workbotDocuments,
         documentEditing: on && features.workbotDocuments && features.workbotDocumentEditing,
-        nativeDictation: features.nativeDictation,
+        nativeDictation: true,
         workspaceAssistant: on && features.workbotWorkspaceAssistant,
         guidedNavigation: on && features.workbotWorkspaceAssistant,
-        driveFiles: features.workbotDriveFiles,
+        // Fixed response-only values for independently released Workbot clients.
+        driveFiles: true,
+        accountMenu: true,
+        workingStatus: true,
+        quickReply: true,
+        browserChat: features.remoteComputers,
+        instantOpen: true,
+        profileSheet: true,
+        centeredProfile: true,
+        browserPreview: features.remoteComputers,
+        remoteTasks: true,
+        profileNav: true,
+        quietCalendar: true,
         // The limit card and model recovery links: included models need them as much as upgrades do.
         usageRecovery: true,
         activationChecklist: true,
         sideChats: on,
-        accountMenu: features.workbotAccountMenu,
-        workingStatus: features.workbotWorkingStatus,
-        quickReply: features.workbotQuickReply,
-        browserChat: features.workbotBrowserChat && features.browserUse && features.remoteComputers,
-        instantOpen: features.workbotInstantOpen,
-        scrollToBottom: features.workbotScrollToBottom,
-        // The profile opens from the name's status line, so it needs the working status.
-        profileSheet: features.workbotProfileSheet && features.workbotWorkingStatus,
-        centeredProfile: features.workbotCenteredProfile && features.workbotProfileSheet && features.workbotWorkingStatus,
-        browserPreview: features.workbotBrowserPreview && features.remoteComputers && (features.browserUse || features.computerUse),
-        remoteTasks: features.workbotRemoteTasks,
-        // Files and Apps move into the profile, so the profile has to be there.
-        profileNav: features.workbotProfileNav && features.workbotProfileSheet && features.workbotWorkingStatus,
-        openworkApps: features.workbotApps,
-        quietCalendar: features.workbotQuietCalendar,
-        devices: on && features.remoteDevices,
+        scrollToBottom: true,
+        profileComputers: features.workbotProfileComputers,
+        openworkApps: true,
+        calmChat: features.workbotCalmChat,
+        devices: on,
         commandPalette: true,
         model,
         gatewayModels: true,
@@ -584,9 +586,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
     const auditBlocked = await attributeWorkbot(c, resolved)
     if (auditBlocked) return auditBlocked
     if (!resolved.scopes.has(DEN_MCP_READ_SCOPE) || (write && !resolved.scopes.has(DEN_MCP_WRITE_SCOPE))) return c.json({ error: "insufficient_scope" }, 403)
-    if (!resolved.features.remoteDevices) return c.json({ error: "feature_disabled", feature: "remoteDevices" }, 404)
     const actor = { organizationId: resolved.organization.id, memberId: normalizeDenTypeId("member", resolved.memberId) }
-    markFeaturesUsed({ organizationId: actor.organizationId, memberId: actor.memberId, keys: ["remoteDevices"] })
     return actor
   }
   const deviceResponses = {
@@ -667,8 +667,6 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       })
       // What Workbot's steps in each connection are called ("Searching Exa"), for everyone.
       const connectors = facts.map((fact) => ({ id: fact.id, name: fact.name, site: connectorSite(fact.url) }))
-      // Only the profile's Apps list reads these (`workbotProfileSheet`); without it the answer is as before.
-      if (!features.workbotProfileSheet) return c.json({ connections, connectors })
       const apps = workbotApps(facts, { inline, canManage: permissions.has("connections.manage"), connectUrl: openworkYourConnectionsUrl })
       return c.json({ connections, apps, connectors })
     },
@@ -867,7 +865,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         // Credential minting still reauthorizes the exact model for this member on every turn.
         // "Not allowed" in the admin's Workbot settings covers the chat as well as Workbot's own checks.
         // The member's own policy: their team's when it has one (already resolved with their Workbot settings).
-        const scopes = features.workbotProactive ? workbotTurnLimitScopes(memberAgentSettings(resolved.workbot, organization.metadata).sources) : []
+        const scopes = workbotTurnLimitScopes(memberAgentSettings(resolved.workbot, organization.metadata).sources)
         const { token, resumeGrant, modelAccess, indexCapability } = await mintHeadlessTurnCredentials({
           ...principal, ttlMs, readOnly, sessionId, messageId, model, indexKind: "workbot", memberId: resolved.memberId,
           ...(scopes.length ? { scopes } : {}),

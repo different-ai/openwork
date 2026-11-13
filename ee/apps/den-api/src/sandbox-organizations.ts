@@ -293,7 +293,7 @@ export async function getSandbox(id: DenTypeId<"sandboxOrganization">): Promise<
  * shared sandbox key; the deployment's list, or `modelIds` when `sandboxModelChoice` is on), one per-person OAuth connector for each fictional workplace app, and a join link. Every
  * member connects their own account, so each person's workplace data stays separate.
  *
- * With `sandboxMicrosoft365` on, Outlook, Calendar and Drive come as one Microsoft 365 connector signed in at the
+ * On cloud deployments, Outlook, Calendar and Drive come as one Microsoft 365 connector signed in at the
  * workplace (so Workbot's chat, Calendar, Documents and first hello can read them); `callbackBaseUrl` is Den's public
  * API address the workplace sends people back to. If the workplace can't offer it, the separate connectors are used.
  *
@@ -343,7 +343,7 @@ export async function createSandbox(actor: UserId, input: SandboxCreateInput, op
     appLogger.error("sandbox gateway provider failed", { organization_id: organizationId, error: error instanceof Error ? error.message : "unknown" })
   })
   let microsoft = false
-  if (connectors.length > 0 && input.connectorBaseUrl && options.callbackBaseUrl && await organizationFeatureEnabled(organizationId, "sandboxMicrosoft365")) {
+  if (connectors.length > 0 && input.connectorBaseUrl && options.callbackBaseUrl && env.features.deployment === "cloud") {
     microsoft = await addSandboxMicrosoft365({ organizationId, ownerMemberId: owner.id, workplaceUrl: input.connectorBaseUrl, callbackBaseUrl: options.callbackBaseUrl })
       .then(() => true)
       .catch((error: unknown) => {
@@ -573,7 +573,7 @@ export async function addMicrosoft365ToSandbox(id: DenTypeId<"sandboxOrganizatio
   if (!row) return null
   if (sandboxState(row) !== "open") throw new SandboxInputError("Reopen this sandbox first.")
   if (!row.connectorBaseUrl) throw new SandboxInputError("This sandbox has no sample work apps address.")
-  if (!await organizationFeatureEnabled(row.organizationId, "sandboxMicrosoft365")) throw new SandboxInputError("Turn on Sandboxes: sample Microsoft 365 for this organization first.")
+  if (env.features.deployment !== "cloud") throw new SandboxInputError("Sample Microsoft 365 is available only on cloud deployments.")
   if (await getExternalMcpConnectionByExternalKey({ organizationId: row.organizationId, externalKey: SANDBOX_MICROSOFT_EXTERNAL_KEY })) return getSandbox(id)
   const [owner] = await db.select({ id: MemberTable.id }).from(MemberTable)
     .where(and(eq(MemberTable.organizationId, row.organizationId), eq(MemberTable.userId, row.createdByUserId), isNull(MemberTable.removedAt))).limit(1)

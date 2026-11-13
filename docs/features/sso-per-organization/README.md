@@ -1,5 +1,7 @@
 # SSO: optional unless required, enforced per organization
 
+> **Generally available:** `ssoPerOrganization` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 - Feature: `ssoPerOrganization`
 - Deployments: cloud and self-hosted; default **off**. Never changes
   single-organization deployments (`DEN_ORG_MODE=single_org`): their SSO stays
@@ -76,7 +78,7 @@ from settings needs the Enterprise plan.
   or Google session has no proofs to carry.
 - **"Ask for SSO again" was removed.** An SSO proof opens the organization for
   as long as the session lasts; how long sessions last is set in Auth &
-  Security › General ([`sessionSecuritySettings`](../session-security-settings/README.md)).
+  Security › General ([session settings](../session-security-settings/README.md)).
   `PATCH /v1/org` no longer accepts `ssoSessionMaxAgeHours`, and a value
   stored before the removal is ignored.
 - `session_sso_authentication` (one row per session) is superseded by

@@ -5,9 +5,10 @@
  * re-checked Manage Gateway providers; audit capture stays with the caller.
  */
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
-import { GatewayCredentialSetTable, GatewayLiteLlmIssuedKeyTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable } from "@openwork-ee/den-db/schema"
+import { GatewayCredentialSetTable, GatewayLiteLlmIssuedKeyTable, GatewayTrueFoundryUserTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable } from "@openwork-ee/den-db/schema"
 import { settleGatewayProviderUsageLimits } from "@openwork-ee/den-db/gateway-usage-limits"
 import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
+import { isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
 import { GATEWAY_PROVIDER_STATUSES } from "@openwork/types/den/gateway"
 import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import type { GatewayProviderRemovalLimitChoice } from "@openwork/types/den/gateway-usage-limits"
@@ -16,6 +17,7 @@ import { GatewayWriteError, resolveGatewayCatalog, validateGatewaySettings, writ
 import { publicProviderSettings, readProviderConfigNpm } from "./inference-provider-config.js"
 import { deleteLiteLlmIssuedKeys, pruneLiteLlmIssuedKeys } from "./litellm-issued.js"
 import { pruneLiteLlmAssignments } from "./litellm-sync.js"
+import { deleteTrueFoundryTokens, pruneTrueFoundryMembers } from "./truefoundry-sync.js"
 import type { ModelsDevProvider } from "./models-dev.js"
 
 type GatewayCredential = typeof GatewayProviderCredentialTable.$inferSelect
@@ -104,6 +106,7 @@ export async function removeGatewayAccessGrant(tx: GatewayTx, provider: GatewayP
   await tx.delete(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.id, id))
   await pruneLiteLlmAssignments(tx, provider)
   if (isLiteLlmProviderId(provider.provider_id)) await pruneLiteLlmIssuedKeys(tx, provider)
+  if (isTrueFoundryProviderId(provider.provider_id)) await pruneTrueFoundryMembers(tx, provider)
 }
 
 /**
@@ -122,8 +125,11 @@ export async function removeGatewayProvider(tx: GatewayTx, provider: GatewayProv
   // permission, so a concurrent membership removal or revocation stops the request before
   // any external key is deleted.
   if (isLiteLlmProviderId(provider.provider_id)) await deleteLiteLlmIssuedKeys(provider)
+  // TrueFoundry tokens delete themselves (admins cannot delete another user's tokens).
+  if (isTrueFoundryProviderId(provider.provider_id)) await deleteTrueFoundryTokens(provider)
   await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.gateway_provider_id, provider.id))
   await tx.delete(GatewayLiteLlmIssuedKeyTable).where(eq(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, provider.id))
+  await tx.delete(GatewayTrueFoundryUserTable).where(eq(GatewayTrueFoundryUserTable.gateway_provider_id, provider.id))
   const credentials = await tx.select().from(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.gateway_provider_id, provider.id)).for("update")
   const groups = await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.gateway_provider_id, provider.id))
   if (groups.length) await tx.delete(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id)))

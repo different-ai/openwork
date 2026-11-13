@@ -68,39 +68,16 @@ export const denSessionSchema = z.object({
   calendar: z.boolean().optional(),
   documents: z.boolean().default(false),
   documentEditing: z.boolean().default(false),
-  nativeDictation: z.boolean().default(false),
   workspaceAssistant: z.boolean().default(false),
   guidedNavigation: z.boolean().default(false),
-  /** How to read PDFs, Office and large files from Drive. A Den from before it doesn't say: off. */
-  driveFiles: z.boolean().default(false),
   usageRecovery: z.boolean().default(false),
   /** The Get set up checklist. A Den from before it doesn't say: off. */
   activationChecklist: z.boolean().default(true),
   /** Side chats are on for this person. A Den from before side chats doesn't say: off. */
   sideChats: z.boolean().default(false),
-  /** The header avatar opens the account menu with Sign out. A Den from before it doesn't say: off. */
-  accountMenu: z.boolean().default(false),
-  /** Work in progress shows in the header and task sheet, not the chat. A Den from before it doesn't say: off. */
-  workingStatus: z.boolean().default(false),
-  quickReply: z.boolean().default(false),
-  /** The conversation docks beside the Browser and Computer views (`workbotBrowserChat`). A Den from before it doesn't say: off. */
-  browserChat: z.boolean().default(false),
-  /** Chats open on the newest page kept on the device (`workbotInstantOpen`). A Den from before it doesn't say: off. */
-  instantOpen: z.boolean().default(false),
-  /** Reading earlier messages keeps its place (`workbotScrollToBottom`). A Den from before it doesn't say: off. */
-  scrollToBottom: z.boolean().default(false),
-  /** Workbot's profile: tasks, permissions and read-only memory. A Den from before it doesn't say: off. */
-  profileSheet: z.boolean().default(false),
-  centeredProfile: z.boolean().default(false),
-  browserPreview: z.boolean().default(false),
-  /** Remote task discovery and live reads (`workbotRemoteTasks`); absent means off. */
-  remoteTasks: z.boolean().default(false),
-  /** Pages-only navigation with Files and Apps in the profile (`workbotProfileNav`); absent means off. */
-  profileNav: z.boolean().default(false),
-  /** Apps built in OpenWork show as cards and open beside the chat (`workbotApps`); absent means off. */
-  openworkApps: z.boolean().default(false),
-  /** Quiet calendar (`workbotQuietCalendar`); absent means off. */
-  quietCalendar: z.boolean().default(false),
+  profileComputers: z.boolean().default(false),
+  /** Calm chat look (`workbotCalmChat`); absent means off. */
+  calmChat: z.boolean().default(false),
   /** The organization's default model for Workbot's turns. Null, or a Den from before it, means the runner's default. */
   model: z.string().nullable().default(null),
   verifyModel: z.boolean().default(false),
@@ -110,8 +87,6 @@ export const denSessionSchema = z.object({
   stepTurns: z.boolean().default(false),
   /** New chats get their own session cell on the runner (per-chat session cells). A Den from before it doesn't say: off. */
   sessionCells: z.boolean().default(false),
-  /** The Devices page and reports about each chat's computer (`remoteDevices`, while Workbot is on). A Den from before it doesn't say: off. */
-  devices: z.boolean().default(false),
 })
 
 const runTokenSchema = z.object({
@@ -435,7 +410,7 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     },
     /**
      * The Gmail, Slack and Microsoft 365 connections the person's admins set up, and whether each is ready for them;
-     * with the profile (`workbotProfileSheet`), also every app they can use, connected or not. A Den from before
+     * with the profile, also every app they can use, connected or not. A Den from before
      * `apps` (or with the profile off) leaves it out.
      */
     async connections(accessToken: string) {

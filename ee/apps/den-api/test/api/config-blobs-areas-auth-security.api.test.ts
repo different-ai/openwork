@@ -90,9 +90,6 @@ let connectionId = ""
 let scimToken = ""
 
 test("setup: an OIDC connection, enabled, with SCIM creating teams", async () => {
-  for (const key of ["sessionSecuritySettings", "authSecuritySettings", "multipleSsoConnections"]) {
-    assert.equal((await den.setFeature(orgA.orgId, key, true)).status, 200)
-  }
   const registered = await apiA("POST", "/v1/sso/oidc", {
     issuer,
     domain: domainA,
@@ -212,20 +209,21 @@ test("Require SSO is refused without a working connection, and the last one can'
   const [orgRow] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, orgB.orgId))
   assert.ok(!JSON.stringify(orgRow?.metadata ?? null).includes("\"requireSso\":true"))
 
-  // Source: SSO is ready, so requiring it is allowed (ssoPerOrganization off: no SSO-session rule).
+  // Even a ready connection cannot be made required by an import without SSO proof.
   const ctxA = await ctxFor(orgA)
   const sessionA = byKind(await area.exportItems(ctxA), "session")
-  const required = await area.apply(ctxA, {
+  await expectItemError(() => area.apply(ctxA, {
     kind: "update",
     targetId: sessionA.id,
     previous: sessionA,
     item: { name: sessionA.name, spec: { ...sessionA.spec, requireSso: true } },
     changes: [{ path: "requireSso", from: false, to: true }],
     secretPaths: [],
-  })
-  assert.deepEqual(required.steps, [{ action: "set", target: "requireSso", detail: "true" }])
+  }), "sso_session_required")
+
   assert.ok(area.irreversible?.({ kind: "update", targetId: sessionA.id, previous: sessionA, item: { name: sessionA.name, spec: { ...sessionA.spec, requireSso: true } }, changes: [{ path: "requireSso" }], secretPaths: [] }).some((line) => line.includes("sign in again with SSO")))
 
+  await sql("UPDATE organization SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.requireSso', TRUE) WHERE id = ?", [orgA.orgId])
   const sso = byKind(await area.exportItems(ctxA), "sso-connection")
   const disable: Op = {
     kind: "update",

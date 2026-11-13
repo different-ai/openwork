@@ -41,8 +41,6 @@ import {
   getOrgSettingsRoute,
   getPermissionsRoute,
   getPluginsRoute,
-  getScimRoute,
-  getSsoRoute,
   getToolTesterRoute,
   getWebRoute,
   getWorkbotSettingsRoute,
@@ -98,8 +96,6 @@ export type BuildDashboardNavSectionsInput = {
   /** The managedDeployments feature is on for this organization. */
   managedDeployments?: boolean;
   desktopPolicyScreenRemoved?: boolean;
-  /** My Computers for every member and the team inventory for admins; remoteDevices is off by default. */
-  remoteDevices?: boolean;
   /** Workbot's settings are on Members › Teams › Everyone for this viewer, so Manage has no Workbot entry. */
   workbotSettingsInTeams?: boolean;
   /** Explicit server capability, independent of organization role permissions. */
@@ -110,10 +106,6 @@ export type BuildDashboardNavSectionsInput = {
   organizationId?: string | null;
   /** The member's own agent is available to them (see myAgentAvailable). */
   myBot?: boolean;
-  /** The authSecuritySettings feature: one Auth & Security entry instead of SSO and SCIM. */
-  authSecuritySettings?: boolean;
-  /** The configBlobs feature: Settings › Config (export and import the organization's configuration). */
-  configBlobs?: boolean;
 };
 
 export function buildDashboardNavSections({
@@ -124,14 +116,11 @@ export function buildDashboardNavSections({
   libraryNeedsSignIn = 0,
   managedDeployments = false,
   desktopPolicyScreenRemoved = false,
-  remoteDevices = false,
   workbotSettingsInTeams = false,
   canManageDeploymentServices = false,
   workbotEntry = { kind: "open" },
   organizationId = null,
   myBot = false,
-  authSecuritySettings = false,
-  configBlobs = false,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
@@ -156,7 +145,7 @@ export function buildDashboardNavSections({
       ? [{ href: getAutomationsRoute(orgSlug), label: "My Automations", icon: CalendarClock }]
       : []),
     // Every member sees their own and shared computers; the team-wide list is Manage › Computers.
-    ...(remoteDevices && orgSlug
+    ...(orgSlug
       ? [{ href: getMyComputersRoute(orgSlug), label: "My Computers", icon: MonitorSmartphone, testId: "dashboard-nav-my-computers" }]
       : []),
     ...(showWeb
@@ -172,7 +161,7 @@ export function buildDashboardNavSections({
         { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug, badge: "MCPs" },
         { href: getAiGatewayRoute(orgSlug), label: "AI Gateway", icon: Sparkles },
         ...(!desktopPolicyScreenRemoved ? [{ href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop }] : []),
-        ...(remoteDevices ? [{ href: getComputersRoute(orgSlug), label: "Computers", icon: Laptop, testId: "dashboard-nav-computers" }] : []),
+        { href: getComputersRoute(orgSlug), label: "Computers", icon: Laptop, testId: "dashboard-nav-computers" },
         ...(!workbotSettingsInTeams ? [{ href: getWorkbotSettingsRoute(orgSlug), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot-settings" }] : []),
         ...(managedDeployments ? [{ href: getDeploymentsRoute(orgSlug), label: "Deployments", icon: Server }] : []),
       ].filter((item) => canOpen(item.href))
@@ -199,11 +188,11 @@ export function buildDashboardNavSections({
           { href: getApiKeysRoute(orgSlug), label: "API Keys" },
         ].filter((item) => canOpen(item.href)),
         ...permissionsNavChildren(orgSlug, access, canOpen(getMembersRoute(orgSlug))),
-        ...authSecurityNavChildren(orgSlug, access, authSecuritySettings),
+        ...authSecurityNavChildren(orgSlug, access),
         ...(canOpen(getMarketplacesRoute(orgSlug))
           ? [{ href: getMarketplacesRoute(orgSlug), label: "Advanced" }]
           : []),
-        ...(configBlobs && canOpen(getConfigRoute(orgSlug))
+        ...(canOpen(getConfigRoute(orgSlug))
           ? [{ href: getConfigRoute(orgSlug), label: "Config" }]
           : []),
         ...(capabilities.mcpConnections && canOpen(getToolTesterRoute(orgSlug))
@@ -239,15 +228,9 @@ function permissionsNavChildren(orgSlug: string, access: DenOrgAccessFlags, memb
   return access.canViewPermissions && !membersOpen ? [{ href: getPermissionsRoute(orgSlug), label: "Roles" }] : [];
 }
 
-/** SSO and SCIM: one Auth & Security entry with the feature on, shown when either tab is visible. */
-function authSecurityNavChildren(orgSlug: string, access: DenOrgAccessFlags, combined: boolean): DashboardNavChild[] {
-  if (combined) {
-    return access.canViewSso || access.canViewScim ? [{ href: getAuthSecurityRoute(orgSlug), label: "Auth & Security" }] : [];
-  }
-  return [
-    ...(access.canViewSso ? [{ href: getSsoRoute(orgSlug), label: "SSO" }] : []),
-    ...(access.canViewScim ? [{ href: getScimRoute(orgSlug), label: "SCIM" }] : []),
-  ];
+/** SSO and SCIM: one Auth & Security entry, shown when either tab is visible. */
+function authSecurityNavChildren(orgSlug: string, access: DenOrgAccessFlags): DashboardNavChild[] {
+  return access.canViewSso || access.canViewScim ? [{ href: getAuthSecurityRoute(orgSlug), label: "Auth & Security" }] : [];
 }
 
 // Alias order is ranking priority in the command palette.
@@ -279,9 +262,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   "OpenWork Models": ["llm", "provider", "managed", "inference"],
   "OpenWork Web": ["cloud", "sessions"],
   Plugins: ["skills", "commands", "plugin directory"],
-  SCIM: ["provisioning", "directory", "users"],
   Settings: ["organization", "workspace"],
-  SSO: ["single sign on", "saml", "oidc"],
   "Tool Tester": ["tools", "test", "mcp"],
   Workbot: ["model", "default model", "assistant", "slack", "automations"],
 };

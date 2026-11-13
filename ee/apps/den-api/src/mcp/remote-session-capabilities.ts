@@ -1288,6 +1288,25 @@ function remoteSessionStatusSources(input: RemoteSessionExecuteInput, deps: Remo
   }
 }
 
+/** Compact, read-only event observation. Reuse access checks without queuing desktop read requests. */
+export async function readRemoteSessionEventStatus(
+  scope: { organizationId: DenTypeId<"organization">; userId: string },
+  reference: { commandId?: string; sessionId?: string },
+  deps: RemoteSessionExecuteDeps = DEFAULT_REMOTE_SESSION_DEPS,
+): Promise<RemoteSessionToolResult> {
+  const input: RemoteSessionExecuteInput = { ...scope, action: "status", hasWriteScope: false, body: reference }
+  const desktop = reference.sessionId ? await findDesktopSession(input, reference, deps) : null
+  const commandId = reference.commandId ?? desktop?.commandId
+  if (commandId) {
+    const command = await deps.commandStore.get({ ...scope, createdByUserId: scope.userId, commandId })
+    if (!command) return errorResult({ error: "unknown_command" })
+    const refusal = await commandRefusal(deps, input, command)
+    if (refusal) return refusal
+  }
+  const body = remoteSessionStatusRequestSchema.parse({ threads: [commandId ? { commandId } : reference], waitMs: 0 })
+  return jsonResult(await readRemoteSessionStatus(body, remoteSessionStatusSources(input, deps), { signal: AbortSignal.timeout(10_000) }))
+}
+
 type CallerScope = { organizationId: DenTypeId<"organization">; userId: string }
 
 function callerScope(input: Pick<RemoteSessionExecuteInput, "organizationId" | "userId">): CallerScope {
@@ -1353,7 +1372,6 @@ async function commandRefusal(
   return desktopSessionRefusal(deps, callerScope(input), runner, command.kind, identity)
 }
 
-const ATTACH_FEATURE_DISABLED_MESSAGE = "Reaching sessions that were started on a computer is not turned on for your organization."
 const ATTACH_UPDATE_REQUIRED_MESSAGE = "That computer needs an OpenWork update before a session started on it can be reached from another device."
 const ATTACH_OFFLINE_MESSAGE = "That computer is not connected. Start OpenWork there and try again."
 const ATTACH_DEFAULT_TITLE = "Session"
@@ -1371,7 +1389,6 @@ async function attachDesktopSession(
 ): Promise<RemoteSessionToolResult> {
   const scope = callerScope(input)
   const policy = await sessionAccessPolicy(deps, scope)
-  if (!policy.enabled) return errorResult({ error: "feature_disabled", message: ATTACH_FEATURE_DISABLED_MESSAGE, retryable: false })
   const organizationOff = remoteAccessOffReason(policy, null)
   if (organizationOff) return remoteAccessOff(organizationOff, {})
   const targets = await (deps.desktopTargets ?? defaultDesktopTargets)({ ...scope, sessions: true })

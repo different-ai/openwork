@@ -31,7 +31,7 @@ const fixture: RemoteDevice[] = [
 ];
 
 function render(flags: Partial<WorkbotHost>, seed: (client: QueryClient) => void | Promise<void>, computerFor?: (chat: string) => (() => void) | null) {
-  setWorkbotHost(host({ devices: true, ...flags }));
+  setWorkbotHost(host({ ...flags }));
   // A static render stands for the page as it is, not for the moment before its next read: a failed read stays failed.
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false } } });
   return Promise.resolve(seed(client)).then(() => {
@@ -42,25 +42,25 @@ function render(flags: Partial<WorkbotHost>, seed: (client: QueryClient) => void
 const rows = (html: string) => html.split("<li ").slice(1);
 const rowOf = (html: string, label: string) => rows(html).find(entry => entry.includes(`>${label}<`)) ?? "";
 
-test("Devices is a destination only where it is on for the person", () => {
-  const props: NavigationProps = { page: "home", onPage: () => {}, currentChat: null, chats: undefined, loading: false, failed: false, onRetry: () => {}, drafts: false };
+test("Devices is a destination unless the profile owns Computers", () => {
+  const props: NavigationProps = { page: "home", onPage: () => {}, onProfile: () => {}, currentChat: null, chats: undefined, loading: false, failed: false, onRetry: () => {}, drafts: false };
   const navigation = (flags: Partial<WorkbotHost>, page: NavigationProps["page"] = "home") => {
     setWorkbotHost(host({ documents: true, calendar: true, ...flags }));
     return renderToStaticMarkup(<DesktopNavigation {...props} page={page} />);
   };
-  const on = navigation({ devices: true });
+  const on = navigation({});
   assert.ok(on.includes('aria-label="Devices"'));
   assert.ok(on.indexOf('aria-label="Calendar"') < on.indexOf('aria-label="Devices"'), "after Calendar");
   assert.ok(!/aria-label="Devices"[^>]*aria-current/.test(on) && !/aria-current="page"[^>]*aria-label="Devices"/.test(on));
-  const current = navigation({ devices: true }, "devices");
+  const current = navigation({}, "devices");
   assert.ok(/<button[^>]*aria-label="Devices"[^>]*aria-current="page"|<button[^>]*aria-current="page"[^>]*aria-label="Devices"/.test(current), "marked as the page on screen");
-  assert.ok(!navigation({}).includes("Devices"), "absent means off");
-  assert.ok(!navigation({ devices: false }).includes("Devices"));
+  assert.ok(!navigation({ profileComputers: true }).includes('aria-label="Devices"'), "the profile owns Computers without a redundant standalone entry");
+  assert.ok(navigation({ profileComputers: false }).includes('aria-label="Devices"'), "turning off the move restores the old entry");
 });
 
 test("the list names each computer, what it is and whether it can be reached", async () => {
   const opened: string[] = [];
-  const html = await render({ computer: true, browser: true, remoteTasks: true }, client => { client.setQueryData(key, fixture); },
+  const html = await render({ computer: true, browser: true }, client => { client.setQueryData(key, fixture); },
     chat => (chat === "main" ? () => { opened.push(chat); } : null));
   assert.ok(html.indexOf(">Your computers<") > 0 && html.indexOf(">Your computers<") < html.indexOf(">Cloud computers<"), "two plain group labels, the person's own first");
   assert.deepEqual(deviceGroups(fixture).map(group => group.devices.map(entry => entry.id)), [["d1", "d2", "d3"], ["v1", "v2", "v3"]]);
@@ -86,13 +86,13 @@ test("the list names each computer, what it is and whether it can be reached", a
   assert.deepEqual(opened, [], "rendering opens nothing");
 });
 
-test("Open needs a view of Workbot's computer, the remote-task marker needs remote tasks, and one group needs no label", async () => {
+test("Open needs computer access, task-capable desktops always show their marker, and one group needs no label", async () => {
   const cloudOnly = fixture.filter(entry => entry.kind === "vm");
   const html = await render({}, client => { client.setQueryData(key, cloudOnly); }, () => () => {});
   assert.ok(!html.includes("<button"), "neither the Browser nor the Computer view: nothing to open");
   assert.ok(!html.includes("Cloud computers") && !html.includes("Your computers"), "a single group is just the list");
   const desktops = await render({ browser: true }, client => { client.setQueryData(key, fixture.filter(entry => entry.kind === "desktop")); }, () => () => {});
-  assert.ok(!desktops.includes("Takes tasks from Workbot") && !desktops.includes("<button"));
+  assert.ok(desktops.includes("Takes tasks from Workbot") && !desktops.includes("<button"));
   assert.ok((await render({ browser: true }, client => { client.setQueryData(key, cloudOnly); }, () => () => {})).includes("Open Workbot&#x27;s browser"));
 });
 

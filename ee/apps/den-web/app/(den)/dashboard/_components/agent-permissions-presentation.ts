@@ -1,9 +1,9 @@
 import {
-  AGENT_HARNESS_PERMISSION_KEYS,
   agentPermissionDefinitions,
   agentPermissionDecisionsFor,
   agentPermissionDecisionLabels,
   AGENT_PERMISSION_DEFAULT_DECISION,
+  agentPermissionMemberDecides,
   type AgentPermissionDefinition,
   type AgentPermissionDecision,
   type AgentPermissionAction,
@@ -15,9 +15,6 @@ import {
 export type AgentPermissionsArea = "all" | "agents" | "browser";
 
 const BROWSER_KEYS: readonly string[] = ["websites", "browserUploads"];
-const HARNESS_KEYS: readonly string[] = AGENT_HARNESS_PERMISSION_KEYS;
-/** Rows that only exist while computer use does: files and the clipboard move through it. */
-const COMPUTER_USE_KEYS: readonly string[] = ["computerUse", "computerFiles", "computerClipboard"];
 /** Rows that blocking computer use blocks too, shown with its lock. */
 const BLOCKED_WITH_COMPUTER_USE: readonly string[] = ["computerFiles", "computerClipboard", "appScripting"];
 
@@ -33,24 +30,13 @@ const EDITOR_GROUPS: readonly { label: string; sections: readonly AgentPermissio
   { label: "Skills and MCP servers", sections: ["extensions"] },
 ];
 
-/** Preview only: keep saved and draft settings intact while computer use is unavailable. */
-export function effectiveAgentPermissionSettings(settings: AgentPermissionSettings, computerUseEnabled: boolean): AgentPermissionSettings {
-  if (computerUseEnabled) return settings;
-  const effective = { ...settings };
-  delete effective.computerUse;
-  return effective;
-}
-
-export function visibleAgentPermissionGroups(area: AgentPermissionsArea, harnessEnabled: boolean, computerUseEnabled: boolean, browserUploadsEnabled = false) {
+export function visibleAgentPermissionGroups(area: AgentPermissionsArea) {
   const groups = area === "browser" ? [{ label: "Websites", sections: ["web"] }] : EDITOR_GROUPS;
   return groups.map((group) => ({
     label: group.label,
     definitions: agentPermissionDefinitions.filter((definition) =>
       group.sections.includes(definition.section)
-      && inArea(area, definition.key)
-      && (harnessEnabled || !HARNESS_KEYS.includes(definition.key))
-      && (computerUseEnabled || !COMPUTER_USE_KEYS.includes(definition.key))
-      && (browserUploadsEnabled || definition.key !== "browserUploads")),
+      && inArea(area, definition.key)),
   })).filter((group) => group.definitions.length > 0);
 }
 
@@ -59,29 +45,30 @@ const TRY_KINDS: readonly { action: AgentPermissionAction; label: string; placeh
   { action: "external_directory", label: "Outside folder", placeholder: "~/Documents/report.pdf" },
   { action: "webfetch", label: "Website", placeholder: "https://docs.example.com/guide" },
   { action: "browser_upload", label: "Website upload", placeholder: "https://docs.example.com/upload" },
+  { action: "file_send", label: "File to a connected account", placeholder: "report.pdf" },
   { action: "skill", label: "Local skill", placeholder: "meeting-notes" },
   { action: "mcp", label: "Local MCP server", placeholder: "issue-tracker" },
 ];
 
-export function visibleAgentPermissionTryKinds(area: AgentPermissionsArea, harnessEnabled: boolean, computerUseEnabled: boolean, browserUploadsEnabled = false) {
-  const keys = visibleAgentPermissionGroups(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled).flatMap((group) => group.definitions.map((definition) => definition.key));
+export function visibleAgentPermissionTryKinds(area: AgentPermissionsArea) {
+  const keys = visibleAgentPermissionGroups(area).flatMap((group) => group.definitions.map((definition) => definition.key));
   return TRY_KINDS.filter((entry) => agentPermissionDefinitions.some((definition) => definition.action === entry.action && keys.includes(definition.key)));
 }
 
 export function agentPermissionChoiceOptions(definition: AgentPermissionDefinition, team: string | null): { value: AgentPermissionDecision | "inherit"; label: string }[] {
   return [
-    ...(definition.key === "browserUploads" ? [{ value: "inherit" as const, label: team === null ? "Member decides" : "Use Everyone's" }] : []),
+    ...(agentPermissionMemberDecides(definition.key) ? [{ value: "inherit" as const, label: team === null ? "Member decides" : "Use Everyone's" }] : []),
     ...agentPermissionDecisionsFor(definition).map((decision) => ({ value: decision, label: agentPermissionDecisionLabels[decision] })),
   ];
 }
 
 export function agentPermissionChoiceValue(definition: AgentPermissionDefinition, decision: AgentPermissionDecision | undefined, effective: AgentPermissionDecision): AgentPermissionDecision | "inherit" {
-  return definition.key === "browserUploads" ? decision ?? "inherit" : effective;
+  return agentPermissionMemberDecides(definition.key) ? decision ?? "inherit" : effective;
 }
 
-/** Preserve explicit upload Ask/Allow: they differ from the member-controlled default. */
+/** Preserve an explicit Ask/Allow of a member-decided permission: they differ from the member-controlled default. */
 export function storedAgentPermissionDecision(definition: AgentPermissionDefinition, team: string | null, decision: AgentPermissionDecision | undefined): AgentPermissionDecision | undefined {
-  return team === null && definition.key !== "browserUploads" && decision === AGENT_PERMISSION_DEFAULT_DECISION ? undefined : decision;
+  return team === null && !agentPermissionMemberDecides(definition.key) && decision === AGENT_PERMISSION_DEFAULT_DECISION ? undefined : decision;
 }
 
 /** Keep the dependent control visible, with the same neutral lock as commands (DESIGN.md P4, C5). */

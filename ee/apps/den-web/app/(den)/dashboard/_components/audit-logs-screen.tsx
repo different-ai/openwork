@@ -1,8 +1,12 @@
 "use client";
 
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronRight } from "lucide-react";
+import { Cog, Plug, SlidersHorizontal } from "lucide-react";
+import { COMPACT_INPUT_CLASS, DASHBOARD_PAGE_CLASS } from "../../_components/ui/dashboard-styles";
+import { ListRow, RowLaneLabel, RowList, RowListHeader, RowLane, RowListSkeleton, RowTile, StatusLane, TimeLane } from "../_features/computers/computer-rows";
+import { PersonLead, RefreshButton, hairline, secondaryText } from "../_features/computers/computer-parts";
+import { FilterInput } from "./item-list";
 import { auditOperationOutcomeSchema, auditOriginSchema, type AuditOperationSummary } from "@openwork/types/den/audit";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
@@ -10,14 +14,15 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { DenSelect } from "../../_components/ui/select";
 import { getOrgAccessFlags, type DenOrgContext, type DenOrgMember } from "../../_lib/den-org";
+import { auditFiltersFromDraft, auditLocalDate, pendingAuditSearch } from "./page-consistency-state";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { ItemPanel, ItemRow, ItemRowsSkeleton } from "./item-list";
+
 import { auditLogsIntroFacts } from "./audit-logs-intro-facts";
 import { useFeatureIntro } from "../_features/feature-intros";
 import { auditQueryKey, isAuditAccessError, useAuditEventTypes, useAuditOperations, type AuditFilters, type AuditReadError, type AuditScope } from "./audit-logs-data";
 import {
-  AuditChevron, AuditLocked, AuditOutcome, AuditReadFailure, AuditSkeleton, AuditTime, AuditTimeline, AuditUsage,
-  auditActionSentence, auditActorLabel, auditLabel, auditOriginLabels, auditOutcomeLabels, auditResourceLabel, auditSummaryClass, auditTechnicalSummaryClass,
+  AuditChevron, AuditLocked, AuditReadFailure, AuditSkeleton, AuditTimeline, AuditUsage,
+  auditActionSentence, auditActorLabel, auditLabel, auditOriginLabels, auditOutcomeLabels, auditOutcomeStatus, auditResourceLabel, auditSummaryClass, auditTechnicalSummaryClass,
 } from "./audit-logs-details";
 
 export function getAuditAccess(input: {
@@ -30,10 +35,16 @@ export function getAuditAccess(input: {
   return getOrgAccessFlags(input.orgContext.currentMember.role, input.orgContext.currentMember.isOwner, input.orgContext.currentMember.permissions).canViewAuditLogs ? "allowed" : "locked";
 }
 
-function AuditPage({ children, action }: { children: ReactNode; action?: ReactNode }) {
-  // Match ItemPage's centered column.
-  return <section aria-label="Audit logs" className="mx-auto flex w-full max-w-[896px] flex-col gap-7 px-6 py-10 text-[13px] text-[var(--dls-text-primary)] md:px-12">
-    <DenPageHeader size="compact" title="Audit logs" action={action} />{children}
+/** One line of state under the title, as Computers has "2 of 6 online". */
+function auditStateLine(shown: number, more: boolean, filtered: boolean) {
+  if (!shown) return filtered ? "Nothing matches these filters" : "Nothing recorded yet";
+  const count = `${shown.toLocaleString()}${more ? "+" : ""} ${shown === 1 && !more ? "operation" : "operations"}`;
+  return filtered ? `${count} match these filters` : `${count}, newest first`;
+}
+
+function AuditPage({ children, action, state }: { children: ReactNode; action?: ReactNode; state?: ReactNode }) {
+  return <section aria-label="Audit logs" className={`${DASHBOARD_PAGE_CLASS} flex flex-col gap-6 text-[13px] text-[var(--dls-text-primary)]`}>
+    <DenPageHeader size="compact" title="Audit logs" state={state} action={action} />{children}
   </section>;
 }
 
@@ -48,19 +59,29 @@ export function AuditLogsScreen() {
   return <AuditLogsContent key={JSON.stringify([dashboard.orgId, member.id, member.userId, member.role, member.isOwner, member.permissions])} scope={{ orgId: dashboard.orgId, memberId: member.id }} members={dashboard.orgContext.members} captureIncluded={dashboard.orgContext.entitlements.auditLogs} />;
 }
 
-function AuditFiltersForm({ filters, members, operations, eventTypes, eventTypesPending, onApply }: {
+const PERIODS = [
+  { value: "", label: "Any time", hours: 0 },
+  { value: "1", label: "Last hour", hours: 1 },
+  { value: "24", label: "Last 24 hours", hours: 24 },
+  { value: "168", label: "Last 7 days", hours: 168 },
+  { value: "720", label: "Last 30 days", hours: 720 },
+] as const;
+
+/** Filter changes apply immediately; identifier search is debounced. */
+function AuditToolbar({ filters, members, operations, eventTypes, eventTypesPending, onApply }: {
   filters: AuditFilters; members: readonly DenOrgMember[]; operations: AuditOperationSummary[];
   eventTypes: readonly string[]; eventTypesPending: boolean; onApply: (filters: AuditFilters) => void;
 }) {
-  const [draft, setDraft] = useState(filters);
-  function localDate(value?: string) {
-    if (!value) return "";
-    const date = new Date(value);
-    return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-  }
-  const [from, setFrom] = useState(localDate(filters.from));
-  const [to, setTo] = useState(localDate(filters.to));
+  const [draft, setDraft] = useState<AuditFilters>(() => ({ ...filters, from: auditLocalDate(filters.from), to: auditLocalDate(filters.to) }));
+  const [period, setPeriod] = useState("");
+  const [more, setMore] = useState(Boolean(filters.to || filters.actorId || filters.origin));
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setDraft({ ...filters, from: auditLocalDate(filters.from), to: auditLocalDate(filters.to) });
+    setError(null);
+    // A reset outside this toolbar (Show all operations) resets its local period too.
+    if (!filters.from && !filters.to) setPeriod("");
+  }, [filters]);
   const actions = [...new Set([...eventTypes, ...(draft.action ? [draft.action] : [])])].sort();
   const actors = new Map(members.flatMap((member) => member.userId ? [[member.userId, member.user.name] satisfies [string, string]] : []));
   for (const { initiatingActor: actor, origin } of operations) {
@@ -69,72 +90,100 @@ function AuditFiltersForm({ filters, members, operations, eventTypes, eventTypes
     actors.set(actor.id, label === "Platform administrator" ? `${label} (${actor.id})` : label);
   }
   if (draft.actorId && !actors.has(draft.actorId)) actors.set(draft.actorId, "Previously selected actor");
-  function apply(event: FormEvent) {
-    event.preventDefault();
-    if ((from && !Number.isFinite(Date.parse(from))) || (to && !Number.isFinite(Date.parse(to))) || (from && to && Date.parse(from) > Date.parse(to))) {
-      setError("Choose a valid date range with the start before the end.");
-      return;
-    }
-    setError(null);
-    onApply({ ...draft, searchId: draft.searchId?.trim() || undefined, from: from ? new Date(from).toISOString() : undefined, to: to ? new Date(to).toISOString() : undefined });
+  function apply(nextDraft: AuditFilters) {
+    const next = auditFiltersFromDraft(nextDraft);
+    setError(next ? null : "Choose a valid date range with the start before the end.");
+    if (next) onApply(next);
   }
-  function clear() { setDraft({}); setFrom(""); setTo(""); setError(null); onApply({}); }
-  return <form onSubmit={apply} aria-label="Filter audit operations" className="flex flex-col gap-3">
-    <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-2" data-testid="audit-primary-filters">
-      <label className="flex min-w-60 flex-1 flex-col gap-1">From (local time)<DenInput type="datetime-local" aria-label="From (local time)" title="Operation start time" value={from} onChange={(event) => setFrom(event.target.value)} aria-invalid={Boolean(error)} /></label>
-      <label className="flex min-w-60 flex-1 flex-col gap-1">To (local time)<DenInput type="datetime-local" aria-label="To (local time)" title="Operation start time" value={to} onChange={(event) => setTo(event.target.value)} aria-invalid={Boolean(error)} /></label>
-      <label className="flex min-w-56 flex-1 flex-col gap-1" aria-busy={eventTypesPending}>Event type<DenSelect aria-label="Event type" searchLabel="Search event types" searchEmptyLabel="No event types match. Try another word." disabled={eventTypesPending} value={draft.action ?? ""} onChange={(event) => setDraft({ ...draft, action: event.target.value || undefined })}>
-        <option value="">All event types</option>{actions.map((action) => <option key={action} value={action}>{auditLabel(action)}</option>)}
-      </DenSelect></label>
-      <label className="flex min-w-56 flex-1 flex-col gap-1">Search IDs<DenInput aria-label="Search IDs" placeholder="Exact ID" title="Exact operation, event, request, or resource ID" maxLength={255} value={draft.searchId ?? ""} onChange={(event) => setDraft({ ...draft, searchId: event.target.value })} /></label>
-    </div>
-    <div className="flex flex-wrap gap-2">
-      <DenButton type="submit" variant="secondary">Apply filters</DenButton><DenButton variant="ghost" onClick={clear}>Clear filters</DenButton>
-    </div>
-    <details className="group"><summary className={auditSummaryClass}><AuditChevron />More filters</summary>
-      <div className="flex flex-wrap gap-3 pb-3">
-        <label className="flex min-w-44 flex-1 flex-col gap-1">Actor<DenSelect aria-label="Actor" value={draft.actorId ?? ""} onChange={(event) => setDraft({ ...draft, actorId: event.target.value || undefined })}>
-          <option value="">All actors</option>{[...actors].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-        </DenSelect></label>
-        <label className="flex min-w-44 flex-1 flex-col gap-1">Result<DenSelect aria-label="Result" value={draft.outcome ?? ""} onChange={(event) => setDraft({ ...draft, outcome: auditOperationOutcomeSchema.safeParse(event.target.value).data })}>
-          <option value="">All results</option>{auditOperationOutcomeSchema.options.map((outcome) => <option key={outcome} value={outcome}>{auditOutcomeLabels[outcome]}</option>)}
-        </DenSelect></label>
-        <label className="flex min-w-44 flex-1 flex-col gap-1">Origin<DenSelect aria-label="Origin" value={draft.origin ?? ""} onChange={(event) => setDraft({ ...draft, origin: auditOriginSchema.safeParse(event.target.value).data })}>
-          <option value="">All origins</option>{auditOriginSchema.options.map((origin) => <option key={origin} value={origin}>{auditOriginLabels[origin]}</option>)}
-        </DenSelect></label>
+  function change(changes: AuditFilters) {
+    const next = { ...draft, ...changes };
+    setDraft(next);
+    apply(next);
+  }
+  useEffect(() => {
+    const next = pendingAuditSearch(draft, filters.searchId);
+    if (!next) return;
+    const timeout = window.setTimeout(() => onApply(next), 300);
+    return () => window.clearTimeout(timeout);
+  }, [draft, filters.searchId, onApply]);
+  function range(key: "from" | "to", value: string) {
+    setPeriod("");
+    change({ [key]: value });
+  }
+  const filtered = Object.values(filters).some(Boolean) || Object.values(draft).some(Boolean);
+  function clear() { setDraft({}); setPeriod(""); setError(null); onApply({}); }
+  return <form className="flex flex-col gap-3" aria-label="Filter audit operations" onSubmit={(event) => { event.preventDefault(); apply(draft); }}>
+    <div className="flex flex-wrap items-center justify-between gap-2" data-testid="audit-primary-filters">
+      <FilterInput className="w-64 max-w-full" placeholder="Filter by exact ID" value={draft.searchId ?? ""} onChange={(value) => { setDraft({ ...draft, searchId: value.slice(0, 255) }); }} />
+      <div className="flex flex-wrap items-center gap-2">
+        {filtered ? <DenButton size="sm" variant="ghost" onClick={clear}>Clear filters</DenButton> : null}
+        <div className="w-44" aria-busy={eventTypesPending}><DenSelect size="sm" aria-label="Event type" searchLabel="Search event types" searchEmptyLabel="No event types match. Try another word." disabled={eventTypesPending} value={draft.action ?? ""} onChange={(event) => change({ action: event.target.value || undefined })}>
+          <option value="">Any event</option>{actions.map((action) => <option key={action} value={action}>{auditLabel(action)}</option>)}
+        </DenSelect></div>
+        <div className="w-36"><DenSelect size="sm" aria-label="Result" value={draft.outcome ?? ""} onChange={(event) => change({ outcome: auditOperationOutcomeSchema.safeParse(event.target.value).data })}>
+          <option value="">Any result</option>{auditOperationOutcomeSchema.options.map((outcome) => <option key={outcome} value={outcome}>{auditOutcomeLabels[outcome]}</option>)}
+        </DenSelect></div>
+        <div className="w-36"><DenSelect size="sm" aria-label="Period" value={period} onChange={(event) => {
+          const chosen = PERIODS.find((entry) => entry.value === event.target.value) ?? PERIODS[0];
+          setPeriod(chosen.value);
+          change({ from: chosen.hours ? auditLocalDate(new Date(Date.now() - chosen.hours * 3_600_000).toISOString()) : undefined, to: undefined });
+        }}>
+          {PERIODS.map((entry) => <option key={entry.value} value={entry.value}>{entry.label}</option>)}
+        </DenSelect></div>
+        <DenButton size="sm" variant="secondary" icon={SlidersHorizontal} aria-expanded={more} aria-controls="audit-more-filters" onClick={() => setMore((open) => !open)}>Filters</DenButton>
       </div>
-    </details>
+    </div>
+    {more ? <div id="audit-more-filters" className={`flex flex-wrap items-end gap-3 border-y ${hairline} py-3 text-[12px] ${secondaryText}`}>
+      <label className="flex w-56 flex-col gap-1">From<DenInput className={COMPACT_INPUT_CLASS} type="datetime-local" aria-label="From (local time)" value={draft.from ?? ""} onChange={(event) => range("from", event.target.value)} aria-invalid={Boolean(error)} /></label>
+      <label className="flex w-56 flex-col gap-1">To<DenInput className={COMPACT_INPUT_CLASS} type="datetime-local" aria-label="To (local time)" value={draft.to ?? ""} onChange={(event) => range("to", event.target.value)} aria-invalid={Boolean(error)} /></label>
+      <label className="flex w-44 flex-col gap-1">Actor<DenSelect size="sm" aria-label="Actor" value={draft.actorId ?? ""} onChange={(event) => change({ actorId: event.target.value || undefined })}>
+        <option value="">Anyone</option>{[...actors].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+      </DenSelect></label>
+      <label className="flex w-44 flex-col gap-1">Origin<DenSelect size="sm" aria-label="Origin" value={draft.origin ?? ""} onChange={(event) => change({ origin: auditOriginSchema.safeParse(event.target.value).data })}>
+        <option value="">Any origin</option>{auditOriginSchema.options.map((origin) => <option key={origin} value={origin}>{auditOriginLabels[origin]}</option>)}
+      </DenSelect></label>
+    </div> : null}
     {error ? <DenNotice tone="error" message={error} /> : null}
   </form>;
 }
+
+/** Who did it, in the row's lead lane: a person's initials, or a quiet mark for the system and services. */
+function AuditLead({ operation, members }: { operation: AuditOperationSummary; members: readonly DenOrgMember[] }) {
+  const actor = operation.initiatingActor;
+  if (actor.type === "user" && actor.id) return <PersonLead name={auditActorLabel(actor, members, operation.origin)} />;
+  return <RowTile icon={actor.type === "service" ? Plug : Cog} />;
+}
+
+/** Lanes of the audit list, as wide as the matching Computers lanes. */
+const AUDIT_LANE = { result: "flex w-[120px] @md:w-40", origin: "hidden w-28 @3xl:block", time: "hidden w-24 @2xl:block" } as const;
 
 function AuditCompactOperations({ operations, scope, members, expanded, onExpand, onAccessError }: {
   operations: AuditOperationSummary[]; scope: AuditScope; members: readonly DenOrgMember[]; expanded: string | null;
   onExpand: (id: string | null) => void; onAccessError: (error: AuditReadError) => void;
 }) {
-  return <div data-testid="audit-compact-list"><ItemPanel>
+  const now = Date.now();
+  return <RowList label="Audit operations" testId="audit-compact-list" header={<RowListHeader lead="Activity" chevron>
+    <RowLaneLabel lane={AUDIT_LANE.result}>Result</RowLaneLabel>
+    <RowLaneLabel lane={AUDIT_LANE.origin}>Origin</RowLaneLabel>
+    <RowLaneLabel lane={AUDIT_LANE.time}>When</RowLaneLabel>
+  </RowListHeader>}>
     {operations.map((operation) => {
       const open = expanded === operation.id;
       const targets = [...new Set(operation.resources.filter((resource) => resource.relationship === "target").map((resource) => auditResourceLabel(resource)))].join(", ");
-      return <details key={operation.id} open={open} data-testid="audit-compact-operation">
-        <summary role="button" aria-label={`${open ? "Hide" : "View"} changes for ${auditLabel(operation.action)}`} aria-expanded={open} aria-controls={`audit-operation-${operation.id}`}
-          className="cursor-pointer list-none rounded-lg hover:bg-[var(--dls-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--dls-border)] [&::-webkit-details-marker]:hidden"
-          onClick={(event) => { event.preventDefault(); onExpand(open ? null : operation.id); }}>
-          <ItemRow
-            logo={<ChevronRight aria-hidden="true" strokeWidth={1.5} className={open
-              ? "size-4 shrink-0 rotate-90 text-[var(--dls-text-secondary)] transition-transform duration-150 motion-reduce:transition-none"
-              : "size-4 shrink-0 text-[var(--dls-text-secondary)] transition-transform duration-150 motion-reduce:transition-none"} />}
-            title={<span className="block whitespace-normal break-words">{auditActorLabel(operation.initiatingActor, members, operation.origin)} {auditActionSentence(operation.action)}</span>}
-            description={<span className="block whitespace-normal break-words">{targets}
-              <span className="flex flex-wrap gap-x-2 sm:hidden"><AuditOutcome outcome={operation.outcome} /><AuditTime value={operation.startedAt} /></span>
-            </span>}
-            status={<span className="flex flex-col items-end gap-1"><AuditOutcome outcome={operation.outcome} /><AuditTime value={operation.startedAt} /></span>}
-          />
-        </summary>
-        {open ? <div id={`audit-operation-${operation.id}`} className="px-5 pb-3">
+      return <ListRow key={operation.id} lead={<AuditLead operation={operation} members={members} />}
+        name={`${auditActorLabel(operation.initiatingActor, members, operation.origin)} ${auditActionSentence(operation.action)}`}
+        secondLine={targets}
+        testId={`audit-operation-toggle-${operation.id}`} rowTestId="audit-compact-operation"
+        toggle={{ expanded: open, controls: `audit-operation-${operation.id}`, onToggle: () => onExpand(open ? null : operation.id) }}
+        lanes={<>
+          <StatusLane lane={AUDIT_LANE.result} {...auditOutcomeStatus(operation.outcome)} />
+          <RowLane lane={AUDIT_LANE.origin} className={`truncate ${secondaryText}`}>{auditOriginLabels[operation.origin]}</RowLane>
+          <TimeLane lane={AUDIT_LANE.time} iso={operation.startedAt} now={now} />
+        </>}>
+        {open ? <div className="space-y-3">
           <AuditTimeline scope={scope} operationId={operation.id} members={members} onAccessError={onAccessError} />
-          <details className="group/audit-technical"><summary className={auditTechnicalSummaryClass}><AuditChevron technical />Technical details</summary>
-            <dl className="flex flex-col gap-2 break-all text-xs text-[var(--dls-text-secondary)]">
+          <details className="group/audit-technical"><summary className={auditTechnicalSummaryClass}><AuditChevron technical />Operation data</summary>
+            <dl className="grid gap-x-6 gap-y-2 break-all text-xs text-[var(--dls-text-secondary)] sm:grid-cols-2">
               <div><dt>Operation</dt><dd className="font-mono">{operation.id}</dd></div>
               <div><dt>Action</dt><dd className="font-mono">{operation.action}</dd></div>
               <div><dt>Actor</dt><dd className="font-mono">{operation.initiatingActor.id ?? "Unknown"}</dd></div>
@@ -146,9 +195,9 @@ function AuditCompactOperations({ operations, scope, members, expanded, onExpand
             </dl>
           </details>
         </div> : null}
-      </details>;
+      </ListRow>;
     })}
-  </ItemPanel></div>;
+  </RowList>;
 }
 
 export function AuditLogsContent({ scope, members, captureIncluded }: {
@@ -166,8 +215,10 @@ export function AuditLogsContent({ scope, members, captureIncluded }: {
   const operations = query.data?.pages.flatMap((page) => page.operations) ?? [];
   const accessError = isAuditAccessError(query.error) ? query.error : isAuditAccessError(eventTypes.error) ? eventTypes.error : detailAccessError;
   const refreshing = query.isFetching || eventTypes.isFetching;
-  function applyFilters(next: AuditFilters) { setExpanded(null); setFilters(next); }
-  // With `featureIntros` on: full screen while nothing has been kept, banner when history
+  const applyFilters = useCallback((next: AuditFilters) => {
+    setExpanded(null); setFilters(next);
+  }, []);
+  // Feature intro: full screen while nothing has been kept, banner when history
   // exists but the plan no longer records new activity.
   const intro = useFeatureIntro("audit-logs", auditLogsIntroFacts({ included: captureIncluded, filters, operations: query.data ? operations : undefined }));
   if (accessError) return <AuditPage><AuditLocked error={accessError}>
@@ -177,22 +228,22 @@ export function AuditLogsContent({ scope, members, captureIncluded }: {
     }}>Retry access check</DenButton>
   </AuditLocked></AuditPage>;
   if (intro.size === "fullscreen") return intro.element;
-  return <AuditPage action={<DenButton variant="secondary" size="sm" disabled={refreshing} onClick={() => void client.invalidateQueries({ queryKey: auditQueryKey(scope) })}>Refresh history</DenButton>}>
+  return <AuditPage state={query.data ? auditStateLine(operations.length, Boolean(query.hasNextPage), Object.values(filters).some(Boolean)) : undefined} action={<RefreshButton refreshing={refreshing} onRefresh={() => void client.invalidateQueries({ queryKey: auditQueryKey(scope) })} />}>
     {intro.size === "banner" ? intro.element : null}
-    <AuditFiltersForm key={JSON.stringify(filters)} filters={filters} members={members} operations={operations} eventTypes={eventTypes.data?.eventTypes ?? []} eventTypesPending={eventTypes.isPending} onApply={applyFilters} />
+    <AuditToolbar key={JSON.stringify([scope.orgId, scope.memberId])} filters={filters} members={members} operations={operations} eventTypes={eventTypes.data?.eventTypes ?? []} eventTypesPending={eventTypes.isPending} onApply={applyFilters} />
     {eventTypes.isError ? <div className="flex flex-wrap items-center gap-3">
       <DenNotice tone="error" message={eventTypes.data ? "Could not refresh event types. Showing the last verified catalog." : "Could not load event types. Try again."} />
       <DenButton variant="secondary" size="sm" disabled={eventTypes.isFetching} onClick={() => void eventTypes.refetch()}>Retry event types</DenButton>
     </div> : null}
     <div aria-busy={query.isFetching}>
       {query.isError ? <AuditReadFailure retained={Boolean(query.data)} verifiedAt={query.dataUpdatedAt} retry={() => { void (query.isFetchNextPageError ? query.fetchNextPage() : query.refetch()); }} busy={query.isFetching} /> : null}
-      {query.isPending ? <ItemPanel><ItemRowsSkeleton label="Loading audit history" rows={5} /></ItemPanel> : operations.length ? <AuditCompactOperations operations={operations} scope={scope} members={members} expanded={expanded} onExpand={setExpanded} onAccessError={setDetailAccessError} /> : !query.isError ? <div role="status" className="flex flex-col items-start gap-3 py-8" data-testid="audit-empty">
+      {query.isPending ? <RowListSkeleton rows={5} /> : operations.length ? <AuditCompactOperations operations={operations} scope={scope} members={members} expanded={expanded} onExpand={setExpanded} onAccessError={setDetailAccessError} /> : !query.isError ? <div role="status" className="flex flex-col items-start gap-3 py-8" data-testid="audit-empty">
         <p>{Object.values(filters).some(Boolean) ? "No operations match these filters." : "No retained audit operations yet. Review capture and storage for the current capture state."}</p>
         {Object.values(filters).some(Boolean) ? <DenButton variant="secondary" size="sm" onClick={() => applyFilters({})}>Show all operations</DenButton> : null}
       </div> : null}
     </div>
     {query.hasNextPage ? <div className="flex items-center justify-between gap-3"><span className="text-[var(--dls-text-secondary)]">{operations.length} operations loaded</span><DenButton variant="secondary" size="sm" disabled={query.isFetching} onClick={() => void query.fetchNextPage()}>Load more operations</DenButton></div> : null}
-    <details className="group border-t border-[var(--dls-border)]" onToggle={(event) => { if (event.currentTarget.open) setUsageOpen(true); }}>
+    <details className={`group border-y ${hairline}`} onToggle={(event) => { if (event.currentTarget.open) setUsageOpen(true); }}>
       <summary className={auditSummaryClass}><AuditChevron />Capture and storage</summary>
       {usageOpen ? <AuditUsage scope={scope} onAccessError={setDetailAccessError} /> : null}
     </details>

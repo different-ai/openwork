@@ -1,7 +1,6 @@
 import { timingSafeEqual } from "node:crypto"
 import { and, eq, gt, inArray, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
 import { GatewayApiKeyTable, GatewayKeyTable, InferenceKeyTable, InferenceOrgUpstreamProviderKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
-import { readFeatures } from "@openwork-ee/den-db/organization-features"
 import { readOrganizationAiGatewaySettings } from "@openwork/types/den/gateway-api-keys"
 import { assertManagedModelsAllowed, ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { gatewayBearerKeyLookupDigest, type GatewayBearerKey } from "@openwork-ee/utils/gateway-bearer-key"
@@ -11,7 +10,6 @@ import {
 } from "@openwork-ee/utils/inference-bearer-key"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
-import { env } from "./env.js"
 
 export function constantTimeEquals(a: string, b: string) {
   const left = new Uint8Array(Buffer.from(a))
@@ -102,9 +100,8 @@ const API_KEY_POLICY_CACHE_MS = 15_000
 const apiKeyPolicyCache = new Map<string, { expires: number; allowed: boolean }>()
 
 /**
- * Member API keys work only while the gatewayMemberApiKeys feature is on for the organization and its
- * admins allow them (Settings › General › AI Gateway). Cached briefly: turning either off stops keys
- * within this window.
+ * Member API keys work only while the organization's admins allow them (AI Gateway › API Keys).
+ * Cached briefly: turning the setting off stops keys within this window.
  */
 async function memberApiKeysAllowed(organizationId: string): Promise<boolean> {
   const now = Date.now()
@@ -114,26 +111,9 @@ async function memberApiKeysAllowed(organizationId: string): Promise<boolean> {
     .where(eq(OrganizationTable.id, normalizeDenTypeId("organization", organizationId))).limit(1)
   const allowed = organization !== undefined
     && readOrganizationAiGatewaySettings(organization.metadata).memberApiKeys
-    && (await readFeatures(db, organizationId, env.features)).gatewayMemberApiKeys
   if (apiKeyPolicyCache.size > 5_000) for (const [key, entry] of apiKeyPolicyCache) if (entry.expires <= now) apiKeyPolicyCache.delete(key)
   apiKeyPolicyCache.set(organizationId, { expires: now + API_KEY_POLICY_CACHE_MS, allowed })
   return allowed
-}
-
-const toolEndpointsPolicyCache = new Map<string, { expires: number; enabled: boolean }>()
-
-/**
- * Whether the Cursor and Claude Code endpoints are on for the organization: they are part of member
- * API keys (feature `gatewayMemberApiKeys`), cached like the key policy.
- */
-export async function toolEndpointsEnabled(organizationId: string): Promise<boolean> {
-  const now = Date.now()
-  const cached = toolEndpointsPolicyCache.get(organizationId)
-  if (cached && cached.expires > now) return cached.enabled
-  const enabled = (await readFeatures(db, organizationId, env.features)).gatewayMemberApiKeys
-  if (toolEndpointsPolicyCache.size > 5_000) for (const [key, entry] of toolEndpointsPolicyCache) if (entry.expires <= now) toolEndpointsPolicyCache.delete(key)
-  toolEndpointsPolicyCache.set(organizationId, { expires: now + API_KEY_POLICY_CACHE_MS, enabled })
-  return enabled
 }
 
 const LAST_USED_RESOLUTION_MS = 60_000

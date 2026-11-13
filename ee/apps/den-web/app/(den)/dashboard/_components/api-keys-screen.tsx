@@ -12,7 +12,6 @@ import { DenBadge } from "../../_components/ui/badge";
 import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import {
     getOrgAccessFlags,
-    orgFeatureEnabled,
     parseOrgApiKeysPayload,
     type DenOrgApiKey,
     permissionLockReason,
@@ -81,10 +80,9 @@ export function ApiKeysScreen() {
     /** The list for this organization has loaded at least once (feature intro facts). */
     const [loadedOrgId, setLoadedOrgId] = useState<string | null>(null);
     const searchParams = useSearchParams();
-    // Config tokens exist only with the configBlobs feature; areas are optional (left out if they fail to load).
-    const configTokensEnabled = orgFeatureEnabled(orgContext, "configBlobs");
-    const configAreasQuery = useConfigAreas(orgId, configTokensEnabled && Boolean(orgContext));
-    const configAreas = configTokensEnabled && configAreasQuery.data ? configAreasQuery.data.areas : null;
+    // Config token areas are optional (left out if they fail to load).
+    const configAreasQuery = useConfigAreas(orgId, Boolean(orgContext));
+    const configAreas = configAreasQuery.data ? configAreasQuery.data.areas : null;
 
     const access = useMemo(
         () =>
@@ -177,7 +175,7 @@ export function ApiKeysScreen() {
             return;
         }
 
-        const typeFields = configTokensEnabled ? configTokenRequestFields(configDraft) : { ok: true as const, fields: {} };
+        const typeFields = configTokenRequestFields(configDraft);
         if (!typeFields.ok) {
             setError(typeFields.reason);
             return;
@@ -318,7 +316,7 @@ export function ApiKeysScreen() {
         }
     }
 
-    // With `featureIntros` on: full screen while the organization has no keys, until the
+    // Feature intro: full screen while the organization has no keys, until the
     // Issue a new key form is open or a new key is on screen (DESIGN.md I1, I2).
     const intro = useFeatureIntro(
         "api-keys",
@@ -444,14 +442,12 @@ export function ApiKeysScreen() {
                                     />
                                 </label>
 
-                                {configTokensEnabled ? (
-                                    <ConfigTokenFields
-                                        draft={configDraft}
-                                        onChange={setConfigDraft}
-                                        areas={configAreas}
-                                        disabled={creating}
-                                    />
-                                ) : null}
+                                <ConfigTokenFields
+                                    draft={configDraft}
+                                    onChange={setConfigDraft}
+                                    areas={configAreas}
+                                    disabled={creating}
+                                />
 
                                 <div className="mt-5 flex flex-wrap justify-end gap-3">
                                     <DenButton
@@ -462,7 +458,7 @@ export function ApiKeysScreen() {
                                         Cancel
                                     </DenButton>
                                     <DenButton type="submit" loading={creating}>
-                                        {configTokensEnabled && configDraft.type === "config"
+                                        {configDraft.type === "config"
                                             ? "Create config token"
                                             : "Create API key"}
                                     </DenButton>

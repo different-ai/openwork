@@ -1,5 +1,5 @@
 /**
- * multipleSsoConnections: an organization adds several SSO connections, each
+ * An organization adds several SSO connections, each
  * with its own identity provider and one or more email domains. Each one is
  * verified, tested and enabled on its own; sign-in lists every ready provider
  * that covers the email; a sign-in through any of them opens an organization
@@ -85,20 +85,7 @@ let secondId = ""
 let firstProviderId = ""
 let secondProviderId = ""
 
-test("flag off: the connection routes are off and the single connection takes one domain", async () => {
-  const listed = await asOwner("GET", "/v1/sso/connections")
-  assert.equal(listed.status, 404, summary(listed))
-  assert.equal(field(listed.body, "error"), "feature_disabled")
-  const added = await asOwner("POST", "/v1/sso/connections/oidc", registration(idpA, [mainDomain], "Okta"))
-  assert.equal(added.status, 404, summary(added))
-  const twoDomains = await asOwner("POST", "/v1/sso/oidc", registration(idpA, [mainDomain, subsidiaryDomain], "Okta"))
-  assert.equal(twoDomains.status, 400, summary(twoDomains))
-})
-
-test("flag on: connections are added next to each other, each with its own provider, name and domains", async () => {
-  const changed = await den.setFeature(orgId, "multipleSsoConnections", true)
-  assert.equal(changed.status < 300, true, summary(changed))
-  await den.setFeature(orgId, "ssoPerOrganization", true)
+test("connections are added next to each other, each with its own provider, name and domains", async () => {
 
   const first = await asOwner("POST", "/v1/sso/connections/oidc", registration(idpA, [mainDomain], "Okta"))
   assert.equal(first.status, 201, summary(first))
@@ -197,7 +184,6 @@ test("renaming keeps a connection enabled; deleting one leaves the others", asyn
 
   const foreign = await den.signUp("Foreign Owner")
   const { orgId: foreignOrg } = await den.createOrg(foreign, "Foreign organization")
-  await den.setFeature(foreignOrg, "multipleSsoConnections", true)
   const notTheirs = await den.as(foreign, foreignOrg)("DELETE", `/v1/sso/connections/${secondId}`)
   assert.equal(notTheirs.status, 404, summary(notTheirs))
 

@@ -85,7 +85,7 @@ import {
 import { getApiKeySessionById } from "../api-keys.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
-import { getOrganizationFeatures, organizationFeatureEnabled, type FeatureMap } from "../features.js"
+import { getOrganizationFeatures, type FeatureMap } from "../features.js"
 import { appLogger } from "../observability/logger.js"
 import { updateOrganizationMetadata } from "../organization-metadata.js"
 import { resolvePermissionsForMember } from "../permissions/resolve.js"
@@ -156,8 +156,6 @@ const PEOPLE_AREA_KEY: ConfigAreaKey = "members.people"
 const APPLY_LEASE_MS = 600_000
 const APPLY_LEASE_EXTEND_EVERY_MS = 60_000
 const MAX_ANALYSIS_ATTEMPTS = 3
-/** Requests a disabled feature leaves waiting are looked at again after this long. */
-const FEATURE_OFF_RETRY_MS = 60_000
 
 // ---------------------------------------------------------------------------
 // Errors, callers
@@ -929,10 +927,6 @@ async function planPatch(row: ConfigChangeRequestRow, planned: Planned | { inval
 
 /** Worker: analyze one claimed request. */
 export async function analyzeClaimedChangeRequest(claim: ClaimedChangeRequest): Promise<ConfigChangeRequestStatus | null> {
-  if (!await organizationFeatureEnabled(claim.organizationId, "configBlobs")) {
-    await releaseClaim(claim, { status: "uploaded", availableAt: new Date(Date.now() + FEATURE_OFF_RETRY_MS), attempts: Math.max(0, claim.attempts - 1) })
-    return null
-  }
   try {
     const patch = await planPatch(claim, await planChangeRequest(claim))
     await releaseClaim(claim, { ...patch, attempts: 0 })
@@ -1457,10 +1451,6 @@ async function applyExecution(claim: ClaimedChangeRequest): Promise<{ execution:
 /** Worker: apply one claimed request (the org's apply lock is the claim). */
 export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Promise<ConfigChangeRequestStatus | null> {
   const organizationId = claim.organizationId
-  if (!await organizationFeatureEnabled(organizationId, "configBlobs")) {
-    await releaseClaim(claim, { status: "queued", availableAt: new Date(Date.now() + FEATURE_OFF_RETRY_MS), attempts: Math.max(0, claim.attempts - 1) })
-    return null
-  }
   const settings = await getConfigBlobSettings(organizationId)
   const approval = applyingApproval(claim)
   if (!approval || !approvalsSatisfied(currentApprovals(claim), settings)) {

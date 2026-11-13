@@ -9,8 +9,6 @@ import {
 } from "./run.js"
 import { z } from "zod"
 import { appLogger } from "../observability/logger.js"
-import { organizationFeatureEnabled } from "../features.js"
-import { markFeaturesUsed } from "../feature-usage.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import {
   buildSlackEnvelope,
@@ -59,20 +57,6 @@ type WorkerDeps = {
   slack: typeof slackClient
   runner: (actor: SlackActor) => SlackRunner
   live: LiveFeedSource
-  /** Whether the member's organization has `workbotDriveFiles` on. Unset: Den's feature rollout. */
-  driveFiles?: (actor: SlackActor) => Promise<boolean>
-  /** Whether the member has `workbotSlackAnswerReply` on. Unset: Den's feature rollout. */
-  answerReply?: (actor: SlackActor) => Promise<boolean>
-}
-
-const slackDriveFilesEnabled = (actor: SlackActor) =>
-  organizationFeatureEnabled(actor.organizationId, "workbotDriveFiles", { userId: actor.userId })
-
-const slackAnswerReplyEnabled = async (actor: SlackActor) => {
-  const enabled = await organizationFeatureEnabled(actor.organizationId, "workbotSlackAnswerReply", { userId: actor.userId })
-  // A Slack message is background work done for the member: count it as a use.
-  if (enabled) markFeaturesUsed({ organizationId: actor.organizationId, memberId: actor.memberId, keys: ["workbotSlackAnswerReply"] })
-  return enabled
 }
 
 const defaultWorkerDeps: WorkerDeps = {
@@ -317,10 +301,10 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
     cp.startedAt ??= Date.now()
     // Quiet by default: Slack's working status, then the answer. Admins can turn on live steps and notes.
     cp.live = installation.progressUpdates
-    // Chosen once per message, so turning the feature off never changes a reply half-way.
+    // Persist the reply format for resumable turns; older in-flight checkpoints keep their original format.
     cp.workbot = true
-    cp.driveFiles = await (suppliedDeps.driveFiles ?? slackDriveFilesEnabled)(actor).catch(() => false)
-    cp.answerReply = await (suppliedDeps.answerReply ?? slackAnswerReplyEnabled)(actor).catch(() => false)
+    cp.driveFiles = true
+    cp.answerReply = true
     cp.recipientUserId = event.slackUserId
     cp.recipientTeamId = event.teamId
     cp.privateReply =

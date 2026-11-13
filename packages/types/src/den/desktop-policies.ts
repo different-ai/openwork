@@ -29,7 +29,7 @@ export const MODEL_ACCESS_POLICY_KEYS = ["allowCustomProviders", "allowLocalMode
 /**
  * Models that run on the member's own computer (Ollama, LM Studio), by the
  * provider ids OpenWork's own setup writes. Governed by `allowLocalModels`
- * (feature `localModelsPolicy`), not by `allowCustomProviders`. A local server
+ * independently of `allowCustomProviders`. A local server
  * someone adds under another id through Connect a provider is a custom
  * provider and follows "Only models you provide".
  */
@@ -481,6 +481,8 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     agentPermissions: desktopAgentPermissionsSchema.optional(),
     /** Present only for clients supporting browser upload permissions. */
     browserUploadPermissions: desktopBrowserUploadPermissionsSchema.optional(),
+    /** Verified account scope for files sent to connected accounts, as for browser uploads. */
+    fileSendPermissions: desktopBrowserUploadPermissionsSchema.optional(),
     /** The member's default model for new chats, present when the organization has one and the feature is on. */
     defaultModel: desktopConfigDefaultModelSchema.optional(),
   })
@@ -883,6 +885,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
   const execution = raw?.execution === undefined ? undefined : effectiveDesktopExecutionPolicySchema.parse(raw.execution);
   const agentPermissions = desktopAgentPermissionsSchema.safeParse(raw?.agentPermissions);
   const browserUploadPermissions = desktopBrowserUploadPermissionsSchema.safeParse(raw?.browserUploadPermissions);
+  const fileSendPermissions = desktopBrowserUploadPermissionsSchema.safeParse(raw?.fileSendPermissions);
   const defaultModel = desktopConfigDefaultModelSchema.safeParse(raw?.defaultModel);
 
   return {
@@ -904,6 +907,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
     ...(agentPermissions.success ? { agentPermissions: agentPermissions.data } : {}),
     ...(browserUploadPermissions.success ? { browserUploadPermissions: browserUploadPermissions.data } : {}),
+    ...(fileSendPermissions.success ? { fileSendPermissions: fileSendPermissions.data } : {}),
     ...(defaultModel.success ? { defaultModel: defaultModel.data } : {}),
   };
 }

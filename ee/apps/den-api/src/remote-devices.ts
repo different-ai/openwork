@@ -978,10 +978,10 @@ export async function readOrganizationComputerRecord(organizationId: Organizatio
       activeTurnSince: iso(session.activeTurnSince), deletedAt: iso(session.deletedAt),
     } : null,
     features: {
-      remoteDevices: features.remoteDevices,
-      computerUse: features.computerUse,
+      remoteDevices: true,
+      computerUse: true,
       remoteComputers: features.remoteComputers,
-      browserUse: features.browserUse,
+      browserUse: true,
       sandboxGateway: features.sandboxGateway,
     },
   }

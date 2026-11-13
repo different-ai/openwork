@@ -8,8 +8,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { mcpAppToolRepairPrompt } from "@/components/chat/mcp-app-tool-change";
-import { markFeatureUsed } from "@/app/lib/den";
-import { useOrgFeature } from "../cloud/use-org-feature";
 import { BuiltAppShareDialog } from "../apps/built-app-share-button";
 import { useSavedApps } from "../apps/use-apps";
 import { useBuiltDashboardApps } from "./built-dashboard-apps";
@@ -19,7 +17,7 @@ import { useArtifactSurfaceActive } from "./retained-artifact-surface";
 import { pruneDashboardTiles, removeDashboardTileCache } from "./dashboard-tile-cache";
 import { artifactRows, groupArtifacts, readArtifactSelection, rememberArtifactSelection, selectedArtifact, type ArtifactRow } from "./artifacts-workspace";
 
-const CREATE_ARTIFACT_PROMPT = "Create one live artifact. Use my request to build and save one app that fetches fresh data with each viewer’s own connections whenever opened or refreshed. My artifact should ";
+const CREATE_ARTIFACT_PROMPT = "Create and save one live artifact that fetches fresh data with each viewer’s own connections whenever opened or refreshed. My artifact should ";
 
 export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTarget, active: routeActive = true }: {
   onCreateApp: CreateDashboardApp;
@@ -30,7 +28,6 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
 }) {
   const surfaceActive = useArtifactSurfaceActive();
   const active = routeActive && surfaceActive;
-  const toolRepair = useOrgFeature("appToolRepair");
   const built = useBuiltDashboardApps();
   const saved = useSavedApps();
   const cache = useQueryClient();
@@ -71,7 +68,7 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
   }, [built.ready, built.cacheScopeKey, rows]);
   const create = useMutation({ mutationFn: () => onCreateApp(CREATE_ARTIFACT_PROMPT) });
   const discuss = useMutation({ mutationFn: ({ appId, title }: { appId: string; title: string }) => onCreateApp(
-    `Work with the existing artifact “${title}” (App ID: ${appId}). Open this artifact; do not create a copy. If I request a change and have edit access, use read_app and update_app with this same App ID. My request is `,
+    `Work with the existing artifact “${title}” (artifact ID: ${appId}). Open this artifact; do not create a copy. If I request a change and have edit access, use read_app and update_app with this same artifact ID. My request is `,
   ) });
   const placement = useMutation({
     mutationFn: async ({ appId, added }: { appId: string; added: boolean }) => {
@@ -145,8 +142,7 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
         {selected.kind === "built" ? <McpAppTile key={`${scope}:${selected.id}`} cacheScopeKey={built.cacheScopeKey} fallbackEndpoints={fallbackEndpoints}
           entry={{ ...selected.app, kind: "mcp", id: selected.id, launchArguments: { input: {} }, autoLaunch: true }}
           chromeTarget={chromeSlot}
-          onFixChangedTool={toolRepair && selected.app.canDelete ? async (tool) => {
-            markFeatureUsed("appToolRepair");
+          onFixChangedTool={selected.app.canDelete ? async (tool) => {
             await onCreateApp(mcpAppToolRepairPrompt({ appId: selected.app.connectionId, title: selected.title, tool }));
           } : undefined}
           renderActions={({ onRefresh, refreshing }) => onRefresh ? <Button variant="ghost" size="icon" className="size-7" aria-label={`Refresh ${selected.title}`} disabled={refreshing} onClick={onRefresh}><RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} /></Button> : null} />

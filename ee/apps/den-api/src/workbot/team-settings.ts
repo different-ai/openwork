@@ -26,7 +26,6 @@ import {
 } from "@openwork/types/den/workbot-team-settings"
 import { cache } from "../cache.js"
 import { db } from "../db.js"
-import { organizationFeatureEnabled } from "../features.js"
 import { listTeamsForMember } from "../member-teams.js"
 import { readAgentTemplate, type AgentTemplateVersion } from "../workbot-proactive/template.js"
 
@@ -307,13 +306,11 @@ export type MemberWorkbotSettingsInput = {
   /** The organization's row, when the caller already read it. */
   organization?: { metadata: unknown }
   /** Whether `workbotTeamSettings` is on, when the caller already read the organization's features. */
-  featureOn?: boolean
 }
 
 /** The reads behind one resolution; injectable so tests can run without a database. */
 export type MemberWorkbotSettingsDeps = {
   metadata: (organizationId: OrganizationId) => Promise<unknown>
-  featureOn: (organizationId: OrganizationId, userId: string | null) => Promise<boolean>
   memberId: (organizationId: OrganizationId, userId: string) => Promise<string | null>
   teams: (member: { organizationId: OrganizationId; memberId: MemberId }) => Promise<ReadonlyArray<{ id: string; name: string }>>
   rows: (organizationId: OrganizationId, teamIds: readonly string[]) => Promise<ReadonlyArray<{ teamId: string; settings: unknown }>>
@@ -327,7 +324,6 @@ const liveDeps: MemberWorkbotSettingsDeps = {
     const [organization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId)).limit(1)
     return organization?.metadata
   },
-  featureOn: (organizationId, userId) => organizationFeatureEnabled(organizationId, "workbotTeamSettings", userId ? { userId } : {}),
   memberId: async (organizationId, userId) => (await cache.org.membership({ organizationId, userId: normalizeDenTypeId("user", userId) }))?.id ?? null,
   teams: listTeamsForMember,
   rows: (organizationId, teamIds) => db
@@ -340,21 +336,20 @@ const liveDeps: MemberWorkbotSettingsDeps = {
   template: (organizationId) => readAgentTemplate(organizationId),
 }
 
-type MemberTeams = { featureOn: boolean; teams: ReadonlyArray<{ name: string; settings: WorkbotTeamStoredSettings }> }
+type MemberTeams = { teams: ReadonlyArray<{ name: string; settings: WorkbotTeamStoredSettings }> }
 
 /**
  * The member's teams with what each overrides: the one read every resolution here shares. No teams when the
  * feature is off (nothing is read then), the member cannot be found, or none of their teams has a row.
  */
 async function readMemberTeams(organizationId: OrganizationId, input: MemberWorkbotSettingsInput, deps: MemberWorkbotSettingsDeps): Promise<MemberTeams> {
-  if (!(input.featureOn ?? await deps.featureOn(organizationId, input.userId ?? null))) return { featureOn: false, teams: [] }
   const memberId = input.memberId ?? (input.userId ? await deps.memberId(organizationId, input.userId) : null)
-  if (!memberId) return { featureOn: true, teams: [] }
+  if (!memberId) return { teams: [] }
   const teams = await deps.teams({ organizationId, memberId: normalizeDenTypeId("member", memberId) })
-  if (teams.length === 0) return { featureOn: true, teams: [] }
+  if (teams.length === 0) return { teams: [] }
   const rows = await deps.rows(organizationId, teams.map((team) => team.id))
-  if (rows.length === 0) return { featureOn: true, teams: [] }
-  return { featureOn: true, teams: teams.map((team) => ({ name: team.name, settings: readWorkbotTeamSettings(rows.find((row) => row.teamId === team.id)?.settings) })) }
+  if (rows.length === 0) return { teams: [] }
+  return { teams: teams.map((team) => ({ name: team.name, settings: readWorkbotTeamSettings(rows.find((row) => row.teamId === team.id)?.settings) })) }
 }
 
 /**
@@ -382,9 +377,7 @@ export async function resolveMemberWorkbotSettings(
     agentFrom: { kind: "organization", teamConflict: false },
   }
   try {
-    const { featureOn, teams } = await readMemberTeams(organizationId, input, deps)
-    // The switch belongs to the feature: off, nobody loses Workbot to a value saved while it was on.
-    if (!featureOn) return { ...fromOrganization, enabled: true }
+    const { teams } = await readMemberTeams(organizationId, input, deps)
     if (teams.length === 0) return fromOrganization
     const resolved = resolveWorkbotTeamSettings({ organization, teams })
     return {

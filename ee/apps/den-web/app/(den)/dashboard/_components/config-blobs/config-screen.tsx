@@ -11,11 +11,11 @@ import { ConfigExportSection } from "./config-export-section";
 import { ConfigImportSection } from "./config-import-section";
 import { ConfigOverviewSection } from "./config-overview-section";
 import { ConfigSettingsSection } from "./config-settings-section";
-import { useConfigBlobsFeature } from "./config-blobs-parts";
+import { useConfigOrgReady } from "./config-blobs-parts";
 
 /** Settings › Config: an overview, then import, export, open changes and history, one tab each (`?tab=`). */
 export function ConfigScreen() {
-  const { ready } = useConfigBlobsFeature();
+  const { ready } = useConfigOrgReady();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { orgId, activeOrg } = useOrgDashboard();

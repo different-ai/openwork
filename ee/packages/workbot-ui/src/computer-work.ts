@@ -90,17 +90,9 @@ export function computerWork(parts: WorkbotPart[], { working, starting, lastIsLi
   return { cards, live, watch, shown, placed, trailing, starts };
 }
 
-/**
- * Whether a computer card stays in the conversation. With the working status (`quiet`), live work shows under
- * Workbot's name rather than in the chat, so a live card shows only while Workbot shows its screen or, with the inline
- * preview, while it works on a screen. Once work on its browser or screen is over, its card stays where it happened as
- * a finished record, like anything else Workbot said, and is read back with the conversation after a reload. Commands
- * in the background leave no card: the task sheet keeps them.
- */
-export function keepsCard(card: { surface: ComputerSurface; live: boolean; showing: boolean }, { quiet, preview }: { quiet: boolean; preview: boolean }) {
-  if (!quiet || card.showing) return true;
-  if (card.surface === "background") return false;
-  return card.live ? preview : true;
+/** Screen work stays as a preview or finished record. Background work lives in the task sheet unless watched. */
+export function keepsCard(card: { surface: ComputerSurface; live: boolean; showing: boolean }) {
+  return card.showing || card.surface !== "background";
 }
 
 export type BrowserTask = {

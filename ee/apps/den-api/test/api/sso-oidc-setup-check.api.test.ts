@@ -36,18 +36,6 @@ function issuerProblem(body: unknown) {
   return { message: field(first, "message"), path: field(first, "path") }
 }
 
-test("flag off: a discovery URL saved as the issuer is refused with 400, and the check route is off", async () => {
-  const check = await asOwner("POST", "/v1/sso/oidc/check", { issuer: idp.issuer })
-  assert.equal(check.status, 404, summary(check))
-  assert.equal(field(check.body, "error"), "feature_disabled")
-
-  const saved = await asOwner("POST", "/v1/sso/oidc", registration({ issuer: discoveryUrl }))
-  assert.equal(saved.status, 400, summary(saved))
-  assert.deepEqual(issuerProblem(saved.body), {
-    message: "OIDC discovery failed with 404. Enter manual OIDC endpoints or enable skip discovery.",
-    path: ["issuer"],
-  })
-})
 
 test("flag on: the check reports the issuer and endpoints behind an issuer or a discovery URL", async () => {
   const changed = await den.setFeature(orgId, "ssoOidcSetupCheck", true)

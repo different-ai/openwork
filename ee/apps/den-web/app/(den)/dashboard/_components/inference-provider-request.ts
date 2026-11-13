@@ -13,7 +13,7 @@ import type {
   InferenceProviderCredentialMode,
   InferenceProviderStatus,
 } from "@openwork/types/den/inference";
-import type { GatewayAccessGrant, GatewayCredentialSet, GatewayModelGroup, GatewayAuthorizationRequest, GatewayLiteLlmStatus, GatewayUsableModel } from "@openwork/types/den/gateway";
+import type { GatewayAccessGrant, GatewayCredentialSet, GatewayModelGroup, GatewayAuthorizationRequest, GatewayLiteLlmStatus, GatewayTrueFoundryStatus, GatewayUsableModel } from "@openwork/types/den/gateway";
 import { gatewayCustomProviderStatusSchema, type GatewayCustomProviderStatus } from "@openwork/types/den/gateway-custom-providers";
 import { z } from "zod";
 
@@ -56,6 +56,8 @@ export type DenInferenceProvider = {
   authorizationRequests: GatewayAuthorizationRequest[];
   /** LiteLLM providers only (manage view). */
   litellm: GatewayLiteLlmStatus | null;
+  /** TrueFoundry providers only (manage view). */
+  truefoundry: GatewayTrueFoundryStatus | null;
   /** Custom OpenAI-compatible providers only (manage view). */
   custom: GatewayCustomProviderStatus | null;
 };
@@ -101,6 +103,13 @@ const liteLlmStatusSchema: z.ZodType<GatewayLiteLlmStatus> = z.object({
   baseUrl: z.string().nullable(), spendTracking: z.boolean(), hasSyncKey: z.boolean(),
   lastSyncedAt: z.string().nullable(), lastSyncError: z.string().nullable(),
   modelCount: z.number(), teamCount: z.number(), connectedMemberCount: z.number(),
+});
+const trueFoundryStatusSchema: z.ZodType<GatewayTrueFoundryStatus> = z.object({
+  controlPlaneUrl: z.string().nullable(), gatewayBaseUrl: z.string().nullable(),
+  createMissingUsers: z.boolean().catch(false), hasAdminKey: z.boolean(),
+  lastSyncedAt: z.string().nullable(), lastSyncError: z.string().nullable(),
+  modelCount: z.number(), activeMemberCount: z.number().catch(0), createdUserCount: z.number().catch(0), attentionCount: z.number().catch(0),
+  attention: z.array(z.object({ memberId: z.string(), name: z.string().nullable(), email: z.string().nullable(), reason: z.enum(["not_in_truefoundry", "user_inactive", "token_limit", "no_models", "error"]), message: z.string().nullable() })).catch([]),
 });
 const authorizationRequestSchema: z.ZodType<GatewayAuthorizationRequest> = z.object({
   credentialSetId: z.string(), name: z.string(), authUrl: z.string(),
@@ -361,6 +370,7 @@ export function asInferenceProvider(value: unknown): DenInferenceProvider | null
     accessGrants: value.accessGrants === undefined ? null : z.array(accessGrantSchema).parse(value.accessGrants),
     authorizationRequests: value.authorizationRequests === undefined ? [] : z.array(authorizationRequestSchema).parse(value.authorizationRequests),
     litellm: value.litellm === undefined ? null : liteLlmStatusSchema.parse(value.litellm),
+    truefoundry: value.truefoundry === undefined ? null : trueFoundryStatusSchema.parse(value.truefoundry),
     custom: readCustomStatus(value.custom),
   };
 }

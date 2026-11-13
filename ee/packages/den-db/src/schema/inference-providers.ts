@@ -105,7 +105,7 @@ export const GatewayKeyTable = mysqlTable(
 )
 
 /**
- * Keys members create themselves for 3rd party tools (feature `gatewayMemberApiKeys`). Separate from
+ * Keys members create themselves for 3rd party tools. Separate from
  * gateway_keys, which holds the one key OpenWork issues and pushes to each member's own apps. Only a
  * digest is stored: the key is shown once when it is created. A key authenticates as its member, so it
  * reaches exactly what that member's grants allow.
@@ -313,6 +313,36 @@ export const GatewayLiteLlmIssuedKeyTable = mysqlTable(
   ],
 )
 
+/**
+ * One row per person on a TrueFoundry provider: the TrueFoundry user OpenWork
+ * found (or added) by their email, and the personal access token it created
+ * for them. The token itself lives in the member's credential row; it is kept
+ * after access is lost only until the token can delete itself in TrueFoundry
+ * (admin keys cannot delete another user's tokens).
+ */
+export const GatewayTrueFoundryUserTable = mysqlTable(
+  "gateway_truefoundry_users",
+  {
+    gateway_provider_id: denTypeIdColumn("inferenceProvider", "gateway_provider_id").notNull(),
+    org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
+    status: varchar("status", { length: 32 }).notNull(),
+    message: text("message"),
+    truefoundry_user_id: varchar("truefoundry_user_id", { length: 255 }),
+    truefoundry_user_created: timestamp("truefoundry_user_created", { fsp: 3 }),
+    token_id: varchar("token_id", { length: 128 }),
+    token_name: varchar("token_name", { length: 64 }),
+    credential_id: denTypeIdColumn("inferenceProviderCredential", "credential_id"),
+    model_group_id: denTypeIdColumn("gatewayModelGroup", "model_group_id"),
+    access_grant_id: denTypeIdColumn("inferenceProviderAccess", "access_grant_id"),
+    checked_at: timestamp("checked_at", { fsp: 3 }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    primaryKey({ name: "gateway_truefoundry_users_pk", columns: [table.gateway_provider_id, table.org_membership_id] }),
+    index("gateway_truefoundry_users_member").on(table.org_membership_id),
+  ],
+)
+
 export const gatewayProviderRelations = relations(GatewayProviderTable, ({ many, one }) => ({
   organization: one(OrganizationTable, {
     fields: [GatewayProviderTable.organization_id],
@@ -470,6 +500,7 @@ export const gatewayProviderCredential = GatewayProviderCredentialTable
 export const gatewayProviderAccess = GatewayProviderAccessTable
 export const gatewayProviderOauthState = GatewayProviderOauthStateTable
 export const gatewayLiteLlmIssuedKey = GatewayLiteLlmIssuedKeyTable
+export const gatewayTrueFoundryUser = GatewayTrueFoundryUserTable
 
 // Temporary source aliases, not parallel tables or legacy column mappings.
 export {

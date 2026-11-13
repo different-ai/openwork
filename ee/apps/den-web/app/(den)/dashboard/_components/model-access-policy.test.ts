@@ -36,13 +36,13 @@ test("saving writes the switch to the default policy and the admin exception, ne
   ]);
 });
 
-test("without the rollout the stored key is left alone", async () => {
+test("opening personal keys preserves the explicit local-model choice", async () => {
   const { writes, api } = recorder();
   const state = readModelAccessState([
     policy({ policy: { allowCustomProviders: true, allowLocalModels: false } }),
     policy({ id: "dp_admins", isDefault: false, policyName: ADMIN_EXCEPTION_POLICY_NAME, policy: { allowCustomProviders: true } }),
   ]);
-  await saveModelAccess(state, { mode: "open", adminException: true, zenAllowed: true }, api);
+  await saveModelAccess(state, { mode: "open", adminException: true, zenAllowed: true, localAllowed: state.localAllowed }, api);
   assert.equal(writes[0]?.policy.allowLocalModels, false, "the default keeps what was stored");
   assert.ok(!writes.some((write) => write.kind === "create"));
 });

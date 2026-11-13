@@ -415,7 +415,7 @@ export const SsoProviderTable = mysqlTable(
 )
 
 /**
- * An organization's SSO connections (several with `multipleSsoConnections`),
+ * An organization's SSO connections (it may have several),
  * one per Better Auth `sso_provider`. `domain` holds every email domain the
  * connection covers, lower case and comma separated without spaces (the same
  * value as its provider's `domain`), so match it with FIND_IN_SET.

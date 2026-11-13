@@ -233,7 +233,6 @@ export async function deleteOrganizationAgentPermissions(database: Database, org
 export async function readAgentPermissionRulesForMember(input: {
   organizationId: OrganizationId
   orgMemberId: MemberId
-  computerUseEnabled?: boolean
 }): Promise<AgentPermissionRule[]> {
   const teams = await db
     .select({ id: TeamTable.id, name: TeamTable.name })
@@ -256,9 +255,6 @@ export async function readAgentPermissionRulesForMember(input: {
   const everyone = policies.find((policy) => policy.scopeKey === EVERYONE_SCOPE)
   // Remove before resolving dependencies: a disabled computer policy must not
   // derive a scripting deny. Stored settings remain available for re-enabling.
-  if (input.computerUseEnabled === false) {
-    for (const policySettings of settings.values()) delete policySettings.computerUse
-  }
   // Every team counts, with or without its own record: a team without one has
   // everyone's settings, so another team's record cannot undo them.
   return resolveAgentPermissionRules({

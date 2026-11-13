@@ -1,9 +1,8 @@
 /**
- * superAdminPermissionSet: Super admin is a default permission set beside
+ * Super admin is a default permission set beside
  * Member and Admin, seeded with every catalog permission, resolved for direct
  * super-admins, editable only by the owner and super-admins, and created
- * lazily for organizations that predate it. Off, super-admins hold every
- * permission through the role and the set is hidden.
+ * lazily for organizations that predate it.
  */
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
@@ -13,13 +12,9 @@ import { bootDen, field, list, strings, summary, type Member } from "./harness.j
 const den = await bootDen()
 after(() => den.close())
 
-async function world(label: string, options: { feature?: boolean } = {}) {
+async function world(label: string) {
   const olivia = await den.signUp(`Olivia ${label}`)
   const { orgId, owner } = await den.createOrg(olivia, `Super admin set ${label}`)
-  if (options.feature !== false) {
-    const enabled = await den.setFeature(orgId, "superAdminPermissionSet", true)
-    assert.equal(enabled.status, 200, summary(enabled))
-  }
   const sam = await den.newMember(owner, orgId, `Sam ${label}`)
   const adam = await den.newMember(owner, orgId, `Adam ${label}`, "admin")
   const ownerCall = den.as(owner, orgId)
@@ -38,38 +33,6 @@ async function world(label: string, options: { feature?: boolean } = {}) {
   }
   return { orgId, owner, sam, adam, ownerCall, sets, held }
 }
-
-test("feature off: super-admins hold every permission through the role and the Super admin set is hidden", async () => {
-  const w = await world("off", { feature: false })
-  assert.deepEqual([...(await w.held(w.sam))].sort(), [...PERMISSION_KEYS].sort())
-  const explained = await w.ownerCall("GET", `/v1/members/${w.sam.memberId}/permissions`)
-  assert.equal(explained.status, 200, summary(explained))
-  const ssoManage = list(field(explained.body, "permissions")).find((entry) => entry.key === "sso.manage")
-  assert.deepEqual(list(ssoManage?.sources).map((source) => source.kind), ["super_admin"])
-
-  const sets = await w.sets()
-  assert.deepEqual(sets.slice(0, 2).map((set) => set.kind), ["member_default", "admin_default"])
-  assert.equal(sets.some((set) => set.kind === "super_admin_default"), false)
-  const catalog = await w.ownerCall("GET", "/v1/permissions/catalog")
-  assert.ok(list(field(catalog.body, "permissions")).every((definition) => !strings(definition.defaultOn).includes("super-admin")))
-
-  // The set exists already (seeded), so turning the feature on is instant; until then it can't be read or edited.
-  const { db } = await import("../../src/db.js")
-  const { and, eq } = await import("@openwork-ee/den-db/drizzle")
-  const { PermissionSetTable } = await import("@openwork-ee/den-db/schema")
-  const orgId = w.orgId as typeof PermissionSetTable.$inferSelect.organizationId
-  const [hidden] = await db.select({ id: PermissionSetTable.id }).from(PermissionSetTable)
-    .where(and(eq(PermissionSetTable.organizationId, orgId), eq(PermissionSetTable.defaultKey, "super-admin")))
-  assert.ok(hidden)
-  const detail = await w.ownerCall("GET", `/v1/permissions/sets/${hidden.id}`)
-  assert.equal(detail.status, 404, summary(detail))
-  const edit = await w.ownerCall("PUT", `/v1/permissions/sets/${hidden.id}/permissions`, { changes: [{ key: "sso.manage", status: "deny" }] })
-  assert.equal(edit.status, 404, summary(edit))
-
-  const enabled = await den.setFeature(w.orgId, "superAdminPermissionSet", true)
-  assert.equal(enabled.status, 200, summary(enabled))
-  assert.equal((await w.sets()).find((set) => set.kind === "super_admin_default")?.id, hidden.id)
-})
 
 test("every organization gets a Super admin permission set with every permission, after Member and Admin", async () => {
   const w = await world("seed")

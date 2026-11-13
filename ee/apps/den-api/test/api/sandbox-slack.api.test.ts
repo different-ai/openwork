@@ -47,6 +47,7 @@ before(async () => {
 
 const admin = await den.signUp("Platform Admin", `platform-admin+${den.stamp}@example.test`)
 const rollout = (body: { enabled?: boolean; killed?: boolean }) => den.request(admin.token, "PUT", "/v1/admin/features/sandboxSlack", { body })
+// Cloud sandboxes include Microsoft 365, Jira and Confluence; Slack adds one connector.
 const create = (name: string) => den.request(admin.token, "POST", "/v1/admin/sandbox-orgs", {
   body: { name, connectorBaseUrl: workplace, days: 14, memberLimit: 5, allowedEmailDomains: [], joinRole: "member" },
 })
@@ -95,12 +96,13 @@ async function connect(person: Session, orgId: string, connectionId: string, pro
   assert.equal(finished.status, 200, finished.text.slice(0, 300))
 }
 
-test("off by default: a sandbox gets no sample Slack, and Workbot has no Slack app", async () => {
+test("off: a sandbox gets no sample Slack, and Workbot has no Slack app", async () => {
+  assert.equal((await rollout({ enabled: false })).status, 200)
   const created = await create("Before the rollout")
   assert.equal(created.status, 200, summary(created))
   const sandbox = field(created.body, "sandbox")
   assert.equal(field(sandbox, "sampleSlack"), false)
-  assert.equal(field(sandbox, "connectorCount"), 5)
+  assert.equal(field(sandbox, "connectorCount"), 3)
   assert.equal(await workbotSlackAppReady(text(field(sandbox, "organizationId"), "organization id")), false)
 })
 
@@ -111,7 +113,7 @@ test("on: Workbot's Slack app is installed, and a member's agent messages arrive
   const sandbox = field(created.body, "sandbox")
   const orgId = text(field(sandbox, "organizationId"), "organization id")
   assert.equal(field(sandbox, "sampleSlack"), true)
-  assert.equal(field(sandbox, "connectorCount"), 6)
+  assert.equal(field(sandbox, "connectorCount"), 4)
   const slack = (await connections(orgId)).find((entry) => entry.name === "Slack")
   assert.equal(slack?.url, `${workplace}/slack/mcp`)
   const connectionId = text(slack?.id, "connection id")
@@ -170,8 +172,8 @@ test("an existing sandbox gets it from /admin", async () => {
   const added = await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/slack`)
   assert.equal(added.status, 200, summary(added))
   assert.equal(field(added.body, "sandbox", "sampleSlack"), true)
-  assert.equal(field(added.body, "sandbox", "connectorCount"), 6)
-  assert.equal(field((await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/slack`)).body, "sandbox", "connectorCount"), 6, "adding twice is harmless")
+  assert.equal(field(added.body, "sandbox", "connectorCount"), 4)
+  assert.equal(field((await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/slack`)).body, "sandbox", "connectorCount"), 4, "adding twice is harmless")
   assert.equal(await workbotSlackAppReady(orgId), true)
 })
 

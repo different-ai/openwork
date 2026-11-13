@@ -128,18 +128,6 @@ const mcp = await apiA("POST", "/v1/mcp-connections", {
 assert.equal(mcp.status, 200, summary(mcp))
 const mcpId = text(field(mcp.body, "id"), "connection id")
 
-test("feature off: every config-blob route answers 404", async () => {
-  const areas = await apiA("GET", "/v1/config-blobs/areas")
-  assert.equal(areas.status, 404, summary(areas))
-  assert.equal(field(areas.body, "error"), "feature_disabled")
-  const exported = await apiA("GET", "/v1/config-blobs/export")
-  assert.equal(exported.status, 404)
-  for (const org of [orgA.orgId, orgB.orgId]) {
-    const enabled = await den.setFeature(org, "configBlobs", true)
-    assert.ok(enabled.status < 300, summary(enabled))
-  }
-})
-
 let exported: ConfigBlob
 let firstRequestId = ""
 
@@ -283,7 +271,6 @@ test("revert: a new change request from the before-snapshot restores the old val
 
 test("a restore touches only what the change wrote: 2 of 5 teams and its creates, never the owner or other members; a withdrawn restore can be started again", async () => {
   const orgR = await den.createOrg(owner, "Flow restore scope")
-  assert.ok((await den.setFeature(orgR.orgId, "configBlobs", true)).status < 300)
   const apiR = den.as(owner, orgR.orgId)
   const member = await den.newMember(owner, orgR.orgId, "Flow Restore Member")
   const teamIds: string[] = []

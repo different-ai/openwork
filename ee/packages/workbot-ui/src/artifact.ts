@@ -50,12 +50,12 @@ export function artifactKind(file: Pick<WorkbotAttachment, "name" | "mediaType">
 }
 
 const LABELS: Record<ArtifactKind, string> = {
-  html: "Web page", app: "App", image: "Image", pdf: "PDF", video: "Video", audio: "Audio", markdown: "Note", text: "Text",
+  html: "Web page", app: "Artifact", image: "Image", pdf: "PDF", video: "Video", audio: "Audio", markdown: "Note", text: "Text",
   csv: "Spreadsheet", sheet: "Spreadsheet", slides: "Presentation", document: "Document", other: "File",
 };
 
 /**
- * The type under a card's title: "App", "PDF", "Spreadsheet". Only an App built in OpenWork is called an App: it is
+ * The type under a card's title: "Artifact", "PDF", "Spreadsheet". An artifact built in OpenWork is
  * kept in OpenWork and can be shared and reopened. An .html file is a "Web page": a file like any other, that runs
  * when opened.
  */

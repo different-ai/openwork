@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { LockKeyhole, Plus, RefreshCw } from "lucide-react";
+import { LockKeyhole, Plus } from "lucide-react";
 import { REMOTE_DEVICE_AVAILABILITIES, REMOTE_DEVICE_AVAILABILITY_LABELS, REMOTE_DEVICE_KINDS, REMOTE_DEVICE_REGISTERABLE_PROVIDERS, remoteDeviceTypeLabel, type RemoteDeviceKind, type RemoteDeviceProvider } from "@openwork/types/den/remote-devices";
 import { DenButton } from "../../../_components/ui/button";
 import { DenPageHeader } from "../../../_components/ui/page-header";
 import { DenSelect } from "../../../_components/ui/select";
 import { DenSegmented } from "../../../_components/ui/segmented";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
-import { getOrgAccessFlags, orgFeatureEnabled, permissionLockReason } from "../../../_lib/den-org";
+import { getOrgAccessFlags, permissionLockReason } from "../../../_lib/den-org";
 import { useDenToast } from "../../_components/den-toast";
 import { FilterInput } from "../../_components/item-list";
 import { TeamsListLocked } from "../../_components/teams-list-row";
@@ -19,7 +19,7 @@ import { FeatureIntroGate } from "../feature-intros/feature-intro-gate";
 import { AddComputerDialog, ComputerActionButtons, ComputerMenu, type ComputerActionSet } from "./computer-action-controls";
 import { disconnectLocked, disconnectOwnerName, disconnectTeamConfirm, disconnectedLine, removeConfirm, teamComputerActions } from "./computer-actions";
 import { ComputerDetail } from "./computer-detail";
-import { focusRing, hairline, secondaryText } from "./computer-parts";
+import { RefreshButton, hairline, secondaryText } from "./computer-parts";
 import { LANE, ListRow, OwnerLane, RowLaneLabel, RowList, RowListHeader, RowListSkeleton, StatusLane, TimeLane, VersionLane, computerIcon } from "./computer-rows";
 import { disconnectOrganizationComputer, removeOrganizationComputer, useComputers } from "./computers-data";
 import { KIND_LABELS, PROVIDER_LABELS, clearComputerFilters, computerStatus, computersStateLine, devicePageCount, duplicateNameNotes, hasComputerFilters, parseDeviceAvailability, parseDeviceProvider, readComputerFilters, staleLine, teamOwnerKey, writeComputerFilters, type ComputerFilters, type OrganizationComputer } from "./computers-format";
@@ -44,7 +44,7 @@ export function ComputersScreen() {
   const { orgId, orgContext } = useOrgDashboard();
   if (!orgId || !orgContext) return <ComputersSkeleton />;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
-  if (!access.canViewComputers || !orgFeatureEnabled(orgContext, "remoteDevices")) return <section className="space-y-4" data-testid="computers-locked">
+  if (!access.canViewComputers) return <section className="space-y-4" data-testid="computers-locked">
     <DenPageHeader size="compact" title="Computers" />
     <p className={`flex items-start gap-2 text-[13px] ${secondaryText}`}><LockKeyhole size={16} strokeWidth={1.5} aria-hidden className="mt-0.5 shrink-0" />
       {!access.canViewComputers ? permissionLockReason("computers.view") : "Computers is not enabled for this organization. Ask an organization owner or admin about availability."}
@@ -70,10 +70,7 @@ export function ComputersPageHeader({ title, state, refreshing, onRefresh, onAdd
     state={state ?? <DenSkeleton className="mt-1 h-3 w-24" />}
     action={<div className="flex items-center gap-1">
       {/* The list is read when the page opens and after each change; this reads it again on request. */}
-      <button type="button" aria-label="Refresh" title="Refresh" aria-busy={refreshing || undefined} onClick={onRefresh} data-testid="computers-refresh"
-        className={`flex size-8 items-center justify-center rounded-lg ${secondaryText} transition-colors hover:bg-[var(--dls-hover)] hover:text-[color:var(--dls-text-primary)] ${focusRing}`}>
-        <RefreshCw size={16} strokeWidth={1.5} aria-hidden="true" className={refreshing ? "motion-safe:animate-spin" : ""} />
-      </button>
+      <RefreshButton refreshing={refreshing} onRefresh={onRefresh} testId="computers-refresh" />
       {/* On a phone the button keeps its plus and its name for assistive tech; the words come back when there is room. */}
       <DenButton size="sm" variant="secondary" icon={Plus} onClick={onAdd} aria-label="Add a computer" data-testid="computers-add"><span className="hidden sm:inline">Add a computer</span></DenButton>
     </div>} />;

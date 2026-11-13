@@ -17,7 +17,6 @@ export const meSchema = z.object({
   calendar: z.boolean().default(false),
   documents: z.boolean().default(false),
   documentEditing: z.boolean().default(false),
-  nativeDictation: z.boolean().default(false),
   workspaceAssistant: z.boolean().default(false),
   guidedNavigation: z.boolean().default(false),
   usageRecovery: z.boolean().default(false),
@@ -27,30 +26,9 @@ export const meSchema = z.object({
   canSchedule: z.boolean().default(false),
   /** Side chats are on for this person (while Workbot is on). */
   sideChats: z.boolean().default(false),
-  /** The header avatar opens the account menu with Sign out (`workbotAccountMenu`); older servers omit it. */
-  accountMenu: z.boolean().default(false),
-  /** Work in progress in the header and task sheet (`workbotWorkingStatus`); older servers omit it. */
-  workingStatus: z.boolean().default(false),
-  /** Brief acknowledgment before tools (`workbotQuickReply`); older servers omit it. */
-  quickReply: z.boolean().default(false),
-  /** The conversation docked beside the Browser and Computer views (`workbotBrowserChat`); older servers omit it. */
-  browserChat: z.boolean().default(false),
-  /** Chats open on the newest page kept on this device (`workbotInstantOpen`); older servers omit it. */
-  instantOpen: z.boolean().default(false),
-  /** Reading earlier messages keeps its place (`workbotScrollToBottom`); older servers omit it. */
-  scrollToBottom: z.boolean().default(false),
-  /** Workbot's profile behind its name (`workbotProfileSheet`); older servers omit it. */
-  profileSheet: z.boolean().default(false),
-  centeredProfile: z.boolean().default(false),
-  browserPreview: z.boolean().default(false),
-  /** Read-only remote tasks (`workbotRemoteTasks`); absent means off. */
-  remoteTasks: z.boolean().default(false),
-  /** Pages-only navigation with Files and Apps in the profile (`workbotProfileNav`); absent means off. */
-  profileNav: z.boolean().default(false),
-  /** Quiet calendar (`workbotQuietCalendar`); absent means off. */
-  quietCalendar: z.boolean().default(false),
-  /** The Devices page (`remoteDevices`, while Workbot is on); absent means off. */
-  devices: z.boolean().default(false),
+  profileComputers: z.boolean().default(false),
+  /** Calm chat look (`workbotCalmChat`); absent means off. */
+  calmChat: z.boolean().default(false),
   denUrl: z.string().nullable(),
 })
 export type Me = z.infer<typeof meSchema>
@@ -160,11 +138,7 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     computer: me.computer,
     browser: me.browser,
     browserDemonstrations: me.browserDemonstrations,
-    browserChat: me.browser && me.browserChat,
-    instantOpen: me.instantOpen,
-    scrollToBottom: me.scrollToBottom,
     documentEditing: me.documents && me.documentEditing,
-    nativeDictation: me.nativeDictation,
     workspaceAssistant: me.workspaceAssistant,
     guidedNavigation: me.workspaceAssistant && me.guidedNavigation,
     usageRecovery: me.denUrl && me.organizationId ? { denUrl: me.denUrl, organizationId: me.organizationId } : undefined,
@@ -179,16 +153,9 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
         && current.userId === me.userId && current.organizationId === me.organizationId
     },
     sideChats: me.sideChats,
-    workingStatus: me.workingStatus,
-    quickReply: me.quickReply,
-    profileSheet: me.profileSheet,
-    centeredProfile: me.centeredProfile,
-    browserPreview: me.browserPreview,
-    remoteTasks: me.remoteTasks,
-    profileNav: me.profileNav,
-    quietCalendar: me.quietCalendar,
-    devices: me.devices,
-    account: me.accountMenu ? { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace } : undefined,
+    profileComputers: me.profileComputers,
+    calmChat: me.calmChat,
+    account: { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace },
     identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
   }
 }

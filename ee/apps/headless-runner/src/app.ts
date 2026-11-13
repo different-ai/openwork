@@ -14,7 +14,7 @@ import { FILE_LIMITS, isMemoryPath, normalizePath } from "./files.js"
 import { localMemory, MemoryUnavailableError, type MemoryResolver } from "./memory.js"
 import type { Runner } from "./runner.js"
 import { scopedCatalogResponse } from "./model-catalog.js"
-import type { HeadlessModelAccess } from "@openwork-ee/headless-protocol"
+import { HEADLESS_MAX_PROMPT_CHARS, type HeadlessModelAccess } from "@openwork-ee/headless-protocol"
 import { modelProbeResponse, type ModelProbe } from "./model-probe.js"
 import { CONVERSATION_TABLES, sqlRow, type SessionInput, type StoredMessage, type Store, type Turn } from "./store.js"
 import { LargeBodyUnavailableError, SegmentError, SessionStorage } from "./storage/index.js"
@@ -73,7 +73,7 @@ function isTimeZone(zone: string) {
 const sendBody = z
   .object({
     messageId: messageIdSchema,
-    prompt: z.string().max(100_000),
+    prompt: z.string().max(HEADLESS_MAX_PROMPT_CHARS),
     model: z.string().min(1).max(256).optional(),
     credentials: turnCredentialsSchema.default({}),
     /** Ids of saved files (POST /v1/sessions/:id/saved-files) sent with this message. */

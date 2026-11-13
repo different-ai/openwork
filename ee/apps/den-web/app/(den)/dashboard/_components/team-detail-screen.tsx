@@ -1,11 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode, useEffect, useState } from "react";
-import { ArrowLeft, Laptop, Compass, KeyRound, Layers, MessageCircle, ScrollText, ShieldCheck, SquareTerminal, Users } from "lucide-react";
+import { Laptop, Compass, KeyRound, Layers, MessageCircle, ScrollText, ShieldCheck, SquareTerminal, Users } from "lucide-react";
 import type { TabItem } from "../../_components/ui/tabs";
-import { getMembersRoute, getMembersTeamsRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getMembersRoute, getMembersTeamsRoute, getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
+import { DenButton } from "../../_components/ui/button";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
 import { DesktopSuggestionsPanel } from "./desktop-suggestions-panel";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -16,15 +16,21 @@ import { directoryAccess } from "./gateway-directory-data";
 import { useGatewayAccessProviders } from "./gateway-subject-access-data";
 import { PromptsPanel, promptsTabVisible } from "./prompts-panel";
 import { teamScopeOf } from "./team-scope";
-import { TeamSections, teamPageWidthClass, teamSectionsSidebarEnabled } from "./team-sections";
+import { TeamPageFrame, TeamSections, teamSectionsSidebarEnabled } from "./team-sections";
 import { WorkbotPanel, workbotTabVisible } from "./team-workbot-panel";
-import { OrgMemberIdentity } from "./org-member-identity";
+import { ListRow, RowLane, RowLaneLabel, RowList, RowListHeader } from "../_features/computers/computer-rows";
+import { PersonLead } from "../_features/computers/computer-parts";
+import { BUILT_IN_ROLES } from "../../_lib/role-catalog";
+import { LinkButton } from "./item-list";
 import { SharedTeamRolePanel } from "./shared-team-role-panel";
 import { MemberTeamRoles } from "./member-team-roles";
 import { useOrganizationRoles } from "./permissions-data";
 import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen, type FeatureIntroKey } from "../_features/feature-intros";
 import type { TeamDetailFacts } from "../_features/feature-intros/intros/team-detail";
 import { useAiGatewayIntroFacts } from "./ai-gateway-intro-facts";
+
+/** The role lane of the team's Members list. */
+const TEAM_MEMBER_ROLE_LANE = "flex w-40 @2xl:w-56";
 
 export type TeamDetailTab = "role" | "overview" | "access" | "agents" | "browser" | "models" | "workbot" | "prompts" | "desktop";
 
@@ -98,6 +104,13 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
     return member ? [member] : [];
   });
   const memberCount = team?.memberIds.length ?? 0;
+  // The team's name and people are edited in the same form as on Members › Teams.
+  const canEditTeam = Boolean(team && viewerAccess?.canManageTeams && !team.managedByScim && (!team.grantsOrganizationAdmin || viewerAccess.canManageAdminTeams));
+  const editTeamLockedReason = team?.managedByScim
+    ? "Managed by your identity provider. Ask your identity provider administrator to change this team."
+    : team?.grantsOrganizationAdmin && !viewerAccess?.canManageAdminTeams
+      ? permissionLockReason("teams.manage_admin")
+      : permissionLockReason("teams.manage");
   // Facts the tabs' intros read; tab-specific ones are added where each tab loads them.
   const teamFacts: TeamDetailFacts | null = team && orgContext
     ? { teamMembers: team.memberIds.length, managedByScim: team.managedByScim, adminTeam: team.grantsOrganizationAdmin }
@@ -129,26 +142,11 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
     ];
 
   return (
-    <div className={`mx-auto ${teamPageWidthClass(sidebar)} px-6 py-8 md:px-8`}>
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <Link
-          href={getMembersTeamsRoute(orgSlug)}
-          className="inline-flex items-center gap-1.5 text-[13px] text-gray-500 transition hover:text-gray-700"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </Link>
-      </div>
-
-      <header className="flex flex-wrap items-center gap-3">
-        <h1 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-950">
-          {team?.name ?? "Team"}
-        </h1>
-        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[12px] font-medium text-gray-600">
-          {memberCount} {memberCount === 1 ? "member" : "members"}
-        </span>
-      </header>
-
+    <TeamPageFrame sidebar={sidebar} title={team?.name ?? "Team"} memberCount={memberCount} backHref={getMembersTeamsRoute(orgSlug)}
+      action={team ? canEditTeam
+        ? <LinkButton size="sm" variant="secondary" href={`${getMembersRoute(orgSlug)}?tab=teams&editTeam=${encodeURIComponent(teamId)}`} data-testid="team-edit">Edit team</LinkButton>
+        : <span className="flex flex-col items-end gap-1"><DenButton size="sm" variant="secondary" disabled title={editTeamLockedReason} data-testid="team-edit-locked">Edit team</DenButton><span className="max-w-72 text-right text-[12px] text-[var(--dls-text-secondary)]">{editTeamLockedReason}</span></span>
+        : undefined}>
       <TeamSections
         sidebar={sidebar}
         tabs={tabs.map((item) => ({ ...item, unseen: introUnseen(TEAM_DETAIL_TAB_INTROS[item.value]) }))}
@@ -165,22 +163,27 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
           <div role="tabpanel" aria-label="Members">
             <TeamTabIntro tab="overview" facts={teamFacts}>
             {teamMembers.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
-                <p className="text-[14px] font-medium text-gray-800">This team has no members yet.</p>
-              </div>
+              <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">This team has no members yet.</p>
             ) : (
-              <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
-                {teamMembers.map((member) => (
-                  <div key={member.id} className="px-6 py-4">
-                    <OrgMemberIdentity member={member} />
-                    {orgContext ? (
-                      <MemberTeamRoles member={member} teams={orgContext.teams} setIdByTeam={organizationRoles.setIdByTeam} roles={organizationRoles.roles} exceptTeamId={teamId} />
-                    ) : member.adminTeams.length > 0 ? (
-                      <p className="mt-2 text-[12px] text-gray-500">Admin via {member.adminTeams.map((entry) => entry.name).join(", ")}</p>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
+              <RowList label={`People in ${team?.name ?? "this team"}`} testId="team-members-list" header={<RowListHeader lead="Member"><RowLaneLabel lane={TEAM_MEMBER_ROLE_LANE}>Role</RowLaneLabel></RowListHeader>}>
+                {teamMembers.map((member) => {
+                  const name = member.user.name || member.user.email;
+                  const flags = getOrgAccessFlags(member.role, member.isOwner);
+                  const role = flags.isOwner ? BUILT_IN_ROLES.owner.label : flags.isSuperAdmin ? BUILT_IN_ROLES["super-admin"].label : flags.canonicalRole === "admin" ? BUILT_IN_ROLES.admin.label : BUILT_IN_ROLES.member.label;
+                  // Roles the person holds through other teams sit under the row, as on the Members page.
+                  const viaTeams = orgContext
+                    ? <MemberTeamRoles member={member} teams={orgContext.teams} setIdByTeam={organizationRoles.setIdByTeam} roles={organizationRoles.roles} exceptTeamId={teamId} />
+                    : null;
+                  return (
+                    <ListRow key={member.id} rowTestId="team-member-row" lead={<PersonLead name={name} />} name={name}
+                      secondLine={name !== member.user.email ? member.user.email : undefined}
+                      lanes={<RowLane lane={TEAM_MEMBER_ROLE_LANE} className="flex-col justify-center">
+                        <span className="truncate">{member.joinedAt ? role : `${role}, invited`}</span>
+                        {viaTeams ? <span className="[&>span]:mt-0 [&>span]:truncate">{viaTeams}</span> : null}
+                      </RowLane>} />
+                  );
+                })}
+              </RowList>
             )}
             </TeamTabIntro>
           </div>
@@ -226,6 +229,6 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
           </div>
         ) : null}
       </TeamSections>
-    </div>
+    </TeamPageFrame>
   );
 }

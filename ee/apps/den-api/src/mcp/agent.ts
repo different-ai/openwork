@@ -1,3 +1,6 @@
+import { registerNativeMcpEvents } from "../native-mcp-events/mcp.js"
+import { eventThreadForPrincipal } from "../mcp-events/context.js"
+import { registerMcpEventTools } from "../mcp-events/tools.js"
 import { createAgentMcpServer, WORKFLOW_SAVE_INSTRUCTIONS } from "./agent-server.js"
 export { createAgentMcpServer, AGENT_MCP_INSTRUCTIONS, LEGACY_AGENT_MCP_INSTRUCTIONS, AGENT_MCP_GUIDANCE_URI } from "./agent-server.js"
 import { appAuthoringStarter, registerAppStarterResources } from "./app-authoring-starter.js"
@@ -768,17 +771,23 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       toolShapes,
       remoteSessionStatus: Boolean(memberIdentity),
       canSendSlackMessages: slackSendAsBotAvailable(capabilityContext),
-      myAgent: Boolean(memberIdentity && organizationFeatures.workbotProactive && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
+      myAgent: Boolean(memberIdentity && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
       myAgentBrief: organizationFeatures.workbotAgentBrief,
       skillsExtension,
+      nativeEvents: Boolean(auditPrincipal && organizationFeatures.nativeMcpEvents),
       skills: skillsExtension && advertisesInstructions && !listsSkillsNatively ? await loadRemoteSkills() : undefined,
       engine: engineTools,
       services: engineTools && advertisesInstructions ? await loadConnectServices(capabilityContext) : undefined,
     })
+    if (auditPrincipal && organizationFeatures.nativeMcpEvents) registerNativeMcpEvents(server, auditPrincipal, c.req.raw, principal.scopes.has(DEN_MCP_WRITE_SCOPE))
     if (skillsExtension) registerSkillsExtension(server, loadResolvedSkills)
     // Your agent's own background check (workbotAgentBrief) may ask for one extra check; no other caller sees it.
-    if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true, workbotProactive: organizationFeatures.workbotProactive, workbotAgentBrief: organizationFeatures.workbotAgentBrief })) {
+    if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true, workbotAgentBrief: organizationFeatures.workbotAgentBrief })) {
       registerAgentCheckRequestTool(server, { organizationId, memberId: memberIdentity.orgMembershipId, userId: normalizeDenTypeId("user", principal.userId), audit: auditPrincipal })
+    }
+    if (organizationFeatures.mcpThreadEvents && auditPrincipal) {
+      const eventThread = await eventThreadForPrincipal(principal)
+      if (eventThread) registerMcpEventTools(server, eventThread, [...principal.scopes], auditPrincipal)
     }
     registerAgentConnectionActionApp(server, { organizationId: principal.organizationId, member: memberIdentity })
     if (appServersEnabled) {
@@ -799,7 +808,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           if (error instanceof McpAppError) throw new AppBuilderError(error.code, error.message)
           if (error instanceof PluginArchAuthorizationError) throw new AppBuilderError(error.error, error.message, error.reason)
           if (error instanceof PluginArchRouteFailure) {
-            throw new AppBuilderError(error.error, "The App could not be saved. Check the Plugin and your permissions.")
+            throw new AppBuilderError(error.error, "The artifact could not be saved. Check the Plugin and your permissions.")
           }
           throw error
         }
@@ -911,11 +920,11 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         title: "Search capabilities",
         description: [
           fullView
-            ? `Search OpenWork's own operations and skills by keyword. Connection actions, Workflows, Apps and remote sessions are tools of their own: ${engineTools ? "find those in the Code Mode catalog or with search()" : "call those directly"}.`
+            ? `Search OpenWork's own operations and skills by keyword. Connection actions, Workflows, artifacts and remote sessions are tools of their own: ${engineTools ? "find those in the Code Mode catalog or with search()" : "call those directly"}.`
             : "Search connection actions, saved Workflows, and skills by keyword.",
           appServersEnabled
-            ? "Direct tools such as create_skill, get_skill, and the App builders prepare_app, create_app, read_app, and update_app are outside this search; call them directly."
-            : "Direct MCP tools such as create_skill and save_artifact_view are outside this search; call an available direct tool itself. For an app, dashboard, or artifact view of Workflow results, use save_artifact_view and follow its prerequisites.",
+            ? "Direct tools such as create_skill, get_skill, and the artifact tools prepare_app, create_app, read_app, and update_app are outside this search; call them directly."
+            : "Direct MCP tools such as create_skill and save_artifact_view are outside this search; call an available direct tool itself. For an artifact or dashboard of Workflow results, use save_artifact_view and follow its prerequisites.",
           ...(fullView ? [] : [
             "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
             "Accessible Workflows appear as marketplace matches with kind workflow and execute through execute_capability like every other exact search result.",
@@ -923,7 +932,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           "Try 2-4 keyword variants before deciding a capability is unavailable.",
           ...(toolShapes ? [] : ["Native API matches include a connector-namespaced name, pathParams, queryParams, querySchema, hasBody, and bodySchema. External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField."]),
           ...(fullView ? [] : [appServersEnabled
-            ? "A match with kind mcp_app is a standard MCP App launch capability, either an App built in OpenWork (also its own MCP server, named in its description) or an App from a connected MCP server; execute it normally and the OpenWork host will render its advertised ui:// resource."
+            ? "A match with kind mcp_app is a standard MCP App launch capability, for either an artifact built in OpenWork or an MCP App from a connected server. Execute it normally to render its advertised ui:// resource. An artifact also has its own MCP server, named in its description."
             : "A match with kind mcp_app is a standard MCP App launch capability from a connected MCP server; execute it normally and the OpenWork host will render its advertised ui:// resource."]),
           toolShapes
             ? "Each match is an MCP tool (name, description, inputSchema, optional outputSchema and annotations) with its kind and connection status where available; call execute_capability with that name and arguments matching inputSchema."
@@ -1364,7 +1373,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
 
     // Only tools/list shows this description and only tools/call runs a test, so
     // only they read the language; both then name the one the test runs in.
-    const workflowLanguage = method === "tools/list" || method === "tools/call" ? await newWorkflowLanguage(organizationId) : "codemode-js"
+    const workflowLanguage = method === "tools/list" || method === "tools/call" ? await newWorkflowLanguage() : "codemode-js"
     server.registerTool(
       EXECUTE_CAPABILITY_SCRIPT_TOOL_NAME,
       {

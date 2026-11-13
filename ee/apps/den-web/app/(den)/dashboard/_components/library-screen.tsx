@@ -17,12 +17,12 @@ import {
   getLibraryLlmProviderRoute,
   getLibraryRoute,
   getYourConnectionsRoute,
-  orgFeatureEnabled,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FilterInput, ItemMenu, ItemPanel, removeEntry } from "./item-list";
 import { ItemPage } from "./item-header";
-import { ConnectorLogo } from "./item-logo";
+import { ConnectorLogo, PluginLogo } from "./item-logo";
+import { RowTile } from "../_features/computers/computer-rows";
 import { LibraryAddDialog, type LibraryAddChoice } from "./library-add-dialog";
 import { type LibraryItem, libraryQueryKeys, useLibrary } from "./library-data";
 import {
@@ -136,8 +136,11 @@ function LibraryItemRow({ item, mine, signIn }: {
       kind={item.type}
       testName={item.name}
       logo={item.type === "connection"
-        ? <ConnectorLogo name={item.name} url={item.url} size="xs" />
-        : <LibraryKindIcon kind={item.type === "workflow" ? "workflow" : libraryFilterOf(item) === "skills" ? "skill" : "plugin"} />}
+        ? <ConnectorLogo name={item.name} url={item.url} size="sm" />
+        : item.type === "workflow" || libraryFilterOf(item) === "skills"
+          ? <LibraryKindIcon kind={item.type === "workflow" ? "workflow" : "skill"} />
+          // A plugin wears the same tile as on Manage › Plugins and on its own page.
+          : <PluginLogo name={item.name} />}
       name={item.name}
       description={workflowLastRunFailed(item)
         ? <WorkflowFailedDescription reason={item.failureReason} />
@@ -206,7 +209,6 @@ function LibraryContent() {
   const personal = useOrgLlmProviders(filter === "models" || introsEnabled ? orgContext?.organization.id ?? null : null);
   const personalProviders = personal.llmProviders.filter(provider => provider.source !== "openwork" && provider.createdByOrgMembershipId === orgContext?.currentMember.id);
   const addKeyHref = `${getLibraryRoute(orgSlug)}/model-providers/new`;
-  const gatewayApiKeysEnabled = orgFeatureEnabled(orgContext, "gatewayMemberApiKeys");
   const onlyNeedsSignIn = parseNeedsSignIn(searchParams.get("status"));
   const personalRows = personalProviders.filter(provider => !onlyNeedsSignIn && provider.name.toLowerCase().includes(query.trim().toLowerCase()));
 
@@ -247,7 +249,7 @@ function LibraryContent() {
   // With feature intros on, the viewer's own keys still loading count as loading (never "empty" on a guess).
   const personalPending = introsEnabled && !personal.loaded && !personal.error;
   const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels && personalProviders.length === 0 && !personalPending;
-  // Feature intros (flag `featureIntros`): null while anything is loading or failed, so the page shows as before.
+  // Feature intros: null while anything is loading or failed, so the page shows as before.
   const introFacts = introsEnabled && !library.error && !models.error && !personal.error && personal.loaded
     ? libraryIntroFacts({ items: library.data, models: models.data?.length, personalModels: personalProviders.length })
     : null;
@@ -277,7 +279,7 @@ function LibraryContent() {
         <LibraryCompactSurface>
           <LibraryCompactSection title="Your model providers" count={personalRows.length} testId="library-personal-models">
             {personalRows.map(provider => <LibraryCompactRow key={provider.id} href={getLibraryLlmProviderRoute(orgSlug, provider.id)} kind="model" testName={provider.name}
-              logo={<KeyRound size={16} aria-hidden />} name={provider.name} source="You" />)}
+              logo={<RowTile icon={KeyRound} />} name={provider.name} source="You" />)}
           </LibraryCompactSection>
         </LibraryCompactSurface>
       ) : null}
@@ -296,13 +298,13 @@ function LibraryContent() {
       </LibraryCompactSurface> : null}
 
       {filter === "models" && models.error ? (
-        <p className="rounded-2xl border border-gray-100 bg-white px-5 py-4 text-[13px] text-gray-600">
+        <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">
           {models.error instanceof Error ? models.error.message : "Your models did not load."}
         </p>
       ) : null}
 
       {filter === "models" && !models.isLoading && !models.error && !hasModels && !personal.busy && !personal.error && !personalPending && personalProviders.length === 0 ? (
-        <p className="rounded-2xl border border-gray-100 bg-white px-5 py-6 text-center text-[13px] text-gray-500" data-testid="library-models-empty">
+        <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]" data-testid="library-models-empty">
           Your organization hasn't given you any models yet.
         </p>
       ) : null}
@@ -310,7 +312,7 @@ function LibraryContent() {
       {filter === "workflows" && !library.isLoading && items.every((item) => item.type !== "workflow") ? <WorkflowsEmpty /> : null}
 
       {(filter !== "workflows" || items.some((item) => item.type === "workflow")) && !library.isLoading && !models.isLoading && !personalPending && groups.mine.length === 0 && groups.received.length === 0 && modelRows.length === 0 && personalRows.length === 0 && !(filter === "models" && (models.error || !hasModels)) ? (
-        <p className="rounded-2xl border border-gray-100 bg-white px-5 py-6 text-center text-[13px] text-gray-500">Nothing matches.</p>
+        <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">{query.trim() || onlyNeedsSignIn ? "Nothing matches." : "Nothing here yet."}</p>
       ) : null}
     </>
   );
@@ -320,11 +322,11 @@ function LibraryContent() {
       <DenPageHeader
         title="My Library"
         size="compact"
-        action={filter === "models" ? <DenButton size="sm" icon={Plus} href={addKeyHref}>Add key</DenButton> : !empty ? <DenButton size="sm" icon={Plus} onClick={openAdd}>Add</DenButton> : undefined}
+        action={filter === "models" ? <DenButton size="sm" variant="secondary" icon={Plus} href={addKeyHref}>Add key</DenButton> : !empty ? <DenButton size="sm" variant="secondary" icon={Plus} onClick={openAdd}>Add</DenButton> : undefined}
       />
 
       {library.error ? (
-        <p className="rounded-2xl border border-gray-100 bg-white px-5 py-4 text-[13px] text-red-600">
+        <p role="alert" className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--ow-danger)]">
           {library.error instanceof Error ? library.error.message : "Your Library did not load."}
         </p>
       ) : null}
@@ -336,13 +338,13 @@ function LibraryContent() {
           <div className="flex flex-wrap items-end" data-testid="library-compact-toolbar">
             <UnderlineTabs tabs={LIBRARY_FILTERS.map((tab) => ({ ...tab, unseen: tab.value === "all" || tab.value === "workflows" ? false : introUnseen(LIBRARY_TAB_INTROS[tab.value]) }))} activeTab={filter} onChange={setFilter} className="min-w-0 flex-1" />
             {showFilter ? (
-              <div className="w-full border-b border-gray-200 pb-2 pt-3 sm:w-auto sm:pl-4 sm:pt-0">
+              <div className="w-full border-b border-gray-200 pb-2 pt-3 sm:w-auto sm:pl-4 sm:pt-0" data-library-filter>
                 <FilterInput value={query} onChange={setQuery} className="w-full sm:w-56" />
               </div>
             ) : null}
           </div>
 
-          {filter === "models" && gatewayApiKeysEnabled ? <MemberGatewayApiKeysSection /> : null}
+          {filter === "models" ? <MemberGatewayApiKeysSection /> : null}
 
           {filter === "all" || filter === "workflows"
             ? listBody
