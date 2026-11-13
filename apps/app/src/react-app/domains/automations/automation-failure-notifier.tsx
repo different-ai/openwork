@@ -7,7 +7,7 @@ import { isDesktopRuntime } from "@/app/lib/runtime-env"
 import { toast } from "@/components/ui/sonner"
 import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature"
 import { notifyDesktopEvent } from "@/react-app/shell/desktop-notifications"
-import { notifyAlert, notifyEvent } from "@/react-app/shell/notifications"
+import { notifyEvent } from "@/react-app/shell/notifications"
 import { automationsRoute } from "@/react-app/shell/workspace-routes"
 import { useDesktopAutomationsEnabled } from "./automation-availability"
 import { dispatchAutomationsStateChanged } from "./automation-events"
@@ -45,9 +45,9 @@ function writeWatermark(organizationId: string, watermark: number) {
 
 /**
  * Tells the owner once when one of their Automations fails or misses a run,
- * wherever they are in the app: an entry in the notification center (with a
- * toast), and a system notification while the app is in the background. A
- * missed run's toast stays until answered and offers to run it now or to move
+ * wherever they are in the app: a message that stays until it is dismissed,
+ * and a system notification while the app is in the background. A failed
+ * run's message opens the run; a missed run's offers to run it now or to move
  * its schedule to the cloud. Off unless the `automationFailureNotifications`
  * feature is on for the organization.
  */
@@ -140,8 +140,15 @@ export function AutomationFailureNotifier() {
 
     for (const notice of notices) {
       if (notice.missed) continue
-      notifyAlert({ kind: "system", severity: "error", title: notice.title, body: notice.body, dedupeKey: `automation-run:${notice.runId}` })
+      notifyEvent({ kind: "system", severity: "error", title: notice.title, body: notice.body, dedupeKey: `automation-run:${notice.runId}` })
       notifyDesktopEvent({ type: "automation.failed", title: notice.title, body: notice.body })
+      // The bell lists only Activity, so this message is where the owner sees the failure: it stays until dismissed.
+      toast.error(notice.title, {
+        id: `automation-failed:${notice.runId}`,
+        description: notice.body,
+        duration: Infinity,
+        action: { label: "Open", onClick: () => open(notice.automationId, notice.runId) },
+      })
     }
     const missed = notices.flatMap((notice) => notice.missed ? [{ notice, desktopRunsAhead: notice.missed.desktopRunsAhead }] : [])
     if (missed.length === 0) return

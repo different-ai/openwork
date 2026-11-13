@@ -13,10 +13,10 @@ owners found out late or not at all.
 With the feature on, the OpenWork app tells the owner once when one of
 their Automations fails, wherever they are in the app:
 
-- an entry in the notification center, with a toast while the app is open,
-  for example: **Daily summary needs a connection**, *Gmail needs to be
-  reconnected, so this run could not use it. Reconnect Gmail in OpenWork, then
-  run the Automation again.*
+- a message in the app that stays until it is dismissed, with an **Open**
+  button that shows the run, for example: **Daily summary needs a
+  connection**, *Gmail needs to be reconnected, so this run could not use it.
+  Reconnect Gmail in OpenWork, then run the Automation again.*
 - a system notification while the app is in the background, following the
   person's desktop notification setting (it counts as an important
   notification).
@@ -68,6 +68,10 @@ same request, so no second poll is added.
 Only each Automation's latest run is listed, so if one Automation fails twice
 between checks, the owner gets one notification.
 
+The messages live in the open app, not in the bell, which lists only what the
+member can newly use. One that was not dismissed is gone after the app
+restarts and is not shown again; the run stays in the Automation's history.
+
 For a missed run the app also asks Den where the member's Automations can run
 (`GET /v1/automation-runners`, the request the Automation editor already
 makes), once per check that found one. The two buttons call the existing run
@@ -76,8 +80,8 @@ and update routes; nothing new was added to Den.
 ## Off
 
 Turning it off stops the poll and the notifications at the next feature
-refresh, within a minute. Notifications already shown stay in the
-notification center, and nothing is stored in Den. Once the app sees the
+refresh, within a minute. Messages already on screen stay until they are
+dismissed or the app restarts, and nothing is stored in Den. Once the app sees the
 feature is off it forgets its watermark, so turning the feature back on
 starts fresh rather than announcing what failed in between. If the app was
 closed or offline, failures from that time are announced when it next checks,
@@ -90,8 +94,9 @@ as long as the feature stayed on.
    it records the watermark.
 3. Make an Automation fail, for example by disconnecting a connection its
    instructions use, then run it now.
-4. Within a minute of the run finishing, the notification center shows the
-   failure; with the app in the background a system notification appears.
+4. Within a minute of the run finishing, the app shows the failure and keeps
+   it on screen until it is dismissed; with the app in the background a system
+   notification appears.
 5. For a missed run: schedule a Desktop Automation a few minutes ahead, quit
    the desktop app until the time has passed and Den has recorded the run as
    missed, then open the app again. Within a minute it offers **Run now** and,
