@@ -148,3 +148,88 @@ test.each(["cancel", "network", "finalization-timeout"])("finish does not author
   else recognition.onerror?.({ error: reason });
   expect(await finishing).toBeNull();
 });
+
+function frames() {
+  let now = 0;
+  let id = 0;
+  const callbacks = new Map<number, (time: number) => void>();
+  return {
+    now: () => now,
+    request(callback: (time: number) => void) { callbacks.set(++id, callback); return id; },
+    cancel(key: number) { callbacks.delete(key); },
+    pending: () => callbacks.size,
+    advance(ms: number) { now += ms; const pending = [...callbacks.values()]; callbacks.clear(); pending.forEach(callback => callback(now)); },
+  };
+}
+
+function streamedDictation() {
+  const recognition = new Recognition();
+  const changes: string[] = [];
+  const clock = frames();
+  const owner = createBrowserDictation({ recognition, text: "", selection: { start: 0, end: 0 }, language: "en-US",
+    resultFrames: clock, onText: text => changes.push(text), onState: () => {}, onError: () => {} });
+  owner.start();
+  recognition.words("Plan");
+  return { recognition, changes, clock, owner };
+}
+
+test("speech bursts reveal on frames and reach the newest text within 100 ms without a growing queue", () => {
+  const { recognition, changes, clock, owner } = streamedDictation();
+  recognition.words("Plan the next week and review the changes.");
+  expect(changes).toEqual(["Plan"]);
+  clock.advance(25);
+  expect((changes.at(-1) ?? "").length).toBeGreaterThan(4);
+  expect((changes.at(-1) ?? "").length).toBeLessThan(42);
+  for (let i = 0; i < 100; i++) recognition.words(`Plan the next week and review all ${i} changes.`);
+  expect(clock.pending()).toBe(1);
+  clock.advance(75);
+  expect(owner.text()).toBe("Plan the next week and review all 99 changes.");
+  expect(clock.pending()).toBe(0);
+  expect(changes).toHaveLength(3);
+  owner.cancel();
+});
+
+test("streamed corrections apply immediately and Send flushes all latest words", async () => {
+  const { recognition, changes, clock, owner } = streamedDictation();
+  recognition.words("Plan the weak");
+  clock.advance(100);
+  recognition.words("Plan the week.");
+  expect(changes.at(-1)).toBe("Plan the week.");
+  recognition.words("Plan the week. Include the final word.");
+  const finished = owner.finish();
+  recognition.onend?.();
+  expect(await finished).toBe("Plan the week. Include the final word.");
+  expect(owner.text()).toBe("Plan the week. Include the final word.");
+  expect(clock.pending()).toBe(0);
+});
+
+test("cancel fences queued frames and streaming never splits grapheme clusters", () => {
+  const { recognition, clock, owner } = streamedDictation();
+  const target = "Plan 👩🏽‍💻 café tomorrow";
+  recognition.words(target);
+  const validPrefixes = new Set(["Plan", ...Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(target), part => target.slice(0, part.index + part.segment.length))]);
+  clock.advance(35);
+  expect(validPrefixes.has(owner.text())).toBe(true);
+  expect(owner.text()).not.toBe(target);
+  expect(clock.pending()).toBe(1);
+  const visible = owner.text();
+  owner.cancel();
+  clock.advance(100);
+  recognition.words("late replacement");
+  expect(owner.text()).toBe(visible);
+  expect(clock.pending()).toBe(0);
+});
+
+test("revising words not yet displayed never retracts an already visible prefix", () => {
+  const { recognition, clock, owner } = streamedDictation();
+  recognition.words("Plan the week and review all of the release notes before Friday.");
+  clock.advance(60);
+  const visible = owner.text();
+  const corrected = visible + " tomorrow.";
+  recognition.words(corrected);
+  clock.advance(10);
+  expect(owner.text().startsWith(visible)).toBe(true);
+  clock.advance(30);
+  expect(owner.text()).toBe(corrected);
+  expect(clock.pending()).toBe(0);
+});

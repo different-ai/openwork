@@ -352,6 +352,18 @@ select:disabled {
   }
 }
 
+/* Startup motion signals preparation, then the same bars show actual audio. */
+@keyframes dictation-warmup {
+  0%, 100% { transform: scaleY(0.12); opacity: 0.4; }
+  50% { transform: scaleY(0.55); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-dictation-preparing] rect {
+    animation: dictation-warmup 1080ms ease-in-out infinite;
+  }
+}
+
 @utility animate-progress-shimmer {
   animation: progress-shimmer 2s infinite linear;
 }

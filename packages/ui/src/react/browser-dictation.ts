@@ -41,6 +41,12 @@ export function createBrowserDictation(options: {
   selection: { start: number; end: number }
   language: string
   finalizationTimeoutMs?: number
+  /** Optional display pacing; recognition and finalization never wait on it. */
+  resultFrames?: {
+    request(callback: (time: number) => void): number
+    cancel(id: number): void
+    now(): number
+  }
   onLevel?(level: number): void
   onStatus?(status: "installing", progress?: number): void
   onText(text: string): void
@@ -59,14 +65,48 @@ export function createBrowserDictation(options: {
   let resolveFinished: (text: string | null) => void = () => {}
   const finished = new Promise<string | null>(resolve => { resolveFinished = resolve })
   let timer: ReturnType<typeof setTimeout> | undefined
-  const publish = () => {
-    if (displayed === latest) return
-    displayed = latest
-    options.onText(latest)
+  const frames = options.resultFrames
+  let frame: number | undefined
+  let revealFrom = displayed
+  let revealStartedAt = 0
+  let receivedResult = false
+  const graphemes = frames ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : undefined
+  const publishText = (text: string) => {
+    if (displayed === text) return
+    displayed = text
+    options.onText(text)
+  }
+  const clearFrame = () => {
+    if (frame !== undefined) frames?.cancel(frame)
+    frame = undefined
+  }
+  const publish = () => { clearFrame(); publishText(latest) }
+  const reveal = (time: number) => {
+    frame = undefined
+    if (!live || !frames || !graphemes) return
+    const progress = Math.min(1, Math.max(0, (time - revealStartedAt) / 100))
+    const tail = Array.from(graphemes.segment(latest.slice(revealFrom.length)), part => part.segment)
+    const next = revealFrom + tail.slice(0, Math.ceil(tail.length * progress)).join("")
+    // A revision can shorten the undisplayed tail during this same window.
+    // Keep the visible prefix until the reveal catches up with it again.
+    if (next.length >= displayed.length) publishText(next)
+    if (displayed !== latest) frame = frames.request(reveal)
+  }
+  const publishResult = () => {
+    // Show the first words and revisions immediately. Only appended text is
+    // revealed over frames, coalescing new bursts into the same 100 ms window.
+    if (!frames || !receivedResult || stopping || !latest.startsWith(displayed)) publish()
+    else if (latest !== displayed && frame === undefined) {
+      revealFrom = displayed
+      revealStartedAt = frames.now()
+      frame = frames.request(reveal)
+    }
+    receivedResult = true
   }
   const endSession = (keep = true, successful = true) => {
     live = false
     clearTimeout(timer)
+    clearFrame()
     if (keep) publish()
     options.onState("idle")
     resolveFinished(successful ? latest : null)
@@ -95,11 +135,11 @@ export function createBrowserDictation(options: {
       if (transcript && part && !/\s$/.test(transcript) && !/^[\s.,!?;:]/.test(part)) transcript += " "
       transcript += part
     }
-    if (!transcript) { latest = options.text; publish(); return }
+    if (!transcript) { latest = options.text; publishResult(); return }
     const left = before && !/\s$/.test(before) && !/^[\s.,!?;:]/.test(transcript) ? " " : ""
     const right = after && !/^[\s.,!?;:]/.test(after) && !/\s$/.test(transcript) ? " " : ""
     latest = before + left + transcript + right + after
-    publish()
+    publishResult()
   }
   function commit() {
     if (live) {
@@ -111,6 +151,7 @@ export function createBrowserDictation(options: {
   function stop() {
     if (!live || stopping) return
     stopping = true
+    publish()
     options.onState("stopping")
     timer = setTimeout(() => {
       if (options.finalizationTimeoutMs) options.onError(speechError("finalization-timeout"))

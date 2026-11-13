@@ -208,6 +208,9 @@ test("model download shows measured progress, resets on retry and ignores late u
     await act(async () => { latest?.onstatus?.("installing", 1) });
     expect(progress()).toBeNull();
     expect(container.querySelector('[role="status"]')?.textContent).toBe("Starting dictation");
+    const preparingWaveform = container.querySelector('[data-dictation-preparing]');
+    expect(preparingWaveform?.getAttribute("aria-label")).toBe("Starting dictation");
+    expect(preparingWaveform?.querySelectorAll("rect").length).toBe(24);
     const cancelled = latest;
     await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Cancel dictation"]')?.click() });
     await act(async () => { cancelled?.onstatus?.("installing", 0.8) });
@@ -221,6 +224,7 @@ test("model download shows measured progress, resets on retry and ignores late u
     expect(progress()?.hasAttribute("aria-valuenow")).toBe(false);
     await act(async () => { latest?.onstatus?.("installing", 1); latest?.onstart?.(); latest?.onstatus?.("installing", 0.75) });
     expect(progress()).toBeNull();
+    expect(container.querySelector('[data-dictation-preparing]')).toBeNull();
     expect(container.querySelector('[role="status"]')?.textContent).toBe("Listening");
     expect(container.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("100");
   } finally { prepareModel = false; await act(async () => { root.unmount() }); client.clear(); container.remove(); }

@@ -8,7 +8,7 @@ export const dictationMeterSamples = 24
 
 /** Host levels render a microphone meter. Without them, text changes drive a
  * dictation-mode indicator; the browser/OS owns the microphone state. */
-export function DictationWaveform({ text, levels, className }: { text: string; levels?: readonly number[]; className?: string }) {
+export function DictationWaveform({ text, levels, preparing = false, className }: { text: string; levels?: readonly number[]; preparing?: boolean; className?: string }) {
   const previous = useRef(text)
   const [active, setActive] = useState(false)
   useEffect(() => {
@@ -19,13 +19,15 @@ export function DictationWaveform({ text, levels, className }: { text: string; l
     return () => clearTimeout(timer)
   }, [text])
 
-  if (levels) return <span role="img" aria-label="Microphone level" data-dictation-waveform className={className}>
+  if (levels) return <span role="img" aria-label={preparing ? "Starting dictation" : "Microphone level"}
+    data-dictation-waveform data-dictation-preparing={preparing || undefined} className={className}>
     <svg viewBox="0 0 240 32" preserveAspectRatio="none" width="100%" height="100%" aria-hidden="true">
       {Array.from({ length: dictationMeterSamples }, (_, index) => {
         const level = levels[index - (dictationMeterSamples - levels.length)] ?? 0
         const height = 2 + Math.max(0, Math.min(1, level)) * 28
         return <rect key={index} x={3 + index * 10} y="2" width="3" height="28" rx="1.5" fill="currentColor"
-          style={{ transformBox: "fill-box", transformOrigin: "center", transform: `scaleY(${height / 28})` }} />
+          style={{ transformBox: "fill-box", transformOrigin: "center", transform: `scaleY(${height / 28})`,
+            animationDelay: preparing ? `${-index * 45}ms` : undefined }} />
       })}
     </svg>
   </span>
