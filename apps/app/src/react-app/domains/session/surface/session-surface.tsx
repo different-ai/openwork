@@ -17,7 +17,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
-import { createSessionInterruptionClient, hasTerminalSessionReply, holdSessionWork, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
+import { createSessionInterruptionClient, hasTerminalSessionReply, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
 import { createClient, createPromptMessageID, isPromptAdmissionUnknown, promptAdmissionFailure, readPromptAdmission, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl, v2AcknowledgementText } from "@/app/lib/opencode-v2-adapter";
 import * as opencodeSessionNative from "@/app/lib/opencode-session-native";
@@ -29,7 +29,7 @@ import { t } from "@/i18n";
 import type { ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import { type CloudImportedPlugin } from "@/app/cloud/import-state";
 import { createDenClient, markFeatureUsed, readDenSettings } from "@/app/lib/den";
-import { confirmArchivedComposerRestore, isConfirmedUnarchivedSession } from "./archived-composer-send";
+import { captureArchivedSendSelection, confirmArchivedComposerRestore, isConfirmedUnarchivedSession, sameArchivedSendIdentity, type ArchivedSendIdentity } from "./archived-composer-send";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { hasMovedRejectedTurn, rejectedTurnOwner, useRejectedTurns, useSessionDraftState } from "@/react-app/domains/session/sync/draft-store";
 import { mergeRejectedTurns, retainRejectedTurn } from "@/react-app/domains/session/sync/rejected-turn";
@@ -776,7 +776,7 @@ export type SessionSurfaceProps = {
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef, variant?: string | null) => void;
   archived?: boolean;
-  onRestoreSession?: () => Promise<boolean>;
+  onRestoreSession?: (signal?: AbortSignal) => Promise<boolean>;
   onSendDraft: (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void, agent?: string | null) => Promise<CloudMcpSubmissionResult>;
   cloudMcpSubmissionState: CloudMcpSubmissionGateState;
   onOpenConnect: () => void;
@@ -2442,6 +2442,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const archiveComposeContextRef = useRef(archiveComposeContext);
   archiveComposeContextRef.current = archiveComposeContext;
   const archivedSendRef = useRef(false);
+  const archiveRestoreControllerRef = useRef<AbortController | null>(null);
+  useEffect(() => () => { archiveRestoreControllerRef.current?.abort(); }, [archiveComposeContext]);
 
   // Immediate sends interrupt foreground delegation, but otherwise steer the
   // running loop. Explicit queueing and automatic draining stay separate.
@@ -2449,7 +2451,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     nextDraft: ComposerDraft,
     itemId: string,
     onPrepared?: (text?: string) => void,
-    options: { consumeQueuedItem?: boolean; agent?: string | null; archiveConsent?: () => boolean } = {},
+    options: { consumeQueuedItem?: boolean; agent?: string | null; archiveConsent?: () => boolean; identity?: ArchivedSendIdentity } = {},
   ): Promise<CloudMcpSubmissionResult | AutoAccessBlock | { outcome: "unknown" }> => {
     // Capture before interruption/readiness waits; later selections affect only later sends.
     const agent = options.agent !== undefined ? options.agent : getSessionAgentSelection(props.sessionId, props.selectedAgent);
@@ -2472,7 +2474,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if ((archived && !options.archiveConsent?.()) || !archiveStateKnown) throw new Error("This session is read-only. Restore it before sending.");
       if (options.archiveConsent && !options.archiveConsent()) throw new Error(MESSAGE_NOT_SENT);
       if (sessionModelPending) throw new Error("The conversation's model is still loading. Retry shortly.");
-      const identity = readDenSettings();
+      const identity = options.identity ?? readDenSettings();
       const freeBlock = nextDraft.mode === "shell" ? null : isAutoModel(sessionModel.selectedModel) && props.openWorkModelsSyncing
         ? { outcome: "blocked", reason: "auto-access", wall: { state: "sync" } } satisfies AutoAccessBlock
         : await preflightAutoSubmission({ model: sessionModel.selectedModel, client: props.client,
@@ -2481,7 +2483,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
           && autoSubmissionRef.current.client === props.client
           && autoSubmissionRef.current.model === modelRefKey(sessionModel.selectedModel)
           && readDenSettings().authToken === identity.authToken && readDenSettings().activeOrgId === identity.activeOrgId
-          && readDenSettings().baseUrl === identity.baseUrl,
+          && readDenSettings().baseUrl === identity.baseUrl
+          && (!options.archiveConsent || options.archiveConsent()),
       });
       if (freeBlock) {
         if (freeBlock.outcome === "blocked") await rememberRejection(freeBlock.wall);
@@ -2585,6 +2588,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const text = originalDraft.trim();
     if (!text && sourceAttachments.length === 0) return;
     const focusedComposer = document.activeElement;
+    const { identity, agent } = captureArchivedSendSelection(
+      readDenSettings(), getSessionAgentSelection(props.sessionId, props.selectedAgent),
+    );
     const savedComposer = snapshotComposerSessionState(submittedComposer ?? {
       draft: originalDraft, attachments: sourceAttachments, mentions, pasteParts, revertMessageId: null,
     });
@@ -2601,10 +2607,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (restoreForSend) {
       archivedSendRef.current = true;
       setRestoringArchived(true);
-      const release = holdSessionWork(props.opencodeBaseUrl, props.sessionId);
-      const isCurrent = () => autoSubmissionRef.current.mounted
+      const controller = new AbortController();
+      archiveRestoreControllerRef.current = controller;
+      const isCurrent = () => !controller.signal.aborted && autoSubmissionRef.current.mounted
         && archiveComposeContextRef.current === archiveComposeContext
-        && getQueuedSendGeneration(props.sessionId) === generation;
+        && getQueuedSendGeneration(props.sessionId) === generation
+        && sameArchivedSendIdentity(identity, readDenSettings());
       const verified = () => {
         const cached = queryClient.getQueryData<OpenworkSessionHistory>(snapshotQueryKey);
         return isConfirmedUnarchivedSession(props.sessionId, cached?.session);
@@ -2612,20 +2620,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
       try {
         void markFeatureUsed("archivedSessionCompose");
         const restored = await confirmArchivedComposerRestore({
-          restore: () => props.onRestoreSession?.() ?? Promise.resolve(false),
-          verify: async () => {
+          lease: { baseUrl: props.opencodeBaseUrl, sessionId: props.sessionId, itemId: nextDraft.messageId },
+          signal: controller.signal,
+          restore: (signal) => props.onRestoreSession?.(signal) ?? Promise.resolve(false),
+          verify: async (signal) => {
             const result = await snapshotQuery.refetch();
-            return !result.isError && verified();
+            return !signal.aborted && !result.isError && verified();
           },
           isCurrent,
         });
-        if (!restored) {
-          dispatchQueuedDrain(props.sessionId, { type: "send_error", itemId: nextDraft.messageId });
-          return;
-        }
+        if (!restored) return;
         archiveConsent = () => isCurrent() && verified() && !sessionWorkHeld(props.opencodeBaseUrl, props.sessionId);
       } catch {
-        dispatchQueuedDrain(props.sessionId, { type: "send_error", itemId: nextDraft.messageId });
         if (isCurrent()) setArchiveComposeError({ owner: sessionOwner,
           message: "Couldn't unarchive this conversation. Your draft is saved. Try sending again.",
         });
@@ -2633,7 +2639,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       } finally {
         archivedSendRef.current = false;
         setRestoringArchived(false);
-        release();
+        if (archiveRestoreControllerRef.current === controller) archiveRestoreControllerRef.current = null;
       }
       if (!archiveConsent()) {
         dispatchQueuedDrain(props.sessionId, { type: "send_error", itemId: nextDraft.messageId });
@@ -2697,7 +2703,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
     if (sentAttachments.length) setAttachmentsUploading(true);
     try {
-      const result = await sendDraft(nextDraft, nextDraft.messageId, markPrepared, { archiveConsent });
+      const result = await sendDraft(nextDraft, nextDraft.messageId, markPrepared, {
+        archiveConsent,
+        ...(restoreForSend ? { agent, identity } : {}),
+      });
       if ((result.outcome === "sent" || result.outcome === "accepted")
         && !isDesktopRuntime() && window.matchMedia("(max-width: 1023px)").matches
         && focusedComposer instanceof HTMLElement
@@ -2734,7 +2743,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } finally {
       setAttachmentsUploading(false);
     }
-  }, [archived, archivedSessionCompose, archiveComposeContext, archiveStateKnown, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.onRestoreSession, props.opencodeBaseUrl, props.sessionId, sendDraft, sessionOwner, setError, sessionModelPending, sessionModelUnavailable, model.transitionState, queryClient, snapshotQuery.refetch, snapshotQueryKey]);
+  }, [archived, archivedSessionCompose, archiveComposeContext, archiveStateKnown, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.onRestoreSession, props.opencodeBaseUrl, props.sessionId, props.selectedAgent, sendDraft, sessionOwner, setError, sessionModelPending, sessionModelUnavailable, model.transitionState, queryClient, snapshotQuery.refetch, snapshotQueryKey]);
 
   // One-step run from the empty-state hero: the route keeps the continuation
   // in this session's composer and marks the submitted snapshot for auto-send.

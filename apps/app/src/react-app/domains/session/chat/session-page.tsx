@@ -310,7 +310,7 @@ export type SessionPageProps = {
   newTaskComposer?: NewTaskComposerContext | null;
   onRenameSession?: (sessionId: string, title: string, workspaceId: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string, workspaceId: string) => Promise<void> | void;
-  onArchiveSession?: (sessionId: string, archived: boolean, workspaceId: string) => Promise<ArchiveSessionOutcome>;
+  onArchiveSession?: (sessionId: string, archived: boolean, workspaceId: string, signal?: AbortSignal) => Promise<ArchiveSessionOutcome>;
   archiveDisabledReason?: string;
   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
   /** Settings content rendered inside the right pane when the settings rail icon is active. */
@@ -1903,7 +1903,7 @@ export function SessionPage(props: SessionPageProps) {
                             workspaceId={props.runtimeWorkspaceId!}
                             sessionId={props.selectedSessionId!}
                             archived={archivedInWorkspace(props.selectedWorkspaceId, props.selectedSessionId)}
-                            onRestoreSession={async () => (await props.onArchiveSession?.(props.selectedSessionId!, false, props.selectedWorkspaceId!))?.kind === "done"}
+                            onRestoreSession={async (signal) => (await props.onArchiveSession?.(props.selectedSessionId!, false, props.selectedWorkspaceId!, signal))?.kind === "done"}
                             isControlTarget={activeWorkbenchPane === "primary"}
                             chatPane={canRenderSplitSurface ? "primary" : undefined}
                             opencodeBaseUrl={reactSessionBaseUrl}
@@ -1988,7 +1988,7 @@ export function SessionPage(props: SessionPageProps) {
                                   sandboxBackend={splitPaneRuntime.sandboxBackend}
                                   sessionId={splitSession.sessionId}
                                   archived={archivedInWorkspace(splitSession.workspaceId, splitSession.sessionId)}
-                                  onRestoreSession={async () => (await props.onArchiveSession?.(splitSession.sessionId, false, splitSession.workspaceId))?.kind === "done"}
+                                  onRestoreSession={async (signal) => (await props.onArchiveSession?.(splitSession.sessionId, false, splitSession.workspaceId, signal))?.kind === "done"}
                                   isControlTarget={activeWorkbenchPane === "secondary"}
                                   chatPane="secondary"
                                   opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}

@@ -3,13 +3,16 @@ import { z } from "zod";
 import { spec, type Probe } from "@openwork/testkit";
 import { archivedSessionCompose, archivedSessionComposeOff } from "../worlds/archived-session-compose.ts";
 
-const options = {
+const test = spec.world(archivedSessionCompose, {
   timeout: 600_000,
   resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
   needs: { commands: ["bun"] },
-} satisfies Parameters<typeof spec.world>[1];
-const test = spec.world(archivedSessionCompose, options);
-const testOff = spec.world(archivedSessionComposeOff, options);
+});
+const testOff = spec.world(archivedSessionComposeOff, {
+  timeout: 600_000,
+  resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
+  needs: { commands: ["bun"] },
+});
 const archivedBanner = { testId: "archived-session" };
 const hint = "Sending a message will unarchive this conversation.";
 const messageSchema = z.object({

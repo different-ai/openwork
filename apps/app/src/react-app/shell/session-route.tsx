@@ -3096,8 +3096,8 @@ export function SessionRoute() {
       });
     },
   });
-  const handleArchiveSession = async (sessionId: string, archived: boolean, workspaceId: string) => {
-    return archiveSessionInWorkspace(workspaceId, sessionId, archived);
+  const handleArchiveSession = async (sessionId: string, archived: boolean, workspaceId: string, signal?: AbortSignal) => {
+    return archiveSessionInWorkspace(workspaceId, sessionId, archived, { signal });
   };
   archiveSessionRef.current = handleArchiveSession;
 

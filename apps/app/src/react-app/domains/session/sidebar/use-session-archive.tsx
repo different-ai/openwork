@@ -111,10 +111,10 @@ export function useSessionArchive(input: {
     pending.current = null;
   }
 
-  async function restore(target: ArchiveTarget, announce: boolean, undo?: typeof undoNavigation.current) {
+  async function restore(target: ArchiveTarget, announce: boolean, undo?: typeof undoNavigation.current, signal?: AbortSignal) {
     const { workspace, endpoint, sessionId } = target;
     try {
-      await setSessionArchived(archiveClient(endpoint, workspace.path), sessionId, false, workspace.path);
+      await setSessionArchived(archiveClient(endpoint, workspace.path), sessionId, false, workspace.path, { signal });
       await Promise.all([...new Set([workspace.id, endpoint.workspaceId])].map(id => applySessionArchived(id, sessionId, false)));
       const now = current.current;
       if (mounted.current) now.input.onArchivedChange(workspace.id, sessionId, false);
@@ -127,10 +127,10 @@ export function useSessionArchive(input: {
         now.input.navigateToWorkspaceSession(workspace.id, sessionId, { replace: true });
       }
       if (mounted.current) await now.input.reloadWorkspaceSessions(workspace.id);
-      if (announce) showUndo(target, false);
+      if (announce && !signal?.aborted) showUndo(target, false);
       return true;
     } catch (error) {
-      toast.error(t("session_management.unarchive_failed"), { description: error instanceof Error ? error.message : String(error) });
+      if (!signal?.aborted) toast.error(t("session_management.unarchive_failed"), { description: error instanceof Error ? error.message : String(error) });
       return false;
     }
   }
@@ -359,9 +359,9 @@ export function useSessionArchive(input: {
   }
 
   // Explicit UI owner; the agent's existing archiveSession contract stays unchanged.
-  function archiveSessionInWorkspace(workspaceId: string, sessionId: string, archived: boolean): Promise<ArchiveSessionOutcome> {
+  function archiveSessionInWorkspace(workspaceId: string, sessionId: string, archived: boolean, options?: ArchiveSessionOptions): Promise<ArchiveSessionOutcome> {
     if (!workspaceId) return Promise.resolve({ kind: "verification_failed", message: "The session's workspace is missing." });
-    return archiveOwnedSession(sessionId, archived, undefined, workspaceId);
+    return archiveOwnedSession(sessionId, archived, options, workspaceId);
   }
 
   function archiveSession(sessionId: string, archived: boolean, options?: ArchiveSessionOptions): Promise<ArchiveSessionOutcome> {
@@ -375,7 +375,7 @@ export function useSessionArchive(input: {
       toast.error(target.error);
       return { kind: "verification_failed", message: target.error };
     }
-    if (!archived) return settle((await restore(target, true)) ? "done" : "cancelled");
+    if (!archived) return settle((await restore(target, true, undefined, options?.signal)) ? "done" : "cancelled");
     return new Promise<ArchiveSessionOutcome>(resolve => {
       pending.current = resolve;
       void archive(target, false, options);
