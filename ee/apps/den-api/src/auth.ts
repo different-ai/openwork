@@ -64,14 +64,16 @@ import { withLoopbackRedirectRelaxation } from "./mcp/cimd-loopback-redirects.js
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
 import { organizationInviteEmailProps } from "./invitation-email.js";
+// Read while this module loads: take them from the import-free module, never
+// from api-keys.ts, which is in an import cycle with this file.
 import {
   DEN_API_KEY_DEFAULT_PREFIX,
   DEN_API_KEY_EXPIRES_IN_DAYS,
   DEN_API_KEY_EXPIRES_IN_SECONDS,
   DEN_API_KEY_RATE_LIMIT_MAX,
   DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
-  revokeOrganizationApiKeysForMember,
-} from "./api-keys.js";
+} from "./api-key-constants.js";
+import { revokeOrganizationApiKeysForMember } from "./api-keys.js";
 import { revokeMembershipSessionCredentials } from "./credential-revocation.js";
 import {
   denOrganizationAccess,
