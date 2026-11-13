@@ -3,6 +3,19 @@ title: "Changelog"
 description: "OpenWork release notes: new features, improvements, and bug fixes."
 "og:description": "OpenWork release notes: new features, improvements, and bug fixes."
 ---
+<Update label="November 13th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.67](https://github.com/different-ai/openwork/compare/v0.18.66...v0.18.67): AI Gateway capabilities are now available to every organization
+
+  - **More AI Gateway features are available to every organization.** Auth & Security, config import and export, AI Gateway API keys for other tools, custom OpenAI-compatible providers, and Smart Routers are now available to every organization, including self-hosted deployments; their completed-rollout switches are gone. TrueFoundry is also available directly in the provider picker. Organizations that had not enabled Auth & Security now have 30-day session limits and admins confirm their identity after 15 minutes for sensitive changes. Claude prompt caching also lowers the cost of long sessions through AI Gateway.
+  - **Admins have clearer controls for roles and computers.** Admins can assign built-in or custom roles to people or teams, and members can disconnect signed-in computers and set what other devices may do on each one. New sandbox organizations make joiners super admins by default. The My Sessions pages have been removed from Den, and a member's Workbot cloud computers are deleted when they leave an organization.
+  - **Workbot and remote tasks recover more cleanly.** Workbot can hand over apps as cards, recovered tasks no longer show as failed, and remote tasks can bring questions and computer-use approvals back to the chat that started them. Unresponsive cloud computers can be replaced, and idle ones pause again.
+  - **Desktop chats and setup are more dependable.** File actions find files inside project subfolders, OpenCode v2 web search cards show their results, OpenWork Models no longer appear missing from the model catalog, and remotely launched chats keep their model choice. Claude Code sign-in can continue in your browser, and desktop Automations run with models that have no variant.
+  - **Workbot Documents can play audio and video.** Admins no longer configure a Workbot step limit or separate mail and chat sources; access follows the Google Workspace, Microsoft 365, or Slack connector they allow. OpenWork-built interactive views are now called Artifacts throughout chat, the library, and sharing.
+  - **Website visitors and admins have new setup guidance.** The website adds an EU sovereignty guide and checklist, and the docs add a knowledge-work cost benchmark and an OIDC sign-in guide. Connector setup also shows the callback URL needed by OAuth providers.
+
+</Update>
+
 <Update label="November 10th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
   ## [v0.18.66](https://github.com/different-ai/openwork/compare/v0.18.65...v0.18.66): Workbot is easier to follow on desktop and phone
