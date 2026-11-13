@@ -134,6 +134,10 @@ export const RETIRED_FEATURE_KEYS = [
   "nativeDictation", "workbotScrollToBottom", "workbotApps",
   "workbotProactive", "workbotTeamSettings", "workbotUsageAnalytics",
   "fileSendPermissions", "remoteDevices", "remoteSessionAccess",
+  // Removed (2026-11): team settings use the existing top tabs.
+  "teamSettingsSidebar",
+  // Generally available (2026-11): Workbot settings tabs; sample Slack stays cloud-sandbox-only.
+  "workbotSettingsTabs", "sandboxSlack",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

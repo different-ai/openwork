@@ -28,7 +28,7 @@ import { workbotTeamsOverridingCount, workbotTeamsOverridingLabel } from "./work
 import { WorkbotProactiveSection } from "./workbot-proactive-section";
 import { WorkbotProactiveHealthSection } from "./workbot-proactive-health";
 import { AGENT_HEALTH_ANCHOR } from "./workbot-agent-scope";
-import { WorkbotSettingsTabs, workbotSettingsTabsEnabled } from "./workbot-settings-tabs";
+import { WorkbotSettingsTabs } from "./workbot-settings-tabs";
 import { workbotSettingsParts, workbotSettingsTabForHash, type WorkbotSettingsTab } from "./workbot-settings-tabs-model";
 import { FeatureIntroGate, useFeatureIntroRuntime } from "../_features/feature-intros";
 import { useWorkbotIntroFacts } from "./workbot-intro-facts";
@@ -104,10 +104,10 @@ export function WorkbotSettingsScreen() {
   }, [orgId, current, draft, resetTest]);
 
   const name = workbotDisplayName(parseOrganizationMetadata(orgContext?.organization.metadata ?? null)?.brandAppName);
-  // Members' agents ride on Workbot: shown only with the rollout on and Workbot deployed here.
+  // Members' agents ride on Workbot: shown only when Workbot is deployed here.
   const proactive = orgContext?.capabilities.workbot === true;
   // Tabs split Workbot's own settings from members' agents and what they read, where there are agents to show.
-  const tabs = workbotSettingsTabsEnabled(orgContext) && proactive;
+  const tabs = proactive;
   // Whether members' agents read the calendar: the calendar setting of Everyone's policy, as a row on General.
   const agentPolicy = useWorkbotProactive(orgId, proactive && Boolean(orgId));
   const saveAgentPolicy = useSaveWorkbotProactive(orgId);

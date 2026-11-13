@@ -6,7 +6,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
-import { organizationFeatureEnabled } from "../features.js"
+import { env } from "../env.js"
 import { isSandboxSlackToken } from "./protocol.js"
 
 /**
@@ -18,7 +18,7 @@ import { isSandboxSlackToken } from "./protocol.js"
  *   from Slack's own install answer, and Slack never issues one with the sample prefix);
  * - the organization is an open sandbox, the address is the workplace address a platform admin gave it, and the
  *   Slack connector still points at that workplace (so a member's connector token only goes where it came from);
- * - `sandboxSlack` is on for the organization.
+ * - this is a Cloud deployment.
  *
  * When any of these stops being true the sample app is unavailable: Den refuses to call anything with it rather
  * than sending a sample token to Slack (slackClient refuses that too).
@@ -44,11 +44,11 @@ function sameOrigin(left: string, right: string) {
 
 /** The Slack API address of a sandbox's sample app, or null when it is not one or can't be used now. */
 export async function sandboxSlackApiBase(connectionId: DenTypeId<"externalMcpConnection">, now = new Date()): Promise<string | null> {
+  if (env.features.deployment !== "cloud") return null
   const [row] = await db
     .select({
       botToken: Installation.botToken,
       teamId: Installation.teamId,
-      organizationId: Installation.organizationId,
       connectionUrl: ExternalMcpConnectionTable.url,
       workplaceUrl: SandboxOrganizationTable.connectorBaseUrl,
       closedAt: SandboxOrganizationTable.closedAt,
@@ -62,6 +62,5 @@ export async function sandboxSlackApiBase(connectionId: DenTypeId<"externalMcpCo
   if (!row || !isSandboxSlackToken(row.botToken) || !row.teamId || !row.workplaceUrl) return null
   if (row.closedAt || row.expiresAt <= now) return null
   if (!sameOrigin(row.connectionUrl, row.workplaceUrl)) return null
-  if (!(await organizationFeatureEnabled(row.organizationId, "sandboxSlack"))) return null
   return sandboxSlackAddresses(row.workplaceUrl).apiBaseUrl(row.teamId)
 }

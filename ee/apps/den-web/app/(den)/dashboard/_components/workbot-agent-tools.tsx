@@ -1,7 +1,7 @@
 "use client";
 
 import { Dialog } from "@base-ui/react/dialog";
-import { ChevronRight, Lock } from "lucide-react";
+import { Lock } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import {
@@ -16,8 +16,8 @@ import type { AgentPolicyScope } from "./workbot-agent-scope";
 import { useAgentConnectionTools } from "./workbot-proactive-data";
 
 /**
- * Manage › Workbot › What agents read, under one connection (`workbotAgentBrief`): "Tools agents may use: N read tools",
- * a disclosure (DESIGN.md S3) with one compact row per tool (S2): its name, why it is or isn't allowed, and a switch
+ * Manage › Workbot › Connectors, under one connection (`workbotAgentBrief`): a read-tools count opens
+ * a dialog (DESIGN.md S3) with one row per tool (S2): its name, why it is or isn't allowed, and a switch
  * for the admin's choice. A tool no admin can allow (its provider marks it destructive, or one of Den's own operations
  * that changes things) keeps its row with a lock and the reason (P4). Agents only ever call the allowed ones.
  * The same rows show a team's choices on its Workbot tab (`scope`).
@@ -48,85 +48,8 @@ export function automaticToolsChange(connectionId: string): AgentSourcesPolicyIn
   return { toolOverrides: { [connectionId]: null } };
 }
 
-function ToolRow({ tool, connectionId, disabled, onChange }: { tool: AgentToolDecisionView; connectionId: string; disabled: boolean; onChange: (change: AgentSourcesPolicyInput) => void }) {
-  const label = tool.title && tool.title !== tool.name ? tool.title : tool.name;
-  const reason = tool.locked ? `${AGENT_TOOL_DECISION_COPY[tool.reason]}. No one can allow it.` : AGENT_TOOL_DECISION_COPY[tool.reason];
-  return (
-    <div className="flex min-h-[40px] items-center justify-between gap-3 py-1.5 pl-20 pr-6" data-testid={`workbot-agent-tool-${tool.name}`} data-allowed={tool.allowed} data-locked={tool.locked}>
-      <span className="min-w-0 truncate font-mono text-[12px] text-gray-900" title={tool.description ?? undefined}>{label}</span>
-      <span className="flex min-w-0 shrink-0 items-center gap-3">
-        <span className="truncate text-[12px] text-gray-500">{reason}</span>
-        {tool.locked ? (
-          <span className="flex h-5 w-9 items-center justify-center">
-            <Lock size={14} strokeWidth={1.5} className="text-gray-500" role="img" aria-label={`${tool.name}: ${reason}`} />
-          </span>
-        ) : (
-          <DenSwitch size="sm" aria-label={`Agents may use ${tool.name}`} checked={tool.allowed} disabled={disabled}
-            onChange={(allowed) => onChange(toolChoiceChange(connectionId, tool.name, allowed))} />
-        )}
-      </span>
-    </div>
-  );
-}
-
-/** The tools of one connection, behind a disclosure. Listed once, when the row mounts, so the summary has its count. */
-export function AgentConnectionTools({ orgId, scope, connectionId, name, connectHref, disabled, onChange }: {
-  orgId: string;
-  /** Whose choices: Everyone's, or one team's. */
-  scope?: AgentPolicyScope;
-  connectionId: string;
-  name: string;
-  connectHref: string;
-  disabled: boolean;
-  onChange: (change: AgentSourcesPolicyInput) => void;
-}) {
-  const query = useAgentConnectionTools(orgId, connectionId, true, scope);
-  return <ConnectionToolsDisclosure view={query.data} failed={query.isError} name={name} connectionId={connectionId} connectHref={connectHref} disabled={disabled} onChange={onChange} />;
-}
-
-/** The disclosure itself, from a loaded view (rendered without fetching in tests and screenshots). */
-export function ConnectionToolsDisclosure({ view, failed, name, connectionId, connectHref, disabled, onChange }: {
-  view: AgentConnectionToolsView | undefined;
-  failed: boolean;
-  name: string;
-  connectionId: string;
-  connectHref: string;
-  disabled: boolean;
-  onChange: (change: AgentSourcesPolicyInput) => void;
-}) {
-  const state = toolsSummary(view, failed, name);
-  const chosen = view?.tools.some((tool) => tool.override !== null) ?? false;
-  return (
-    <details className="group/tools" data-testid={`workbot-agent-tools-${connectionId}`} data-read-tools={view?.readTools ?? ""}>
-      <summary className="flex min-h-[36px] cursor-pointer list-none items-center justify-between gap-3 py-1.5 pl-14 pr-6 text-[12px] text-gray-500 outline-hidden hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-gray-900/5 [&::-webkit-details-marker]:hidden">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <ChevronRight size={14} strokeWidth={1.5} aria-hidden className="shrink-0 transition-transform duration-150 group-open/tools:rotate-90 motion-reduce:transition-none" />
-          <span className="truncate">{`Tools agents may use${state ? `: ${state}` : ""}`}</span>
-        </span>
-        <span className="shrink-0 font-medium text-gray-700 group-open/tools:hidden">Review</span>
-      </summary>
-      <div className="pb-1" data-testid={`workbot-agent-tools-list-${connectionId}`}>
-        {view?.status === "needs_connection" ? (
-          <p className="py-2 pl-20 pr-6 text-[12px] text-gray-500">
-            <Link href={connectHref} className="font-medium text-gray-900 underline-offset-2 hover:underline">{`Connect ${name}`}</Link>
-            {" to see its tools."}
-          </p>
-        ) : null}
-        {view?.status === "ready" && view.tools.length === 0 ? <p className="py-2 pl-20 pr-6 text-[12px] text-gray-500">It lists no tools.</p> : null}
-        {view?.status === "ready" ? view.tools.map((tool) => <ToolRow key={tool.name} tool={tool} connectionId={connectionId} disabled={disabled} onChange={onChange} />) : null}
-        {view?.coreSourcesElsewhere ? <p className="py-2 pl-20 pr-6 text-[12px] text-gray-500">The calendar is read under its own setting.</p> : null}
-        {chosen ? (
-          <div className="flex justify-end py-1.5 pr-6">
-            <DenButton variant="ghost" size="xs" disabled={disabled} onClick={() => onChange(automaticToolsChange(connectionId))}>Use automatic choices</DenButton>
-          </div>
-        ) : null}
-      </div>
-    </details>
-  );
-}
-
 /**
- * With `workbotSettingsTabs`: the same tools and choices, opened from a "Manage tools" button on the connection's own
+ * In tabbed settings: the same tools and choices, opened from a "Manage tools" button on the connection's own
  * row instead of a second line under it. The row keeps one line (the count beside the button); the dialog has room
  * for each tool's description, why it is or isn't allowed, and its switch.
  */
@@ -187,8 +110,6 @@ export function ConnectionToolsButton({ view, failed, name, connectionId, connec
   initialOpen?: boolean;
 }) {
   const [open, setOpen] = useState(initialOpen);
-  const state = toolsSummary(view, failed, name);
-  const chosen = view?.tools.some((tool) => tool.override !== null) ?? false;
   return (
     <span className="flex min-w-0 items-center" data-testid={`workbot-agent-tools-${connectionId}`} data-read-tools={view?.readTools ?? ""}>
       <button
@@ -206,33 +127,52 @@ export function ConnectionToolsButton({ view, failed, name, connectionId, connec
             data-testid={`workbot-agent-tools-dialog-${connectionId}`}
             className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(640px,calc(100vh-2rem))] w-[calc(100%-2rem)] max-w-[560px] -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border border-gray-100 bg-white outline-none"
           >
-            <div className="px-6 pt-5">
-              <Dialog.Title className="text-[16px] font-semibold leading-6 text-gray-900">{`${name}: tools agents may use`}</Dialog.Title>
-              <Dialog.Description className="mt-1 text-[13px] text-gray-500">
-                {state ? `${state}. ` : ""}Choose which tools members' agents may call.
-              </Dialog.Description>
-            </div>
-            <div className="mt-3 min-h-0 flex-1 divide-y divide-gray-100 overflow-y-auto border-t border-gray-100 px-6" data-testid={`workbot-agent-tools-list-${connectionId}`}>
-              {view?.status === "needs_connection" ? (
-                <p className="py-3 text-[13px] text-gray-500">
-                  <Link href={connectHref} className="font-medium text-gray-900 underline-offset-2 hover:underline">{`Connect ${name}`}</Link>
-                  {" to see its tools."}
-                </p>
-              ) : null}
-              {!view && !failed ? <p className="py-3 text-[13px] text-gray-500">Loading tools</p> : null}
-              {view?.status === "ready" && view.tools.length === 0 ? <p className="py-3 text-[13px] text-gray-500">It lists no tools.</p> : null}
-              {view?.status === "ready" ? view.tools.map((tool) => <DialogToolRow key={tool.name} tool={tool} connectionId={connectionId} disabled={disabled} onChange={onChange} />) : null}
-              {view?.coreSourcesElsewhere ? <p className="py-3 text-[12px] text-gray-500">The calendar is read under its own setting.</p> : null}
-            </div>
-            <div className="flex items-center justify-between gap-3 border-t border-gray-100 px-6 py-4">
-              {chosen ? (
-                <DenButton variant="ghost" size="sm" disabled={disabled} onClick={() => onChange(automaticToolsChange(connectionId))}>Use automatic choices</DenButton>
-              ) : <span />}
-              <Dialog.Close className={buttonVariants({ variant: "primary", size: "sm" })}>Done</Dialog.Close>
-            </div>
+            <ConnectionToolsContent view={view} failed={failed} name={name} connectionId={connectionId} connectHref={connectHref} disabled={disabled} onChange={onChange} />
           </Dialog.Popup>
         </Dialog.Portal>
       </Dialog.Root>
     </span>
+  );
+}
+
+/** The dialog contents, shared with render tests so the real tool rows and permission locks are covered. */
+export function ConnectionToolsContent({ view, failed, name, connectionId, connectHref, disabled, onChange }: {
+  view: AgentConnectionToolsView | undefined;
+  failed: boolean;
+  name: string;
+  connectionId: string;
+  connectHref: string;
+  disabled: boolean;
+  onChange: (change: AgentSourcesPolicyInput) => void;
+}) {
+  const state = toolsSummary(view, failed, name);
+  const chosen = view?.tools.some((tool) => tool.override !== null) ?? false;
+  return (
+    <>
+      <div className="px-6 pt-5">
+        <Dialog.Title className="text-[16px] font-semibold leading-6 text-gray-900">{`${name}: tools agents may use`}</Dialog.Title>
+        <Dialog.Description className="mt-1 text-[13px] text-gray-500">
+          {state ? `${state}. ` : ""}Choose which tools members' agents may call.
+        </Dialog.Description>
+      </div>
+      <div className="mt-3 min-h-0 flex-1 divide-y divide-gray-100 overflow-y-auto border-t border-gray-100 px-6" data-testid={`workbot-agent-tools-list-${connectionId}`}>
+        {view?.status === "needs_connection" ? (
+          <p className="py-3 text-[13px] text-gray-500">
+            <Link href={connectHref} className="font-medium text-gray-900 underline-offset-2 hover:underline">{`Connect ${name}`}</Link>
+            {" to see its tools."}
+          </p>
+        ) : null}
+        {!view && !failed ? <p className="py-3 text-[13px] text-gray-500">Loading tools</p> : null}
+        {view?.status === "ready" && view.tools.length === 0 ? <p className="py-3 text-[13px] text-gray-500">It lists no tools.</p> : null}
+        {view?.status === "ready" ? view.tools.map((tool) => <DialogToolRow key={tool.name} tool={tool} connectionId={connectionId} disabled={disabled} onChange={onChange} />) : null}
+        {view?.coreSourcesElsewhere ? <p className="py-3 text-[12px] text-gray-500">The calendar is read under its own setting.</p> : null}
+      </div>
+      <div className="flex items-center justify-between gap-3 border-t border-gray-100 px-6 py-4">
+        {chosen ? (
+          <DenButton variant="ghost" size="sm" disabled={disabled} onClick={() => onChange(automaticToolsChange(connectionId))}>Use automatic choices</DenButton>
+        ) : <span />}
+        <Dialog.Close className={buttonVariants({ variant: "primary", size: "sm" })}>Done</Dialog.Close>
+      </div>
+    </>
   );
 }

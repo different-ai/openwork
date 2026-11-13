@@ -28,7 +28,7 @@ import { WorkbotProactiveHealthSection } from "./workbot-proactive-health";
 import { WorkbotProactiveSection } from "./workbot-proactive-section";
 import { AgentCalendarPolicy, calendarStateLine } from "./workbot-proactive-sources";
 import { useSaveWorkbotModel, useWorkbotSettings } from "./workbot-settings-data";
-import { WorkbotSettingsTabs, workbotSettingsTabsEnabled } from "./workbot-settings-tabs";
+import { WorkbotSettingsTabs } from "./workbot-settings-tabs";
 import { WORKBOT_SETTING_HELP, workbotSettingsParts, type WorkbotAgentsPart, type WorkbotSettingsParts, type WorkbotSettingsTab } from "./workbot-settings-tabs-model";
 import { useSaveWorkbotEveryoneSettings, useSaveWorkbotTeamSettings, useWorkbotTeamSettings } from "./workbot-team-settings-data";
 import {
@@ -55,7 +55,7 @@ import {
 
 type TeamSettingsQuery = ReturnType<typeof useWorkbotTeamSettings>;
 type ModelsQuery = ReturnType<typeof useWorkbotSettings>;
-type RowsProps = { orgId: string; orgSlug: string | null; view: TeamSettingsQuery; models: ModelsQuery; canEdit: boolean; parts: WorkbotSettingsParts; help: boolean };
+type RowsProps = { orgId: string; orgSlug: string | null; view: TeamSettingsQuery; models: ModelsQuery; canEdit: boolean; parts: WorkbotSettingsParts };
 type TeamOnlyScope = Extract<TeamScope, { kind: "team" }>;
 
 /** The Workbot tab shows with settings per team on, for people who can view Workbot's settings. */
@@ -87,10 +87,8 @@ export function WorkbotPanel({ scope }: { scope: TeamScope }) {
   const [tab, setTab] = useState<WorkbotSettingsTab>("general");
   if (!orgContext || !visible) return null;
   // Tabs split Workbot's own settings from members' agents and what they read, where there are agents to show.
-  const tabs = workbotSettingsTabsEnabled(orgContext) && Boolean(view.data && workbotAgentsShown(view.data));
+  const tabs = Boolean(view.data && workbotAgentsShown(view.data));
   const parts = workbotSettingsParts(tabs, tab);
-  // An "i" beside each row's label saying what the setting does.
-  const help = workbotSettingsTabsEnabled(orgContext);
   const canManage = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canManageModelsSettings;
   const canEdit = canManage && (view.data?.canEdit ?? true);
 
@@ -120,8 +118,8 @@ export function WorkbotPanel({ scope }: { scope: TeamScope }) {
       ) : null}
       {tabs ? <WorkbotSettingsTabs activeTab={tab} onChange={setTab} /> : null}
       {scope.kind === "team"
-        ? <TeamWorkbotSettings key={scope.teamId} scope={scope} orgId={orgId} orgSlug={orgSlug} view={view} models={models} canEdit={canEdit} parts={parts} help={help} />
-        : <EveryoneWorkbotSettings scope={scope} orgId={orgId} orgSlug={orgSlug} view={view} models={models} canEdit={canEdit} parts={parts} help={help} />}
+        ? <TeamWorkbotSettings key={scope.teamId} scope={scope} orgId={orgId} orgSlug={orgSlug} view={view} models={models} canEdit={canEdit} parts={parts} />
+        : <EveryoneWorkbotSettings scope={scope} orgId={orgId} orgSlug={orgSlug} view={view} models={models} canEdit={canEdit} parts={parts} />}
     </div>
   );
 }
@@ -202,7 +200,7 @@ function CalendarRow({ orgId, scope, canEdit, chip }: { orgId: string; scope: Ag
 }
 
 /** Everyone: Workbot on or off and its default model, saved on change. The name is the organization's brand name. */
-function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, parts, help }: RowsProps & { scope: TeamScope }) {
+function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, parts }: RowsProps & { scope: TeamScope }) {
   const ids = { enabled: useId(), model: useId(), name: useId() };
   const saveEveryone = useSaveWorkbotEveryoneSettings(orgId);
   const saveModel = useSaveWorkbotModel(orgId);
@@ -231,7 +229,7 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit,
         <SettingRow flush
           label="Workbot"
           labelId={ids.enabled}
-          aside={help ? <HelpTip label="Workbot">{WORKBOT_SETTING_HELP.enabled}</HelpTip> : null}
+          aside={<HelpTip label="Workbot">{WORKBOT_SETTING_HELP.enabled}</HelpTip>}
           stateLine={data && !data.organization.enabled ? <span data-testid="team-workbot-off">{workbotOffLine(scope, workbotTeamsOnCount(data))}</span> : null}
         >
           {view.isError ? <Unavailable /> : !data ? <SwitchSkeleton /> : (
@@ -398,7 +396,7 @@ function TeamMembersAgents({ scope, orgId, orgSlug, row, canEdit, show }: {
 }
 
 /** A team: each row shows Everyone's value until the team changes it, and "Use Everyone's" takes it back. */
-function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, parts, help }: RowsProps & { scope: TeamOnlyScope }) {
+function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, parts }: RowsProps & { scope: TeamOnlyScope }) {
   const ids = { enabled: useId(), model: useId(), name: useId() };
   const save = useSaveWorkbotTeamSettings(orgId);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -440,7 +438,7 @@ function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, par
         <SettingRow flush
           label="Workbot"
           labelId={ids.enabled}
-          aside={help ? <HelpTip label="Workbot">{WORKBOT_SETTING_HELP.enabled}</HelpTip> : null}
+          aside={<HelpTip label="Workbot">{WORKBOT_SETTING_HELP.enabled}</HelpTip>}
           stateLine={data && row && !workbotTeamEnabled(data, row) ? <span data-testid="team-workbot-off">{workbotOffLine(scope)}</span> : null}
         >
           {view.isError ? <Unavailable /> : !data || !row ? <SwitchSkeleton /> : (

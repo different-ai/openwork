@@ -26,7 +26,7 @@ const registeredAppSchema = z.object({
 })
 
 /**
- * Gives a sandbox its sample Slack (`sandboxSlack`): a per-person Slack connector at the sandbox's sample work apps,
+ * Gives a sandbox its sample Slack: a per-person Slack connector at the sandbox's sample work apps,
  * and the Workbot Slack app installed against it with a sample bot token the workplace issues. Workbot's settings
  * then see the Slack app as installed, so Proactive Mode can be turned on; each member connects Slack once in their
  * own browser, which links them, and their agent's messages arrive on that browser's sample Slack page.

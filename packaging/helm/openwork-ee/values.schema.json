@@ -131,16 +131,6 @@
               ],
               "description": "Den: grey sidebar, white pages: The Den dashboard shows its sidebar on a light grey band and every page on white, like the admin dashboard pictured on the website, instead of a white sidebar beside lightly tinted pages. Only colours change: navigation, page layouts and every control stay where they are. Turning it off restores the earlier colours at once. Renders DEN_FEATURE_DEN_GREY_SIDEBAR."
             },
-            "teamSettingsSidebar": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Den: team sections in a sidebar: On Members › Teams, a team's page and Everyone's page list their sections (Role, Members, Access, Agents, Browser, Models, Workbot, Prompts, Desktop) in a grouped sidebar on the left instead of a row of tabs across the top. The Role, Agents and Browser sections get a heading with a tooltip that explains them, and a role that adds nothing says so. Turning it off restores the tabs and the earlier sections. Renders DEN_FEATURE_TEAM_SETTINGS_SIDEBAR."
-            },
             "administratorRecovery": {
               "enum": [
                 "",
@@ -261,16 +251,6 @@
               ],
               "description": "Workbot: Your agent checks each message before sending: With Your agent's brief on, admins can turn on Check each message before sending in Manage › Workbot. A fast second model then reads each message Your agent wrote against the brief and what the member was already told today, and holds a message the brief says to skip or that repeats one from today. It never writes, changes or adds a message, and when it can't answer the message is sent as before. Renders DEN_FEATURE_WORKBOT_AGENT_SEND_CHECK."
             },
-            "workbotSettingsTabs": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Workbot: settings in tabs: Workbot's settings are split into three tabs, General, Agents and Data sources, instead of one long page: in Manage › Workbot and on the Workbot section of a team's page and Everyone's page. With Your agent's brief on, the Agents tab groups its rows (Messages, Schedule), uses switches for yes or no choices and explains each row in a tooltip. Turning it off restores the single page and its rows. Renders DEN_FEATURE_WORKBOT_SETTINGS_TABS."
-            },
             "browserDemonstrations": {
               "enum": [
                 "",
@@ -310,16 +290,6 @@
                 false
               ],
               "description": "Workbot: computers through the sandbox gateway: Workbot's cloud computers for this organization run through the runner's sandbox gateway (Differently), which holds the provider keys and picks the provider, instead of the runner's own Freestyle or Daytona account. Needs a runner with SANDBOX_GATEWAY set; without one, or while it is down, new computers use the runner's own provider. Renders DEN_FEATURE_SANDBOX_GATEWAY."
-            },
-            "sandboxSlack": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Sandboxes: sample Slack for Workbot: New sandbox organizations get a sample Slack: a Slack connector at the sandbox's sample work apps with the Workbot Slack app already installed, so Proactive Mode can be turned on and each person's agent messages arrive on their own sample Slack page. Each person connects Slack once in their own browser. Only sandbox organizations are affected; every other organization keeps real Slack. Turning it off stops the sample Slack without sending anything to Slack. Renders DEN_FEATURE_SANDBOX_SLACK."
             },
             "connectStandardTools": {
               "enum": [
@@ -2272,6 +2242,36 @@
               "description": "Retired: no longer a feature switch. Ignored."
             },
             "remoteSessionAccess": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "teamSettingsSidebar": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "workbotSettingsTabs": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "sandboxSlack": {
               "enum": [
                 "",
                 "true",
