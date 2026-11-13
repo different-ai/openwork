@@ -454,7 +454,7 @@ function providerAuthorizationConnectionStatus(input: {
  * The per-member credential gate shared by search, status and execution.
  * Null when the member's own credential is usable; otherwise what to tell them.
  */
-function memberCredentialGap(
+export function memberCredentialGap(
   connection: ExternalMcpConnectionRow,
   account: Awaited<ReturnType<typeof getConnectedAccount>>,
 ): { message: string; status: ExternalConnectionStatus } | null {
