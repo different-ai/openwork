@@ -6,7 +6,7 @@ import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 
 /**
- * ssoOidcSetupCheck: the OIDC issuer field that reports what it found.
+ * The OIDC issuer field that reports what it found.
  *
  * The administrator gives the issuer or the discovery URL; the line under the
  * field says what the provider answered. The field owns no data: the form

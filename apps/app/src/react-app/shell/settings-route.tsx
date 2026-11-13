@@ -163,7 +163,6 @@ import {
   isDesktopProviderBlocked,
   isSettingsTabAllowed,
 } from "@/app/cloud/desktop-app-restrictions";
-import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { useCheckDesktopRestriction, useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
@@ -475,10 +474,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const local = useLocal();
   const platform = usePlatform();
   const checkDesktopRestriction = useCheckDesktopRestriction();
-  const claudeAgentEnabled = useDesktopFeature("claudeAgentProvider");
-  const singleOpenWorkModelsRow = useDesktopFeature("singleOpenWorkModelsRow");
-  const claudeAgentEnabledRef = useRef(claudeAgentEnabled);
-  claudeAgentEnabledRef.current = claudeAgentEnabled;
   const restrictionNotice = useRestrictionNotice();
   const desktopConfig = useDesktopConfig();
   const reloadCoordinator = useReloadCoordinator();
@@ -756,7 +751,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const providerAuthStore = useMemo(
     () =>
       createProviderAuthStore({
-        claudeAgentEnabled: () => claudeAgentEnabledRef.current,
         nativeOpenworkClient: () => routeStateRef.current.selectedWorkspaceOpenworkClient,
         nativeWorkspaceId: () => routeStateRef.current.runtimeWorkspaceId,
         client: () => routeStateRef.current.activeClient,
@@ -824,7 +818,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const openworkServerSnapshot = useOpenworkServerStoreSnapshot(openworkServerStore);
   const connectionsSnapshot = useConnectionsStoreSnapshot(connectionsStore);
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
-  useEffect(() => { providerAuthStore.syncFromOptions(); }, [providerAuthStore, claudeAgentEnabled]);
+  useEffect(() => { providerAuthStore.syncFromOptions(); }, [providerAuthStore]);
   const cloudSession = useCloudSession();
   // With live provider sync the engine delivers Gateway providers and the
   // server sync stops reporting them, so Settings lists them from Den instead.
@@ -1087,7 +1081,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   // OpenWork Models is listed once: under the organization when it pays for
   // it (with Turn off / Turn on there), else as the free row on this device.
   const openWorkModelsRow = planOpenWorkModelsRow({
-    enabled: singleOpenWorkModelsRow,
     fromOrganization: openWorkModelsEntitled,
     managedByOrganization: checkDesktopRestriction({ restriction: "allowCustomProviders" }),
     isOrganizationAdmin: isDenOrgAdminRole(cloudSession.activeOrganization?.role),
@@ -1935,7 +1928,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       ? []
       : [{ id, name: providers.find((provider) => provider.id === id)?.name ?? PROVIDER_LABELS[id.toLowerCase()] ?? id }],
   );
-  // Den feature shareDeviceProvider: a key saved here can go to the organization in one confirmation.
+  // Device provider sharing: a key saved here can go to the organization in one confirmation.
   const deviceShare = useDeviceProviderShareFlow({
     providers: selectedWorkspace && selectedWorkspace.workspaceType !== "local" ? [] : connectedProviders,
     runtimeWorkspaceId,

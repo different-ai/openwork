@@ -31,8 +31,8 @@ export function auditFiltersFromDraft(draft: AuditFilters): AuditFilters | null 
     to: to ? new Date(to).toISOString() : undefined };
 }
 
-export function pendingAuditSearch(immediate: boolean, draft: AuditFilters, appliedSearchId?: string): AuditFilters | null {
-  if (!immediate || (draft.searchId?.trim() || undefined) === appliedSearchId) return null;
+export function pendingAuditSearch(draft: AuditFilters, appliedSearchId?: string): AuditFilters | null {
+  if ((draft.searchId?.trim() || undefined) === appliedSearchId) return null;
   return auditFiltersFromDraft(draft);
 }
 

@@ -36,15 +36,8 @@ const owner = den.as(org.owner, org.orgId)
 const member = await den.newMember(org.owner, org.orgId, "Riley Member")
 const memberCall = den.as(member, org.orgId)
 
-test("with the feature off the options route answers 404 feature_disabled", { timeout: 60_000 }, async () => {
-  const response = await owner("GET", `${OPTIONS}?providerIds=openai`)
-  assert.equal(response.status, 404, summary(response))
-  assert.equal(field(response.body, "error"), "feature_disabled")
-})
 
 test("an owner learns which keys on their device one confirmation can share, and a member learns who can", { timeout: 60_000 }, async () => {
-  const enabled = await den.setFeature(org.orgId, "shareDeviceProvider", true)
-  assert.equal(enabled.status, 200, summary(enabled))
 
   const options = await owner("GET", `${OPTIONS}?providerIds=openai,anthropic,azure,groq,not-a-provider,openai`)
   assert.equal(options.status, 200, summary(options))
@@ -92,8 +85,6 @@ test("an owner learns which keys on their device one confirmation can share, and
 
 test("an older sign-in is told verification comes first", { timeout: 60_000 }, async () => {
   const other = await den.createOrg(await den.signUp("Jordan Owner"), "Borealis")
-  const enabled = await den.setFeature(other.orgId, "shareDeviceProvider", true)
-  assert.equal(enabled.status, 200, summary(enabled))
   await db.update(AuthSessionTable).set({ createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000) }).where(eq(AuthSessionTable.userId, other.owner.userId))
   const call = den.as(other.owner, other.orgId)
   const options = await call("GET", `${OPTIONS}?providerIds=openai`)
@@ -111,7 +102,7 @@ test("sharing grants never cross organizations and a member cannot upload a devi
   });
   assert.equal(denied.status, 403, summary(denied));
   const other = await den.createOrg(await den.signUp("Morgan Owner"), "Other workspace");
-  assert.equal((await den.setFeature(other.orgId, "shareDeviceProvider", true)).status, 200);
+
   const otherCall = den.as(other.owner, other.orgId);
   const options = await otherCall("GET", `${OPTIONS}?providerIds=openai`);
   assert.equal(options.status, 200, summary(options));
@@ -127,10 +118,6 @@ test("parallel device shares and retries never duplicate a provider; ordinary cr
   const workspace = await den.createOrg(await den.signUp("Taylor Owner"), "Concurrent share workspace");
   const call = den.as(workspace.owner, workspace.orgId);
   const input = { name: "OpenAI", providerId: "openai", credential: { kind: "api_key", secret: DEVICE_KEY }, allMembers: true, shareFromDevice: true };
-  const off = await call("POST", "/v1/inference-providers", input);
-  assert.equal(off.status, 404, summary(off));
-  assert.equal(field(off.body, "error"), "feature_disabled");
-  assert.equal((await den.setFeature(workspace.orgId, "shareDeviceProvider", true)).status, 200);
   const parallel = await Promise.all([call("POST", "/v1/inference-providers", input), call("POST", "/v1/inference-providers", input)]);
   assert.deepEqual(parallel.map((result) => result.status).sort(), [201, 409], parallel.map(summary).join("\n"));
   const retried = await call("POST", "/v1/inference-providers", input);
@@ -140,16 +127,12 @@ test("parallel device shares and retries never duplicate a provider; ordinary cr
   assert.equal(list(field(catalog.body, "inferenceProviders")).length, 1);
   const ordinary = await call("POST", "/v1/inference-providers", { name: "Separate configuration", providerId: "openai" });
   assert.equal(ordinary.status, 201, summary(ordinary));
-  assert.equal((await den.setFeature(workspace.orgId, "shareDeviceProvider", false)).status, 200);
-  const killed = await call("POST", "/v1/inference-providers", { ...input, providerId: "anthropic" });
-  assert.equal(killed.status, 404, summary(killed));
-  const retained = await call("GET", "/v1/inference-providers?scope=manageable");
-  assert.equal(list(field(retained.body, "inferenceProviders")).length, 2, "turning sharing off retains deliberate existing grants");
+
 });
 
 test("an admin who is not the owner can share; demoting them to member locks it again", { timeout: 60_000 }, async () => {
   const workspace = await den.createOrg(await den.signUp("Casey Owner"), "Role workspace");
-  assert.equal((await den.setFeature(workspace.orgId, "shareDeviceProvider", true)).status, 200);
+
   const admin = await den.newMember(workspace.owner, workspace.orgId, "Drew Admin", "admin");
   const adminCall = den.as(admin, workspace.orgId);
   const adminOptions = await adminCall("GET", `${OPTIONS}?providerIds=anthropic`);

@@ -44,12 +44,11 @@ function unchosenNote(state: RemoteSessionAccessState): string | null {
 /**
  * The choices to offer, each with whether it is locked and the line under it.
  * A stored choice that cannot apply says so; a reason shared by several locked
- * choices is written once. Sessions started here are offered only with that
- * feature on, or when they are already the stored choice.
+ * choices is written once.
  */
-function describeChoices(state: RemoteSessionAccessState, allSessions: boolean) {
+function describeChoices(state: RemoteSessionAccessState) {
   let written: string | null = null;
-  return CHOICES.filter(choice => choice.mode !== "all" || allSessions || state.mode === "all").map(choice => {
+  return CHOICES.map(choice => {
     const reason = lockedReason(choice.mode, state);
     const stored = state.mode === choice.mode;
     const note = reason === null ? null : stored ? `Not in effect. ${reason}` : reason === written ? null : reason;
@@ -60,19 +59,17 @@ function describeChoices(state: RemoteSessionAccessState, allSessions: boolean) 
 
 /**
  * This computer's own choice of what its owner's other devices, Workbot and
- * agents can do on it, kept per organization. Desktop only. `allSessions` is
- * whether the organization offers opening sessions started here.
+ * agents can do on it, kept per organization. Desktop only.
  */
-export function SessionAccessSection({ allSessions }: { allSessions: boolean }) {
+export function SessionAccessSection() {
   const bridge = typeof window === "undefined" ? undefined : window.__OPENWORK_ELECTRON__?.remoteSessionAccess;
   if (!bridge?.get || !bridge.set) return null;
-  return <SessionAccessChoices read={bridge.get} write={bridge.set} allSessions={allSessions} />;
+  return <SessionAccessChoices read={bridge.get} write={bridge.set} />;
 }
 
-function SessionAccessChoices({ read, write, allSessions }: {
+function SessionAccessChoices({ read, write }: {
   read: () => Promise<RemoteSessionAccessState>;
   write: (mode: RemoteSessionAccessMode) => Promise<RemoteSessionAccessState>;
-  allSessions: boolean;
 }) {
   const query = useQuery({ queryKey: sessionAccessQueryKey, queryFn: () => read(), refetchInterval: SESSION_ACCESS_REFRESH_MS, retry: false });
   const [confirming, setConfirming] = useState(false);
@@ -99,7 +96,7 @@ function SessionAccessChoices({ read, write, allSessions }: {
     {query.isPending ? <div aria-label="Checking this computer's choice" className="h-12 animate-pulse rounded bg-muted motion-reduce:animate-none" /> : null}
     {query.isError && !state ? <div role="alert" className="flex flex-wrap items-center gap-3 text-sm"><span>Couldn't read this computer's choice.</span><Button size="sm" variant="outline" onClick={() => void query.refetch()}>Try again</Button></div> : null}
     {state ? <RadioGroup aria-label={HEADING} value={shown ?? ""} onValueChange={next => { if (next === "all") setConfirming(true); else if (next === "off" || next === "created") void choose(next); }}>
-      {describeChoices(state, allSessions).map(choice => <FieldLabel key={choice.mode} htmlFor={`session-access-${choice.mode}`}><Field orientation="horizontal">
+      {describeChoices(state).map(choice => <FieldLabel key={choice.mode} htmlFor={`session-access-${choice.mode}`}><Field orientation="horizontal">
         <RadioGroupItem
           id={`session-access-${choice.mode}`}
           value={choice.mode}

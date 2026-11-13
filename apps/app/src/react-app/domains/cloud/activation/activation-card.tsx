@@ -10,7 +10,6 @@ import { denDashboardUrl } from "@/app/lib/den-dashboard-links";
 import { readDenSettings } from "@/app/lib/den";
 import { cn } from "@/lib/utils";
 import { usePlatform } from "../../../kernel/platform";
-import { useOrgFeature } from "../use-org-feature";
 import { activationCardModel, type ActivationRow, type ActivationRowAction } from "./activation-model";
 import { useActivation } from "./use-activation";
 
@@ -25,15 +24,13 @@ export function ActivationCard(props: { onOpenExtensions: () => void }) {
   const navigate = useNavigate();
   const platform = usePlatform();
   const [open, setOpen] = useState(false);
-  const shareFromDevice = useOrgFeature("shareDeviceProvider");
   if (model.presentation === "hidden") return null;
 
   const act = (action: ActivationRowAction) => {
     setOpen(false);
     const denBaseUrl = readDenSettings().baseUrl;
     if (action === "invite") platform.openLink(denDashboardUrl(denBaseUrl, "members"));
-    // With sharing from this device on, AI Providers offers the key already saved here; otherwise AI Gateway's form.
-    else if (action === "gateway") { if (shareFromDevice) navigate("/settings/ai?share=1"); else platform.openLink(denDashboardUrl(denBaseUrl, "gatewayProviders")); }
+    else if (action === "gateway") navigate("/settings/ai?share=1");
     else if (action === "provider") navigate("/settings/ai");
     else props.onOpenExtensions();
   };

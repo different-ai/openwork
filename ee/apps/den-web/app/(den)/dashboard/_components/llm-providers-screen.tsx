@@ -174,7 +174,7 @@ export function LlmProvidersScreen() {
     try {
       setAccessSaving(true);
       await runReauthableAction("save-model-access", async () => {
-        await saveModelAccess(accessState, { mode: accessMode, adminException: adminExceptionChecked, zenAllowed });
+        await saveModelAccess(accessState, { mode: accessMode, adminException: adminExceptionChecked, zenAllowed, localAllowed: accessState.localAllowed });
         await reloadPolicies();
       });
       setAccessSaved("Model access saved.");

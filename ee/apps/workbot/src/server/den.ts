@@ -68,7 +68,6 @@ export const denSessionSchema = z.object({
   calendar: z.boolean().optional(),
   documents: z.boolean().default(false),
   documentEditing: z.boolean().default(false),
-  nativeDictation: z.boolean().default(false),
   workspaceAssistant: z.boolean().default(false),
   guidedNavigation: z.boolean().default(false),
   usageRecovery: z.boolean().default(false),
@@ -76,11 +75,7 @@ export const denSessionSchema = z.object({
   activationChecklist: z.boolean().default(true),
   /** Side chats are on for this person. A Den from before side chats doesn't say: off. */
   sideChats: z.boolean().default(false),
-  /** Reading earlier messages keeps its place (`workbotScrollToBottom`). A Den from before it doesn't say: off. */
-  scrollToBottom: z.boolean().default(false),
   profileComputers: z.boolean().default(false),
-  /** Apps built in OpenWork show as cards and open beside the chat (`workbotApps`); absent means off. */
-  openworkApps: z.boolean().default(false),
   /** Calm chat look (`workbotCalmChat`); absent means off. */
   calmChat: z.boolean().default(false),
   /** The organization's default model for Workbot's turns. Null, or a Den from before it, means the runner's default. */
@@ -92,8 +87,6 @@ export const denSessionSchema = z.object({
   stepTurns: z.boolean().default(false),
   /** New chats get their own session cell on the runner (per-chat session cells). A Den from before it doesn't say: off. */
   sessionCells: z.boolean().default(false),
-  /** The Devices page and reports about each chat's computer (`remoteDevices`, while Workbot is on). A Den from before it doesn't say: off. */
-  devices: z.boolean().default(false),
 })
 
 const runTokenSchema = z.object({

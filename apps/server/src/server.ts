@@ -3520,7 +3520,7 @@ function createRoutes(
     return jsonResponse(await cloudProviderSync.startProviderOAuth(ctx.params.id, body.orgId, body.credentialSetId));
   });
 
-  // Den feature shareDeviceProvider: the person confirmed in the app; the key
+  // Device provider sharing: the person confirmed in the app; the key
   // goes from this computer's credential store straight to the Den it is
   // signed in to, never through the app's window (device-provider-share.ts).
   addRoute(routes, "POST", "/cloud-provider-sync/device-providers/:id/share", "host-token", async (ctx) => {

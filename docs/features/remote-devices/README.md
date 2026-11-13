@@ -1,5 +1,7 @@
 # Computers in Den (`remoteDevices`)
 
+> **Generally available:** `remoteDevices` is retired; its enabled behavior is standard on Cloud and self-hosted. Actual settings, permissions, billing rules and consent remain enforced. Rollout/off-state instructions below are historical; see [the retirement guide](../globally-enabled-retirement/README.md).
+
 - **Key:** `remoteDevices`
 - **Deployments:** cloud and self-hosted
 - **Default:** off

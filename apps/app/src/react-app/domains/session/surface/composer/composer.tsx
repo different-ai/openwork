@@ -54,7 +54,6 @@ import { resolveComposerSubmit } from "./composer-submit";
 import { ModelRecoveryNote } from "./model-recovery-note";
 import { modelRecoveryChatKey, useModelRecoveryStore } from "../model-recovery-store";
 import { useNativeDictation } from "@openwork/ui/react";
-import { useNativeDictationFeature } from "./use-native-dictation-feature";
 import { startNativeDictation } from "./start-native-dictation";
 import { useDesktopSpeechDictation } from "./desktop-speech-dictation";
 import { markFeatureUsed } from "@/app/lib/den";
@@ -293,11 +292,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   // compositionstart/compositionend events below.
   const imeComposingRef = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const nativeDictationEnabled = useNativeDictationFeature();
   const speechDictation = useDesktopSpeechDictation();
   const dictationInput = () => rootRef.current?.querySelector<HTMLElement>("[contenteditable='true']") ?? null;
   const dictation = useNativeDictation({
-    enabled: nativeDictationEnabled,
+    enabled: true,
     scope: props.sessionId,
     text: props.draft,
     onText: props.onDraftChange,
@@ -310,7 +308,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [dictationSubmitting, setDictationSubmitting] = useState(false);
   const prepareVoiceSubmission = async () => {
     if (voiceSubmissionPending.current) return null;
-    if (!nativeDictationEnabled) return latestProps.current;
     if (dictation.localRecording && dictation.state === "starting") return null;
     const scope = latestProps.current.sessionId;
     voiceSubmissionPending.current = true;
@@ -1504,7 +1501,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               submitDisabled={props.disabled}
               placeholder={followUpSuggestion ?? t("composer.placeholder")}
               placeholderShortcut={followUpSuggestion ? "Tab" : undefined}
-              onChange={nativeDictationEnabled ? dictation.edit : props.onDraftChange}
+              onChange={dictation.edit}
               onMentionQueryChange={setActiveMentionQuery}
               onSessionReferenceQueryChange={sessionReferencesEnabled ? handleSessionTriggerChange : undefined}
               onOpenSessionReference={sessionReferences?.openReference}
@@ -1711,7 +1708,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   Cmd/Ctrl+Enter still steers).
               */}
               <div data-composer-actions className="col-start-2 row-start-2 ml-auto flex shrink-0 items-center gap-1.5">
-                {nativeDictationEnabled ? <NativeDictationControl dictation={dictation} disabled={props.disabled} text={props.draft} /> : null}
+                <NativeDictationControl dictation={dictation} disabled={props.disabled} text={props.draft} />
                 <ComposerSendButton
                   mode={props.stopping ? "stopping" : showStop ? "stop" : sendPreparing ? "preparing" : "send"}
                   ready={(canSend || canSubmitVoice) && !props.disabled}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { getLibraryAddConnectorRoute, getLibraryConnectorRoute, getLibraryMyAgentRoute, getLibraryRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getLibraryAddConnectorRoute, getLibraryConnectorRoute, getLibraryMyAgentRoute, getLibraryRoute } from "../../_lib/den-org";
 import { useFeatureIntro } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage } from "./item-header";
@@ -47,7 +47,7 @@ export function MyAgentScreen() {
   useFeatureIntro("my-bot", orgContext ? {} : null);
   // With Workbot settings per team on, an admin can turn Workbot off for the member, and their agent with it.
   // The check is the one the Workbot entry already made; Den would refuse the agent's own requests.
-  const readiness = useWorkbotReadiness(orgId || null, available && orgFeatureEnabled(orgContext, "workbotTeamSettings"));
+  const readiness = useWorkbotReadiness(orgId || null, available);
   const off = readiness.data?.enabled === false;
   const agent = useMyAgent(orgId, available && !off);
   const library = useLibrary();

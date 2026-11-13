@@ -625,14 +625,13 @@ export function useWorkbotMemory(enabled: boolean) {
 }
 
 /**
- * The computers the person can reach through OpenWork, for the Devices page (`remoteDevices`). Mounted only by that
+ * The computers the person can reach through OpenWork, for the Devices page. Mounted only by that
  * page, so the list is re-read every minute, and when the window is looked at again, only while it is on screen.
  */
 export function useWorkbotDevices() {
   const host = workbotHost();
   return useQuery({
     queryKey: ["workbot", "devices", host.identity?.organizationId, host.identity?.principalId],
-    enabled: host.devices === true,
     queryFn: async () => {
       const { response, payload } = await requestJson("/v1/workbot/devices", { method: "GET" }, 15_000);
       if (!response.ok) throw new Error("Couldn't load your computers.");

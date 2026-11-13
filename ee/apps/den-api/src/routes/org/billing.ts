@@ -209,7 +209,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       const web = await getOpenWorkWebBillingSummary(payload.organization.id)
       // hasAccess stays the organization's; memberHasAccess is the caller's own
       // (an admin may have chosen who gets Web, see webPerMember).
-      const memberHasAccess = web.hasAccess && (!payload.features.webPerMember || payload.currentMember.openworkWeb)
+      const memberHasAccess = web.hasAccess && payload.currentMember.openworkWeb
       return c.json({ billing: { stripe: { web: { ...web, memberHasAccess } } } })
     },
   )

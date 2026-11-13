@@ -56,7 +56,7 @@ export function registerOrgComputerRoutes<T extends { Variables: OrgRouteVariabl
     summary: "List team computers",
     description: "Read-only computer inventory for the current organization, including all members and shared registered devices. Includes owners, type, provider, versions, state, last contact and reported readiness. Desktops nobody has heard from for 30 days are left out and counted in `staleHidden` unless `stale=include`; a disconnected desktop stays listed for 30 days after it was disconnected. `total` and paging count what is listed, and `online` how many of those answered in the last ten minutes. Retained runner-only registrations are imported within this organization, even when stale. Registrations already pruned by runner retention cannot be recovered. `canDisconnect` and `canRemove` say what the caller may do with computers.disconnect. `remoteAccess` on a desktop that takes tasks from other devices says what they may do there under its owner's own policy, whether the owner chose it, and why when something else decides it. Devices and registered local/cloud worker instances are independently paged, 50 per page. `search` applies to both; kind/provider/availability/page filter devices; instanceDestination/instanceStatus/instanceProvider/instancePage filter registered instances. Never deployment-wide totals, credentials, files, screen content or conversation titles. Requires Devices and computers.view; does not grant control of computers.",
     responses: { 200: jsonResponse("Team computers returned.", organizationComputerListResponseSchema), ...errors },
-  }), orgMemberRoute(), requireFeature("remoteDevices"), requireOrgPermission("computers.view"), queryValidator(listQuerySchema), async (c) => {
+  }), orgMemberRoute(), requireOrgPermission("computers.view"), queryValidator(listQuerySchema), async (c) => {
     c.header("Cache-Control", "no-store")
     const context = c.get("organizationContext")
     if (!context) return c.json({ error: "organization_not_found" }, 404)
@@ -75,7 +75,7 @@ export function registerOrgComputerRoutes<T extends { Variables: OrgRouteVariabl
     summary: "Get registered OpenWork instance inventory",
     description: "A registered local or cloud worker host in the current organization. Reported status and heartbeat only, never inferred OS or online state. No endpoints, tokens, provider reference blobs or workspace paths. Requires Devices and computers.view.",
     responses: { 200: jsonResponse("Registered instance returned.", organizationComputerInstanceDetailResponseSchema), ...errors },
-  }), orgMemberRoute(), requireFeature("remoteDevices"), requireOrgPermission("computers.view"), paramValidator(instanceParamsSchema), async (c) => {
+  }), orgMemberRoute(), requireOrgPermission("computers.view"), paramValidator(instanceParamsSchema), async (c) => {
     c.header("Cache-Control", "no-store")
     const context = c.get("organizationContext")
     if (!context) return c.json({ error: "organization_not_found" }, 404)
@@ -87,7 +87,7 @@ export function registerOrgComputerRoutes<T extends { Variables: OrgRouteVariabl
     summary: "Get team computer inventory details",
     description: "One computer in the current organization, its reported OS, architecture, adapters, readiness, versions, fixed events, runner capabilities and workspace count. Owner feature state is resolved only within this organization. No credentials, workspace paths, screen content or conversation titles. Requires Devices and computers.view.",
     responses: { 200: jsonResponse("Team computer returned.", organizationComputerDetailResponseSchema), ...errors },
-  }), orgMemberRoute(), requireFeature("remoteDevices"), requireOrgPermission("computers.view"), paramValidator(deviceParamsSchema), async (c) => {
+  }), orgMemberRoute(), requireOrgPermission("computers.view"), paramValidator(deviceParamsSchema), async (c) => {
     c.header("Cache-Control", "no-store")
     const context = c.get("organizationContext")
     if (!context) return c.json({ error: "organization_not_found" }, 404)
@@ -103,7 +103,7 @@ export function registerOrgComputerRoutes<T extends { Variables: OrgRouteVariabl
       ...changeErrors,
       409: jsonResponse("This computer cannot be disconnected.", errorSchema),
     },
-  }), orgMemberRoute(), requireFeature("remoteDevices"), requireOrgPermission("computers.disconnect"), paramValidator(deviceParamsSchema), async (c) => {
+  }), orgMemberRoute(), requireOrgPermission("computers.disconnect"), paramValidator(deviceParamsSchema), async (c) => {
     c.header("Cache-Control", "no-store")
     const context = c.get("organizationContext")
     if (!context) return c.json({ error: "organization_not_found" }, 404)
@@ -129,7 +129,7 @@ export function registerOrgComputerRoutes<T extends { Variables: OrgRouteVariabl
       ...changeErrors,
       409: jsonResponse("The computer is connected; disconnect it first.", errorSchema),
     },
-  }), orgMemberRoute(), requireFeature("remoteDevices"), requireOrgPermission("computers.disconnect"), paramValidator(deviceParamsSchema), async (c) => {
+  }), orgMemberRoute(), requireOrgPermission("computers.disconnect"), paramValidator(deviceParamsSchema), async (c) => {
     const context = c.get("organizationContext")
     if (!context) return c.json({ error: "organization_not_found" }, 404)
     try {

@@ -33,7 +33,7 @@ export type DenOrgMember = {
   createdAt: string | null;
   joinedAt: string | null;
   isOwner: boolean;
-  /** Whether this member has OpenWork Web (the webPerMember feature lets admins choose). */
+  /** Whether this member has OpenWork Web; admins choose. */
   openworkWeb: boolean;
   user: {
     id: string;

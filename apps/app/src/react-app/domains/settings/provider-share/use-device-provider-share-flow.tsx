@@ -25,7 +25,7 @@ export type DeviceProviderShareFlow = {
 
 /**
  * Settings › AI Providers: share a key saved on this device with the
- * organization (Den feature `shareDeviceProvider`). Owns the confirmation and
+ * organization. Owns the confirmation and
  * what follows it, so the page only places the row action and the dialog.
  */
 export function useDeviceProviderShareFlow(input: {

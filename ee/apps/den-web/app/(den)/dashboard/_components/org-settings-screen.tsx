@@ -2,13 +2,11 @@
 
 import { Check, ChevronRight, Copy, Pencil, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { markFeatureUsed } from "../../_lib/feature-usage";
 import { normalizeAllowedEmailDomainsInput, refreshedDraft, sameStringSet, settingsDraftChanged } from "./page-consistency-state";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
 import {
   getAllowedDesktopVersionsFromMetadata,
   getOrgAccessFlags,
-  orgFeatureEnabled,
   permissionLockReason,
 } from "../../_lib/den-org";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
@@ -185,7 +183,6 @@ export function OrgSettingsScreen() {
   const [deleteConfirmationName, setDeleteConfirmationName] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const pageConsistency = orgFeatureEnabled(orgContext, "denPageConsistency");
   const currentAllowedDomains =
     orgContext?.organization.allowedEmailDomains ?? null;
   const previousSettings = useRef<{ orgId: string; name: string; domains: string; restricted: boolean } | null>(null);
@@ -240,7 +237,6 @@ export function OrgSettingsScreen() {
   });
   function discardChanges() {
     if (!orgContext || !canManageSettings || !dirty || mutationBusy === "update-organization-settings") return;
-    if (pageConsistency) markFeatureUsed("denPageConsistency");
     clearOrgSettingsCompletion();
     setOrgNameDraft(orgContext.organization.name);
     setAllowedDomainsDraft(savedDomains.join("\n"));
@@ -290,7 +286,7 @@ export function OrgSettingsScreen() {
       setPageError(null);
     }
     previousSettings.current = next;
-  }, [orgContext, pageConsistency]);
+  }, [orgContext]);
 
   useEffect(() => {
     let cancelled = false;
@@ -363,7 +359,7 @@ export function OrgSettingsScreen() {
     setAllowedDesktopVersionsDraft((current) => refreshedDraft(current, previous?.versions, savedDesktopVersions,
       previous?.orgId === orgId, sameStringSet));
     previousVersions.current = { orgId, versions: savedDesktopVersions };
-  }, [orgContext, supportedDesktopVersionOptions, savedDesktopVersions, pageConsistency]);
+  }, [orgContext, supportedDesktopVersionOptions, savedDesktopVersions]);
 
   useEffect(() => {
     if (!copiedOrgId) {
@@ -434,12 +430,11 @@ export function OrgSettingsScreen() {
       return;
     }
 
-    if (mutationBusy === "update-organization-settings" || (pageConsistency && !dirty)) return;
-    if (pageConsistency && domainRestrictionsEnabled && !hasDraftDomains) {
+    if (mutationBusy === "update-organization-settings" || !dirty) return;
+    if (domainRestrictionsEnabled && !hasDraftDomains) {
       setPageError("Enter at least one email domain, or turn off domain restrictions.");
       return;
     }
-    if (pageConsistency) markFeatureUsed("denPageConsistency");
     try {
       await updateOrganizationSettings({
         name: orgNameDraft,
@@ -670,12 +665,12 @@ export function OrgSettingsScreen() {
         </section>
 
         {!canManageSettings ? <p className="text-[12px] text-[var(--dls-text-secondary)]">{`Read only. ${permissionLockReason("organization.update")}`}</p> : null}
-        {pageConsistency ? dirty && canManageSettings ? (
+        {dirty && canManageSettings ? (
           <DenStickyActionBar summary="Unsaved changes" testId="org-settings-save-bar">
             <DenButton type="button" size="sm" variant="ghost" disabled={mutationBusy === "update-organization-settings"} onClick={discardChanges}>Discard</DenButton>
             <DenButton type="submit" size="sm" loading={mutationBusy === "update-organization-settings"}>Save changes</DenButton>
           </DenStickyActionBar>
-        ) : null : <div className="flex justify-end"><DenButton type="submit" loading={mutationBusy === "update-organization-settings"} disabled={!canManageSettings}>Save settings</DenButton></div>}
+        ) : null}
       </form>
 
       {access.canViewModelsSettings ? (

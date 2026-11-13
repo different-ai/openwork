@@ -32,9 +32,9 @@ export const REQUEST_CHECK_TOOL_NAME = "request_check"
 const REQUEST_CHECK_DESCRIPTION = "Your agent's background check only: ask for one extra check at a time today or tomorrow, when timing matters before your next scheduled check (a meeting at 2 PM, a deadline at 5). Den keeps it inside the member's hours, caps extra checks per day and shows the reason in My bot. Asking again for about the same time changes nothing."
 
 /** Whether this MCP request may see request_check: the agent's own check token, a member, and both features on. */
-export function agentCheckRequestsAvailable(input: { scopes: ReadonlySet<string>; member: boolean; workbotProactive: boolean; workbotAgentBrief: boolean }): boolean {
+export function agentCheckRequestsAvailable(input: { scopes: ReadonlySet<string>; member: boolean; workbotAgentBrief: boolean }): boolean {
   const allowlist = agentReadAllowlist(input.scopes)
-  return Boolean(input.member && input.workbotProactive && input.workbotAgentBrief && allowlist && (allowlist.kinds.size > 0 || allowlist.connectionIds.size > 0))
+  return Boolean(input.member && input.workbotAgentBrief && allowlist && (allowlist.kinds.size > 0 || allowlist.connectionIds.size > 0))
 }
 
 function clockOf(at: number, timeZone: string) {

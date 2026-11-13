@@ -74,7 +74,7 @@ export type AiSettingsViewProps = {
   /** Providers on this device the engine chat runs on cannot use, from the server's skipped list. */
   localProviderStates?: ReadonlyMap<string, LocalProviderEngineState>;
   onOpenDen?: () => void;
-  /** Den feature shareDeviceProvider: which keys on this device can be shared with the organization, or already are. */
+  /** Device provider sharing: which keys on this device can be shared with the organization, or already are. */
   shareRows?: ReadonlyMap<string, DeviceProviderShareRow>;
   onShareProvider?: (provider: { id: string; name: string }) => void;
 };

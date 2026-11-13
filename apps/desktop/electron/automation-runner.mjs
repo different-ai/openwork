@@ -36,7 +36,7 @@ const INVENTORY_CONCURRENCY = 4
 const SESSION_REPORT_LIMIT = 100
 /** Sessions are read at most this often, just under the work poll so each poll may report; sent only when they changed. */
 const SESSION_REPORT_MIN_INTERVAL_MS = 55_000
-/** Den answers 404 while remoteSessionAccess is off; ask again this much later. */
+/** Older Den versions without session reporting answer 404; ask again this much later. */
 const SESSION_REPORT_DISABLED_RETRY_MS = 10 * 60_000
 /** Archived sessions count toward a v1 list's limit, so more than a report holds are read. */
 const SESSION_LIST_V1_LIMIT = 300
@@ -1492,8 +1492,8 @@ export function createDesktopAutomationRunner(options) {
    * minute; otherwise one empty report makes Den forget what it had. A change
    * in the access in force, or in whether the owner chose, is reported at
    * once. A Den from before `off` existed would reject it, so it is told
-   * `created`; this computer refuses everything all the same. While Den
-   * answers 404 the feature is off and it is asked again ten minutes later.
+   * `created`; this computer refuses everything all the same. Older Den versions
+   * without this endpoint answer 404 and are asked again ten minutes later.
    * A failure never affects polling for work.
    */
   const reportSessions = (state) => {
@@ -1534,7 +1534,7 @@ export function createDesktopAutomationRunner(options) {
           })
         } catch (error) {
           if (error?.status !== 404) throw error
-          // Den has the feature off: ask again much later.
+          // Compatibility with Den versions without session reporting: ask again much later.
           state.sessionReportBlockedUntil = now() + SESSION_REPORT_DISABLED_RETRY_MS
           return
         }

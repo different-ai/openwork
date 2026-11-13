@@ -76,13 +76,6 @@ function definitionOf(key: string) {
   return agentPermissionDefinitions.find((entry) => entry.key === key) ?? null
 }
 
-/** Permissions the target can't edit because their feature is off there. */
-export function gatedAgentPermissionKeys(features: Pick<FeatureMap, "fileSendPermissions">): Map<AgentPermissionKey, string> {
-  const gated = new Map<AgentPermissionKey, string>()
-  if (!features.fileSendPermissions) gated.set("fileSends", "fileSendPermissions")
-  return gated
-}
-
 type Database = Pick<ConfigAreaContext["db"], "select">
 
 async function readSettings(database: Database, policyIds: string[]): Promise<Map<string, AgentPermissionSettings>> {
@@ -345,18 +338,12 @@ export const membersAgentPermissionsArea = defineConfigArea({
     } catch (error) {
       throw asItemError(error, [])
     }
-    const gated = gatedAgentPermissionKeys(ctx.features)
     const warnings: string[] = []
 
     if (op.kind === "delete") {
       const scope = await resolveItemScope(ctx, previousScopeSpec(op.previous))
       const desired = new Map<AgentPermissionKey, AgentPermissionSetting | null>()
       for (const definition of agentPermissionDefinitions) {
-        const flag = gated.get(definition.key)
-        if (flag) {
-          if (op.previous.spec.settings && isSet(op.previous.spec.settings, definition.key)) warnings.push(`${definition.label} was kept: ${flag} is off here.`)
-          continue
-        }
         desired.set(definition.key, null)
       }
       const result = await writeScopeSettings(ctx, { scope, desired, policyId: op.targetId })
@@ -370,11 +357,6 @@ export const membersAgentPermissionsArea = defineConfigArea({
     const pick = (keys: Iterable<AgentPermissionKey>) => {
       const desired = new Map<AgentPermissionKey, AgentPermissionSetting | null>()
       for (const key of keys) {
-        const flag = gated.get(key)
-        if (flag) {
-          if (settings[key]) warnings.push(`${definitionOf(key)?.label ?? key} was skipped: ${flag} is off here.`)
-          continue
-        }
         desired.set(key, settings[key] ?? null)
       }
       return desired

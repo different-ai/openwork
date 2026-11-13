@@ -12,7 +12,7 @@ const proactive = "/v1/org/workbot-settings/proactive"
 
 async function workspace(name: string) {
   const created = await den.createOrg(await den.signUp(`${name} Owner`), name)
-  assert.equal((await den.setFeature(created.orgId, "workbotProactive", true)).status, 200)
+
   const owner = den.as(created.owner, created.orgId)
   assert.equal((await owner("PUT", proactive, { enabled: true })).status, 200)
   const member = await den.newMember(created.owner, created.orgId, `${name} member`)
@@ -26,7 +26,7 @@ async function sayInChat(target: Den, token: string, name: string, body?: unknow
   return result.body
 }
 
-test("the parent rollout controls the whole agent: fields, checks and chat guidance", async () => {
+test("GA agent fields, checks and write-scoped chat guidance are available", async () => {
   const space = await workspace("Agent parent rollout")
   const before = await space.call("GET", "/v1/me/agent")
   assert.equal(before.status, 200, summary(before))
@@ -35,21 +35,6 @@ test("the parent rollout controls the whole agent: fields, checks and chat guida
   const token = await den.mintMcpToken(space.member, space.orgId)
   assert.match(await initializeInstructions(token), /putMeAgent/)
 
-  assert.equal((await den.setFeature(space.orgId, "workbotProactive", false)).status, 200)
-  const refusedRequests = await Promise.all([
-    space.call("GET", "/v1/me/agent"),
-    space.call("GET", "/v1/me/agent/checks"),
-    space.call("PUT", "/v1/me/agent", { preferences: { when: "Mornings only" } }),
-    space.call("PUT", "/v1/me/agent", { mute: ["calendar_changes"] }),
-    space.call("PUT", "/v1/me/agent", { undo: "last" }),
-  ])
-  for (const refused of refusedRequests) {
-    assert.equal(refused.status, 404, summary(refused))
-    assert.equal(field(refused.body, "feature"), "workbotProactive")
-  }
-  assert.doesNotMatch(await initializeInstructions(token), /putMeAgent/)
-
-  assert.equal((await den.setFeature(space.orgId, "workbotProactive", true)).status, 200)
   const restored = await space.call("PUT", "/v1/me/agent", { preferences: { when: "Mornings only" } })
   assert.equal(restored.status, 200, summary(restored))
   assert.equal(field(restored.body, "preferences", "when"), "Mornings only")

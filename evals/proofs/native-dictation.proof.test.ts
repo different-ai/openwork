@@ -6,14 +6,9 @@ const test = spec.world(nativeDictation, { timeout: 90_000, needs: { placement: 
 
 test("a member dictates directly into Workbot and sends while words are still arriving", async ({ world, user, probe, step, evidence }) => {
   await user.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
-  await step("before: the microphone is absent while dictation is off", async () => {
-    await user.see({ role: "textbox", label: "Message Workbot" });
-    await user.notSee({ role: "button", label: "Dictate message" });
-    evidence.recordAssertionEvidence("Dictation starts off", "The composer works without a microphone entry point", (await probe.dom("[data-native-dictation]")).elements.length === 0);
-    await user.screenshot();
-  });
+
   await step("after: a plain microphone starts live words without an extra panel", async () => {
-    await user.navigate(`${world.url}?dictation=on&chat=sidechat000000001`);
+    await user.navigate(`${world.url}?chat=sidechat000000001`);
     await world.installSpeech();
     await user.type({ role: "textbox", label: "Message Workbot" }, "Please ");
     await user.click({ role: "button", label: "Dictate message" });

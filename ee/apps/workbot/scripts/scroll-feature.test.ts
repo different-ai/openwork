@@ -14,13 +14,13 @@ const identity = {
   canSchedule: false,
 }
 
-test("a Den that predates the scroll-to-latest feature leaves it off", () => {
-  assert.equal(denSessionSchema.parse(identity).scrollToBottom, false)
-  assert.equal(denSessionSchema.parse({ ...identity, scrollToBottom: true }).scrollToBottom, true)
+test("Den session parsing ignores retired scroll rollout values", () => {
+  assert.equal("scrollToBottom" in denSessionSchema.parse(identity), false)
+  assert.equal("scrollToBottom" in denSessionSchema.parse({ ...identity, scrollToBottom: false }), false)
 })
 
-test("Workbot me passes the member's scroll feature through and turns it off with Workbot access", async (t) => {
-  // /me warms the conversation but this flag check must not need a runner or Den.
+test("Workbot me keeps the loaded UI scroll compatibility field on while Workbot access remains", async (t) => {
+  // /me warms the conversation but this compatibility check must not need a runner or Den.
   t.mock.method(globalThis, "fetch", async () => Response.json({ sessions: [] }))
   const config = loadConfig({ WORKBOT_PUBLIC_URL: "http://localhost:3090", WORKBOT_DEN_API_URL: "http://localhost:3091", WORKBOT_DEN_WEB_URL: "https://console.example.test", WORKBOT_RUNNER_URL: "http://localhost:3092", WORKBOT_RUNNER_TOKEN: "r".repeat(32), WORKBOT_SESSION_SECRET: "s".repeat(32) })
   const den = createDen({ apiUrl: config.denApiUrl, publicUrl: config.publicUrl })
@@ -41,11 +41,11 @@ test("Workbot me passes the member's scroll feature through and turns it off wit
     assert.ok(typeof payload === "object" && payload !== null && "scrollToBottom" in payload)
     return payload.scrollToBottom
   }
-  assert.equal(await flag(), false, "omitted on an older Den")
+  assert.equal(await flag(), true, "independent of an older Den")
   who = denSessionSchema.parse({ ...identity, scrollToBottom: true })
-  assert.equal(await flag(), true, "on only for the signed-in member")
+  assert.equal(await flag(), true, "retired rollout values cannot change presentation")
   who = denSessionSchema.parse({ ...identity, scrollToBottom: false })
-  assert.equal(await flag(), false, "a member override or kill switch takes it away")
+  assert.equal(await flag(), true, "retired rollout values cannot take it away")
   who = denSessionSchema.parse({ ...identity, enabled: false, scrollToBottom: true })
   assert.equal(await flag(), false, "Workbot access always wins")
 })

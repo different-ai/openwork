@@ -3,16 +3,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { workbotUsageResponseSchema } from "@openwork/types/den/workbot-usage";
 import { getErrorMessage, requestJson } from "../../../_lib/den-flow";
-import { orgFeatureEnabled } from "../../../_lib/den-org";
 import { ORG_SCOPE_HEADER } from "../../../_lib/org-scope";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useLibraryUsageAvailable } from "../library-usage/use-library-usage";
 
-/** Whether this member can see Workbot's cost: the feature is on here and they can view usage analytics. */
+/** Whether this member has permission to view Workbot's cost analytics. */
 export function useWorkbotUsageAvailable() {
-  const { orgContext } = useOrgDashboard();
-  const canView = useLibraryUsageAvailable();
-  return canView && orgFeatureEnabled(orgContext, "workbotUsageAnalytics");
+  return useLibraryUsageAvailable();
 }
 
 /** What Workbot spent on models over the last 30 days. */

@@ -55,9 +55,9 @@ export async function eventAccess(actor: Actor, originalScopes: readonly string[
   if (!member) throw new EventAccessError("Your membership is no longer active.")
   const features = await getOrganizationFeatures(actor.organizationId, { userId: actor.userId })
   if (!features.mcpThreadEvents) throw new EventAccessError("MCP thread events are turned off.")
-  const settings = await resolveMemberWorkbotSettings({ ...actor, featureOn: features.workbotTeamSettings })
+  const settings = await resolveMemberWorkbotSettings({ ...actor })
   if (!settings.enabled) throw new EventAccessError("Workbot is turned off for this member.")
-  const policy = features.workbotProactive ? await resolveMemberAgentPolicy({ ...actor, workbot: settings, featureOn: features.workbotTeamSettings }) : null
+  const policy = await resolveMemberAgentPolicy({ ...actor, workbot: settings })
   const scopes = [...new Set([...originalScopes, ...(policy ? workbotTurnLimitScopes(policy.settings.sources) : [])])]
   const identity = await resolveMcpMemberIdentity(actor)
   if (!identity) throw new EventAccessError("Your membership is no longer active.")

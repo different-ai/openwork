@@ -1713,7 +1713,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken, signal, method: "POST", body: { orgId, ...(credentialSetId !== undefined ? { credentialSetId } : {}) } satisfies GatewayDesktopOauthStartRequest, timeoutMs: timeouts.config,
       }),
     /**
-     * Den feature shareDeviceProvider: after the person confirms, this server sends
+     * Device provider sharing: after the person confirms, this server sends
      * the key it holds for `providerId` to their organization. The key is never
      * read by or returned to the app. `token` is a freshly verified sign-in, when
      * Den asked for one.

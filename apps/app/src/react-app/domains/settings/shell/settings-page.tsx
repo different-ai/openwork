@@ -64,7 +64,6 @@ import {
   SettingsPanelToolbarStatus,
 } from "./panel";
 import { SidebarDestination } from "../../session/sidebar/sidebar-destination";
-import { useDesktopFeature } from "../../session/status/use-desktop-feature";
 
 export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
@@ -281,15 +280,13 @@ export type SettingsNavGroups = {
 export function useSettingsNavGroups(developerMode: boolean): SettingsNavGroups {
   const platform = usePlatform();
   const checkRestriction = useCheckDesktopRestriction();
-  // Computer use runs in the desktop app; the web app has no local computer.
-  const remoteDevices = useDesktopFeature("remoteDevices");
   const allowed = (tabs: SettingsTab[]) =>
     tabs.filter((tab) => isSettingsTabAllowed({ tab, checkRestriction }));
   return {
     hub: allowed(["general"]),
     workspace: allowed(getWorkspaceSettingsTabs()),
     global: allowed(getGlobalSettingsTabs(developerMode, platform.capabilities, { desktop: isElectronRuntime() })),
-    cloud: allowed([...CLOUD_SETTINGS_TABS, ...(remoteDevices ? ["devices" as const] : [])]),
+    cloud: allowed([...CLOUD_SETTINGS_TABS, "devices"]),
   };
 }
 

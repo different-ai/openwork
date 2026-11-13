@@ -81,16 +81,16 @@ test("Config appears under Settings after Advanced only with organization.update
   assert.ok(!configChildren(["sharing.manage_all"]).some((item) => item.label === "Config"));
 });
 
-test("Computers belongs to regular Den Manage and needs both remoteDevices and computers.view", () => {
-  for (const remoteDevices of [false, true]) {
+test("Computers belongs to regular Den Manage and needs computers.view", () => {
+  {
     for (const permitted of [false, true]) {
       const sections = buildDashboardNavSections({
         orgSlug: "workspace", access: getOrgAccessFlags("member", false, permitted ? ["computers.view"] : []),
-        capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, remoteDevices,
+        capabilities, orgMode: "multi_org", runtimeConfigLoaded: true,
       });
       const manage = sections.find((section) => section.label === "Manage");
       const computers = manage?.items.find((item) => item.label === "Computers");
-      assert.equal(Boolean(computers), remoteDevices && permitted);
+      assert.equal(Boolean(computers), permitted);
       if (computers) {
         assert.equal(computers.href, "/dashboard/computers");
         assert.ok(flattenNavigationForSearch(sections).find((item) => item.label === "Computers")?.keywords.includes("inventory"));
@@ -104,15 +104,15 @@ test("Computers belongs to regular Den Manage and needs both remoteDevices and c
   assert.match(adminRouteLockedMessage("/dashboard/computers"), /View team computers/);
 });
 
-test("My Computers is under Work for every member whenever remoteDevices is on, whatever their permissions", () => {
-  for (const remoteDevices of [false, true]) {
+test("My Computers is under Work for every member whatever their permissions", () => {
+  {
     for (const permissions of [[], ["computers.view"]] as const) {
       const sections = buildDashboardNavSections({
         orgSlug: "workspace", access: getOrgAccessFlags("member", false, [...permissions]),
-        capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, remoteDevices,
+        capabilities, orgMode: "multi_org", runtimeConfigLoaded: true,
       });
       const mine = sections.find((section) => section.label === "Work")?.items.find((item) => item.label === "My Computers");
-      assert.equal(Boolean(mine), remoteDevices);
+      assert.equal(Boolean(mine), true);
       // Never in Manage: the member view is not an admin page.
       assert.ok(!sections.find((section) => section.label === "Manage")?.items.some((item) => item.label === "My Computers"));
       if (mine) {
@@ -125,12 +125,10 @@ test("My Computers is under Work for every member whenever remoteDevices is on, 
 });
 
 test("Den web has no My Sessions: no entry, no search result, whatever features the organization has", async () => {
-  const { mapFeatures } = await import("@openwork/features");
-  const everything = mapFeatures(() => true);
   for (const permissions of [[], ["computers.view"]] as const) {
     const sections = buildDashboardNavSections({
       orgSlug: "workspace", access: getOrgAccessFlags("member", false, [...permissions]),
-      capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, remoteDevices: everything.remoteDevices,
+      capabilities, orgMode: "multi_org", runtimeConfigLoaded: true,
     });
     const items = sections.flatMap((section) => section.items);
     assert.ok(!items.some((item) => /sessions/i.test(item.label) || /my-sessions/.test(item.href) || item.testId === "dashboard-nav-my-sessions"));

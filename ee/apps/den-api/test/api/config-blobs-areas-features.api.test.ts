@@ -133,7 +133,7 @@ const apiC = den.as(owner, orgC.orgId)
 
 // Every feature state this file relies on is set here, never left to the registry default.
 /** On for A, off for B and C: the features an import has to turn on. */
-const TURNED_ON = ["nativeDictation", "workbotScrollToBottom"]
+const TURNED_ON = ["mcpThreadEvents", "workbotAgentBrief"]
 /** Off for every organization here: one A turned off, and one only A's owner has (a member override). */
 const TURNED_OFF = ["workbotDocumentEditing", "workbotDocuments"]
 for (const key of TURNED_ON) {
@@ -147,14 +147,14 @@ await ok(den.asPlatformAdmin("PUT", "/v1/admin/features/followUpSuggestions", { 
 await ok(den.asPlatformAdmin("PUT", `/v1/admin/organizations/${orgA.orgId}/members/${orgA.owner.memberId}/capabilities`, { capabilities: { workbotDocumentEditing: true } }), "member override")
 await ok(apiA("POST", "/v1/org/web-origins", { origin: "https://features-source.example.com" }), "web origin")
 // Killed everywhere: never exported, and skipped when a file asks for it.
-await ok(den.asPlatformAdmin("PUT", "/v1/admin/features/claudeAgentProvider", { killed: true }), "kill switch")
+await ok(den.asPlatformAdmin("PUT", "/v1/admin/features/remoteTasksOptIn", { killed: true }), "kill switch")
 
 /** What A's export must list: on by default on this deployment or turned on above, minus what is off, killed or locked off. */
 const expectedOnForA = FEATURE_KEYS
   .filter((key) => {
     const definition = featureDefinition(key)
     if (!definition.deployments.includes("self_hosted")) return false
-    if ([...TURNED_OFF, "claudeAgentProvider", "workbotDocuments"].includes(key)) return false
+    if ([...TURNED_OFF, "remoteTasksOptIn", "workbotDocuments"].includes(key)) return false
     return definition.default || ["followUpSuggestions", ...TURNED_ON].includes(key)
   })
   .map((key): string => key)
@@ -166,9 +166,9 @@ test("export: exactly the features on for the organization, as { enabled: true }
   exportedA = clone<ConfigBlob>((await ok(apiA("GET", "/v1/config-blobs/export"), "export")).body)
   const items = areaItems(exportedA, AREA)
   assert.deepEqual(items.map((item) => item.id), expectedOnForA, JSON.stringify(items))
-  for (const key of [...TURNED_OFF, "claudeAgentProvider", "workbotDocuments"]) assert.ok(!items.some((item) => item.id === key), `${key} is off, killed, locked or member-only: never exported`)
+  for (const key of [...TURNED_OFF, "remoteTasksOptIn", "workbotDocuments"]) assert.ok(!items.some((item) => item.id === key), `${key} is off, killed, locked or member-only: never exported`)
   assert.ok(items.every((item) => JSON.stringify(item.spec) === JSON.stringify({ enabled: true })), JSON.stringify(items))
-  assert.equal(items.find((item) => item.id === "nativeDictation")?.name, "Native dictation")
+  assert.equal(items.find((item) => item.id === "workbotAgentBrief")?.name, "Workbot: Your agent's brief and check rhythm")
   assert.ok(exportedA.scope.includes(AREA))
 })
 
@@ -177,7 +177,7 @@ test("import by a platform admin turns the missing features on; unknown, unavail
     { id: "notARealFeature", name: "Not a real feature", spec: { enabled: true } },
     { id: "litellm", name: "LiteLLM", spec: { enabled: true } },
     { id: "managedDeployments", name: "Managed deployments", spec: { enabled: true } },
-    { id: "claudeAgentProvider", name: "Claude Code sign-in", spec: { enabled: true } },
+    { id: "remoteTasksOptIn", name: "Claude Code sign-in", spec: { enabled: true } },
     { id: "workbotDocuments", name: "Workbot documents", spec: { enabled: true } },
   ])
   const { id, plan } = await upload(apiB, blob, "merge", "Features")
@@ -193,23 +193,23 @@ test("import by a platform admin turns the missing features on; unknown, unavail
   assert.match(skipped("notARealFeature"), /isn't a feature on this server/)
   assert.match(skipped("litellm"), /no longer a feature flag on this server/)
   assert.match(skipped("managedDeployments"), /isn't part of this deployment/)
-  assert.match(skipped("claudeAgentProvider"), /kill switch/)
+  assert.match(skipped("remoteTasksOptIn"), /kill switch/)
   assert.match(skipped("workbotDocuments"), /locked off by this server's operator \(DEN_FEATURE_WORKBOT_DOCUMENTS\)/)
   assert.equal(plan.summary.blocking, 0, describe(items))
 
   const applied = await applyPlan(platformAdmin, orgB.orgId, id, plan)
   assert.equal(applied.status, "applied", JSON.stringify(applied.errors))
   const features = await orgFeatures(apiB)
-  assert.equal(features.workbotScrollToBottom, true)
-  assert.equal(features.nativeDictation, true)
+  assert.equal(features.mcpThreadEvents, true)
+  assert.equal(features.workbotAgentBrief, true)
   assert.equal(features.workbotDocuments, false)
-  assert.equal(features.claudeAgentProvider, false)
+  assert.equal(features.remoteTasksOptIn, false)
   assert.equal(features.workbotDocumentEditing, false, "member overrides never travel")
   assert.equal(features.workbotDocuments, false)
   // The same override /admin sets, with its history: who turned it on.
   const history = await db.select().from(FeatureChangeTable).where(and(eq(FeatureChangeTable.organization_id, orgB.orgId), eq(FeatureChangeTable.scope, "organization")))
   const imported = history.filter((row) => row.action === "on").map((row) => [row.feature_key, row.action, row.changed_by_user_id]).sort()
-  assert.deepEqual(imported, [["nativeDictation", "on", platformAdmin.userId], ["workbotScrollToBottom", "on", platformAdmin.userId]])
+  assert.deepEqual(imported, [["mcpThreadEvents", "on", platformAdmin.userId], ["workbotAgentBrief", "on", platformAdmin.userId]])
 })
 
 test("anyone else is blocked on the features; the rest of the import still applies", async () => {
@@ -228,8 +228,8 @@ test("anyone else is blocked on the features; the rest of the import still appli
   const applied = await applyPlan(owner, orgC.orgId, id, skipped)
   assert.equal(applied.status, "applied", JSON.stringify(applied.errors))
   const features = await orgFeatures(apiC)
-  assert.equal(features.workbotScrollToBottom, false)
-  assert.equal(features.nativeDictation, false)
+  assert.equal(features.mcpThreadEvents, false)
+  assert.equal(features.workbotAgentBrief, false)
   const origins = await ok(apiC("GET", "/v1/org/web-origins"), "origins")
   assert.ok(origins.text.includes("https://features-source.example.com"), summary(origins))
 })
@@ -248,8 +248,8 @@ test("a config token acts for its member: one a non-admin made is blocked too, a
 
   // The apply-time check, as the worker runs it for an approval given with that token.
   const ctx = { db, organizationId: orgC.orgId, actor: { userId: owner.userId, memberId: orgC.owner.memberId, apiKeyId: "tok_features" }, deployment: "self_hosted" as const, features: await getOrganizationFeatures(orgC.orgId) }
-  await assert.rejects(settingsFeaturesArea.apply(ctx, { kind: "create", item: { sourceId: "nativeDictation", name: "Dictation", spec: { enabled: true } } }), (error: unknown) => error instanceof Error && error.message === PLATFORM_ADMIN_ONLY_MESSAGE)
-  assert.equal((await orgFeatures(apiC)).nativeDictation, false)
+  await assert.rejects(settingsFeaturesArea.apply(ctx, { kind: "create", item: { sourceId: "workbotAgentBrief", name: "Dictation", spec: { enabled: true } } }), (error: unknown) => error instanceof Error && error.message === PLATFORM_ADMIN_ONLY_MESSAGE)
+  assert.equal((await orgFeatures(apiC)).workbotAgentBrief, false)
 })
 
 test("mirror mode never turns a feature off, even when its delete is ticked", async () => {
@@ -257,19 +257,19 @@ test("mirror mode never turns a feature off, even when its delete is ticked", as
     format: "openwork.config-blob",
     formatVersion: 1,
     scope: [AREA],
-    areas: { settings: { features: { specVersion: 1, items: [{ id: "workbotScrollToBottom", name: "Workbot scroll to bottom", spec: { enabled: true } }] } } },
+    areas: { settings: { features: { specVersion: 1, items: [{ id: "mcpThreadEvents", name: "Workbot scroll to bottom", spec: { enabled: true } }] } } },
   }
   const { id, plan } = await upload(apiB, blob, "mirror", "Mirror features")
-  const decided = await ok(apiB("PUT", `/v1/config-blobs/change-requests/${id}/decisions`, { deletes: [{ area: AREA, targetId: "nativeDictation" }] }), "tick a delete")
+  const decided = await ok(apiB("PUT", `/v1/config-blobs/change-requests/${id}/decisions`, { deletes: [{ area: AREA, targetId: "workbotAgentBrief" }] }), "tick a delete")
   const ticked = asPlan(field(decided.body, "plan"))
   for (const current of [plan, ticked]) {
     const items = featureItems(current)
     assert.deepEqual(items.filter((item) => item.op === "delete"), [], describe(items))
   }
-  const dictation = featureItems(ticked).find((item) => item.target?.id === "nativeDictation")
+  const dictation = featureItems(ticked).find((item) => item.target?.id === "workbotAgentBrief")
   assert.ok(dictation?.reasons?.some((reason) => reason.includes("Imports never turn features off.")), describe(featureItems(ticked)))
   await ok(apiB("POST", `/v1/config-blobs/change-requests/${id}/cancel`, {}), "cancel")
-  assert.equal((await orgFeatures(apiB)).nativeDictation, true)
+  assert.equal((await orgFeatures(apiB)).workbotAgentBrief, true)
 })
 
 test("re-import: B's own export into B is all unchanged", async () => {

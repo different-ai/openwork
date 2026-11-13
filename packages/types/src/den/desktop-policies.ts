@@ -29,7 +29,7 @@ export const MODEL_ACCESS_POLICY_KEYS = ["allowCustomProviders", "allowLocalMode
 /**
  * Models that run on the member's own computer (Ollama, LM Studio), by the
  * provider ids OpenWork's own setup writes. Governed by `allowLocalModels`
- * (feature `localModelsPolicy`), not by `allowCustomProviders`. A local server
+ * independently of `allowCustomProviders`. A local server
  * someone adds under another id through Connect a provider is a custom
  * provider and follows "Only models you provide".
  */

@@ -38,16 +38,8 @@ async function delivered(call = memberCall) {
   return { allowCustomProviders: field(config.body, "allowCustomProviders"), allowLocalModels: field(config.body, "allowLocalModels") }
 }
 
-test("with the rollout off, local models follow the provider setting whatever is stored", { timeout: 60_000 }, async () => {
-  const saved = await save({ allowCustomProviders: true, allowLocalModels: false })
-  assert.equal(saved.status, 200, summary(saved))
-  assert.deepEqual(await delivered(), { allowCustomProviders: true, allowLocalModels: true })
-  assert.equal((await save({ allowCustomProviders: false, allowLocalModels: true })).status, 200)
-  assert.deepEqual(await delivered(), { allowCustomProviders: false, allowLocalModels: false }, "Only models you provide still blocks Ollama")
-})
+test("the owner turns local models off for everyone, independently of personal keys; an admin sees but cannot change it", { timeout: 60_000 }, async () => {
 
-test("with the rollout on, the owner turns local models off for everyone, independently of personal keys; an admin sees but cannot change it", { timeout: 60_000 }, async () => {
-  assert.equal((await den.setFeature(org.orgId, "localModelsPolicy", true)).status, 200)
   // A policy saved before the switch existed: local models inherit "Only models you provide".
   const current = await defaultPolicy()
   const legacy = await owner("PATCH", `/v1/desktop-policies/${text(current.id, "policy id")}`, {
@@ -81,6 +73,6 @@ test("a plain member cannot change local models for anyone", { timeout: 60_000 }
 
 test("another organization is unaffected", { timeout: 60_000 }, async () => {
   const other = await den.createOrg(await den.signUp("Morgan Owner"), "Borealis")
-  assert.equal((await den.setFeature(other.orgId, "localModelsPolicy", true)).status, 200)
+
   assert.deepEqual(await delivered(den.as(other.owner, other.orgId)), { allowCustomProviders: true, allowLocalModels: true })
 })

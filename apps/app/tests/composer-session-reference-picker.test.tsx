@@ -4,9 +4,6 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 const ownsDom = !GlobalRegistrator.isRegistered;
 if (ownsDom) GlobalRegistrator.register({ url: "http://localhost/" });
 
-mock.module("../src/react-app/domains/session/surface/composer/use-native-dictation-feature", () => ({
-  useNativeDictationFeature: () => false,
-}));
 type ModelControls = Parameters<typeof import("../src/components/model-select")["ModelSelect"]>[0];
 let capturedModelControls: ModelControls | null = null;
 mock.module("../src/components/model-select", () => ({ ModelSelect: (props: ModelControls) => {

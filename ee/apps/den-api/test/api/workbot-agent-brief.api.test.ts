@@ -12,7 +12,7 @@ const proactive = "/v1/org/workbot-settings/proactive"
 
 async function workspace(name: string, brief: boolean) {
   const created = await den.createOrg(await den.signUp(`${name} Owner`), name)
-  assert.equal((await den.setFeature(created.orgId, "workbotProactive", true)).status, 200)
+
   if (brief) assert.equal((await den.setFeature(created.orgId, "workbotAgentBrief", true)).status, 200)
   const owner = den.as(created.owner, created.orgId)
   assert.equal((await owner("PUT", proactive, { enabled: true })).status, 200)

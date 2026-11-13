@@ -52,14 +52,6 @@ async function removeUnprovenSignIns(ctx: AuthEndpointContext, userId: string) {
 /** Sign-in methods whose verified email is the person's directory identity. GitHub's primary email is a preference people switch between addresses, so it never moves the account. */
 const EMAIL_FOLLOWED_OAUTH_PROVIDERS = new Set(["google"])
 
-export type DenUserPolicyOptions = {
-  /**
-   * Whether an account's email follows the identity that signs in to it
-   * (feature `signInEmailSync`). Read on every returning Google or
-   * SSO sign-in whose provider reports another email than the stored one.
-   */
-  emailFollowsProvider?: () => boolean | Promise<boolean>
-}
 
 /**
  * A returning Google or SSO sign-in is found by the provider's own id, so it
@@ -76,10 +68,8 @@ export type DenUserPolicyOptions = {
 async function followProviderEmail(
   ctx: AuthEndpointContext,
   input: { userId: string; email: string; emailVerified: boolean; oauthProviderId?: string; ssoProviderId?: string },
-  options: DenUserPolicyOptions,
 ) {
   try {
-    if (!await options.emailFollowsProvider?.()) return
     if (!input.ssoProviderId && !(input.emailVerified && input.oauthProviderId !== undefined && EMAIL_FOLLOWED_OAUTH_PROVIDERS.has(input.oauthProviderId))) return
 
     const stored = await ctx.context.internalAdapter.findUserById(input.userId)
@@ -125,7 +115,7 @@ async function followProviderEmail(
  * - A returning Google or SSO sign-in whose provider reports a new email moves
  *   the account to it (followProviderEmail).
  */
-function createValidateDenUserInfo(options: DenUserPolicyOptions = {}): ValidateUserInfo {
+function createValidateDenUserInfo(): ValidateUserInfo {
   return async ({ user, source }, ctx) => {
     const email = typeof user.email === "string" ? user.email.trim().toLowerCase() : ""
     const ssoProviderId = source.method === "sso-oidc" || source.method === "sso-saml" ? source.sso?.providerId : undefined
@@ -139,7 +129,7 @@ function createValidateDenUserInfo(options: DenUserPolicyOptions = {}): Validate
         emailVerified: user.emailVerified === true,
         oauthProviderId: source.method === "oauth" ? source.oauth?.providerId : undefined,
         ssoProviderId,
-      }, options)
+      })
       return
     }
     if (source.action !== "link-account" || !email) return
@@ -158,6 +148,6 @@ function createValidateDenUserInfo(options: DenUserPolicyOptions = {}): Validate
 }
 
 /** Den's Better Auth `user` options. */
-export function denUserConfig(options: DenUserPolicyOptions = {}) {
-  return { validateUserInfo: createValidateDenUserInfo(options) } satisfies DenUserOptions
+export function denUserConfig() {
+  return { validateUserInfo: createValidateDenUserInfo() } satisfies DenUserOptions
 }

@@ -185,7 +185,6 @@ export const workbotTeamSettingsArea = defineConfigArea({
   // A team's model is an AI Gateway alias or a managed model: imported after the providers that serve it.
   dependsOn: ["members.teams", PROVIDERS_AREA],
   deployments: ["cloud", "self_hosted"],
-  feature: "workbotTeamSettings",
   viewPermission: "inference.view",
   managePermission: "inference.manage",
   tables: ["workbot_team_setting"],

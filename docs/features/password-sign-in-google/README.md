@@ -1,5 +1,7 @@
 # Google on the password sign-in step
 
+> **Generally available:** `passwordSignInGoogle` is retired; its enabled behavior is standard on Cloud and self-hosted. Actual settings, permissions, billing rules and consent remain enforced. Rollout/off-state instructions below are historical; see [the retirement guide](../globally-enabled-retirement/README.md).
+
 - Feature: `passwordSignInGoogle`
 - Deployments: cloud and self-hosted; off by default
 - Owner: @benjaminshafii

@@ -511,7 +511,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       requestAnimationFrame(() => requestAnimationFrame(focusComposer));
     } : null;
     const attached = askContext && !browserPreview?.visible ? <AttachedContext context={askContext} onRemove={() => setAskContext(null)} /> : null;
-    const composer = <DraftComposer state={composerState} teaching={teaching} name={name} busy={busy} stopping={stop.isPending} filesEnabled={filesEnabled} nativeDictation={host.nativeDictation}
+    const composer = <DraftComposer state={composerState} teaching={teaching} name={name} busy={busy} stopping={stop.isPending} filesEnabled={filesEnabled}
       onSend={text => submit(text)} onStop={() => stop.mutate()} autoFocus={false} disabled={!data && !loading} />;
     const firstName = user?.name?.trim().split(/\s+/)[0] ?? null;
     const home = !data && !loading ? <div className="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center text-[13px] text-[var(--wb-muted)]" role="status"><p>Couldn't load your conversation.</p><button type="button" className="rounded-lg px-3 py-2 underline focus-visible:shadow-[var(--wb-focus)]" onClick={() => void thread.refetch()}>Try again</button></div>
@@ -545,7 +545,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
             {host.calendar && (calendarVisited || tab === "calendar") && <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={name} onContextChange={setCalendarContext} />}
           </div>
           <div className="flex min-h-0 min-w-0 flex-1 border-t border-[var(--wb-hairline)]" style={{ display: tab === "devices" ? undefined : "none" }} hidden={tab !== "devices"}>
-            {host.devices === true && tab === "devices" && <WorkbotDevices computerFor={computerFor} />}
+            {tab === "devices" && <WorkbotDevices computerFor={computerFor} />}
           </div>
           <div className="flex min-h-0 min-w-0 flex-1" style={{ display: tab === "computer" ? undefined : "none" }} hidden={tab !== "computer"}>
             {computerVisited && tab === "computer" && !browserPreview?.visible && computerViews(host).length > 0 && <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} onViewChange={setComputerView} onContextChange={setBrowserContext} />}
@@ -562,7 +562,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       </OpenDocumentContext.Provider>
     </>;
   }
-  if ((tab === "calendar" && host.calendar) || tab === "documents" || (tab === "devices" && host.devices === true) || (tab === "computer" && computerViews(host).length > 0)) {
+  if ((tab === "calendar" && host.calendar) || tab === "documents" || (tab === "devices") || (tab === "computer" && computerViews(host).length > 0)) {
     return layout(
       <div className="flex min-h-0 flex-1 flex-col">
         <WorkbotHeader
@@ -630,7 +630,6 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const composer = (
     <DraftComposer
       state={composerState}
-      nativeDictation={host.nativeDictation}
       name={shown.name}
       busy={busy}
       stopping={stop.isPending}
@@ -816,7 +815,7 @@ type WorkbotTab = WorkbotPaletteTab;
 
 /** The pages this person has, in the header's order. */
 function paletteTabs(host: WorkbotHost): WorkbotTab[] {
-  return ["home", ...(host.calendar ? ["calendar" as const] : []), ...(host.documents ? ["documents" as const] : []), ...(host.devices === true ? ["devices" as const] : [])];
+  return ["home", ...(host.calendar ? ["calendar" as const] : []), ...(host.documents ? ["documents" as const] : []), "devices"];
 }
 
 /** Puts the caret in the message box on screen (the Home composer, or the workspace chat's). */
@@ -851,11 +850,10 @@ function useWorkbotTab(beforeLeave?: (next: WorkbotTab) => boolean, preserveSear
   beforeLeaveRef.current = beforeLeave;
   const [tab, setTabState] = useState<WorkbotTab>(tabFromLocation);
   const computerEnabled = computerViews(workbotHost()).length > 0;
-  const devicesEnabled = workbotHost().devices === true;
   useEffect(() => {
     // A page this person doesn't have (from a link, or turned off since) opens Home instead.
-    if ((!computerEnabled && tab === "computer") || (!devicesEnabled && tab === "devices")) { window.history.replaceState(null, "", `/${preserveSearch ? window.location.search : ""}`); setTabState("home"); }
-  }, [computerEnabled, devicesEnabled, tab, preserveSearch]);
+    if (!computerEnabled && tab === "computer") { window.history.replaceState(null, "", `/${preserveSearch ? window.location.search : ""}`); setTabState("home"); }
+  }, [computerEnabled, tab, preserveSearch]);
   useEffect(() => {
     const sync = () => {
       const next = tabFromLocation();
@@ -1215,7 +1213,7 @@ function Conversation(props: {
         </div>
       </div>
     </div>
-    {workbotHost().scrollToBottom === true && <ScrollToBottom visible={far} onClick={latest} />}
+    <ScrollToBottom visible={far} onClick={latest} />
     </div>
   );
 }
@@ -2230,7 +2228,6 @@ function DraftComposer({ state, ...props }: { state: ComposerState } & Omit<Para
 
 export function WorkbotComposer(props: {
   teaching?: BrowserTeachingContext;
-  nativeDictation?: boolean;
   text: string;
   onText: (text: string) => void;
   name: string;
@@ -2250,7 +2247,7 @@ export function WorkbotComposer(props: {
   const browserPreview = useBrowserPreview();
   const input = useRef<HTMLTextAreaElement>(null);
   const touch = useTouchKeyboard();
-  const dictation = useNativeDictation({ enabled: props.nativeDictation === true, text, onText: props.onText,
+  const dictation = useNativeDictation({ enabled: !props.disabled, text, onText: props.onText,
     selection: () => ({ start: input.current?.selectionStart ?? text.length, end: input.current?.selectionEnd ?? text.length }),
     focusInput: () => input.current?.focus() });
   const hasFiles = props.uploads.length > 0;
@@ -2275,7 +2272,7 @@ export function WorkbotComposer(props: {
 
   const sendNow = () => {
     if (!canSend || props.disabled) return;
-    props.onSend(props.nativeDictation === true ? dictation.commit() : text);
+    props.onSend(dictation.commit());
     input.current?.focus();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -2330,7 +2327,7 @@ export function WorkbotComposer(props: {
           aria-label={`Message ${props.name}`}
           className={`max-h-[200px] min-h-9 min-w-0 flex-1 resize-none bg-transparent px-1.5 py-[7px] text-[16px] leading-[22px] text-[var(--wb-text)] outline-none placeholder:text-[var(--wb-faint)] sm:py-[9px] sm:leading-[18px] ${calmChat() ? "sm:text-[13px]" : "sm:text-[14px]"}`}
         />
-        {props.nativeDictation === true ? <WorkbotDictation dictation={dictation} disabled={props.disabled} text={text} /> : null}
+        <WorkbotDictation dictation={dictation} disabled={props.disabled} text={text} />
         <button
           type="button"
           onClick={showStop ? props.onStop : sendNow}

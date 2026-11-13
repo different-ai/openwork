@@ -9,23 +9,13 @@ const test = spec.world(denPageInteractionsWorld, {
 
 const auditRows = '[data-testid="audit-compact-operation"]';
 
-test("an owner uses the new page interactions while an opted-out administrator and a read-only teammate retain their boundaries", async ({ world, user, probe, step, evidence }) => {
+test("administrators use the same page interactions while a read-only teammate retains their boundaries", async ({ world, user, probe, step, evidence }) => {
   const owner = user.on(world.owner);
   const legacy = user.on(world.legacy);
   const viewer = user.on(world.viewer);
   const ownerProbe = probe.on(world.owner);
-  const legacyProbe = probe.on(world.legacy);
   const viewerProbe = probe.on(world.viewer);
 
-  await step("before: an opted-out administrator keeps the persistent settings save action", async () => {
-    await legacy.see({ role: "heading", label: "Org settings" }, { timeoutMs: 60_000 });
-    await legacy.see({ role: "button", label: "Save settings" });
-    await legacy.notSee({ role: "button", label: "Discard" });
-    const saved = await world.organizationName();
-    evidence.recordAssertionEvidence("Opting out preserves the save action without changing saved settings", String(saved), saved === "Page consistency studio");
-    expect(saved).toBe("Page consistency studio");
-    await legacy.screenshot();
-  });
 
   await step("after: an owner can discard an unsaved name without writing it", async () => {
     await owner.see({ role: "heading", label: "Org settings" }, { timeoutMs: 60_000 });
@@ -72,11 +62,11 @@ test("an owner uses the new page interactions while an opted-out administrator a
     await viewer.screenshot();
   });
 
-  await step("the owner opens the existing team editor while the opted-out administrator keeps the old entry points", async () => {
+  await step("both administrators can open the existing team editor", async () => {
     const teamUrl = world.url(`/dashboard/members/teams/${world.teamId}?tab=overview`);
     await legacy.navigate(teamUrl);
     await legacy.see({ role: "heading", label: "Readers" });
-    await legacy.notSee({ testId: "team-edit" });
+    await legacy.see({ testId: "team-edit" });
     await owner.navigate(world.url("/dashboard/members?tab=teams"));
     await owner.see({ testId: "team-row" });
     await owner.click({ role: "button", label: "Actions for Readers" });
@@ -121,33 +111,23 @@ test("an owner uses the new page interactions while an opted-out administrator a
     await viewer.screenshot();
   });
 
-  await step("after: Analytics removes the personal-runs tab only for the enabled owner", async () => {
+  await step("Analytics uses the same navigation for both administrators", async () => {
     const analytics = world.url("/dashboard/analytics");
     await legacy.navigate(analytics);
-    await legacy.see({ role: "link", label: "Workflow Runs" }, { timeoutMs: 30_000 });
+    await legacy.see({ role: "heading", label: "Analytics" }, { timeoutMs: 30_000 });
+    await legacy.notSee({ role: "link", label: "Workflow Runs" });
     await owner.navigate(analytics);
     await owner.see({ role: "heading", label: "Analytics" });
     await owner.notSee({ role: "link", label: "Workflow Runs" });
     const tabs = await ownerProbe.dom('nav[aria-label="Analytics views"] a');
     const ok = tabs.elements.length > 0 && !tabs.elements.some(entry => entry.text === "Workflow Runs");
-    evidence.recordAssertionEvidence("The new navigation does not leak to an opted-out member", tabs.elements.map(entry => entry.text).join(" | "), ok);
+    evidence.recordAssertionEvidence("Both administrators use the same navigation", tabs.elements.map(entry => entry.text).join(" | "), ok);
     expect(ok).toBe(true);
     await owner.screenshot();
     await owner.navigate(world.url("/dashboard/analytics/workflow-runs"));
     await owner.see({ role: "link", label: "Workflow Runs" });
   });
 
-  await step("an opted-out administrator applies audit filters explicitly", async () => {
-    await legacy.navigate(world.url("/dashboard/audit-logs"));
-    await legacy.see({ role: "button", label: "Apply filters" }, { timeoutMs: 30_000 });
-    await legacy.type({ placeholder: "Filter by exact ID" }, "synthetic-no-such-id", { replace: true });
-    await legacy.click({ role: "button", label: "Apply filters" });
-    await legacy.see({ text: "Nothing matches these filters" });
-    const result = await legacyProbe.dom(auditRows);
-    evidence.recordAssertionEvidence("Explicit apply removes nonmatching audit operations", `rows=${result.elements.length}`, result.elements.length === 0);
-    expect(result.elements).toHaveLength(0);
-    await legacy.screenshot();
-  });
 
   await step("after: the owner filters audit history without an Apply step", async () => {
     await owner.navigate(world.url("/dashboard/audit-logs"));

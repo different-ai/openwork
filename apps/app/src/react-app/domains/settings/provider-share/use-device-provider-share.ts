@@ -2,7 +2,6 @@ import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { DeviceShareOptions } from "@openwork/types/den/device-provider-share";
 import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations";
-import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
 import type { ProviderCredentialHealth } from "../../connections/provider-auth/credential-health";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { readDenSettings } from "@/app/lib/den";
@@ -16,7 +15,7 @@ import {
 } from "./device-provider-share";
 
 export type DeviceProviderShare = {
-  /** The feature is on for the signed-in person's organization. */
+  /** The signed-in person's organization is ready. */
   enabled: boolean;
   options: DeviceShareOptions | null;
   /** Per device provider id: shareable, or already shared. */
@@ -28,19 +27,17 @@ export type DeviceProviderShare = {
 };
 
 /**
- * What this person can share from this device (Den feature
- * `shareDeviceProvider`). Signed out, feature off or Den unreachable: nothing
+ * What this person can share from this device. Signed out or Den unreachable: nothing
  * is offered, and Settings › AI Providers reads exactly as before.
  */
 export function useDeviceProviderShare(input: {
   providers: readonly ShareableDeviceProvider[];
   health: (providerId: string) => ProviderCredentialHealth;
 }): DeviceProviderShare {
-  const featureOn = useOrgFeature("shareDeviceProvider");
   const context = useAutomationsDenContext();
   const auth = useDenAuth();
   const settings = readDenSettings();
-  const enabled = featureOn && context.ready;
+  const enabled = context.ready;
   const candidates = useMemo(() => deviceShareCandidates(input.providers, input.health), [input.providers, input.health]);
   const ids = useMemo(() => candidates.map((provider) => provider.id).sort(), [candidates]);
   const query = useQuery({

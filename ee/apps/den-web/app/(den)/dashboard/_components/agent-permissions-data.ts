@@ -8,8 +8,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
-import { orgFeatureEnabled } from "../../_lib/den-org";
-import { markFeatureUsed } from "../../_lib/feature-usage";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 const AGENT_PERMISSIONS_PATH = "/v1/agent-permissions";
@@ -99,7 +97,7 @@ function scopePath(scopeId: AgentPermissionScopeId): string {
 /** Saves each scope's settings in turn; the first failure stops and is thrown. */
 export function useSaveAgentPermissions(orgId: string) {
   const queryClient = useQueryClient();
-  const { runReauthableAction, orgContext } = useOrgDashboard();
+  const { runReauthableAction } = useOrgDashboard();
   return useMutation({
     mutationKey: [...agentPermissionsQueryKey(orgId), "save"],
     retry: false,
@@ -116,9 +114,6 @@ export function useSaveAgentPermissions(orgId: string) {
             15000,
           );
           if (!response.ok) throw getRequestError(payload, response, `Couldn't save agent permissions (${response.status}).`);
-          if (orgFeatureEnabled(orgContext, "fileSendPermissions") && change.settings.fileSends !== undefined) {
-            markFeatureUsed("fileSendPermissions");
-          }
         }
       });
     },

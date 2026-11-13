@@ -1,5 +1,7 @@
 # One OpenWork Models row you can turn off
 
+> **Generally available:** `singleOpenWorkModelsRow` is retired; its enabled behavior is standard on Cloud and self-hosted. Actual settings, permissions, billing rules and consent remain enforced. Rollout/off-state instructions below are historical; see [the retirement guide](../globally-enabled-retirement/README.md).
+
 - **Feature key:** `singleOpenWorkModelsRow`
 - **Deployments:** cloud and self-hosted, off by default
 - **Author:** benjaminshafii

@@ -14,7 +14,6 @@ import type { Hono } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { ComputerDisconnectedError, computerDisconnectedBody, signInSessionOf } from "../../computer-disconnect.js"
-import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, paramValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import {
@@ -74,11 +73,10 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
       tags: ["Devices"],
       summary: "List the computers I can reach",
       "x-mcp": true,
-      description: "The caller's own computers (Macs and PCs running OpenWork Desktop, Workbot's cloud computers, virtual computers they registered) and the ones registered for the whole organization, online first. `availability` is worked out from the last report: a desktop is online for ten minutes after it was last heard from; Workbot's computer is paused only after an observed pause; a stale ready report is unknown. Desktops not heard from for 30 days are left out. `remoteAccess` on a signed-in desktop that takes tasks from other devices says what they may do there (off, created or all), whether its owner chose it on that computer, and why when something else decides it: the organization's limit, an app that has to be updated before it can be allowed, or an owner who has not allowed it yet where the organization asks them to; null for every other computer. Names, versions and state only: never credentials or anything from the computer's screen. Needs the Devices feature.",
+      description: "The caller's own computers (Macs and PCs running OpenWork Desktop, Workbot's cloud computers, virtual computers they registered) and the ones registered for the whole organization, online first. `availability` is worked out from the last report: a desktop is online for ten minutes after it was last heard from; Workbot's computer is paused only after an observed pause; a stale ready report is unknown. Desktops not heard from for 30 days are left out. `remoteAccess` on a signed-in desktop that takes tasks from other devices says what they may do there (off, created or all), whether its owner chose it on that computer, and why when something else decides it: the organization's limit, an app that has to be updated before it can be allowed, or an owner who has not allowed it yet where the organization asks them to; null for every other computer. Names, versions and state only: never credentials or anything from the computer's screen. Requires active organization membership; device ownership and management permissions still apply.",
       responses: { 200: jsonResponse("The computers.", remoteDeviceListResponseSchema), 401: unauthorized, 404: featureOff },
     }),
     orgMemberRoute(),
-    requireFeature("remoteDevices"),
     async (c) => {
       c.header("Cache-Control", "no-store")
       const actor = actorOf(c)
@@ -92,7 +90,7 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Devices"],
       summary: "Register a virtual computer",
-      description: "Adds a Freestyle or Daytona VM, a Mac sandbox or another virtual computer to the caller's list by the id its provider shows, or with `shared` to everyone's list in the organization (needs the Manage desktop policies permission). Registering names the computer in OpenWork; it stores no credentials and grants no access at the provider. Desktops and Workbot's computers register themselves. Needs the Devices feature.",
+      description: "Adds a Freestyle or Daytona VM, a Mac sandbox or another virtual computer to the caller's list by the id its provider shows, or with `shared` to everyone's list in the organization (needs the Manage desktop policies permission). Registering names the computer in OpenWork; it stores no credentials and grants no access at the provider. Desktops and Workbot's computers register themselves. Requires active organization membership; device ownership and management permissions still apply.",
       responses: {
         201: jsonResponse("The computer was registered.", remoteDeviceResponseSchema),
         400: jsonResponse("The request was invalid.", invalidRequestSchema),
@@ -103,7 +101,6 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
       },
     }),
     orgMemberRoute(),
-    requireFeature("remoteDevices"),
     jsonValidator(remoteDeviceRegisterRequestSchema),
     async (c) => {
       const actor = actorOf(c)
@@ -123,7 +120,7 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
       tags: ["Devices"],
       "x-mcp": false,
       summary: "Report this desktop and how its computer use is doing",
-      description: "Sent by the signed-in desktop app on launch, when something changes and every few minutes. Creates or refreshes this desktop in the caller's list, records what changed (app update, computer use needing setup, the computer agents use) and does the same for VMs the desktop is configured to reach. Names, versions and readiness only: no file paths, window titles or screen content. `installId` is the id the desktop registers its runner with, so the same computer is one entry. A desktop that was disconnected from the organization is answered 403 computer_disconnected and its entry is left as it was, unless the report comes with a sign-in made after the disconnect, which connects it again. Needs the Devices feature.",
+      description: "Sent by the signed-in desktop app on launch, when something changes and every few minutes. Creates or refreshes this desktop in the caller's list, records what changed (app update, computer use needing setup, the computer agents use) and does the same for VMs the desktop is configured to reach. Names, versions and readiness only: no file paths, window titles or screen content. `installId` is the id the desktop registers its runner with, so the same computer is one entry. A desktop that was disconnected from the organization is answered 403 computer_disconnected and its entry is left as it was, unless the report comes with a sign-in made after the disconnect, which connects it again. Requires active organization membership; device ownership and management permissions still apply.",
       responses: {
         200: jsonResponse("This desktop as listed, and when to report again.", remoteDeviceDesktopReportResponseSchema),
         400: jsonResponse("The report was invalid.", invalidRequestSchema),
@@ -134,7 +131,6 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
       },
     }),
     orgMemberRoute(),
-    requireFeature("remoteDevices"),
     jsonValidator(remoteDeviceDesktopReportSchema),
     async (c) => {
       c.header("Cache-Control", "no-store")
@@ -161,11 +157,10 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
       tags: ["Devices"],
       summary: "Get one of my computers and its recent activity",
       "x-mcp": true,
-      description: "One computer from the caller's list with its 20 most recent events, newest first: when it registered, state changes, app updates, and for Workbot's computer when a view was opened, paused, resumed or rebuilt. Needs the Devices feature.",
+      description: "One computer from the caller's list with its 20 most recent events, newest first: when it registered, state changes, app updates, and for Workbot's computer when a view was opened, paused, resumed or rebuilt. Requires active organization membership; device ownership and management permissions still apply.",
       responses: { 200: jsonResponse("The computer and its recent activity.", remoteDeviceDetailResponseSchema), 400: jsonResponse("Invalid computer id.", invalidRequestSchema), 401: unauthorized, 404: deviceNotFound },
     }),
     orgMemberRoute(),
-    requireFeature("remoteDevices"),
     paramValidator(deviceParamsSchema),
     async (c) => {
       c.header("Cache-Control", "no-store")
@@ -182,7 +177,7 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Devices"],
       summary: "Rename a computer I registered",
-      description: "Renames a virtual computer that was registered by hand. Desktops name themselves and Workbot's computers are named after their chat, so both answer 403. Needs the Devices feature.",
+      description: "Renames a virtual computer that was registered by hand. Desktops name themselves and Workbot's computers are named after their chat, so both answer 403. Requires active organization membership; device ownership and management permissions still apply.",
       responses: {
         200: jsonResponse("The renamed computer.", remoteDeviceResponseSchema),
         400: jsonResponse("The request was invalid.", invalidRequestSchema),
@@ -192,7 +187,6 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
       },
     }),
     orgMemberRoute(),
-    requireFeature("remoteDevices"),
     paramValidator(deviceParamsSchema),
     jsonValidator(remoteDeviceUpdateRequestSchema),
     async (c) => {
@@ -212,11 +206,10 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Devices"],
       summary: "Remove a computer from my list",
-      description: "Takes the computer off the list. Nothing is stopped or deleted at its provider, and a desktop or Workbot computer that reports again comes back: `canRemove` is false for a signed-in desktop until it is disconnected or has been quiet for 30 days. Needs the Devices feature.",
+      description: "Takes the computer off the list. Nothing is stopped or deleted at its provider, and a desktop or Workbot computer that reports again comes back: `canRemove` is false for a signed-in desktop until it is disconnected or has been quiet for 30 days. Requires active organization membership; device ownership and management permissions still apply.",
       responses: { 204: { description: "Removed." }, 400: jsonResponse("Invalid computer id.", invalidRequestSchema), 401: unauthorized, 403: sharedForbidden, 404: deviceNotFound },
     }),
     orgMemberRoute(),
-    requireFeature("remoteDevices"),
     paramValidator(deviceParamsSchema),
     async (c) => {
       const actor = actorOf(c)
@@ -247,7 +240,6 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
       },
     }),
     orgMemberRoute(),
-    requireFeature("remoteDevices"),
     paramValidator(deviceParamsSchema),
     async (c) => {
       c.header("Cache-Control", "no-store")

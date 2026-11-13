@@ -978,7 +978,7 @@ export async function readOrganizationComputerRecord(organizationId: Organizatio
       activeTurnSince: iso(session.activeTurnSince), deletedAt: iso(session.deletedAt),
     } : null,
     features: {
-      remoteDevices: features.remoteDevices,
+      remoteDevices: true,
       computerUse: true,
       remoteComputers: features.remoteComputers,
       browserUse: true,

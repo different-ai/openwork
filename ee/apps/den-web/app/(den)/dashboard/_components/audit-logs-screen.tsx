@@ -13,8 +13,7 @@ import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { DenSelect } from "../../_components/ui/select";
-import { getOrgAccessFlags, orgFeatureEnabled, type DenOrgContext, type DenOrgMember } from "../../_lib/den-org";
-import { markFeatureUsed } from "../../_lib/feature-usage";
+import { getOrgAccessFlags, type DenOrgContext, type DenOrgMember } from "../../_lib/den-org";
 import { auditFiltersFromDraft, auditLocalDate, pendingAuditSearch } from "./page-consistency-state";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
@@ -57,7 +56,7 @@ export function AuditLogsScreen() {
   if (access === "unavailable") return <AuditPage><AuditLocked unavailable /></AuditPage>;
   if (access === "locked" || !dashboard.orgContext || !dashboard.orgId) return <AuditPage><AuditLocked /></AuditPage>;
   const member = dashboard.orgContext.currentMember;
-  return <AuditLogsContent key={JSON.stringify([dashboard.orgId, member.id, member.userId, member.role, member.isOwner, member.permissions])} scope={{ orgId: dashboard.orgId, memberId: member.id }} members={dashboard.orgContext.members} captureIncluded={dashboard.orgContext.entitlements.auditLogs} immediateFilters={orgFeatureEnabled(dashboard.orgContext, "denPageConsistency")} />;
+  return <AuditLogsContent key={JSON.stringify([dashboard.orgId, member.id, member.userId, member.role, member.isOwner, member.permissions])} scope={{ orgId: dashboard.orgId, memberId: member.id }} members={dashboard.orgContext.members} captureIncluded={dashboard.orgContext.entitlements.auditLogs} />;
 }
 
 const PERIODS = [
@@ -68,14 +67,14 @@ const PERIODS = [
   { value: "720", label: "Last 30 days", hours: 720 },
 ] as const;
 
-/** With the rollout off, edits remain drafts until Apply filters is pressed. */
-function AuditToolbar({ filters, members, operations, eventTypes, eventTypesPending, onApply, immediate }: {
+/** Filter changes apply immediately; identifier search is debounced. */
+function AuditToolbar({ filters, members, operations, eventTypes, eventTypesPending, onApply }: {
   filters: AuditFilters; members: readonly DenOrgMember[]; operations: AuditOperationSummary[];
-  eventTypes: readonly string[]; eventTypesPending: boolean; onApply: (filters: AuditFilters) => void; immediate: boolean;
+  eventTypes: readonly string[]; eventTypesPending: boolean; onApply: (filters: AuditFilters) => void;
 }) {
   const [draft, setDraft] = useState<AuditFilters>(() => ({ ...filters, from: auditLocalDate(filters.from), to: auditLocalDate(filters.to) }));
   const [period, setPeriod] = useState("");
-  const [more, setMore] = useState(!immediate || Boolean(filters.to || filters.actorId || filters.origin));
+  const [more, setMore] = useState(Boolean(filters.to || filters.actorId || filters.origin));
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setDraft({ ...filters, from: auditLocalDate(filters.from), to: auditLocalDate(filters.to) });
@@ -99,16 +98,14 @@ function AuditToolbar({ filters, members, operations, eventTypes, eventTypesPend
   function change(changes: AuditFilters) {
     const next = { ...draft, ...changes };
     setDraft(next);
-    if (immediate) apply(next);
-    else setError(null);
+    apply(next);
   }
-  // No timer or automatic query changes at all when the rollout is off.
   useEffect(() => {
-    const next = pendingAuditSearch(immediate, draft, filters.searchId);
+    const next = pendingAuditSearch(draft, filters.searchId);
     if (!next) return;
     const timeout = window.setTimeout(() => onApply(next), 300);
     return () => window.clearTimeout(timeout);
-  }, [immediate, draft, filters.searchId, onApply]);
+  }, [draft, filters.searchId, onApply]);
   function range(key: "from" | "to", value: string) {
     setPeriod("");
     change({ [key]: value });
@@ -146,7 +143,6 @@ function AuditToolbar({ filters, members, operations, eventTypes, eventTypesPend
         <option value="">Any origin</option>{auditOriginSchema.options.map((origin) => <option key={origin} value={origin}>{auditOriginLabels[origin]}</option>)}
       </DenSelect></label>
     </div> : null}
-    {!immediate ? <DenButton type="submit" size="sm" variant="secondary" className="self-start">Apply filters</DenButton> : null}
     {error ? <DenNotice tone="error" message={error} /> : null}
   </form>;
 }
@@ -204,11 +200,10 @@ function AuditCompactOperations({ operations, scope, members, expanded, onExpand
   </RowList>;
 }
 
-export function AuditLogsContent({ scope, members, captureIncluded, immediateFilters = false }: {
+export function AuditLogsContent({ scope, members, captureIncluded }: {
   scope: AuditScope; members: readonly DenOrgMember[];
   /** `entitlements.auditLogs`: new activity is recorded. Only used for the feature intro. */
   captureIncluded: boolean;
-  immediateFilters?: boolean;
 }) {
   const client = useQueryClient();
   const [filters, setFilters] = useState<AuditFilters>({});
@@ -221,9 +216,8 @@ export function AuditLogsContent({ scope, members, captureIncluded, immediateFil
   const accessError = isAuditAccessError(query.error) ? query.error : isAuditAccessError(eventTypes.error) ? eventTypes.error : detailAccessError;
   const refreshing = query.isFetching || eventTypes.isFetching;
   const applyFilters = useCallback((next: AuditFilters) => {
-    if (immediateFilters) markFeatureUsed("denPageConsistency");
     setExpanded(null); setFilters(next);
-  }, [immediateFilters]);
+  }, []);
   // Feature intro: full screen while nothing has been kept, banner when history
   // exists but the plan no longer records new activity.
   const intro = useFeatureIntro("audit-logs", auditLogsIntroFacts({ included: captureIncluded, filters, operations: query.data ? operations : undefined }));
@@ -236,7 +230,7 @@ export function AuditLogsContent({ scope, members, captureIncluded, immediateFil
   if (intro.size === "fullscreen") return intro.element;
   return <AuditPage state={query.data ? auditStateLine(operations.length, Boolean(query.hasNextPage), Object.values(filters).some(Boolean)) : undefined} action={<RefreshButton refreshing={refreshing} onRefresh={() => void client.invalidateQueries({ queryKey: auditQueryKey(scope) })} />}>
     {intro.size === "banner" ? intro.element : null}
-    <AuditToolbar key={JSON.stringify([scope.orgId, scope.memberId])} immediate={immediateFilters} filters={filters} members={members} operations={operations} eventTypes={eventTypes.data?.eventTypes ?? []} eventTypesPending={eventTypes.isPending} onApply={applyFilters} />
+    <AuditToolbar key={JSON.stringify([scope.orgId, scope.memberId])} filters={filters} members={members} operations={operations} eventTypes={eventTypes.data?.eventTypes ?? []} eventTypesPending={eventTypes.isPending} onApply={applyFilters} />
     {eventTypes.isError ? <div className="flex flex-wrap items-center gap-3">
       <DenNotice tone="error" message={eventTypes.data ? "Could not refresh event types. Showing the last verified catalog." : "Could not load event types. Try again."} />
       <DenButton variant="secondary" size="sm" disabled={eventTypes.isFetching} onClick={() => void eventTypes.refetch()}>Retry event types</DenButton>

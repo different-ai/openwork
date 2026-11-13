@@ -40,15 +40,5 @@ test("a person manages virtual computers beside their signed-in desktops without
     expect(ok).toBe(true);
     await user.screenshot();
   });
-  await step("turning Devices off leaves the saved list intact and explains that it is not turned on", async () => {
-    await world.setEnabled(false);
-    await user.reload();
-    await user.see({ text: "Not turned on" }, { timeoutMs: 60_000 });
-    await user.notSee({ text: "Avery's MacBook" });
-    const text = await probe.text();
-    const off = text.includes("Not turned on") && !text.includes("Avery's MacBook");
-    evidence.recordAssertionEvidence("The rollout can be switched off without deleting computers", "Settings says Not turned on; the registry is no longer displayed", off);
-    expect(off).toBe(true);
-    await user.screenshot();
-  });
+
 });

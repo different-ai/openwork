@@ -82,7 +82,7 @@ type OrgDashboardContextValue = {
   getInvitationLink: (invitationId: string) => Promise<string>;
   updateMemberRole: (memberId: string, role: string) => Promise<void>;
   removeMember: (memberId: string) => Promise<void>;
-  /** Turns OpenWork Web on or off for a member or pending invitation (webPerMember). */
+  /** Turns OpenWork Web on or off for a member or pending invitation. */
   setMemberOpenWorkWeb: (memberId: string, enabled: boolean) => Promise<void>;
   transferOwnership: (memberId: string) => Promise<void>;
   /** Resolves to the new team's id, or null when the server didn't return one. */

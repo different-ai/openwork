@@ -91,56 +91,6 @@
               ],
               "description": "Remote desktop device sign-in: Sign a remote OpenWork desktop into an organization by approving a code on another computer. Renders DEN_FEATURE_REMOTE_DESKTOP_DEVICE_LOGIN."
             },
-            "claudeAgentProvider": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Claude Code sign-in: Connect Claude through the Claude Code login on this computer, without an Anthropic API key. Renders DEN_FEATURE_CLAUDE_AGENT_PROVIDER."
-            },
-            "webPerMember": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "OpenWork Web per member: Admins choose which members get OpenWork Web from the Members page, and the organization pays for Web only for them. Members without it can't open a Web computer. Off: every member and pending invitation has Web and is billed for it. Renders DEN_FEATURE_WEB_PER_MEMBER."
-            },
-            "localModelsPolicy": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "AI Gateway: limit local models (Ollama, LM Studio): Admins turn local models on or off in AI Gateway › Who can use models, separately from members adding their own provider keys. Off: local models follow the provider setting (\"Only models you provide\" blocks them). Renders DEN_FEATURE_LOCAL_MODELS_POLICY."
-            },
-            "shareDeviceProvider": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Desktop: share a provider key with your organization: In Settings › AI Providers, a person who manages AI Gateway shares an API key already saved on their device with everyone in the organization, after confirming who can use it and who pays. People they invite get those models without anyone pasting the key again. Off: sharing means adding the provider again in AI Gateway. Renders DEN_FEATURE_SHARE_DEVICE_PROVIDER."
-            },
-            "singleOpenWorkModelsRow": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Desktop: one OpenWork Models row you can turn off: Settings › AI Providers and Connect a provider list OpenWork Models once. When the organization pays for it, the organization's row replaces the free on-device row, and it has Turn off / Turn on on this device: for every member, or only for admins when the organization manages models (Only models you provide). Renders DEN_FEATURE_SINGLE_OPEN_WORK_MODELS_ROW."
-            },
             "followUpSuggestions": {
               "enum": [
                 "",
@@ -151,36 +101,6 @@
               ],
               "description": "Desktop: suggested follow-ups: After a reply finishes, the empty message box can show a suggested next message in gray. Tab fills it in; typing anything else ignores it. A small model writes the suggestion, and nothing shows when it has no clear next step to offer. Renders DEN_FEATURE_FOLLOW_UP_SUGGESTIONS."
             },
-            "passwordSignInGoogle": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Sign-in: offer Google alongside a password: The email-first password step also offers Continue with Google when Google sign-in is configured. Off: the password step is unchanged. Resolved deployment-wide before sign-in; organization and member overrides do not apply. Renders DEN_FEATURE_PASSWORD_SIGN_IN_GOOGLE."
-            },
-            "signInEmailSync": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Sign-in: account email follows Google or SSO: When someone's email changes at Google or at their company's identity provider, their OpenWork account moves to the new email the next time they sign in that way, so signing in with the new email opens the same account instead of creating a second one. Off: the account keeps the email it was created with. Renders DEN_FEATURE_SIGN_IN_EMAIL_SYNC."
-            },
-            "ssoOidcSetupCheck": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "SSO: check the OIDC issuer during setup: The OIDC setup form accepts the provider's issuer or its discovery URL, checks it while the administrator types and on save, shows the issuer and endpoints it found, and reports a wrong address on the field with the exact URL that was tried. Manual endpoints move behind a disclosure and reject a discovery URL as the issuer. Off: the form saves what was typed and reports discovery failures in the page banner. Renders DEN_FEATURE_SSO_OIDC_SETUP_CHECK."
-            },
             "denGreySidebar": {
               "enum": [
                 "",
@@ -190,16 +110,6 @@
                 false
               ],
               "description": "Den: grey sidebar, white pages: The Den dashboard shows its sidebar on a light grey band and every page on white, like the admin dashboard pictured on the website, instead of a white sidebar beside lightly tinted pages. Only colours change: navigation, page layouts and every control stay where they are. Turning it off restores the earlier colours at once. Renders DEN_FEATURE_DEN_GREY_SIDEBAR."
-            },
-            "denPageConsistency": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Den: predictable page interactions: Audit filters apply as they change, organization settings show Save and Discard only for unsaved changes, and team pages offer Edit team. Analytics no longer offers the separate Workflow Runs tab; existing run links still work. Turning it off restores explicit audit filtering, the persistent settings save action, and the earlier navigation. Layout polish is independent of this switch. Renders DEN_FEATURE_DEN_PAGE_CONSISTENCY."
             },
             "teamSettingsSidebar": {
               "enum": [
@@ -220,16 +130,6 @@
                 false
               ],
               "description": "Deploy-time administrator recovery: Run a one-time, operator-selected Admin-team permission repair at deployment; disabling stops future repairs, not existing grants. Renders DEN_FEATURE_ADMINISTRATOR_RECOVERY."
-            },
-            "nativeDictation": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Native dictation: Dictate editable prompts in OpenWork and Workbot using native desktop dictation or live browser speech recognition. Renders DEN_FEATURE_NATIVE_DICTATION."
             },
             "connectionMcpServers": {
               "enum": [
@@ -291,16 +191,6 @@
               ],
               "description": "Workbot: workspace assistant: Members ask Workbot about the document they have open (Ask Workbot brings it into the chat) and navigate from a compact sidebar. Workbot offers to open the documents it mentions. The chat itself stays on its own page. Renders DEN_FEATURE_WORKBOT_WORKSPACE_ASSISTANT."
             },
-            "workbotScrollToBottom": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Workbot: scroll to latest messages: People reading earlier messages keep their place while Workbot replies, with a button to return to the latest messages. Renders DEN_FEATURE_WORKBOT_SCROLL_TO_BOTTOM."
-            },
             "workbotProfileComputers": {
               "enum": [
                 "",
@@ -311,16 +201,6 @@
               ],
               "description": "Workbot: Computers in its profile: Moves the existing Devices entry into Workbot's profile as a Computers tab. The same member-scoped computers, status and Open actions remain available. Requires the profile sheet and Devices. Renders DEN_FEATURE_WORKBOT_PROFILE_COMPUTERS."
             },
-            "workbotApps": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Workbot: open artifacts from chat: An artifact that Workbot builds, changes, or opens appears as a card under its reply. Select the card to open the artifact beside the chat. Renders DEN_FEATURE_WORKBOT_APPS."
-            },
             "workbotCalmChat": {
               "enum": [
                 "",
@@ -330,16 +210,6 @@
                 false
               ],
               "description": "Workbot: calm chat look: A quieter look for Workbot's chat: a labelled sidebar with the open page as a white pill, Workbot's name and live status in one pill at the top, a narrower conversation with smaller text, a compact browser card, and a softer message box. Looks only; chats, files, browser tasks and navigation work the same. Renders DEN_FEATURE_WORKBOT_CALM_CHAT."
-            },
-            "workbotProactive": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Workbot: Your agent: Every member gets a read-only background agent that checks Gmail and Google Calendar each morning and about every three working hours, sending a short Workbot Slack DM only when needed. Members review checks and messages in My bot, tell it what they care about, narrow its hours and limits, undo changes, snooze or mute it. Admins choose its responsibilities and see aggregate 7-day health in Manage › Workbot, without member names or content. It never sends email, accepts invitations or edits data for them. Renders DEN_FEATURE_WORKBOT_PROACTIVE."
             },
             "workbotAgentBrief": {
               "enum": [
@@ -381,36 +251,6 @@
               ],
               "description": "Workbot: settings in tabs: Workbot's settings are split into three tabs, General, Agents and Data sources, instead of one long page: in Manage › Workbot and on the Workbot section of a team's page and Everyone's page. With Your agent's brief on, the Agents tab groups its rows (Messages, Schedule), uses switches for yes or no choices and explains each row in a tooltip. Turning it off restores the single page and its rows. Renders DEN_FEATURE_WORKBOT_SETTINGS_TABS."
             },
-            "workbotTeamSettings": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Workbot: settings per team: Admins can give a team its own Workbot default model and its own Workbot name, and turn Workbot on or off for everyone or for a team; teams without their own use the organization's. A member on several teams whose settings differ gets the organization's. Renders DEN_FEATURE_WORKBOT_TEAM_SETTINGS."
-            },
-            "workbotUsageAnalytics": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Workbot: cost in Analytics: Admins see what Workbot spent on models over the last 30 days in Analytics › Workbot: the total, per day, per person, per model, and split between chats, members' agents, and Slack and automations. Renders DEN_FEATURE_WORKBOT_USAGE_ANALYTICS."
-            },
-            "fileSendPermissions": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Connected accounts: one permission for files the agent sends: Drive uploads, saves back to Drive, OneDrive and SharePoint, and Gmail and Outlook drafts with attachments ask the same way: Allow once, Allow for this chat or Always allow. Admins set Allow, Ask first or Block on the Agents tab, and members revoke remembered approvals in Settings. Renders DEN_FEATURE_FILE_SEND_PERMISSIONS."
-            },
             "browserDemonstrations": {
               "enum": [
                 "",
@@ -430,26 +270,6 @@
                 false
               ],
               "description": "Desktop: computer use on remote computers: Use a Linux cloud computer with its browser and desktop in OpenWork Web, or connect a VM from Desktop. Configured and conversation-owned desktops open directly when enabled, including follow-ups and internal session renewal. Take over and Stop stay available. Renders DEN_FEATURE_REMOTE_COMPUTERS."
-            },
-            "remoteDevices": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Computers: Computers in Den lets organization owners and admins view their team's reported desktops, cloud computers, registered virtual computers and OpenWork instances, with owners, status, last contact, versions and supported inventory. My Computers in Den, Desktop Settings > Devices and Workbot's Devices page show each member their own and shared computers. Registration does not provision a computer or grant provider access. Off, these views are hidden and desktop reports stop; existing computer use and remote tasks are unchanged. Renders DEN_FEATURE_REMOTE_DEVICES."
-            },
-            "remoteSessionAccess": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Desktop: other devices can open sessions started on a computer: A member can let their other devices, Workbot and agents working for them open sessions they started on one of their own computers, continue them, stop them and answer what they wait on, not only tasks that were started remotely. Organization owners choose whether members may allow it (Manage > Computers > Remote access); each member then allows it per computer in Desktop Settings > Devices. It needs both choices and is enforced on that computer. Off, other devices reach only sessions started remotely, as before, and computers report no sessions. Renders DEN_FEATURE_REMOTE_SESSION_ACCESS."
             },
             "remoteTasksOptIn": {
               "enum": [
@@ -2252,6 +2072,186 @@
               "description": "Retired: no longer a feature switch. Ignored."
             },
             "outlookAttachments": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "claudeAgentProvider": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "webPerMember": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "localModelsPolicy": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "shareDeviceProvider": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "singleOpenWorkModelsRow": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "passwordSignInGoogle": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "signInEmailSync": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "ssoOidcSetupCheck": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "denPageConsistency": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "nativeDictation": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "workbotScrollToBottom": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "workbotApps": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "workbotProactive": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "workbotTeamSettings": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "workbotUsageAnalytics": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "fileSendPermissions": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "remoteDevices": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "remoteSessionAccess": {
               "enum": [
                 "",
                 "true",

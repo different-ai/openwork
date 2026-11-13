@@ -46,7 +46,7 @@ export function registerOrgWorkbotReadinessRoutes<T extends { Variables: OrgRout
       const organizationId = organization.id
       const chosen = readWorkbotModel(organization.metadata)
       // The caller's own default model and on/off switch: their team's when it sets one (workbotTeamSettings).
-      const workbot = await resolveMemberWorkbotSettings({ organizationId, memberId: currentMember.id, userId: currentMember.userId, organization, featureOn: features.workbotTeamSettings })
+      const workbot = await resolveMemberWorkbotSettings({ organizationId, memberId: currentMember.id, userId: currentMember.userId, organization })
       const mine = workbot.model
       const managedLuna = workbotUsesManagedDefault(mine)
         && await workbotIncludedDefaultModel({ organizationId, userId: currentMember.userId }, mine) !== null

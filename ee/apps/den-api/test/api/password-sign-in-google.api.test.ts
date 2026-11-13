@@ -33,48 +33,23 @@ async function loginOptions(email = person.email) {
   return response.body
 }
 
-async function rollout(body: { enabled?: boolean; killed?: boolean }) {
-  const response = await den.asPlatformAdmin("PUT", "/v1/admin/features/passwordSignInGoogle", body)
-  assert.equal(response.status, 200, summary(response))
-}
-
 function noGoogleOffer(body: unknown) {
   const offered = field(body, "offerGoogleOnPassword")
   assert.ok(offered === undefined || offered === false, "Google must not be offered")
 }
 
-test("default off: an organization override cannot offer Google on the public password step", async () => {
-  const baseline = await loginOptions()
-  assert.equal(field(baseline, "nextStep"), "password")
-  noGoogleOffer(baseline)
 
-  const changed = await den.setFeature(orgId, "passwordSignInGoogle", true)
-  assert.equal(changed.status, 200, summary(changed))
-  noGoogleOffer(await loginOptions())
-})
+test("configured Google is offered alongside a password without a rollout", async () => {
 
-test("deployment rollout offers Google on password even when the organization override is off", async () => {
-  const changed = await den.setFeature(orgId, "passwordSignInGoogle", false)
-  assert.equal(changed.status, 200, summary(changed))
-  await rollout({ enabled: true, killed: false })
 
   const options = await loginOptions()
   assert.equal(field(options, "nextStep"), "password")
   assert.equal(field(options, "offerGoogleOnPassword"), true)
 })
 
-test("the deployment kill switch removes the offer immediately and can restore it", async () => {
-  await rollout({ enabled: true, killed: true })
-  const killed = await loginOptions()
-  assert.equal(field(killed, "nextStep"), "password")
-  noGoogleOffer(killed)
-
-  await rollout({ killed: false })
-  assert.equal(field(await loginOptions(), "offerGoogleOnPassword"), true)
-})
 
 test("both Google credentials are needed before the password step offers Google", async () => {
-  await rollout({ enabled: true, killed: false })
+
   const original = { ...env.google }
   try {
     for (const missing of ["clientId", "clientSecret"]) {
@@ -89,7 +64,7 @@ test("both Google credentials are needed before the password step offers Google"
 })
 
 test("Google-linked accounts keep Google priority, and a new email keeps new-account routing", async () => {
-  await rollout({ enabled: true, killed: false })
+
   const linked = await den.signUp("Google Linked")
   // ARRANGE ONLY: a password account that previously linked Google successfully.
   await client.execute(
@@ -106,7 +81,7 @@ test("Google-linked accounts keep Google priority, and a new email keeps new-acc
 })
 
 test("offering Google does not verify or link an unverified password account", async () => {
-  await rollout({ enabled: true, killed: false })
+
   const [before] = await client.query("SELECT email_verified FROM user WHERE id = ?", [person.userId])
   assert.equal(Array.isArray(before) && Boolean(field(before[0], "email_verified")), false)
 
@@ -145,12 +120,11 @@ test("SSO responses stay unchanged, including when password is the SSO alternati
     [createDenTypeId("ssoConnection"), orgId, providerId, "https://idp.example.test", domain, `/sso/test-${den.stamp}`],
   )
   {
-    await rollout({ enabled: false, killed: false })
+
     const before = await loginOptions(member.email)
     assert.equal(field(before, "nextStep"), "sso")
     assert.equal(field(before, "alternativeStep"), "password")
 
-    await rollout({ enabled: true })
     const after = await loginOptions(member.email)
     assert.deepEqual(after, before)
     noGoogleOffer(after)

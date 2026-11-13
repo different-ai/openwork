@@ -685,7 +685,7 @@ function appsOf(messages: RunnerMessage[]): WorkbotAttachment[] {
   return [...apps.values()]
 }
 
-export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = new Map(), connectors: WorkbotConnectors = new Map(), options: { apps?: boolean } = {}): WorkbotTurn[] {
+export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = new Map(), connectors: WorkbotConnectors = new Map()): WorkbotTurn[] {
   const byTurn = new Map<string, RunnerMessage[]>()
   for (const message of snapshot.messages) {
     if (!message.messageId) continue
@@ -786,7 +786,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
         suggestions = split.suggestions
       }
     }
-    const outputs = [...outputsOf(files, turn.createdAt ?? null, working ? null : (turn.updatedAt ?? null)), ...(options.apps ? appsOf(messages) : [])]
+    const outputs = [...outputsOf(files, turn.createdAt ?? null, working ? null : (turn.updatedAt ?? null)), ...appsOf(messages)]
     // A report is Workbot speaking first: the task's notes to it stay hidden, and it brings back what the task made.
     const task = turn.kind === "report" ? snapshot.turns.find((entry) => entry.messageId === turn.parent) : undefined
     const visible = readWorkbotContextPrompt(readBrowserSkillRunPrompt(readBrowserTeachingPrompt(user.text)))
@@ -799,7 +799,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
       status,
       attachments: turn.kind === "report" ? [] : (user.attachments ?? []),
       outputs: task
-        ? [...new Map([...outputsOf(files, task.createdAt ?? null, task.updatedAt ?? null), ...(options.apps ? appsOf(byTurn.get(task.messageId) ?? []) : []), ...outputs].map((file) => [file.id, file])).values()]
+        ? [...new Map([...outputsOf(files, task.createdAt ?? null, task.updatedAt ?? null), ...appsOf(byTurn.get(task.messageId) ?? []), ...outputs].map((file) => [file.id, file])).values()]
         : outputs,
       reaction,
       ...(navigation.length ? { navigation } : {}),

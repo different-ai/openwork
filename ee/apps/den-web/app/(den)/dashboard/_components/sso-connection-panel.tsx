@@ -6,7 +6,7 @@ import { DenButton } from "../../_components/ui/button";
 import { DenSecretInput } from "../../_components/ui/secret-input";
 import { DenNotice } from "../../_components/ui/notice";
 import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
-import { getOrgAccessFlags, orgFeatureEnabled, parseOrgSsoPayload, type DenOrgSsoConnection } from "../../_lib/den-org";
+import { getOrgAccessFlags, parseOrgSsoPayload, type DenOrgSsoConnection } from "../../_lib/den-org";
 import { issuerProblemFromSave, manualIssuerProblem, OidcIssuerField, parseOidcIssuerCheck, type OidcIssuerCheck } from "./sso-oidc-issuer-field";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
@@ -99,8 +99,7 @@ export function SsoConnectionPanel({
   const [userInfoEndpoint, setUserInfoEndpoint] = useState("");
   const [tokenEndpointAuthentication, setTokenEndpointAuthentication] = useState<"" | "client_secret_basic" | "client_secret_post">("");
 
-  // ssoOidcSetupCheck: the issuer field checks the provider and reports on itself.
-  const setupCheck = orgFeatureEnabled(orgContext, "ssoOidcSetupCheck");
+  // The issuer field checks the provider and reports on itself.
   const [issuerCheck, setIssuerCheck] = useState<OidcIssuerCheck>({ state: "idle" });
   const issuerCheckRun = useRef(0);
 
@@ -222,7 +221,7 @@ export function SsoConnectionPanel({
       setClientId(nextConnection.oidc.clientId ?? "");
       setScopes(nextConnection.oidc.scopes.length > 0 ? nextConnection.oidc.scopes.join(" ") : "openid email profile");
       // Saved connections always store their endpoints; with the setup check the form starts from discovery again.
-      setSkipDiscovery(setupCheck ? false : nextConnection.oidc.skipDiscovery);
+      setSkipDiscovery(false);
       setAuthorizationEndpoint(nextConnection.oidc.authorizationEndpoint ?? "");
       setTokenEndpoint(nextConnection.oidc.tokenEndpoint ?? "");
       setJwksEndpoint(nextConnection.oidc.jwksEndpoint ?? "");
@@ -346,7 +345,7 @@ export function SsoConnectionPanel({
 
           const { response, payload } = await requestJson(path, { method: "POST", headers: getOrgScopedHeaders(), body: JSON.stringify(body) }, 20000);
           if (!response.ok) {
-            const issuerProblem = setupCheck && formMode === "oidc" && response.status === 400 ? issuerProblemFromSave(payload) : null;
+            const issuerProblem = formMode === "oidc" && response.status === 400 ? issuerProblemFromSave(payload) : null;
             if (issuerProblem) {
               // The issuer was refused: say so on its field, not in the page banner.
               issuerCheckRun.current += 1;
@@ -581,7 +580,7 @@ export function SsoConnectionPanel({
   }
 
   const ssoFormDisabled = formReadOnly || saving || !orgContext.entitlements.sso;
-  const oidcSetupCheck = setupCheck && formMode === "oidc";
+  const oidcSetupCheck = formMode === "oidc";
   const manualEndpointFields = (
     <>
       <label className="block text-[14px] text-gray-700 md:col-span-2">

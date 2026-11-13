@@ -69,12 +69,10 @@ async function disablePolicy(policy: DenDesktopPolicy, writes: DesktopPolicyWrit
 /** Writes the default policy and the admin-exception policy so they agree with the chosen mode. */
 export async function saveModelAccess(
   state: Pick<ModelAccessState, "defaultPolicy" | "adminExceptionPolicies">,
-  next: { mode: ModelAccessMode; adminException: boolean; zenAllowed: boolean; localAllowed?: boolean },
+  next: { mode: ModelAccessMode; adminException: boolean; zenAllowed: boolean; localAllowed: boolean },
   writes: DesktopPolicyWrites = desktopPolicyWrites,
 ) {
-  // Without the localModelsPolicy rollout `localAllowed` is omitted: leave the
-  // stored key alone so local models keep following the provider setting.
-  const local = next.localAllowed === undefined ? {} : { allowLocalModels: next.localAllowed };
+  const local = { allowLocalModels: next.localAllowed };
   const { defaultPolicy, adminExceptionPolicies } = state;
   if (!defaultPolicy) throw new Error("Default desktop policy not found.");
   const managed = next.mode === "managed";

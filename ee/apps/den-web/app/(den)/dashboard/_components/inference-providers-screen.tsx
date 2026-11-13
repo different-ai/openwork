@@ -8,7 +8,7 @@ import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { AUTOMATION_CARD_CLASS, CARD_TITLE_CLASS, SECTION_TITLE_CLASS } from "../../_components/ui/dashboard-styles";
 import { DenNotice } from "../../_components/ui/notice";
 import { autoRouterModelName, type AutoRouter, type AutoRouterRoutingState } from "@openwork/types/den/auto-router";
-import { getAiGatewayProviderRoute, getAiGatewaySmartRouterRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getAiGatewayProviderRoute, getAiGatewaySmartRouterRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FeatureIntroGate, useFeatureIntro } from "../_features/feature-intros";
 import { useAutoRouters } from "./auto-router-data";
@@ -199,9 +199,9 @@ export function GatewayProvidersSection() {
     <div>
       {error ? <DenNotice message="Could not load your providers. Your saved configuration has not changed." tone="error" presentation="inline" className="mb-6" action={<DenButton size="sm" variant="secondary" onClick={() => void reloadProviders()}>Retry</DenButton>} /> : null}
 
-      {/* Who can use models also governs personal keys and local models, so with
-          localModelsPolicy on it is reachable before any provider exists. */}
-      {empty && orgFeatureEnabled(orgContext, "localModelsPolicy") ? <div className="mb-6"><GatewayWhoCanUseModels /></div> : null}
+      {/* Who can use models also governs personal keys and local models, so it
+          is reachable before any provider exists. */}
+      {empty ? <div className="mb-6"><GatewayWhoCanUseModels /></div> : null}
       {/* With feature intros on, the AI providers intro replaces the empty state (DESIGN.md I1). */}
       <FeatureIntroGate introKey="ai-gateway.ai-providers" facts={loaded ? { providers: inferenceProviders.length } : null}>
         {empty ? <EmptyState orgSlug={orgSlug} /> : (

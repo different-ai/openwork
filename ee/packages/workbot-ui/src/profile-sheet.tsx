@@ -50,7 +50,7 @@ export function ProfileSheet({ open, onClose, name, activity, initialTab = "task
   }
   const tabId = useId();
 
-  const computers = workbotHost().profileComputers === true && workbotHost().devices === true;
+  const computers = workbotHost().profileComputers === true;
   const tabs = TABS.filter((entry) => computers || entry.id !== "computers");
   if (!tabs.some((entry) => entry.id === tab)) setTab("tasks");
   const drag = useSheetDrag(onClose);

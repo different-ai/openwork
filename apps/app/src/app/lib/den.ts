@@ -3291,7 +3291,7 @@ export function createDenClient(options: {
       }
     },
 
-    /** The computers the member can reach through OpenWork (feature `remoteDevices`). */
+    /** The computers the member can reach through OpenWork. */
     async listRemoteDevices(orgId: string): Promise<RemoteDevice[]> {
       return remoteDeviceListResponseSchema.parse(await requestJson<unknown>(baseUrls, "/v1/remote-devices", {
         method: "GET", token, organizationId: orgId,
@@ -3550,8 +3550,8 @@ export function createDenClient(options: {
     },
 
     /**
-     * What the caller may share from this device with the organization (feature
-     * shareDeviceProvider). null when the feature is off or Den predates it, so
+     * What the caller may share from this device with the organization.
+     * null when Den predates this endpoint, so
      * the app offers nothing. Never carries a key.
      */
     async getDeviceShareOptions(orgId: string, providerIds: readonly string[]): Promise<DeviceShareOptions | null> {

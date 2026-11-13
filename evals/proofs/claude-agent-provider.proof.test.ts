@@ -1,9 +1,8 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import type { Probe, User } from "@openwork/testkit";
-import { claudeAgentDisabled, claudeAgentLoggedOut, claudeAgentMissing, claudeAgentSaved } from "../worlds/claude-agent-provider.ts";
+import { claudeAgentLoggedOut, claudeAgentMissing, claudeAgentSaved } from "../worlds/claude-agent-provider.ts";
 
-const disabled = spec.world(claudeAgentDisabled, { timeout: 300_000, resources: { surfaces: ["appWeb"], services: [] }, needs: { commands: ["bun"] } });
 const loggedOut = spec.world(claudeAgentLoggedOut, { timeout: 300_000, resources: { surfaces: ["appWeb"], services: [] }, needs: { commands: ["bun"] } });
 const missing = spec.world(claudeAgentMissing, { timeout: 300_000, resources: { surfaces: ["appWeb"], services: [] }, needs: { commands: ["bun"] } });
 const saved = spec.world(claudeAgentSaved, { timeout: 300_000, resources: { surfaces: ["appWeb"], services: [] }, needs: { commands: ["bun"] } });
@@ -162,45 +161,6 @@ missing("a person without Claude Code installed is told to install it", async ({
     const inputs = (await probe.dom('[role="dialog"] input')).elements.length;
     expect(inputs).toBe(0);
     evidence.recordAssertionEvidence("Recovery stays credential-free", `inputs=${inputs}`, inputs === 0);
-    await user.screenshot();
-  });
-});
-
-disabled("a person without the feature sees no Claude Code anywhere", async ({ world, user, probe, step, evidence }) => {
-  await user.resizeViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
-  await step("before: AI Providers has no Claude Code row", async () => {
-    await user.navigate(world.settingsUrl);
-    await user.see({ role: "button", label: "Connect a provider" }, { timeoutMs: WITHIN });
-    await user.notSee({ testId: "local-provider-claude-agent" });
-    const page = await rowText(probe, "main");
-    expect(page).not.toContain("Claude");
-    evidence.recordAssertionEvidence("Nothing about Claude Code on the page", `page mentions Claude: ${page.includes("Claude")}`, !page.includes("Claude"));
-    await user.screenshot();
-  });
-  await step("Connect a provider has no Claude entry and nothing locked", async () => {
-    // Where the engine's provider list cannot be read, Connect a provider stays
-    // unavailable exactly as it was before Claude Code existed.
-    const available = (await probe.dom('button:not([disabled])')).elements.some(element => element.text.includes("Connect a provider"));
-    let dialog = "";
-    if (available) {
-      await user.click({ role: "button", label: "Connect a provider" });
-      await user.type({ label: "Search providers" }, "Claude");
-      dialog = await probe.eventually(() => rowText(probe, '[role="dialog"]'), { within: WITHIN, label: "search results", until: value => value.length > 0 });
-      await user.press("Escape");
-    }
-    await user.see({ role: "button", label: "Connect a provider" });
-    expect(dialog).not.toMatch(/Claude Agent|Claude Code|administrator/);
-    expect((await probe.dom('[data-provider-id="claude-agent"], svg.lucide-lock')).elements).toHaveLength(0);
-    evidence.recordAssertionEvidence("No Claude entry, no lock and no administrator notice", available ? `searched "Claude": ${dialog.slice(0, 160)}` : "Connect a provider unavailable: the engine's provider list could not be read", !/Claude Agent|Claude Code|administrator/.test(dialog));
-    await user.screenshot();
-  });
-  await step("after: nothing was connected and Claude Code was never started", async () => {
-    await user.see({ role: "button", label: "Connect a provider" });
-    const connections = await world.integration();
-    const audit = await world.audit();
-    expect(connections).toHaveLength(0);
-    expect(audit).toHaveLength(0);
-    evidence.recordAssertionEvidence("No connection and no Claude Code process", `connections=${connections.length}; executable events=${audit.length}`, connections.length === 0 && audit.length === 0);
     await user.screenshot();
   });
 });

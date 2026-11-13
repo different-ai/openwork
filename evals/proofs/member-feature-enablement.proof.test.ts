@@ -12,7 +12,7 @@ test("a platform admin enables a feature for one organization member", async ({ 
     await admin.see({ role: "heading", label: "Feature pilot workspace" }, { timeoutMs: 60_000 });
     await admin.click({ testId: `admin-member-features-${world.memberId}` });
     await admin.see({ testId: "admin-member-feature-editor" });
-    await admin.see({ testId: "admin-capability-source-workbotProactive" }, { text: "Set for this organization" });
+    await admin.see({ testId: "admin-capability-source-workbotDocuments" }, { text: "Set for this organization" });
     const state = await world.state();
     expect(state).toEqual({ pilot: false, peer: false, override: null });
     evidence.recordAssertionEvidence("Both members use the organization setting", JSON.stringify(state), state.pilot === false && state.peer === false && state.override === null);
@@ -20,9 +20,9 @@ test("a platform admin enables a feature for one organization member", async ({ 
   });
 
   await step("after: the admin enables the feature for the selected member only", async () => {
-    await admin.click({ testId: "admin-capability-workbotProactive" });
-    await admin.see({ testId: "admin-capability-source-workbotProactive" }, { text: "Set for this member" });
-    await admin.see({ testId: "admin-capability-last-change-workbotProactive" }, { text: /On for this member by/ });
+    await admin.click({ testId: "admin-capability-workbotDocuments" });
+    await admin.see({ testId: "admin-capability-source-workbotDocuments" }, { text: "Set for this member" });
+    await admin.see({ testId: "admin-capability-last-change-workbotDocuments" }, { text: /On for this member by/ });
     const state = await adminProbe.eventually(() => world.state(), { within: 10_000, until: value => value.pilot === true, label: "member feature enabled" });
     expect(state).toEqual({ pilot: true, peer: false, override: true });
     evidence.recordAssertionEvidence("Only the selected member receives the feature", JSON.stringify(state), state.pilot === true && state.peer === false && state.override === true);
@@ -32,10 +32,10 @@ test("a platform admin enables a feature for one organization member", async ({ 
   await step("the member's setting survives refresh and can return to the organization setting", async () => {
     await admin.reload();
     await admin.click({ testId: `admin-member-features-${world.memberId}` });
-    await admin.see({ testId: "admin-capability-source-workbotProactive" }, { text: "Set for this member" });
-    await admin.click({ testId: "admin-capability-reset-workbotProactive" });
-    await admin.see({ testId: "admin-capability-source-workbotProactive" }, { text: "Set for this organization" });
-    await admin.see({ testId: "admin-capability-last-change-workbotProactive" }, { text: /Reset to the organization setting by/ });
+    await admin.see({ testId: "admin-capability-source-workbotDocuments" }, { text: "Set for this member" });
+    await admin.click({ testId: "admin-capability-reset-workbotDocuments" });
+    await admin.see({ testId: "admin-capability-source-workbotDocuments" }, { text: "Set for this organization" });
+    await admin.see({ testId: "admin-capability-last-change-workbotDocuments" }, { text: /Reset to the organization setting by/ });
     const state = await adminProbe.eventually(() => world.state(), { within: 10_000, until: value => value.override === null, label: "organization inheritance restored" });
     expect(state).toEqual({ pilot: false, peer: false, override: null });
     evidence.recordAssertionEvidence("Reset restores organization inheritance", JSON.stringify(state), state.pilot === false && state.peer === false && state.override === null);

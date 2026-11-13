@@ -17,7 +17,6 @@ export const meSchema = z.object({
   calendar: z.boolean().default(false),
   documents: z.boolean().default(false),
   documentEditing: z.boolean().default(false),
-  nativeDictation: z.boolean().default(false),
   workspaceAssistant: z.boolean().default(false),
   guidedNavigation: z.boolean().default(false),
   usageRecovery: z.boolean().default(false),
@@ -27,13 +26,9 @@ export const meSchema = z.object({
   canSchedule: z.boolean().default(false),
   /** Side chats are on for this person (while Workbot is on). */
   sideChats: z.boolean().default(false),
-  /** Reading earlier messages keeps its place (`workbotScrollToBottom`); older servers omit it. */
-  scrollToBottom: z.boolean().default(false),
   profileComputers: z.boolean().default(false),
   /** Calm chat look (`workbotCalmChat`); absent means off. */
   calmChat: z.boolean().default(false),
-  /** The Devices page (`remoteDevices`, while Workbot is on); absent means off. */
-  devices: z.boolean().default(false),
   denUrl: z.string().nullable(),
 })
 export type Me = z.infer<typeof meSchema>
@@ -143,9 +138,7 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     computer: me.computer,
     browser: me.browser,
     browserDemonstrations: me.browserDemonstrations,
-    scrollToBottom: me.scrollToBottom,
     documentEditing: me.documents && me.documentEditing,
-    nativeDictation: me.nativeDictation,
     workspaceAssistant: me.workspaceAssistant,
     guidedNavigation: me.workspaceAssistant && me.guidedNavigation,
     usageRecovery: me.denUrl && me.organizationId ? { denUrl: me.denUrl, organizationId: me.organizationId } : undefined,
@@ -162,7 +155,6 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     sideChats: me.sideChats,
     profileComputers: me.profileComputers,
     calmChat: me.calmChat,
-    devices: me.devices,
     account: { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace },
     identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
   }

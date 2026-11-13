@@ -13,25 +13,9 @@ test("a member sees what their agent did and why it stayed quiet, and changes it
   const agent = async () => memberAgentViewSchema.parse((await probe.api(world.den.members.member, "/v1/me/agent")).body);
   const checked = (testId: string) => probe.dom(`[data-testid="${testId}"] button[role="switch"][aria-checked="true"]`);
 
-  await step("before: with Your agent off, the sidebar has no agent and its API and chat refuse access", async () => {
-    await user.see({ role: "heading", label: "My Library" }, { timeoutMs: 90_000 });
-    await user.notSee({ testId: "dashboard-nav-my-bot" });
-    await user.notSee({ testId: "my-agent-row" });
-    const hidden = await probe.api(world.den.members.member, "/v1/me/agent");
-    const said = await world.sayInChat("putMeAgent", { preferences: { when: "Mornings only" } });
-    evidence.recordAssertionEvidence(
-      "Your agent is off: its API and chat changes are refused",
-      `GET /v1/me/agent status=${hidden.response.status}; putMeAgent with words → refused=${!said.ok} ${JSON.stringify(said.body).slice(0, 90)}`,
-      hidden.response.status === 404 && !said.ok,
-    );
-    expect(hidden.response.status).toBe(404);
-    expect(said.ok).toBe(false);
-    await user.screenshot();
-  });
 
-  await step("after: My bot appears in the Work sidebar, not in the Library, and reads the agent's own records", async () => {
-    await world.turnOnMyAgent();
-    await user.reload();
+  await step("My bot appears in the Work sidebar, not in the Library, and reads the agent's own records", async () => {
+    await user.see({ role: "heading", label: "My Library" }, { timeoutMs: 90_000 });
     await user.see({ testId: "dashboard-nav-my-bot" }, { timeoutMs: 60_000 });
     await user.see({ role: "tab", label: "All" });
     await user.notSee({ testId: "my-agent-row" });
