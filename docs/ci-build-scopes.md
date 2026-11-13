@@ -304,9 +304,11 @@ auto-deploys have usually made the commit live already), without deploying.
      `workbot` and `client-web`, and on the suspended services that still have
      it on (`api`, `inference`, `inference-west`, `den-api-west`,
      `den-legacy-migrator-temp`, `den-mysql-core`).
-   - Vercel: add `"git": { "deploymentEnabled": { "dev": false } }` to the
+   - Vercel: `"git": { "deploymentEnabled": { "dev": false } }` in the
      `vercel.json` of `ee/apps/den-web`, `apps/app`, `ee/apps/landing` and
-     `ee/apps/diagnostics`. PR previews keep building.
+     `ee/apps/diagnostics` (done; `production-deploy.test.mjs` keeps it so).
+     PR previews keep building. Until the mode is `deploy`, nothing deploys
+     these projects' production from dev.
    - Set the repository variable `PRODUCTION_DEPLOY_MODE` to `deploy`.
 4. To deploy a dev commit by hand, or to roll forward after a fix, run
    **Actions → Production deploy → Run workflow** with mode `deploy` and an
