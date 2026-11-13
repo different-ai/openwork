@@ -414,7 +414,7 @@ jobs:
     name: Build the desktop app (Electron typecheck and server bundle)
     needs: classify-changes
     if: needs.classify-changes.outputs.core == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: blacksmith-8vcpu-ubuntu-2204
     timeout-minutes: 10
     steps:
       - name: Checkout
