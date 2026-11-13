@@ -29,6 +29,14 @@ test("every target names a build input target and the Vercel ones their app's ve
   assert.equal(TARGETS["api-private"].migrations, true);
 });
 
+test("Vercel does not also deploy dev from Git: production-deploy.yml does", () => {
+  for (const [name, spec] of Object.entries(TARGETS)) {
+    if (spec.provider !== "vercel") continue;
+    const config = JSON.parse(readFileSync(new URL(`../../${spec.rootDirectory}/vercel.json`, import.meta.url), "utf8"));
+    assert.equal(config.git?.deploymentEnabled?.dev, false, name);
+  }
+});
+
 test("each Vercel app deploys for its own source and not for another app's", () => {
   assert.equal(isBuildAffected("vercel-landing", ["ee/apps/landing/app/page.tsx"]), true);
   assert.equal(isBuildAffected("vercel-landing", ["packages/email/src/index.ts"]), true);
