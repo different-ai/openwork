@@ -13,7 +13,7 @@ import { loadProviderAudit, providerAuditMutation, providerSystemAuditContext, r
 import { recheckAuditEntitlement } from "../audit/capture.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
-import { bedrockSettingsError, isAwsGatewayNpm, buildGatewayModelConfig, buildGatewayProviderConfig, buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "./inference-provider-config.js"
+import { bedrockSettingsError, microsoftFoundrySettingsError, isAwsGatewayNpm, buildGatewayModelConfig, buildGatewayProviderConfig, buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "./inference-provider-config.js"
 import { gatewayMemberSignInMethod, memberSignInConfigurationError, memberSignInCredentialKind, memberSignInCredentialUsable, memberSignInExtraneousFields, readAwsSsoSettings, sameMemberSignInConfiguration } from "./gateway-member-sign-in.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
 import { liteLlmCatalogProvider, liteLlmStatus, readLiteLlmSettings } from "./litellm-settings.js"
@@ -49,6 +49,8 @@ export function validateGatewaySettings(config: Record<string, unknown>, setting
   if (config.id === MICROSOFT_FOUNDRY_PROVIDER_ID && !isMicrosoftFoundryResourceName(settings.resourceName)) {
     throw new GatewayWriteError(400, "invalid_settings", "Microsoft Foundry requires the Foundry resource name, the first part of https://<resource>.services.ai.azure.com.")
   }
+  const foundryError = config.id === MICROSOFT_FOUNDRY_PROVIDER_ID ? microsoftFoundrySettingsError(settings) : null
+  if (foundryError) throw new GatewayWriteError(400, "invalid_settings", foundryError)
   if (npm === "@ai-sdk/azure" && (typeof settings.resourceName !== "string" || !/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(settings.resourceName))) {
     throw new GatewayWriteError(400, "invalid_settings", "Azure requires a resourceName DNS label.")
   }

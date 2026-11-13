@@ -7,6 +7,7 @@ import { GatewayProviderModelTable, GatewayProviderTable } from "@openwork-ee/de
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
 import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
+import { isMicrosoftFoundryOverrideAllowed } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import { isLiteLlmProviderId, liteLlmSpendTrackingEnabled } from "@openwork-ee/utils/litellm-catalog"
 import { isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
@@ -267,10 +268,21 @@ function awsUpstreamBase(family: "bedrock" | "bedrock_mantle", settings: Record<
   return override === undefined ? defaultBaseUrl(family, settings) : override
 }
 
+// Microsoft Foundry egress is <resource>.services.ai.azure.com. The request can
+// carry a member's own Entra ID token, so catalog URLs and admin-entered hosts
+// never choose it: a saved override is used only on that same origin or on an
+// operator-allowlisted one, and any other saved override is refused.
+function foundryUpstreamBase(settings: Record<string, unknown>) {
+  const override = settings.upstreamBaseUrl
+  if (typeof override !== "string" || !override) return defaultBaseUrl("microsoft_foundry", settings)
+  return isMicrosoftFoundryOverrideAllowed(settings.resourceName, override, inferenceEgressAllowedOrigins()) ? override : null
+}
+
 function upstreamBase(provider: GatewayProvider, catalog: CatalogProvider | null, family: ProtocolFamily) {
   if (family === "google_vertex") return vertexPublisherBase(provider.settings, "google")
   if (family === "google_vertex_anthropic") return vertexPublisherBase(provider.settings, "anthropic")
   if (isAwsFamily(family)) return awsUpstreamBase(family, provider.settings)
+  if (family === "microsoft_foundry") return foundryUpstreamBase(provider.settings)
   return readBaseUrl(provider, catalog, family)
 }
 
@@ -282,7 +294,9 @@ function resolveUpstream(provider: GatewayProvider, catalog: CatalogProvider | n
     return {
       error: family === "google_vertex" || family === "google_vertex_anthropic"
         ? "Vertex providers require settings.project and settings.location."
-        : `Provider ${provider.provider_id} has no upstream base URL.`,
+        : family === "microsoft_foundry"
+          ? "Microsoft Foundry providers reach their own resource; settings.resourceName is required and a custom upstream URL must be an operator-approved origin."
+          : `Provider ${provider.provider_id} has no upstream base URL.`,
     }
   }
   const forwardedRest = family === "google_vertex" || family === "google_vertex_anthropic" || family === "bedrock_mantle" ? stripApiVersionPrefix(rest) : rest
