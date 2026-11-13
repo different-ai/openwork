@@ -138,6 +138,8 @@ export const RETIRED_FEATURE_KEYS = [
   "teamSettingsSidebar",
   // Generally available (2026-11): Workbot settings tabs; sample Slack stays cloud-sandbox-only.
   "workbotSettingsTabs", "sandboxSlack",
+  // Generally available (2026-11): choosing a new sandbox's models; stays cloud-sandbox-only.
+  "sandboxModelChoice",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

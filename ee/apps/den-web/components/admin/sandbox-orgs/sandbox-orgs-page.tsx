@@ -56,7 +56,7 @@ export function SandboxOrgsPage() {
   const savingRef = useRef(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [notice, setNotice] = useState("");
-  // sandboxModelChoice: the admin picks this sandbox's AI Gateway models instead of the deployment's list.
+  // The admin picks this sandbox's AI Gateway models, starting from the deployment's list.
   const canChooseModels = Boolean(data?.defaults?.modelChoice && data.defaults.gatewayModels.length);
   // The models to pick from, loaded when the form first opens. null while loading; available false when it failed.
   const [modelOptions, setModelOptions] = useState<SandboxModelOptions | null>(null);
