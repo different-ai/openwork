@@ -46,11 +46,34 @@ already unarchived stay unarchived; disabling the feature does not undo work.
 5. Turn the feature off and verify that another archived conversation uses the
    existing read-only view. Do not enable it globally merely to run a test.
 
+## Screenshots
+
+Captured from the real app in headless Chrome against isolated Den and native
+OpenCode v2; only the model responses are scripted.
+
+Off: the existing read-only archive remains unchanged.
+
+![Feature off: archived conversation with Restore](./flag-off.png)
+
+On: drafting leaves the conversation archived, with the normal composer.
+
+![Feature on: draft in an archived conversation](./archived-draft.png)
+
+Sending unarchives the same conversation and adds one follow-up.
+
+![The follow-up is answered in the same conversation](./follow-up-sent.png)
+
 ## Verification
 
-The focused archived-composer tests cover restore-before-send, draft preservation
-and duplicate-send guards. The real-product proof is
-`evals/proofs/archived-session-compose.proof.test.ts`.
+The focused archived-composer tests cover restore-before-send, timeout and
+cancellation cleanup of real shared send claims/holds, identity and agent
+capture, and late-receipt exclusion. Restore failures occur before the normal
+composer-clearing/submission path. Existing send failures retain normal recovery.
+
+`evals/proofs/archived-session-compose.proof.test.ts` exercises both flag states
+through the real UI, drafting without restoration, exactly-one follow-up,
+unchanged earlier work and neighboring conversations, group retention and reload.
+It does not inject a restore transport failure; that boundary is unit-tested.
 
 Design: continuity and draft preservation (P11), outcome-specific action labels
 (C1–C2), neutral archive state (C5/V2), and the existing composer controls (P5/T5).
