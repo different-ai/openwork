@@ -112,7 +112,7 @@ Revert this code change to restore the switches and their checks. Their historic
 ## Flags intentionally retained
 
 November 2026 follow-up: `teamSettingsSidebar` was removed; `workbotSettingsTabs`
-and Cloud sandbox-only `sandboxSlack` became standard behavior without rollout switches.
+and Cloud sandbox-only `sandboxSlack` and `sandboxModelChoice` became standard behavior without rollout switches.
 
 These remain controlled rollouts or operational switches. Neither a stale code default nor a single-organization override is sufficient evidence of GA. The 18 deployment-wide completed rollouts listed in the second-pass guide are no longer in this registry.
 

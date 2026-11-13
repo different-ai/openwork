@@ -36,7 +36,6 @@ import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { createOrganizationForUser, isEmailAllowedForOrganization, updateOrganizationMemberRole } from "./orgs.js"
 import { getInvitationOrigin } from "./routes/org/shared.js"
-import { deploymentFeatureEnabled } from "./features.js"
 import { addSandboxMicrosoft365, SANDBOX_MICROSOFT_APP_KEYS, SANDBOX_MICROSOFT_EXTERNAL_KEY, SandboxMicrosoftUnavailableError } from "./sandbox-microsoft-365.js"
 import { getExternalMcpConnectionByExternalKey } from "./capability-sources/external-mcp-connections.js"
 import { addSandboxSlack, SANDBOX_SLACK_EXTERNAL_KEY, SandboxSlackUnavailableError } from "./sandbox-slack.js"
@@ -242,11 +241,6 @@ export async function closeExpiredSandboxes(now = new Date()) {
   }
 }
 
-/** Whether a platform admin may choose a new sandbox's models: `sandboxModelChoice` is on and the deployment has a sandbox model key. */
-async function sandboxModelChoiceOn() {
-  return sandboxGatewayConfigured() && await deploymentFeatureEnabled("sandboxModelChoice")
-}
-
 export async function sandboxDefaults(): Promise<SandboxDefaults> {
   const gateway = sandboxGatewayConfigured() ? env.sandbox.gateway : null
   return {
@@ -254,16 +248,17 @@ export async function sandboxDefaults(): Promise<SandboxDefaults> {
     gatewayModels: gateway?.modelIds ?? [],
     gatewayProviderId: gateway?.providerId ?? null,
     creditUsd: sandboxMintsModelKeys() ? gateway?.creditUsd ?? null : null,
-    modelChoice: await sandboxModelChoiceOn(),
+    modelChoice: sandboxGatewayConfigured(),
   }
 }
 
 /**
- * The models a platform admin can choose for a new sandbox, for the New sandbox form. Null when choosing is off.
+ * The models a platform admin can choose for a new sandbox, for the New sandbox form. Null when the deployment
+ * has no sandbox model key, so there is nothing to choose.
  * A catalog that cannot be read is not an error here: the form still takes typed ids, checked on create.
  */
 export async function sandboxModelOptions(): Promise<SandboxModelOptions | null> {
-  if (!await sandboxModelChoiceOn()) return null
+  if (!sandboxGatewayConfigured()) return null
   const providerId = env.sandbox.gateway?.providerId
   if (!providerId) return null
   try {
@@ -290,7 +285,7 @@ export async function getSandbox(id: DenTypeId<"sandboxOrganization">): Promise<
  * Creates an ordinary organization owned by the admin, then makes it a sandbox: the Enterprise plan until it
  * ends, included models on (Workbot defaults to them), Free Auto until the sandbox closes or expires, AI Gateway
  * models for everyone (from the sandbox's own capped OpenRouter key when the deployment mints them, else the
- * shared sandbox key; the deployment's list, or `modelIds` when `sandboxModelChoice` is on), one per-person OAuth connector for each fictional workplace app, and a join link. Every
+ * shared sandbox key; the deployment's list, or `modelIds` when the admin chose them), one per-person OAuth connector for each fictional workplace app, and a join link. Every
  * member connects their own account, so each person's workplace data stays separate.
  *
  * On cloud deployments, Outlook, Calendar and Drive come as one Microsoft 365 connector signed in at the
@@ -311,7 +306,7 @@ export async function createSandbox(actor: UserId, input: SandboxCreateInput, op
   if (env.orgMode === "single_org") throw new SandboxInputError("This deployment has one organization; sandboxes need multi-organization mode.")
   // Chosen models are checked before the organization exists: a mistyped id must not leave a sandbox without models.
   if (input.modelIds) {
-    if (!await sandboxModelChoiceOn()) throw new SandboxInputError("Choosing a sandbox's models is not turned on for this deployment.")
+    if (!sandboxGatewayConfigured()) throw new SandboxInputError("This deployment has no sandbox model key, so a sandbox's models cannot be chosen.")
     try { await assertSandboxGatewayModels(input.modelIds) }
     catch (error) {
       if (error instanceof GatewayWriteError) throw new SandboxInputError(error.message)

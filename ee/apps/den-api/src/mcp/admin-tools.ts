@@ -854,7 +854,7 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
         allowedEmailDomains: z.array(z.string()).max(20).optional().describe("Only people with these email domains can join; omitted means anyone with the link"),
         joinRole: z.enum(["member", "admin", "super-admin"]).optional().describe("What people who join become; default super-admin"),
         withConnectors: z.boolean().optional().describe("Add the fictional workplace connectors (default true)"),
-        modelIds: z.array(z.string()).min(1).max(SANDBOX_MAX_MODELS).optional().describe("AI Gateway models this sandbox gets, as ids from the sandbox provider's catalog; omitted uses the deployment's list (defaults.gatewayModels). Only when den_sandbox_list returns defaults.modelChoice true."),
+        modelIds: z.array(z.string()).min(1).max(SANDBOX_MAX_MODELS).optional().describe("AI Gateway models this sandbox gets, as ids from the sandbox provider's catalog; omitted uses the deployment's list (defaults.gatewayModels). Needs a sandbox model key on the deployment: den_sandbox_list returns defaults.modelChoice true."),
       }),
     },
     async ({ name, days, memberLimit, creditUsd, allowedEmailDomains, joinRole, withConnectors, modelIds }) =>

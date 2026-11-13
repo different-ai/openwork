@@ -41,7 +41,7 @@ export const sandboxCreateInputSchema = z.object({
   creditUsd: creditUsdSchema.optional(),
   /**
    * AI Gateway models this sandbox gets, as ids in the deployment's sandbox provider catalog. Omitted uses the
-   * deployment's list. Needs `sandboxModelChoice` on and a sandbox model key on the deployment.
+   * deployment's list. Needs a sandbox model key on the deployment.
    */
   modelIds: z.array(z.string().trim().min(1).max(200)).min(1).max(SANDBOX_MAX_MODELS).optional(),
 }).strict();
@@ -94,7 +94,7 @@ export const sandboxDefaultsSchema = z.object({
   gatewayProviderId: z.string().nullable(),
   /** Default cap for each sandbox's own model key; null when sandboxes share the deployment's key. Older servers omit it. */
   creditUsd: z.number().nullable().optional(),
-  /** Whether a new sandbox's models can be chosen (`modelIds`); otherwise it gets gatewayModels. Older servers omit it. */
+  /** Whether a new sandbox's models can be chosen (`modelIds`): the deployment has a sandbox model key. Older servers omit it. */
   modelChoice: z.boolean().optional(),
 });
 
