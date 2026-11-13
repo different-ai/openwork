@@ -41,7 +41,7 @@ export function signIn() {
 
 /** Ends this browser's Workbot sign-in, then shows the signed-out page (never straight back into sign-in). */
 export async function signOut() {
-  const response = await fetch("/auth/logout", { method: "POST", credentials: "same-origin", signal: AbortSignal.timeout(15_000) }).catch(() => null)
+  const response = await fetch("/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => null)
   // Never say signed out while the sign-in cookie may still be there.
   if (!response?.ok) throw new Error("Workbot couldn't sign you out. Check your connection and try again.")
   // Chats kept on this device for instant opening leave with the person.
