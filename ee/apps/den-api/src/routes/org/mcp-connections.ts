@@ -21,7 +21,6 @@ import { and, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,
   ConfigObjectTable,
-  MemberTable,
   PluginConfigObjectTable,
   PluginTable,
   type ExternalMcpOAuthConfiguration,
@@ -111,7 +110,16 @@ import { externalMcpAppResourceUri } from "../../mcp/external-capabilities.js"
 import { EXECUTE_CAPABILITY_TOOL_NAME, SEARCH_CAPABILITIES_TOOL_NAME } from "../../mcp/search.js"
 import { listNativeProviderUsableEntries } from "../../capability-sources/native-provider-connections.js"
 import { getNativeOAuthProvider } from "../../capability-sources/provider-registry.js"
-import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
+import { connectCallbackPage, connectConfirmationPage } from "../../capability-sources/oauth-callback-page.js"
+import {
+  OAUTH_CALLBACK_CONFIRMATION_PARAM,
+  OAUTH_CALLBACK_OTHER_ACCOUNT_MESSAGE,
+  checkOAuthCallbackStarter,
+  createOAuthCallbackConfirmation,
+  loadOAuthCallbackStarter,
+  oauthCallbackConfirmationResponse,
+  oauthCallbackSessionUserId,
+} from "../../capability-sources/oauth-callback-starter.js"
 import { workbotConnectReturn, workbotCallbackReturn } from "../../workbot/connect-return.js"
 import { getConnectedAccount, getConnectedAccountsForListing, getOrgOAuthClient, getOrgOAuthClientFromPrimary, getOrgOAuthClients, upsertOrgOAuthClient, type ConnectedAccountRow, type OrgOAuthClientRow } from "../../capability-sources/oauth-credentials.js"
 import { assertPublicUrl, createGuardedFetch, createRealmSafeFetch } from "../../capability-sources/url-guard.js"
@@ -1617,6 +1625,8 @@ async function handleExternalMcpOAuthCallback(input: {
   request: Request
   requestId: string
   scopedConnectionId?: string
+  /** The OpenWork user signed in to the browser that received the provider's reply, if any. */
+  sessionUserId: string | null
   /** Audit attribution once the signed state, connection and member are verified; a Response (503) aborts. */
   attribute?: (owner: { organizationId: string; memberId: string; userId: string | null }) => Promise<Response | null>
 }): Promise<Response> {
@@ -1653,29 +1663,54 @@ async function handleExternalMcpOAuthCallback(input: {
   } catch {
     return invalidMcpOAuthCallback("Invalid or expired state.")
   }
-  const [connection, members] = await Promise.all([
+  const [connection, starter] = await Promise.all([
     // primary: the provider can redirect back instantly, before a replica has
     // the verifier and configuration the authorization start just saved.
     getExternalMcpConnection({
       organizationId: statePayload.organizationId,
       connectionId,
     }, db.$primary),
-    db.select({ id: MemberTable.id, userId: MemberTable.userId })
-      .from(MemberTable)
-      .where(and(
-        eq(MemberTable.id, statePayload.orgMembershipId),
-        eq(MemberTable.organizationId, statePayload.organizationId),
-        isNull(MemberTable.removedAt),
-      ))
-      .limit(1),
+    loadOAuthCallbackStarter({ organizationId: statePayload.organizationId, orgMembershipId: statePayload.orgMembershipId }),
   ])
-  if (!connection || !members[0]) {
+  if (!connection || !starter) {
     return invalidMcpOAuthCallback("Unknown authorization transaction.")
   }
   if (connection.kind !== "external_mcp") {
     return invalidMcpOAuthCallback("Native provider connectors do not use the external MCP OAuth callback.")
   }
-  const auditBlocked = await input.attribute?.({ organizationId: statePayload.organizationId, memberId: members[0].id, userId: members[0].userId })
+  // Signed state names who started this connection, not who approved it at the
+  // provider. Nothing is exchanged, stored or recorded until the browser agrees.
+  const code = url.searchParams.get("code")
+  const starterCheck = checkOAuthCallbackStarter({
+    starterUserId: starter.userId,
+    sessionUserId: input.sessionUserId,
+    state,
+    code: url.searchParams.has("error") ? null : code,
+    confirmation: url.searchParams.get(OAUTH_CALLBACK_CONFIRMATION_PARAM),
+    secret: env.betterAuthSecret,
+  })
+  if (starterCheck === "other_account") {
+    logger.warn("external_mcp_connect_callback_other_account_refused", {
+      connection_id: connection.id,
+      organization_id: statePayload.organizationId,
+    })
+    return mcpOAuthCallbackHtml(completionPage({ ok: false, name: connection.name, message: OAUTH_CALLBACK_OTHER_ACCOUNT_MESSAGE }), 403)
+  }
+  if (starterCheck === "confirm" && code) {
+    const responseIssuer = url.searchParams.get("iss")
+    return oauthCallbackConfirmationResponse(connectConfirmationPage({
+      name: connection.name,
+      accountEmail: starter.email,
+      organizationName: starter.organizationName,
+      fields: {
+        code,
+        state,
+        ...(responseIssuer !== null ? { iss: responseIssuer } : {}),
+        confirm: createOAuthCallbackConfirmation({ state, code, secret: env.betterAuthSecret }),
+      },
+    }, workbotCallbackReturn(statePayload.workbotReturn, statePayload.providerId)))
+  }
+  const auditBlocked = await input.attribute?.({ organizationId: statePayload.organizationId, memberId: starter.memberId, userId: starter.userId })
   if (auditBlocked) return auditBlocked
   // The completion page never tells the opener why; the apps read this instead.
   const recordConnectFailure = async (diagnostic: ExternalMcpDiagnostic) => {
@@ -1811,7 +1846,6 @@ async function handleExternalMcpOAuthCallback(input: {
     }), 400)
   }
 
-  const code = url.searchParams.get("code")
   if (!code) {
     try {
       await abandonAuthorization(connection, state, member, input.requestId)
@@ -4362,16 +4396,18 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       tags: ["Authentication"],
       security: [],
       summary: "Shared OAuth callback for External MCP Connections",
-      description: "Deployment-wide callback. Organization, member, and connection routing are derived exclusively from signed state.",
+      description: "Deployment-wide callback. Organization, member, and connection routing are derived exclusively from signed state. The code is exchanged only for the person who started the connection: a browser signed in to OpenWork as someone else is refused, and a browser with no OpenWork session is first shown the account the connection belongs to and must confirm.",
       responses: {
-        200: htmlResponse("Connected — a static success page."),
+        200: htmlResponse("Connected, or a confirmation page naming the account before anything is exchanged."),
         400: jsonResponse("Missing or invalid code/state.", invalidRequestSchema),
+        403: htmlResponse("The browser is signed in to OpenWork as a different account than the one that started the connection."),
       },
     }),
     publicRoute,
     async (c) => handleExternalMcpOAuthCallback({
       request: c.req.raw,
       requestId: c.get("requestId"),
+      sessionUserId: oauthCallbackSessionUserId(c),
       attribute: (owner) => attributeOAuthCallbackMember(c, owner),
     }),
   )
@@ -4428,10 +4464,11 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       tags: ["Authentication"],
       security: [],
       summary: "OAuth callback for an External MCP Connection",
-      description: "The external MCP server redirects here with code+state after the admin consents. Serves a small static HTML page — the admin's Den tab in the background polls connection status and never needs this response body.",
+      description: "The external MCP server redirects here with code+state after the admin consents. Serves a small static HTML page — the admin's Den tab in the background polls connection status and never needs this response body. The code is exchanged only for the person who started the connection: a browser signed in to OpenWork as someone else is refused, and a browser with no OpenWork session must confirm the account first.",
       responses: {
-        200: htmlResponse("Connected — a static success page."),
+        200: htmlResponse("Connected, or a confirmation page naming the account before anything is exchanged."),
         400: jsonResponse("Missing or invalid code/state.", invalidRequestSchema),
+        403: htmlResponse("The browser is signed in to OpenWork as a different account than the one that started the connection."),
       },
     }),
     publicRoute,
@@ -4440,6 +4477,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       request: c.req.raw,
       requestId: c.get("requestId"),
       scopedConnectionId: c.req.valid("param").connectionId,
+      sessionUserId: oauthCallbackSessionUserId(c),
       attribute: (owner) => attributeOAuthCallbackMember(c, owner),
     }),
   )

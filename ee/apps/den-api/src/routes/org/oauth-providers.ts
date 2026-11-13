@@ -27,7 +27,16 @@ import {
   resolvePublicOrigin,
   verifyOAuthStateToken,
 } from "../../capability-sources/generic-oauth.js"
-import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
+import { connectCallbackPage, connectConfirmationPage } from "../../capability-sources/oauth-callback-page.js"
+import {
+  OAUTH_CALLBACK_CONFIRMATION_PARAM,
+  OAUTH_CALLBACK_OTHER_ACCOUNT_MESSAGE,
+  checkOAuthCallbackStarter,
+  createOAuthCallbackConfirmation,
+  loadOAuthCallbackStarter,
+  oauthCallbackConfirmationResponse,
+  oauthCallbackSessionUserId,
+} from "../../capability-sources/oauth-callback-starter.js"
 import { workbotConnectReturn, workbotCallbackReturn } from "../../workbot/connect-return.js"
 import { revokeAccountsBeforeOAuthClientIdentityChange } from "../../capability-sources/oauth-client-rotation.js"
 import {
@@ -646,10 +655,11 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       tags: ["Authentication"],
       security: [],
       summary: "OAuth callback for a provider",
-      description: "The provider redirects here with code+state after the member consents. Identity is carried entirely by the signed state token, not a session cookie, since the redirect may arrive in a fresh browser context. Serves a small static HTML page that deep-links back to OpenWork.",
+      description: "The provider redirects here with code+state after the member consents. The signed state token names the organization and member, since the redirect may arrive in a fresh browser context. The code is exchanged only for the person who started the connection: a browser signed in to OpenWork as someone else is refused, and a browser with no OpenWork session is first shown the account the connection belongs to and must confirm. Serves a small static HTML page that deep-links back to OpenWork.",
       responses: {
-        200: htmlResponse("Connected — a static success page."),
+        200: htmlResponse("Connected, or a confirmation page naming the account before anything is exchanged."),
         400: jsonResponse("Missing or invalid code/state.", invalidRequestSchema),
+        403: htmlResponse("The browser is signed in to OpenWork as a different account than the one that started the connection."),
       },
     }),
     publicRoute,
@@ -698,12 +708,39 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         orgMembershipId: statePayload.orgMembershipId,
         providerId: credentialProviderId,
       })
-      if (!client || !pending?.pendingCodeVerifier) {
+      const starter = await loadOAuthCallbackStarter({ organizationId: statePayload.organizationId, orgMembershipId: statePayload.orgMembershipId })
+      if (!client || !pending?.pendingCodeVerifier || !starter) {
         return c.json({ error: "invalid_request", message: "No pending connection for this state." }, 400)
+      }
+      // Signed state names who started this connection, not who approved it at the
+      // provider. Nothing is exchanged, stored or recorded until the browser agrees.
+      const starterCheck = checkOAuthCallbackStarter({
+        starterUserId: starter.userId,
+        sessionUserId: oauthCallbackSessionUserId(c),
+        state,
+        code: url.searchParams.has("error") ? null : code,
+        confirmation: url.searchParams.get(OAUTH_CALLBACK_CONFIRMATION_PARAM),
+        secret: env.betterAuthSecret,
+      })
+      if (starterCheck === "other_account") {
+        console.warn("native_oauth_connect_callback_other_account_refused", {
+          requestId: c.get("requestId"),
+          organizationId: statePayload.organizationId,
+          providerId,
+        })
+        return c.html(completionPage({ ok: false, name: provider.displayName, message: OAUTH_CALLBACK_OTHER_ACCOUNT_MESSAGE }), 403)
+      }
+      if (starterCheck === "confirm" && code) {
+        return oauthCallbackConfirmationResponse(connectConfirmationPage({
+          name: provider.displayName,
+          accountEmail: starter.email,
+          organizationName: starter.organizationName,
+          fields: { code, state, confirm: createOAuthCallbackConfirmation({ state, code, secret: env.betterAuthSecret }) },
+        }, workbotCallbackReturn(statePayload.workbotReturn, statePayload.providerId)))
       }
       // Signed state + resolved member credential + pending verifier prove the
       // organization and initiating member: attribute before the token exchange.
-      const auditBlocked = await attributeOAuthCallbackMember(c, { organizationId: statePayload.organizationId, memberId: statePayload.orgMembershipId })
+      const auditBlocked = await attributeOAuthCallbackMember(c, { organizationId: statePayload.organizationId, memberId: starter.memberId, userId: starter.userId })
       if (auditBlocked) return auditBlocked
 
       if (url.searchParams.has("error") || !code) {
