@@ -84,6 +84,7 @@ jobs:
         run: >-
           node --test
           .github/scripts/alpha-macos.test.mjs
+          .github/scripts/desktop-helper-cache.test.mjs
           .github/scripts/alpha-windows.test.mjs
           .github/scripts/contributor-pr.test.mjs
           .github/scripts/contributor-screen.test.mjs

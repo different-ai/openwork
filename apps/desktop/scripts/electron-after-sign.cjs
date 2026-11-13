@@ -114,7 +114,10 @@ function notarizeApp(zipPath, { keyPath, keyId, issuer }, { spawn = spawnSync, r
   throw new Error("notarytool submit was not Accepted; notarization failed (see issue report)");
 }
 
-async function afterSign(context, { runCommand = run, runRetry = runWithRetry, spawnNotary = spawnSync, report = console.error } = {}) {
+async function afterSign(context, {
+  runCommand = run, runRetry = runWithRetry, spawnNotary = spawnSync, report = console.error,
+  now = () => performance.now(), reportTiming = console.log,
+} = {}) {
   if (context.electronPlatformName !== "darwin") return;
 
   if (process.env.MACOS_NOTARIZE !== "true") {
@@ -122,9 +125,22 @@ async function afterSign(context, { runCommand = run, runRetry = runWithRetry, s
     return;
   }
 
+  async function timed(stage, operation) {
+    const started = now();
+    let outcome = "failure";
+    try {
+      const result = await operation();
+      outcome = "success";
+      return result;
+    } finally {
+      // Fixed stage names only: never log signing arguments or credentials.
+      reportTiming(`[desktop-package-timing] ${JSON.stringify({ stage, durationMs: Math.round(now() - started), outcome })}`);
+    }
+  }
+
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const appPath = path.join(context.appOutDir, appName);
-  verifyComputerUseHelper(appPath, process.env.MACOS_NOTARIZE === "true", { runCommand, spawn: spawnNotary });
+  await timed("verify-helper", () => verifyComputerUseHelper(appPath, true, { runCommand, spawn: spawnNotary }));
 
   const notaryTempDir = mkdtempSync(path.join(tmpdir(), "openwork-electron-notary-"));
   const notaryZipPath = path.join(notaryTempDir, `${context.packager.appInfo.productFilename}-notary.zip`);
@@ -133,11 +149,11 @@ async function afterSign(context, { runCommand = run, runRetry = runWithRetry, s
   const issuer = requireEnv("APPLE_API_ISSUER");
 
   try {
-    runCommand("ditto", ["-c", "-k", "--keepParent", appPath, notaryZipPath]);
-    notarizeApp(notaryZipPath, { keyPath, keyId, issuer }, { spawn: spawnNotary, report });
+    await timed("notary-archive", () => runCommand("ditto", ["-c", "-k", "--keepParent", appPath, notaryZipPath]));
+    await timed("notarization-submit-and-wait", () => notarizeApp(notaryZipPath, { keyPath, keyId, issuer }, { spawn: spawnNotary, report }));
     // Notarization tickets can take minutes to propagate to Apple's CDN after acceptance; stapler can transiently fail with status 65 ("CloudKit query failed").
-    await runRetry("xcrun", ["stapler", "staple", appPath], 5);
-    verifySignedApp(appPath, { runCommand });
+    await timed("staple", () => runRetry("xcrun", ["stapler", "staple", appPath], 5));
+    await timed("verify-signed-app", () => verifySignedApp(appPath, { runCommand }));
   } finally {
     rmSync(notaryTempDir, { recursive: true, force: true });
   }

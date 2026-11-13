@@ -158,6 +158,29 @@ jobs:
       - name: Install dependencies
         run: pnpm --filter @openwork/desktop... --filter @openwork/app... --filter openwork-server... install --frozen-lockfile --prefer-offline
 
+      - name: Identify native macOS toolchain
+        id: native-toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift_version="$(xcrun swift --version)"
+          sdk_version="$(xcrun --sdk macosx --show-sdk-version)"
+          xcode_version="$(xcodebuild -version)"
+          fingerprint="$(printf '%s\n' "$swift_version" "$sdk_version" "$xcode_version" | shasum -a 256 | cut -d ' ' -f 1)"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+
+      # Cache only prepared helpers, before distribution signing. No prefix
+      # restore: a compiler, SDK, architecture or native-source change builds cold.
+      - name: Cache native macOS helpers
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        continue-on-error: true
+        with:
+          path: |
+            apps/desktop/resources/helpers/OpenWork Computer Use.app
+            apps/desktop/resources/helpers/openwork-dictation
+            apps/desktop/resources/helpers/openwork-dictation.sha256
+          key: macos-native-helpers-v1-${{ runner.arch }}-${{ steps.native-toolchain.outputs.fingerprint }}-${{ hashFiles('packages/computer-use/native/Package.swift', 'packages/computer-use/native/Package.resolved', 'packages/computer-use/native/Sources/**', 'apps/desktop/native/dictation/*.swift', 'apps/desktop/scripts/prepare-computer-use-helper.mjs', 'apps/desktop/scripts/prepare-dictation-helper.mjs', 'apps/desktop/resources/icons/computer-use.icns') }}
+
       - name: Resolve alpha version
         id: alpha-version
         shell: bash
@@ -214,6 +237,7 @@ jobs:
         shell: bash
         env:
           TARGET: aarch64-apple-darwin
+          OPENWORK_REUSE_NATIVE_HELPERS: "true"
         run: |
           set -euo pipefail
           # Capture provenance at build start, not when the rolling release or
@@ -224,6 +248,7 @@ jobs:
 
       - name: Package Electron alpha (macOS, signed + notarized)
         if: env.MACOS_NOTARIZE == 'true'
+        shell: bash
         env:
           CSC_LINK: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
@@ -233,6 +258,15 @@ jobs:
           APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
         run: |
           set -euo pipefail
+          package_started=$SECONDS
+          report_package_time() {
+            status=$?
+            elapsed=$((SECONDS - package_started))
+            echo "[desktop-package-timing] total_seconds=$elapsed exit_code=$status"
+            printf 'macOS packaging: %s seconds (exit %s). Per-stage timings are in the packaging log.\n' "$elapsed" "$status" >> "$GITHUB_STEP_SUMMARY"
+            exit "$status"
+          }
+          trap report_package_time EXIT
           pnpm --dir apps/desktop exec electron-builder \
             --config electron-builder.yml \
             --mac \
