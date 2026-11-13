@@ -1,5 +1,5 @@
 /**
- * How a feature from ./registry.ts resolves. One function for
+ * How a feature from ./flags resolves. One function for
  * every feature and every place it is checked (den-api, Den web, the desktop):
  *
  *   1. not part of this deployment      → off    ("unavailable")
