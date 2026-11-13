@@ -38,7 +38,7 @@
     "@hono/standard-validator": "^0.2.2",
     "@hono/swagger-ui": "^0.6.1",
     "@modelcontextprotocol/ext-apps": "^1.7.5",
-    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@modelcontextprotocol/server": "^2.3.1",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/api-logs": "0.220.0",
