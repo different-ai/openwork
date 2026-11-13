@@ -231,6 +231,13 @@
               "ai-gateway/limits",
               "start-here/do-work-with-it/what-uses-tokens"
             ]
+          },
+          {
+            "group": "Benchmarks",
+            "pages": [
+              "benchmarks/overview",
+              "benchmarks/how-it-was-run"
+            ]
           }
         ]
       },
