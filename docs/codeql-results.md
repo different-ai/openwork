@@ -10,7 +10,8 @@ autobuild on every PR: about 14 minutes waiting for a macOS runner, then about
 * Every push to `dev`, the weekly schedule and manual runs analyze all four
   languages: `actions`, `javascript-typescript` and `python` without a build,
   and `swift` built directly with `swift build` for the `ComputerUse` product
-  on macOS. JavaScript/TypeScript runs on a 16-vCPU runner.
+  on macOS. All four run on GitHub-hosted runners (`macos-15` for Swift,
+  `ubuntu-latest` for the rest), which cost nothing for a public repository.
 * PRs do not analyze. Each PR uploads an empty result per category from Linux
   in seconds. Empty results are only ever uploaded for PRs, never for `dev`.
 * All analyses keep the `/language:<language>` categories default setup used,
