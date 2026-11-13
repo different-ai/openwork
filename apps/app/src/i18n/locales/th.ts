@@ -522,7 +522,6 @@ export default {
   "settings.group_workspace": "พื้นที่ทำงาน",
   "settings.hide_titlebar": "ซ่อนแถบชื่อหน้าต่าง",
   "settings.hide_titlebar_desc": "ซ่อนแถบชื่อหน้าต่าง เหมาะสำหรับ tiling window",
-  "settings.join_discord": "เข้าร่วม Discord",
   "settings.language": "ภาษา",
   "settings.language.description": "เลือกภาษาที่คุณต้องการ",
   "settings.last_error": "ข้อผิดพลาดล่าสุด",

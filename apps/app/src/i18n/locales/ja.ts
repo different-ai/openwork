@@ -521,7 +521,6 @@ export default {
   "settings.group_workspace": "ワークスペース",
   "settings.hide_titlebar": "タイトルバーを非表示",
   "settings.hide_titlebar_desc": "ウィンドウのタイトルバーを非表示にします。タイル型ウィンドウマネージャーに便利です。",
-  "settings.join_discord": "Discordに参加",
   "settings.language": "言語",
   "settings.language.description": "使用する言語を選択してください",
   "settings.last_error": "最後のエラー",

@@ -1936,7 +1936,6 @@ export default {
   "settings.group_workspace": "Workspace",
   "settings.hide_titlebar": "Nascondi la barra del titolo",
   "settings.hide_titlebar_desc": "Nasconde la barra del titolo della finestra. Utile con i gestori di finestre affiancate",
-  "settings.join_discord": "Unisciti a Discord",
   "settings.language": "Lingua",
   "settings.language.description": "Scegli la lingua che preferisci",
   "settings.last_error": "Ultimo errore",

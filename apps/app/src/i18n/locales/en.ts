@@ -1939,7 +1939,6 @@ export default {
   "settings.group_workspace": "Workspace",
   "settings.hide_titlebar": "Hide titlebar",
   "settings.hide_titlebar_desc": "Hide the window titlebar. Useful for tiling window",
-  "settings.join_discord": "Join Discord",
   "settings.language": "Language",
   "settings.language.description": "Choose your preferred language",
   "settings.last_error": "Last error",

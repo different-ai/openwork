@@ -521,7 +521,6 @@ export default {
   "settings.group_workspace": "Espacio de trabajo",
   "settings.hide_titlebar": "Ocultar barra de título",
   "settings.hide_titlebar_desc": "Oculta la barra de título de la ventana. Útil para mosaico de ventanas",
-  "settings.join_discord": "Únete a Discord",
   "settings.language": "Idioma",
   "settings.language.description": "Elige tu idioma preferido",
   "settings.last_error": "Último error",

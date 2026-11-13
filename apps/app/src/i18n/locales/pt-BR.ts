@@ -521,7 +521,6 @@ export default {
   "settings.group_workspace": "Workspace",
   "settings.hide_titlebar": "Ocultar barra de título",
   "settings.hide_titlebar_desc": "Oculta a barra de título da janela. Útil para gerenciadores de janelas tipo tiling",
-  "settings.join_discord": "Entrar no Discord",
   "settings.language": "Idioma",
   "settings.language.description": "Escolha seu idioma preferido",
   "settings.last_error": "Último erro",
