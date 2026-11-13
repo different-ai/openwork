@@ -424,7 +424,7 @@ export async function deleteScimProvisionedAccessForProvider(input: {
 
   const account = accountRows[0] ?? null
   const member = memberRows[0] ?? null
-  const [userRows, identityRows] = await Promise.all([
+  const [userRows, identityRows, tombstoneRows] = await Promise.all([
     db.$primary.select().from(AuthUserTable).where(eq(AuthUserTable.id, input.userId)).limit(1),
     db.$primary
       .select()
@@ -434,9 +434,25 @@ export async function deleteScimProvisionedAccessForProvider(input: {
         eq(ExternalIdentityTable.userId, input.userId),
       ))
       .limit(1),
+    db.$primary
+      .select({ id: ScimUserTombstoneTable.id })
+      .from(ScimUserTombstoneTable)
+      .where(and(
+        eq(ScimUserTombstoneTable.organizationId, input.provider.organizationId),
+        eq(ScimUserTombstoneTable.deprovisionedUserId, input.userId),
+      ))
+      .limit(1),
   ])
   const user = userRows[0] ?? null
   const identity = identityRows[0] ?? null
+
+  // A SCIM token speaks for one organization. Someone with no account from this
+  // connection, no membership or identity in this organization and no earlier
+  // deprovisioning here is not its user, whatever id the request names.
+  if (!account && !member && !identity && !tombstoneRows[0]) {
+    return { ok: false as const, status: 404, body: { detail: "User not found" } }
+  }
+
   const tombstoneEmail = (identity?.email ?? user?.email ?? "").trim().toLowerCase() || null
 
   if (member) {
@@ -471,14 +487,25 @@ export async function deleteScimProvisionedAccessForProvider(input: {
       },
     })
 
+  // primary: reads after the member removal above.
+  const otherActiveMembershipRows = await db.$primary
+    .select({ value: count() })
+    .from(MemberTable)
+    .where(and(eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
+  // The account row is what this connection wrote when it created or linked the
+  // user. Without it the organization only loses the member: the person's own
+  // account is not this connection's to delete. The row stays until the user is
+  // deleted, so a retry after a failed deletion still finds it.
+  const deleteUser = Boolean(account) && Boolean(user) && shouldDeleteGlobalUser(Number(otherActiveMembershipRows[0]?.value ?? 0))
+  if (deleteUser) {
+    await deleteGlobalAuthUser(input.userId)
+    return { ok: true as const, userDeleted: true }
+  }
+
   await db.transaction(async (tx) => {
-    if (account) {
-      await tx.delete(AuthAccountTable).where(eq(AuthAccountTable.id, account.id))
-    } else {
-      await tx
-        .delete(AuthAccountTable)
-        .where(and(eq(AuthAccountTable.userId, input.userId), eq(AuthAccountTable.providerId, input.provider.providerId)))
-    }
+    await tx
+      .delete(AuthAccountTable)
+      .where(and(eq(AuthAccountTable.userId, input.userId), eq(AuthAccountTable.providerId, input.provider.providerId)))
     await tx
       .update(ExternalIdentityTable)
       .set({
@@ -490,17 +517,7 @@ export async function deleteScimProvisionedAccessForProvider(input: {
       .where(and(eq(ExternalIdentityTable.organizationId, input.provider.organizationId), eq(ExternalIdentityTable.userId, input.userId)))
   })
 
-  // primary: reads after the member removal above.
-  const otherActiveMembershipRows = await db.$primary
-    .select({ value: count() })
-    .from(MemberTable)
-    .where(and(eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
-  const deleteUser = shouldDeleteGlobalUser(Number(otherActiveMembershipRows[0]?.value ?? 0))
-  if (deleteUser && user) {
-    await deleteGlobalAuthUser(input.userId)
-  }
-
-  return { ok: true as const, userDeleted: deleteUser && Boolean(user) }
+  return { ok: true as const, userDeleted: false }
 }
 
 export async function deleteScimProvisionedAccess(input: {
