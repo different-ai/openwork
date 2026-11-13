@@ -238,6 +238,8 @@ export default {
   "mcp.quick_connect_sentry_title": "Sentry",
   "mcp.quick_connect_stripe_desc": "ตรวจสอบการชำระเงิน ใบแจ้งหนี้ และการสมัครสมาชิก",
   "mcp.quick_connect_stripe_title": "Stripe",
+  "mcp.quick_connect_strunk_desc": "เผยแพร่ฉบับร่างไปยัง Google Docs และจัดการความคิดเห็นของผู้ตรวจทาน",
+  "mcp.quick_connect_strunk_title": "Strunk",
   "mcp.reload_banner_blocked_hint": "หยุดงานที่กำลังทำงานเพื่อเปิดใช้งาน",
   "mcp.remove_app": "ลบ",
   "mcp.remove_failed": "ลบแอปไม่สำเร็จ",

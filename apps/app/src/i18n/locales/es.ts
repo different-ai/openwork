@@ -238,6 +238,8 @@ export default {
   "mcp.quick_connect_sentry_title": "Sentry",
   "mcp.quick_connect_stripe_desc": "Inspeccionar pagos, facturas y suscripciones.",
   "mcp.quick_connect_stripe_title": "Stripe",
+  "mcp.quick_connect_strunk_desc": "Publica borradores en Google Docs y trabaja los comentarios de los revisores.",
+  "mcp.quick_connect_strunk_title": "Strunk",
   "mcp.reload_banner_blocked_hint": "Detenga la tarea en ejecución para activarla.",
   "mcp.remove_app": "Eliminar",
   "mcp.remove_failed": "No se pudo eliminar la aplicación.",

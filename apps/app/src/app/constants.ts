@@ -152,6 +152,16 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     iconSrc: "/ext-context7.svg",
   },
   {
+    get name() { return t("mcp.quick_connect_strunk_title"); },
+    serverName: "strunk",
+    get description() { return t("mcp.quick_connect_strunk_desc"); },
+    url: "https://strunk.io/mcp",
+    type: "remote",
+    oauth: true,
+    kind: "mcp",
+    iconSrc: "/ext-strunk.svg",
+  },
+  {
     get name() { return t("mcp.quick_connect_openwork_cloud_title"); },
     serverName: "openwork-cloud",
     get description() { return t("mcp.quick_connect_openwork_cloud_desc"); },

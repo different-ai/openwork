@@ -184,6 +184,8 @@ export default {
   "mcp.quick_connect_sentry_title": "Sentry",
   "mcp.quick_connect_stripe_desc": "Проверяйте платежи, счета и подписки.",
   "mcp.quick_connect_stripe_title": "Stripe",
+  "mcp.quick_connect_strunk_desc": "Публикуйте черновики в Google Docs и отрабатывайте комментарии рецензентов.",
+  "mcp.quick_connect_strunk_title": "Strunk",
   "mcp.reload_banner_blocked_hint": "Остановите выполняющуюся задачу, чтобы активировать.",
   "mcp.remove_app": "Удалить",
   "mcp.remove_failed": "Не удалось удалить приложение.",

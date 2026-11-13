@@ -238,6 +238,8 @@ export default {
   "mcp.quick_connect_sentry_title": "Sentry",
   "mcp.quick_connect_stripe_desc": "Consulta pagaments, factures i subscripcions.",
   "mcp.quick_connect_stripe_title": "Stripe",
+  "mcp.quick_connect_strunk_desc": "Publica esborranys a Google Docs i treballa els comentaris dels revisors.",
+  "mcp.quick_connect_strunk_title": "Strunk",
   "mcp.reload_banner_blocked_hint": "Atura la tasca en execució per activar-la.",
   "mcp.remove_app": "Eliminar",
   "mcp.remove_failed": "No s'ha pogut eliminar l'aplicació.",

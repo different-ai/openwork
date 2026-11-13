@@ -241,6 +241,8 @@ export default {
   "mcp.quick_connect_sentry_title": "Sentry",
   "mcp.quick_connect_stripe_desc": "查看支付、发票和订阅。",
   "mcp.quick_connect_stripe_title": "Stripe",
+  "mcp.quick_connect_strunk_desc": "将草稿发布到 Google 文档，并处理审阅者的评论。",
+  "mcp.quick_connect_strunk_title": "Strunk",
   "mcp.reload_banner_blocked_hint": "停止正在运行的任务以激活。",
   "mcp.remove_app": "移除",
   "mcp.remove_failed": "无法移除应用。",

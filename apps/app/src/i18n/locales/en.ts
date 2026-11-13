@@ -1201,6 +1201,8 @@ export default {
   "mcp.quick_connect_sentry_title": "Sentry",
   "mcp.quick_connect_stripe_desc": "Inspect payments, invoices, and subscriptions.",
   "mcp.quick_connect_stripe_title": "Stripe",
+  "mcp.quick_connect_strunk_desc": "Publish drafts to Google Docs and work through reviewer comments.",
+  "mcp.quick_connect_strunk_title": "Strunk",
   "mcp.reload_banner_blocked_hint": "Stop the running task to activate.",
   "mcp.remove_app": "Remove",
   "mcp.remove_failed": "Couldn't remove the app.",

@@ -238,6 +238,8 @@ export default {
   "mcp.quick_connect_sentry_title": "Sentry",
   "mcp.quick_connect_stripe_desc": "Kiểm tra thanh toán, hóa đơn và đăng ký.",
   "mcp.quick_connect_stripe_title": "Stripe",
+  "mcp.quick_connect_strunk_desc": "Đăng bản nháp lên Google Docs và xử lý nhận xét của người duyệt.",
+  "mcp.quick_connect_strunk_title": "Strunk",
   "mcp.reload_banner_blocked_hint": "Dừng task đang chạy để kích hoạt.",
   "mcp.remove_app": "Xóa",
   "mcp.remove_failed": "Không thể xóa ứng dụng.",

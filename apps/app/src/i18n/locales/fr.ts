@@ -238,6 +238,8 @@ export default {
   "mcp.quick_connect_sentry_title": "Sentry",
   "mcp.quick_connect_stripe_desc": "Inspectez paiements, factures et abonnements.",
   "mcp.quick_connect_stripe_title": "Stripe",
+  "mcp.quick_connect_strunk_desc": "Publiez des brouillons dans Google Docs et traitez les commentaires des relecteurs.",
+  "mcp.quick_connect_strunk_title": "Strunk",
   "mcp.reload_banner_blocked_hint": "Arrêtez la tâche en cours pour activer.",
   "mcp.remove_app": "Supprimer",
   "mcp.remove_failed": "Impossible de supprimer l'application.",

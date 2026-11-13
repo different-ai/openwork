@@ -10,6 +10,7 @@ const BUNDLED_LOGOS: { match: RegExp; iconSrc: string }[] = [
   { match: /\bsentry\b|sentry\.io/i, iconSrc: "/ext-sentry.svg" },
   { match: /\bstripe\b|stripe\.com/i, iconSrc: "/ext-stripe.svg" },
   { match: /\bcontext7\b/i, iconSrc: "/ext-context7.svg" },
+  { match: /\bstrunk\b|strunk\.io/i, iconSrc: "/ext-strunk.svg" },
 ];
 
 function isPublicServiceUrl(serviceUrl: string): boolean {

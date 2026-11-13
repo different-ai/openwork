@@ -237,6 +237,8 @@ export default {
   "mcp.quick_connect_sentry_title": "Sentry",
   "mcp.quick_connect_stripe_desc": "支払い、請求書、サブスクリプションを確認。",
   "mcp.quick_connect_stripe_title": "Stripe",
+  "mcp.quick_connect_strunk_desc": "下書きを Google ドキュメントに公開し、レビュアーのコメントに対応。",
+  "mcp.quick_connect_strunk_title": "Strunk",
   "mcp.reload_banner_blocked_hint": "実行中のタスクを停止して有効化してください。",
   "mcp.remove_app": "削除",
   "mcp.remove_failed": "アプリを削除できませんでした。",
