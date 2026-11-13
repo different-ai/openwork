@@ -4,7 +4,7 @@ import { feedHiddenSideChats } from "../worlds/feed-hidden-side-chats.ts";
 
 const test = spec.world(feedHiddenSideChats, {
   timeout: 600_000,
-  resources: { surfaces: ["appWeb"], services: [] },
+  resources: { surfaces: ["appWeb"], services: ["mock"] },
   needs: { commands: ["bun"] },
 });
 
