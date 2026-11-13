@@ -34,9 +34,11 @@ permissions:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-    # Swift needs macOS (AppKit); JavaScript/TypeScript, the largest analysis,
-    # uses every core it gets. PR legs only upload an empty result.
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || matrix.language == 'swift' && 'blacksmith-12vcpu-macos-15' || matrix.language == 'javascript-typescript' && 'blacksmith-16vcpu-ubuntu-2204' || 'ubuntu-latest' }}
+    # Swift needs macOS (AppKit). Everything runs on GitHub-hosted runners,
+    # which are free for this public repository: analysis happens after the
+    # merge, so a slower runner delays no one. PR legs only upload an empty
+    # result.
+    runs-on: ${{ github.event_name != 'pull_request' && matrix.language == 'swift' && 'macos-15' || 'ubuntu-latest' }}
     timeout-minutes: ${{ matrix.language == 'swift' && 45 || 30 }}
     permissions:
       actions: read
