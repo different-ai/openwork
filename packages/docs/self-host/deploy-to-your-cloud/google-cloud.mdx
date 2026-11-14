@@ -16,7 +16,7 @@ OpenWork supports two Google Cloud deployment shapes. Use GKE Autopilot and Helm
 
 ## Choose a deployment target
 
-Choose GKE when you need Helm hooks, pod-level customization, custom CA mounts, installer artifact volumes, or the optional OpenWork Gateway. Choose Cloud Run when Den Web and Den API fit the request-driven service model and you prefer managed autoscaling without a Kubernetes cluster.
+Choose GKE when you need Helm hooks, pod-level customization, custom CA mounts or installer artifact volumes. Choose Cloud Run when Den web, Den API and optional AI Gateway fit the request-driven service model and you prefer managed autoscaling without a Kubernetes cluster.
 
 ## What Google Cloud manages
 
@@ -60,6 +60,18 @@ The common outputs are `web_url`, `api_url`, `database_identifier` (managed Clou
 
 Existing network/subnet, database, service account, certificates and reserved IP inputs remain supported. The applying account needs resource-creation and IAM-setting permissions, including Project IAM Admin, Secret Manager Admin and Cloud Run Admin; Editor alone is insufficient. Alternatively grant runtime IAM separately and use `grant_iam_roles = false`. Use application-default credentials or workload identity.
 
+The optional **AI Gateway** (`openwork-inference`, 8791) is distinct from OpenWork
+Web's **den-gateway** and Den API's MCP gateway. Set `ai_gateway_enabled=true`, a
+dedicated `ai_gateway_domain_name`, and a digest-pinned `ai_gateway_image` mirrored
+into Artifact Registry. `ai_gateway_url` is its HTTPS origin, null when off.
+It creates a serverless backend/host rule and separate certificate on an HTTPS
+load balancer, even when Den keeps run.app URLs, without replacing Den's certificate. Den calls that HTTPS origin, **not private DNS**;
+the Gateway's direct run.app URI is disabled. Existing Cloud SQL socket secrets are
+preserved by a serving-process-only hostname adapter. Native managed-install roots
+remain off. See the [Terraform AI Gateway guide](https://github.com/different-ai/openwork/blob/dev/infra/terraform/AI_GATEWAY.md)
+for DNS, networking, shared secrets and limits. **Live AI Gateway conformance is
+NotRun**; mock plans do not qualify an installation.
+
 ### Tested scenarios
 
 | Date | Tools | Release | Result |
@@ -83,7 +95,7 @@ The live run used new-deployment write-only mode, db-g1-small and default HTTPS 
 The [module](https://github.com/different-ai/openwork/tree/dev/infra/terraform/modules/openwork-gcp-cloud-run)
 is available on `dev` in **beta**.
 
-Follow the shared [module contract](https://github.com/different-ai/openwork/blob/dev/infra/terraform/MODULE_CONTRACT.md) and pin to a reviewed commit. Requires Terraform or OpenTofu `>= 1.11, < 2.0`. The module's bounded providers are Google `~> 8.7` and Random `~> 3.9`. Workbot, the runner, Slack and OpenWork Web/gateway are outside this change. A dedicated job orders one deployment; it does not implement a database mutex, dirty marker or coordination across independent deployments.
+Follow the shared [module contract](https://github.com/different-ai/openwork/blob/dev/infra/terraform/MODULE_CONTRACT.md) and pin to a reviewed commit. Requires Terraform or OpenTofu `>= 1.11, < 2.0`. The module's bounded providers are Google `~> 8.7` and Random `~> 3.9`. Workbot, the runner, Slack and OpenWork Web/den-gateway are outside this change. A dedicated job orders one deployment; it does not implement a database mutex, dirty marker or coordination across independent deployments.
 
 Defaults: API **1 vCPU / 2 GiB**, web **1 vCPU / 1 GiB**, one warm instance per service, maximum three; Cloud SQL **db-g1-small (1.7 GB)** with 20 GB disk and backups. The old micro tier exhausted its reported memory quota at idle. Database, services and job have deletion protection by default; explicitly turn it off only for disposable stacks. The deprecated nested `database.deletion_protection` override retains precedence.
 

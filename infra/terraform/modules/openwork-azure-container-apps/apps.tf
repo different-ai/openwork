@@ -16,17 +16,19 @@ locals {
   plain_env            = [for name, value in local.environment : { name = name, value = value }]
   secret_env_values    = [for name, reference in local.secret_env : { name = name, secretRef = reference }]
   ingress_restrictions = [for index, cidr in var.allowed_ingress_cidrs : { name = "allow-${index}", action = "Allow", ipAddressRange = cidr }]
-  app_specs = {
+  app_specs = merge({
     api = { name = "den-api", port = 8788, health = "/health", cpu = var.den_api.cpu, memory = var.den_api.memory, replicas = var.den_api.replicas, image = local.den_api_image }
     web = { name = "den-web", port = 3005, health = "/api/health", cpu = var.den_web.cpu, memory = var.den_web.memory, replicas = var.den_web.replicas, image = local.den_web_image }
-  }
+    }, var.ai_gateway_enabled ? {
+    ai_gateway = { name = "ai-gateway", port = 8791, health = "/health", cpu = 1, memory = "2Gi", replicas = 1, image = var.ai_gateway_image }
+  } : {})
   app_bodies = { for key, app in local.app_specs : key => {
     properties = {
       managedEnvironmentId = local.environment_id
       workloadProfileName  = var.workload_profile_name != "" ? var.workload_profile_name : null
       configuration = {
         activeRevisionsMode = "Single"
-        secrets             = local.secret_metadata
+        secrets             = key == "ai_gateway" ? local.ai_gateway_secret_metadata : local.secret_metadata
         registries          = local.registries
         ingress = {
           external               = true, targetPort = app.port, transport = "Auto", allowInsecure = false
@@ -41,10 +43,13 @@ locals {
         containers = [{
           name      = app.name, image = app.image
           resources = { cpu = app.cpu, memory = app.memory }
-          env       = concat([{ name = "PORT", value = tostring(app.port) }], local.plain_env, local.secret_env_values)
+          env = key == "ai_gateway" ? concat(
+            [for name, value in merge(local.ai_gateway_environment, { NODE_ENV = "production", OPENWORK_DEV_MODE = "0", DB_MODE = "mysql", PORT = "8791" }) : { name = name, value = value }],
+            [for name in ["DATABASE_URL", "DEN_DB_ENCRYPTION_KEY"] : { name = name, secretRef = local.secret_env[name] }],
+          ) : concat([{ name = "PORT", value = tostring(app.port) }], local.plain_env, local.secret_env_values)
           probes = concat(
             [{ type = "Liveness", httpGet = { path = app.health, port = app.port, scheme = "HTTP" }, initialDelaySeconds = 10, periodSeconds = 30 }],
-            key == "api" ? [{ type = "Readiness", httpGet = { path = "/ready", port = app.port, scheme = "HTTP" }, periodSeconds = 10 }] : [],
+            contains(["api", "ai_gateway"], key) ? [{ type = "Readiness", httpGet = { path = "/ready", port = app.port, scheme = "HTTP" }, periodSeconds = 10 }] : [],
           )
         }]
       }
@@ -54,7 +59,7 @@ locals {
   # Version this write-only property by NON-SECRET deployment configuration; the
   # payload is ephemerally recovered from the cloud unless a *_version rotates it.
   app_write_versions = { for key, body in local.app_bodies : key => {
-    "properties.configuration.secrets" = sha256(jsonencode({ body = body, tags = var.tags, identities = local.identity_ids, location = local.app_location }))
+    "properties.configuration.secrets" = sha256(jsonencode({ body = body, tags = var.tags, identities = key == "ai_gateway" ? local.ai_gateway_identity_ids : local.identity_ids, location = local.app_location }))
   } }
 }
 
