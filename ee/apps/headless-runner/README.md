@@ -521,9 +521,11 @@ the old one.
 
 A new guest on the same image needs no rebuild. The runner installs its guest
 into the computers it starts, which adds about 4 s to a new computer's first
-open. Guests change most days, and a template takes about five minutes to build
-and a Differently configuration change to adopt, so the template follows the
-image and not the guest.
+open, and into an idle computer just before pausing it, so one used since the
+deploy opens without that wait. A computer paused before the deploy gets the
+guest on its next open. Guests change most days, and a template takes about
+five minutes to build and a Differently configuration change to adopt, so the
+template follows the image and not the guest.
 
 Opt-in verification, creating and cleaning one real computer:
 
