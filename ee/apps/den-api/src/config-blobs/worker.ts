@@ -7,6 +7,7 @@
  */
 import { appLogger } from "../observability/logger.js"
 import { captureException } from "../observability/runtime.js"
+import { withPrimaryReads } from "../read-routing.js"
 import { claimNextAnalysis, claimNextApply, expireSecretInputs } from "./repository.js"
 import { analyzeClaimedChangeRequest, applyClaimedChangeRequest } from "./service.js"
 
@@ -25,7 +26,15 @@ export type ConfigBlobWorkerTick = { analyzed: number; applied: number; expired:
  * One pass: secret-input expiry (once a minute), then up to MAX_PER_TICK
  * analyses, then up to MAX_PER_TICK applies. Exposed for tests.
  */
-export async function runConfigBlobWorkerOnce(options: { now?: Date } = {}): Promise<ConfigBlobWorkerTick> {
+export function runConfigBlobWorkerOnce(options: { now?: Date } = {}): Promise<ConfigBlobWorkerTick> {
+  // An analysis plans against what the organization holds now, and an apply
+  // reads back what it just wrote (through the areas' route handlers and
+  // stores): neither may see a lagging replica. The worker runs outside a
+  // request, so nothing else routes its reads to the primary.
+  return withPrimaryReads(() => runTick(options))
+}
+
+async function runTick(options: { now?: Date }): Promise<ConfigBlobWorkerTick> {
   const tick: ConfigBlobWorkerTick = { analyzed: 0, applied: 0, expired: 0 }
   const now = options.now ?? new Date()
   if (options.now || now.getTime() - lastExpiryAt >= EXPIRE_EVERY_MS) {

@@ -135,9 +135,21 @@ export type ConfigNaturalKey = {
   get: (item: ConfigItem) => string | null
 }
 
-/** What planning knows about an op besides the op itself: the secret decisions (never values). */
+/**
+ * What planning knows about an op besides the op itself: the secret decisions
+ * (never values), and how each reference in the spec resolves in this plan.
+ */
 export type ConfigPreflightInfo = {
   secrets: ReadonlyArray<{ path: string; field: string; decision: "keep" | "env" | "value" | "unset" }>
+  /**
+   * One entry per `$ref` in the op's spec, by spec path
+   * (`assignments.members[0]`): `target` is an item the organization already
+   * holds (`id`); `planned` and `invite` are items this same plan creates
+   * (for people: an invitation, so the person has not joined when the op
+   * runs); `drop` is left out; `unresolved` still needs the admin. Absent
+   * when the caller did not resolve references.
+   */
+  refs?: ReadonlyArray<{ path: string; ref: string; resolution: "target" | "planned" | "invite" | "drop" | "unresolved"; id?: string }>
 }
 
 /**
@@ -202,6 +214,26 @@ export type ConfigArea = {
    * join). Left out of diffs and hashes, so they never make an item differ.
    */
   informationalFields?: string[]
+  /**
+   * Spec fields an import never writes on their own: the target works them
+   * out for itself (how a person signs in), or they are only saved together
+   * with something else (the kind of a stored key, saved when a key is
+   * entered). Like `informationalFields` they are never planned as a change,
+   * but they stay in `rev`: listing a field here leaves the hashes in files
+   * and before-snapshots already written as they are, so an older file still
+   * restores without every item showing as changed.
+   */
+  derivedFields?: string[]
+  /**
+   * References an entry can't exist without (paths use `[]` for array
+   * elements). Dropping one removes the array element it sits in, in the plan
+   * and at apply (`access[].member`: a grant goes with the person it names).
+   * One that sits in no array is the item's own (`team`: the settings of that
+   * team) and can't be dropped: it stays unresolved until it is mapped or the
+   * item is skipped, so an import never widens what an item applies to.
+   * Without this, a dropped reference only removes its own key.
+   */
+  requiredRefs?: string[]
   /** The item's name is derived on the target and never set by import (people): a different name is not a change. */
   informationalName?: boolean
   /**

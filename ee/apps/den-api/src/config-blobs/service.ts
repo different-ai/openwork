@@ -94,6 +94,7 @@ import { ConfigApplyError } from "./areas/route-support.js"
 import {
   baseHash as computeBaseHash,
   buildPlan,
+  planRefTargets,
   checkWrittenItems,
   CONFIG_APPLY_INTERRUPTED_CODE,
   emptyApplyCounts,
@@ -436,19 +437,31 @@ async function loadActor(organizationId: OrganizationId, memberId: string | null
 
 /** Normalized email → member id, for members and invited people (their placeholder member rows). */
 async function loadPeople(organizationId: OrganizationId): Promise<Map<string, string>> {
+  return (await loadDirectory(organizationId)).people
+}
+
+/**
+ * The organization's member rows, read once: `people` (normalized email →
+ * member id, what a people reference resolves against) and `names` (member
+ * id → their name, else their email) for the people who are in it now.
+ */
+async function loadDirectory(organizationId: OrganizationId): Promise<{ people: Map<string, string>; names: Map<string, string> }> {
   const rows = await db.$primary
-    .select({ id: MemberTable.id, userEmail: AuthUserTable.email, inviteEmail: InvitationTable.email, removedAt: MemberTable.removedAt })
+    .select({ id: MemberTable.id, userName: AuthUserTable.name, userEmail: AuthUserTable.email, inviteEmail: InvitationTable.email, removedAt: MemberTable.removedAt })
     .from(MemberTable)
     .leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
     .leftJoin(InvitationTable, eq(MemberTable.inviteId, InvitationTable.id))
     .where(eq(MemberTable.organizationId, organizationId))
   const people = new Map<string, string>()
+  const names = new Map<string, string>()
   // A current member wins over a removed row with the same email.
   for (const row of [...rows.filter((entry) => !entry.removedAt), ...rows.filter((entry) => entry.removedAt)]) {
     const email = (row.userEmail ?? row.inviteEmail)?.trim().toLowerCase()
-    if (email && !people.has(email)) people.set(email, row.id)
+    if (!email) continue
+    if (!people.has(email)) people.set(email, row.id)
+    if (!row.removedAt) names.set(row.id, row.userName?.trim() || email)
   }
-  return people
+  return { people, names }
 }
 
 /**
@@ -459,6 +472,20 @@ async function loadPeople(organizationId: OrganizationId): Promise<Map<string, s
  */
 function canReadPeople(caller: Pick<ConfigCaller, "can" | "tokenAreas">): boolean {
   return canView(caller, PEOPLE_AREA_KEY)
+}
+
+/**
+ * A plan as this caller may read it: people hidden from who may not read
+ * them (`peopleRedactorFor`), and the organization's items a reference could
+ * be pointed at (`refTargets`) only for the areas the caller may view. The
+ * stored plan lists them for its author.
+ */
+function planFor(plan: ConfigPlan, caller: Pick<ConfigCaller, "can" | "tokenAreas">, people: PeopleRedactor | null): ConfigPlan {
+  const shown = people ? people.plan(plan) : plan
+  if (!shown.refTargets) return shown
+  const { refTargets, ...rest } = shown
+  const visible = refTargets.filter((entry) => canView(caller, entry.area))
+  return visible.length > 0 ? { ...rest, refTargets: visible } : rest
 }
 
 /** Null when the caller may read people; otherwise what hides them from what it is sent. */
@@ -591,7 +618,7 @@ function runNotFound(): ConfigBlobError {
 export async function getChangeRequestPlan(organizationId: OrganizationId, id: string, caller: Pick<ConfigCaller, "can" | "tokenAreas">): Promise<{ plan: ConfigPlan | null; decisions: ConfigDecisions }> {
   const row = await loadVisible(organizationId, id, caller)
   const people = await peopleRedactorFor(organizationId, caller)
-  return { plan: row.plan && people ? people.plan(row.plan) : row.plan, decisions: row.decisions ?? EMPTY_CONFIG_DECISIONS }
+  return { plan: row.plan ? planFor(row.plan, caller, people) : row.plan, decisions: row.decisions ?? EMPTY_CONFIG_DECISIONS }
 }
 
 export async function getBeforeSnapshot(organizationId: OrganizationId, id: string, caller: Pick<ConfigCaller, "can" | "tokenAreas">): Promise<unknown> {
@@ -678,7 +705,7 @@ export async function dryRunChangeRequest(org: ConfigOrganization, caller: Confi
   })
   const people = await peopleRedactorFor(org.id, caller)
   if ("invalid" in planned) return { plan: null, errors: people ? planned.invalid.map(people.text) : planned.invalid }
-  return people ? { plan: people.plan(planned.plan), errors: planned.fatal.map(people.text) } : { plan: planned.plan, errors: planned.fatal }
+  return { plan: planFor(planned.plan, caller, people), errors: people ? planned.fatal.map(people.text) : planned.fatal }
 }
 
 export async function submitChangeRequest(org: ConfigOrganization, caller: ConfigCaller, input: SubmitInput, options: { source?: "ui" | "api" | "revert"; revertsChangeRequestId?: ConfigChangeRequestId; decisions?: ConfigDecisions } = {}): Promise<ConfigChangeRequestSummary> {
@@ -844,6 +871,7 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
   const secretInputs = overrides.secretInputs ?? row.secretInputs ?? []
   const grouped = sourceInstanceId ? groupAliases(await listAliasRows(row.organizationId, sourceInstanceId, db.$primary)) : null
   const access = await planningAccessFor(row.organizationId, actor, row.apiKeyId)
+  const directory = await loadDirectory(row.organizationId)
   const planInput: Parameters<typeof buildPlan>[0] = {
     areas: CONFIG_AREAS,
     blobAreas: areas,
@@ -855,7 +883,7 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
     mayInvite: access.mayInvite,
     decisions,
     secretInputs,
-    people: await loadPeople(row.organizationId),
+    people: directory.people,
     allowEnv: configAllowEnv(),
     deployment,
     features,
@@ -880,6 +908,9 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
     if (verdicts.size > 0) result = buildPlan({ ...planInput, preflight: verdicts })
   }
   if (grouped) addAliasProvenance(result.plan, grouped.provenance)
+  // Outside the areas the file carries, what a reference left open could be pointed at (display only).
+  const refTargets = planRefTargets(result.plan, { scope, targetItems, members: directory.names, visibleAreas: access.visibleAreas })
+  if (refTargets.length > 0) result.plan.refTargets = refTargets
   for (const entry of blob.omitted ?? []) {
     result.plan.issues.push({ level: "warning", message: `${areaLabel(entry.area)} was left out of the export: ${entry.reason}`, area: entry.area })
   }
@@ -956,7 +987,7 @@ async function replan(row: ConfigChangeRequestRow, caller: ConfigCaller, change:
   const updated = await updateChangeRequest(row.organizationId, row.id, [row.status], { ...change, ...patch })
   if (!updated) throw new ConfigBlobError(409, { error: "change_request_moved_on", message: "This change moved on while you were editing it. Reload and try again." })
   const people = await peopleRedactorFor(row.organizationId, caller)
-  return { changeRequest: await summaryFor(updated, caller), plan: updated.plan && people ? people.plan(updated.plan) : updated.plan }
+  return { changeRequest: await summaryFor(updated, caller), plan: updated.plan ? planFor(updated.plan, caller, people) : updated.plan }
 }
 
 async function loadEditable(organizationId: OrganizationId, id: string, caller: ConfigCaller): Promise<ConfigChangeRequestRow> {

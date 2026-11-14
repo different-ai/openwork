@@ -194,6 +194,8 @@ export const membersDefaultModelsArea = defineConfigArea({
   uniqueFields: [{ label: "scope", get: scopeUniqueKey }],
   informationalName: true,
   secretFields: [],
+  // A team's default is that team's (without the team it would become everyone's), and a default names a provider's model.
+  requiredRefs: ["team", "provider"],
   // saveDefaultModel and the model check read and write the global db.
   transactional: false,
   irreversible: () => [],

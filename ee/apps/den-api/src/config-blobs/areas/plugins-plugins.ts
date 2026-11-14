@@ -77,6 +77,7 @@ import {
   ConfigApplyError,
   applyWithSteps,
   isJsonObject,
+  ownManagerAccessPreflight,
   resolvedRefIds,
   specObject,
   specRefSchema,
@@ -396,6 +397,8 @@ export const pluginsPluginsArea = defineConfigArea({
   secretFields: [],
   arrayKeys: { components: "$ref", collections: "$ref" },
   informationalFields: ["sourceRepositoryUrl", "sourceFormat", "managedBy", "builtIn"],
+  // A binding ties a skill's MCP server to a connection: without either there is no binding.
+  requiredRefs: ["mcpConnections[].component", "mcpConnections[].connection"],
   transactional: false,
   protectedFromDelete: (item) => {
     if (item.spec.builtIn === true) return `"${item.name}" is built into the OpenWork Marketplace.`
@@ -415,6 +418,8 @@ export const pluginsPluginsArea = defineConfigArea({
   async readItems(ctx, ids) {
     return readPlugins(ctx, ids)
   },
+
+  preflight: ownManagerAccessPreflight,
 
   async apply(ctx, op) {
     return applyWithSteps(async (log) => {

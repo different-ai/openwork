@@ -191,6 +191,7 @@ export function createPeopleRedactor(people: ReadonlyMap<string, string>): Peopl
     if (target === null) return ref
     const out: ConfigPlanRef = { path: ref.path, ref: `${PEOPLE_PREFIX}${handleFor(target)}`, resolvedId: ref.resolvedId, via: ref.via }
     if (ref.decision !== undefined) out.decision = ref.decision
+    if (ref.refuses !== undefined) out.refuses = ref.refuses
     return out
   }
 
@@ -243,11 +244,18 @@ export function createPeopleRedactor(people: ReadonlyMap<string, string>): Peopl
     text: (value) => display(null).text(value),
     plan: (plan) => {
       const view = display(plan)
-      return {
+      const out: ConfigPlan = {
         ...plan,
         issues: plan.issues.map((issue) => ({ ...issue, message: view.text(issue.message) })),
         areas: plan.areas.map((area) => ({ ...area, items: area.items.map((item) => planItem(view, item)) })),
       }
+      // The organization's members are not offered to someone who may not read them.
+      if (plan.refTargets) {
+        out.refTargets = plan.refTargets
+          .filter((entry) => entry.area !== PEOPLE_AREA)
+          .map((entry) => ({ ...entry, items: entry.items.map((item) => ({ ...item, name: view.text(item.name) })) }))
+      }
+      return out
     },
     report: (report) => {
       const view = display(report)

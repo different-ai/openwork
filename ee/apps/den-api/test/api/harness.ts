@@ -164,6 +164,114 @@ async function createDatabase(): Promise<{ url: string; drop: () => Promise<void
   }
 }
 
+const READ_USER = { username: "den_api_test_read", password: "den-api-test-read-password" }
+
+/** A second account on the same server that can only read: Den's replica credentials. */
+async function createReadUser(): Promise<{ username: string; password: string }> {
+  const root = mysqlPool(withDatabase(mysqlBaseUrl(), "mysql"))
+  try {
+    await root.query(`CREATE USER IF NOT EXISTS '${READ_USER.username}'@'%' IDENTIFIED BY '${READ_USER.password}'`)
+    await root.query(`GRANT SELECT ON *.* TO '${READ_USER.username}'@'%'`)
+  } finally {
+    await root.end()
+  }
+  return READ_USER
+}
+
+/** What a transaction did that PlanetScale's serverless driver refuses. */
+export type ConcurrentStatement = { running: string; sent: string }
+
+/**
+ * The two things production's database does that a single local MySQL does
+ * not, for one booted app (`bootDen({ productionLike: true })`, or
+ * DEN_API_TEST_PRODUCTION_LIKE=1 for any test file):
+ *
+ * - A lagging replica. Reads Den does not send to the primary go through the
+ *   replica pool, whose connections each hold an open snapshot: they see the
+ *   database as it was at the last `catchUp()`. The harness catches up at the
+ *   start of every request the test makes and never during one, so a request
+ *   or a worker tick that writes and reads back through the replica sees its
+ *   write missing, as on a replica that is a moment behind. `freeze()` stops
+ *   the catching up until `thaw()`.
+ * - One statement at a time in a transaction. PlanetScale's serverless driver
+ *   fails a transaction that sends a statement before the previous one
+ *   answered (MySQL's wire protocol would queue it), so `Promise.all` over a
+ *   `tx` works locally and fails in production. Here it fails too, and is
+ *   listed in `concurrentStatements`.
+ */
+async function productionLikeDatabase(options: { replica: boolean }) {
+  const { client, readClient } = await import("../../src/db.js")
+  if (!("getConnection" in client)) throw new Error("productionLike needs MySQL mode")
+  const replica = options.replica ? readClient : null
+  if (options.replica && (!replica || !("getConnection" in replica))) throw new Error("productionLike needs replica credentials")
+  // The pool's size (den-db createMySqlPool): every connection gets a snapshot, so none reads fresh by accident.
+  const REPLICA_CONNECTIONS = 10
+  let frozen = false
+
+  async function snapshotAll(): Promise<void> {
+    if (!replica || !("getConnection" in replica)) return
+    const connections = await Promise.all(Array.from({ length: REPLICA_CONNECTIONS }, () => replica.getConnection()))
+    try {
+      await Promise.all(connections.map(async (connection) => {
+        await connection.query("COMMIT")
+        await connection.query("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY")
+      }))
+    } finally {
+      for (const connection of connections) connection.release()
+    }
+  }
+
+  const concurrentStatements: ConcurrentStatement[] = []
+  const guarded = new WeakSet<object>()
+  const sqlOf = (input: unknown): string => (typeof input === "string" ? input : isRecord(input) && typeof input.sql === "string" ? input.sql : "?")
+  const getConnection = client.getConnection.bind(client)
+  client.getConnection = async () => {
+    const connection = await getConnection()
+    if (guarded.has(connection)) return connection
+    guarded.add(connection)
+    let running: string | null = null
+    for (const method of ["query", "execute"] as const) {
+      const unwrapped = connection[method]
+      const original = (...args: unknown[]): Promise<unknown> => Reflect.apply(unwrapped, connection, args)
+      const wrapped = async (...args: unknown[]) => {
+        const sent = sqlOf(args[0])
+        // The rollback of a failed transaction waits its turn, so the report names the statement that failed.
+        if (running !== null && sent !== "rollback") {
+          concurrentStatements.push({ running, sent })
+          throw new Error(`production-like database: a transaction sent "${sent}" before "${running}" answered; PlanetScale's serverless driver fails here`)
+        }
+        running = sent
+        try {
+          return await original(...args)
+        } finally {
+          running = null
+        }
+      }
+      Object.defineProperty(connection, method, { value: wrapped, configurable: true, writable: true })
+    }
+    return connection
+  }
+
+  await snapshotAll()
+  return {
+    /** The replica now holds everything written so far. */
+    async catchUp(): Promise<void> {
+      if (!frozen) await snapshotAll()
+    },
+    /** The replica stops catching up: it stays as it is now until `thaw()`. */
+    async freeze(): Promise<void> {
+      await snapshotAll()
+      frozen = true
+    },
+    async thaw(): Promise<void> {
+      frozen = false
+      await snapshotAll()
+    },
+    /** Every time a transaction sent a statement before the previous one answered. */
+    concurrentStatements,
+  }
+}
+
 export type FakeHandler = (request: IncomingMessage, body: string, response: ServerResponse) => void | Promise<void>
 
 /** A small outside service (an MCP server, an OAuth provider) for one test file. */
@@ -376,10 +484,15 @@ export type Den = Awaited<ReturnType<typeof bootDen>>
  * (the same DEN_BOOTSTRAP_ADMIN_EMAILS a self-hosted operator sets) so the test
  * can turn organization features on from /v1/admin.
  */
-export async function bootDen(options: { env?: Record<string, string> } = {}) {
+export async function bootDen(options: { env?: Record<string, string>; productionLike?: boolean } = {}) {
   const stamp = `${Date.now().toString(36)}${randomBytes(3).toString("hex")}`
   const platformAdminEmail = `platform-admin+${stamp}@example.test`
   const database = await createDatabase()
+  // DEN_API_TEST_PRODUCTION_LIKE=1 runs any test file this way; =transactions keeps one database and only
+  // enforces one statement at a time (for tests that call an area adapter directly, outside the worker).
+  const transactionsOnly = options.productionLike === undefined && process.env.DEN_API_TEST_PRODUCTION_LIKE === "transactions"
+  const productionLike = transactionsOnly || (options.productionLike ?? process.env.DEN_API_TEST_PRODUCTION_LIKE === "1")
+  const readUser = productionLike && !transactionsOnly ? await createReadUser() : null
   Object.assign(process.env, {
     DATABASE_URL: database.url,
     DB_MODE: "mysql",
@@ -403,6 +516,7 @@ export async function bootDen(options: { env?: Record<string, string> } = {}) {
     STRIPE_SECRET_KEY: "",
     LOOPS_API_KEY: "",
     OTEL_SDK_DISABLED: "true",
+    ...(readUser ? { DATABASE_READ_USERNAME: readUser.username, DATABASE_READ_PASSWORD: readUser.password } : {}),
     ...options.env,
   })
   const app = await import("../../src/app.js").then((module) => module.default, async (error: unknown) => {
@@ -410,7 +524,11 @@ export async function bootDen(options: { env?: Record<string, string> } = {}) {
     throw error
   })
 
+  const production = productionLike ? await productionLikeDatabase({ replica: !transactionsOnly }) : null
+
   async function request(token: string | null, method: Method, pathname: string, options: RequestOptions = {}): Promise<Call> {
+    // The lagging replica has caught up by the time the next request arrives.
+    await production?.catchUp()
     const headers = new Headers({ origin: WEB_ORIGIN, ...options.headers })
     if (token) headers.set("authorization", `Bearer ${token}`)
     if (options.orgId) headers.set("x-openwork-org-id", options.orgId)
@@ -571,8 +689,12 @@ export async function bootDen(options: { env?: Record<string, string> } = {}) {
     setFeature,
     asPlatformAdmin,
     as,
+    /** Production-shaped database behaviour, when booted with `productionLike` (null otherwise). */
+    production,
     async close() {
-      const { client } = await import("../../src/db.js")
+      const { client, readClient } = await import("../../src/db.js")
+      // The replica's open snapshots hold metadata locks: close it before the drop.
+      if (readClient && "getConnection" in readClient) await readClient.end().catch(() => undefined)
       if ("getConnection" in client) await client.end().catch(() => undefined)
       await database.drop()
     },
