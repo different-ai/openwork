@@ -21,6 +21,7 @@ import {
   resolveOpenWorkExtensionCatalogPlatform,
 } from "@/app/constants";
 import type { EnablementContext } from "@/app/enablement";
+import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import {
   createOpenworkServerClient,
@@ -1310,6 +1311,23 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setCloudMcpHealthResult({ workspaceId, health });
     return health;
   }, [currentCloudMcpModel, openworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
+  // Same report as the command palette's "Copy diagnostics", plus the Cloud check shown on the Advanced page.
+  const copyDiagnosticsReport = useCallback(async () => {
+    try {
+      const report = await buildDiagnosticsBundleJson({
+        clientConnected: Boolean(opencodeClient),
+        developerMode,
+        openworkServerStatus: openworkServerSnapshot.openworkServerStatus,
+        openworkServerUrl: openworkClient?.baseUrl ?? "",
+        runtimeWorkspaceId,
+        cloudMcpHealth,
+      });
+      await navigator.clipboard.writeText(report);
+      toast.success(t("session.diagnostics_copied"));
+    } catch (error) {
+      toast.error(t("session.diagnostics_failed"), { description: describeRouteError(error) });
+    }
+  }, [cloudMcpHealth, developerMode, opencodeClient, openworkClient, openworkServerSnapshot.openworkServerStatus, runtimeWorkspaceId]);
   const { commandPaletteOpen, setCommandPaletteOpen } = useCommandPaletteShortcut(!props.embedded);
   const developerModePaletteItem = useMemo(
     () => settingsDeveloperModePaletteItem(developerMode, () => {
@@ -2641,6 +2659,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               }}
               cloudMcpHealth={cloudMcpHealth}
               refreshCloudMcpHealth={refreshCloudMcpHealth}
+              appVersion={electronUpdaterState.appVersion}
+              copyDiagnosticsReport={copyDiagnosticsReport}
               organizationServer={denSession}
               engineClient={openworkClient}
             />

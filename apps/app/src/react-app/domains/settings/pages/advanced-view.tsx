@@ -7,16 +7,17 @@ import { ADVANCED_SETTINGS_SECTIONS } from "../advanced-sections";
 import { Separator } from "@/components/ui/separator";
 
 import type { OpencodeConnectStatus } from "@/app/types";
+import { readDenSettings } from "@/app/lib/den";
 import type { OpenworkServerClient, OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
 import { t } from "@/i18n";
 import { LayoutStack } from "../settings-layout";
 import type { useDenSession } from "../cloud/use-den-session";
 
+import { AdvancedDiagnosticsSection } from "./advanced-diagnostics-section";
 import { advancedLocalReducer, initialAdvancedLocalState } from "./advanced-view-state";
 import {
   AdvancedDeveloperSection,
   AdvancedEngineV2PreviewSection,
-  AdvancedCloudMcpDiagnosticsSection,
   AdvancedOrganizationServerSection,
   AdvancedRuntimeConfigSourcesSection,
   AdvancedRuntimeSection,
@@ -53,6 +54,8 @@ export type AdvancedViewProps = {
   cloudMcpUrl: string | null;
   cloudMcpHealth: OpenworkCloudMcpHealth | null;
   refreshCloudMcpHealth: () => Promise<OpenworkCloudMcpHealth | null>;
+  appVersion: string | null;
+  copyDiagnosticsReport: () => Promise<void>;
   engineClient: OpenworkServerClient | null;
 };
 
@@ -173,6 +176,8 @@ export function AdvancedView(props: AdvancedViewProps) {
     void refreshRuntimeConfigStatus();
   }, [props.canInspectRuntimeConfig]);
 
+  const denSettings = readDenSettings();
+
   return (
     <div ref={viewRef}>
       <LayoutStack>
@@ -199,9 +204,13 @@ export function AdvancedView(props: AdvancedViewProps) {
           openworkDetailLines={openworkDetailLines}
         />
 
-        <AdvancedCloudMcpDiagnosticsSection
+        <AdvancedDiagnosticsSection
+          appVersion={props.appVersion}
+          signedIn={Boolean(denSettings.authToken)}
+          orgSelected={Boolean(denSettings.activeOrgId)}
           cloudMcpHealth={props.cloudMcpHealth}
           onRefresh={props.refreshCloudMcpHealth}
+          onCopyReport={props.copyDiagnosticsReport}
         />
 
         <AdvancedRuntimeConfigSourcesSection
