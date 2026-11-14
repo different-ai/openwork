@@ -2,6 +2,7 @@ import {
   BarChart3,
   Box,
   CalendarClock,
+  Gauge,
   Radar,
   Globe,
   Laptop,
@@ -38,6 +39,7 @@ import {
   getMcpConnectionsRoute,
   getMembersRoute,
   getMyComputersRoute,
+  getMyUsageRoute,
   getOrgSettingsRoute,
   getPermissionsRoute,
   getPluginsRoute,
@@ -168,6 +170,8 @@ export function buildDashboardNavSections({
     : [];
   const observabilityItems: DashboardNavItem[] = orgSlug
     ? [
+        // Every member's own usage; needs no permission, so the section shows for everyone.
+        { href: getMyUsageRoute(orgSlug), label: "My Usage", icon: Gauge, testId: "dashboard-nav-my-usage" },
         ...(access.canViewUsageAnalytics ? [{ href: getAnalyticsRoute(orgSlug), label: "Analytics", icon: BarChart3 }] : []),
         ...(capabilities.auditLogs
           ? [{
@@ -259,6 +263,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   "My Computers": ["devices", "my devices", "laptop", "desktop", "virtual computers", "workbot computer", "remote access", "other devices", "tasks"],
   "My bot": ["agent", "my agent", "morning brief", "meeting prep", "proactive", "notifications"],
   "My Library": ["skills", "plugins", "connections"],
+  "My Usage": ["usage", "spend", "cost", "limits", "budget", "tokens", "prices", "models"],
   "OpenWork Models": ["llm", "provider", "managed", "inference"],
   "OpenWork Web": ["cloud", "sessions"],
   Plugins: ["skills", "commands", "plugin directory"],
