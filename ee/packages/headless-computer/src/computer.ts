@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { posix } from "node:path"
 import { ensureRunning, isSandboxError, shellQuote, SCOPE_LABEL, withBlocks, type RunSpec, type SandboxHandle, type SandboxProvider, type SandboxSpec, type SandboxState } from "@openwork/sandbox"
 import { z } from "zod"
@@ -53,6 +53,23 @@ const OUT_DIR = `${WORKSPACE}/out`
 /** Which /workspace/out files were already added to the person's Files (path → size:mtime), kept in the VM itself. */
 const EXPORTED_MANIFEST = `${WORKSPACE}/.jobs/.exported.json`
 const MANIFEST_MARKER = "---computer-exported---"
+/** Which of the person's files were copied in (file id → its name in /workspace/files), kept in the VM next to it. */
+const COPIED_MANIFEST = `${WORKSPACE}/.jobs/.copied.json`
+const COPIED_MARKER = "---computer-copied---"
+/**
+ * Files move between the store and the computer directly when the store hands out links (ComputerFiles): the
+ * computer fetches or sends them with curl in one command, so the bytes never pass through the runner. The time a
+ * transfer gets grows with its size, at half a megabyte a second; its links stop working a minute after that.
+ */
+const TRANSFER_BASE_MS = 60_000
+const TRANSFER_MS_PER_MB = 2_000
+const MAX_TRANSFER_MS = 280_000
+const TRANSFER_LINK_GRACE_SECONDS = 60
+const TRANSFERS_AT_ONCE = 4
+/** After a transfer in which nothing arrived, files go through the runner for this long before links are tried again. */
+const DIRECT_RETRY_MS = 10 * 60_000
+const TRANSFER_PLAN = ".openwork-transfer-"
+const COPIED_LINE = "copied"
 /** What a login shell would set, so `pip install --user` and npm globals are found without the slow profile. */
 function computerBlocks(provider: SandboxProvider) { return withBlocks(provider, ["run", "files"], "Workbot computer") }
 const GUEST_PATH = "/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -89,6 +106,8 @@ export class Computers {
   private readonly checkpointing = new Set<string>()
   /** Saved file ids already copied into each session's VM by this process. */
   private readonly copied = new Map<string, Set<string>>()
+  /** Until when files go through the runner because the last direct transfer brought nothing. */
+  private directOffUntil = 0
   /** The desktop request being timed for each VM, by its slug. */
   private readonly timings = new Map<string, DesktopTiming>()
   /** How each session's desktop last started in this process; a `stale` one is replaced the next time it is idle. */
@@ -602,7 +621,12 @@ export class Computers {
     })
   }
 
-  /** Copies files the person sent into /workspace/files. Returns the paths it copied this time. */
+  /**
+   * Copies files the person sent into /workspace/files. Returns the paths it copied this time. What is already there
+   * is read in one command: the folder's names and sizes, and the record of earlier copies kept on the computer, so
+   * a new process doesn't ask about each file. Missing files are fetched by the computer itself where the store
+   * hands out links, all in one command; otherwise, or when that doesn't arrive, they go through the runner.
+   */
   private async copyUploads(sessionId: string): Promise<string[]> {
     if (!this.files) return []
     const done = this.copied.get(sessionId) ?? new Set<string>()
@@ -610,44 +634,148 @@ export class Computers {
     const pending = this.files.list(sessionId).filter((file) => file.source === "user" && !done.has(file.id))
     if (pending.length === 0) return []
     const vm = await this.vm(sessionId)
-    const copied: string[] = []
+    const seen = await this.execute(vm, {
+      command: `find ${FILES_DIR} -mindepth 1 -maxdepth 1 -printf '%f\\t%s\\n' 2>/dev/null; echo '${COPIED_MARKER}'; cat ${COPIED_MANIFEST} 2>/dev/null || echo '{}'`,
+      timeoutMs: 30_000,
+    })
+    const [listed = "", recordText = "{}"] = (seen.stdout ?? "").split(`${COPIED_MARKER}\n`)
+    const present = new Map(listed.split("\n").filter(Boolean).map((line) => {
+      const tab = line.lastIndexOf("\t")
+      return [line.slice(0, tab), Number(line.slice(tab + 1))] as const
+    }))
+    // File id → the name it was copied under. It only counts while that file is still there at that size: a
+    // replacement computer carries this record over but not /workspace/files.
+    const record = z.record(z.string(), z.string()).catch({}).parse(safeJson(recordText.trim()))
+    const missing: Array<{ file: ComputerFile; path: string }> = []
+    let recorded = false
     for (const file of pending) {
-      const path = await this.uploadPath(vm, file.name, file.size)
-      if (path.exists) {
+      const earlier = record[file.id]
+      if (earlier !== undefined && present.get(earlier) === file.size) {
         done.add(file.id)
         continue
       }
-      const found = await this.files.read(sessionId, file.id)
-      if (!found) {
+      const place = uploadPath(present, file.name, file.size)
+      record[file.id] = place.name
+      recorded = true
+      if (place.exists) {
         done.add(file.id)
         continue
       }
-      await this.blocks.files.write(vm, path.path, found.bytes, { timeoutMs: 30_000, ...(this.desktop ? { mode: 0o660 } : {}) })
-      done.add(file.id)
-      copied.push(path.path)
+      // Taken from here on, so another file of this name sent with it gets its own.
+      present.set(place.name, file.size)
+      missing.push({ file, path: `${FILES_DIR}/${place.name}` })
     }
+    const recordJson = JSON.stringify(record)
+    const fetched = await this.fetchUploads(sessionId, vm, missing, recordJson)
+    const copied: string[] = []
+    for (const { file, path } of missing) {
+      if (!fetched.has(file.id)) {
+        const found = await this.files.read(sessionId, file.id)
+        if (!found) {
+          done.add(file.id)
+          continue
+        }
+        await this.blocks.files.write(vm, path, found.bytes, { timeoutMs: 30_000, ...(this.desktop ? { mode: 0o660 } : {}) })
+      }
+      done.add(file.id)
+      copied.push(path)
+    }
+    // The fetching command writes the record itself; otherwise it is written here, when it changed. Without it the
+    // next process still finds the files by name and size.
+    if (recorded && fetched.size === 0) await this.blocks.files.write(vm, COPIED_MANIFEST, new TextEncoder().encode(recordJson), { timeoutMs: 30_000 }).catch(() => undefined)
     return copied
   }
 
-  /** `/workspace/files/<name>`, or a variant when a different file already has that name. */
-  private async uploadPath(vm: SandboxHandle, name: string, size: number) {
-    const base = posix.basename(name) || "file"
-    const extension = posix.extname(base)
-    const stem = base.slice(0, base.length - extension.length)
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const path = `${FILES_DIR}/${attempt === 0 ? base : `${stem} (${attempt + 1})${extension}`}`
-      const stat = await this.blocks.files.stat(vm, path, { timeoutMs: 10_000 })
-      if (!stat) return { path, exists: false }
-      if (stat.size === size) return { path, exists: true }
+  /**
+   * Has the computer fetch the person's files from the store itself, all in one command. Each is fetched under a
+   * temporary name, checked against its size, given the permissions a copy through the runner gets, and only then
+   * moved into place. Returns the ids of the files that arrived; the rest are left for the runner to carry.
+   */
+  private async fetchUploads(sessionId: string, vm: SandboxHandle, missing: Array<{ file: ComputerFile; path: string }>, recordJson: string): Promise<Set<string>> {
+    const arrived = new Set<string>()
+    const files = this.files
+    if (!files?.downloadUrl || missing.length === 0 || Date.now() < this.directOffUntil) return arrived
+    const timeoutMs = transferTimeoutMs(missing.reduce((total, { file }) => total + file.size, 0))
+    const token = randomUUID().replaceAll("-", "")
+    let outcome: unknown
+    try {
+      const fetching: Array<{ file: ComputerFile; path: string; part: string; url: string }> = []
+      for (const [index, entry] of missing.entries()) {
+        const url = await files.downloadUrl(sessionId, entry.file.id, linkSeconds(timeoutMs))
+        if (url) fetching.push({ ...entry, url, part: `${FILES_DIR}/.openwork-part-${token}-${index}` })
+      }
+      if (fetching.length === 0) return arrived
+      const result = await this.transfer(vm, {
+        token,
+        blocks: fetching.map(({ url, part }) => [`url = "${url}"`, `output = "${part}"`]),
+        timeoutMs,
+        cleanup: fetching.map(({ part }) => part),
+        after: [
+          ...fetching.map(({ file, path, part }, index) =>
+            `[ "$(stat -c %s ${part} 2>/dev/null)" = ${file.size} ] && ${this.desktop ? `chmod 660 ${part} && ` : ""}mv -fT -- ${part} ${shellQuote(path)} && echo ${COPIED_LINE} ${index}`),
+          `printf %s ${shellQuote(recordJson)} > ${COPIED_MANIFEST}`,
+        ],
+      })
+      for (const line of result.stdout.split("\n")) {
+        const [word, index] = line.trim().split(" ")
+        const entry = word === COPIED_LINE ? fetching[Number(index)] : undefined
+        if (entry) arrived.add(entry.file.id)
+      }
+      outcome = result.stderr
+    } catch (error) {
+      outcome = error
     }
-    return { path: `${FILES_DIR}/${Date.now()}-${base}`, exists: false }
+    if (arrived.size === 0) this.directFailed(sessionId, "to the computer", missing.length, outcome)
+    return arrived
   }
 
-  /** Adds new or changed files under /workspace/out to the person's Files. Returns their names. */
-  /** Adds new or changed files in /workspace/out to the person's files. Returns what was added, and what wasn't. */
+  /**
+   * Runs curl on the computer over `blocks`, one transfer each, then the `after` commands. The links are written to a
+   * file, never to a command line, and the file is removed when the command ends. On a desktop, commands run as a
+   * separate account that can't enter the folder it is in; elsewhere there is one account.
+   */
+  private async transfer(vm: SandboxHandle, input: { token: string; blocks: string[][]; before?: string[]; after?: string[]; cleanup?: string[]; timeoutMs: number }) {
+    const folder = this.transferFolder
+    const plan = `${folder}/${TRANSFER_PLAN}${input.token}`
+    const seconds = Math.max(10, Math.floor(input.timeoutMs / 1000) - 10)
+    const config = input.blocks.map((block) => [...block, "fail", "globoff", "connect-timeout = 10", `max-time = ${seconds}`].join("\n")).join("\nnext\n")
+    await this.blocks.files.write(vm, plan, new TextEncoder().encode(`${config}\n`), { timeoutMs: 10_000 })
+    return this.execute(vm, {
+      command: [
+        `trap 'rm -rf ${[plan, `${plan}.d`, ...(input.cleanup ?? [])].join(" ")}' EXIT`,
+        `chmod 600 ${plan}`,
+        // Whatever an interrupted transfer left behind; its links have long stopped working.
+        `find ${folder} -maxdepth 1 -name '${TRANSFER_PLAN}*' -mmin +15 -exec rm -rf {} + 2>/dev/null`,
+        ...(input.before ?? []),
+        `curl --silent --show-error --parallel --parallel-max ${TRANSFERS_AT_ONCE} --config ${plan} >/dev/null`,
+        ...(input.after ?? []),
+        "true",
+      ].join("\n"),
+      timeoutMs: input.timeoutMs,
+    })
+  }
+
+  /** Where a transfer's links are written: the provider account's own folder on a desktop, the jobs folder elsewhere. */
+  private get transferFolder() {
+    return this.desktop ? "/home/ubuntu" : `${WORKSPACE}/.jobs`
+  }
+
+  /** Files go through the runner for a while after a direct transfer in which nothing arrived. */
+  private directFailed(sessionId: string, direction: string, files: number, outcome: unknown) {
+    this.directOffUntil = Date.now() + DIRECT_RETRY_MS
+    const detail = (outcome instanceof Error ? outcome.message : typeof outcome === "string" ? outcome : "").replace(/https?:\/\/\S+/g, "[link]").trim().slice(-300)
+    console.warn("[headless-computer] a direct file transfer brought nothing; files go through the runner for now", { sessionId, direction, files, ...(detail ? { detail } : {}) })
+  }
+
+  /**
+   * Adds new or changed files in /workspace/out to the person's files. Returns what was added, and what wasn't. The
+   * computer sends them to the store itself where the store hands out links, all in one command; what doesn't
+   * arrive that way goes through the runner.
+   */
   private async exportOutputs(sessionId: string): Promise<{ saved: string[]; skipped: string[] }> {
     if (!this.files) return { saved: [], skipped: [] }
-    const maxBytes = Math.min(MAX_EXPORT_BYTES, this.files.maxFileBytes)
+    const files = this.files
+    const maxBytes = Math.min(MAX_EXPORT_BYTES, files.maxFileBytes)
     const vm = await this.vm(sessionId)
     const listing = await this.execute(vm, {
       command: `find ${OUT_DIR} -type f -not -name '.*' -printf '%P\\t%s\\t%T@\\n' 2>/dev/null; echo '${MANIFEST_MARKER}'; cat ${EXPORTED_MANIFEST} 2>/dev/null || echo '{}'`,
@@ -659,6 +787,13 @@ export class Computers {
     const saved: string[] = []
     const skipped: string[] = []
     let changed = false
+    // A version that doesn't fit is recorded as seen, so it is reported once rather than after every command.
+    const notKept = (output: Output, reason: string) => {
+      skipped.push(`${output.relative} (${reason})`)
+      manifest[output.relative] = `${output.signature}|${output.previousId ?? ""}`
+      changed = true
+    }
+    const outputs: Output[] = []
     for (const line of listed.split("\n").filter(Boolean)) {
       const [relative, sizeText, mtime] = line.split("\t")
       if (!relative || !sizeText) continue
@@ -667,35 +802,39 @@ export class Computers {
       const [previousSignature, recordedId] = (manifest[relative] ?? "").split("|")
       if (previousSignature === signature) continue
       // Outputs recorded before ids were kept: the newest file it made under that name is the earlier version.
-      const previousId = recordedId || (previousSignature ? this.files.list(sessionId).find((file) => file.source === "agent" && file.name === posix.basename(relative))?.id : undefined)
-      // A version that doesn't fit is recorded as seen, so it is reported once rather than after every command.
-      const notKept = (reason: string) => {
-        skipped.push(`${relative} (${reason})`)
-        manifest[relative] = `${signature}|${previousId ?? ""}`
-        changed = true
-      }
-      if (size > maxBytes) {
-        notKept(`${formatBytes(size)}; the most a kept file can be is ${formatBytes(maxBytes)}`)
+      const previousId = recordedId || (previousSignature ? files.list(sessionId).find((file) => file.source === "agent" && file.name === posix.basename(relative))?.id : undefined)
+      const output = { relative, size, signature, previousId }
+      if (size > maxBytes) notKept(output, `${formatBytes(size)}; the most a kept file can be is ${formatBytes(maxBytes)}`)
+      else outputs.push(output)
+    }
+    const sent = await this.sendOutputs(sessionId, vm, outputs)
+    for (const output of outputs) {
+      const { relative, previousId } = output
+      const direct = sent.get(relative)
+      if (direct instanceof Error) {
+        notKept(output, direct.message)
         continue
       }
-      const bytes = new Uint8Array(await this.blocks.files.read(vm, `${OUT_DIR}/${relative}`, { timeoutMs: 30_000 }))
       // A new version of a file already handed over updates it in place: one file in their Files, and anything
       // showing it (the answer's card, an open preview) moves to the new version.
-      let file: ComputerFile | null = null
-      try {
-        file =
-          (previousId ? await this.files.replace(sessionId, previousId, { bytes }) : null) ??
-          (await this.files.add(sessionId, { name: posix.basename(relative), bytes, source: "agent" }))
-      } catch (error) {
-        // Over the conversation's limits: final for this version. Anything else (storage briefly unreachable)
-        // is left unrecorded, so the next command tries again.
-        if (isLimitError(error)) {
-          notKept(error.message)
-          continue
+      let file = direct ?? null
+      if (!file) {
+        const bytes = new Uint8Array(await this.blocks.files.read(vm, `${OUT_DIR}/${relative}`, { timeoutMs: 30_000 }))
+        try {
+          file =
+            (previousId ? await files.replace(sessionId, previousId, { bytes }) : null) ??
+            (await files.add(sessionId, { name: posix.basename(relative), bytes, source: "agent" }))
+        } catch (error) {
+          // Over the conversation's limits: final for this version. Anything else (storage briefly unreachable)
+          // is left unrecorded, so the next command tries again.
+          if (isLimitError(error)) {
+            notKept(output, error.message)
+            continue
+          }
+          throw error
         }
-        throw error
       }
-      manifest[relative] = `${signature}|${file.id}`
+      manifest[relative] = `${output.signature}|${file.id}`
       changed = true
       saved.push(file.name)
       // Slides, documents and PDFs get page images for the preview panel, made in the background.
@@ -703,6 +842,53 @@ export class Computers {
     }
     if (changed) await this.blocks.files.write(vm, EXPORTED_MANIFEST, new TextEncoder().encode(JSON.stringify(manifest)), { timeoutMs: 30_000 })
     return { saved, skipped }
+  }
+
+  /**
+   * Has the computer send changed outputs to the store itself, all in one command. The store measures what arrived
+   * before keeping it, so the limits hold whatever was sent. Returns, by path, the kept file or the limit it ran
+   * into; an output that isn't in the result didn't arrive and is left for the runner to carry.
+   */
+  private async sendOutputs(sessionId: string, vm: SandboxHandle, outputs: Output[]): Promise<Map<string, ComputerFile | Error>> {
+    const settled = new Map<string, ComputerFile | Error>()
+    const files = this.files
+    if (!files?.receive || outputs.length === 0 || Date.now() < this.directOffUntil) return settled
+    const timeoutMs = transferTimeoutMs(outputs.reduce((total, output) => total + output.size, 0))
+    const sending: Array<{ output: Output; url: string; finish(): Promise<ComputerFile | null> }> = []
+    for (const output of outputs) {
+      try {
+        const place = await files.receive(sessionId, { name: posix.basename(output.relative), size: output.size, source: "agent", replaces: output.previousId, expiresSeconds: linkSeconds(timeoutMs) })
+        if (place) sending.push({ output, ...place })
+      } catch (error) {
+        // Anything but a limit is the store's trouble: the runner's own way reports it.
+        if (isLimitError(error)) settled.set(output.relative, error)
+      }
+    }
+    if (sending.length === 0) return settled
+    const token = randomUUID().replaceAll("-", "")
+    const links = `${this.transferFolder}/${TRANSFER_PLAN}${token}.d`
+    // curl reads each output through a link with a plain name, so a file's own name never has to be quoted for it.
+    const outcome: unknown = await this.transfer(vm, {
+      token,
+      blocks: sending.map(({ url }, index) => [`url = "${url}"`, `upload-file = "${links}/${index}"`]),
+      timeoutMs,
+      before: ["umask 077", `mkdir ${links} || exit 1`, ...sending.map(({ output }, index) => `ln -s -- ${shellQuote(`${OUT_DIR}/${output.relative}`)} ${links}/${index}`)],
+    }).then((result) => result.stderr, (error: unknown) => error)
+    let arrived = 0
+    for (const { output, finish } of sending) {
+      try {
+        const file = await finish()
+        if (!file) continue
+        settled.set(output.relative, file)
+        arrived += 1
+      } catch (error) {
+        if (!isLimitError(error)) continue
+        settled.set(output.relative, error)
+        arrived += 1
+      }
+    }
+    if (arrived === 0) this.directFailed(sessionId, "from the computer", sending.length, outcome)
+    return settled
   }
 
   /** Renders a kept file's preview on demand (files from before previews, or ones the person sent). */
@@ -815,6 +1001,31 @@ export class Computers {
     return result
   }
 }
+
+/** A changed file in /workspace/out: its path there, the version seen (size:mtime), and the kept file it updates. */
+type Output = { relative: string; size: number; signature: string; previousId: string | undefined }
+
+/**
+ * A person's file's name in /workspace/files: its own, or a variant when a different file already has that name.
+ * `present` is what the folder holds (name → size); a file of the same name and size is taken to be this one.
+ */
+function uploadPath(present: ReadonlyMap<string, number>, name: string, size: number) {
+  const plain = posix.basename(name)
+  const base = plain && plain !== "." && plain !== ".." ? plain : "file"
+  const extension = posix.extname(base)
+  const stem = base.slice(0, base.length - extension.length)
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const candidate = attempt === 0 ? base : `${stem} (${attempt + 1})${extension}`
+    const taken = present.get(candidate)
+    if (taken === undefined) return { name: candidate, exists: false }
+    if (taken === size) return { name: candidate, exists: true }
+  }
+  return { name: `${Date.now()}-${base}`, exists: false }
+}
+
+/** How long a direct transfer of this many bytes may take, and how long its links work. */
+const transferTimeoutMs = (bytes: number) => Math.min(MAX_TRANSFER_MS, TRANSFER_BASE_MS + Math.ceil(bytes / (1024 * 1024)) * TRANSFER_MS_PER_MB)
+const linkSeconds = (timeoutMs: number) => Math.ceil(timeoutMs / 1000) + TRANSFER_LINK_GRACE_SECONDS
 
 /** Width and height from a PNG's header. */
 function pngSize(bytes: Uint8Array | undefined) {
