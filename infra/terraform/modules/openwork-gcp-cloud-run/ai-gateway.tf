@@ -159,6 +159,16 @@ resource "google_compute_backend_service" "ai_gateway" {
   protocol              = var.managed_legacy ? "HTTP" : "HTTPS"
   backend { group = google_compute_region_network_endpoint_group.ai_gateway[0].id }
 }
+# Separate certificate: enabling inference must not replace the existing Den
+# certificate (managed certificate domain sets are immutable). Hash the host so
+# a later hostname change can create its replacement before detaching the old one.
+resource "google_compute_managed_ssl_certificate" "ai_gateway" {
+  count   = var.ai_gateway_enabled && length(var.ssl_certificate_ids) == 0 ? 1 : 0
+  project = var.project_id
+  name    = "${var.name}-ai-${substr(sha256(var.ai_gateway_domain_name), 0, 8)}"
+  managed { domains = [var.ai_gateway_domain_name] }
+  lifecycle { create_before_destroy = true }
+}
 output "ai_gateway_url" {
   description = "AI Gateway HTTPS origin for desktops, or null when disabled. Not the OpenWork Web den-gateway URL."
   value       = var.ai_gateway_enabled ? local.ai_gateway_url : null

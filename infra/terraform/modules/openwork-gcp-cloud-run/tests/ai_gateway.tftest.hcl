@@ -6,10 +6,15 @@ mock_provider "google" {
   mock_resource "google_secret_manager_secret_version" { defaults = { version = "1" } }
   mock_resource "google_service_account" { defaults = { email = "runtime@test-project.iam.gserviceaccount.com" } }
   mock_resource "google_compute_backend_service" { defaults = { id = "projects/test-project/global/backendServices/openwork" } }
+  mock_resource "google_compute_managed_ssl_certificate" { defaults = { id = "projects/test-project/global/sslCertificates/openwork-den" } }
 }
 override_resource {
   target = google_compute_backend_service.ai_gateway
   values = { id = "projects/test-project/global/backendServices/ai-gateway-distinct" }
+}
+override_resource {
+  target = google_compute_managed_ssl_certificate.ai_gateway
+  values = { id = "projects/test-project/global/sslCertificates/openwork-ai-gateway" }
 }
 provider "random" {}
 variables {
@@ -40,7 +45,7 @@ run "enable_plan" {
     error_message = "Enabled: 0 -> 1 inference service on 8791 with /health; public models URL."
   }
   assert {
-    condition     = google_cloud_run_v2_service.ai_gateway[0].default_uri_disabled && google_cloud_run_v2_service.ai_gateway[0].ingress == "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER" && google_cloud_run_v2_service.ai_gateway[0].invoker_iam_disabled && !google_cloud_run_v2_service.ai_gateway[0].deletion_protection && contains(google_compute_managed_ssl_certificate.this[0].managed[0].domains, "models.example.com") && anytrue([for r in google_compute_url_map.https[0].host_rule : contains(r.hosts, "models.example.com") && r.path_matcher == "ai-gateway"])
+    condition     = google_cloud_run_v2_service.ai_gateway[0].default_uri_disabled && google_cloud_run_v2_service.ai_gateway[0].ingress == "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER" && google_cloud_run_v2_service.ai_gateway[0].invoker_iam_disabled && !google_cloud_run_v2_service.ai_gateway[0].deletion_protection && contains(google_compute_managed_ssl_certificate.ai_gateway[0].managed[0].domains, "models.example.com") && anytrue([for r in google_compute_url_map.https[0].host_rule : contains(r.hosts, "models.example.com") && r.path_matcher == "ai-gateway"])
     error_message = "HTTPS LB routes the dedicated host and certificate; no direct run.app bypass or Cloud Run ID-token requirement; stateless service can be disabled."
   }
   assert {
@@ -58,6 +63,14 @@ run "enable_plan" {
     error_message = "Same four app secrets and encryption value, no new version counters."
   }
 }
+run "custom_den_mock_state" {
+  command = apply # Mock only: establish an existing Den TLS certificate.
+  variables { domain_name = "openwork.example.com" }
+  assert {
+    condition     = toset(google_compute_managed_ssl_certificate.this[0].managed[0].domains) == toset(["openwork.example.com", "api.openwork.example.com"]) && length(google_compute_managed_ssl_certificate.ai_gateway) == 0
+    error_message = "Synthetic Den baseline has its two-host certificate and no Gateway certificate."
+  }
+}
 run "with_den_custom_domains" {
   command = plan
   variables {
@@ -66,8 +79,20 @@ run "with_den_custom_domains" {
     ai_gateway_domain_name = "models.example.com"
   }
   assert {
-    condition     = length(google_compute_region_network_endpoint_group.run) + length(google_compute_region_network_endpoint_group.ai_gateway) == 3 && length(google_compute_url_map.https[0].host_rule) == 3 && toset(google_compute_managed_ssl_certificate.this[0].managed[0].domains) == toset(["openwork.example.com", "api.openwork.example.com", "models.example.com"])
-    error_message = "Den and AI Gateway coexist as three separate backends/hosts on one HTTPS LB; this does not create den-gateway."
+    condition     = length(google_compute_region_network_endpoint_group.run) + length(google_compute_region_network_endpoint_group.ai_gateway) == 3 && length(google_compute_url_map.https[0].host_rule) == 3 && toset(google_compute_managed_ssl_certificate.this[0].managed[0].domains) == toset(["openwork.example.com", "api.openwork.example.com"]) && google_compute_managed_ssl_certificate.this[0].id != "" && toset(google_compute_managed_ssl_certificate.ai_gateway[0].managed[0].domains) == toset(["models.example.com"])
+    error_message = "Three separate backends/hosts coexist on one HTTPS LB; a separate Gateway certificate preserves the existing Den certificate and does not create den-gateway."
+  }
+}
+run "operator_managed_certificates" {
+  command = plan
+  variables {
+    ai_gateway_enabled     = true
+    ai_gateway_domain_name = "models.example.com"
+    ssl_certificate_ids    = ["projects/test-project/global/sslCertificates/external"]
+  }
+  assert {
+    condition     = length(google_compute_managed_ssl_certificate.ai_gateway) == 0 && length(google_compute_managed_ssl_certificate.this) == 0 && toset(google_compute_target_https_proxy.this[0].ssl_certificates) == toset(var.ssl_certificate_ids)
+    error_message = "Supplied covering certificates remain operator-owned; no replacement certificate is generated."
   }
 }
 run "missing_domain" {
@@ -126,7 +151,7 @@ run "enabled_mock_state" {
     ai_gateway_domain_name = "models.example.com"
   }
   assert {
-    condition     = length(google_cloud_run_v2_service.ai_gateway) == 1 && length(google_secret_manager_secret.app) == 4 && anytrue([for matcher in google_compute_url_map.https[0].path_matcher : matcher.name == "ai-gateway" && matcher.default_service == google_compute_backend_service.ai_gateway[0].id])
+    condition     = length(google_cloud_run_v2_service.ai_gateway) == 1 && length(google_secret_manager_secret.app) == 4 && contains(google_compute_target_https_proxy.this[0].ssl_certificates, google_compute_managed_ssl_certificate.ai_gateway[0].id) && anytrue([for matcher in google_compute_url_map.https[0].path_matcher : matcher.name == "ai-gateway" && matcher.default_service == google_compute_backend_service.ai_gateway[0].id])
     error_message = "Synthetic state routes the Gateway matcher to its distinct backend, not Den, and keeps the original four secrets."
   }
 }
