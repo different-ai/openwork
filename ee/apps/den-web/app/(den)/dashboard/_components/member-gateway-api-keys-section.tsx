@@ -15,9 +15,6 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
-import { orgFeatureEnabled } from "../../_lib/den-org";
-import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { getCursorSetupRoute } from "./cursor-setup-data";
 import { GatewayToolSetupRow } from "./gateway-tool-setup-dialog";
 import { BackButton, GatewayToolPicker, GatewayToolSteps, gatewayToolName, type GatewayToolId } from "./gateway-tool-setup";
 import { ItemMenu } from "./item-list";
@@ -43,8 +40,6 @@ import {
 export function MemberGatewayApiKeysSection() {
   const keys = useMyGatewayApiKeys();
   const revoke = useRevokeGatewayApiKey("mine");
-  const { orgSlug, orgContext } = useOrgDashboard();
-  const toolButtons = orgFeatureEnabled(orgContext, "gatewayToolSetupButtons");
   const [creating, setCreating] = useState(false);
   /** The key "Set up" was chosen for: the tool choice again, without the key, which can't be shown twice. */
   const [settingUp, setSettingUp] = useState<GatewayApiKey | null>(null);
@@ -73,18 +68,12 @@ export function MemberGatewayApiKeysSection() {
       <section className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2 px-2">
           <h2 className="flex items-center gap-2 text-[12px] font-medium leading-5 text-[var(--dls-text-secondary)]">
-            {toolButtons ? "Use OpenWork AI Gateway with other tools" : "API keys for 3rd party tools"}
-            {toolButtons ? null : <span className="tabular-nums">{apiKeys.length}</span>}
+            Use OpenWork AI Gateway with other tools
           </h2>
           <div className="flex items-center gap-1">
             <a href={GATEWAY_API_KEYS_DOCS_URL} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "ghost", size: "sm" })} data-testid="gateway-api-keys-docs">
               How to use
             </a>
-            {toolButtons ? null : (
-              <DenButton size="sm" variant="ghost" href={getCursorSetupRoute(orgSlug)} data-testid="gateway-api-keys-cursor-setup">
-                Set up Cursor
-              </DenButton>
-            )}
             {enabled ? (
               <DenButton size="sm" variant="secondary" icon={Plus} onClick={() => setCreating(true)} data-testid="gateway-api-keys-create">
                 Create key
@@ -93,15 +82,11 @@ export function MemberGatewayApiKeysSection() {
           </div>
         </div>
 
-        {toolButtons ? (
-          <>
-            <GatewayToolSetupRow enabled={enabled} baseUrl={baseUrl} />
-            <h3 className="mt-2 flex items-center gap-2 px-2 text-[12px] font-medium leading-5 text-[var(--dls-text-secondary)]">
-              Your API keys
-              <span className="tabular-nums">{apiKeys.length}</span>
-            </h3>
-          </>
-        ) : null}
+        <GatewayToolSetupRow enabled={enabled} baseUrl={baseUrl} />
+        <h3 className="mt-2 flex items-center gap-2 px-2 text-[12px] font-medium leading-5 text-[var(--dls-text-secondary)]">
+          Your API keys
+          <span className="tabular-nums">{apiKeys.length}</span>
+        </h3>
 
         {!enabled ? (
           <p className="flex items-center gap-1.5 px-2 py-2 text-[13px] text-gray-500" data-testid="gateway-api-keys-disabled">
@@ -112,9 +97,7 @@ export function MemberGatewayApiKeysSection() {
 
         {apiKeys.length === 0 ? (
           <p className="px-2 py-2 text-[13px] text-gray-500" data-testid="gateway-api-keys-empty">
-            {toolButtons
-              ? "No keys yet. Pick a tool above to create one as you set it up."
-              : "Create a key to use your models in Claude Code, Codex, Cursor or any OpenAI or Anthropic compatible tool."}
+            No keys yet. Pick a tool above to create one as you set it up.
           </p>
         ) : (
           <div className="flex flex-col">

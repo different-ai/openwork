@@ -1,23 +1,14 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import type { Seed } from "@openwork/env";
 import { gatewayCursorSetupWorld } from "../worlds/gateway-cursor-setup.ts";
-import { enableOrganizationCapabilities } from "../worlds/organization-capabilities.ts";
 
-async function gatewayToolSetupButtonsWorld(seed: Seed) {
-  const world = await gatewayCursorSetupWorld(seed);
-  await enableOrganizationCapabilities(seed, world.den.admin, { gatewayToolSetupButtons: true }, world.organizationId);
-  return world;
-}
-
-const test = spec.world(gatewayToolSetupButtonsWorld, {
+const test = spec.world(gatewayCursorSetupWorld, {
   timeout: 600_000,
   resources: { surfaces: ["web"], services: ["den", "mock"] },
 });
 
 test("My Library › Models sets up each tool from its logo, creating a key that fills into the steps", async ({ user, probe, step, evidence }) => {
   await step("the section is renamed and shows a logo button per tool", async () => {
-    await user.reload();
     await user.see({ testId: "gateway-tool-setup-row" }, { timeoutMs: 60_000 });
     await user.see({ text: "Use OpenWork AI Gateway with other tools" });
     const buttons = await probe.dom('[data-testid^="gateway-tool-setup-"][aria-label^="Set up"]');

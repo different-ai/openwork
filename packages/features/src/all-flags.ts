@@ -9,7 +9,6 @@ export { default as connectStandardTools } from "@openwork/features/flags/connec
 export { default as connectionMcpServers } from "@openwork/features/flags/connection-mcp-servers"
 export { default as denGreySidebar } from "@openwork/features/flags/den-grey-sidebar"
 export { default as followUpSuggestions } from "@openwork/features/flags/follow-up-suggestions"
-export { default as gatewayToolSetupButtons } from "@openwork/features/flags/gateway-tool-setup-buttons"
 export { default as importOpencodeConnections } from "@openwork/features/flags/import-opencode-connections"
 export { default as managedDeployments } from "@openwork/features/flags/managed-deployments"
 export { default as mcpThreadEvents } from "@openwork/features/flags/mcp-thread-events"
