@@ -18,7 +18,10 @@ function bridgeStep(command: string) {
 export class DesktopTiming {
   private readonly started = performance.now()
   private readonly steps: Record<string, Step> = {}
-  /** The VM's state when the request first looked it up: `stopped` is paused, `missing` means a new computer. */
+  /**
+   * The VM's state when the request first looked it up: `stopped` is paused, `missing` means a new computer. Unset when
+   * it was seen running moments ago and never looked up.
+   */
   before?: string
 
   constructor(readonly sessionId: string, readonly operation: string) {}

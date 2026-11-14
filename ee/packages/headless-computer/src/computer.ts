@@ -7,6 +7,7 @@ import { demonstrationReplySchema, type DemonstrationCommand } from "@openwork/t
 import { Desktop, DesktopError, type CarriedState, type DesktopState, type DesktopView } from "./desktop.js"
 import { DESKTOP_TOOL } from "./desktop-tool.js"
 import { DesktopTiming, timedProvider } from "./desktop-timing.js"
+import { SeenRunning, watchedProvider } from "./seen-running.js"
 
 /** One provider-neutral Linux computer per conversation. Jobs own idle policy and files; adapters own transport. */
 export type ComputerOptions = {
@@ -103,6 +104,8 @@ export class Computers {
   private readonly recovering = new Map<string, Promise<SandboxHandle | null>>()
   /** When each session's computer was last replaced for a desktop that wouldn't start. */
   private readonly recovered = new Map<string, number>()
+  /** Computers seen running moments ago, which `vm()` and `startDesktop` don't ask about again. */
+  private readonly seen = new SeenRunning()
 
   private readonly snapshot: string
   private readonly files?: ComputerFiles
@@ -120,7 +123,7 @@ export class Computers {
    * `readFile` turns a file into what the model can see (images, PDFs, text), the same way tool results are read.
    */
   constructor(private readonly options: ComputerOptions, deps: { files?: ComputerFiles; readFile: FileReader }) {
-    this.provider = timedProvider(options.provider, key => this.timings.get(key))
+    this.provider = watchedProvider(timedProvider(options.provider, key => this.timings.get(key)), this.seen, (sessionId, box, error) => this.afterWrongGuess(sessionId, box, error))
     this.blocks = computerBlocks(this.provider)
     this.snapshot = this.provider.currentImage()?.id ?? "configured image"
     this.files = deps.files
@@ -178,19 +181,53 @@ export class Computers {
     const timing = this.track(sessionId, "viewer")
     let outcome = "failed"
     try {
-      const pending = this.vms.get(sessionId)
-      const existing = pending ? await this.provider.inspect(await pending) : await this.provider.find({ idempotencyKey: this.slug(sessionId), labels: this.spec(sessionId).labels })
+      // Seen running moments ago: it isn't paused, so nothing is asked. A view never wakes a computer, so when that
+      // turns out wrong the computer is looked up after all.
+      let failed: { error: unknown } | undefined
+      if (await this.seenRunning(sessionId)) {
+        try {
+          const viewer = await this.view(this.desktop, sessionId, input)
+          outcome = "ok"
+          return viewer
+        } catch (error) { failed = { error } }
+      }
+      const existing = await this.lookup(sessionId)
       if (existing?.state === "stopped" || existing?.state === "stopping") {
         outcome = "paused"
         return { state: "paused" as const }
       }
-      const box = await this.vm(sessionId)
-      try {
-        const viewer = { state: "connected" as const, ...await this.desktop.viewer(await this.startDesktop(sessionId, box), input) }
-        outcome = "ok"
-        return viewer
-      } finally { this.release(sessionId) }
+      // Still running: it failed for another reason.
+      if (failed && existing?.state === "running") throw failed.error
+      const viewer = await this.view(this.desktop, sessionId, input)
+      outcome = "ok"
+      return viewer
     } finally { this.finish(timing, outcome) }
+  }
+
+  /** A viewer ticket from the session's computer, which the caller knows or takes to be running. */
+  private async view(desktop: Desktop, sessionId: string, input: { view: DesktopView; control: boolean; origin: string }) {
+    const box = await this.vm(sessionId)
+    // Not woken on a wrong guess: `desktopViewer` looks it up instead.
+    this.seen.take(box)
+    try { return { state: "connected" as const, ...await desktop.viewer(await this.startDesktop(sessionId, box), input) } }
+    finally { this.release(sessionId) }
+  }
+
+  /** Whether the session's computer, as this process holds it, was seen running moments ago. */
+  private async seenRunning(sessionId: string) {
+    const pending = this.vms.get(sessionId)
+    return pending !== undefined && this.seen.running(await pending)
+  }
+
+  /**
+   * The session's computer as its provider has it now, without starting it. One found running is kept, so the `vm()`
+   * that follows doesn't look it up again.
+   */
+  private async lookup(sessionId: string) {
+    const pending = this.vms.get(sessionId)
+    const existing = pending ? await this.provider.inspect(await pending) : await this.provider.find({ idempotencyKey: this.slug(sessionId), labels: this.spec(sessionId).labels })
+    if (existing?.state === "running" && !this.vms.has(sessionId)) this.vms.set(sessionId, Promise.resolve(existing))
+    return existing
   }
 
   browserDemonstration(sessionId: string, command: DemonstrationCommand) {
@@ -200,8 +237,7 @@ export class Computers {
   private async demonstrate(sessionId: string, command: DemonstrationCommand) {
     if (!this.desktop) throw new Error("Desktop access is not configured.")
     if (command.action === "read") {
-      const pending = this.vms.get(sessionId)
-      const existing = pending ? await this.provider.inspect(await pending) : await this.provider.find({ idempotencyKey: this.slug(sessionId), labels: this.spec(sessionId).labels })
+      const existing = await this.lookup(sessionId)
       if (!existing || existing.state !== "running") throw new Error("Resume the computer before checking its demonstration.")
     }
     const box = await this.vm(sessionId)
@@ -293,9 +329,15 @@ export class Computers {
     // replacement, is still waited for.
     if (!this.checkpointing.delete(sessionId)) await this.pausing.get(sessionId)
     const prior = this.vms.get(sessionId)
+    let guessed = false
     // Reserve the transition before awaiting provider state. Concurrent viewer
     // and tool requests must not both issue a start against the same paused VM.
     const pending = prior ? prior.then(async box => {
+      // Seen running moments ago: not asked again. `afterWrongGuess` is what happens when it no longer is.
+      if (this.seen.running(box)) {
+        guessed = true
+        return box
+      }
       const current = await this.provider.inspect(box)
       if (current.state === "running") return current
       if (current.state === "missing") this.copied.delete(sessionId)
@@ -303,7 +345,21 @@ export class Computers {
     }) : this.resolve(sessionId)
     this.vms.set(sessionId, pending)
     pending.catch(() => { if (this.vms.get(sessionId) === pending) this.vms.delete(sessionId) })
-    return pending
+    const box = await pending
+    return guessed ? this.seen.guess(box, sessionId) : box
+  }
+
+  /**
+   * A call failed on a computer `vm()` took to be running without asking. Returns the computer to run it on once more
+   * when that one turns out to have been paused or removed, so the call never started; null leaves the failure as it
+   * is. A call that timed out may have started, and a computer still running failed for another reason: neither is
+   * run twice.
+   */
+  private async afterWrongGuess(sessionId: string, box: SandboxHandle, error: unknown): Promise<SandboxHandle | null> {
+    if (isSandboxError(error) && error.code === "timeout") return null
+    const current = await this.provider.inspect(box).catch(() => null)
+    if (!current || current.state === "running") return null
+    return this.vm(sessionId)
   }
 
   private spec(sessionId: string): SandboxSpec {
@@ -457,16 +513,21 @@ export class Computers {
   private async startDesktop(sessionId: string, box: SandboxHandle, self = 0): Promise<SandboxHandle> {
     const desktop = this.desktop
     if (!desktop) throw new Error("Desktop access is not configured.")
+    // Found current on this computer moments ago: it isn't asked for its health again.
+    if (this.seen.desktopCurrent(box)) return box
     this.awaitingDesktop.set(sessionId, (this.awaitingDesktop.get(sessionId) ?? 0) + self)
     try {
-      this.desktops.set(sessionId, await desktop.start(box))
+      await this.begin(desktop, sessionId, box)
       return box
     } catch (error) {
       if (!(error instanceof DesktopError)) throw error
       if (error.desktopCode === "desktop_unresponsive") {
+        // A paused computer isn't unresponsive: it was paused since it was last seen, and replacing it would delete it.
+        const state = (await this.provider.inspect(box).catch(() => null))?.state
+        if (state === "stopped" || state === "stopping") throw error
         const fresh = await this.recover(sessionId, box)
         if (!fresh) throw error
-        this.desktops.set(sessionId, await desktop.start(fresh))
+        await this.begin(desktop, sessionId, fresh)
         return fresh
       }
       if (error.desktopCode !== "desktop_outdated") throw error
@@ -474,13 +535,20 @@ export class Computers {
       if (await desktop.replacedInVain(box, NEEDED_REPLACEMENT_RETRY_MS)) throw error
       const fresh = await this.replace(sessionId, box, { required: true })
       if (!fresh) throw error
-      this.desktops.set(sessionId, await desktop.start(fresh))
+      await this.begin(desktop, sessionId, fresh)
       return fresh
     } finally {
       const left = (this.awaitingDesktop.get(sessionId) ?? self) - self
       if (left > 0) this.awaitingDesktop.set(sessionId, left)
       else this.awaitingDesktop.delete(sessionId)
     }
+  }
+
+  /** Starts the desktop on `box` and keeps what it found, for the idle check and for the next `startDesktop`. */
+  private async begin(desktop: Desktop, sessionId: string, box: SandboxHandle) {
+    const state = await desktop.start(box)
+    this.desktops.set(sessionId, state)
+    this.seen.desktop(box, state === "current")
   }
 
   /**
