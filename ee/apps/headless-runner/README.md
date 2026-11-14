@@ -69,7 +69,7 @@ return credentials or URLs. Public `/health` remains a liveness check. See
 Turn status is one of `queued`, `running`, `completed`, `failed`, `interrupted` or `aborted`. `failed` and `interrupted` can be resumed by re-sending the same `messageId` with fresh credentials; `aborted` cannot. Resuming continues the same turn (Workbot's "Try again" does this), so the conversation never gets a second copy of the message. A failed turn's `errorDetail` says what the model provider answered, with its request id, and the turn's `turn ended` log line carries it too; it is for support, never for the person. The `error` field holds a stable code:
 
 - `model_credentials_missing`
-- `mcp_unavailable` (connecting to `HEADLESS_MCP_URL` failed three times in a row, 0.5 s and 2 s apart)
+- `mcp_unavailable` (connecting to `HEADLESS_MCP_URL` failed three times in a row, 0.5 s and 2 s apart, before the turn's tools were listed; see [Step mode](#step-mode) for later steps)
 - `model_http_<status>`
 - `turn_timeout`
 - `max_steps_exceeded` (only with `HEADLESS_MAX_STEPS` set: the turn made that many model calls)
@@ -219,6 +219,12 @@ interrupt, the repeat check and `credentials_refresh` work the same way.
 - **A step** is: build the context, one streaming model call, that call's tool calls, then one SQLite transaction
   that writes the step's messages and tool results, the turn's next step (`step_schedule`) and the attempt reset. A
   crash leaves the whole step or none of it.
+- **Tools and memory are read once per run.** The first step lists the OpenWork MCP tools and reads `memory/`;
+  later steps show the model the same list and memory, as a turn run in one go does, so every request starts the
+  same and no later step waits on either before its model call. A later step connects only when the model calls
+  an MCP tool, starting as soon as the model begins writing that call. If that connection fails (three tries),
+  the step's MCP calls get an error saying they were not made and the next step connects again; the turn does not
+  end `mcp_unavailable`. A restart or a fresh MCP token lists the tools again.
 - **Between steps nothing runs.** On celld, steps run from the cell's durable alarm (the same alarm as self-resume,
   set for whichever is due first), each to completion, lanes in parallel. Between two alarms the cell is idle, so a
   runner deploy switches it to the new code there instead of cancelling a step after `CELLD_DEPLOY_MAX_AGE_S`. On

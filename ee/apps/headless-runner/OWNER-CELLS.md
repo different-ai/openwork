@@ -49,7 +49,7 @@ Workbot + owner ─ router                      legacy chats not yet split, forw
   in the same shape as before; like legacy chats, only chats with a message are listed.
 - **Shared memory.** `memoryScope: "owner"` (strict enum; needs an owner) puts the chat's `memory/` in the owner's
   memory (`owner_memory`), shared by all their chats. A session cell reads it from the owner cell
-  (`/internal/memory`) once per turn (once per step in step mode), when it builds the system prompt, and writes through
+  (`/internal/memory`) once per run of a turn (again when a restart continues it), when it builds the system prompt, and writes through
   on each file tool call; the files API shows it too. If the owner cell doesn't answer (3 tries), the turn fails
   `memory_unavailable` (resend it) or, in step mode, the step runs again in 15 s; a file tool returns an error. The first
   time an owner's memory is used, the memory their legacy chats share becomes it (the chat most others name in
