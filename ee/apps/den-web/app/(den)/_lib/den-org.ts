@@ -817,6 +817,11 @@ export function getAnalyticsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/analytics`;
 }
 
+/** Any member's own AI Gateway usage, limits and model prices. */
+export function getMyUsageRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/my-usage`;
+}
+
 export function getLibraryUsageRoute(orgSlug?: string | null): string {
   return `${getAnalyticsRoute(orgSlug)}/library`;
 }

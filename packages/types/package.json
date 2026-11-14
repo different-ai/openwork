@@ -269,6 +269,14 @@
       "bun": "./src/den/gateway-usage-limits.ts",
       "default": "./dist/den/gateway-usage-limits.js"
     },
+    "./den/gateway-member-usage": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/gateway-member-usage.d.ts",
+        "default": "./src/den/gateway-member-usage.ts"
+      },
+      "development": "./src/den/gateway-member-usage.ts",
+      "default": "./src/den/gateway-member-usage.ts"
+    },
     "./den/gateway-usage": {
       "types": {
         "openwork-build": "./dist/types/src/den/gateway-usage.d.ts",

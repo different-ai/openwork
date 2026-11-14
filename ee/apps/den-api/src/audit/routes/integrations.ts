@@ -226,6 +226,7 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   read("/v1/gateway/usage-limits/members", "gateway_usage_limit.member.search", GUL, res("member")),
   read("/v1/gateway/usage-limits/members/:memberId", "gateway_usage_limit.status.read", GUL, res("member", "memberId")),
   read("/v1/inference-providers/usage", "gateway_usage.read", "gateway_usage.reporting", res("gateway_usage"), "Aggregate usage/cost per member and team."),
+  read("/v1/gateway/usage/me", "gateway_usage.read_own", "gateway_usage.reporting", res("member"), "The caller's own usage, token mix and usable models with listed prices; never another member's rows."),
 
   // Inference settings and free tier
   read("/v1/inference", "inference.settings.read", INF, res("organization")),

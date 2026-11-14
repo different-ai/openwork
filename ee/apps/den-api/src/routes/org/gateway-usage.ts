@@ -1,15 +1,19 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, GatewayProviderModelTable, GatewayProviderTable, GatewayRequestLogTable, GatewayUsageRollupTable, MemberTable, OrganizationTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
+import { GATEWAY_MEMBER_USAGE_DAYS, gatewayMemberUsageResponseSchema, readGatewayListedPrice, type GatewayMemberModel, type GatewayMemberTokenMix, type GatewayMemberUsageResponse } from "@openwork/types/den/gateway-member-usage"
 import type { GatewayUsageDay, GatewayUsageOption, GatewayUsageResponse } from "@openwork/types/den/gateway-usage"
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { resolvePublicApiBaseUrl } from "../../capability-sources/generic-oauth.js"
 import { db } from "../../db.js"
+import { env } from "../../env.js"
 import { gatewayManagementUnavailable, gatewayManagementUnavailableSchema } from "../../gateway-deployment.js"
+import { effectiveGatewaySummaryGrants, gatewaySummary, readGatewaySummaries, type GatewayMemberId } from "../../llm/gateway-matrix.js"
 import { getModelsDevProviders } from "../../llm/models-dev.js"
-import { orgPermissionRoute, queryValidator } from "../../middleware/index.js"
+import { orgMemberRoute, orgPermissionRoute, queryValidator } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 
@@ -564,7 +568,130 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
   } }
 }
 
+const memberQuerySchema = z.object({
+  days: z.string().max(3).regex(/^[1-9]\d*$/).default(String(GATEWAY_MEMBER_USAGE_DAYS)).transform(Number).pipe(z.number().int().min(1).max(366)),
+}).strict()
+
+// Anthropic-style protocols report cache tokens apart from input; the others include them in input.
+const DISJOINT_CACHE_PROTOCOLS = ["anthropic_messages", "bedrock_converse"] as const
+
+/**
+ * The caller's tokens per model, split the way prices are listed, from the same
+ * raw logs and retained rollups as the usage report. Only requests with both
+ * input and output tokens count, so an estimate never prices missing usage as free.
+ */
+async function readMemberTokenMix(organizationId: typeof GatewayProviderTable.$inferSelect.organization_id, memberId: GatewayMemberId, fromSeconds: number, endSeconds: number): Promise<GatewayMemberTokenMix[]> {
+  const raw = GatewayRequestLogTable
+  const rollup = GatewayUsageRollupTable
+  const disjoint = sql.join(DISJOINT_CACHE_PROTOCOLS.map((protocol) => sql`${protocol}`), sql`, `)
+  const routes = sql.join(USAGE_ROUTES.map((route) => sql`${route}`), sql`, `)
+  const seriesId = (table: typeof raw | typeof rollup) => sql<string>`concat('model:', hex(case when ${table.route} in ('openwork_openrouter', 'openwork_free') then ${OPENWORK_MODELS_OPTION_ID} else ${table.upstream_provider_id} end), ':', coalesce(hex(${table.upstream_model}), '~'))`
+  const rawSeries = seriesId(raw)
+  const measured = sql`${raw.input_tokens} is not null and ${raw.output_tokens} is not null`
+  const rawRows = await db.select({
+    seriesId: rawSeries,
+    measuredRequests: sql<string>`coalesce(sum(case when ${measured} then 1 else 0 end), 0)`,
+    uncachedInputTokens: sql<string>`coalesce(sum(case when ${measured} then (case when ${raw.protocol} in (${disjoint}) then ${raw.input_tokens} else greatest(${raw.input_tokens} - coalesce(${raw.cache_read_tokens}, 0) - coalesce(${raw.cache_write_tokens}, 0), 0) end) else 0 end), 0)`,
+    outputTokens: sql<string>`coalesce(sum(case when ${measured} then ${raw.output_tokens} else 0 end), 0)`,
+    cacheReadTokens: sql<string>`coalesce(sum(case when ${measured} then coalesce(${raw.cache_read_tokens}, 0) else 0 end), 0)`,
+    cacheWriteTokens: sql<string>`coalesce(sum(case when ${measured} then coalesce(${raw.cache_write_tokens}, 0) else 0 end), 0)`,
+  }).from(raw).where(and(
+    eq(raw.organization_id, organizationId), eq(raw.org_membership_id, memberId), sql`${raw.route} in (${routes})`, isNotNull(raw.completed_at),
+    sql`${raw.started_at} >= from_unixtime(${fromSeconds}) and ${raw.started_at} < from_unixtime(${endSeconds})`,
+  )).groupBy(rawSeries)
+  const rollupSeries = seriesId(rollup)
+  // Older summaries lack per-measurement counts; their requests with usage stand in.
+  const rollupMeasured = sql`coalesce(least(${rollup.input_tokens_count}, ${rollup.output_tokens_count}), greatest(${rollup.request_count} - ${rollup.usage_missing_count}, 0))`
+  const rollupRows = await db.select({
+    seriesId: rollupSeries,
+    measuredRequests: sql<string>`coalesce(sum(${rollupMeasured}), 0)`,
+    uncachedInputTokens: sql<string>`coalesce(sum(case when ${rollup.protocol} in (${disjoint}) then ${rollup.input_tokens} else greatest(${rollup.input_tokens} - ${rollup.cache_read_tokens} - ${rollup.cache_write_tokens}, 0) end), 0)`,
+    outputTokens: sql<string>`coalesce(sum(${rollup.output_tokens}), 0)`,
+    cacheReadTokens: sql<string>`coalesce(sum(${rollup.cache_read_tokens}), 0)`,
+    cacheWriteTokens: sql<string>`coalesce(sum(${rollup.cache_write_tokens}), 0)`,
+  }).from(rollup).where(and(
+    eq(rollup.organization_id, organizationId), eq(rollup.org_membership_id, memberId), sql`${rollup.route} in (${routes})`, inArray(rollup.granularity, ["hour", "day"]),
+    sql`${rollup.bucket_start} >= from_unixtime(${fromSeconds}) and ${rollup.bucket_start} < from_unixtime(${endSeconds})`,
+  )).groupBy(rollupSeries)
+  const mixes = new Map<string, GatewayMemberTokenMix>()
+  for (const row of [...rawRows, ...rollupRows]) {
+    const mix = mixes.get(row.seriesId) ?? { seriesId: row.seriesId, measuredRequests: 0, uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
+    mix.measuredRequests = safeCount(mix.measuredRequests + safeCount(row.measuredRequests))
+    mix.uncachedInputTokens = safeCount(mix.uncachedInputTokens + safeCount(row.uncachedInputTokens))
+    mix.outputTokens = safeCount(mix.outputTokens + safeCount(row.outputTokens))
+    mix.cacheReadTokens = safeCount(mix.cacheReadTokens + safeCount(row.cacheReadTokens))
+    mix.cacheWriteTokens = safeCount(mix.cacheWriteTokens + safeCount(row.cacheWriteTokens))
+    mixes.set(row.seriesId, mix)
+  }
+  return [...mixes.values()].filter((mix) => mix.measuredRequests > 0).sort((a, b) => a.seriesId.localeCompare(b.seriesId, "en"))
+}
+
+/**
+ * The Gateway models the caller can use right now, as `GET /v1/inference-providers`
+ * lists them, with each model's listed price. Read-only: never provisions keys.
+ */
+async function readMemberModels(organizationId: typeof GatewayProviderTable.$inferSelect.organization_id, memberId: GatewayMemberId, baseUrl: string): Promise<GatewayMemberModel[]> {
+  const providers = (await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, organizationId)).orderBy(asc(GatewayProviderTable.name)))
+    .filter((provider) => provider.status === "active")
+  if (!providers.length) return []
+  const reads = await readGatewaySummaries({ identities: false, manage: false, memberId, organizationId, providers })
+  const models: GatewayMemberModel[] = []
+  for (const provider of providers) {
+    if (!effectiveGatewaySummaryGrants(provider, memberId, reads).length) continue
+    const summary = await gatewaySummary(provider, memberId, baseUrl, false, {}, reads)
+    for (const model of summary.models) {
+      models.push({
+        id: model.id, name: model.name || model.upstreamModelId, providerName: provider.name, providerId: provider.provider_id,
+        upstreamModelId: model.upstreamModelId, seriesId: modelIdentity(provider.provider_id, model.upstreamModelId),
+        price: readGatewayListedPrice(model.config),
+      })
+    }
+  }
+  return models
+}
+
+/** One member's own usage by model, token mix and usable models. Never reads another member's rows. */
+export async function readMemberGatewayUsage(input: { organizationId: typeof GatewayProviderTable.$inferSelect.organization_id; memberId: GatewayMemberId; days: number; baseUrl: string }, now = new Date()): Promise<GatewayMemberUsageResponse> {
+  const toMs = Math.floor(now.getTime() / DAY_MS) * DAY_MS
+  const fromSeconds = (toMs - (input.days - 1) * DAY_MS) / 1000
+  const endSeconds = (toMs + DAY_MS) / 1000
+  const [{ usage }, tokenMix, models] = await Promise.all([
+    readGatewayUsage(input.organizationId, { groupBy: "model", days: input.days, filterIds: [], memberId: input.memberId }, now),
+    readMemberTokenMix(input.organizationId, input.memberId, fromSeconds, endSeconds),
+    readMemberModels(input.organizationId, input.memberId, input.baseUrl),
+  ])
+  // Provider filters name the whole organization's providers; a member's page has no use for them.
+  return { usage: { ...usage, filterOptions: [] }, tokenMix, models }
+}
+
 export function registerOrgGatewayUsageRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  app.get("/v1/gateway/usage/me", describeRoute({
+    tags: ["Gateway Usage Limits"], summary: "Read own Gateway usage by UTC day",
+    description: "The caller's own AI Gateway usage, by model, over the last `days` UTC calendar days including today (default 30, 1-366): the same report as GET /v1/inference-providers/usage with groupBy=model, scoped to the caller's membership and without organization filter options. Reads raw request logs and retained rollups; cost is the stored approximate cost in integer micro-USD, never repriced. tokenMix lists, per model series, the input (excluding cache), output, cache read and cache write tokens of requests that reported both input and output tokens. models lists the Gateway models the caller can use now, with the listed price from the model's catalog config (USD per 1M tokens) or null when it has none. Any member can read their own usage; no Gateway permission is needed. Requires enabled Gateway management.",
+    security: [{ denApiKey: [] }, { bearerAuth: [] }],
+    responses: {
+      200: jsonResponse("Own Gateway usage", gatewayMemberUsageResponseSchema),
+      400: jsonResponse("Invalid query", invalidRequestSchema),
+      401: jsonResponse("Sign-in required", unauthorizedSchema),
+      403: jsonResponse("Gateway management disabled", z.union([forbiddenSchema, gatewayManagementUnavailableSchema])),
+      422: jsonResponse("Usage cannot be represented safely", z.object({ error: z.string(), message: z.string() })),
+    },
+  }), orgMemberRoute(), queryValidator(memberQuerySchema), async (c) => {
+    const unavailable = gatewayManagementUnavailable()
+    if (unavailable) return c.json(unavailable, 403)
+    c.header("cache-control", "no-store")
+    const { organization, currentMember } = c.get("organizationContext")
+    try {
+      return c.json(await readMemberGatewayUsage({
+        organizationId: organization.id, memberId: currentMember.id, days: c.req.valid("query").days,
+        baseUrl: resolvePublicApiBaseUrl(c.req.raw, env.apiPublicUrl),
+      }))
+    } catch (error) {
+      if (error instanceof UsageReadError) return c.json({ error: error.code, message: error.message }, 422)
+      throw error
+    }
+  })
+
   app.get("/v1/inference-providers/usage", describeRoute({
     tags: ["Inference Providers"], summary: "Read organization Gateway usage by UTC day",
     description: "Defaults to model grouping and the last 31 UTC calendar days including today. Empty filters mean all. Counts org_provider, openwork_openrouter and openwork_free traffic. requestCount includes completed request records of all outcomes, including gateway rejections and interrupted requests; unreportedRequests counts records without total tokens, not just successful generations with missing usage. uncountableRequests breaks missing token totals down by outcome (ok, upstream_error, upstream_unreachable, client_aborted, rejected); individual counts are null when historical summaries cannot separate them. These diagnostic counts are separate from plotted usage. Team requestCount and uncountableRequests sum current team attributions like the other totals. Token values omit zero subtotals, and series with neither positive tokens nor positive cost are omitted. Returns tokens and stored approximate cost in integer micro-USD in the same snapshot, without repricing historical requests. totalTokens, unreportedRequests and daily values remain token-only. totalCostMicroUsd sums known stored costs; unpricedRequests counts missing cost observations, or is null when legacy rollup observation counts leave coverage unknown. Daily costValues use the same stable series IDs: zero subtotals with missing or unknown cost coverage are null, fully observed zero costs are 0, and positive recorded subtotals remain numeric even with incomplete coverage indicated by unpricedRequests. Team view attributes each active org member's usage to every distinct current team membership; members without a team are omitted. Team token, cost and missing-observation totals sum these attributions and may exceed model/person totals; cost coverage is evaluated per team/day. No teams returns emptyReason=no_teams, zero totals and missing counts, and empty daily maps without querying usage. Absent keys in a day's sparse values and costValues maps mean no usage and are zero. Limits: 100 filter IDs, 366 days, 10,000 series and 20,000 filter options; oversized results fail without truncation.",
