@@ -19,7 +19,7 @@ interface ThemeSectionProps
 
 export function ThemeSection(props: ThemeSectionProps) {
   return (
-    <LayoutSectionItem className="items-center">
+    <LayoutSectionItem anchor="theme" className="items-center">
       <LayoutSectionItemHeader className="w-full">
         <LayoutSectionItemTitle>{t("settings.theme_title")}</LayoutSectionItemTitle>
         <LayoutSectionItemDescription>{t("settings.appearance_hint")}</LayoutSectionItemDescription>

@@ -21,7 +21,7 @@ interface LanguageSectionProps extends Pick<AppearanceViewProps, "busy" | "langu
 
 export function LanguageSection(props: LanguageSectionProps) {
   return (
-    <LayoutSectionItem>
+    <LayoutSectionItem anchor="language">
       <LayoutSectionItemHeader>
         <LayoutSectionItemTitle>{t("settings.language")}</LayoutSectionItemTitle>
         <LayoutSectionItemDescription>{t("settings.language.description")}</LayoutSectionItemDescription>

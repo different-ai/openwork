@@ -361,6 +361,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     () => buildCommandPaletteSettingsItems({
       developerMode: props.developerMode,
       capabilities: platform.capabilities,
+      os: platform.os,
       checkRestriction: checkDesktopRestriction,
       onOpenSettings: (route) => {
         props.onClose();
@@ -374,6 +375,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     [
       checkDesktopRestriction,
       platform.capabilities,
+      platform.os,
       props.developerMode,
       props.onClose,
       props.onOpenExtensions,

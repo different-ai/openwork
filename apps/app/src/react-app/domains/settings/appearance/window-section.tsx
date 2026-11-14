@@ -29,7 +29,7 @@ export function WindowSection(props: WindowSectionProps) {
         <LayoutSectionDescription>{t("settings.window_appearance_desc")}</LayoutSectionDescription>
       </LayoutSectionHeader>
 
-      <LayoutSectionItem>
+      <LayoutSectionItem anchor="hide-titlebar">
         <LayoutSectionItemHeader>
           <LayoutSectionItemTitle>{t("settings.hide_titlebar")}</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>{t("settings.hide_titlebar_desc")}</LayoutSectionItemDescription>
@@ -43,7 +43,7 @@ export function WindowSection(props: WindowSectionProps) {
         </LayoutSectionItemHeader>
       </LayoutSectionItem>
 
-      <LayoutSectionItem className="hidden windows:flex linux:flex">
+      <LayoutSectionItem anchor="menu-bar" className="hidden windows:flex linux:flex">
         <LayoutSectionItemHeader>
           <LayoutSectionItemTitle>Display menu bar</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>Show the native desktop menu bar.</LayoutSectionItemDescription>

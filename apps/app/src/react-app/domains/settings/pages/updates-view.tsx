@@ -276,7 +276,7 @@ export function UpdatesView(props: UpdatesViewProps) {
         <>
         <Separator />
           {props.alphaChannelSupported && props.releaseChannel ? (
-            <LayoutSectionItem>
+            <LayoutSectionItem anchor="release-channel">
               <LayoutSectionItemHeader>
                 <LayoutSectionItemTitle>Release channel</LayoutSectionItemTitle>
                 <LayoutSectionItemDescription>
@@ -311,7 +311,7 @@ export function UpdatesView(props: UpdatesViewProps) {
             </LayoutSectionItem>
           ) : null}
 
-            <LayoutSectionItem>
+            <LayoutSectionItem anchor="check-automatically">
               <LayoutSectionItemHeader>
                 <LayoutSectionItemTitle>{t("settings.background_checks_title")}</LayoutSectionItemTitle>
                 <LayoutSectionItemDescription>{t("settings.background_checks_desc")}</LayoutSectionItemDescription>
@@ -325,7 +325,7 @@ export function UpdatesView(props: UpdatesViewProps) {
               </LayoutSectionItemHeader>
             </LayoutSectionItem>
 
-            <LayoutSectionItem>
+            <LayoutSectionItem anchor="download-automatically">
               <LayoutSectionItemHeader>
                 <LayoutSectionItemTitle>{t("settings.auto_update_title")}</LayoutSectionItemTitle>
                 <LayoutSectionItemDescription>{t("settings.auto_update_desc")}</LayoutSectionItemDescription>

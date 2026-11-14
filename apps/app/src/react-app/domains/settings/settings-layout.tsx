@@ -62,13 +62,26 @@ export function LayoutSectionDescription({ children, className }: LayoutSectionD
 }
 
 interface LayoutSectionItemProps {
+  /**
+   * Names this setting so search can open the page at it:
+   * `/settings/<tab>/<anchor>`. List it in `settings-search-index.ts`.
+   */
+  anchor?: string;
   children: React.ReactNode;
   className?: string;
 }
 
-export function LayoutSectionItem({ children, className }: LayoutSectionItemProps) {
+export function LayoutSectionItem({ anchor, children, className }: LayoutSectionItemProps) {
   return (
-    <div className={cn("flex flex-col gap-3", className)}>
+    <div
+      data-setting-anchor={anchor}
+      tabIndex={anchor ? -1 : undefined}
+      className={cn(
+        "flex flex-col gap-3",
+        anchor && "scroll-mt-6 rounded-lg outline-2 outline-offset-8 outline-transparent transition-[outline-color] duration-200 ease-out motion-reduce:transition-none data-setting-found:outline-ring/30",
+        className,
+      )}
+    >
       {children}
     </div>
   );
