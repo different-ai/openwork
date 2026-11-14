@@ -3,7 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { isDiskFullError, unexpectedApiError, watchDiskSpace, watchedDiskFreeMegabytes } from "../src/disk-space.js";
+import {
+  CRITICAL_DISK_SPACE_BYTES,
+  LOW_DISK_SPACE_BYTES,
+  diskSpaceLevel,
+  isDiskFullError,
+  readDiskSpace,
+  unexpectedApiError,
+  watchDiskSpace,
+  watchedDiskFreeMegabytes,
+} from "../src/disk-space.js";
 import { captureServerException, resetDiskFullReportsForTests, type ServerTelemetryContext } from "../src/telemetry.js";
 
 function fsError(code: string, message: string): Error {
@@ -77,6 +86,25 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.__openworkDesktopTelemetry = undefined;
   rmSync(directory, { recursive: true, force: true });
+});
+
+test("free space maps to ok, low and critical at the documented limits", () => {
+  expect(diskSpaceLevel(LOW_DISK_SPACE_BYTES)).toBe("ok");
+  expect(diskSpaceLevel(LOW_DISK_SPACE_BYTES - 1)).toBe("low");
+  expect(diskSpaceLevel(CRITICAL_DISK_SPACE_BYTES)).toBe("low");
+  expect(diskSpaceLevel(CRITICAL_DISK_SPACE_BYTES - 1)).toBe("critical");
+  expect(diskSpaceLevel(0)).toBe("critical");
+  // An unreadable disk is never reported as full.
+  expect(diskSpaceLevel(null)).toBe("ok");
+});
+
+test("the free-space answer is read for a real folder and unknown for one that does not exist", async () => {
+  const status = await readDiskSpace(directory);
+  expect(status.totalBytes).toBeGreaterThan(0);
+  expect(status.freeBytes).toBeGreaterThanOrEqual(0);
+  expect(status.freeBytes).toBeLessThanOrEqual(status.totalBytes ?? 0);
+  expect(status.level).toBe(diskSpaceLevel(status.freeBytes));
+  expect(await readDiskSpace(join(directory, "missing"))).toEqual({ freeBytes: null, totalBytes: null, level: "ok" });
 });
 
 test("the space left is read for a real folder and unknown for one that is gone", () => {

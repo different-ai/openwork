@@ -342,6 +342,16 @@ export type OpenworkRuntimeServiceSnapshot = {
   upgradeAvailable: boolean;
 };
 
+/** Free space on the disk that holds the server's saved data; null when the system does not say. */
+export type OpenworkDiskSpace = {
+  freeBytes: number | null;
+  totalBytes: number | null;
+  level: "ok" | "low" | "critical";
+};
+
+/** Window event sent when a server reports that a write failed for lack of disk space. */
+export const openworkDiskFullEvent = "openwork-disk-full";
+
 export type OpenworkRuntimeSnapshot = {
   ok: boolean;
   worker?: {
@@ -1502,6 +1512,9 @@ async function requestJson<T>(
   if (!response.ok) {
     const code = typeof json?.code === "string" ? json.code : "request_failed";
     const message = typeof json?.message === "string" ? json.message : response.statusText;
+    if (code === "insufficient_storage" && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(openworkDiskFullEvent));
+    }
     throw new OpenworkServerError(response.status, code, message, json?.details);
   }
 
@@ -1682,6 +1695,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     runtimeVersions: () =>
       requestJson<OpenworkRuntimeSnapshot>(baseUrl, "/runtime/versions", { token, hostToken, timeoutMs: timeouts.status }),
     status: () => requestJson<OpenworkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
+    diskSpace: () => requestJson<OpenworkDiskSpace>(baseUrl, "/disk-space", { token, hostToken, timeoutMs: timeouts.status }),
     capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
     getConnectState: (workspaceId?: string | null) => {
       const query = new URLSearchParams();
