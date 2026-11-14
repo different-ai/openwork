@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 const ownedDom = typeof window === "undefined";
 if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
 const { getGlobalSettingsTabs, isSettingsTabActive } = await import("../src/react-app/domains/settings/shell/settings-page");
+const { buildCommandPaletteSettingsItems } = await import("../src/react-app/shell/command-palette-settings");
 const { AiSettingsView } = await import("../src/react-app/domains/settings/pages/ai-view");
 type AiSettingsViewProps = import("../src/react-app/domains/settings/pages/ai-view").AiSettingsViewProps;
 
@@ -13,19 +14,23 @@ afterAll(async () => {
   if (ownedDom) await GlobalRegistrator.unregister();
 });
 
-test("off, Ollama stays its own settings page in the sidebar", () => {
-  expect(getGlobalSettingsTabs(false, { autoUpdate: false })).toContain("ollama");
-  expect(isSettingsTabActive("ollama", "ollama")).toBe(true);
-  expect(isSettingsTabActive("ollama", "ai")).toBe(false);
-});
-
-test("on, the sidebar drops Ollama and highlights AI Providers while the Ollama page is open", () => {
-  const tabs = getGlobalSettingsTabs(false, { autoUpdate: false }, { ollamaInAiProviders: true });
+test("the sidebar drops Ollama and highlights AI Providers while the Ollama page is open", () => {
+  const tabs = getGlobalSettingsTabs(false, { autoUpdate: false });
   expect(tabs).not.toContain("ollama");
   expect(tabs).toContain("ai");
-  expect(isSettingsTabActive("ollama", "ai", { ollamaInAiProviders: true })).toBe(true);
-  expect(isSettingsTabActive("ollama", "ollama", { ollamaInAiProviders: true })).toBe(false);
-  expect(isSettingsTabActive("appearance", "ai", { ollamaInAiProviders: true })).toBe(false);
+  expect(isSettingsTabActive("ollama", "ai")).toBe(true);
+  expect(isSettingsTabActive("ollama", "ollama")).toBe(false);
+  expect(isSettingsTabActive("appearance", "ai")).toBe(false);
+});
+
+test("the command palette still finds the Ollama page", () => {
+  const items = buildCommandPaletteSettingsItems({
+    developerMode: false,
+    capabilities: { autoUpdate: false },
+    onOpenSettings: () => {},
+    onOpenExtensions: () => {},
+  });
+  expect(items.some((item) => item.id === "settings:ollama")).toBe(true);
 });
 
 const view: AiSettingsViewProps = {

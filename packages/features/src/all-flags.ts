@@ -13,7 +13,6 @@ export { default as importOpencodeConnections } from "@openwork/features/flags/i
 export { default as managedDeployments } from "@openwork/features/flags/managed-deployments"
 export { default as mcpThreadEvents } from "@openwork/features/flags/mcp-thread-events"
 export { default as nativeMcpEvents } from "@openwork/features/flags/native-mcp-events"
-export { default as ollamaInAiProviders } from "@openwork/features/flags/ollama-in-ai-providers"
 export { default as opencodeV2Only } from "@openwork/features/flags/opencode-v2-only"
 export { default as questionMinimize } from "@openwork/features/flags/question-minimize"
 export { default as remoteComputers } from "@openwork/features/flags/remote-computers"
