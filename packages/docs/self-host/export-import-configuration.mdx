@@ -100,7 +100,7 @@ the file.
 | `settings.advanced.collections` | Settings › Advanced › Collections | `marketplaces.manage` | `marketplaces.manage` |
 | `settings.advanced.brand` | Settings › Advanced › Brand appearance | `branding.update` | `branding.update` |
 | `settings.audit` | Observability › Audit logs › Settings | `audit.view` | `audit.manage` |
-| `settings.features` | Feature flags (set by platform admins in `/admin`) | `organization.update` | `organization.update`, and the person applying must be a platform admin |
+| `settings.features` | Feature flags (set by platform admins in `/admin`) | `organization.update` | `organization.update`; features are only turned on when the person applying is a platform admin (skipped otherwise) |
 
 Importing an area (uploading, or a dry run) needs both permissions in its row: a
 plan shows the area's current settings next to the file's, so someone who may
@@ -110,7 +110,20 @@ Some areas carry only part of what their screen shows:
 
 - **People** are invited, never added directly: someone who is a member on the
   source gets a pending invitation (silent unless you choose to send emails). An
-  owner is invited as an admin.
+  owner is invited as an admin, and an import never moves ownership. When the
+  organization has fewer seats left than the file invites, the last people in the
+  file are blocked with the reason: skip them (or skip someone else to give them
+  the seat), or free up seats first.
+- **Limits** can only be assigned to people who have joined. People the import
+  invites are left out of a limit with a note; import the file again once they have
+  accepted and they are assigned.
+- **Access you hold as the importer** is kept: an import never removes your own
+  manager access to a collection, plugin, skill or source, also when the file
+  doesn't list you.
+- **Workbot's model** follows its AI provider: the file names the provider, model
+  group, credential set and model, and the import finds the same model in the
+  target. If you can't use that model there yet (typically its provider has no key
+  yet), the model is left as it is with a note; import again once it works.
 - **Sources** need the GitHub App installed in the target organization first: an
   installation belongs to the server and organization that made it.
 - **Auth & Security**: a new SSO connection starts disabled and unverified (verify
@@ -124,11 +137,13 @@ Some areas carry only part of what their screen shows:
   member only, are never exported. An import only ever turns features on, as the
   organization override `/admin` sets (the feature's history in `/admin` shows who),
   and never turns one off, even in mirror mode or when restoring. Only a platform
-  admin can apply these items: for anyone else they are blocked with "Only platform
-  admins can turn on features.", so you can skip them and apply the rest. A feature
-  is skipped when this server doesn't know its key (or has retired it), doesn't
-  offer it on this deployment, has it turned off everywhere with the kill switch, or
-  the operator locked it off (`DEN_FEATURE_*`).
+  admin can turn a feature on: for anyone else these items are skipped with the
+  reason ("… stays off here: only a platform admin can turn a feature on."), and the
+  rest of the file applies. Ask a platform admin to turn the features on, then
+  import the file again for the settings that need them. A feature is also skipped
+  when it is already on, when this server doesn't know its key (or has retired it),
+  doesn't offer it on this deployment, has it turned off everywhere with the kill
+  switch, or the operator locked it off (`DEN_FEATURE_*`).
 
   ```json
   "settings": { "features": { "specVersion": 1, "items": [
@@ -155,8 +170,10 @@ Secrets are never in a file. Every secret field is a placeholder:
 
 `set` says whether the source had a value. The placeholder path is stable, so a file
 you edit and upload again keeps its placeholders. Before a change that writes a
-secret can be approved, each placeholder needs a decision, given in the file or
-through the inputs endpoint:
+secret can be approved, each placeholder the source had a value for needs a
+decision, given in the file or through the inputs endpoint. A placeholder with
+`"set": false` is not asked about: there is no value to bring, so the target keeps
+the value it has, or stays without one.
 
 | Decision | In the file | Through `PUT …/inputs` |
 | --- | --- | --- |
@@ -216,11 +233,27 @@ background.
   `untouched` or `skip`, with field-level changes. Items blocked by a missing
   decision are counted in `plan.summary.blocking`; approval is refused until it is `0`.
 - **Checks before approval:** the plan already checks what would fail on this
-  organization. Items that can't apply here are skipped with a reason (for example a
-  skill a source syncs); items that need something first are blocked with what to do
-  (connect the GitHub App, allow an email domain, set up SSO before requiring it,
-  enter a key again for a provider that moves to another address). Fix it and change
-  any decision to re-check, or skip the item.
+  organization. Items that can't apply here, or have nothing to change, are skipped
+  with a reason and need no decision (a skill a source syncs, a feature only a
+  platform admin can turn on, SCIM settings where SCIM isn't set up, an SSO
+  connection that must be tested before it can be enabled); items that need
+  something first are blocked with what to do (connect the GitHub App, allow an
+  email domain, free a seat, set up SSO before requiring it, enter a key again for
+  a provider that moves to another address). Fix it and change any decision to
+  re-check, or skip the item. Parts of an item the organization can't take yet are
+  left out with a warning on the plan, and the rest of the item is applied.
+- **References** to something the target doesn't have (a person, team, provider or
+  connection) can be mapped to an item there, or dropped. Dropping the person of a
+  grant, or the provider of a Smart Router's model, removes that grant or model.
+  A reference an item is about (the team of a team's settings, the team or provider
+  a limit applies to) can't be dropped: choose one in the target, or skip the item.
+  Each missing person, team or item is listed once: one choice applies to every
+  item that uses it, and you can open the row to decide a single use differently.
+  A file that holds only part of an organization still offers the teams and people
+  already in the target.
+- **Importing the same file again** is safe and is how you finish an import: what
+  was applied shows as unchanged, and what had to wait (people who have since
+  joined, a model whose provider now has its key) is applied.
 - **Approvals** are tied to `planHash`. Any change to the plan or a secret value
   drops them. An organization can require a second approver (Settings › Config),
   who must differ from the uploader and the first approver.

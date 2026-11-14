@@ -58,6 +58,7 @@ The UI shows, for each unmatched blob item, Drizzle-style:
 - When there are more than 50,000 (unmatched blob item × unmatched target item) pairs in an area, no scores are computed: every unmatched blob item is `needs_mapping` with "too many items to suggest matches; choose manually".
 - Suggestions are sorted by score; the best one is preselected **only** if it's clearly ahead (e.g. at least 0.85 and 0.15 ahead of the next). Otherwise "create" is preselected, plus a warning.
 - Confirmed choices are saved on the change request. When it's applied, they become alias rows, so the next import of the same lineage matches at tier 2 or 3.
+- An area may score pairs itself (`similarity`). People do: a person is their email, so someone at another address is proposed as the same person only when the part before the @ is the same (an organization that changed domains) or the names are. Sharing a role or teams says nothing about who someone is, and would ask the question about every person a file brings.
 
 ### Same-name collisions
 
@@ -85,8 +86,9 @@ Each item pair gets exactly one **state** and may have several **flags**.
 | Flag | Meaning | Blocks apply? |
 |---|---|---|
 | `needs_mapping` | tier 6 or an identity conflict not yet confirmed | yes |
-| `needs_input` | a `$secret` with no keep / env / value / unset decision | yes |
-| `ref_unresolved` | a `$ref` with no target. Options: map it, create it (if it's in the blob), or drop the reference | yes |
+| `needs_input` | a `$secret` the source had a value for (or that doesn't say), with no keep / env / value / unset decision. One the source never had (`set: false`) defaults to keep, or to unset where the target has none | yes |
+| `ref_unresolved` | a `$ref` with no target. Options: map it, create it (if it's in the blob), or drop the reference (see References for what a drop removes) | yes |
+| `blocked` | the write is known to fail here: the item's spec is invalid, or its area's preflight says so, with what to do | yes |
 | `drift` | the target changed since export (see below) | yes, until acknowledged |
 | `collision.unique` | the create or rename would break a unique constraint | yes |
 | `destructive` | delete, removing access, removing models, lowering limits | no, but needs an extra confirmation |
@@ -122,6 +124,11 @@ To show field values from **base**, we need the base spec, not only its hash. Wh
 - Cross-area references to areas outside the blob are resolved read-only. They never become writes.
 - People (`people/<email>`) resolve to members of the target org, or to planned creates/invitations from `members.people` in the same plan. If neither, the flag is `ref_unresolved` with two fixes: invite or drop from the grant. Invite adds a planned `members.people` create (pending invitation, role `member`, no teams) that runs first; the reference resolves to it.
 - A chosen target for a reference must be one of the referenced area's current items; references into an area that can't be read here can't take a chosen target.
+- **What the plan tells a client about a reference left to the admin.** Both are display only and outside `planHash`:
+  - `refuses` on the reference lists the decisions the plan would refuse for it, so they are not offered: `invite` for a person the import leaves out on purpose, a handle that isn't an email, or an author who can't invite; `drop` where the item can't be imported without the reference. Absent when nothing is known to be refused.
+  - `refTargets` on the plan lists, for each referenced area the file does not carry, the items already in the organization the reference can be pointed at (id and name). The items of an area the file carries are in the plan itself. A reader is sent only the areas they may view.
+- In Den, the References step lists each missing thing once. One choice applies to every item that uses it; opening the row shows each use, which can be decided on its own.
+- **What a drop removes.** By default only the reference's own key. Where an entry is nothing without what it names (an access grant and its person, a router's model and its provider, a limit's assignment and its team: the area's `requiredRefs`), dropping the reference removes the whole entry, in the plan and at apply. Where the reference is the item's own scope and sits in no list (the team of a team's settings, the team or provider a limit applies to), it can't be dropped: without it the item would apply to everyone. It stays `ref_unresolved` with "can't be dropped (this item can't be imported without it): choose one here, or skip the item".
 
 ## Delete modes
 

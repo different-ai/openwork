@@ -12,6 +12,11 @@
  *   and `enabled`. A key that is absent means the team uses the
  *   organization's value. Stored keys a server doesn't know yet are not
  *   carried.
+ * - `provider` and `gatewayModel`: when the team's model is an AI Gateway
+ *   alias, the provider serving it (a reference) and what the alias names
+ *   in words, as in `workbot.settings`: an import into an organization whose
+ *   provider rows have other ids rebuilds the alias from them, and the model
+ *   is compared by them (areas/gateway-model-ref.ts). Absent otherwise.
  * - `maxSteps` is in files exported while teams had a step limit. It is read
  *   so those files still import; never applied and no longer exported.
  * - Apply goes through PUT /v1/org/workbot-settings/teams/:teamId's own
@@ -19,6 +24,9 @@
  *   applier's own servable models only, the managed Luna starter saved as the
  *   default, and only the keys the plan changes. A delete removes the team's
  *   row, so the team uses the organization's settings again.
+ * - A model the applier can't use here yet (typically: its provider was
+ *   imported without its key) is left out with a warning, so the rest of the
+ *   import still runs; importing again once the model is usable sets it.
  */
 import { and, asc, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { TeamTable, WorkbotTeamSettingTable } from "@openwork-ee/den-db/schema"
@@ -32,9 +40,18 @@ import {
   type WorkbotTeamStoredSettings,
 } from "@openwork/types/den/workbot-team-settings"
 import { z } from "zod"
-import { RUNNER_UNAVAILABLE_MESSAGE, UNKNOWN_MODEL_MESSAGE } from "../../routes/org/workbot-settings.js"
+import { RUNNER_UNAVAILABLE_MESSAGE } from "../../routes/org/workbot-settings.js"
 import { checkWorkbotTeamModel, saveWorkbotTeamSettingsChange } from "../../routes/org/workbot-team-settings.js"
 import { defineConfigArea, type ConfigApplyOp, type ConfigAreaContext, type ConfigItem } from "../area.js"
+import {
+  describeGatewayModel,
+  gatewayModelHintSchema,
+  gatewayModelLabel,
+  localGatewayModel,
+  modelNotUsable,
+  readGatewayModelHint,
+  resolvedProviderId,
+} from "./gateway-model-ref.js"
 import {
   applyFailure,
   asItemError,
@@ -68,6 +85,10 @@ const settingsSchema = z.strictObject({
 const specSchema = z.object({
   team: configRefSchema,
   settings: settingsSchema,
+  /** The AI Gateway provider serving `settings.model`; informational, names where the model is found on import. */
+  provider: configRefSchema.nullable().optional(),
+  /** What an AI Gateway `settings.model` names (group, credential set, catalog model id), so it is found again where ids differ. */
+  gatewayModel: gatewayModelHintSchema.nullable().optional(),
 }).strict()
 
 type TeamSettings = z.infer<typeof settingsSchema>
@@ -99,12 +120,24 @@ async function readRows(ctx: ConfigAreaContext, ids?: string[]): Promise<ConfigI
       ...(rowIds ? [inArray(WorkbotTeamSettingTable.id, rowIds)] : []),
     ))
     .orderBy(asc(TeamTable.name), asc(WorkbotTeamSettingTable.id))
-  return rows.flatMap((row): ConfigItem[] => {
+  const items: ConfigItem[] = []
+  for (const row of rows) {
     const settings = exportedSettings(readWorkbotTeamSettings(row.settings))
     // A row with nothing readable overrides nothing (the routes show it as the organization's).
-    if (Object.keys(settings).length === 0) return []
-    return [{ id: row.id, name: row.teamName, spec: { team: teamRef(row.teamId, row.teamName), settings } }]
-  })
+    if (Object.keys(settings).length === 0) continue
+    const gateway = await describeGatewayModel(ctx, settings.model)
+    items.push({
+      id: row.id,
+      name: row.teamName,
+      spec: {
+        team: teamRef(row.teamId, row.teamName),
+        settings,
+        ...(gateway ? { provider: gateway.provider } : {}),
+        ...(gateway?.gatewayModel ? { gatewayModel: gateway.gatewayModel } : {}),
+      },
+    })
+  }
+  return items
 }
 
 async function currentRow(ctx: ConfigAreaContext, teamId: string) {
@@ -129,19 +162,20 @@ function parseSettings(spec: { [key: string]: unknown }): TeamSettings {
   return parsed.data
 }
 
-function describe(key: SettingKey, settings: TeamSettings): string {
+function describe(key: SettingKey, settings: TeamSettings, modelLabel?: string): string {
   if (!(key in settings)) return "the organization's"
   const value = settings[key]
-  if (key === "model") return value === null ? "default" : String(value)
+  if (key === "model") return value === null ? "default" : modelLabel ?? String(value)
   return String(value)
 }
 
 /**
  * The change to write: each key the plan names whose value differs from the target's, as the route's write
  * (`{ inherit: true }` when the team should use the organization's again). Keys whose feature is off here are
- * left out with a warning; a set model is checked against the applier's own models first.
+ * left out with a warning; a set model is checked against the applier's own models first, and one they can't use
+ * here (yet) is left out with a warning too. `next.model` is already the alias as this organization names it.
  */
-async function buildChange(ctx: ConfigAreaContext, op: ConfigApplyOp, next: TeamSettings, current: TeamSettings) {
+async function buildChange(ctx: ConfigAreaContext, op: ConfigApplyOp, next: TeamSettings, current: TeamSettings, teamName: string, modelLabel: string) {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
   const warnings: string[] = []
   const keys = SETTING_KEYS.filter((key) => touches(op, `settings.${key}`) && JSON.stringify(next[key]) !== JSON.stringify(current[key]))
@@ -153,10 +187,8 @@ async function buildChange(ctx: ConfigAreaContext, op: ConfigApplyOp, next: Team
       else {
         const checked = await checkWorkbotTeamModel({ organizationId, userId: ctx.actor.userId, model: next.model })
         if (checked.choice === "runner_unavailable") applyFailure({ code: "workbot_runner_unavailable", message: RUNNER_UNAVAILABLE_MESSAGE, field: "settings.model", status: 503 })
-        if (checked.choice === "unknown_model") {
-          applyFailure({ code: "unknown_model", message: `${UNKNOWN_MODEL_MESSAGE} (${next.model} isn't one of the models you can use in this organization.)`, field: "settings.model", status: 400 })
-        }
-        change.model = { inherit: false, value: checked.model }
+        if (checked.choice === "unknown_model") warnings.push(`${teamName}'s Workbot model was not changed: ${modelNotUsable(modelLabel)}`)
+        else change.model = { inherit: false, value: checked.model }
       }
     }
     if (key === "name") change.name = next.name === undefined ? { inherit: true } : { inherit: false, value: next.name }
@@ -192,6 +224,10 @@ export const workbotTeamSettingsArea = defineConfigArea({
   uniqueFields: [{ label: "team", get: scopeUniqueKey }],
   informationalName: true,
   secretFields: [],
+  // The settings are a team's: there is nothing to write without it.
+  requiredRefs: ["team"],
+  // `gatewayModel` only explains the model, which is compared as written (see workbot-settings).
+  informationalFields: ["provider", "gatewayModel"],
   // The model check reads the applier's Gateway catalog; saves use the global db.
   transactional: false,
   irreversible: () => [],
@@ -199,13 +235,35 @@ export const workbotTeamSettingsArea = defineConfigArea({
   exportItems: (ctx) => readRows(ctx),
   readItems: (ctx, ids) => readRows(ctx, ids),
 
-  async preflight(ctx, op) {
-    if (op.kind !== "create") return null
-    const settings = settingsSchema.safeParse(specObject(op.item.spec).settings)
+  /**
+   * Plan time: an item that would write nothing is skipped with the reason,
+   * and a model that will be left out is said before approval. The model is
+   * only judged when its provider already exists here: one this same plan
+   * creates has no models to look at yet, so the apply reports it.
+   */
+  async preflight(ctx, op, info) {
+    if (op.kind === "delete") return null
+    const spec = specObject(op.item.spec)
+    const settings = settingsSchema.safeParse(spec.settings)
     if (!settings.success) return null
     const keys = Object.keys(settings.data)
-    if (keys.length > 0 && keys.every((key) => key === "maxSteps")) return { skip: "only a step limit, which Workbot no longer has" }
-    return null
+    if (op.kind === "create" && keys.length > 0 && keys.every((key) => key === "maxSteps")) return { skip: "only a step limit, which Workbot no longer has" }
+    const model = settings.data.model
+    if (typeof model !== "string" || !touches(op, "settings.model")) return null
+    const provider = info.refs?.find((ref) => ref.path === "provider")
+    if (provider && provider.resolution !== "target") return null
+    const hint = readGatewayModelHint(spec.gatewayModel)
+    const next = await localGatewayModel(ctx, { model, providerId: provider?.id ?? null, hint })
+    const onlyModel = op.kind === "update"
+      ? op.secretPaths.length === 0 && op.changes.length > 0 && op.changes.every((change) => change.path === "settings.model")
+      : keys.every((key) => key === "model" || key === "maxSteps")
+    if (op.kind === "update" && specObject(specObject(op.previous.spec).settings).model === next) {
+      return onlyModel ? { skip: "This team's Workbot already uses this model here." } : null
+    }
+    const checked = await checkWorkbotTeamModel({ organizationId: normalizeDenTypeId("organization", ctx.organizationId), userId: ctx.actor.userId, model: next })
+    if (checked.choice !== "unknown_model") return null
+    const label = gatewayModelLabel(model, spec.provider, hint)
+    return onlyModel ? { skip: modelNotUsable(label) } : { warnings: [`${op.item.name}'s Workbot model will not be changed: ${modelNotUsable(label)}`] }
   },
 
   async apply(ctx, op) {
@@ -236,7 +294,13 @@ export const workbotTeamSettingsArea = defineConfigArea({
       if (spec.team === null || spec.team === undefined) applyFailure({ code: "invalid_spec", message: "Workbot settings per team need a team.", field: "team" })
       const scope = await resolveItemScope(ctx, spec)
       if (scope.kind !== "team") applyFailure({ code: "invalid_spec", message: "Workbot settings per team need a team.", field: "team" })
-      const next = parseSettings(spec)
+      const written = parseSettings(spec)
+      // An AI Gateway alias from another organization is rebuilt against the provider it resolved to here.
+      const hint = readGatewayModelHint(spec.gatewayModel)
+      const modelLabel = typeof written.model === "string" ? gatewayModelLabel(written.model, spec.provider, hint) : "default"
+      const next: TeamSettings = typeof written.model === "string" && touches(op, "settings.model")
+        ? { ...written, model: await localGatewayModel(ctx, { model: written.model, providerId: resolvedProviderId(spec.provider), hint }) }
+        : written
       const current = await currentRow(ctx, scope.teamId)
       const save = (change: WorkbotTeamSettingsWrite, id?: string) => saveWorkbotTeamSettingsChange({
         organizationId: normalizeDenTypeId("organization", ctx.organizationId),
@@ -250,11 +314,14 @@ export const workbotTeamSettingsArea = defineConfigArea({
         if (current) {
           applyFailure({ code: "workbot_team_settings_exist", message: `${scope.teamName} already has its own Workbot settings here; match this item to them instead of creating new ones.`, field: "team", status: 409 })
         }
-        const { change, written, warnings } = await buildChange(ctx, op, next, {})
-        if (written.length === 0) {
-          applyFailure({ code: "feature_disabled", message: `Nothing in ${scope.teamName}'s Workbot settings can be set here: ${warnings.join(" ") || "no setting given."}`, field: "settings" })
+        const { change, written: keys, warnings } = await buildChange(ctx, op, next, {}, scope.teamName, modelLabel)
+        if (keys.length === 0) {
+          // Everything the item sets was left out with a reason (a model the applier can't use here yet): nothing
+          // is created, the report says why, and importing again once it can be set creates it.
+          if (warnings.length) return { localId: op.item.sourceId ?? scope.teamId, steps, warnings }
+          applyFailure({ code: "invalid_spec", message: `Nothing in ${scope.teamName}'s Workbot settings can be set here: no setting given.`, field: "settings" })
         }
-        const step: ConfigApplyStep = { action: "create", target: scope.teamName, detail: written.map((key) => `${key}: ${describe(key, next)}`).join(", ") }
+        const step: ConfigApplyStep = { action: "create", target: scope.teamName, detail: keys.map((key) => `${key}: ${describe(key, next, modelLabel)}`).join(", ") }
         await save(change, op.preferredId).catch((error: unknown) => applyFailure({ code: "write_failed", message: errorMessage(error), step }))
         steps.push(step)
         const created = await currentRow(ctx, scope.teamId)
@@ -268,9 +335,9 @@ export const workbotTeamSettingsArea = defineConfigArea({
       if (!current || current.id !== op.targetId) {
         applyFailure({ code: "workbot_team_settings_not_found", message: `${scope.teamName}'s Workbot settings changed since the plan; analyze again.`, status: 409 })
       }
-      const { change, written, warnings } = await buildChange(ctx, op, next, current.settings)
-      if (written.length === 0) return { localId: current.id, steps, ...(warnings.length ? { warnings } : {}) }
-      const done: ConfigApplyStep[] = written.map((key) => ({ action: "set", target: `settings.${key}`, detail: describe(key, next) }))
+      const { change, written: keys, warnings } = await buildChange(ctx, op, next, current.settings, scope.teamName, modelLabel)
+      if (keys.length === 0) return { localId: current.id, steps, ...(warnings.length ? { warnings } : {}) }
+      const done: ConfigApplyStep[] = keys.map((key) => ({ action: "set", target: `settings.${key}`, detail: describe(key, next, modelLabel) }))
       await save(change).catch((error: unknown) => applyFailure({ code: "write_failed", message: errorMessage(error), step: done[0] }))
       steps.push(...done)
       // Every override cleared: the route removed the row, and the team uses the organization's settings.

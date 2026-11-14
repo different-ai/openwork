@@ -211,7 +211,8 @@ export function redactRawSecrets(secretFields: readonly string[], spec: ConfigSp
  */
 export function replacesSecretValue(layout: ArrayLayout, spec: ConfigSpec, inputs: ReadonlyMap<string, ConfigSecretInput>): boolean {
   return findSecrets(layout, spec).some((occurrence) => {
-    const chosen = decisionFor(occurrence.placeholder, inputs.get(occurrence.path))
+    // Whether the target holds a value only picks between keep and unset, neither of which writes one.
+    const chosen = decisionFor(occurrence.placeholder, inputs.get(occurrence.path), false)
     return chosen?.decision === "value" || chosen?.decision === "env"
   })
 }
@@ -250,7 +251,7 @@ export function planSecrets(input: PlanSecretsInput): PlannedSecrets {
   let missing = false
   for (const occurrence of findSecrets(input.layout, input.blobSpec)) {
     const targetHasValue = targetSet.get(occurrence.field) ?? false
-    const chosen = decisionFor(occurrence.placeholder, input.inputs.get(occurrence.path))
+    const chosen = decisionFor(occurrence.placeholder, input.inputs.get(occurrence.path), targetHasValue)
     const planned: ConfigPlanSecret = {
       path: occurrence.path,
       field: occurrence.field,
@@ -281,10 +282,18 @@ export function planSecrets(input: PlanSecretsInput): PlannedSecrets {
   return { secrets, execution, flags: missing ? ["needs_input"] : [], reasons }
 }
 
-function decisionFor(placeholder: ConfigSecret, input: ConfigSecretInput | undefined): { decision: SecretDecisionKind; env?: string } | null {
+/**
+ * What to do with one placeholder: the admin's input, else what the file says,
+ * else, for a secret the export says the source never had (`set: false`),
+ * nothing to ask: there is no value to bring, so a value this organization
+ * already holds is kept and an empty one stays empty. A placeholder that had a
+ * value, or doesn't say (a hand-written file), is always asked about.
+ */
+function decisionFor(placeholder: ConfigSecret, input: ConfigSecretInput | undefined, targetHasValue: boolean): { decision: SecretDecisionKind; env?: string } | null {
   if (input) return input.decision === "env" ? { decision: "env", env: input.env } : { decision: input.decision }
   if (placeholder.keep) return { decision: "keep" }
   if (placeholder.env) return { decision: "env", env: placeholder.env }
   if (placeholder.unset) return { decision: "unset" }
+  if (placeholder.set === false) return { decision: targetHasValue ? "keep" : "unset" }
   return null
 }

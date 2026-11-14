@@ -378,8 +378,10 @@ async function applyConnection(ctx: ConfigAreaContext, op: ConfigApplyOp, log: C
               },
             } : {}),
             ...(spec.oauth.manualOAuthEndpoints ? { manualOAuthEndpoints: spec.oauth.manualOAuthEndpoints } : {}),
-            ...(spec.oauth.authorizationServerIssuer ? { authorizationServerIssuer: spec.oauth.authorizationServerIssuer } : {}),
-            ...(spec.oauth.requestedScopes.length > 0 ? { requestedScopes: spec.oauth.requestedScopes } : {}),
+            // Both always sent, also when empty: left out, a known server gets its default issuer and scopes
+            // here, which the source does not have, and the next import of the same file would plan to remove them.
+            authorizationServerIssuer: spec.oauth.authorizationServerIssuer,
+            requestedScopes: spec.oauth.requestedScopes,
           }
         : {}),
       access: accessInput,

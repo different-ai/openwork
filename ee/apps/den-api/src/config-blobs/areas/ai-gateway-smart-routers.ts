@@ -41,6 +41,9 @@ const PROVIDERS_AREA = "ai-gateway.providers"
 // ---------------------------------------------------------------------------
 // Spec
 
+/** The provider reference of a model, as a positional path: `models[2].provider`. */
+const MODEL_PROVIDER_PATH = /^models\[\d+\]\.provider$/
+
 const routerSpecSchema = z.object({
   /** Who the router applies to. A new router with none applies to nobody. */
   assignment: z.object({
@@ -339,6 +342,8 @@ export const aiGatewaySmartRoutersArea = defineConfigArea({
   similarity,
   secretFields: [],
   orderedArrays: ["models", "models[].tasks"],
+  // A router's model is a provider's: dropping the provider drops that model from the router.
+  requiredRefs: ["models[].provider"],
   // The auto-router service writes through the global db in its own transactions.
   transactional: false,
   // Saving checks the AI Gateway's routing status over the network.
@@ -347,5 +352,16 @@ export const aiGatewaySmartRoutersArea = defineConfigArea({
 
   exportItems: (ctx) => readRouters(ctx),
   readItems: (ctx, ids) => readRouters(ctx, ids),
+  // A model goes with its dropped provider: say how many are left out, and refuse a router left with none.
+  async preflight(_ctx, op, info) {
+    if (op.kind === "delete" || !info.refs) return null
+    const dropped = info.refs.filter((ref) => MODEL_PROVIDER_PATH.test(ref.path) && ref.resolution === "drop").length
+    if (dropped === 0) return null
+    const models = Array.isArray(op.item.spec.models) ? op.item.spec.models.length : 0
+    if (dropped >= models) {
+      return { block: `"${op.item.name}" would have no model left: every provider its models use was dropped. Choose a provider here for at least one of them, or skip this Smart Router.` }
+    }
+    return { warnings: [`${dropped} of the ${models} models of "${op.item.name}" ${dropped === 1 ? "is" : "are"} left out: ${dropped === 1 ? "its provider was" : "their providers were"} dropped.`] }
+  },
   apply: applyRouter,
 })

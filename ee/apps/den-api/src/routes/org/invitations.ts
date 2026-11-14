@@ -22,7 +22,7 @@ import type { PermissionDatabase } from "@openwork-ee/den-db/permissions"
 import { resolveTeamActorInTransaction, teamGrantDecisionInTransaction, teamGrantsForbiddenResponse, roleAssignmentDeniedHeaders, roleAssignmentDeniedResponse, roleAssignmentDenial, roleAssignmentDenialInTransaction, type RoleAssignmentDenial } from "../../permissions/team-grants.js"
 import { resolvePermissionsForMember } from "../../permissions/resolve.js"
 import { getOrganizationSeatAddEligibility, getSeatPlanQuote } from "../../stripe-billing.js"
-import { planLimitReachedMessage } from "../../organization-plan.js"
+import { freePlanLimitReachedMessage, planLimitReachedMessage } from "../../organization-plan.js"
 import { seatPlanQuoteSchema } from "@openwork/types/den/billing-plans"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import { organizationInviteEmailProps } from "../../invitation-email.js"
@@ -517,7 +517,7 @@ export async function createInvitationAction(
         subscriptionType: "seat",
         currentCount: seatEligibility.currentCount,
         freeSeatCount: seatEligibility.freeSeatCount,
-        message: `The Free plan is limited to ${seatEligibility.freeSeatCount} users, counting pending invitations. Upgrade to the Team plan at ${invitationBillingUrl()} to invite more people.`,
+        message: freePlanLimitReachedMessage(seatEligibility.freeSeatCount, invitationBillingUrl()),
         billingUrl: invitationBillingUrl(),
         quote,
       }, 402)

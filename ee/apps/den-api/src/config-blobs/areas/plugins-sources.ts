@@ -71,7 +71,7 @@ import {
   resolvedRefId,
   sameJson,
 } from "./plugins-support.js"
-import { ConfigApplyError, applyWithSteps, isJsonObject, specObject, specRefSchema, touches, type ConfigStepLog, type JsonObject } from "./route-support.js"
+import { ConfigApplyError, applyWithSteps, isJsonObject, ownManagerAccessPreflight, specObject, specRefSchema, touches, type ConfigStepLog, type JsonObject } from "./route-support.js"
 
 const AREA = "plugins.sources"
 
@@ -287,7 +287,7 @@ export const pluginsSourcesArea = defineConfigArea({
   },
 
   async preflight(ctx, op) {
-    if (op.kind !== "create") return null
+    if (op.kind !== "create") return ownManagerAccessPreflight(ctx, op)
     const parsed = z.object({ connectorType: specSchema.shape.connectorType, account: specSchema.shape.account }).safeParse(op.item.spec)
     if (!parsed.success) return null
     if (await findAccount(ctx, parsed.data.connectorType, parsed.data.account)) return null
