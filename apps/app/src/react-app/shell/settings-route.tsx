@@ -107,6 +107,8 @@ import { GeneralSettingsView } from "@/react-app/domains/settings/pages/general-
 import { AuthorizedFoldersPanel } from "@/react-app/domains/settings/panels/authorized-folders-panel";
 import { EffectivePermissionsPanel } from "@/react-app/domains/settings/panels/effective-permissions-panel";
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
+import { SETTINGS_FIND_LABEL } from "@/react-app/domains/settings/find/settings-find";
+import { useSettingsFindStore } from "@/react-app/domains/settings/find/settings-find-store";
 import { AdvancedView } from "@/react-app/domains/settings/pages/advanced-view";
 import { ClaudeImportView } from "@/react-app/domains/settings/pages/claude-import-view";
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
@@ -1171,6 +1173,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   const runtimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspace?.id ?? null;
   const importOpencodeConnectionsEnabled = useDesktopFeature("importOpencodeConnections");
+  const settingsFindEnabled = useDesktopFeature("settingsFind");
   const opencodeConnectionsImport = useMemo(() => {
     if (!importOpencodeConnectionsEnabled || !openworkClient || !runtimeWorkspaceId) return undefined;
     return {
@@ -1318,6 +1321,18 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }),
     [developerMode, setCommandPaletteOpen, toggleDeveloperMode],
   );
+  // The same find as Cmd/Ctrl+F and the header button, from the command palette.
+  const settingsFindPaletteItem = useMemo<PaletteItem | null>(() => settingsFindEnabled ? {
+    id: "settings-find.open",
+    title: SETTINGS_FIND_LABEL,
+    detail: "Search the settings page you have open",
+    meta: "Cmd/Ctrl+F",
+    searchText: "find search text settings page",
+    action: () => {
+      setCommandPaletteOpen(false);
+      useSettingsFindStore.getState().openFind();
+    },
+  } : null, [setCommandPaletteOpen, settingsFindEnabled]);
   const paletteSessionOptions = useMemo(
     () => buildCommandPaletteSessions(workspaces, sessionsByWorkspaceId, selectedWorkspaceId),
     [sessionsByWorkspaceId, selectedWorkspaceId, workspaces],
@@ -2789,6 +2804,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             navigationSessionId,
           )))}
           compact={props.embedded}
+          findEnabled={settingsFindEnabled}
         >
           {settingsView}
         </SettingsShell>
@@ -2833,7 +2849,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         selectedModelBehavior={local.prefs.modelVariant ?? null}
         onSelectModel={(next, behavior) => local.setPrefs((prev) => applyDefaultModelPreference(prev, next, behavior))}
         sessions={paletteSessionOptions}
-        extraItems={checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]}
+        extraItems={[
+          ...(checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]),
+          ...(settingsFindPaletteItem ? [settingsFindPaletteItem] : []),
+        ]}
       />
 
       <ProviderAuthModal
