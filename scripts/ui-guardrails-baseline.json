@@ -398,12 +398,6 @@
       "count": 1
     },
     {
-      "file": "ee/apps/den-web/app/(den)/dashboard/_components/egress-diagnostics-card.tsx",
-      "rule": "faint-text",
-      "fingerprint": "faf2b08f95c14e03",
-      "count": 1
-    },
-    {
       "file": "ee/apps/den-web/app/(den)/dashboard/_components/execution-policy-fields.tsx",
       "rule": "raw-control",
       "fingerprint": "052f6bc0615b7f82",

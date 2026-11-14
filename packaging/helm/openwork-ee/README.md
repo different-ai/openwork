@@ -1475,7 +1475,7 @@ illustrative IDs into a real installation.
 #### 2. Verify in Den
 
 Open **Members > Roles**, find **Restored administrator permissions** and inspect
-its team and 14-key policy. As an intended recipient, test changing a different
+its team and 13-key policy. As an intended recipient, test changing a different
 non-owner test member's role, then restore that test member's role. If undo is
 needed, the owner can unlink or delete this custom role in **Members > Roles**.
 The repair does not undo unrelated actions performed while access was granted.

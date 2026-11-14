@@ -12,7 +12,7 @@ description: "Plan OpenWork deployments that limit or remove public internet acc
 | **Private-network / semi-air-gapped** | Employee desktops can reach the public internet and can also reach internal Den over VPN or private network. Den access is restricted to approved networks, but the desktop still has ordinary internet paths unless your endpoint policy blocks them. |
 | **Isolated Den** | Den has no unrestricted public internet access. Client laptops may still have internet access for installers, model catalogs, npm packages, providers, and links. |
 | **Fully air-gapped installer delivery** | Only the installer bytes are mounted or served from inside your network. This does **not** make the entire OpenWork product fully air-gapped. It only removes the GitHub release-asset download path for the installer. |
-| **Fully isolated OpenWork deployment** | Every dependency used by the enabled OpenWork features is mirrored, provisioned, disabled, or replaced with an internally reachable service. This includes deployment artifacts, desktop runtime dependencies, model/provider catalogs, OAuth/provider endpoints, MCP servers, email, diagnostics, updates, and trust anchors. |
+| **Fully isolated OpenWork deployment** | Every dependency used by the enabled OpenWork features is mirrored, provisioned, disabled, or replaced with an internally reachable service. This includes deployment artifacts, desktop runtime dependencies, model/provider catalogs, OAuth/provider endpoints, MCP servers, email, updates, and trust anchors. |
 
 If desktops have internet access and Den is private, start with [Private network deployment](/start-here/private-network-deployment). If you need to inventory domains, use [Outbound network access](/start-here/outbound-network-access). If TLS inspection or private roots are involved, use [Certificate trust and proxies](/start-here/certificate-trust-and-proxies).
 
@@ -52,9 +52,9 @@ See [Installer delivery](/start-here/installer-delivery) for the exact filenames
 ### Security and diagnostics
 
 - Install private roots and proxy configuration for the correct trust surface: desktop Electron/Chromium, spawned local runtimes, Den containers, and MySQL TLS do not all use the same store. See [Certificate trust and proxies](/start-here/certificate-trust-and-proxies).
-- Use [Network diagnostics](/start-here/network-diagnostics) to separate desktop DNS/TLS/proxy issues from Den outbound checks.
+- Use [Network diagnostics](/start-here/network-diagnostics) to diagnose desktop DNS, TLS, and proxy issues.
 - Helm already disables the external breached-password lookup by default for isolated self-hosted installs. Enable it only if your security team approves the external Have I Been Pwned range API path.
 
 ## What full isolation does not include automatically
 
-Mounting installer artifacts is useful, but it only solves installer delivery. It does not mirror npm, model catalogs, provider APIs, GitHub plugin contents, OAuth metadata, email delivery, diagnostics, desktop updates, or certificate trust. Treat each enabled feature as a separate dependency review.
+Mounting installer artifacts is useful, but it only solves installer delivery. It does not mirror npm, model catalogs, provider APIs, GitHub plugin contents, OAuth metadata, email delivery, desktop updates, or certificate trust. Treat each enabled feature as a separate dependency review.

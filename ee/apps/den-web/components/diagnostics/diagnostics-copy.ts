@@ -58,7 +58,6 @@ export const SECTION_TITLES: Record<DiagnosticsSectionId, string> = {
   providers: "AI providers",
   connectors: "Connectors",
   installation: "Installation",
-  network: "Advanced",
 };
 
 export const SECTION_SCOPES: Record<DiagnosticsSectionId, string | null> = {
@@ -66,7 +65,6 @@ export const SECTION_SCOPES: Record<DiagnosticsSectionId, string | null> = {
   providers: "Checked against each endpoint. No prompt sent.",
   connectors: null,
   installation: null,
-  network: null,
 };
 
 export const INSTALLATION_COPY = {
@@ -75,11 +73,6 @@ export const INSTALLATION_COPY = {
   managed: "Managed by OpenWork",
   lockedName: "Installation admins only",
   lockedSub: "Ask whoever set up OpenWork for your organization",
-} as const;
-
-export const NETWORK_COPY = {
-  name: "Network check",
-  sub: "From the OpenWork server",
 } as const;
 
 /** "Requires permission to view desktop policies", from the catalog label, never the raw key. */
