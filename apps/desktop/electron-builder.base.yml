@@ -9,8 +9,20 @@ files:
   - package.json
   # The staged copy below is compiled JavaScript; leave the checkout's source out.
   - "!node_modules/@openwork/types/{src,tsconfig*.json,tsup.config.ts}"
+  # The Swift helper ships under helpers; its build cache is checkout-only.
+  - "!node_modules/@openwork/computer-use/native/.build"
+  # Only a debugger or a compiler reads these, and nothing here runs one.
+  # The staged copy below repeats each rule so it cannot bring them back.
+  - &noSourceMaps "!**/*.{js,cjs,mjs,ts,cts,mts}.map"
+  - &noTypeDeclarations "!**/*.d.{ts,cts,mts}"
+  # Computer use transpiles scripts with lib/typescript.js alone. The compiler
+  # command, language server and translated messages are never loaded.
+  - &noTypeScriptTools "!**/typescript/{bin,lib/!(typescript.js)}"
+  # SQLite loads its prebuilt binary; the C sources only compile one.
+  - "!**/better-sqlite3/{deps,src}"
   - from: .electron-runtime/node_modules
     to: node_modules
+    filter: ["**/*", *noSourceMaps, *noTypeDeclarations, *noTypeScriptTools]
 extraResources:
   - from: .electron-runtime/openwork-sentry.json
     to: openwork-sentry.json
