@@ -245,9 +245,28 @@ export class Computers {
     return { ok: true }
   }
 
-  /** Runs one of the computer's tools (`bash` or `look`) for a conversation. */
-  run(sessionId: string, name: string, input: Record<string, unknown>): Promise<ToolResult> {
-    return this.holding(sessionId, () => runComputerTool(this, sessionId, name, input))
+  /**
+   * Runs one of the computer's tools (`bash` or `look`) for a conversation. `callKey` names this one call for good: a
+   * command started under it can be picked up later (`pickUp`) if the wait for it is lost.
+   */
+  run(sessionId: string, name: string, input: Record<string, unknown>, callKey?: string): Promise<ToolResult> {
+    return this.holding(sessionId, () => runComputerTool(this, sessionId, name, input, callKey))
+  }
+
+  /**
+   * The result of a command started under `callKey` whose result never reached the runner: its real result once it
+   * ends, or that it is still running. Null when this computer never started it. Never starts a command or a computer.
+   */
+  pickUp(sessionId: string, name: string, input: Record<string, unknown>, callKey: string): Promise<ToolResult | null> {
+    return this.holding(sessionId, async () => {
+      const parsed = name === "bash" ? bashInput.safeParse(input) : null
+      if (!parsed?.success || !(await this.has(sessionId))) return null
+      const job = commandJob(callKey)
+      const limit = parsed.data.timeout_seconds ?? DEFAULT_COMMAND_SECONDS
+      const outcome = await this.awaitCommand(sessionId, job, limit)
+      if (outcome.status === "unknown" || outcome.status === "unconfirmed" || outcome.status === "direct") return null
+      return this.commandResult(sessionId, job, limit, outcome, [])
+    })
   }
 
   /** The snapshot new computers boot from, for logs. */
@@ -330,9 +349,10 @@ export class Computers {
     return this.blocks.run(box, spec)
   }
 
-  /** Recover before launching work; never retry an unknown command outcome. */
-  private async exec(sessionId: string, command: string, timeoutSeconds: number) {
+  /** Recover before launching work; never retry an unknown command outcome. `reached`: the computer is up, and is being asked. */
+  private async exec(sessionId: string, command: string, timeoutSeconds: number, reached?: () => void) {
     const box = await this.vm(sessionId)
+    reached?.()
     if (this.desktop) return this.execute(box, {
       command: `printf %s ${shellQuote(JSON.stringify({ command }))} | sudo -n /usr/local/sbin/openwork-desktop-bridge command`,
       timeoutMs: timeoutSeconds * 1000,
@@ -443,8 +463,12 @@ export class Computers {
     }
   }
 
+  /**
+   * How many jobs are running: `background` jobs and commands (see `awaitCommand`), which both keep a `.running` file.
+   * A command's file names its process, so one left behind by a command that was killed isn't counted for ever.
+   */
   private async runningJobs(box: SandboxHandle, timeoutMs = 10_000) {
-    const jobs = await this.execute(box, { command: `ls ${WORKSPACE}/.jobs/*.running 2>/dev/null | wc -l`, activity: "maintenance", timeoutMs })
+    const jobs = await this.execute(box, { command: RUNNING_JOBS, activity: "maintenance", timeoutMs })
     return Number(jobs.stdout?.trim() ?? "0")
   }
 
@@ -715,11 +739,25 @@ export class Computers {
     const path = `/tmp/computer-preview/source/${fileId}${extension}`
     await this.execute(vm, { command: "mkdir -p /tmp/computer-preview/source", timeoutMs: 10_000 })
     await this.blocks.files.write(vm, path, found.bytes, { timeoutMs: 30_000 })
-    await this.renderPreview(sessionId, fileId, path)
+    await this.renderPreview(sessionId, fileId, path, false)
   }
 
-  /** Renders an Office file with LibreOffice on the computer and keeps its pages as images, the file's preview. */
-  private async renderPreview(sessionId: string, fileId: string, path: string) {
+  /**
+   * Renders an Office file with LibreOffice on the computer and keeps its pages as images, the file's preview.
+   * `floating`: nothing waits for it (a command's output), so nothing keeps the runner alive until it is done.
+   */
+  private async renderPreview(sessionId: string, fileId: string, path: string, floating = true) {
+    if (!this.files) return
+    // A line when it starts and one when it ends, ids and times only: a start without an end is a preview that was
+    // lost with its runner, which is how often that happens.
+    const started = Date.now()
+    console.log(`[headless-computer] preview started ${JSON.stringify({ sessionId, fileId, floating })}`)
+    const done = { outcome: "failed", pages: 0 }
+    try { await this.renderPages(sessionId, fileId, path, done) }
+    finally { console.log(`[headless-computer] preview finished ${JSON.stringify({ sessionId, fileId, floating, ...done, ms: Date.now() - started })}`) }
+  }
+
+  private async renderPages(sessionId: string, fileId: string, path: string, done: { outcome: string; pages: number }) {
     if (!this.files) return
     // The version being rendered: if the file is revised meanwhile, these pages are stale and are not kept.
     const version = this.files.list(sessionId).find((file) => file.id === fileId)?.updatedAt
@@ -743,7 +781,10 @@ export class Computers {
           timeoutMs: 150_000,
         })
     const pdfPath = rendered.stdout?.trim()
-    if (!pdfPath) return
+    if (!pdfPath) {
+      done.outcome = "not_rendered"
+      return
+    }
     // One image per page (at most 60), 1600px on the long side: the panel lays them out like a deck.
     const paged = await this.execute(vm, {
       command: `pdftoppm -png -l ${MAX_PREVIEW_PAGES} -scale-to 1600 "$PDF" "$OUT/page" && ls "$OUT"/page-*.png | sort -V`,
@@ -755,28 +796,82 @@ export class Computers {
     for (const pagePath of pagePaths) pages.push(new Uint8Array(await this.blocks.files.read(vm, pagePath, { timeoutMs: 30_000 })))
     const size = pngSize(pages[0])
     const current = this.files.list(sessionId).find((file) => file.id === fileId)?.updatedAt
-    if (size && current === version) await this.files.putPreview(sessionId, fileId, pages, size)
+    done.pages = pages.length
+    done.outcome = !size ? "no_pages" : current !== version ? "revised" : "failed"
+    if (size && current === version) done.outcome = (await this.files.putPreview(sessionId, fileId, pages, size)) ? "kept" : "not_kept"
     await this.execute(vm, { command: `rm -rf "$OUT"`, env: { OUT: outDir }, timeoutMs: 10_000 }).catch(() => undefined)
   }
 
-  async bash(sessionId: string, command: string, timeoutSeconds: number): Promise<ToolResult> {
+  async bash(sessionId: string, command: string, timeoutSeconds: number, callKey?: string): Promise<ToolResult> {
     const copied = await this.copyUploads(sessionId)
-    let result
-    try { result = await this.exec(sessionId, command, timeoutSeconds) }
-    catch (error) {
-      if (!isSandboxError(error) || error.code !== "timeout") throw error
-      return { output: `[No confirmed result after ${timeoutSeconds}s. The command may still be running; do not repeat side effects. Use background for long jobs.]`, isError: true }
+    const job = commandJob(callKey)
+    return this.commandResult(sessionId, job, timeoutSeconds, await this.awaitCommand(sessionId, job, timeoutSeconds, command), copied)
+  }
+
+  /**
+   * Waits for a command to end, starting it first when `command` is given. The command runs on the computer apart
+   * from the request that waits for it, keeps its output and exit code in files, and stops itself at its time limit.
+   * So a wait that is cut (the provider's limit, a runner that stops) loses nothing: the next wait for the same `job`
+   * finds it, and a command is never started twice. `unknown`: this computer has no such command.
+   */
+  private async awaitCommand(sessionId: string, job: string, limitSeconds: number, command?: string): Promise<CommandOutcome> {
+    // The command is over by then: its limit, the time it gets to stop, and a moment to record how it ended.
+    const longest = limitSeconds + STOP_GRACE_SECONDS + 5
+    let left = longest
+    let start = command === undefined ? undefined : { command, limitSeconds }
+    let askedAt: number | undefined
+    let cut = false
+    for (;;) {
+      const waitSeconds = Math.min(left, MAX_WAIT_SECONDS)
+      left -= waitSeconds
+      const result = await this.exec(sessionId, commandScript(job, waitSeconds, start), waitSeconds + WAIT_SLACK_SECONDS, () => { askedAt ??= Date.now() }).catch((error: unknown) => {
+        if (!isSandboxError(error) || error.code !== "timeout") throw error
+        return null
+      })
+      if (!result) {
+        // The wait was cut, not the command: one more wait, for what is left of its time, which starts nothing. Not
+        // when the computer never came up, nor a second time.
+        if (cut || askedAt === undefined) return { status: "unconfirmed" }
+        cut = true
+        left = Math.max(1, longest - Math.floor((Date.now() - askedAt) / 1000))
+        start = undefined
+        continue
+      }
+      const outcome = readCommand(result)
+      if (outcome.status !== "running" || left <= 0) return outcome
+      start = undefined
+    }
+  }
+
+  /** What the model is told about a command, and its outputs added to the person's Files once it has ended. */
+  private async commandResult(sessionId: string, job: string, limitSeconds: number, outcome: CommandOutcome, copied: string[]): Promise<ToolResult> {
+    const copiedNote = copied.length ? `[Copied the person's files to: ${copied.join(", ")}]` : ""
+    const unfinished = (note: string, output: { stdout: string; stderr: string }) => ({
+      output: [copiedNote, note, output.stdout, output.stderr ? `[stderr]\n${output.stderr}` : ""].filter(Boolean).join("\n"),
+      isError: true,
+    })
+    if (outcome.status === "unconfirmed" || outcome.status === "unknown") {
+      return unfinished(`[No confirmed result after ${limitSeconds}s. The command may still be running; do not repeat side effects. Use background for long jobs.]`, { stdout: "", stderr: "" })
+    }
+    if (outcome.status === "running") {
+      return unfinished(`[Still running: it did not stop at its ${limitSeconds}s limit. Its output so far is in ${JOBS_DIR}/${job}.out and ${job}.err, and ${JOBS_DIR}/${job}.exit will hold its exit code once it ends. Check on it there; do not repeat side effects.]`, outcome)
+    }
+    if (outcome.status === "lost") {
+      return unfinished("[The command's process ended without an exit code: it was killed, or the computer restarted under it. Check its effect before repeating it.]", outcome)
+    }
+    if (outcome.status === "done" && outcome.stopped) {
+      return unfinished(`[Stopped after ${limitSeconds}s, its time limit, before it finished. Use background for long jobs.]`, outcome)
     }
     const { saved, skipped } = await this.exportOutputs(sessionId).catch(() => ({ saved: [], skipped: [] }))
     const parts = [
-      copied.length ? `[Copied the person's files to: ${copied.join(", ")}]` : "",
-      `[exit ${result.exitCode}]`,
-      tail(result.stdout ?? ""),
-      result.stderr?.trim() ? `[stderr]\n${tail(result.stderr)}` : "",
+      copiedNote,
+      `[exit ${outcome.exitCode}]`,
+      outcome.stdout,
+      outcome.stderr ? `[stderr]\n${outcome.stderr}` : "",
       saved.length ? `[Added to their Files: ${saved.join(", ")}]` : "",
       skipped.length ? `[Not added to their Files: ${skipped.join("; ")}. Make it smaller, or tell them it is too big to hand over.]` : "",
     ]
-    return { output: parts.filter(Boolean).join("\n"), isError: result.exitCode !== 0 }
+    return { output: parts.filter(Boolean).join("\n"), isError: outcome.exitCode !== 0 }
   }
 
   async look(sessionId: string, paths: string[]): Promise<ToolResult> {
@@ -835,9 +930,142 @@ function formatBytes(bytes: number) {
   return `${bytes} bytes`
 }
 
-function tail(text: string) {
+/** `earlier`: how much of the output the computer had already dropped before this end of it. */
+function tail(text: string, earlier = 0) {
   const trimmed = text.trimEnd()
-  return trimmed.length > OUTPUT_TAIL_CHARS ? `…[${trimmed.length - OUTPUT_TAIL_CHARS} earlier characters cut]\n${trimmed.slice(-OUTPUT_TAIL_CHARS)}` : trimmed
+  const cut = Math.max(0, trimmed.length - OUTPUT_TAIL_CHARS) + earlier
+  return cut ? `…[${cut} earlier characters cut]\n${trimmed.slice(-OUTPUT_TAIL_CHARS)}` : trimmed
+}
+
+/** Where commands and `background` jobs keep their files: `<job>.running` while one runs. */
+const JOBS_DIR = `${WORKSPACE}/.jobs`
+/** How long a command gets to stop once its time is up, before it is killed. */
+const STOP_GRACE_SECONDS = 5
+/** How much longer than its wait a request for a command may take, and the longest wait that leaves within MAX_COMMAND_SECONDS. */
+const WAIT_SLACK_SECONDS = 10
+const MAX_WAIT_SECONDS = MAX_COMMAND_SECONDS - WAIT_SLACK_SECONDS
+/** The end of each stream is kept and read back in bytes: all that its last OUTPUT_TAIL_CHARS characters can take. */
+const OUTPUT_TAIL_BYTES = OUTPUT_TAIL_CHARS * 4
+/** A command's files stay this long after it started, for a wait that comes back for its result. */
+const COMMAND_KEPT_MINUTES = 24 * 60
+/** Starts the first line of what `commandScript` prints. */
+const COMMAND_MARKER = "---computer-command---"
+
+type CommandOutput = { stdout: string; stderr: string }
+/**
+ * How a command stands. `done`: it ended (`stopped`: at its time limit). `direct`: it ran inside the request, with no
+ * files to come back to. `lost`: it was started, and is neither running nor done. `unknown`: the computer has no such
+ * command. `unconfirmed`: the computer couldn't be asked.
+ */
+type CommandOutcome =
+  | ({ status: "done"; exitCode: number; stopped: boolean } & CommandOutput)
+  | ({ status: "direct"; exitCode: number } & CommandOutput)
+  | ({ status: "running" } & CommandOutput)
+  | ({ status: "lost" } & CommandOutput)
+  | { status: "unknown" }
+  | { status: "unconfirmed" }
+
+/** Reads the state of process `$pid` into `$state`, false when there is none; `Z` is one that ended and awaits its parent. */
+const PROCESS_STATE = `read -r _pid _name state _rest 2>/dev/null < "/proc/$pid/stat"`
+
+/** The name of a command's files: the same for the same call, so a later wait finds them; one of a kind without one. */
+function commandJob(callKey?: string) {
+  return `bash-call-${createHash("sha256").update(callKey ?? crypto.randomUUID()).digest("hex").slice(0, 24)}`
+}
+
+/**
+ * Counts running jobs. `background` leaves its `.running` file empty until it removes it; a command's names its
+ * process and the boot it belongs to, so a file left by a command that was killed, or by a restart, doesn't count.
+ */
+const RUNNING_JOBS = [
+  `boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); count=0`,
+  `for file in ${JOBS_DIR}/*.running; do`,
+  `  [ -e "$file" ] || continue`,
+  `  pid=; at=; state=; read -r pid at 2>/dev/null < "$file"`,
+  `  case "$pid" in`,
+  `    ''|*[!0-9]*) count=$((count + 1)) ;;`,
+  `    *) [ "$at" = "$boot" ] && ${PROCESS_STATE} && [ "$state" != Z ] && count=$((count + 1)) ;;`,
+  `  esac`,
+  `done`,
+  `echo "$count"`,
+].join("\n")
+
+/**
+ * Runs a command in its own session, so it outlives the request that started it: $1 its files, $2 its time limit in
+ * seconds, $3 how many bytes of each stream to keep, $4 the command. Its output goes to `$1.out` and `$1.err`; when it
+ * ends, `$1.exit` gets `<exit code> <1 when its limit stopped it> <stdout bytes> <stderr bytes>`.
+ */
+const COMMAND_RUNNER = [
+  `echo "$$ $(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" > "$1.running.new" && mv "$1.running.new" "$1.running"`,
+  `timeout -k ${STOP_GRACE_SECONDS} "$2" bash -c "$4" > "$1.out" 2> "$1.err" < /dev/null`,
+  `code=$?; stopped=0; sizes=`,
+  `case "$code" in 124|137) [ "$SECONDS" -ge "$2" ] && stopped=1 ;; esac`,
+  `for stream in out err; do`,
+  `  size=$(wc -c < "$1.$stream"); sizes="$sizes $size"`,
+  `  [ "$size" -gt "$3" ] && tail -c "$3" "$1.$stream" > "$1.$stream.new" && mv "$1.$stream.new" "$1.$stream"`,
+  `done`,
+  `echo "$code $stopped$sizes" > "$1.exit.new" && mv "$1.exit.new" "$1.exit"`,
+  `rm -f "$1.running"`,
+].join("\n")
+
+/**
+ * What one request for a command runs: with `start`, it starts the command unless the computer already has it, then
+ * it waits up to `waitSeconds` for the command to end. It prints `<marker> <status> <exit code> <stopped> <stdout
+ * bytes> <stderr bytes>`, then the end of the command's stdout, with the end of its stderr on stderr.
+ */
+function commandScript(job: string, waitSeconds: number, start?: { command: string; limitSeconds: number }) {
+  return [
+    `job=${shellQuote(`${JOBS_DIR}/${job}`)}; boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)`,
+    ...(start ? [
+      `run=${shellQuote(start.command)}`,
+      `mkdir -p ${JOBS_DIR} 2>/dev/null`,
+      // Making its output file is what claims a command, and a file can be made once: it never starts twice.
+      `if ( set -C; : > "$job.out" ) 2>/dev/null; then`,
+      `  find ${JOBS_DIR} -maxdepth 1 -name 'bash-call-*' -mmin +${COMMAND_KEPT_MINUTES} -delete 2>/dev/null`,
+      `  echo "$$ $boot" > "$job.running"`,
+      `  setsid nohup bash -c ${shellQuote(COMMAND_RUNNER)} _ "$job" ${start.limitSeconds} ${OUTPUT_TAIL_BYTES} "$run" > /dev/null 2>&1 < /dev/null &`,
+      // Nowhere to keep its files (a full disk): it runs inside this request, as commands did before.
+      `elif [ ! -e "$job.out" ]; then exec bash -c "$run"`,
+      `fi`,
+    ] : []),
+    `look() {`,
+    `  status=done; [ -e "$job.exit" ] && return`,
+    `  status=running; pid=; at=; state=; read -r pid at 2>/dev/null < "$job.running"`,
+    `  [ -n "$pid" ] && [ "$at" = "$boot" ] && ${PROCESS_STATE} && [ "$state" != Z ] && return`,
+    // It may have ended between the two looks.
+    `  status=done; [ -e "$job.exit" ] && return`,
+    `  status=lost; [ -e "$job.out" ] && return`,
+    `  status=unknown`,
+    `}`,
+    `look; end=$((SECONDS + ${waitSeconds}))`,
+    `while [ "$status" = running ] && [ "$SECONDS" -lt "$end" ]; do`,
+    // Looks often at first, so a quick command isn't held up, then less and less.
+    `  if [ "$SECONDS" -lt 1 ]; then sleep 0.01; elif [ "$SECONDS" -lt 10 ]; then sleep 0.05; else sleep 0.25; fi`,
+    `  look`,
+    `done`,
+    `code=0; stopped=0; out=0; err=0`,
+    `if [ "$status" = done ]; then read -r code stopped out err < "$job.exit"`,
+    `elif [ "$status" != unknown ]; then out=$(wc -c 2>/dev/null < "$job.out"); err=$(wc -c 2>/dev/null < "$job.err"); fi`,
+    'echo "' + COMMAND_MARKER + ' $status ${code:-0} ${stopped:-0} ${out:-0} ${err:-0}"',
+    `if [ "$status" != unknown ]; then tail -c ${OUTPUT_TAIL_BYTES} "$job.out" 2>/dev/null; [ -e "$job.err" ] && tail -c ${OUTPUT_TAIL_BYTES} "$job.err" >&2; fi`,
+    `exit 0`,
+  ].join("\n")
+}
+
+/** What a request for a command answered. Without `commandScript`'s first line, the command ran inside the request. */
+function readCommand(result: { exitCode: number; stdout?: string; stderr?: string }): CommandOutcome {
+  const stdout = result.stdout ?? ""
+  const stderr = result.stderr ?? ""
+  if (!stdout.startsWith(`${COMMAND_MARKER} `)) return { status: "direct", exitCode: result.exitCode, stdout: tail(stdout), stderr: stderr.trim() ? tail(stderr) : "" }
+  const lineEnd = stdout.indexOf("\n")
+  const [, status, code, stopped, outBytes, errBytes] = stdout.slice(0, lineEnd === -1 ? stdout.length : lineEnd).split(" ")
+  if (status !== "done" && status !== "running" && status !== "lost") return { status: "unknown" }
+  // What the computer dropped before the end it kept, so the note on what was cut still counts all of it.
+  const dropped = (bytes: string | undefined) => Math.max(0, (Number(bytes) || 0) - OUTPUT_TAIL_BYTES)
+  const output = { stdout: tail(lineEnd === -1 ? "" : stdout.slice(lineEnd + 1), dropped(outBytes)), stderr: stderr.trim() ? tail(stderr, dropped(errBytes)) : "" }
+  if (status !== "done") return { status, ...output }
+  const exitCode = Number(code)
+  return Number.isInteger(exitCode) && code !== "" ? { status, exitCode, stopped: stopped === "1", ...output } : { status: "lost", ...output }
 }
 
 function safeJson(text: string): unknown {
@@ -898,11 +1126,11 @@ const bashInput = z.object({
 })
 const lookInput = z.object({ paths: z.array(z.string().min(1)).min(1).max(4) })
 
-async function runComputerTool(computers: Computers, sessionId: string, name: string, input: Record<string, unknown>): Promise<ToolResult> {
+async function runComputerTool(computers: Computers, sessionId: string, name: string, input: Record<string, unknown>, callKey?: string): Promise<ToolResult> {
   if (name === "bash") {
     const parsed = bashInput.safeParse(input)
     if (!parsed.success) return { output: "bash needs a command (and optionally timeout_seconds up to 300).", isError: true }
-    return computers.bash(sessionId, parsed.data.command, parsed.data.timeout_seconds ?? DEFAULT_COMMAND_SECONDS)
+    return computers.bash(sessionId, parsed.data.command, parsed.data.timeout_seconds ?? DEFAULT_COMMAND_SECONDS, callKey)
   }
   if (name === "look") {
     const parsed = lookInput.safeParse(input)

@@ -19,7 +19,7 @@ import { APPS_UNREACHABLE, CUT_OFF_INSTRUCTION, Runner, type RunnerOptions } fro
 import { SelfResume } from "../src/self-resume.js"
 import { FRESH_REPEAT, type StepState } from "../src/steps.js"
 import { Store } from "../src/store.js"
-import type { Message } from "../src/types.js"
+import type { Message, SessionComputer, ToolResult } from "../src/types.js"
 
 const usage = { inputTokens: 3, cachedInputTokens: 1, outputTokens: 2 }
 const unlimited: RunnerOptions["limits"] = { maxConcurrentTurns: 4, maxSteps: 20, turnTimeoutMs: Number.POSITIVE_INFINITY, credentialRefreshMs: Number.POSITIVE_INFINITY, contextCharBudget: 100_000 }
@@ -63,6 +63,7 @@ type WorldInput = {
   errors?: ErrorReporter
   limits?: Partial<RunnerOptions["limits"]>
   driver?: (db: SqlDriver) => SqlDriver
+  computer?: SessionComputer
 }
 
 /**
@@ -89,6 +90,7 @@ function world(directory: string, input: WorldInput) {
     errors: input.errors,
     now: input.clock,
     stepAlarm: input.alarm,
+    computer: input.computer,
   })
   const steps = runner.recoverSteps()
   return { store, runner, recovered, steps }
@@ -321,6 +323,59 @@ test("a tool call whose result wasn't recorded is never run again: the model get
   assert.equal(requests.length, 2, "the step finished from the kept answer, without asking the model again")
   assert.deepEqual(den.calls.map((call) => call.messageId), ["m1"], "fresh credentials from the turn's grant")
   assert.deepEqual(tokens, ["caller-token", "fresh-token-1"])
+})
+
+test("a computer command cut off with its step is picked up from the computer, never run again; one it never started stays interrupted", async () => {
+  using temp = tempDir()
+  const requests: ModelRequest[] = []
+  const model: ModelClient = {
+    async complete(request) {
+      requests.push(request)
+      if (resultsOf(request).length === 0) {
+        return { text: "Building it.", toolCalls: [{ id: "call_build", name: "bash", input: { command: "make report" } }, { id: "call_send", name: "bash", input: { command: "send report" } }], usage }
+      }
+      return { text: "The report is built; I couldn't confirm it was sent.", toolCalls: [], usage }
+    },
+  }
+  // The conversation's computer, which outlives the runner: it keeps what it started, by the call's key.
+  const started: Array<{ command: unknown; key: string | undefined }> = []
+  const asked: string[] = []
+  const computer = (results: Record<string, ToolResult>): SessionComputer => ({
+    prompt: "",
+    tools: [{ name: "bash", description: "Runs a command", inputSchema: { type: "object" } }],
+    toolNames: new Set(["bash"]),
+    image: "test",
+    async run(_sessionId, _name, input, callKey) {
+      started.push({ command: input.command, key: callKey })
+      return never()
+    },
+    async pickUp(_sessionId, _name, input, callKey) {
+      asked.push(callKey)
+      return results[String(input.command)] ?? null
+    },
+    known: () => false,
+    prewarm: () => undefined,
+    release: () => undefined,
+    delete: async () => undefined,
+    previewSavedFile: async () => undefined,
+  })
+  const first = world(temp.directory, { model, computer: computer({}) })
+  const session = first.store.createSession({ computer: true })
+  first.runner.send({ sessionId: session.id, messageId: "m1", prompt: "Build and send the report", credentials: { modelApiKey: "caller-key" }, execution: "steps" })
+  await until(() => started.length === 1, "the build starting")
+  // The runner dies while the build runs. On the computer it finishes; the send never started.
+  const second = world(temp.directory, { model, computer: computer({ "make report": { output: "[exit 0]\nreport.pdf written", isError: false } }) })
+  await second.runner.idle()
+  assert.equal(second.store.getTurn(session.id, "m1")?.status, "completed")
+  assert.deepEqual(started.map((call) => call.command), ["make report"], "no command ran a second time")
+  assert.equal(asked.length, 2)
+  assert.equal(asked[0], started[0]?.key, "the computer is asked by the key the command was started under")
+  assert.notEqual(asked[1], asked[0])
+  const results = transcript(second.store, session.id, "m1").filter((message) => message.role === "tool")
+  assert.deepEqual(results.map((message) => [message.callId, message.isError]), [["call_build", false], ["call_send", true]])
+  assert.equal(results[0]?.output, "[exit 0]\nreport.pdf written")
+  assert.ok(results[1]?.output.includes("not retried"))
+  assert.equal(requests.length, 2, "the step finished from the kept answer, without asking the model again")
 })
 
 test("without a resume grant, a turn that lost its credentials is interrupted as on any restart, and resumes when re-sent", async () => {
