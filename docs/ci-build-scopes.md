@@ -275,7 +275,7 @@ For each dev push it:
    Migrate's latest run failed.
 3. Deploys the core services (`api-private`, `inference-private`) and waits
    until they are live, then `workbot`, `client-web` and the Vercel projects
-   (`openwork-den`, `openwork-app`, `openwork-landing`, `openwork-diagnostics`).
+   (`openwork-den`, `openwork-app`, `openwork-landing`).
    Render deploys pin `commitId`; Vercel deploys build the checked-out commit
    with `vercel deploy --prod`.
 
@@ -305,7 +305,7 @@ auto-deploys have usually made the commit live already), without deploying.
      it on (`api`, `inference`, `inference-west`, `den-api-west`,
      `den-legacy-migrator-temp`, `den-mysql-core`).
    - Vercel: the `ignoreCommand` in the `vercel.json` of `ee/apps/den-web`,
-     `apps/app`, `ee/apps/landing` and `ee/apps/diagnostics` first skips dev
+     `apps/app` and `ee/apps/landing` first skips dev
      (`[ "$VERCEL_GIT_COMMIT_REF" = dev ] && exit 0`), so Vercel's Git build
      for a dev push ends as a green "Canceled by Ignored Build Step". Vercel
      runs the ignore command only for Git deployments, not for this

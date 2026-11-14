@@ -38,7 +38,6 @@ export const TARGETS = Object.freeze({
   "openwork-den": { provider: "vercel", stage: "edge", id: "prj_MvpDu3pE2SEfeiPXkdHx6UcU5DVO", rootDirectory: "ee/apps/den-web", build: "vercel-den-web" },
   "openwork-app": { provider: "vercel", stage: "edge", id: "prj_d8oz8fPdzK10RtFVequ3JdXjhxPu", rootDirectory: "apps/app", build: "vercel-app" },
   "openwork-landing": { provider: "vercel", stage: "edge", id: "prj_kSccDt6i07NRESPOQpvk4o7feLAR", rootDirectory: "ee/apps/landing", build: "vercel-landing" },
-  "openwork-diagnostics": { provider: "vercel", stage: "edge", id: "prj_b10TW7TtTUWdm2NvKO8TzfSzAv3I", rootDirectory: "ee/apps/diagnostics", build: "vercel-diagnostics" },
 });
 
 const SHA = /^[a-f0-9]{40}$/;
