@@ -971,34 +971,6 @@ importers:
         specifier: 5.4.5
         version: 5.4.5
 
-  ee/apps/diagnostics:
-    dependencies:
-      '@openwork/types':
-        specifier: workspace:*
-        version: link:../../../packages/types
-      next:
-        specifier: 16.4.1
-        version: 16.4.1(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@types/node@20.12.12)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      react:
-        specifier: 'catalog:'
-        version: 19.2.8
-      react-dom:
-        specifier: 'catalog:'
-        version: 19.2.8(react@19.2.8)
-    devDependencies:
-      '@types/node':
-        specifier: 20.12.12
-        version: 20.12.12
-      '@types/react':
-        specifier: 19.2.14
-        version: 19.2.14
-      '@types/react-dom':
-        specifier: 19.2.3
-        version: 19.2.3(@types/react@19.2.14)
-      typescript:
-        specifier: 5.4.5
-        version: 5.4.5
-
   ee/apps/enterprise-mock-lab:
     dependencies:
       '@hono/node-server':

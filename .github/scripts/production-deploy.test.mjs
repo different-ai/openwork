@@ -47,9 +47,8 @@ test("each Vercel app deploys for its own source and not for another app's", () 
   assert.equal(isBuildAffected("vercel-landing", ["ee/apps/landing/app/page.tsx"]), true);
   assert.equal(isBuildAffected("vercel-landing", ["packages/email/src/index.ts"]), true);
   assert.equal(isBuildAffected("vercel-den-web", ["ee/apps/landing/app/page.tsx"]), false);
-  assert.equal(isBuildAffected("vercel-diagnostics", ["ee/apps/den-web/app/page.tsx"]), false);
   assert.equal(isBuildAffected("vercel-app", ["apps/server/src/mcp-app-sandbox.ts"]), true);
-  for (const build of ["vercel-den-web", "vercel-app", "vercel-landing", "vercel-diagnostics"]) {
+  for (const build of ["vercel-den-web", "vercel-app", "vercel-landing"]) {
     assert.equal(isBuildAffected(build, ["pnpm-lock.yaml"]), true, build);
     assert.equal(isBuildAffected(build, null), true, build);
   }

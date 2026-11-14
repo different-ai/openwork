@@ -220,22 +220,6 @@
       "development": "./src/den/remote-sessions.ts",
       "default": "./src/den/remote-sessions.ts"
     },
-    "./den/connect-diagnostics": {
-      "types": {
-        "openwork-build": "./dist/types/src/den/connect-diagnostics.d.ts",
-        "default": "./src/den/connect-diagnostics.ts"
-      },
-      "development": "./src/den/connect-diagnostics.ts",
-      "default": "./src/den/connect-diagnostics.ts"
-    },
-    "./den/egress-diagnostics": {
-      "types": {
-        "openwork-build": "./dist/types/src/den/egress-diagnostics.d.ts",
-        "default": "./src/den/egress-diagnostics.ts"
-      },
-      "development": "./src/den/egress-diagnostics.ts",
-      "default": "./src/den/egress-diagnostics.ts"
-    },
     "./den/managed-models-policy": {
       "types": {
         "openwork-build": "./dist/types/src/den/managed-models-policy.d.ts",

@@ -186,7 +186,6 @@ export function buildInputPatterns(target, options = {}) {
     ]; break;
     // The landing build command also builds packages/email, which it does not declare.
     case "vercel-landing": patterns = [...closure("@openwork-ee/landing", "@openwork/email"), ".vercelignore"]; break;
-    case "vercel-diagnostics": patterns = [...closure("@openwork-ee/diagnostics"), ".vercelignore"]; break;
     case "review": patterns = [
       ...closure("@openwork/review-app"), "apps/app/src/styles/colors.css",
       ".vercelignore", ".github/workflows/review-app-deploy.yml",
