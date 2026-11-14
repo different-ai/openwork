@@ -3,15 +3,16 @@ import { FILE_LIMITS } from "./files.js"
 import type { Session, Store } from "./store.js"
 
 /**
- * Where a conversation's memory/ lives, for the model's context (all files, read once per turn or step) and for the
+ * Where a conversation's memory/ lives, for the model's context (all files, read once per run of a turn) and for the
  * file tools (one file at a time). Everything else in the scratch workspace stays the conversation's own.
  *
  * - No access (null): memory/ is the conversation's own files, as always.
  * - `memoryOf` (legacy): another conversation's files in the same database.
  * - `memoryScope: "owner"`: the owner's memory. Local where it is stored (Node, an owner cell); in a session cell, calls
- *   to the owner cell (see src/worker), one read per context build and each write through.
+ *   to the owner cell (see src/worker), one read per run and each write through.
  *
- * `list` is called once per turn (once per step in step mode) and its files are shown in the system prompt.
+ * `list` is called once per run of a turn (again after a restart) and its files are shown in the system prompt of
+ * every step, so a turn's requests start the same and the provider's prompt cache keeps hitting.
  */
 export type MemoryAccess = {
   list(): Promise<MemoryFile[]>

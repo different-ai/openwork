@@ -10,11 +10,12 @@ import { denResumeClient, RESUME_EXCHANGE_PATH } from "../src/den-resume.js"
 import type { ErrorReport, ErrorReporter } from "../src/error-reporting.js"
 import { readPart } from "../src/files.js"
 import type { McpConnector } from "../src/mcp.js"
+import type { MemoryResolver } from "../src/memory.js"
 import type { ModelClient, ModelRequest } from "../src/model.js"
 import { nodeSqlite } from "../src/node-sqlite.js"
 import type { SqlDriver } from "../src/sql.js"
 import { grantVault } from "../src/resume-grants.js"
-import { CUT_OFF_INSTRUCTION, Runner, type RunnerOptions } from "../src/runner.js"
+import { APPS_UNREACHABLE, CUT_OFF_INSTRUCTION, Runner, type RunnerOptions } from "../src/runner.js"
 import { SelfResume } from "../src/self-resume.js"
 import { FRESH_REPEAT, type StepState } from "../src/steps.js"
 import { Store } from "../src/store.js"
@@ -54,6 +55,8 @@ function recordingErrors() {
 type WorldInput = {
   model: ModelClient
   mcp?: McpConnector
+  memory?: MemoryResolver
+  sleep?: RunnerOptions["sleep"]
   den?: string
   alarm?: boolean
   clock?: () => number
@@ -80,6 +83,8 @@ function world(directory: string, input: WorldInput) {
     defaultModelApiKey: "test-key",
     limits: { ...unlimited, ...input.limits },
     mcp: input.mcp,
+    memory: input.memory,
+    sleep: input.sleep,
     resume,
     errors: input.errors,
     now: input.clock,
@@ -677,4 +682,91 @@ test("a reply cut off at the output cap never ends the turn: it is dropped, the 
     const turn = failing.store.getTurn("hs_cut_off", "m1")
     assert.deepEqual([turn?.status, turn?.error], ["failed", "output_limit"], `${execution ?? "one go"}`)
   }
+})
+
+/** Notes something, looks something up in the person's apps (twice when the first try fails), then answers. */
+const lookupModel = (requests: ModelRequest[]): ModelClient => ({
+  async complete(request) {
+    requests.push(request)
+    const results = resultsOf(request)
+    if (results.length === 0) return { text: "", toolCalls: [{ id: "call_note", name: "write_file", input: { path: "notes.md", content: "ask about tea" } }], usage }
+    const last = results.at(-1)
+    if (last?.name === "lookup" && !last.isError) return { text: `They like ${last.output}.`, toolCalls: [], usage }
+    request.onTool?.("lookup")
+    return { text: "", toolCalls: [{ id: `call_lookup_${results.length}`, name: "lookup", input: {} }], usage }
+  },
+})
+
+test("a step-mode run lists the person's apps' tools and reads memory once: later steps connect only for a call", async () => {
+  using temp = tempDir()
+  const requests: ModelRequest[] = []
+  let connects = 0
+  let closes = 0
+  let lists = 0
+  const mcp: McpConnector = async () => {
+    connects += 1
+    return {
+      tools: [{ name: "lookup", description: "Looks something up", inputSchema: { type: "object" } }],
+      call: async () => ({ output: "tea", isError: false }),
+      async close() {
+        closes += 1
+      },
+    }
+  }
+  const memory: MemoryResolver = () => ({
+    async list() {
+      lists += 1
+      return [{ path: "memory/me.md", content: `read ${lists}` }]
+    },
+    read: async () => null,
+    write: async () => ({ ok: true, size: 0 }),
+    delete: async () => false,
+  })
+  const { store, runner } = world(temp.directory, { model: lookupModel(requests), mcp, memory })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "m1", prompt: "What do they like?", credentials: { mcpToken: "token" }, execution: "steps" })
+  await runner.idle()
+  assert.equal(store.getTurn(session.id, "m1")?.status, "completed")
+  assert.equal(requests.length, 3, "a note, a lookup, the answer")
+  // The first step lists the tools; of the two later steps, only the one that calls an app tool connects.
+  assert.equal(connects, 2)
+  assert.equal(closes, 2, "nothing stays open between steps")
+  assert.equal(lists, 1)
+  for (const request of requests) {
+    assert.deepEqual(request.tools.map((tool) => tool.name), requests[0]?.tools.map((tool) => tool.name))
+    assert.equal(request.system, requests[0]?.system, "every step's request starts the same, so the prompt cache keeps hitting")
+  }
+  assert.ok(requests[0]?.tools.some((tool) => tool.name === "lookup"))
+  assert.ok(requests[0]?.system.includes("read 1"))
+  assert.deepEqual(transcript(store, session.id, "m1").filter((message) => message.role === "tool").map((message) => message.output).slice(1), ["tea"])
+})
+
+test("a later step that can't connect to the person's apps: its call was never sent and says so, and the next step connects again", async () => {
+  using temp = tempDir()
+  const requests: ModelRequest[] = []
+  let connects = 0
+  let calls = 0
+  // The first step lists the tools; then the apps are out of reach for one step's three tries.
+  const mcp: McpConnector = async () => {
+    connects += 1
+    if (connects >= 2 && connects <= 4) throw new Error("connect failed")
+    return {
+      tools: [{ name: "lookup", description: "Looks something up", inputSchema: { type: "object" } }],
+      async call() {
+        calls += 1
+        return { output: "tea", isError: false }
+      },
+      async close() {},
+    }
+  }
+  const { store, runner } = world(temp.directory, { model: lookupModel(requests), mcp, sleep: async () => undefined })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "m1", prompt: "What do they like?", credentials: { mcpToken: "token" }, execution: "steps" })
+  await runner.idle()
+  const turn = store.getTurn(session.id, "m1")
+  assert.deepEqual([turn?.status, turn?.error], ["completed", null])
+  const results = transcript(store, session.id, "m1").filter((message): message is Extract<Message, { role: "tool" }> => message.role === "tool")
+  assert.deepEqual(results.slice(1).map((result) => [result.output, result.isError]), [[APPS_UNREACHABLE, true], ["tea", false]])
+  assert.equal(connects, 5, "listed once, three failed tries in one step, connected again in the next")
+  assert.equal(calls, 1, "the call that couldn't be sent ran once, when it was tried again")
 })
