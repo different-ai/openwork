@@ -3,7 +3,7 @@ import { z } from "zod"
 import type { BlobStore } from "./blobs.js"
 import { normalizePath } from "./files.js"
 import type { SavedFile, Store } from "./store.js"
-import { formatBytes, readToolFile, type FileReading } from "./tool-files.js"
+import { formatBytes, readToolFile, unreadableNote, type FileReading } from "./tool-files.js"
 import type { Attachment, ToolResult, ToolSpec } from "./types.js"
 
 /**
@@ -205,15 +205,21 @@ export class SavedFiles {
     }))
   }
 
-  /** A file in the form the model reads best: image or PDF input, extracted text, or a note. */
+  /**
+   * A file in the form the model reads best: image or PDF input, extracted text, or a note. A file whose type or
+   * size rules out reading it (a video, an image or PDF over the limit) gets its note from its row: its bytes are
+   * not fetched.
+   */
   async reading(sessionId: string, id: string): Promise<{ file: SavedFile; reading: FileReading } | null> {
-    const found = await this.read(sessionId, id)
-    if (!found) return null
-    const reading = await readToolFile(
-      { name: found.file.name, mimeType: found.file.mediaType, data: Buffer.from(found.bytes).toString("base64") },
-      { images: 0, documents: 0 },
-    )
-    return { file: found.file, reading }
+    const entry = this.store.getSavedFile(sessionId, id)
+    if (!entry) return null
+    const { file } = entry
+    const note = unreadableNote({ name: file.name, mimeType: file.mediaType, size: file.size })
+    if (note) return { file, reading: { text: note } }
+    const bytes = await this.blobs.get(entry.storageKey)
+    if (!bytes) return null
+    const reading = await readToolFile({ name: file.name, mimeType: file.mediaType, data: Buffer.from(bytes).toString("base64") }, { images: 0, documents: 0 })
+    return { file, reading }
   }
 }
 
