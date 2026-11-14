@@ -21,6 +21,10 @@ const MAX_CARRIED_BYTES = 100 * 1024 * 1024
  * needs them all isn't going to start: the sooner that is known, the sooner it can be replaced.
  */
 const START_BUDGET_MS = 40_000
+/** One look at the desktop, run inside the computer. */
+const HEALTH = `printf %s '{}' | sudo -n ${BRIDGE} call '/health'`
+/** What a start command exits with when the desktop started and then never answered. */
+const STARTED_SILENT = 75
 const viewerSchema = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{43}$/), paused: z.boolean() })
 const healthSchema = z.object({ version: z.string(), protocol: z.number().optional() }).loose()
 const versionsSchema = z.object({ image: z.string().regex(/^[a-f0-9]{64}$/), guest: z.string().regex(/^[a-f0-9]{64}$/) })
@@ -45,13 +49,20 @@ export class DesktopError extends Error {
 /** The existing conversation computer owns the desktop too; it never provisions a second machine. */
 export class Desktop {
   private readonly starting = new Map<string, Promise<DesktopState>>()
+  /** The guest install under way for each computer, which a start and an idle update that overlap share. */
+  private readonly installing = new Map<string, Promise<void>>()
   /** Health versions of desktops already found stale but compatible, by computer, so they aren't checked again. */
   private readonly compatible = new Map<string, string>()
   /** The image this runner's computers boot from. */
   readonly image = identity.image.trim()
-  private readonly guest = identity.guest.trim()
+  /** The guest this runner installs into a computer built from its image. */
+  readonly guest = identity.guest.trim()
+  /** What a desktop on this runner's image and guest answers a health check with. */
+  private readonly version: string
   /** privateBrowsing lets the browser open loopback and private pages: operator diagnostics on a dedicated VM only. */
-  constructor(private readonly provider: SandboxProvider, private readonly options: { privateBrowsing?: boolean } = {}) {}
+  constructor(private readonly provider: SandboxProvider, options: { privateBrowsing?: boolean } = {}) {
+    this.version = createHash("sha256").update(identity.image).update(identity.guest).update(options.privateBrowsing === true ? "private-browsing" : "").digest("hex")
+  }
 
   start(box: SandboxHandle): Promise<DesktopState> {
     const key = JSON.stringify(box.ref)
@@ -63,11 +74,22 @@ export class Desktop {
     return pending
   }
 
+  /**
+   * Brings an idle computer on this runner's image up to this runner's guest, so the next use of its desktop doesn't
+   * wait for that. A desktop that is running restarts on the new guest, as that next use would have made it; one that
+   * isn't only gets the guest, and starts when it is first needed. Returns whether anything changed.
+   */
+  async update(box: SandboxHandle) {
+    const { health, built } = await this.look(box)
+    if (built?.image !== this.image || built.guest === this.guest) return false
+    if (health) await this.start(box)
+    else await this.install(box, START_BUDGET_MS)
+    return true
+  }
+
   private async prepare(box: SandboxHandle, key: string): Promise<DesktopState> {
     const { run } = this.provider.blocks ?? {}
     if (!run || this.provider.describe().platform?.os !== "linux") throw new Error("Desktop access needs a configured Linux computer.")
-    const privateBrowsing = this.options.privateBrowsing === true
-    const version = createHash("sha256").update(identity.image).update(identity.guest).update(privateBrowsing ? "private-browsing" : "").digest("hex")
     const deadline = Date.now() + START_BUDGET_MS
     /** What a step may take: its own limit, or what is left of the start's time. */
     const within = (limit: number) => {
@@ -75,70 +97,88 @@ export class Desktop {
       if (left < 1_000) throw new DesktopError("desktop_unresponsive", "The computer's desktop didn't start. Try reconnecting.")
       return Math.min(limit, left)
     }
-    const ready = await this.health(box)
-    if (ready?.version === version) return "current"
+    const { health: ready, built } = await this.look(box)
+    if (ready?.version === this.version) return "current"
     if (ready && this.compatible.get(key) === ready.version) return "stale"
-    let started = await this.launch(box, this.image, this.guest, within(45_000))
-    // Same image, older guest: install this runner's guest into the running computer instead of replacing it.
-    if (!started.ok && /guest is out of date/i.test(started.detail)) {
-      await this.install(box, within(60_000))
-      started = await this.launch(box, this.image, this.guest, within(45_000))
-    }
-    if (!started.ok && started.timedOut) {
-      // A timeout can leave startup running: only recheck health, never automatically replay start.
-      if ((await this.health(box))?.version === version) return "current"
-    }
-    if (started.ok) {
-      await this.healthy(box)
-      return "current"
-    }
-    // A helper from before images and guests had their own identities refuses two of them; another image says so.
-    if (!/out of date|start VERSION/i.test(started.detail)) {
-      if (started.missingHelper) {
-        throw new Error(`The computer needs a desktop snapshot built for this runner, including its restricted desktop helper. ${started.detail}`)
+    // A start the helper is known to refuse is never run: another image keeps its own desktop (below).
+    let refusal = "The desktop image is out of date. Rebuild its snapshot for this runner."
+    if (!built || built.image === this.image) {
+      // Same image, older guest: install this runner's guest into the running computer instead of replacing it, then
+      // start once.
+      const behind = built !== null && built.guest !== this.guest
+      if (behind) await this.install(box, within(60_000))
+      let started = await this.launch(box, this.image, this.guest, within(45_000))
+      // A computer that couldn't say what it was built with says so by refusing.
+      if (!behind && !started.ok && /guest is out of date/i.test(started.detail)) {
+        await this.install(box, within(60_000))
+        started = await this.launch(box, this.image, this.guest, within(45_000))
       }
-      throw new DesktopError("desktop_unresponsive", `The computer's desktop didn't start. Try reconnecting.${started.detail ? ` ${started.detail}` : ""}`)
+      if (!started.ok && started.timedOut) {
+        // A timeout can leave startup running: only recheck health, never automatically replay start.
+        if ((await this.look(box)).health?.version === this.version) return "current"
+      }
+      if (started.ok) return "current"
+      // A helper from before images and guests had their own identities refuses two of them; another image says so.
+      if (!/out of date|start VERSION/i.test(started.detail)) {
+        if (started.missingHelper) {
+          throw new Error(`The computer needs a desktop snapshot built for this runner, including its restricted desktop helper. ${started.detail}`)
+        }
+        throw new DesktopError("desktop_unresponsive", `The computer's desktop didn't start. Try reconnecting.${started.detail ? ` ${started.detail}` : ""}`)
+      }
+      refusal = started.detail
     }
     // Another image: keep driving its own desktop while it speaks this runner's protocol.
     let own = ready
     if (!own) {
-      const versions = await this.versions(box)
-      if (versions && (await this.launch(box, versions.image, versions.guest, within(45_000))).ok) own = await this.healthy(box)
+      const versions = built ?? await this.versions(box)
+      if (versions) own = (await this.launch(box, versions.image, versions.guest, within(45_000))).health
     }
     if (own?.protocol === DESKTOP_PROTOCOL) {
       this.compatible.set(key, own.version)
       return "stale"
     }
-    throw new DesktopError("desktop_outdated", `The computer's desktop image was built for a different runner: ${started.detail}`)
+    throw new DesktopError("desktop_outdated", `The computer's desktop image was built for a different runner: ${refusal}`)
   }
 
-  private async health(box: SandboxHandle) {
-    const parsed = healthSchema.safeParse(await this.call(box, "/health", {}).catch(() => null))
-    return parsed.success ? parsed.data : null
+  /**
+   * What the desktop answers and, unless that is this runner's version, the image and guest the computer was built
+   * with: one command, so a start knows what the helper would refuse without asking it.
+   */
+  private async look(box: SandboxHandle) {
+    const result = await this.provider.blocks?.run?.(box, {
+      command: `health=$(${HEALTH}); printf '%s\\n' "$health"; case "$health" in *${this.version}*) ;; *) sudo -n ${BRIDGE} versions ;; esac`,
+      timeoutMs: 12_000,
+    }).catch(() => null)
+    const [answered = "", versions = ""] = (result?.stdout ?? "").split("\n")
+    const health = healthSchema.safeParse(safeJson(answered))
+    const built = versionsSchema.safeParse(safeJson(versions))
+    return { health: health.success ? health.data : null, built: built.success ? built.data : null }
   }
 
-  private async healthy(box: SandboxHandle) {
-    for (let attempt = 0; attempt < 30; attempt++) {
-      const probe = await this.health(box)
-      if (probe) return probe
-      await new Promise(resolve => setTimeout(resolve, 100))
-    }
-    throw new DesktopError("desktop_unresponsive", "The desktop didn't respond. Try reconnecting.")
-  }
-
+  /**
+   * Starts the desktop built from `image` and `guest` and waits inside the computer for it to answer, all in one
+   * command: asking from here costs a round trip per look, and a browser takes several to come up.
+   */
   private async launch(box: SandboxHandle, image: string, guest: string, timeoutMs: number) {
-    try {
-      const result = await this.bridge(box, `start ${image} ${guest}`, timeoutMs)
-      const detail = result.stderr.trim()
-      return {
-        ok: result.exitCode === 0,
-        detail: detail.slice(0, 300),
-        timedOut: /timed?\s*out|timeout/i.test(detail),
-        missingHelper: detail.includes(BRIDGE) && /command not found|no such file or directory|not found/i.test(detail),
-      }
-    } catch (error) {
+    // The computer gives up a little before the command's own limit, so a desktop that never answers is told apart
+    // from a command whose outcome is unknown.
+    const seconds = Math.max(1, Math.floor(timeoutMs / 1000) - 3)
+    const wait = `end=$(($(date +%s) + ${seconds})); until health=$(${HEALTH} 2>/dev/null); do [ "$(date +%s)" -lt "$end" ] || exit ${STARTED_SILENT}; sleep 0.1; done; printf '%s\\n' "$health"`
+    let result
+    try { result = await this.bridge(box, `start ${image} ${guest} || exit; ${wait}`, timeoutMs) }
+    catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
-      return { ok: false, detail: detail.slice(0, 300), timedOut: (isSandboxError(error) && error.code === "timeout") || /timed?\s*out|timeout/i.test(detail), missingHelper: false }
+      return { ok: false, health: null, detail: detail.slice(0, 300), timedOut: (isSandboxError(error) && error.code === "timeout") || /timed?\s*out|timeout/i.test(detail), missingHelper: false }
+    }
+    if (result.exitCode === STARTED_SILENT) throw new DesktopError("desktop_unresponsive", "The desktop didn't respond. Try reconnecting.")
+    const detail = result.stderr.trim()
+    const health = result.exitCode === 0 ? healthSchema.safeParse(safeJson(result.stdout.trim().split("\n").at(-1) ?? "")) : null
+    return {
+      ok: result.exitCode === 0,
+      health: health?.success ? health.data : null,
+      detail: detail.slice(0, 300),
+      timedOut: /timed?\s*out|timeout/i.test(detail),
+      missingHelper: detail.includes(BRIDGE) && /command not found|no such file or directory|not found/i.test(detail),
     }
   }
 
@@ -162,11 +202,21 @@ export class Desktop {
     return image === this.image && Date.now() - Number(at) < withinMs
   }
 
-  /** Hands the helper this runner's guest bundle; it checks the checksum and that the image is its own. */
-  private async install(box: SandboxHandle, timeoutMs: number) {
-    const result = await this.upload(box, Buffer.from(guestBundle, "base64"), path =>
-      this.bridge(box, `install ${this.image} ${this.guest} ${identity.bundleSha256} < ${path}`, timeoutMs), timeoutMs)
-    if (result.exitCode !== 0) throw new Error(`Couldn't update the computer's desktop. ${result.stderr.trim().slice(0, 300)}`)
+  /**
+   * Hands the helper this runner's guest bundle; it checks the checksum and that the image is its own. One at a time
+   * per computer: the helper writes the bundle in place, so two installs at once could leave half of one.
+   */
+  private install(box: SandboxHandle, timeoutMs: number) {
+    const key = JSON.stringify(box.ref)
+    let pending = this.installing.get(key)
+    if (!pending) {
+      pending = this.upload(box, Buffer.from(guestBundle, "base64"), path =>
+        this.bridge(box, `install ${this.image} ${this.guest} ${identity.bundleSha256} < ${path}`, timeoutMs), timeoutMs)
+        .then(result => { if (result.exitCode !== 0) throw new Error(`Couldn't update the computer's desktop. ${result.stderr.trim().slice(0, 300)}`) })
+        .finally(() => this.installing.delete(key))
+      this.installing.set(key, pending)
+    }
+    return pending
   }
 
   /** The browser profile or workspace as a gzipped tar, or null when this computer can't export it in time (or it's too big). */
