@@ -59,7 +59,7 @@ locals {
   # Version this write-only property by NON-SECRET deployment configuration; the
   # payload is ephemerally recovered from the cloud unless a *_version rotates it.
   app_write_versions = { for key, body in local.app_bodies : key => {
-    "properties.configuration.secrets" = sha256(jsonencode({ body = body, tags = var.tags, identities = local.identity_ids, location = local.app_location }))
+    "properties.configuration.secrets" = sha256(jsonencode({ body = body, tags = var.tags, identities = key == "ai_gateway" ? local.ai_gateway_identity_ids : local.identity_ids, location = local.app_location }))
   } }
 }
 

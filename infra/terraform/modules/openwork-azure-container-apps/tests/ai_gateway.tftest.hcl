@@ -86,6 +86,24 @@ run "den_custom_domains_coexist" {
     error_message = "Three separate Den/AI apps and hostnames reuse the supplied covering certificate; no den-gateway service is implied."
   }
 }
+run "gateway_gets_only_registry_identity" {
+  command = plan
+  variables {
+    ai_gateway_enabled        = true
+    ai_gateway_domain_name    = "models.example.com"
+    custom_domain_certificate = { pfx_base64 = "UEZYLXRlc3Q=", password = "fixture" }
+    key_vault_identity_id     = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-test/providers/Microsoft.ManagedIdentity/userAssignedIdentities/vault"
+    user_assigned_identity_ids = [
+      "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-test/providers/Microsoft.ManagedIdentity/userAssignedIdentities/vault",
+      "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-test/providers/Microsoft.ManagedIdentity/userAssignedIdentities/registry",
+    ]
+    registry = { server = "registry.example.com", identity = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-test/providers/Microsoft.ManagedIdentity/userAssignedIdentities/registry" }
+  }
+  assert {
+    condition     = length(azapi_resource.ai_gateway[0].identity[0].identity_ids) == 1 && contains(azapi_resource.ai_gateway[0].identity[0].identity_ids, var.registry.identity) && !contains(azapi_resource.ai_gateway[0].identity[0].identity_ids, var.key_vault_identity_id) && length(azapi_resource.api.identity[0].identity_ids) == 2
+    error_message = "Gateway gets only registry-pull identity, never Den's Key Vault/integration identities; Den retains both existing identities."
+  }
+}
 run "missing_domain" {
   command = plan
   variables {

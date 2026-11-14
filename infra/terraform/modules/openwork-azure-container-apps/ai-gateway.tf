@@ -43,6 +43,9 @@ locals {
     GATEWAY_PUBLIC_BASE_URL  = local.ai_gateway_url
     INFERENCE_PROXY_BASE_URL = local.ai_gateway_url
   } : {}
+  # Gateway reads core managed secrets from its write-only payload, not Key
+  # Vault. Attach only an explicitly configured registry-pull identity.
+  ai_gateway_identity_ids    = var.registry == null ? [] : (var.registry.identity != "" ? [var.registry.identity] : [])
   ai_gateway_secret_names    = concat(["database-url", "den-db-encryption-key"], local.registry_password ? ["registry-password"] : [])
   ai_gateway_secret_metadata = [for secret in local.secret_metadata : secret if contains(local.ai_gateway_secret_names, secret.name)]
   ai_gateway_secret_payload = [for name in concat(["DATABASE_URL", "DEN_DB_ENCRYPTION_KEY"], local.registry_password ? ["REGISTRY_PASSWORD"] : []) : {
@@ -59,10 +62,10 @@ resource "azapi_resource" "ai_gateway" {
   ignore_null_property   = true
   response_export_values = []
   dynamic "identity" {
-    for_each = length(local.identity_ids) > 0 ? [1] : []
+    for_each = length(local.ai_gateway_identity_ids) > 0 ? [1] : []
     content {
       type         = "UserAssigned"
-      identity_ids = local.identity_ids
+      identity_ids = local.ai_gateway_identity_ids
     }
   }
   body                   = local.app_bodies.ai_gateway
