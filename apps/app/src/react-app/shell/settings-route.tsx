@@ -1171,6 +1171,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   const runtimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspace?.id ?? null;
   const importOpencodeConnectionsEnabled = useDesktopFeature("importOpencodeConnections");
+  const ollamaInAiProvidersEnabled = useDesktopFeature("ollamaInAiProviders");
   const opencodeConnectionsImport = useMemo(() => {
     if (!importOpencodeConnectionsEnabled || !openworkClient || !runtimeWorkspaceId) return undefined;
     return {
@@ -2394,6 +2395,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             showOpenWorkModelsDeviceRow={openWorkModelsRow.showDeviceRow}
             organizationProviderIds={organizationProviderIds}
             onOpenDen={openProviderCloudPage}
+            onUseOllama={ollamaInAiProvidersEnabled && !checkDesktopRestriction({ restriction: "allowLocalModels" })
+              ? () => navigateSettingsPath("ollama")
+              : undefined}
             cloudProvidersView={
               <CloudProvidersView
                 runtimeWorkspaceId={runtimeWorkspaceId}

@@ -77,6 +77,8 @@ export type AiSettingsViewProps = {
   /** Device provider sharing: which keys on this device can be shared with the organization, or already are. */
   shareRows?: ReadonlyMap<string, DeviceProviderShareRow>;
   onShareProvider?: (provider: { id: string; name: string }) => void;
+  /** Feature `ollamaInAiProviders`: opens the Ollama page from the bottom of AI Providers. */
+  onUseOllama?: () => void;
 };
 
 function deviceSourceLabel(source: ConnectedProvider["source"]) {
@@ -241,5 +243,9 @@ export function AiSettingsView(props: AiSettingsViewProps) {
         {props.gatewayConnectProviders?.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={props.connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={props.onConnectGatewayProvider} onCancel={props.onCancelGatewayConnect} />)}
       </ProviderList>
     </section> : null)}
+
+    {props.onUseOllama ? <div>
+      <Button variant="outline" data-testid="ai-providers-use-ollama" onClick={props.onUseOllama}>Use Ollama</Button>
+    </div> : null}
   </LayoutStack>;
 }

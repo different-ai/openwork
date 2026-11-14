@@ -51,6 +51,7 @@ import { isElectronRuntime } from "../../../../app/utils";
 import { cn } from "@/lib/utils";
 import { usePlatform } from "../../../kernel/platform";
 import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider";
+import { useDesktopFeature } from "../../session/status/use-desktop-feature";
 import {
   SettingsContent,
   SettingsPanel,
@@ -220,9 +221,12 @@ export function getWorkspaceSettingsTabs(): SettingsTab[] {
 export function getGlobalSettingsTabs(
   developerMode: boolean,
   capabilities: Pick<PlatformCapabilities, "autoUpdate">,
-  options: { desktop?: boolean } = {},
+  options: { desktop?: boolean; ollamaInAiProviders?: boolean } = {},
 ): SettingsTab[] {
-  const tabs: SettingsTab[] = ["ai", "ollama", "appearance", "shortcuts", "environment"];
+  // Feature `ollamaInAiProviders`: Ollama opens from a button on AI Providers instead of the sidebar.
+  const tabs: SettingsTab[] = options.ollamaInAiProviders
+    ? ["ai", "appearance", "shortcuts", "environment"]
+    : ["ai", "ollama", "appearance", "shortcuts", "environment"];
   if (options.desktop) tabs.push("computer");
   if (capabilities.autoUpdate) tabs.push("updates");
   if (developerMode) tabs.push("debug");
@@ -238,7 +242,12 @@ export function isSettingsTabBeta(_tab: SettingsTab) {
   return false;
 }
 
-export function isSettingsTabActive(activeTab: SettingsTab, tab: SettingsTab) {
+export function isSettingsTabActive(
+  activeTab: SettingsTab,
+  tab: SettingsTab,
+  options: { ollamaInAiProviders?: boolean } = {},
+) {
+  if (options.ollamaInAiProviders && activeTab === "ollama") return tab === "ai";
   return activeTab === tab;
 }
 
@@ -269,6 +278,8 @@ export type SettingsNavGroups = {
   workspace: SettingsTab[];
   global: SettingsTab[];
   cloud: SettingsTab[];
+  /** Feature `ollamaInAiProviders`: the Ollama page is reached from AI Providers, which stays highlighted there. */
+  ollamaInAiProviders: boolean;
 };
 
 /**
@@ -280,13 +291,15 @@ export type SettingsNavGroups = {
 export function useSettingsNavGroups(developerMode: boolean): SettingsNavGroups {
   const platform = usePlatform();
   const checkRestriction = useCheckDesktopRestriction();
+  const ollamaInAiProviders = useDesktopFeature("ollamaInAiProviders");
   const allowed = (tabs: SettingsTab[]) =>
     tabs.filter((tab) => isSettingsTabAllowed({ tab, checkRestriction }));
   return {
     hub: allowed(["general"]),
     workspace: allowed(getWorkspaceSettingsTabs()),
-    global: allowed(getGlobalSettingsTabs(developerMode, platform.capabilities, { desktop: isElectronRuntime() })),
+    global: allowed(getGlobalSettingsTabs(developerMode, platform.capabilities, { desktop: isElectronRuntime(), ollamaInAiProviders })),
     cloud: allowed([...CLOUD_SETTINGS_TABS, "devices"]),
+    ollamaInAiProviders,
   };
 }
 
@@ -320,6 +333,7 @@ function SettingsSidebarGroup(props: {
   tabs: SettingsTab[];
   activeTab: SettingsTab;
   onSelectTab: (tab: SettingsTab) => void;
+  ollamaInAiProviders: boolean;
 }) {
   if (props.tabs.length === 0) return null;
   return (
@@ -332,7 +346,7 @@ function SettingsSidebarGroup(props: {
             return (
               <SidebarDestination
                 key={tab}
-                active={isSettingsTabActive(props.activeTab, tab)}
+                active={isSettingsTabActive(props.activeTab, tab, { ollamaInAiProviders: props.ollamaInAiProviders })}
                 icon={Icon}
                 label={getSettingsTabLabel(tab)}
                 labelContent={<SettingsSidebarTabLabel tab={tab} />}
@@ -413,18 +427,21 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
           tabs={groups.workspace}
           activeTab={props.activeTab}
           onSelectTab={props.onSelectTab}
+          ollamaInAiProviders={groups.ollamaInAiProviders}
         />
         <SettingsSidebarGroup
           label={t("settings.group_global")}
           tabs={groups.global}
           activeTab={props.activeTab}
           onSelectTab={props.onSelectTab}
+          ollamaInAiProviders={groups.ollamaInAiProviders}
         />
         <SettingsSidebarGroup
           label={t("settings.group_cloud")}
           tabs={groups.cloud}
           activeTab={props.activeTab}
           onSelectTab={props.onSelectTab}
+          ollamaInAiProviders={groups.ollamaInAiProviders}
         />
       </SidebarContent>
       <SidebarRail />
