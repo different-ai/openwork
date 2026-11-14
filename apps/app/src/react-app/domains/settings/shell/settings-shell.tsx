@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import type * as React from "react";
+import { useRef } from "react";
 import { DesktopUpdateButton } from "../state/desktop-updater-provider";
 import { ChevronDown, X } from "lucide-react";
 
@@ -21,6 +22,7 @@ import {
 import { t } from "../../../../i18n";
 import { NotificationBell } from "../../../shell/notification-center";
 import type { SettingsTab } from "../../../../app/types";
+import { SettingsFindBar, SettingsFindButton, useSettingsFind } from "../find/settings-find";
 import {
   SettingsPage,
   SettingsBetaBadge,
@@ -48,14 +50,32 @@ export type SettingsShellProps = SettingsPageFrameProps & {
   modalSlot?: React.ReactNode;
   footer?: React.ReactNode;
   compact?: boolean;
+  /** Offers find on the open page: Cmd/Ctrl+F and a button in the header. */
+  findEnabled?: boolean;
 };
 
 export function SettingsShell(props: SettingsShellProps) {
   const title = getSettingsTabLabel(props.activeTab);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
+  const find = useSettingsFind({
+    enabled: props.findEnabled === true,
+    scopeRef: shellRef,
+    besideChat: props.compact === true,
+  });
+  // The bar floats over the page it searches and is not part of it.
+  const page = (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div ref={pageRef} className="contents">
+        <SettingsPage {...props}>{props.children}</SettingsPage>
+      </div>
+      {find.open ? <SettingsFindBar contentRef={pageRef} focusNonce={find.focusNonce} onClose={find.closeFind} /> : null}
+    </div>
+  );
 
   if (props.compact) {
     return (
-      <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
+      <div ref={shellRef} className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
         <header className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-dls-border px-3 mac:titlebar-drag">
           <div className="flex min-w-0 items-center gap-2 mac:titlebar-no-drag">
             <SettingsSectionMenu
@@ -71,6 +91,7 @@ export function SettingsShell(props: SettingsShellProps) {
             />
           </div>
           <div className="flex shrink-0 items-center gap-1 mac:titlebar-no-drag">
+            {find.enabled ? <SettingsFindButton onOpen={find.openFind} /> : null}
             <Button
               variant="ghost"
               type="button"
@@ -86,7 +107,7 @@ export function SettingsShell(props: SettingsShellProps) {
 
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="flex min-h-0 flex-1 flex-col">
-            <SettingsPage {...props}>{props.children}</SettingsPage>
+            {page}
 
             {props.modalSlot}
           </div>
@@ -98,7 +119,7 @@ export function SettingsShell(props: SettingsShellProps) {
   }
 
   return (
-    <div className="flex h-dvh min-h-dvh w-full overflow-hidden">
+    <div ref={shellRef} className="flex h-dvh min-h-dvh w-full overflow-hidden">
       <SidebarProvider defaultOpen className="relative min-h-0 flex-1">
         <SettingsSidebar
           activeTab={props.activeTab}
@@ -133,6 +154,7 @@ export function SettingsShell(props: SettingsShellProps) {
                 ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-1.5 text-gray-10 titlebar-no-drag">
+                {find.enabled ? <SettingsFindButton onOpen={find.openFind} /> : null}
                 <DesktopUpdateButton />
                 <NotificationBell />
                 <Button
@@ -149,7 +171,7 @@ export function SettingsShell(props: SettingsShellProps) {
             </header>
 
             <div className="flex min-h-0 flex-1 flex-col">
-              <SettingsPage {...props}>{props.children}</SettingsPage>
+              {page}
 
               {props.modalSlot}
             </div>
