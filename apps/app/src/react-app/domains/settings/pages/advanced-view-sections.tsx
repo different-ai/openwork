@@ -711,7 +711,7 @@ export function AdvancedWorkspaceRunModeSection() {
         <LayoutSectionTitle>Workspace run mode</LayoutSectionTitle>
         <LayoutSectionDescription>Experimental approval controls in the composer.</LayoutSectionDescription>
       </LayoutSectionHeader>
-      <LayoutSectionItem>
+      <LayoutSectionItem anchor="show-workspace-run-mode">
         <LayoutSectionItemHeader>
           <LayoutSectionItemTitle>Show workspace run mode</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>
@@ -743,7 +743,7 @@ export function AdvancedEngineV2PreviewSection(props: { client: OpenworkServerCl
   return (
     <LayoutSection id="advanced-experimental-engine">
       <LayoutSectionHeader><LayoutSectionTitle>OpenCode engine</LayoutSectionTitle></LayoutSectionHeader>
-      <LayoutSectionItem>
+      <LayoutSectionItem anchor="chat-engine">
         <LayoutSectionItemHeader>
           <LayoutSectionItemTitle>Chat engine</LayoutSectionItemTitle>
           <LayoutSectionItemHeaderActions>
@@ -786,7 +786,7 @@ export function AdvancedDeveloperSection(props: AdvancedDeveloperSectionProps) {
         <LayoutSectionTitle>{t("settings.developer")}</LayoutSectionTitle>
       </LayoutSectionHeader>
 
-      <LayoutSectionItem>
+      <LayoutSectionItem anchor="developer-mode">
         <LayoutSectionItemHeader>
           <LayoutSectionItemTitle>{t("settings.developer_mode_title")}</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>{t("settings.developer_mode_desc")}</LayoutSectionItemDescription>
@@ -880,7 +880,7 @@ function ComputerUseRecordingItem() {
       .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
   };
   return (
-    <LayoutSectionItem>
+    <LayoutSectionItem anchor="screen-recordings">
       <LayoutSectionItemHeader>
         <LayoutSectionItemTitle>Show computer use in screen recordings</LayoutSectionItemTitle>
         <LayoutSectionItemDescription>

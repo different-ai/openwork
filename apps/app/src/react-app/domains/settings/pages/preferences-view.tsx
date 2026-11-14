@@ -85,7 +85,7 @@ export function PreferencesView(props: PreferencesViewProps) {
         </LayoutSectionHeader>
 
         {/* Show reasoning */}
-        <LayoutSectionItem>
+        <LayoutSectionItem anchor="show-model-reasoning">
           <LayoutSectionItemHeader>
             <LayoutSectionItemTitle>{t("settings.show_model_reasoning")}</LayoutSectionItemTitle>
             <LayoutSectionItemDescription>{t("settings.show_model_reasoning_desc")}</LayoutSectionItemDescription>
@@ -101,7 +101,7 @@ export function PreferencesView(props: PreferencesViewProps) {
         </LayoutSectionItem>
 
         {/* Auto context compaction */}
-        <LayoutSectionItem>
+        <LayoutSectionItem anchor="auto-compact">
           <LayoutSectionItemHeader>
             <LayoutSectionItemTitle>{t("settings.auto_compact")}</LayoutSectionItemTitle>
             <LayoutSectionItemDescription>{t("settings.auto_compact_desc")}</LayoutSectionItemDescription>
@@ -122,7 +122,7 @@ export function PreferencesView(props: PreferencesViewProps) {
           <LayoutSectionTitle>{t("settings.follow_up.title")}</LayoutSectionTitle>
           <LayoutSectionDescription>{t("settings.follow_up.section_desc")}</LayoutSectionDescription>
         </LayoutSectionHeader>
-        <LayoutSectionItem>
+        <LayoutSectionItem anchor="follow-up">
           <LayoutSectionItemHeader>
             <LayoutSectionItemTitle>{t("settings.follow_up.enter")}</LayoutSectionItemTitle>
             <LayoutSectionItemDescription>
@@ -158,7 +158,7 @@ export function PreferencesView(props: PreferencesViewProps) {
           <LayoutSectionDescription>{t("settings.desktop_notifications.section_desc")}</LayoutSectionDescription>
         </LayoutSectionHeader>
 
-        <LayoutSectionItem>
+        <LayoutSectionItem anchor="desktop-notifications">
           <LayoutSectionItemHeader>
             <LayoutSectionItemTitle>{t("settings.desktop_notifications.mode")}</LayoutSectionItemTitle>
             <LayoutSectionItemDescription>{t("settings.desktop_notifications.mode_desc")}</LayoutSectionItemDescription>
@@ -199,7 +199,7 @@ export function PreferencesView(props: PreferencesViewProps) {
             <LayoutSectionTitle>{t("settings.power_title")}</LayoutSectionTitle>
           </LayoutSectionHeader>
 
-          <LayoutSectionItem>
+          <LayoutSectionItem anchor="keep-awake">
             <LayoutSectionItemHeader>
               <LayoutSectionItemTitle>{t("settings.keep_awake")}</LayoutSectionItemTitle>
               <LayoutSectionItemDescription>{t("settings.keep_awake_desc")}</LayoutSectionItemDescription>
@@ -225,7 +225,7 @@ export function PreferencesView(props: PreferencesViewProps) {
             <LayoutSectionDescription>{t("settings.browser_section_desc")}</LayoutSectionDescription>
           </LayoutSectionHeader>
 
-          <LayoutSectionItem>
+          <LayoutSectionItem anchor="open-links-in">
             <LayoutSectionItemHeader className="min-h-10 items-center">
               <LayoutSectionItemTitle>{t("settings.links.open_in")}</LayoutSectionItemTitle>
               <LayoutSectionItemDescription>{t("settings.links.open_in_desc")}</LayoutSectionItemDescription>
@@ -260,7 +260,7 @@ export function PreferencesView(props: PreferencesViewProps) {
           <LayoutSectionDescription>{t("settings.privacy_section_desc")}</LayoutSectionDescription>
         </LayoutSectionHeader>
 
-        <LayoutSectionItem>
+        <LayoutSectionItem anchor="usage-data">
           <LayoutSectionItemHeader>
             <LayoutSectionItemTitle>{t("settings.analytics_toggle")}</LayoutSectionItemTitle>
             <LayoutSectionItemDescription>{t("settings.analytics_toggle_desc")}</LayoutSectionItemDescription>

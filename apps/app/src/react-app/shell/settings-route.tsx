@@ -107,6 +107,7 @@ import { GeneralSettingsView } from "@/react-app/domains/settings/pages/general-
 import { AuthorizedFoldersPanel } from "@/react-app/domains/settings/panels/authorized-folders-panel";
 import { EffectivePermissionsPanel } from "@/react-app/domains/settings/panels/effective-permissions-panel";
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
+import { isSettingAnchor, useRevealSetting } from "@/react-app/domains/settings/settings-anchor";
 import { AdvancedView } from "@/react-app/domains/settings/pages/advanced-view";
 import { ClaudeImportView } from "@/react-app/domains/settings/pages/claude-import-view";
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
@@ -295,6 +296,8 @@ export function parseSettingsPath(pathname: string): {
   tab: SettingsTab;
   redirectPath: string | null;
   advancedSection?: string;
+  /** One setting on the page, opened from search: `/settings/<tab>/<anchor>`. */
+  anchor?: string;
   extensionsSection?: ExtensionsSection;
   extensionDetailId?: string;
 } {
@@ -321,9 +324,10 @@ export function parseSettingsPath(pathname: string): {
     case "updates":
     case "debug":
     case "import":
-      return { tab: head, redirectPath: null };
+      return { tab: head, redirectPath: null, anchor: isSettingAnchor(tail) ? tail : undefined };
     case "advanced":
-      return { tab: "advanced", redirectPath: null, advancedSection: tail };
+      // The tail names a whole section (AdvancedView scrolls to it) or one setting in it.
+      return { tab: "advanced", redirectPath: null, advancedSection: tail, anchor: isSettingAnchor(tail) ? tail : undefined };
     case "cloud-account":
     case "cloud-providers":
     case "usage":
@@ -436,6 +440,7 @@ function findSessionWorkspaceId(
 
 export function settingsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
   if (route.tab === "advanced" && route.advancedSection) return `advanced/${route.advancedSection}`;
+  if (route.anchor) return `${route.tab}/${route.anchor}`;
   if (route.tab === "extensions" && route.extensionDetailId) {
     return `extensions/${encodeURIComponent(route.extensionDetailId)}`;
   }
@@ -484,6 +489,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     : props.standaloneExtensions
       ? parseExtensionsPath(location.pathname)
       : parseSettingsPath(location.pathname);
+  useRevealSetting(route.anchor, location.key);
   const navigationWorkspaceId = readNavigationWorkspaceId(location.state);
   const navigationSessionId = readNavigationSessionId(location.state);
 
