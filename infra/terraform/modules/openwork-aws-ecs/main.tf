@@ -90,7 +90,7 @@ locals {
     SMTP_HOST                              = var.smtp.host
     SMTP_PORT                              = tostring(var.smtp.port)
     SMTP_SECURE                            = local.bool[var.smtp.secure]
-  }, local.web_environment, local.agent_environment, var.extra_environment)
+  }, local.web_environment, local.agent_environment, local.ai_gateway_environment, var.extra_environment)
 
   # Empty values are dropped below, so these are unset while Web is off.
   web_environment = {

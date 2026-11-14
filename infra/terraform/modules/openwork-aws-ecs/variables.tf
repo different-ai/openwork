@@ -187,7 +187,7 @@ variable "api_domain_name" {
 }
 
 variable "certificate_arn" {
-  description = "ACM certificate (same region) covering domain_name, api_domain_name, and openwork_web_domain_name when openwork_web_enabled. Empty creates and DNS-validates one in route53_zone_id."
+  description = "ACM certificate (same region) covering Den and all enabled optional hosts, including ai_gateway_domain_name. Empty creates and DNS-validates one in route53_zone_id."
   type        = string
   default     = ""
 }

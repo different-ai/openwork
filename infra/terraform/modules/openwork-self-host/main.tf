@@ -192,10 +192,10 @@ resource "helm_release" "openwork" {
 
   # Helm deep-merges these in order, so extra_helm_values can override any
   # single key without restating the whole block.
-  values = [
+  values = concat([
     yamlencode(local.chart_values),
     yamlencode(var.extra_helm_values),
-  ]
+  ], var.ai_gateway_enabled ? [yamlencode(local.ai_gateway_values)] : [])
 
   depends_on = [
     kubernetes_namespace_v1.this,

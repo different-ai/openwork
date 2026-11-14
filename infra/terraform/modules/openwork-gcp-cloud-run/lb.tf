@@ -4,11 +4,11 @@
 # HTTP redirects to HTTPS. Without it, the services' run.app URLs serve HTTPS.
 
 locals {
-  create_lb         = local.custom_domain
+  create_lb         = local.custom_domain || var.ai_gateway_enabled
   create_lb_address = local.create_lb && var.load_balancer_ip_address == ""
   create_lb_cert    = local.create_lb && length(var.ssl_certificate_ids) == 0
   lb_ip             = local.create_lb ? (local.create_lb_address ? google_compute_global_address.lb[0].address : var.load_balancer_ip_address) : null
-  lb_services       = local.create_lb ? { api = google_cloud_run_v2_service.api.name, web = google_cloud_run_v2_service.web.name } : {}
+  lb_services       = merge(local.create_lb ? { api = google_cloud_run_v2_service.api.name, web = google_cloud_run_v2_service.web.name } : {}, var.ai_gateway_enabled ? { ai_gateway = google_cloud_run_v2_service.ai_gateway[0].name } : {})
 }
 
 resource "google_compute_global_address" "lb" {
@@ -23,7 +23,7 @@ resource "google_compute_region_network_endpoint_group" "run" {
   for_each = local.lb_services
 
   project               = var.project_id
-  name                  = var.managed_legacy ? "${var.name}-${each.key}-neg" : "${var.name}-den-${each.key}"
+  name                  = var.managed_legacy ? "${var.name}-${replace(each.key, "_", "-")}-neg" : "${var.name}-den-${replace(each.key, "_", "-")}"
   region                = var.region
   network_endpoint_type = "SERVERLESS"
 
@@ -36,7 +36,7 @@ resource "google_compute_backend_service" "run" {
   for_each = local.lb_services
 
   project               = var.project_id
-  name                  = var.managed_legacy ? "${var.name}-${each.key}-backend" : "${var.name}-den-${each.key}"
+  name                  = var.managed_legacy ? "${var.name}-${replace(each.key, "_", "-")}-backend" : "${var.name}-den-${replace(each.key, "_", "-")}"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   protocol              = var.managed_legacy ? "HTTP" : "HTTPS"
 
@@ -52,13 +52,28 @@ resource "google_compute_url_map" "https" {
   name            = var.managed_legacy ? "${var.name}-routes" : "${var.name}-den"
   default_service = google_compute_backend_service.run["web"].id
 
+  dynamic "host_rule" {
+    for_each = var.ai_gateway_enabled ? [1] : []
+    content {
+      hosts        = [var.ai_gateway_domain_name]
+      path_matcher = "ai-gateway"
+    }
+  }
+  dynamic "path_matcher" {
+    for_each = var.ai_gateway_enabled ? [1] : []
+    content {
+      name            = "ai-gateway"
+      default_service = google_compute_backend_service.run["ai_gateway"].id
+    }
+  }
+
   host_rule {
-    hosts        = [local.api_host]
+    hosts        = [trimprefix(local.api_url, "https://")]
     path_matcher = "api"
   }
 
   host_rule {
-    hosts        = [var.domain_name]
+    hosts        = [local.web_host]
     path_matcher = "web"
   }
 
@@ -80,7 +95,7 @@ resource "google_compute_managed_ssl_certificate" "this" {
   name    = var.managed_legacy ? "${var.name}-tls" : "${var.name}-den"
 
   managed {
-    domains = [var.domain_name, local.api_host]
+    domains = concat(local.custom_domain ? [var.domain_name, local.api_host] : [], var.ai_gateway_enabled ? [var.ai_gateway_domain_name] : [])
   }
 }
 
