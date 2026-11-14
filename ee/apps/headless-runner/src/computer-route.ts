@@ -152,7 +152,9 @@ export function routeComputers(input: {
     desktopViewer: async (sessionId, view) => (await desktop(sessionId, false)).desktopViewer(sessionId, view),
     browserDemonstration: async (sessionId, command) => (await desktop(sessionId, true)).browserDemonstration(sessionId, command),
     desktopAction: async (sessionId, action) => (await desktop(sessionId, false)).desktopAction(sessionId, action),
-    run: async (sessionId, name, args) => (await routed(sessionId, true)).run(sessionId, name, args),
+    run: async (sessionId, name, args, callKey) => (await routed(sessionId, true)).run(sessionId, name, args, callKey),
+    // Asked where the conversation's computer is, never placing one: a call no computer started has no result.
+    pickUp: async (sessionId, name, args, callKey) => (await (await route(sessionId, false))?.pickUp?.(sessionId, name, args, callKey)) ?? null,
     known: (sessionId) => current(sessionId)?.known(sessionId) ?? false,
     prewarm: (sessionId) => void route(sessionId, true).then((computer) => computer?.prewarm(sessionId)).catch(() => undefined),
     // Both sides: a no-op where the conversation has no computer, and one switched away from still pauses.
