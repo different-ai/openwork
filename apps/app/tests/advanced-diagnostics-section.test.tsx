@@ -82,7 +82,7 @@ const expiredSignIn = health({
 });
 
 describe("diagnostics summary", () => {
-  const signedIn = { checking: false, signedIn: true, orgSelected: true };
+  const signedIn = { checking: false, canCheck: true, signedIn: true, orgSelected: true };
 
   test("working tools read as one reassuring line", () => {
     expect(summarizeDiagnostics({ ...signedIn, health: health() })).toEqual({
@@ -112,6 +112,8 @@ describe("diagnostics summary", () => {
     expect(summarizeDiagnostics({ ...signedIn, signedIn: false, health: null }).label).toBe("Signed out");
     expect(summarizeDiagnostics({ ...signedIn, orgSelected: false, health: null }).label).toBe("No organization");
     expect(summarizeDiagnostics({ ...signedIn, checking: true, health: null }).label).toBe("Checking");
+    expect(summarizeDiagnostics({ ...signedIn, canCheck: false, health: null }).detail)
+      .toBe("The check runs once this workspace is connected.");
   });
 
   test("checking again keeps the last result on screen", () => {
@@ -154,6 +156,7 @@ describe("Diagnostics section", () => {
         signedIn
         orgSelected
         cloudMcpHealth={health()}
+        canCheck
         onRefresh={async () => { calls.refresh += 1; return null; }}
         onCopyReport={async () => { calls.copy += 1; }}
         {...props}
@@ -198,6 +201,15 @@ describe("Diagnostics section", () => {
     expect(first.refresh).toBe(1);
     const rerender = await render({ cloudMcpHealth: null });
     expect(rerender.refresh).toBe(0);
+  });
+
+  test("the page can open before the workspace is connected; the check runs when it is", async () => {
+    const early = await render({ cloudMcpHealth: null, canCheck: false });
+    expect(early.refresh).toBe(0);
+    expect(host.textContent).toContain("The check runs once this workspace is connected.");
+    expect(button("Check again")?.disabled).toBe(true);
+    const connected = await render({ cloudMcpHealth: null, canCheck: true });
+    expect(connected.refresh).toBe(1);
   });
 
   test("a failed check says so instead of leaving a stale status", async () => {

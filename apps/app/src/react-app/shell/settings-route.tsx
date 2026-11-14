@@ -2659,6 +2659,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               }}
               cloudMcpHealth={cloudMcpHealth}
               refreshCloudMcpHealth={refreshCloudMcpHealth}
+              canCheckCloudMcpHealth={Boolean((selectedWorkspaceEndpoint?.client ?? openworkClient) && runtimeWorkspaceId?.trim())}
               appVersion={electronUpdaterState.appVersion}
               copyDiagnosticsReport={copyDiagnosticsReport}
               organizationServer={denSession}

@@ -128,6 +128,8 @@ export interface AdvancedDiagnosticsSectionProps {
   signedIn: boolean;
   orgSelected: boolean;
   cloudMcpHealth: OpenworkCloudMcpHealth | null;
+  /** False until the workspace has a server connection the check can ask. */
+  canCheck: boolean;
   onRefresh: () => Promise<OpenworkCloudMcpHealth | null>;
   /** Copies the full sanitized report and tells the person it worked. */
   onCopyReport: () => Promise<void>;
@@ -161,14 +163,16 @@ export function AdvancedDiagnosticsSection(props: AdvancedDiagnosticsSectionProp
   };
 
   // "Run diagnostics" lands here: show a result instead of asking for another click.
+  // The page can open before the workspace connection exists, so wait for it.
   useEffect(() => {
-    if (autoChecked.current || props.cloudMcpHealth || !props.signedIn || !props.orgSelected) return;
+    if (autoChecked.current || props.cloudMcpHealth || !props.canCheck || !props.signedIn || !props.orgSelected) return;
     autoChecked.current = true;
     void check();
-  }, [props.cloudMcpHealth, props.signedIn, props.orgSelected]);
+  }, [props.cloudMcpHealth, props.canCheck, props.signedIn, props.orgSelected]);
 
   const summary = summarizeDiagnostics({
     checking,
+    canCheck: props.canCheck,
     signedIn: props.signedIn,
     orgSelected: props.orgSelected,
     health: props.cloudMcpHealth,
@@ -200,7 +204,7 @@ export function AdvancedDiagnosticsSection(props: AdvancedDiagnosticsSectionProp
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <RefreshButton busy={checking} disabled={checking} onRefresh={check}>
+            <RefreshButton busy={checking} disabled={checking || !props.canCheck} onRefresh={check}>
               Check again
             </RefreshButton>
             <Button

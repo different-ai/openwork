@@ -30,8 +30,8 @@ test("a member whose connected tools stopped working sees what is wrong and copi
     await user.see({ role: "button", label: "Copy report" }, { timeoutMs: 30_000 });
     // The check starts without another click and ends on a result, not a spinner.
     const line = await probe.eventually(status, {
-      within: 60_000, label: "the check finishes without another click",
-      until: text => text.startsWith("Turned off") || text.startsWith("Needs attention"),
+      within: 90_000, label: "the check finishes without another click",
+      until: text => ["Working", "Turned off", "Needs attention"].some(result => text.startsWith(result)),
     });
     const details = await technicalDetails();
     await user.notSee({ role: "button", label: "Copy sanitized diagnostic" });

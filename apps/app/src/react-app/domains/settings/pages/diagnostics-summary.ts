@@ -10,6 +10,8 @@ export type DiagnosticsSummary = {
 /** The one line Settings shows about connected tools; the full health stays in the copied report. */
 export function summarizeDiagnostics(input: {
   checking: boolean;
+  /** False while the workspace has no server connection to ask yet. */
+  canCheck: boolean;
   signedIn: boolean;
   orgSelected: boolean;
   health: OpenworkCloudMcpHealth | null;
@@ -25,7 +27,13 @@ export function summarizeDiagnostics(input: {
     return { tone: "neutral", label: "No organization", detail: "Choose an organization to use connected tools." };
   }
   if (!input.health) {
-    return { tone: "neutral", label: "Not checked", detail: "Check whether your connected tools are working." };
+    return {
+      tone: "neutral",
+      label: "Not checked",
+      detail: input.canCheck
+        ? "Check whether your connected tools are working."
+        : "The check runs once this workspace is connected.",
+    };
   }
   const summary = cloudMcpDisplaySummary({
     signedIn: true,

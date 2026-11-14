@@ -54,6 +54,7 @@ export type AdvancedViewProps = {
   cloudMcpUrl: string | null;
   cloudMcpHealth: OpenworkCloudMcpHealth | null;
   refreshCloudMcpHealth: () => Promise<OpenworkCloudMcpHealth | null>;
+  canCheckCloudMcpHealth: boolean;
   appVersion: string | null;
   copyDiagnosticsReport: () => Promise<void>;
   engineClient: OpenworkServerClient | null;
@@ -209,6 +210,7 @@ export function AdvancedView(props: AdvancedViewProps) {
           signedIn={Boolean(denSettings.authToken)}
           orgSelected={Boolean(denSettings.activeOrgId)}
           cloudMcpHealth={props.cloudMcpHealth}
+          canCheck={props.canCheckCloudMcpHealth}
           onRefresh={props.refreshCloudMcpHealth}
           onCopyReport={props.copyDiagnosticsReport}
         />
