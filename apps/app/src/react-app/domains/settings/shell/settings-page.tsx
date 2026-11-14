@@ -222,7 +222,8 @@ export function getGlobalSettingsTabs(
   capabilities: Pick<PlatformCapabilities, "autoUpdate">,
   options: { desktop?: boolean } = {},
 ): SettingsTab[] {
-  const tabs: SettingsTab[] = ["ai", "ollama", "appearance", "shortcuts", "environment"];
+  // Ollama opens from a button on AI Providers, not from the sidebar.
+  const tabs: SettingsTab[] = ["ai", "appearance", "shortcuts", "environment"];
   if (options.desktop) tabs.push("computer");
   if (capabilities.autoUpdate) tabs.push("updates");
   if (developerMode) tabs.push("debug");
@@ -239,6 +240,8 @@ export function isSettingsTabBeta(_tab: SettingsTab) {
 }
 
 export function isSettingsTabActive(activeTab: SettingsTab, tab: SettingsTab) {
+  // The Ollama page is reached from AI Providers, which stays highlighted there.
+  if (activeTab === "ollama") return tab === "ai";
   return activeTab === tab;
 }
 
