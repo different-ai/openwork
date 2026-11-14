@@ -77,7 +77,7 @@ import {
 import { getSsoDomainVerificationDnsName } from "../../sso-domain-verification.js"
 import { defaultSsoConnectionName, parseSsoDomains } from "../../sso-domains.js"
 import { isOrganizationSsoReady } from "../../sso-readiness.js"
-import { getSsoTestPresentation } from "../../sso-test-lifecycle.js"
+import { getSsoTestPresentation, ssoConnectionEnableBlocker } from "../../sso-test-lifecycle.js"
 import { ConfigApplyItemError, defineConfigArea, type ConfigApplyOp, type ConfigApplyResult, type ConfigAreaContext, type ConfigItem, type ConfigPreflightInfo, type ConfigPreflightResult } from "../area.js"
 import { ConfigApplyError, configRouteContext, expectRouteOk, isJsonObject, resolvedSecret, secretPlaceholder, specObject, specSecretSchema, type ConfigRouteContext, type JsonObject } from "./route-support.js"
 
@@ -633,6 +633,14 @@ async function deleteSsoConnection(ctx: ConfigAreaContext, op: Extract<ConfigApp
 // ---------------------------------------------------------------------------
 // Apply: SCIM
 
+/** What an admin does by hand when the target has no SCIM provisioning to write to. */
+function scimSetupGuidance(mode: "create_teams" | "metadata_only"): string[] {
+  return [
+    "SCIM provisioning isn't set up here and its token can't be carried over: once an SSO connection is enabled, generate a SCIM token in Settings › Auth & Security and give it and the SCIM URL to the identity provider.",
+    `Then set group mapping to "${mode === "create_teams" ? "Create teams from groups" : "Keep groups as metadata"}". The identity provider pushes its groups again; teams are created from them.`,
+  ]
+}
+
 async function applyScim(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, { kind: "delete" }>): Promise<ConfigApplyResult> {
   await requireActorPermission(ctx, "scim.manage")
   const next = parseSpec(scimSpecSchema, op.item.spec)
@@ -640,14 +648,8 @@ async function applyScim(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, { ki
   const [provider] = await ctx.db.select().from(ScimProviderTable).where(eq(ScimProviderTable.organizationId, route.payload.organization.id)).limit(1)
   if (!provider) {
     // Nothing to write: a SCIM connection only exists once its token is generated (needs an enabled SSO connection).
-    return {
-      localId: op.item.sourceId ?? ctx.organizationId,
-      warnings: [
-        "SCIM provisioning isn't set up here and its token can't be carried over: once an SSO connection is enabled, generate a SCIM token in Settings › Auth & Security and give it and the SCIM URL to the identity provider.",
-        `Then set group mapping to "${next.groupMappingMode === "create_teams" ? "Create teams from groups" : "Keep groups as metadata"}". The identity provider pushes its groups again; teams are created from them.`,
-      ],
-      steps: [],
-    }
+    // The plan already skips this (`scimPreflight`); this answers a provider removed since.
+    return { localId: op.item.sourceId ?? ctx.organizationId, warnings: scimSetupGuidance(next.groupMappingMode), steps: [] }
   }
   const current = provider.groupMappingMode === "create_teams" ? "create_teams" : "metadata_only"
   const named = op.kind === "update" ? changedTopFields(op.changes).has("groupMappingMode") : true
@@ -684,17 +686,49 @@ async function sessionPreflight(ctx: ConfigAreaContext, op: Exclude<ConfigApplyO
   return { block: "Requiring SSO must be turned on by an admin signed in through this organization's SSO, so nobody is locked out; an import can't. Skip this item (or set it to off) and turn it on in Settings › Auth & Security." }
 }
 
-function ssoConnectionPreflight(op: Exclude<ConfigApplyOp, { kind: "delete" }>, info: ConfigPreflightInfo): ConfigPreflightResult | null {
+async function ssoConnectionPreflight(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, { kind: "delete" }>, info: ConfigPreflightInfo): Promise<ConfigPreflightResult | null> {
   const spec = ssoConnectionApplySchema.safeParse(op.item.spec)
   if (!spec.success) return null
   if (spec.data.protocol === "saml" && !spec.data.saml?.cert && op.kind === "create") {
     return { block: "Enter the identity provider's signing certificate (saml.cert) in the file, or skip this connection." }
   }
-  if (spec.data.protocol !== "oidc") return null
-  const decision = info.secrets.find((secret) => secret.field === "oidc.clientSecret")?.decision
-  if (decision === "unset") return { block: "An OIDC connection can't work without a client secret: enter one instead of leaving it unset, or skip this connection." }
-  if (op.kind === "create" && decision === "keep") return { block: "A new connection has no stored client secret to keep: enter the OIDC client secret." }
-  return null
+  if (spec.data.protocol === "oidc") {
+    const decision = info.secrets.find((secret) => secret.field === "oidc.clientSecret")?.decision
+    if (decision === "unset") return { block: "An OIDC connection can't work without a client secret: enter one instead of leaving it unset, or skip this connection." }
+    if (op.kind === "create" && decision === "keep") return { block: "A new connection has no stored client secret to keep: enter the OIDC client secret." }
+  }
+  if (!spec.data.enabled) return null
+  // Said before approval, not only by the run: a file carries neither a verified domain nor a successful test.
+  if (op.kind === "create") return { warnings: ["The connection is enabled in the source but will start disabled here: test it and enable it in Settings › Auth & Security."] }
+  return ssoEnablePreflight(ctx, op)
+}
+
+/**
+ * An update that turns the connection on. Enabling needs a verified domain and
+ * a successful test of the current configuration, neither of which a file
+ * carries: a connection an import created keeps planning "enable" until an
+ * admin has done both. When that is the only difference there is nothing to
+ * apply; next to other changes the plan says the connection stays disabled.
+ */
+async function ssoEnablePreflight(ctx: ConfigAreaContext, op: Extract<ConfigApplyOp, { kind: "update" }>): Promise<ConfigPreflightResult | null> {
+  const changed = changedTopFields(op.changes)
+  if (!changed.has("enabled")) return null
+  // A new configuration disables the connection until it is tested again: `ssoIrreversible` says so on the plan.
+  if ([...changed].some((field) => CONFIG_FIELDS.has(field)) || op.secretPaths.length > 0) return null
+  const connection = await loadConnection(ctx, op.targetId)
+  const blocker = ssoConnectionEnableBlocker(connection, await getSsoProviderForConnection(connection, ctx.db))
+  if (!blocker) return null
+  if (changed.size === 1) return { skip: `An import can't enable this connection yet. ${blocker} Then enable it in Settings › Auth & Security, or import this file again.` }
+  return { warnings: [`The connection will stay disabled. ${blocker}`] }
+}
+
+/** SCIM provisioning the target doesn't have can't be written: the plan says what to do instead of an apply that changes nothing. */
+async function scimPreflight(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, { kind: "delete" }>): Promise<ConfigPreflightResult | null> {
+  const next = scimSpecSchema.safeParse(op.item.spec)
+  if (!next.success) return null
+  const [provider] = await ctx.db.select({ id: ScimProviderTable.id }).from(ScimProviderTable)
+    .where(eq(ScimProviderTable.organizationId, normalizeDenTypeId("organization", ctx.organizationId))).limit(1)
+  return provider ? null : { skip: scimSetupGuidance(next.data.groupMappingMode).join(" ") }
 }
 
 // ---------------------------------------------------------------------------
@@ -777,7 +811,8 @@ export const settingsAuthSecurityArea = defineConfigArea({
     if (op.kind === "delete") return null
     const kind = specKind(op.item.spec)
     if (kind === "session") return sessionPreflight(ctx, op)
-    if (kind === "sso-connection") return ssoConnectionPreflight(op, info)
+    if (kind === "sso-connection") return ssoConnectionPreflight(ctx, op, info)
+    if (kind === "scim") return scimPreflight(ctx, op)
     return null
   },
 

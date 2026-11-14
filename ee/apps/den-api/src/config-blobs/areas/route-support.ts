@@ -18,9 +18,9 @@
  * apply report and before-snapshot cover them.
  */
 import { randomUUID } from "node:crypto"
-import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, InvitationTable, MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   configRefSchema,
   configSecretSchema,
@@ -33,7 +33,7 @@ import { Context } from "hono"
 import { z } from "zod"
 import { getOrganizationContextForUser, type OrganizationContext } from "../../orgs.js"
 import type { OrgRouteVariables } from "../../routes/org/shared.js"
-import { ConfigApplyItemError, type ConfigApplyOp, type ConfigApplyResult, type ConfigAreaContext, type ConfigDb } from "../area.js"
+import { ConfigApplyItemError, type ConfigApplyOp, type ConfigApplyResult, type ConfigAreaContext, type ConfigDb, type ConfigPreflightResult } from "../area.js"
 
 export type JsonObject = { [key: string]: unknown }
 
@@ -367,6 +367,52 @@ export async function loadMemberEmails(db: ConfigDb, organizationId: string, mem
     if (email) out.set(row.id, email.trim().toLowerCase())
   }
   return out
+}
+
+/**
+ * Of these members, the ones who have not accepted their invitation yet: an
+ * invitation's placeholder member row has no account. Some services refuse
+ * them (a spend limit can only be assigned to someone who has joined).
+ */
+export async function loadPendingMemberIds(db: ConfigDb, organizationId: string, memberIds: readonly string[]): Promise<Set<string>> {
+  const ids = [...new Set(memberIds)].filter((id) => isDenTypeId("member", id)).map((id) => normalizeDenTypeId("member", id))
+  if (ids.length === 0) return new Set()
+  const rows = await db
+    .select({ id: MemberTable.id })
+    .from(MemberTable)
+    .where(and(eq(MemberTable.organizationId, normalizeDenTypeId("organization", organizationId)), inArray(MemberTable.id, ids), isNull(MemberTable.userId)))
+  return new Set(rows.map((row) => row.id))
+}
+
+export const OWN_MANAGER_ACCESS_KEPT = "Your own manager access was kept."
+
+/**
+ * Plan time, for areas whose apply never takes away the applying member's own
+ * manager access (skills, plugins, sources, collections: the person who
+ * imports something keeps managing it, as its creator does in the dashboard).
+ * A file exported by someone else doesn't list them, so every later import
+ * would plan to remove them and then not do it. An update that is only that
+ * difference is planned as a skip; next to other changes it is said before
+ * approval.
+ */
+export async function ownManagerAccessPreflight(ctx: ConfigAreaContext, op: ConfigApplyOp): Promise<ConfigPreflightResult | null> {
+  if (op.kind !== "update") return null
+  const change = op.changes.find((entry) => entry.path === "access.members.manager")
+  // The plan lists set members by their name hint, else their `$ref` (people have no name hint): engine/diff.ts.
+  const removed = (change?.removed ?? []).flatMap((entry) => {
+    if (typeof entry === "string") return [entry]
+    return isJsonObject(entry) && typeof entry.$ref === "string" ? [entry.$ref] : []
+  })
+  if (removed.length === 0) return null
+  const memberId = normalizeDenTypeId("member", ctx.actor.memberId)
+  const email = (await loadMemberEmails(ctx.db, ctx.organizationId, [memberId])).get(memberId)
+  // A caller who may not read the member directory sees people by member id (engine/people.ts).
+  const own = new Set([`people/${memberId}`, ...(email ? [personRef(email).$ref] : [])])
+  if (!removed.some((ref) => own.has(ref))) return null
+  const only = op.secretPaths.length === 0 && op.changes.length === 1 && removed.length === 1 && (change?.added ?? []).length === 0
+  return only
+    ? { skip: "Nothing to change: only your own manager access differs, and an import keeps it." }
+    : { warnings: ["Your own manager access will be kept."] }
 }
 
 export async function loadTeamNames(db: ConfigDb, organizationId: string, teamIds: readonly string[]): Promise<Map<string, string>> {

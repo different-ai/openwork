@@ -140,6 +140,11 @@ export function personAddRefusal(state: OrganizationPlanState): "free_limit_reac
   return state.seats !== null ? "plan_limit_reached" : "free_limit_reached"
 }
 
+/** "The Free plan is limited to 5 users, counting pending invitations. Upgrade to the Team plan at <url> to invite more people." */
+export function freePlanLimitReachedMessage(freeSeatCount: number, billingUrl: string) {
+  return `The Free plan is limited to ${freeSeatCount} users, counting pending invitations. Upgrade to the Team plan at ${billingUrl} to invite more people.`
+}
+
 /** "Your Enterprise plan includes 20 users, counting pending invitations. Ask your OpenWork contact to add seats." */
 export function planLimitReachedMessage(state: Pick<OrganizationPlanState, "tier" | "userLimit">) {
   const plan = state.tier === "enterprise" ? "Enterprise" : "Team"

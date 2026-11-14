@@ -8,7 +8,7 @@ import type { ConfigArea } from "../area.js"
 export type JsonObject = { [key: string]: unknown }
 
 /** How an area lays out its arrays: which are ordered, which key identifies set elements. */
-export type ArrayLayout = Pick<ConfigArea, "orderedArrays" | "arrayKeys" | "informationalFields" | "comparableSpec">
+export type ArrayLayout = Pick<ConfigArea, "orderedArrays" | "arrayKeys" | "informationalFields" | "derivedFields" | "comparableSpec">
 
 /**
  * The spec as compared, hashed and diffed: `layout.comparableSpec` applied
@@ -24,6 +24,11 @@ export function comparableTop(layout: ArrayLayout, value: unknown): { layout: Ar
 /** Whether the spec field at `schemaPath` is informational (never diffed or hashed). */
 export function isInformationalField(layout: ArrayLayout, schemaPath: string): boolean {
   return (layout.informationalFields ?? []).includes(schemaPath)
+}
+
+/** Whether the spec field at `schemaPath` is derived on the target (hashed, never diffed). */
+export function isDerivedField(layout: ArrayLayout, schemaPath: string): boolean {
+  return (layout.derivedFields ?? []).includes(schemaPath)
 }
 
 export function isPlainObject(value: unknown): value is JsonObject {

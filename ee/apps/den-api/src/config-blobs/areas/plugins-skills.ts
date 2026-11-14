@@ -58,7 +58,7 @@ import {
   sharedConfigObjectIds,
   textOverlap,
 } from "./plugins-support.js"
-import { ConfigApplyError, applyWithSteps, isJsonObject, specObject, touches } from "./route-support.js"
+import { ConfigApplyError, applyWithSteps, isJsonObject, ownManagerAccessPreflight, specObject, touches } from "./route-support.js"
 
 const AREA = "plugins.skills"
 
@@ -230,7 +230,7 @@ export const pluginsSkillsArea = defineConfigArea({
     ? `"${item.name}" comes from ${typeof item.spec.source === "string" ? `the source "${item.spec.source}"` : "a source"}; remove it from the repository instead.`
     : null,
 
-  async preflight(_ctx, op) {
+  async preflight(ctx, op) {
     if (op.kind === "create") {
       if (isAgentTemplate(op.item.spec.type, op.item.spec.sourcePath)) return { skip: AGENT_TEMPLATE_SKIP }
       if (op.item.spec.managedBy === "source") {
@@ -243,7 +243,7 @@ export const pluginsSkillsArea = defineConfigArea({
       const source = typeof op.previous.spec.source === "string" ? `the source "${op.previous.spec.source}"` : "its source"
       return { block: `"${op.previous.name}" comes from ${source}: its content and archived state change in the repository, not by import. Skip this item (or keep its content as it is here).` }
     }
-    return null
+    return ownManagerAccessPreflight(ctx, op)
   },
 
   irreversible: (op) => {

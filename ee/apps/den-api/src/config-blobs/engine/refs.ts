@@ -32,10 +32,19 @@ export function findRefs(spec: unknown, path = "", out: RefOccurrence[] = []): R
 }
 
 export const DROP_REF: unique symbol = Symbol("drop-ref")
+/** Removes the array element the reference sits in, however deep in it (`access[2].member`: all of `access[2]`). */
+export const DROP_ENTRY: unique symbol = Symbol("drop-entry")
+
+/** The schema path of a positional one: `access[2].member` → `access[].member`. */
+export function refSchemaPath(path: string): string {
+  return path.replace(/\[\d+\]/g, "[]")
+}
 
 /**
  * Copies `spec`, replacing every `$ref` with what `replace` returns for it
- * (`DROP_REF` removes it; inside an array the element is removed).
+ * (`DROP_REF` removes it; inside an array the element is removed. `DROP_ENTRY`
+ * removes the nearest array element around it; with no array around it, it is
+ * the result).
  */
 export function rewriteRefs(spec: unknown, replace: (path: string, ref: ConfigRef) => unknown, path = ""): unknown {
   if (isConfigRef(spec)) return replace(path, spec)
@@ -44,7 +53,7 @@ export function rewriteRefs(spec: unknown, replace: (path: string, ref: ConfigRe
     const out: unknown[] = []
     spec.forEach((element, index) => {
       const next = rewriteRefs(element, replace, `${path}[${index}]`)
-      if (next !== DROP_REF) out.push(next)
+      if (next !== DROP_REF && next !== DROP_ENTRY) out.push(next)
     })
     return out
   }
@@ -53,6 +62,7 @@ export function rewriteRefs(spec: unknown, replace: (path: string, ref: ConfigRe
     for (const [key, value] of Object.entries(spec)) {
       if (isUnsafeKey(key)) continue
       const next = rewriteRefs(value, replace, joinPath(path, key))
+      if (next === DROP_ENTRY) return DROP_ENTRY
       if (next !== DROP_REF) out[key] = next
     }
     return out
@@ -64,7 +74,8 @@ export function rewriteRefs(spec: unknown, replace: (path: string, ref: ConfigRe
 export type RefResolution =
   | { kind: "target"; id: string; via: "target" | "decision" }
   | { kind: "planned"; area: ConfigAreaKey; ref: string }
-  | { kind: "drop" }
+  /** `entry`: the reference is one its array element can't exist without (`requiredRefs`), so the element goes with it. */
+  | { kind: "drop"; entry?: true }
   /**
    * The admin chose to invite someone who is neither a member nor a person in
    * the blob: the plan adds a `members.people` create (`inviteRef(email)`)
@@ -84,8 +95,8 @@ export type RefResolverInput = {
   skipped?: ReadonlySet<string>
   /** Current target items, for every area references may point to (in scope or not). */
   targetItems: ReadonlyMap<ConfigAreaKey, readonly ConfigItem[]>
-  /** Area definitions, for natural keys of out-of-scope lookups. */
-  areas: ReadonlyMap<ConfigAreaKey, Pick<ConfigArea, "naturalKeys">>
+  /** Area definitions, for natural keys of out-of-scope lookups and the references an item's entries can't lose. */
+  areas: ReadonlyMap<ConfigAreaKey, Pick<ConfigArea, "naturalKeys" | "requiredRefs">>
   aliases?: ReadonlyMap<ConfigAreaKey, ReadonlyMap<string, string>>
   /** Target org members by normalized email → member id. */
   people?: ReadonlyMap<string, string>
@@ -259,12 +270,29 @@ export function createRefResolver(input: RefResolverInput): (itemArea: ConfigAre
     return { kind: "invite", email }
   }
 
+  /**
+   * A drop decision. On a reference its entry can't exist without (`requiredRefs`) the array element goes with
+   * it; one that sits in no array is the item's own, so it can't be dropped and says so.
+   */
+  const resolveDrop = (itemArea: ConfigAreaKey, parsed: { area: ConfigAreaKey | "people"; target: string }, occurrence: RefOccurrence): RefResolution => {
+    const schemaPath = refSchemaPath(occurrence.path)
+    if (!(input.areas.get(itemArea)?.requiredRefs ?? []).includes(schemaPath)) return { kind: "drop" }
+    if (schemaPath.includes("[]")) return { kind: "drop", entry: true }
+    const auto = resolveAuto(parsed.area, parsed.target, occurrence.name)
+    return {
+      kind: "unresolved",
+      reason: auto.kind === "unresolved"
+        ? `${auto.reason}, and it can't be dropped (this item can't be imported without it): choose one here, or skip the item`
+        : "it can't be dropped (this item can't be imported without it): remove that decision, or skip the item",
+    }
+  }
+
   return (itemArea, itemRef, occurrence) => {
     const parsed = parseConfigRef(occurrence.ref)
     const decision = decisions.get(`${itemArea}\u0000${itemRef}\u0000${occurrence.path}`)
     let resolution: RefResolution
     if (!parsed) resolution = { kind: "unresolved", reason: `"${occurrence.ref}" is not a valid reference` }
-    else if (decision && "drop" in decision) resolution = { kind: "drop" }
+    else if (decision && "drop" in decision) resolution = resolveDrop(itemArea, parsed, occurrence)
     else if (decision && "invite" in decision) resolution = resolveInvite(parsed, occurrence.name)
     else if (decision && "targetId" in decision) {
       const loaded = parsed.area === "people" ? input.people !== undefined : input.targetItems.has(parsed.area)
@@ -310,7 +338,7 @@ export function localizeSpec(spec: { [key: string]: unknown }, resolved: readonl
     const occurrence = byPath.get(path)
     if (!occurrence) return ref
     const { resolution } = occurrence
-    if (resolution.kind === "drop") return DROP_REF
+    if (resolution.kind === "drop") return resolution.entry ? DROP_ENTRY : DROP_REF
     if (resolution.kind !== "target") return ref
     const parsed = parseConfigRef(ref.$ref)
     if (!parsed || parsed.area === "people") return ref

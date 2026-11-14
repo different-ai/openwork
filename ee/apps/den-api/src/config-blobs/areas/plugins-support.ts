@@ -43,6 +43,7 @@ import {
   isJsonObject,
   loadMemberEmails,
   loadTeamNames,
+  OWN_MANAGER_ACCESS_KEPT,
   personRef,
   resolvedRefIds,
   specRefSchema,
@@ -253,7 +254,7 @@ export async function applyAccess(input: {
     const key = grantKey(grant)
     if (desiredKeys.has(key)) continue
     if (grant.orgMembershipId === self && grant.role === "manager") {
-      input.warnings.push("Your own manager access was kept.")
+      input.warnings.push(OWN_MANAGER_ACCESS_KEPT)
       continue
     }
     const detail = grant.orgWide ? "everyone" : grant.teamId ?? grant.orgMembershipId ?? grant.id

@@ -9,7 +9,8 @@
  * tokens, sessions, accounts, passwords, user ids.
  *
  * Spec: `email`, direct `role`, `status` (active | invited), `teams` (refs to
- * `members.teams`) and `managedBy` (scim | sso | manual, informational).
+ * `members.teams`) and `managedBy` (scim | sso | manual; derived, never
+ * planned as a change). People are exported in the order they joined.
  * Permission sets are NOT a per-person field: a person's permissions follow
  * from their role and teams (`members.roles` carries which teams have which
  * role), so exporting them per person would duplicate derived state.
@@ -24,7 +25,9 @@
  *   gets a pending invitation too. Invitations are SILENT unless the engine
  *   sets `spec.__sendInviteEmail: true` on the resolved item (from the
  *   request's `decisions.people.sendInviteEmails`). Allowed email domains,
- *   seats and role rules are enforced by the invitation action.
+ *   seats and role rules are enforced by the invitation action; `preflight`
+ *   checks the first two when the plan is made, so a file that invites more
+ *   people than there are seats says who is left out before anything runs.
  * - update: role via updateMemberRoleAction (members) or a silent refresh of
  *   the invitation (invited); team membership via the team routes' updateTeam.
  * - delete: removeMemberAction (members) or cancelInvitationAction (invited).
@@ -46,15 +49,19 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
+import { invitationBillingUrl } from "../../agent-links.js"
 import { currentAuditChangeCapture } from "../../audit/request-capture.js"
 import { roleIncludesOwner } from "../../organization-member-guards.js"
+import { freePlanLimitReachedMessage, planLimitReachedMessage } from "../../organization-plan.js"
 import { isEmailAllowedForOrganization } from "../../orgs.js"
 import { ORGANIZATION_ADMIN_ROLE, normalizeOrganizationRoleName, splitOrganizationRoles } from "../../organization-role-hierarchy.js"
 import { cancelInvitationAction, createInvitationAction } from "../../routes/org/invitations.js"
 import { removeMemberAction, updateMemberRoleAction } from "../../routes/org/members.js"
 import { updateTeam } from "../../routes/org/teams.js"
 import { getScimManagedTeamIds } from "../../scim-groups.js"
+import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
 import { defineConfigArea, type ConfigApplyOp, type ConfigAreaContext, type ConfigItem, type ConfigPreflightResult } from "../area.js"
+import { normalizeName } from "../engine/match.js"
 import { SEND_INVITE_EMAIL_FIELD } from "../engine/refs.js"
 import {
   ConfigApplyError,
@@ -382,8 +389,79 @@ function readInviteRules(ctx: ConfigAreaContext): Promise<InviteRules> {
   return loading
 }
 
-/** The invitation action's own rules, before apply: allowed email domains and SCIM-provisioned people. */
+/**
+ * The seats left for the people a plan invites, counted down as its invitations take them (`left` null: no limit),
+ * and what the invitation action would answer once they run out. One per plan: an invitation is refused when the
+ * organization is full, and an apply stops at the first refusal, so a file that invites more people than fit says
+ * who is left out when the plan is made. Who gets the seats that remain is the admin's choice (skip someone else).
+ */
+type SeatBudget = { left: number | null; refusal: string }
+
+const seatBudgets = new WeakMap<ConfigAreaContext, Promise<SeatBudget>>()
+
+function readSeatBudget(ctx: ConfigAreaContext): Promise<SeatBudget> {
+  const cached = seatBudgets.get(ctx)
+  if (cached) return cached
+  const loading = (async () => {
+    const eligibility = await getOrganizationSeatAddEligibility(normalizeDenTypeId("organization", ctx.organizationId))
+    const { plan } = eligibility
+    return {
+      left: plan.userLimit === null ? null : Math.max(0, plan.userLimit - plan.users),
+      // The invitation route's own answers: a plan a platform admin set, or the Free plan.
+      refusal: plan.seats !== null ? planLimitReachedMessage(plan) : freePlanLimitReachedMessage(eligibility.freeSeatCount, invitationBillingUrl()),
+    }
+  })()
+  seatBudgets.set(ctx, loading)
+  return loading
+}
+
+/** Takes a seat for the invitation of `email`, or says why there is none. Someone who already joined needs none. */
+async function seatPreflight(ctx: ConfigAreaContext, email: string): Promise<ConfigPreflightResult | null> {
+  const budget = await readSeatBudget(ctx)
+  if (budget.left === null) return null
+  if (await activeMemberByEmail(ctx, email)) return null
+  if (budget.left > 0) {
+    budget.left -= 1
+    return null
+  }
+  return { block: `${email} can't be invited: there is no seat left for them. ${budget.refusal} Or skip this person (or another person this file invites, to give them the seat).` }
+}
+
+/**
+ * An import never moves ownership: the apply leaves the role as it is and says so. Said when the plan is made
+ * instead, and an update that is only that difference is planned as a skip (the owner of the organization a file
+ * came from is invited as an admin, so every later import of that file would otherwise plan the same change).
+ */
+function ownershipPreflight(op: ConfigApplyOp & { kind: "update" }): ConfigPreflightResult | null {
+  if (!touches(op.changes, "role")) return null
+  const wanted = typeof op.item.spec.role === "string" ? op.item.spec.role : ""
+  const current = typeof op.previous.spec.role === "string" ? op.previous.spec.role : ""
+  if (roleIncludesOwner(wanted) === roleIncludesOwner(current)) return null
+  const email = emailOf(op.previous) ?? op.previous.name
+  const reason = roleIncludesOwner(current)
+    ? `${email} is the owner here: ownership is only moved by transferring it, so their role stays as it is.`
+    : `${email} is the owner in the file and ${current || "a member"} here: ownership is only moved by transferring it, so their role stays as it is.`
+  return op.secretPaths.length === 0 && op.changes.length === 1 ? { skip: reason } : { warnings: [reason] }
+}
+
+/**
+ * A person is their email. Someone at another address is proposed as the same
+ * person only when the part before the @ is the same (an organization that
+ * changed domains) or their names are; holding the same role or teams says
+ * nothing about who someone is, and would ask "the same as an existing item?"
+ * about every person a file brings to an organization that has other people.
+ */
+function similarity(blob: ConfigItem, target: ConfigItem): { score: number; reasons: string[] } {
+  const local = (item: ConfigItem) => emailOf(item)?.split("@")[0] ?? ""
+  if (local(blob) && local(blob) === local(target)) return { score: 0.9, reasons: ["same address before the @"] }
+  const name = (item: ConfigItem) => item.name.includes("@") ? "" : normalizeName(item.name)
+  if (name(blob) && name(blob) === name(target)) return { score: 0.6, reasons: ["same name"] }
+  return { score: 0, reasons: [] }
+}
+
+/** The invitation action's own rules, before apply: allowed email domains, SCIM-provisioned people and seats. */
 async function peoplePreflight(ctx: ConfigAreaContext, op: ConfigApplyOp): Promise<ConfigPreflightResult | null> {
+  if (op.kind === "update") return ownershipPreflight(op)
   if (op.kind !== "create" || typeof op.item.spec.email !== "string") return null
   const email = normalizeEmail(op.item.spec.email)
   const rules = await readInviteRules(ctx)
@@ -393,6 +471,8 @@ async function peoplePreflight(ctx: ConfigAreaContext, op: ConfigApplyOp): Promi
   if (!isEmailAllowedForOrganization(rules.allowedEmailDomains, email)) {
     return { block: `${email} can't be invited: this organization only allows ${rules.allowedEmailDomains.join(", ")} email addresses (Settings › General). Allow the domain first, or skip this person.` }
   }
+  const seat = await seatPreflight(ctx, email)
+  if (seat) return seat
   const role = typeof op.item.spec.role === "string" ? op.item.spec.role : ""
   return roleIncludesOwner(role) ? { warnings: [`${email} is the owner on the source; they are invited as an admin (an import never moves ownership).`] } : null
 }
@@ -413,11 +493,14 @@ export const membersPeopleArea = defineConfigArea({
   managePermission: "invitations.manage",
   tables: ["member", "team_member", "invitation"],
   naturalKeys: [{ label: "email", get: emailOf }],
+  similarity,
   uniqueFields: [{ label: "email", get: (item) => typeof item.spec.email === "string" ? normalizeEmail(item.spec.email) || null : null }],
   secretFields: [],
   // An import invites; it never makes someone join, and a person's name is
   // their account's. Both are exported for readers but are not changes.
   informationalFields: ["status"],
+  // Who owns a person (SCIM, SSO, nobody) follows from this organization's identity setup and their accounts.
+  derivedFields: ["managedBy"],
   informationalName: true,
   // Invitation, member and team actions open their own transactions on the global db, and may send email.
   transactional: false,

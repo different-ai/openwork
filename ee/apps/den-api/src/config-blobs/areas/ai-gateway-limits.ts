@@ -18,6 +18,13 @@
  *   archivePolicy), so revision checks, entitlement locks, provider validation,
  *   expiry of stale increase requests and the usage audit stay identical.
  *   Only what the plan's changes name is written.
+ * - People who have not accepted their invitation yet can't hold a limit (the
+ *   service only assigns to members who have joined, as the dashboard does).
+ *   An import usually invites the people it names in the same run, so those
+ *   assignments are left out with a warning instead of failing the item (and
+ *   the run): the plan says so before approval, and importing again once they
+ *   have joined assigns them. An update that would only assign people who have
+ *   not joined is skipped, so re-importing the same blob has nothing to do.
  */
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { createGatewayUsageLimits, GatewayUsageError, type GatewayUsageScope } from "@openwork-ee/den-db/gateway-usage-limits"
@@ -30,11 +37,12 @@ import { z } from "zod"
 import { gatewayManagementUnavailable } from "../../gateway-deployment.js"
 import { permissionDeniedMessage } from "../../permissions/effective.js"
 import { resolvePermissionsForMember } from "../../permissions/resolve.js"
-import { ConfigApplyItemError, defineConfigArea, type ConfigApplyOp, type ConfigAreaContext, type ConfigItem } from "../area.js"
-import { audienceRefs, ConfigApplyError, isJsonObject, loadMemberEmails, loadTeamNames, resolvedRefIds, specObject } from "./route-support.js"
+import { ConfigApplyItemError, defineConfigArea, type ConfigApplyOp, type ConfigAreaContext, type ConfigItem, type ConfigPreflightInfo, type ConfigPreflightResult } from "../area.js"
+import { audienceRefs, ConfigApplyError, isJsonObject, loadMemberEmails, loadPendingMemberIds, loadTeamNames, resolvedRefIds, specObject } from "./route-support.js"
 
 const AREA = "ai-gateway.limits" as const
 const PROVIDERS_AREA = "ai-gateway.providers"
+const PEOPLE_PREFIX = "people/"
 
 // ---------------------------------------------------------------------------
 // Spec
@@ -289,13 +297,16 @@ async function applyLimits(ctx: ConfigAreaContext, op: ConfigApplyOp) {
     for (const teamId of spec.assignments.teamIds) {
       await steps.run({ action: "add", target: "assignments.teams", detail: teamId }, "assignments.teams", () => service.assign(scope, policyId, teamTarget(teamId)))
     }
+    const waiting = await notJoined(ctx, spec.assignments.memberIds)
     for (const memberId of spec.assignments.memberIds) {
+      if (waiting.ids.has(memberId)) continue
       await steps.run({ action: "add", target: "assignments.members", detail: memberId }, "assignments.members", () => service.assign(scope, policyId, memberTarget(memberId)))
     }
-    return { localId: policyId, steps: steps.done }
+    return { localId: policyId, steps: steps.done, ...(waiting.warning ? { warnings: [waiting.warning] } : {}) }
   }
 
   // update
+  const warnings: string[] = []
   const [current] = await ctx.db.select().from(GatewayUsagePolicyTable)
     .where(and(eq(GatewayUsagePolicyTable.id, op.targetId), eq(GatewayUsagePolicyTable.organizationId, scope.organizationId))).limit(1)
   if (!current || current.archivedAt) throw new ConfigApplyItemError({ code: "policy_not_found", message: `Limit "${op.previous.name}" no longer exists or was archived.`, status: 404 })
@@ -348,12 +359,77 @@ async function applyLimits(ctx: ConfigAreaContext, op: ConfigApplyOp) {
         const id = row.id
         await steps.run({ action: "remove", target: "assignments.members", detail: emails.get(row.memberId) }, "assignments.members", () => service.unassign(scope, current.id, id))
       }
-      for (const memberId of wantMembers) if (!haveMembers.has(memberId)) {
+      const adding = [...wantMembers].filter((memberId) => !haveMembers.has(memberId))
+      const waiting = await notJoined(ctx, adding)
+      if (waiting.warning) warnings.push(waiting.warning)
+      for (const memberId of adding) {
+        if (waiting.ids.has(memberId)) continue
         await steps.run({ action: "add", target: "assignments.members", detail: memberId }, "assignments.members", () => service.assign(scope, current.id, { memberId }))
       }
     }
   }
-  return { localId: current.id, steps: steps.done }
+  return { localId: current.id, steps: steps.done, ...(warnings.length ? { warnings } : {}) }
+}
+
+// ---------------------------------------------------------------------------
+// People who have not joined yet
+
+/** "ada@example.com", "ada@example.com and bo@example.com", "ada@example.com, bo@example.com and 3 more". */
+function listPeople(names: readonly string[]): string {
+  const sorted = [...names].sort()
+  if (sorted.length <= 2) return sorted.join(" and ")
+  if (sorted.length === 3) return `${sorted[0]}, ${sorted[1]} and ${sorted[2]}`
+  return `${sorted[0]}, ${sorted[1]} and ${sorted.length - 2} more`
+}
+
+const JOIN_FIRST = "a limit can only be assigned to someone who has joined. Import again once they have accepted their invitation."
+
+function whoIsWaiting(names: readonly string[], count: number): string {
+  if (names.length === count && count > 0) return listPeople(names)
+  return count === 1 ? "1 person" : `${count} people`
+}
+
+/** Of the members a limit is to be assigned to, the ones who have not accepted their invitation (and the warning to report). */
+async function notJoined(ctx: ConfigAreaContext, memberIds: readonly string[]): Promise<{ ids: Set<string>; warning: string | null }> {
+  const pending = await loadPendingMemberIds(ctx.db, ctx.organizationId, memberIds)
+  const ids = new Set(memberIds.filter((id) => isDenTypeId("member", id) && pending.has(normalizeDenTypeId("member", id))))
+  if (ids.size === 0) return { ids, warning: null }
+  const emails = await loadMemberEmails(ctx.db, ctx.organizationId, [...ids])
+  return { ids, warning: `Not assigned to ${whoIsWaiting([...emails.values()], ids.size)} yet: ${JOIN_FIRST}` }
+}
+
+const MEMBERS_PATH = /^assignments\.members\[\d+\]$/
+
+/**
+ * Plan time: which of the people this op assigns have not joined (invited by
+ * this same plan, or already invited and still pending). They are left out
+ * at apply, so say it before approval; an update with nothing else to do is
+ * skipped instead of running to assign nobody.
+ */
+async function limitsPreflight(ctx: ConfigAreaContext, op: ConfigApplyOp, info: ConfigPreflightInfo): Promise<ConfigPreflightResult | null> {
+  if (op.kind === "delete" || !info.refs) return null
+  const people = info.refs.filter((ref) => MEMBERS_PATH.test(ref.path) && ref.ref.startsWith(PEOPLE_PREFIX))
+  if (people.length === 0) return null
+  const existing = people.flatMap((ref) => ref.resolution === "target" && ref.id ? [ref.id] : [])
+  const pending = await loadPendingMemberIds(ctx.db, ctx.organizationId, existing)
+  const waiting = people.filter((ref) => ref.resolution === "planned" || ref.resolution === "invite"
+    || (ref.resolution === "target" && ref.id !== undefined && isDenTypeId("member", ref.id) && pending.has(normalizeDenTypeId("member", ref.id))))
+  if (waiting.length === 0) return null
+  const handles = waiting.map((ref) => ref.ref.slice(PEOPLE_PREFIX.length))
+  const who = whoIsWaiting(handles.every((handle) => handle.includes("@")) ? handles : [], waiting.length)
+
+  if (op.kind === "update") {
+    // Already assigned people stay assigned; only additions are written.
+    const waitingRefs = new Set(waiting.map((ref) => ref.ref))
+    const onlyWaiting = op.changes.length > 0 && op.secretPaths.length === 0 && op.changes.every((change) => (
+      change.path === "assignments.members"
+      && (change.removed ?? []).length === 0
+      && (change.added ?? []).length > 0
+      && (change.added ?? []).every((entry) => typeof entry === "string" && waitingRefs.has(entry))
+    ))
+    if (onlyWaiting) return { skip: `Nothing to assign until ${who} ${waiting.length === 1 ? "has" : "have"} joined: ${JOIN_FIRST}` }
+  }
+  return { warnings: [`${who} will not be assigned yet: ${JOIN_FIRST}`] }
 }
 
 // ---------------------------------------------------------------------------
@@ -408,11 +484,14 @@ export const aiGatewayLimitsArea = defineConfigArea({
   similarity,
   secretFields: [],
   arrayKeys: { limits: "timeframe" },
+  // A limit on one provider's usage is that provider's: without it, it would become a limit on everything.
+  requiredRefs: ["provider"],
   // The usage service opens its own (deadlock-retried) transactions.
   transactional: false,
   irreversible,
 
   exportItems: (ctx) => readPolicies(ctx),
   readItems: (ctx, ids) => readPolicies(ctx, ids),
+  preflight: limitsPreflight,
   apply: applyLimits,
 })
