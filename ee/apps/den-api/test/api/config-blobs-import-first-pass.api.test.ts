@@ -298,6 +298,8 @@ test("another person imports the whole organization: applied by the first run", 
   const { id, plan: first } = await upload(apiB, exportedA, "Whole organization")
 
   // Six people for five seats: the last invitation is refused when the plan is made, not in the middle of the apply.
+  // A whole organization carries every area a reference points into: nothing more to list.
+  assert.equal(first.refTargets, undefined, JSON.stringify(first.refTargets))
   const blocked = planItems(first).filter((entry) => entry.flags.includes("blocked"))
   assert.deepEqual(blocked.map(label), [`members.people:${zoe.name}`], describe(blocked))
   assert.match(reasons(item(first, "members.people", zoe.name)), /there is no seat left for them\. The Free plan is limited to 5 users, counting pending invitations\./)
@@ -326,6 +328,9 @@ test("another person imports the whole organization: applied by the first run", 
     "desktop-policies:Engineering",
     "plugins.plugins:Research",
   ], describe(waiting))
+  // Each of those references says who it is, and that inviting them anyway is not a choice: they were left out on purpose.
+  const toZoe = planItems(plan).flatMap((entry) => (entry.refs ?? []).filter((ref) => ref.resolvedId === null && ref.via !== "planned"))
+  assert.deepEqual(toZoe.map((ref) => `${ref.name ?? ""}: ${(ref.refuses ?? []).join(",")}`), Array.from({ length: 5 }, () => `${zoe.name}: invite`))
   decisions.refs = openReferenceDrops(plan)
   assert.equal(decisions.refs.length, 5, JSON.stringify(decisions.refs))
   plan = await enterSecrets(apiB, id, await decide(apiB, id, decisions))
@@ -422,6 +427,9 @@ test("part of an organization, where what it references is missing: an entry goe
   // A limit on one provider's spending, without the provider: leaving the provider out would make it a limit on everything.
   const limits = await upload(apiD, await exportOf(apiA, "ai-gateway.limits"), "Limits only")
   assert.ok(openPaths(item(limits.plan, "ai-gateway.limits", "Engineering spend")).includes("provider"), describe(planItems(limits.plan)))
+  // The plan says so before anyone tries it, and only for that reference: the people it names can be left out or invited.
+  const refusals = Object.fromEntries((item(limits.plan, "ai-gateway.limits", "Engineering spend").refs ?? []).map((ref) => [ref.path.replace(/\[\d+\]/g, "[]"), (ref.refuses ?? []).join(",")]))
+  assert.deepEqual(refusals, { provider: "drop", "assignments.teams[]": "", "assignments.members[]": "" }, JSON.stringify(refusals))
   let plan = await decide(apiD, limits.id, { skips: [], refs: planItems(limits.plan).flatMap((entry) => openPaths(entry).map((path) => drop(entry, path))) })
   const refused = item(plan, "ai-gateway.limits", "Engineering spend")
   assert.ok(refused.flags.includes("ref_unresolved"), describe([refused]))
@@ -453,6 +461,35 @@ test("part of an organization, where what it references is missing: an entry goe
   assert.deepEqual(narrowed.flags.filter((flag) => BLOCKING.includes(flag)), [], describe([narrowed]))
   assert.match(reasons(narrowed), /warning: 1 of the 2 models of "Smart Engineering" is left out: its provider was dropped\./)
   await ok(apiD("POST", `/v1/config-blobs/change-requests/${partial.id}/cancel`, {}), "cancel")
+
+  // A desktop policy without the team and the person it is assigned to. The file carries neither area, so the plan
+  // lists what is already here to point them at: otherwise all that is left is leaving them out.
+  const rae: Member = await den.newMember(dan, orgD.orgId, "Rae Reviewer")
+  const reviewers = await den.createTeam(dan, orgD.orgId, "Reviewers", [rae.memberId])
+  await ok(apiD("POST", "/v1/permissions/sets", { name: "Desktop policies", teamIds: [reviewers], permissions: ["desktop_policies.view", "desktop_policies.manage"].map((key) => ({ key, status: "allow" })) }), "role")
+  const policies = await upload(apiD, await exportOf(apiA, "desktop-policies"), "Desktop policies only")
+  const policy = item(policies.plan, "desktop-policies", "Engineering")
+  assert.deepEqual(openPaths(policy).sort(), ["assignments.members[0]", "assignments.teams[0]"], describe([policy]))
+  const listed = Object.fromEntries((policies.plan.refTargets ?? []).map((entry) => [entry.area, entry.items]))
+  assert.deepEqual(listed, {
+    "members.teams": [{ id: reviewers, name: "Reviewers" }],
+    "members.people": [{ id: orgD.owner.memberId, name: dan.name }, { id: rae.memberId, name: rae.name }],
+  }, JSON.stringify(policies.plan.refTargets))
+  // Someone who may read this request but neither teams nor people is shown the plan without them.
+  const asRae = asPlan(field((await ok(den.as(rae, orgD.orgId)("GET", `/v1/config-blobs/change-requests/${policies.id}/plan`), "plan of a reviewer")).body, "plan"))
+  assert.equal(asRae.planHash, policies.plan.planHash)
+  assert.equal(asRae.refTargets, undefined, JSON.stringify(asRae.refTargets))
+  assert.ok(!JSON.stringify(asRae).includes(dan.name), "the reviewer's plan names a member")
+  // Pointed at the team and the person here, the policy goes in with both.
+  plan = await decide(apiD, policies.id, { skips: [], refs: [
+    { area: policy.area, ref: policy.ref, path: "assignments.teams[0]", resolution: { targetId: reviewers } },
+    { area: policy.area, ref: policy.ref, path: "assignments.members[0]", resolution: { targetId: rae.memberId } },
+  ] })
+  const pointed = item(plan, "desktop-policies", "Engineering")
+  assert.deepEqual((pointed.refs ?? []).map((ref) => `${ref.path}: ${ref.via} ${ref.resolvedId}`).sort(), [`assignments.members[0]: decision ${rae.memberId}`, `assignments.teams[0]: decision ${reviewers}`])
+  assert.deepEqual(pointed.flags.filter((flag) => BLOCKING.includes(flag)), [], describe([pointed]))
+  assert.deepEqual((plan.refTargets ?? []).map((entry) => entry.area).sort(), ["members.people", "members.teams"], "the choices stay listed once made")
+  await ok(apiD("POST", `/v1/config-blobs/change-requests/${policies.id}/cancel`, {}), "cancel")
 })
 
 test("no transaction sent a statement before the previous one answered", () => {

@@ -9,6 +9,7 @@ import type {
   ConfigDecisions,
   ConfigPlanRef,
   ConfigRef,
+  ConfigRefRefusal,
 } from "@openwork/types/den/config-blobs"
 import { isConfigRef, isConfigSecret, parseConfigRef } from "@openwork/types/den/config-blobs"
 import type { ConfigArea, ConfigItem } from "../area.js"
@@ -84,7 +85,11 @@ export type RefResolution =
   | { kind: "invite"; email: string }
   | { kind: "unresolved"; reason: string }
 
-export type ResolvedRefOccurrence = RefOccurrence & { resolution: RefResolution }
+export type ResolvedRefOccurrence = RefOccurrence & {
+  resolution: RefResolution
+  /** Decisions this reference would refuse, when it does not resolve on its own (`ConfigPlanRef.refuses`). */
+  refuses?: ConfigRefRefusal[]
+}
 
 export type RefResolverInput = {
   /** Areas this plan writes (supported, in scope). */
@@ -305,13 +310,20 @@ export function createRefResolver(input: RefResolverInput): (itemArea: ConfigAre
           ? { kind: "target", id: decision.targetId, via: "decision" }
           : { kind: "unresolved", reason: `chosen target ${decision.targetId} does not exist` }
     } else resolution = resolveAuto(parsed.area, parsed.target, occurrence.name)
-    return { ...occurrence, resolution }
+    // What a reference that needs a decision can't be decided as, so a client doesn't offer it.
+    const refuses: ConfigRefRefusal[] = []
+    if (parsed && (decision || resolution.kind === "unresolved") && resolveAuto(parsed.area, parsed.target, occurrence.name).kind === "unresolved") {
+      if (resolveDrop(itemArea, parsed, occurrence).kind === "unresolved") refuses.push("drop")
+      if (parsed.area === "people" && resolveInvite(parsed, occurrence.name).kind !== "invite") refuses.push("invite")
+    }
+    return refuses.length ? { ...occurrence, resolution, refuses } : { ...occurrence, resolution }
   }
 }
 
 export function toPlanRef(occurrence: ResolvedRefOccurrence): ConfigPlanRef {
   const base: ConfigPlanRef = { path: occurrence.path, ref: occurrence.ref, resolvedId: null, via: null }
   if (occurrence.name !== undefined) base.name = occurrence.name
+  if (occurrence.refuses) base.refuses = occurrence.refuses
   const { resolution } = occurrence
   switch (resolution.kind) {
     case "target":

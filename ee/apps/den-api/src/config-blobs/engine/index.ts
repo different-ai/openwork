@@ -48,6 +48,7 @@ export {
 } from "./secrets.js"
 export {
   buildPlan,
+  planRefTargets,
   preflightKey,
   previewOp,
   sortAreas,

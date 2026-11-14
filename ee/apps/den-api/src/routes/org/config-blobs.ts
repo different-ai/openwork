@@ -116,6 +116,7 @@ const planSchema = z.object({
   summary: planSummarySchema,
   areas: z.array(z.object({ area: configAreaKeySchema, label: z.string(), items: z.array(z.record(z.string(), z.unknown())) })),
   issues: z.array(z.object({ level: z.enum(["error", "warning", "info"]), message: z.string(), area: configAreaKeySchema.optional() })),
+  refTargets: z.array(z.object({ area: configAreaKeySchema, items: z.array(z.object({ id: z.string(), name: z.string() })) })).optional(),
 }).meta({ ref: "ConfigPlan" })
 
 const applyStepSchema = z.object({

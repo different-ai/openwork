@@ -343,7 +343,15 @@ export type ConfigPlanRef = {
   /** How it resolved: an existing target item, a planned create in this request, or an explicit decision. */
   via: "target" | "planned" | "decision" | null;
   decision?: "drop" | "invite" | null;
+  /**
+   * Decisions the plan would refuse for this reference, on one that does not resolve on its own: `invite` for a
+   * person left out of this import or who can't be invited here, `drop` where the item can't be imported without
+   * it. Display only (a client leaves those choices out); absent when nothing is known to be refused.
+   */
+  refuses?: ConfigRefRefusal[];
 };
+
+export type ConfigRefRefusal = "drop" | "invite";
 
 export type ConfigPlanItem = {
   area: ConfigAreaKey;
@@ -374,7 +382,15 @@ export type ConfigPlan = {
   areas: Array<{ area: ConfigAreaKey; label: string; items: ConfigPlanItem[] }>;
   /** Request-level problems (version skew, omitted areas, …). */
   issues: Array<{ level: "error" | "warning" | "info"; message: string; area?: ConfigAreaKey }>;
+  /**
+   * What is already in the organization that a reference could be pointed at, for the areas this file does not
+   * carry (the items of an area it carries are in `areas`). Listed for the areas named by a reference that does
+   * not resolve on its own. Display only: not part of `planHash`, and without the areas the reader may not view.
+   */
+  refTargets?: ConfigPlanRefTargets[];
 };
+
+export type ConfigPlanRefTargets = { area: ConfigAreaKey; items: Array<{ id: string; name: string }> };
 
 // ---------------------------------------------------------------------------
 // Decisions and inputs
