@@ -14,13 +14,22 @@ A single-organization OpenWork control plane (Den), without Kubernetes:
 | HTTPS | Default run.app URLs; optional global HTTPS load balancer and managed certificate |
 | Identity / logs | Dedicated runtime service account, per-secret accessor grants; Cloud Logging |
 | Optional network | Direct VPC egress into an existing VPC/subnet |
+| AI Gateway (optional, off by default) | `openwork-inference` Cloud Run service on 8791, HTTPS LB host/NEG/backend and certificate |
 
-Uses the environment described in [the manual Cloud Run guide](../../../../docs/gcp-cloud-run.md), `packaging/cloud-run`, and the Helm chart. Workbot, the runner, Slack, OpenWork Web/gateway, Redis and headless Automations are outside this module; their existing inputs are unchanged.
+The **AI Gateway** handles inference, **den-gateway** handles OpenWork Web/sandboxes,
+and Den API's **MCP gateway** handles tools; they are not interchangeable.
+See [AI Gateway setup and networking limits](../../AI_GATEWAY.md), including the
+Cloud SQL socket adapter and the HTTPS (not private DNS) service-call boundary.
+A separate managed AI Gateway certificate avoids replacing the existing Den
+certificate when adding its hostname; supplied certificates must cover it.
+
+Uses the environment described in [the manual Cloud Run guide](../../../../docs/gcp-cloud-run.md), `packaging/cloud-run`, and the Helm chart. Workbot, the runner, Slack, OpenWork Web/den-gateway, Redis and headless Automations are outside this module; their existing inputs are unchanged.
 
 ## Tested scenarios
 
 | Date | Tools | Images | Scenario / result |
 | --- | --- | --- | --- |
+| 2026-11-13 | Offline-only implementation | Synthetic fixture digests | AI Gateway live DNS/TLS, admin/provider/Desktop, unchanged apply, disable/data retention and teardown: **NotRun**; no provisioning |
 | 2026-10-14 | Terraform 1.16.5 | 0.18.58 → dev b8efc5b (digests) | Earlier module: setup, browser, isolated desktop, same-database upgrade and destroy passed; one API instance |
 | 2026-10-15 | Terraform 1.16.5 / OpenTofu 1.11.14 | Mocked Google provider | Init, validate and 32 offline test runs per tool passed; write-only fields, protected DB, 2-instance singleton migration topology |
 | 2026-10-15 | Terraform 1.16.5; local testkit | 0.18.58 → dev f450b1a (digests) | Two API instances observed in both revisions; one migrator/task per deployment, exit 0; setup, browser, exact admin/org preservation, isolated source Electron, no secret rotation/state values, 21-resource destroy and independent empty inventory passed |
@@ -94,6 +103,7 @@ Get the setup code directly from Secret Manager, without logging it, using the `
 | `database.deletion_protection` | Deprecated nullable alias; when explicitly set it overrides the common input for Cloud SQL only |
 | `den_api` | CPU `1`, memory `2Gi`, min `1`, max `3` |
 | `den_web` | CPU `1`, memory `1Gi`, min `1`, max `3` (Cloud Run request-driven service floor uses one CPU) |
+| `ai_gateway_enabled`, `ai_gateway_domain_name`, `ai_gateway_image` | `false`, `""`, `""`; enabled requires a dedicated hostname and mirrored inference image@digest; creates HTTPS LB even without Den custom domains |
 | `migration_run_id` | `"1"`; changing it deliberately runs another migration |
 | `write_only_secrets` | `true`; ephemeral generation and write-only provider arguments; false is a not-recommended legacy compatibility opt-out |
 | `database_password_wo_version` | `1`; deliberate database-password rotation counter, coordinate with the connection secret |
@@ -112,7 +122,8 @@ Get the setup code directly from Secret Manager, without logging it, using the `
 | `secret_ids`, `service_account_email`, `service_names` | Managed secret identifiers and runtime identities |
 | `images` | Final resolved image references |
 | `bootstrap_code` | Sensitive legacy-mode value; null in write-only mode |
-| `load_balancer_ip`, `dns_records` | Optional IP and two A records |
+| `load_balancer_ip`, `dns_records` | Optional IP and A records for enabled custom Den/AI Gateway hostnames |
+| `ai_gateway_url` | AI Gateway HTTPS origin, null when disabled |
 
 ### Existing infrastructure and TLS
 
@@ -191,5 +202,10 @@ The reusable module does **not** ship a lockfile: Terraform and OpenTofu registr
 For an S3 backend outside this GCP example, use native `use_lockfile = true`, not a DynamoDB locking table. Configure backends only in roots.
 
 ## Cost notes
+
+Enabling the AI Gateway keeps one 1 vCPU / 2 GiB instance warm (up to three),
+and creates an HTTPS LB/IP if Den previously used only run.app. It adds no Cloud
+SQL instance. Estimate those incremental regional charges before applying; no
+live Gateway cost/capacity measurement is claimed.
 
 Defaults keep one API (1 vCPU / 2 GiB) and one web (1 vCPU / 1 GiB) instance warm plus a db-g1-small (1.7 GB) with 20 GB disk, backups, secrets and image cache. This is a smoke-test baseline, **not** HA or production load sizing. SQL, warm-instance rates, storage, egress and optional load balancer/IP charges vary; estimate current regional prices before apply. The old micro-based daily estimate is no longer applicable. Min instances zero reduces Cloud Run idle cost but adds sign-in cold starts. Disposable `examples/complete` disables deletion protection and backups; do not copy those choices into production. Direct VPC egress can keep a subnet busy for up to roughly two hours after service deletion: budget teardown time, and never force-delete someone else's resources.

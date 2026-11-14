@@ -127,6 +127,13 @@ counts, and skips; do not count one tool's result for the other.
 - Expose `web_url`, `api_url`, `database_identifier`, and
   `migration_step_identifier`, retaining native outputs. Explain each identifier's
   cloud-specific meaning and the value returned for external infrastructure.
+- Optional AI Gateway uses `ai_gateway_enabled` (false),
+  `ai_gateway_domain_name` (empty), `ai_gateway_image` (empty; explicit digest
+  required when enabled), and `ai_gateway_url` (null when disabled) on all three
+  native modules. It reuses database/encryption secrets without rotating them.
+  Distinguish it from OpenWork Web's den-gateway and Den API's MCP gateway.
+  See [AI_GATEWAY.md](AI_GATEWAY.md) for native networking exceptions, the thin
+  Helm wrapper interface, managed-installer boundaries and live NotRun checks.
 - Document all defaults in the README. These smoke-tested floors are not
   production load-sizing guarantees.
 

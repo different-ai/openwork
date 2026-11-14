@@ -25,6 +25,15 @@ Runs a private, single-organization OpenWork control plane (Den) on AWS
 | Logs | CloudWatch `/ecs/<name>/den-api` and `/ecs/<name>/den-web` |
 | Headless runner and Workbot (optional) | Managed Node runner (Service Connect, SQLite on EFS) or an existing celld/S3 fleet; diskless `workbot` at `chat.<domain_name>` (`headless_runner`, `workbot`) |
 | OpenWork Web (optional) | `den-gateway` Fargate service at `web.<domain_name>`, sandboxes in your Daytona organization (`openwork_web_enabled = true`) |
+| AI Gateway (optional, off by default) | Separate `openwork-inference` service on 8791, private Cloud Map, HTTPS host rule (`ai_gateway_enabled`) |
+
+**Three different gateways:** the AI Gateway handles inference; **den-gateway**
+handles OpenWork Web/sandboxes; Den API's MCP gateway handles connected tools.
+See [AI Gateway inputs, networking and verification limits](../../AI_GATEWAY.md).
+`ai_gateway_enabled=false`, `ai_gateway_domain_name=""`, `ai_gateway_image=""`
+are the defaults; enablement requires a dedicated hostname and digest-pinned image.
+`ai_gateway_listener_rule_priority` defaults to 50; `ai_gateway_url` is null when off.
+The managed installer calls this module directly, not Helm; its defaults stay off.
 
 It sets the same environment the [`openwork-ee` Helm chart](../../../../packaging/helm/openwork-ee)
 sets on Kubernetes, so the chart's README and `ee/apps/den-api/.env.example`
@@ -44,6 +53,7 @@ What has been applied end to end in an AWS test account with
 
 | Scenario | Result | Release / tools | Date |
 | --- | --- | --- | --- |
+| AI Gateway live DNS/TLS, admin/provider/Desktop flow, unchanged apply, disable/data retention and teardown | NotRun: offline-only implementation; no infrastructure provisioned | See [AI Gateway verification boundary](../../AI_GATEWAY.md#verification-boundary) | 2026-11-13 |
 | Contract-v1 offline guards, including write-only existing DB and no legacy bootstrap output in write-only mode | Passed: 37 per tool | Terraform 1.16.5 / OpenTofu 1.11.14 | 2026-10-15 |
 | Contract-v1 release → dev, two API-only tasks, exactly one successful migrator per image, recognizable org preserved | Passed | 0.18.58 → dev ef455ca; AWS 6.69.1 | 2026-10-15 |
 | Same-version later apply with identical ephemeral inputs; secret hashes/version and pre-apply session unchanged | Passed: plan exit 0, no changes | 0.18.58 | 2026-10-15 |
@@ -220,7 +230,10 @@ at the `alb_dns_name` output (CNAME) at your DNS provider.
   or set `allow_public_signup = true` for a while.
 - **OpenWork Web** (chat in the browser, each member's workspace in a
   Daytona sandbox) is off by default; see [OpenWork Web](#openwork-web).
-- **Anything else** (SSO, proxies, Gateway, observability): add env vars with
+- **AI Gateway:** use the first-class `ai_gateway_*` inputs above. Setting
+  `GATEWAY_ENABLED` through `extra_environment` alone does not deploy a service;
+  remove Gateway/Inference and shared runtime overrides before opting in.
+- **Anything else** (SSO, proxies, observability): add non-secret env vars with
   `extra_environment` and secrets with `extra_secrets`.
 
 ## Upgrade notes
@@ -585,6 +598,9 @@ Sandbox and volume names start with `daytona.name_prefix` (default `name`), so
 several deployments can share one Daytona organization.
 
 ## Cost notes
+
+Enabling the AI Gateway adds one 1 vCPU / 2 GiB Fargate task, logs and ALB traffic,
+not a new database. Its live capacity and incremental costs have not been measured.
 
 ### Small / trial baseline
 

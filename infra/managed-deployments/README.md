@@ -27,6 +27,18 @@ tools/               Release build and publication (provider argument)
 tests/               Installer, runner and health agent tests
 ```
 
+## Optional AI Gateway module support
+
+AWS and Google Cloud roots consume the native Terraform modules **directly**, not
+Helm. The modules' new `ai_gateway_*` inputs are documented in
+[the AI Gateway guide](../terraform/AI_GATEWAY.md); these managed roots do not set
+them, so the AI Gateway remains **off**. This does not change installer payload
+publication, bootstrap permissions, managed defaults or rollout state. Enabling a
+managed install needs a separately reviewed root/image/DNS/certificate/permission
+change, required re-approval and fresh live install/upgrade proof. Mock module
+plans are not a managed-readiness receipt. The AI Gateway is distinct from
+OpenWork Web's den-gateway and Den API's MCP gateway.
+
 ## AWS shared-module adoption
 
 The AWS root consumes `infra/terraform/modules/openwork-aws-ecs`. The former
