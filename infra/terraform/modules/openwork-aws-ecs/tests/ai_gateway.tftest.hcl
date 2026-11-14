@@ -1,5 +1,5 @@
-# OFFLINE ONLY. The first mock apply establishes synthetic state for upgrade
-# plans; every cloud provider is mocked. No resources are provisioned.
+# OFFLINE ONLY. Mock applies establish synthetic off/on state for upgrade plans;
+# every cloud provider is mocked. No resources are provisioned.
 mock_provider "aws" {
   mock_data "aws_iam_policy_document" { defaults = { json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}" } }
   mock_resource "aws_cloudwatch_log_group" { defaults = { arn = "arn:aws:logs:us-east-1:123456789012:log-group:openwork" } }

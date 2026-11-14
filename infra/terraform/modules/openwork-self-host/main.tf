@@ -197,6 +197,21 @@ resource "helm_release" "openwork" {
     yamlencode(var.extra_helm_values),
   ], var.ai_gateway_enabled ? [yamlencode(local.ai_gateway_values)] : [])
 
+  lifecycle {
+    precondition {
+      condition     = !var.ai_gateway_enabled || var.ai_gateway_domain_name != ""
+      error_message = "ai_gateway_enabled requires ai_gateway_domain_name."
+    }
+    precondition {
+      condition     = !var.ai_gateway_enabled || local.ai_gateway_overrides_valid
+      error_message = "First-class ai_gateway_enabled cannot be combined with Gateway enable/URL/name/port overrides in extra_helm_values. Remove those overrides or keep the advanced Helm interface."
+    }
+    precondition {
+      condition     = !var.ai_gateway_enabled || !contains([var.ingress.web_host, var.ingress.api_host, trimsuffix(trimprefix(var.web_origin, "https://"), "/"), trimsuffix(trimprefix(var.api_origin, "https://"), "/")], var.ai_gateway_domain_name)
+      error_message = "The AI Gateway hostname must differ from Den web and API hostnames."
+    }
+  }
+
   depends_on = [
     kubernetes_namespace_v1.this,
     kubernetes_secret_v1.openwork,

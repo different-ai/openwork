@@ -143,6 +143,22 @@ resource "google_cloud_run_v2_service" "ai_gateway" {
   }
   depends_on = [google_cloud_run_v2_job.migrate]
 }
+resource "google_compute_region_network_endpoint_group" "ai_gateway" {
+  count                 = var.ai_gateway_enabled ? 1 : 0
+  project               = var.project_id
+  name                  = "${var.name}-ai-gateway"
+  region                = var.region
+  network_endpoint_type = "SERVERLESS"
+  cloud_run { service = google_cloud_run_v2_service.ai_gateway[0].name }
+}
+resource "google_compute_backend_service" "ai_gateway" {
+  count                 = var.ai_gateway_enabled ? 1 : 0
+  project               = var.project_id
+  name                  = "${var.name}-ai-gateway"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  protocol              = var.managed_legacy ? "HTTP" : "HTTPS"
+  backend { group = google_compute_region_network_endpoint_group.ai_gateway[0].id }
+}
 output "ai_gateway_url" {
   description = "AI Gateway HTTPS origin for desktops, or null when disabled. Not the OpenWork Web den-gateway URL."
   value       = var.ai_gateway_enabled ? local.ai_gateway_url : null

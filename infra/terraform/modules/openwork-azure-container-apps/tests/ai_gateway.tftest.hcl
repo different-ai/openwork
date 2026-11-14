@@ -1,5 +1,5 @@
 # OFFLINE. All Azure/external calls mocked; ephemeral random is local-only.
-# Mock apply seeds synthetic state, then plan-only Gateway checks. No provisioning.
+# Mock applies seed synthetic off/on state, then Gateway plan checks. No provisioning.
 mock_provider "azurerm" {
   mock_data "azurerm_resource_group" { defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-test", location = "eastus" } }
   mock_resource "azurerm_container_app_environment" {

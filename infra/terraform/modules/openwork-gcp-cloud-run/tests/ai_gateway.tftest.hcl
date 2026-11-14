@@ -1,5 +1,5 @@
 # OFFLINE: all Google APIs mocked; random is local-only (ephemeral schema).
-# A mock apply establishes synthetic state; all enable/invalid cases are plans.
+# Mock applies establish synthetic off/on state; enable/invalid checks use plans.
 mock_provider "google" {
   mock_data "google_project" { defaults = { number = "123456789012" } }
   mock_resource "google_sql_database_instance" { defaults = { connection_name = "test-project:us-central1:openwork-den" } }
@@ -8,7 +8,7 @@ mock_provider "google" {
   mock_resource "google_compute_backend_service" { defaults = { id = "projects/test-project/global/backendServices/openwork" } }
 }
 override_resource {
-  target = google_compute_backend_service.run["ai_gateway"]
+  target = google_compute_backend_service.ai_gateway
   values = { id = "projects/test-project/global/backendServices/ai-gateway-distinct" }
 }
 provider "random" {}
@@ -23,7 +23,7 @@ variables {
 run "off_by_default" {
   command = apply # Synthetic state only; no provisioning or migration execution.
   assert {
-    condition     = length(google_cloud_run_v2_service.ai_gateway) == 0 && length(google_compute_backend_service.run) == 0 && output.ai_gateway_url == null && length([for e in google_cloud_run_v2_service.api.template[0].containers[0].env : e.name if startswith(e.name, "GATEWAY_") || startswith(e.name, "INFERENCE_")]) == 0
+    condition     = length(google_cloud_run_v2_service.ai_gateway) == 0 && length(google_compute_backend_service.ai_gateway) == 0 && length(google_compute_region_network_endpoint_group.ai_gateway) == 0 && length(google_compute_backend_service.run) == 0 && output.ai_gateway_url == null && length([for e in google_cloud_run_v2_service.api.template[0].containers[0].env : e.name if startswith(e.name, "GATEWAY_") || startswith(e.name, "INFERENCE_")]) == 0
     error_message = "Default: 0 AI Gateway services/backends, URL null, no new Den env; no load balancer."
   }
 }
@@ -54,7 +54,7 @@ run "enable_plan" {
     error_message = "Gateway retains VPC and Cloud SQL socket wiring; only serving-process hostname is adapted, stored localhost URL unchanged."
   }
   assert {
-    condition     = output.secret_ids == run.off_by_default.secret_ids && length(google_secret_manager_secret.app) == 4 && google_secret_manager_secret_version.app["DEN_DB_ENCRYPTION_KEY"].secret_data == random_password.db_encryption[0].result && length(var.secret_data_wo_version) == 0
+    condition     = toset(values(output.secret_ids)) == toset(["openwork-den-database-url", "openwork-den-better-auth-secret", "openwork-den-den-db-encryption-key", "openwork-den-den-initial-admin-bootstrap-code"]) && length(google_secret_manager_secret.app) == 4 && google_secret_manager_secret_version.app["DEN_DB_ENCRYPTION_KEY"].secret_data == random_password.db_encryption[0].result && length(var.secret_data_wo_version) == 0
     error_message = "Same four app secrets and encryption value, no new version counters."
   }
 }
@@ -66,7 +66,7 @@ run "with_den_custom_domains" {
     ai_gateway_domain_name = "models.example.com"
   }
   assert {
-    condition     = length(google_compute_region_network_endpoint_group.run) == 3 && length(google_compute_url_map.https[0].host_rule) == 3 && toset(google_compute_managed_ssl_certificate.this[0].managed[0].domains) == toset(["openwork.example.com", "api.openwork.example.com", "models.example.com"])
+    condition     = length(google_compute_region_network_endpoint_group.run) + length(google_compute_region_network_endpoint_group.ai_gateway) == 3 && length(google_compute_url_map.https[0].host_rule) == 3 && toset(google_compute_managed_ssl_certificate.this[0].managed[0].domains) == toset(["openwork.example.com", "api.openwork.example.com", "models.example.com"])
     error_message = "Den and AI Gateway coexist as three separate backends/hosts on one HTTPS LB; this does not create den-gateway."
   }
 }
@@ -126,7 +126,7 @@ run "enabled_mock_state" {
     ai_gateway_domain_name = "models.example.com"
   }
   assert {
-    condition     = length(google_cloud_run_v2_service.ai_gateway) == 1 && length(google_secret_manager_secret.app) == 4 && anytrue([for matcher in google_compute_url_map.https[0].path_matcher : matcher.name == "ai-gateway" && matcher.default_service == google_compute_backend_service.run["ai_gateway"].id])
+    condition     = length(google_cloud_run_v2_service.ai_gateway) == 1 && length(google_secret_manager_secret.app) == 4 && anytrue([for matcher in google_compute_url_map.https[0].path_matcher : matcher.name == "ai-gateway" && matcher.default_service == google_compute_backend_service.ai_gateway[0].id])
     error_message = "Synthetic state routes the Gateway matcher to its distinct backend, not Den, and keeps the original four secrets."
   }
 }
@@ -137,14 +137,14 @@ run "unchanged_enabled_plan" {
     ai_gateway_domain_name = "models.example.com"
   }
   assert {
-    condition     = length(google_cloud_run_v2_service.ai_gateway) == 1 && output.secret_ids == run.off_by_default.secret_ids && length(var.secret_data_wo_version) == 0
+    condition     = length(google_cloud_run_v2_service.ai_gateway) == 1 && toset(values(output.secret_ids)) == toset(["openwork-den-database-url", "openwork-den-better-auth-secret", "openwork-den-den-db-encryption-key", "openwork-den-den-initial-admin-bootstrap-code"]) && length(var.secret_data_wo_version) == 0
     error_message = "Unchanged enabled plan retains original secret identities and version counters."
   }
 }
 run "disable_plan_keeps_data" {
   command = plan
   assert {
-    condition     = length(google_cloud_run_v2_service.ai_gateway) == 0 && output.ai_gateway_url == null && length(google_sql_database_instance.this) == 1 && output.secret_ids == run.off_by_default.secret_ids && !contains(keys(local.environment), "GATEWAY_ENABLED")
+    condition     = length(google_cloud_run_v2_service.ai_gateway) == 0 && output.ai_gateway_url == null && length(google_sql_database_instance.this) == 1 && toset(values(output.secret_ids)) == toset(["openwork-den-database-url", "openwork-den-better-auth-secret", "openwork-den-den-db-encryption-key", "openwork-den-den-initial-admin-bootstrap-code"]) && !contains(keys(local.environment), "GATEWAY_ENABLED")
     error_message = "Disable: Gateway 1 -> 0, runtime defaults false, database and four original secrets kept."
   }
 }

@@ -42,10 +42,31 @@ run "preserves_advanced_values_interface" {
     error_message = "False first-class default does not override existing advanced gateway.enabled installs."
   }
 }
+run "operator_managed_https_routing" {
+  command = plan
+  variables {
+    ai_gateway_enabled     = true
+    ai_gateway_domain_name = "models.example.com"
+    ingress                = { enabled = false }
+  }
+  assert {
+    condition     = length(kubernetes_ingress_v1.ai_gateway) == 0 && yamldecode(helm_release.openwork.values[2]).gateway.enabled && output.ai_gateway_url == "https://models.example.com"
+    error_message = "External routing creates no ingress but still enables the chart and reports the required HTTPS origin."
+  }
+}
+run "rejects_shared_host_without_managed_ingress" {
+  command = plan
+  variables {
+    ai_gateway_enabled     = true
+    ai_gateway_domain_name = "openwork.example.com"
+    ingress                = { enabled = false }
+  }
+  expect_failures = [helm_release.openwork]
+}
 run "missing_domain" {
   command = plan
   variables { ai_gateway_enabled = true }
-  expect_failures = [var.ai_gateway_domain_name]
+  expect_failures = [helm_release.openwork]
 }
 run "conflicting_values" {
   command = plan
@@ -54,7 +75,7 @@ run "conflicting_values" {
     ai_gateway_domain_name = "models.example.com"
     extra_helm_values      = { gateway = { enabled = false } }
   }
-  expect_failures = [var.ai_gateway_enabled]
+  expect_failures = [helm_release.openwork]
 }
 run "missing_tls" {
   command = plan

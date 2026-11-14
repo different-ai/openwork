@@ -8,7 +8,7 @@ locals {
   create_lb_address = local.create_lb && var.load_balancer_ip_address == ""
   create_lb_cert    = local.create_lb && length(var.ssl_certificate_ids) == 0
   lb_ip             = local.create_lb ? (local.create_lb_address ? google_compute_global_address.lb[0].address : var.load_balancer_ip_address) : null
-  lb_services       = merge(local.create_lb ? { api = google_cloud_run_v2_service.api.name, web = google_cloud_run_v2_service.web.name } : {}, var.ai_gateway_enabled ? { ai_gateway = google_cloud_run_v2_service.ai_gateway[0].name } : {})
+  lb_services       = local.create_lb ? { api = google_cloud_run_v2_service.api.name, web = google_cloud_run_v2_service.web.name } : {}
 }
 
 resource "google_compute_global_address" "lb" {
@@ -23,7 +23,7 @@ resource "google_compute_region_network_endpoint_group" "run" {
   for_each = local.lb_services
 
   project               = var.project_id
-  name                  = var.managed_legacy ? "${var.name}-${replace(each.key, "_", "-")}-neg" : "${var.name}-den-${replace(each.key, "_", "-")}"
+  name                  = var.managed_legacy ? "${var.name}-${each.key}-neg" : "${var.name}-den-${each.key}"
   region                = var.region
   network_endpoint_type = "SERVERLESS"
 
@@ -36,7 +36,7 @@ resource "google_compute_backend_service" "run" {
   for_each = local.lb_services
 
   project               = var.project_id
-  name                  = var.managed_legacy ? "${var.name}-${replace(each.key, "_", "-")}-backend" : "${var.name}-den-${replace(each.key, "_", "-")}"
+  name                  = var.managed_legacy ? "${var.name}-${each.key}-backend" : "${var.name}-den-${each.key}"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   protocol              = var.managed_legacy ? "HTTP" : "HTTPS"
 
@@ -63,7 +63,7 @@ resource "google_compute_url_map" "https" {
     for_each = var.ai_gateway_enabled ? [1] : []
     content {
       name            = "ai-gateway"
-      default_service = google_compute_backend_service.run["ai_gateway"].id
+      default_service = google_compute_backend_service.ai_gateway[0].id
     }
   }
 
