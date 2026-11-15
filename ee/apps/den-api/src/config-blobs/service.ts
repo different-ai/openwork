@@ -837,6 +837,36 @@ async function baseSpecsFor(organizationId: OrganizationId, hash: string | null)
 }
 
 /** What planning reads from a request: a stored row, or an unsaved dry run. */
+/**
+ * Items an earlier import of this source created or matched are recognised by
+ * their saved link before anything else. An area's export leaves some items
+ * out (a skill or plugin that only its creator can reach is personal, which
+ * is what an imported item becomes when the people it was shared with are
+ * left out), so the saved link would never see them and the item would be
+ * created again. Read those by id and add them to the target items, for the
+ * items of this file only: nothing else personal becomes visible to the plan.
+ */
+async function addLinkedTargetItems(input: {
+  ctx: ConfigAreaContext
+  areas: Partial<Record<ConfigAreaKey, { items: readonly { id?: string | null }[] }>>
+  targetItems: Map<ConfigAreaKey, ConfigItem[]>
+  aliases: ReadonlyMap<ConfigAreaKey, ReadonlyMap<string, string>>
+}): Promise<void> {
+  for (const [key, items] of input.targetItems) {
+    const links = input.aliases.get(key)
+    const area = registeredArea(key)
+    if (!links || !area?.readItems) continue
+    const known = new Set(items.map((item) => item.id))
+    const missing = new Set<string>()
+    for (const item of input.areas[key]?.items ?? []) {
+      const localId = item.id ? links.get(item.id) : undefined
+      if (localId && !known.has(localId)) missing.add(localId)
+    }
+    if (missing.size === 0) continue
+    items.push(...await readItemsFor(area, input.ctx, [...missing]))
+  }
+}
+
 type PlanSource = Pick<ConfigChangeRequestRow, "organizationId" | "blob" | "mode" | "baseHash" | "createdByMemberId" | "approvals" | "decisions" | "secretInputs" | "apiKeyId">
   & Partial<Pick<ConfigChangeRequestRow, "sourceKind" | "revertsChangeRequestId">>
 
@@ -870,6 +900,7 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
   const decisions = overrides.decisions ?? row.decisions ?? EMPTY_CONFIG_DECISIONS
   const secretInputs = overrides.secretInputs ?? row.secretInputs ?? []
   const grouped = sourceInstanceId ? groupAliases(await listAliasRows(row.organizationId, sourceInstanceId, db.$primary)) : null
+  if (grouped) await addLinkedTargetItems({ ctx, areas, targetItems, aliases: grouped.aliases })
   const access = await planningAccessFor(row.organizationId, actor, row.apiKeyId)
   const directory = await loadDirectory(row.organizationId)
   const planInput: Parameters<typeof buildPlan>[0] = {
