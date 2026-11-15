@@ -232,7 +232,10 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
 
   // `people/<member id>` (exports for callers who may not read emails) compares as the member's email here.
   const blobAreas = input.people ? namePeopleByEmail(input.blobAreas, input.people) : input.blobAreas
-  const ordered = sortAreas(input.areas)
+  // Natural keys behind a feature are used only while it is on.
+  const ordered = sortAreas(input.areas.map((area) => area.naturalKeys.some((key) => key.feature)
+    ? { ...area, naturalKeys: area.naturalKeys.filter((key) => !key.feature || input.features[key.feature] === true) }
+    : area))
   const areaByKey = new Map(ordered.map((area) => [area.key, area]))
   const scope = new Set(input.scope)
   for (const key of input.scope) if (!areaByKey.has(key)) addError(`area ${key} is not available on this server`, key)
@@ -668,6 +671,26 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         if (value === null || (counts.get(value) ?? 0) < 2) continue
         if (!draft.item.flags.includes("collision.unique")) draft.item.flags.push("collision.unique")
         draft.item.reasons = [...(draft.item.reasons ?? []), `another item already has ${unique.label} "${value}": rename this one, match it to the existing item, or skip it`]
+      }
+    }
+  }
+
+  // Creates of one import that can't both exist (see `uniqueAmongCreates`).
+  for (const state of states) {
+    if (!state.match || !state.area.uniqueAmongCreates?.length) continue
+    const creates = (blobDrafts.get(state.area.key) ?? []).filter((draft) => draft.exec?.kind === "create" && draft.uniqueProbe)
+    for (const unique of state.area.uniqueAmongCreates) {
+      const counts = new Map<string, number>()
+      const valueOf = (draft: Draft) => draft.uniqueProbe ? unique.get(draft.uniqueProbe) : null
+      for (const draft of creates) {
+        const value = valueOf(draft)
+        if (value !== null) counts.set(value, (counts.get(value) ?? 0) + 1)
+      }
+      for (const draft of creates) {
+        const value = valueOf(draft)
+        if (value === null || (counts.get(value) ?? 0) < 2) continue
+        if (!draft.item.flags.includes("collision.unique")) draft.item.flags.push("collision.unique")
+        draft.item.reasons = [...(draft.item.reasons ?? []), `this import creates more than one item with ${unique.label} "${draft.item.blob?.name ?? value}": rename this one or skip it`]
       }
     }
   }

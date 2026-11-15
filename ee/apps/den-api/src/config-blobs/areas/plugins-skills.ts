@@ -205,6 +205,13 @@ export const pluginsSkillsArea = defineConfigArea({
     get: (item) => item.spec.managedBy === "source" && typeof item.spec.source === "string" && typeof item.spec.sourcePath === "string"
       ? `${normalizeText(item.spec.source)}\n${item.spec.sourcePath}`
       : null,
+  }, {
+    // A skill, agent or command of the same type and title the organization already shares is the same one.
+    label: "type and title",
+    feature: "configImportMatchByName",
+    get: (item) => item.spec.managedBy !== "source" && typeof item.spec.type === "string" && normalizeText(item.name)
+      ? `${item.spec.type}\n${normalizeText(item.name)}`
+      : null,
   }],
   similarity: (blob, target) => {
     if (blob.spec.type !== target.spec.type) return { score: 0, reasons: ["different type"] }
