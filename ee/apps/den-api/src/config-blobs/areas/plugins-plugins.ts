@@ -221,7 +221,7 @@ async function readPlugins(ctx: ConfigAreaContext, ids: readonly string[] | null
       .where(and(
         eq(PluginMcpRequirementBindingTable.organizationId, organizationId),
         inArray(PluginMcpRequirementBindingTable.pluginId, pluginIds),
-        // connectors.mcp carries external MCP connections only.
+        // Bindings to built-in provider connections are not carried: plugins bind them by provider, not by connection.
         eq(ExternalMcpConnectionTable.kind, "external_mcp"),
       )),
   ])

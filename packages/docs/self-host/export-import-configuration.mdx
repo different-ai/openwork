@@ -81,7 +81,7 @@ the file.
 | `members.default-models` | Members › Teams › Models | `inference.view` | `inference.manage` |
 | `members.prompts` | Members › Teams › Prompts | `prompts.view` | `prompts.manage` |
 | `connectors.oauth-clients` | Connectors › OAuth apps | `oauth_clients.view` | `oauth_clients.manage` |
-| `connectors.mcp` | Connectors › MCP | `connections.view` | `connections.manage` |
+| `connectors.mcp` | Connectors (MCP connections, and built-in ones such as Google Workspace and Microsoft 365) | `connections.view` | `connections.manage`; changing a built-in connection's OAuth app also needs `oauth_clients.manage` |
 | `ai-gateway.providers` | AI Gateway › AI Providers | `gateway_providers.manage` | `gateway_providers.manage` |
 | `ai-gateway.byok` | AI Gateway › Bring your own keys | `llm_providers.view` (only providers you can edit: with `llm_providers.update`, or ones you created) | `llm_providers.update` |
 | `ai-gateway.limits` | AI Gateway › Limits | `gateway_limits.view` | `gateway_limits.manage` |
@@ -124,6 +124,14 @@ Some areas carry only part of what their screen shows:
   group, credential set and model, and the import finds the same model in the
   target. If you can't use that model there yet (typically its provider has no key
   yet), the model is left as it is with a note; import again once it works.
+- **Built-in connections** (Google Workspace, Microsoft 365) carry their name, who
+  can use them and your organization's OAuth app for the provider: client ID,
+  optional features and tenant. The client secret is a placeholder, like every
+  secret. Each person signs in again in the target; nobody's sign-in travels. The
+  redirect URI belongs to the server, not the organization, so the same OAuth app
+  works for another organization on the same server; on a different server, add
+  that server's redirect URI to the app at the provider first. An import can't turn
+  a built-in connection into an MCP connection, or change its provider.
 - **Sources** need the GitHub App installed in the target organization first: an
   installation belongs to the server and organization that made it.
 - **Auth & Security**: a new SSO connection starts disabled and unverified (verify
