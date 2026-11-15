@@ -113,6 +113,7 @@ import {
   pluginMutationResponseSchema,
   pluginParamsSchema,
   pluginUpdateSchema,
+  configObjectExternalKeySchema,
   resolvedPluginsQuerySchema,
   resolvedPluginsResponseSchema,
   resourceAccessGrantWriteSchema,
@@ -190,6 +191,7 @@ import {
   removePluginMembership,
   retryConnectorSyncEvent,
   syncConnectorInstanceNow,
+  setConfigObjectExternalKey,
   setConfigObjectLifecycle,
   setConnectorInstanceLifecycle,
   setMarketplaceLifecycle,
@@ -205,6 +207,11 @@ import {
 
 type OrgContext = Context<{ Variables: OrgRouteVariables }>
 type PluginCreateBody = z.infer<typeof pluginCreateSchema>
+
+const externalKeyConflictSchema = z.object({
+  error: z.string(),
+  message: z.string().optional(),
+}).meta({ ref: "PluginArchExternalKeyConflictError" })
 
 const marketplaceConflictSchema = z.object({
   error: z.string(),
@@ -554,6 +561,32 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       }
     })
 
+  withPluginArchOrgContext(app, "put", pluginArchRoutePaths.configObjectKey,
+    paramValidator(configObjectParamsSchema),
+    jsonValidator(configObjectExternalKeySchema),
+    describeRoute({
+      tags: ["Config Objects"],
+      summary: "Set config object key",
+      description: "Sets or clears the stable key a configuration import finds this config object by. The key is unique per organization and never follows the title.",
+      responses: {
+        200: jsonResponse("Config object key updated successfully.", configObjectMutationResponseSchema),
+        400: jsonResponse("The key was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to manage config objects.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to manage this config object.", forbiddenSchema),
+        404: jsonResponse("The config object could not be found.", notFoundSchema),
+        409: jsonResponse("Another config object in the organization already has this key (external_key_taken).", externalKeyConflictSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        const body = validJson<any>(c)
+        return c.json({ ok: true, item: await setConfigObjectExternalKey({ configObjectId: params.configObjectId, context: actorContext(c), externalKey: body.externalKey }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
   for (const [path, action] of [[pluginArchRoutePaths.configObjectArchive, "archive"], [pluginArchRoutePaths.configObjectDelete, "delete"], [pluginArchRoutePaths.configObjectRestore, "restore"]] as const) {
     withPluginArchOrgContext(app, "post", path,
       paramValidator(configObjectParamsSchema),
@@ -824,13 +857,14 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         401: jsonResponse("The caller must be signed in to update plugins.", unauthorizedSchema),
         403: jsonResponse("The caller lacks permission to edit this plugin.", forbiddenSchema),
         404: jsonResponse("The plugin could not be found.", notFoundSchema),
+        409: jsonResponse("Another plugin in the organization already has this key (external_key_taken).", externalKeyConflictSchema),
       },
     }),
     async (c: OrgContext) => {
       try {
         const params = validParam<any>(c)
         const body = validJson<any>(c)
-        return c.json({ ok: true, item: await updatePlugin({ context: actorContext(c), description: body.description, name: body.name, pluginId: params.pluginId }) })
+        return c.json({ ok: true, item: await updatePlugin({ context: actorContext(c), description: body.description, externalKey: body.externalKey, name: body.name, pluginId: params.pluginId }) })
       } catch (error) {
         return routeErrorResponse(c, error)
       }

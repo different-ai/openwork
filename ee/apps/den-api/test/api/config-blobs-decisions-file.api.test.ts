@@ -1,6 +1,6 @@
 /**
  * Config blobs: the answers of one import carry over to a later import of the
- * same source into the same organization, as a file (`configImportDecisionsFile`).
+ * same source into the same organization, as a file.
  *
  * The first import leaves a person out and with them every reference to
  * them, and skips a spend limit whose provider is not here. Its answers are
@@ -25,7 +25,6 @@ after(async () => {
 const { runConfigBlobWorkerOnce } = await import("../../src/config-blobs/worker.js")
 
 const AREAS = "members.people,plugins.plugins,plugins.skills,ai-gateway.limits"
-const FEATURE = "configImportDecisionsFile"
 const BLOCKING = ["needs_mapping", "ref_unresolved", "drift", "collision.unique", "conflict.identity", "blocked", "needs_input"]
 const skillMarkdown = (name: string, body: string) => `---\nname: ${name}\ndescription: A skill of the answers-file import.\n---\n\n${body}\n`
 
@@ -160,16 +159,10 @@ test("the answers of one import, given to the next import of the same file, leav
   await apply(ian, target.orgId, first.id, answered)
   firstId = first.id
 
-  // Off, the same file again asks about the person again.
+  // Without the answers, the same file again asks about the person again.
   const second = await upload(apiB, exported, "Second import")
-  const unanswered = [...blocking(second.plan), ...writes(second.plan)]
-  assert.ok(unanswered.length > 0, describe(planItems(second.plan)))
-
-  // Off, there is no answers file to download or to give.
-  const off = await apiB("GET", `/v1/config-blobs/change-requests/${first.id}/decisions`)
-  assert.equal(off.status, 404, summary(off))
-  assert.equal(field(off.body, "error"), "feature_disabled")
-  assert.equal((await den.setFeature(target.orgId, FEATURE, true)).status, 200, `${FEATURE} on`)
+  const unanswered = await decide(apiB, second.id, {})
+  assert.ok(blocking(unanswered).length + writes(unanswered).length > 0, describe(planItems(unanswered)))
 
   const file = await answersOf(apiB, first.id)
   assert.equal(file.source?.organizationId, source.orgId)
@@ -187,7 +180,7 @@ test("the answers of one import, given to the next import of the same file, leav
   await ok(apiB("POST", `/v1/config-blobs/change-requests/${second.id}/cancel`, {}), "cancel")
 })
 
-test("with the feature on, the next import of the same source starts with the earlier answers", async () => {
+test("the next import of the same source starts with the earlier answers", async () => {
   const third = await upload(apiB, exported, "Third import")
   assert.deepEqual(blocking(third.plan).map(label), [], describe(blocking(third.plan)))
   assert.deepEqual(writes(third.plan).map(label), [], describe(writes(third.plan)))
@@ -213,11 +206,6 @@ test("with the feature on, the next import of the same source starts with the ea
 
 test("an import told to create nothing blocks what the organization doesn't hold", async () => {
   const request = await upload(apiB, exported, "Match only")
-  const off = await apiB("PUT", `/v1/config-blobs/change-requests/${request.id}/decisions`, { createMissing: false })
-  assert.equal(off.status, 404, summary(off))
-  assert.equal(field(off.body, "feature"), "configImportMatchOnly")
-  assert.equal((await den.setFeature(target.orgId, "configImportMatchOnly", true)).status, 200, "configImportMatchOnly on")
-
   const plan = await decide(apiB, request.id, { createMissing: false })
   const creates = planItems(plan).filter((entry) => entry.op === "create")
   assert.ok(creates.some((entry) => entry.area === "ai-gateway.limits"), describe(planItems(plan)))
@@ -233,9 +221,11 @@ test("an import told to create nothing blocks what the organization doesn't hold
   await ok(apiB("POST", `/v1/config-blobs/change-requests/${request.id}/cancel`, {}), "cancel")
 })
 
-test("an answers file is refused for another organization, another source, and with the feature off", async () => {
+test("an answers file is refused for another organization and another source", async () => {
   const file = await answersOf(apiB, firstId)
   const request = await upload(apiB, exported, "Refusals")
+  // Start from no answers, so a refusal that changed the request would show.
+  await decide(apiB, request.id, {})
 
   const elsewhere = await apiB("PUT", `/v1/config-blobs/change-requests/${request.id}/decisions`, { ...file, target: { organizationId: source.orgId } })
   assert.equal(elsewhere.status, 409, summary(elsewhere))
@@ -244,13 +234,6 @@ test("an answers file is refused for another organization, another source, and w
   const otherSource = await apiB("PUT", `/v1/config-blobs/change-requests/${request.id}/decisions`, { ...file, source: { organizationId: target.orgId } })
   assert.equal(otherSource.status, 409, summary(otherSource))
   assert.equal(field(otherSource.body, "error"), "decisions_other_source")
-
-  assert.equal((await den.setFeature(target.orgId, FEATURE, false)).status, 200, `${FEATURE} off`)
-  const off = await apiB("PUT", `/v1/config-blobs/change-requests/${request.id}/decisions`, file)
-  assert.equal(off.status, 404, summary(off))
-  // Plain decisions are not part of the feature.
-  await decide(apiB, request.id, { skips: file.decisions.skips })
-  assert.equal((await den.setFeature(target.orgId, FEATURE, true)).status, 200, `${FEATURE} on`)
 
   // None of the refusals changed the request.
   const plan = asPlan(field((await ok(apiB("GET", `/v1/config-blobs/change-requests/${request.id}/plan`), "plan")).body, "plan"))

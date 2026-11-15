@@ -358,7 +358,8 @@ async function exportAreas(ctx: ConfigAreaContext, keys: readonly ConfigAreaKey[
   const out: ExportedArea[] = []
   for (const key of keys) {
     const area = getConfigArea(key)
-    const items = await area.exportItems(ctx)
+    const read = await area.exportItems(ctx)
+    const items = area.ensureKeys ? await area.ensureKeys(ctx, read) : read
     out.push({ area, items: [...items].sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) })
   }
   return out
@@ -711,8 +712,6 @@ export async function dryRunChangeRequest(org: ConfigOrganization, caller: Confi
   return { plan: planFor(planned.plan, caller, people), errors: people ? planned.fatal.map(people.text) : planned.fatal }
 }
 
-const REUSE_ANSWERS_FEATURE = "configImportDecisionsFile"
-
 /**
  * The answers a new import of a source starts with: those of the last applied
  * import of the same source into this organization. What was matched, pointed
@@ -722,7 +721,7 @@ const REUSE_ANSWERS_FEATURE = "configImportDecisionsFile"
  * change any of them.
  */
 async function earlierAnswers(org: ConfigOrganization, blob: ConfigBlob): Promise<ConfigDecisions | null> {
-  if (!org.features[REUSE_ANSWERS_FEATURE] || !blob.source) return null
+  if (!blob.source) return null
   const earlier = await latestAppliedFromSource(org.id, { instanceId: blob.source.instanceId, organizationId: blob.source.organization.id })
   if (!earlier?.decisions) return null
   const { matches, skips, renames } = earlier.decisions

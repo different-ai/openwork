@@ -7,9 +7,10 @@
  *    plan, with what to do about it; renamed, it applies.
  * 2. Two plugins of one name created by the same import are flagged in the
  *    plan.
- * 3. With `configImportMatchByName` on, a plugin or skill the organization
- *    already shares under the same name is planned as the same item instead
- *    of a second copy; off, it is planned as a new one.
+ * 3. A plugin or skill the organization already shares is the same item when
+ *    it has the same stable key, whatever it is called there; without a key
+ *    in common, the same name. The key gets a default on create and on export,
+ *    is stored, never follows a rename, and can be edited.
  */
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
@@ -24,7 +25,6 @@ after(async () => {
 const { runConfigBlobWorkerOnce } = await import("../../src/config-blobs/worker.js")
 
 const AREAS = "plugins.plugins,plugins.skills"
-const FEATURE = "configImportMatchByName"
 const BLOCKING = ["needs_mapping", "ref_unresolved", "drift", "collision.unique", "conflict.identity", "blocked", "needs_input"]
 const skillMarkdown = (name: string, body: string) => `---\nname: ${name}\ndescription: A skill of the name-matching import.\n---\n\n${body}\n`
 
@@ -126,14 +126,47 @@ async function counts(api: Api): Promise<Record<string, number>> {
   return out
 }
 
+type Seeded = { pluginId: string; skillId: string }
+
 /** A plugin and a skill in it, both shared with everyone when `shared`. */
-async function seed(api: Api, shared: boolean, body: string): Promise<void> {
-  const plugin = await ok(api("POST", "/v1/plugins", { name: "Field notes", description: "Notes from the field" }), "plugin")
+async function seed(api: Api, shared: boolean, body: string, names = { plugin: "Field notes", skill: "field-report" }): Promise<Seeded> {
+  const plugin = await ok(api("POST", "/v1/plugins", { name: names.plugin, description: "Notes from the field" }), "plugin")
   const pluginId = text(field(plugin.body, "item", "id"), "plugin id")
-  const skill = await ok(api("POST", "/v1/config-objects", { type: "skill", sourceMode: "cloud", pluginIds: [pluginId], input: { rawSourceText: skillMarkdown("field-report", body) } }), "skill")
-  if (!shared) return
+  const skill = await ok(api("POST", "/v1/config-objects", { type: "skill", sourceMode: "cloud", pluginIds: [pluginId], input: { rawSourceText: skillMarkdown(names.skill, body) } }), "skill")
+  const skillId = text(field(skill.body, "item", "id"), "skill id")
+  if (!shared) return { pluginId, skillId }
   await ok(api("POST", `/v1/plugins/${pluginId}/access`, { orgWide: true, role: "viewer" }), "plugin grant")
-  await ok(api("POST", `/v1/config-objects/${text(field(skill.body, "item", "id"), "skill id")}/access`, { orgWide: true, role: "viewer" }), "skill grant")
+  await ok(api("POST", `/v1/config-objects/${skillId}/access`, { orgWide: true, role: "viewer" }), "skill grant")
+  return { pluginId, skillId }
+}
+
+async function keysOf(api: Api, seeded: Seeded): Promise<{ plugin: unknown; skill: unknown }> {
+  const [plugin, skill] = await Promise.all([ok(api("GET", `/v1/plugins/${seeded.pluginId}`), "plugin"), ok(api("GET", `/v1/config-objects/${seeded.skillId}`), "skill")])
+  return { plugin: field(plugin.body, "item", "externalKey"), skill: field(skill.body, "item", "externalKey") }
+}
+
+async function setKeys(api: Api, seeded: Seeded, keys: { plugin: string | null; skill: string | null }): Promise<void> {
+  await ok(api("PATCH", `/v1/plugins/${seeded.pluginId}`, { externalKey: keys.plugin }), "plugin key")
+  await ok(api("PUT", `/v1/config-objects/${seeded.skillId}/key`, { externalKey: keys.skill }), "skill key")
+}
+
+/** Imports the export into an organization that already shares the two items, and expects them matched by `tier` with nothing created. */
+async function importMatched(person: Session, orgId: string, tier: string): Promise<void> {
+  const api = den.as(person, orgId)
+  const uploaded = await upload(api, exported, `Import (${tier})`)
+  const plan = await decide(api, uploaded.id, uploaded.plan)
+  assert.deepEqual(blocking(plan).map(label), [], describe(blocking(plan)))
+  assert.deepEqual(planItems(plan).filter((entry) => entry.op === "create").map(label), [], describe(planItems(plan)))
+  assert.equal(item(plan, "plugins.plugins", "Field notes").matchedBy, tier, describe(planItems(plan)))
+  assert.equal(item(plan, "plugins.skills", "field-report").matchedBy, tier, describe(planItems(plan)))
+  await apply(person, orgId, uploaded.id, plan)
+  const now = await counts(api)
+  assert.deepEqual([now["Field notes"], now["field-report"]], [1, 1], JSON.stringify(now))
+  // The same file again: nothing to ask and nothing to write.
+  const again = await upload(api, exported, `Again (${tier})`)
+  assert.deepEqual(blocking(again.plan).map(label), [], describe(blocking(again.plan)))
+  assert.deepEqual(writes(again.plan).map(label), [], describe(writes(again.plan)))
+  await ok(api("POST", `/v1/config-blobs/change-requests/${again.id}/cancel`, {}), "cancel")
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +174,7 @@ async function seed(api: Api, shared: boolean, body: string): Promise<void> {
 const ada = await den.signUp("Ada Owner")
 const source = await den.createOrg(ada, "Name match source")
 const apiA = den.as(ada, source.orgId)
-await seed(apiA, true, "Write the report of the visit.")
+const seededA = await seed(apiA, true, "Write the report of the visit.")
 const exported = asBlob((await ok(apiA("GET", `/v1/config-blobs/export?areas=${AREAS}`), "export")).body)
 
 test("a plugin name the importer already uses is blocked in the plan, and applies once renamed", async () => {
@@ -176,7 +209,7 @@ test("two plugins of one name created by one import are flagged in the plan", as
   const twice: ConfigBlob = JSON.parse(JSON.stringify(exported))
   const plugins = twice.areas.plugins?.plugins?.items
   assert.ok(plugins && plugins[0])
-  plugins.push({ ...plugins[0], id: `${plugins[0].id}`.replace(/.$/, (last) => (last === "0" ? "1" : "0")) })
+  plugins.push({ ...plugins[0], key: "field-notes-copy", id: `${plugins[0].id}`.replace(/.$/, (last) => (last === "0" ? "1" : "0")) })
 
   const { plan } = await upload(apiC, twice, "Import")
   const flagged = planItems(plan).filter((entry) => entry.area === "plugins.plugins" && entry.flags.includes("collision.unique"))
@@ -184,35 +217,80 @@ test("two plugins of one name created by one import are flagged in the plan", as
   assert.match((flagged[0]?.reasons ?? []).join("\n"), /this import creates more than one item with the name "Field notes": rename this one or skip it/)
 })
 
-test("a shared plugin or skill of the same name: a second copy with the feature off, the same item with it on", async () => {
+test("a plugin and a skill get a key when created, and the export carries it", async () => {
+  assert.deepEqual(await keysOf(apiA, seededA), { plugin: "field-notes", skill: "field-report" })
+  assert.equal(exported.areas.plugins?.plugins?.items.find((entry) => entry.name === "Field notes")?.key, "field-notes")
+  assert.equal(exported.areas.plugins?.skills?.items.find((entry) => entry.name === "field-report")?.key, "field-report")
+})
+
+test("an item without a key gets one when it is exported, and keeps it", async () => {
+  const eve = await den.signUp("Eve Exporter")
+  const org = await den.createOrg(eve, "Key on export")
+  const api = den.as(eve, org.orgId)
+  const seeded = await seed(api, true, "Write the report of the visit.")
+  await setKeys(api, seeded, { plugin: null, skill: null })
+  assert.deepEqual(await keysOf(api, seeded), { plugin: null, skill: null })
+  const first = asBlob((await ok(api("GET", `/v1/config-blobs/export?areas=${AREAS}`), "export")).body)
+  assert.equal(first.areas.plugins?.plugins?.items[0]?.key, "field-notes")
+  assert.equal(first.areas.plugins?.skills?.items[0]?.key, "field-report")
+  assert.deepEqual(await keysOf(api, seeded), { plugin: "field-notes", skill: "field-report" })
+  // A rename does not move the key.
+  await ok(api("PATCH", `/v1/plugins/${seeded.pluginId}`, { name: "Field diary" }), "rename")
+  const second = asBlob((await ok(api("GET", `/v1/config-blobs/export?areas=${AREAS}`), "export")).body)
+  assert.equal(second.areas.plugins?.plugins?.items[0]?.name, "Field diary")
+  assert.equal(second.areas.plugins?.plugins?.items[0]?.key, "field-notes")
+})
+
+test("a key another item of the organization has is refused", async () => {
+  const kim = await den.signUp("Kim Keys")
+  const org = await den.createOrg(kim, "Key taken")
+  const api = den.as(kim, org.orgId)
+  const first = await seed(api, true, "One.")
+  const second = await seed(api, true, "Two.", { plugin: "Other notes", skill: "other-report" })
+  // The second of a name gets a suffix, never the same key.
+  assert.deepEqual(await keysOf(api, second), { plugin: "other-notes", skill: "other-report" })
+  const plugin = await api("PATCH", `/v1/plugins/${second.pluginId}`, { externalKey: "field-notes" })
+  assert.equal(plugin.status, 409, summary(plugin))
+  assert.equal(field(plugin.body, "error"), "external_key_taken")
+  const skill = await api("PUT", `/v1/config-objects/${second.skillId}/key`, { externalKey: "field-report" })
+  assert.equal(skill.status, 409, summary(skill))
+  assert.equal(field(skill.body, "error"), "external_key_taken")
+  const invalid = await api("PUT", `/v1/config-objects/${second.skillId}/key`, { externalKey: "Not A Key" })
+  assert.equal(invalid.status, 400, summary(invalid))
+  assert.deepEqual(await keysOf(api, first), { plugin: "field-notes", skill: "field-report" })
+  assert.deepEqual(await keysOf(api, second), { plugin: "other-notes", skill: "other-report" })
+})
+
+test("a shared plugin or skill with the same key is the same item, whatever it is called", async () => {
   const uma = await den.signUp("Uma Importer")
-  const target = await den.createOrg(uma, "Name match shared")
+  const target = await den.createOrg(uma, "Key match renamed")
   const apiD = den.as(uma, target.orgId)
-  await seed(apiD, true, "Write the report of the visit.")
-  const before = await counts(apiD)
-  assert.deepEqual([before["Field notes"], before["field-report"]], [1, 1], JSON.stringify(before))
+  // Created under the same names, so with the same default keys, then renamed: the keys stay.
+  const seeded = await seed(apiD, true, "Write the report of the visit.")
+  await ok(apiD("PATCH", `/v1/plugins/${seeded.pluginId}`, { name: "Field diary" }), "rename")
+  assert.deepEqual(await keysOf(apiD, seeded), { plugin: "field-notes", skill: "field-report" })
+  await importMatched(uma, target.orgId, "key")
+  assert.deepEqual(await keysOf(apiD, seeded), { plugin: "field-notes", skill: "field-report" })
+})
 
-  // Off: both are new items; the plugin is the importer's own name twice, so it is blocked rather than failing at apply.
-  const off = await upload(apiD, exported, "Feature off")
-  assert.equal(item(off.plan, "plugins.skills", "field-report").op, "create", describe(planItems(off.plan)))
-  const blockedPlugin = item(off.plan, "plugins.plugins", "Field notes")
-  assert.equal(blockedPlugin.op, "create", describe([blockedPlugin]))
-  assert.ok(blockedPlugin.flags.includes("blocked"), describe([blockedPlugin]))
-  await ok(apiD("POST", `/v1/config-blobs/change-requests/${off.id}/cancel`, {}), "cancel")
+test("a key edited by hand links two items that were created apart", async () => {
+  const ned = await den.signUp("Ned Importer")
+  const target = await den.createOrg(ned, "Key match edited")
+  const apiE = den.as(ned, target.orgId)
+  const seeded = await seed(apiE, true, "A log of visits.", { plugin: "Visit diary", skill: "visit-log" })
+  assert.deepEqual(await keysOf(apiE, seeded), { plugin: "visit-diary", skill: "visit-log" })
+  await setKeys(apiE, seeded, { plugin: "field-notes", skill: "field-report" })
+  await importMatched(ned, target.orgId, "key")
+  const now = await counts(apiE)
+  assert.deepEqual([now["Visit diary"], now["visit-log"]], [undefined, undefined], JSON.stringify(now))
+})
 
-  // On: each is the one the organization already shares.
-  assert.equal((await den.setFeature(target.orgId, FEATURE, true)).status, 200, `${FEATURE} on`)
-  const uploaded = await upload(apiD, exported, "Feature on")
-  const on = { id: uploaded.id, plan: await decide(apiD, uploaded.id, uploaded.plan) }
-  assert.deepEqual(blocking(on.plan).map(label), [], describe(blocking(on.plan)))
-  assert.deepEqual(planItems(on.plan).filter((entry) => entry.op === "create").map(label), [], describe(planItems(on.plan)))
-  const plugin = item(on.plan, "plugins.plugins", "Field notes")
-  const skill = item(on.plan, "plugins.skills", "field-report")
-  assert.equal(plugin.matchedBy, "natural", describe([plugin]))
-  assert.equal(skill.matchedBy, "natural", describe([skill]))
-  assert.match((plugin.reasons ?? []).join("\n"), /matched by name/)
-  assert.match((skill.reasons ?? []).join("\n"), /matched by type and title/)
-  await apply(uma, target.orgId, on.id, on.plan)
-  const now = await counts(apiD)
-  assert.deepEqual([now["Field notes"], now["field-report"]], [1, 1], JSON.stringify(now))
+test("without a key in common, the same name is the same item, and it takes the file's key", async () => {
+  const oli = await den.signUp("Oli Importer")
+  const target = await den.createOrg(oli, "Name match shared")
+  const apiF = den.as(oli, target.orgId)
+  const seeded = await seed(apiF, true, "Write the report of the visit.")
+  await setKeys(apiF, seeded, { plugin: null, skill: null })
+  await importMatched(oli, target.orgId, "natural")
+  assert.deepEqual(await keysOf(apiF, seeded), { plugin: "field-notes", skill: "field-report" })
 })

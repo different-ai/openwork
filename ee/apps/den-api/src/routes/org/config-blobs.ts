@@ -64,7 +64,6 @@ import {
 } from "../../config-blobs/service.js"
 import { configBlobJsonSchema } from "../../config-blobs/json-schema.js"
 import { allowConfigTokenSecrets, apiKeyHasConfigScope, getConfigTokenAreas, requireConfigScope } from "../../config-blobs/token.js"
-import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, paramValidator, publicRoute, queryValidator, requireOrgPermission } from "../../middleware/index.js"
 import { refuseMachineSecrets } from "../../middleware/refuse-machine-secrets.js"
 import { checkFreshPrivilegedSession, organizationPrivilegedSessionMaxAgeMs } from "../../privileged-session.js"
@@ -82,8 +81,6 @@ import {
 } from "./shared.js"
 
 const BASE = "/v1/config-blobs"
-const DECISIONS_FILE_FEATURE = "configImportDecisionsFile"
-const MATCH_ONLY_FEATURE = "configImportMatchOnly"
 const TAGS = ["Config blobs"]
 
 // ---------------------------------------------------------------------------
@@ -511,10 +508,9 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
   app.get(
     `${BASE}/change-requests/:changeRequestId/decisions`,
     describe("Download a change request's answers", "The answers given on this request (what was matched, pointed elsewhere, left out and renamed) as a file to keep next to the export. Send it as the body of `PUT …/decisions` on a later import of the same source into this organization to give the same answers again.", { status: 200, schema: configDecisionsFileSchema, description: "The answers file." }, {
-      404: jsonResponse("The request doesn't exist, or the feature is off.", errorSchema),
+      404: jsonResponse("The request doesn't exist.", errorSchema),
     }),
     orgMemberRoute(),
-    requireFeature(DECISIONS_FILE_FEATURE),
     primaryReadsMiddleware,
     requireConfigScope("config:submit"),
     paramValidator(changeRequestParams),
@@ -545,11 +541,7 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
         const { org, caller } = await configCaller(c, getConfigTokenAreas(c))
         const body = c.req.valid("json")
         const id = c.req.valid("param").changeRequestId
-        if (!("format" in body)) {
-          if (body.createMissing === false && !org.features[MATCH_ONLY_FEATURE]) return c.json({ error: "feature_disabled", feature: MATCH_ONLY_FEATURE }, 404)
-          return c.json(await updateDecisions(org.id, id, caller, body))
-        }
-        if (!org.features[DECISIONS_FILE_FEATURE]) return c.json({ error: "feature_disabled", feature: DECISIONS_FILE_FEATURE }, 404)
+        if (!("format" in body)) return c.json(await updateDecisions(org.id, id, caller, body))
         return c.json(await replayDecisionsFile(org.id, id, caller, body))
       } catch (error) {
         return refusal(error)

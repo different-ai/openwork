@@ -233,9 +233,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
   // `people/<member id>` (exports for callers who may not read emails) compares as the member's email here.
   const blobAreas = input.people ? namePeopleByEmail(input.blobAreas, input.people) : input.blobAreas
   // Natural keys behind a feature are used only while it is on.
-  const ordered = sortAreas(input.areas.map((area) => area.naturalKeys.some((key) => key.feature)
-    ? { ...area, naturalKeys: area.naturalKeys.filter((key) => !key.feature || input.features[key.feature] === true) }
-    : area))
+  const ordered = sortAreas(input.areas)
   const areaByKey = new Map(ordered.map((area) => [area.key, area]))
   const scope = new Set(input.scope)
   for (const key of input.scope) if (!areaByKey.has(key)) addError(`area ${key} is not available on this server`, key)

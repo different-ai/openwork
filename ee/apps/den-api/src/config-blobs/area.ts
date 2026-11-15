@@ -133,8 +133,6 @@ export type ConfigNaturalKey = {
   label: string
   /** Normalised value, or null when the item has none. Only used when unique on BOTH sides. */
   get: (item: ConfigItem) => string | null
-  /** The key is only used while this feature is on for the organization. */
-  feature?: FeatureKey
 }
 
 /**
@@ -190,6 +188,13 @@ export type ConfigArea = {
   /** SQL table names whose config this area owns (coverage check). */
   tables: string[]
   naturalKeys: ConfigNaturalKey[]
+  /**
+   * The area's keys are given by the server (a default on first create,
+   * export or import) and edited on the item, not by imports: an import only
+   * fills the key of a matched item that has none. A different key on the two
+   * sides is not a change, and the key is left out of `rev`.
+   */
+  assignedKeys?: boolean
   similarity?: ConfigSimilarity
   /** Spec paths holding `$secret` placeholders, e.g. "credentials.apiKey", "headers[].value". */
   secretFields: string[]
@@ -282,6 +287,12 @@ export type ConfigArea = {
    */
   preflight?(ctx: ConfigAreaContext, op: ConfigApplyOp, info: ConfigPreflightInfo): Promise<ConfigPreflightResult | null>
   exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]>
+  /**
+   * Called on the items of an export before the file is written: give every
+   * item without a key its key, store it, and return the items with their
+   * keys. Only for `assignedKeys` areas.
+   */
+  ensureKeys?(ctx: ConfigAreaContext, items: ConfigItem[]): Promise<ConfigItem[]>
   /**
    * Read only these items (by local id). Used by apply to re-check drift and to
    * snapshot just the items about to be written, instead of exporting the area.

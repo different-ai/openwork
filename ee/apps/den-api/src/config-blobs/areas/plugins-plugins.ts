@@ -61,7 +61,10 @@ import { defineConfigArea, type ConfigAreaContext, type ConfigItem } from "../ar
 import {
   accessByRoleSchema,
   accessSpec,
+  adoptItemKey,
   applyAccess,
+  ensureItemKeys,
+  itemKey,
   exportedRefIds,
   jaccard,
   loadAudienceNames,
@@ -253,7 +256,7 @@ async function readPlugins(ctx: ConfigAreaContext, ids: readonly string[] | null
       })
     return {
       id: row.id,
-      key: null,
+      key: row.externalKey,
       name: row.name,
       spec: {
         description: row.description ?? null,
@@ -370,14 +373,15 @@ export const pluginsPluginsArea = defineConfigArea({
   viewPermission: "sharing.manage_all",
   managePermission: "sharing.manage_all",
   tables: ["plugin", "plugin_config_object", "plugin_access_grant", "plugin_mcp_requirement_binding", "marketplace_plugin"],
+  assignedKeys: true,
+  ensureKeys: (ctx, items) => ensureItemKeys("plugin", ctx.organizationId, items),
   naturalKeys: [{
     // Built-in plugins have one copy per organization, named the same everywhere.
     label: "built-in plugin name",
     get: (item) => item.spec.builtIn === true ? `builtin:${normalizeText(item.name)}` : null,
   }, {
-    // A plugin of the same name the organization already shares is the same plugin, not a second one.
+    // First contact, for plugins that have no key in common yet: the same name is the same plugin.
     label: "name",
-    feature: "configImportMatchByName",
     get: (item) => item.spec.builtIn === true ? null : normalizeText(item.name) || null,
   }],
   // createPlugin refuses a second active plugin of the same name by the same person: an import's creates are all one person's.
@@ -470,6 +474,7 @@ export const pluginsPluginsArea = defineConfigArea({
           context: actor,
           ...(op.preferredId ? { id: normalizeDenTypeId("plugin", op.preferredId) } : {}),
           name,
+          ...(itemKey(op.item.key) ? { externalKey: itemKey(op.item.key) } : {}),
           description: spec.description,
           sourceFormat: spec.sourceFormat,
           sourceRepositoryUrl: spec.sourceRepositoryUrl,
@@ -499,6 +504,7 @@ export const pluginsPluginsArea = defineConfigArea({
       pluginId = normalizeDenTypeId("plugin", op.targetId)
       const id = normalizeDenTypeId("plugin", pluginId)
       const renamed = name !== op.previous.name
+      await adoptItemKey({ kind: "plugin", organizationId: ctx.organizationId, id }, op, log, warnings)
       if (renamed || touches(op.changes, "description")) {
         await log.run(
           renamed && touches(op.changes, "description") ? { action: "update", target: "plugin", detail: "name and description" }
