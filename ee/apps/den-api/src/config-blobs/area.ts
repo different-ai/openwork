@@ -188,6 +188,13 @@ export type ConfigArea = {
   /** SQL table names whose config this area owns (coverage check). */
   tables: string[]
   naturalKeys: ConfigNaturalKey[]
+  /**
+   * The area's keys are given by the server (a default on first create,
+   * export or import) and edited on the item, not by imports: an import only
+   * fills the key of a matched item that has none. A different key on the two
+   * sides is not a change, and the key is left out of `rev`.
+   */
+  assignedKeys?: boolean
   similarity?: ConfigSimilarity
   /** Spec paths holding `$secret` placeholders, e.g. "credentials.apiKey", "headers[].value". */
   secretFields: string[]
@@ -249,6 +256,13 @@ export type ConfigArea = {
   /** Unique constraints on the target that a create/rename could break, e.g. team name. */
   uniqueFields?: Array<{ label: string; get: (item: ConfigItem | ResolvedConfigItem) => string | null }>
   /**
+   * Values two items created by one import can't share, though items the
+   * target already holds may (a plugin's name is unique among the plugins one
+   * person created, and an import creates all of its plugins as one person).
+   * The second create would fail at apply, so both are flagged in the plan.
+   */
+  uniqueAmongCreates?: Array<{ label: string; get: (item: ConfigItem | ResolvedConfigItem) => string | null }>
+  /**
    * Whether `apply` writes only through `ctx.db` (so the engine may pass a transaction).
    * False when it calls services that use the global db or make external calls.
    */
@@ -273,6 +287,12 @@ export type ConfigArea = {
    */
   preflight?(ctx: ConfigAreaContext, op: ConfigApplyOp, info: ConfigPreflightInfo): Promise<ConfigPreflightResult | null>
   exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]>
+  /**
+   * Called on the items of an export before the file is written: give every
+   * item without a key its key, store it, and return the items with their
+   * keys. Only for `assignedKeys` areas.
+   */
+  ensureKeys?(ctx: ConfigAreaContext, items: ConfigItem[]): Promise<ConfigItem[]>
   /**
    * Read only these items (by local id). Used by apply to re-check drift and to
    * snapshot just the items about to be written, instead of exporting the area.

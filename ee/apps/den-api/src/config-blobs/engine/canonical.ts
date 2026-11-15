@@ -96,7 +96,7 @@ export function specRev(area: ArrayLayout, spec: unknown): string {
 }
 
 /** What `itemRev` reads of an area: its array layout and whether names are informational. */
-export type RevLayout = ArrayLayout & Pick<ConfigArea, "informationalName">
+export type RevLayout = ArrayLayout & Pick<ConfigArea, "informationalName" | "assignedKeys">
 
 /**
  * `rev` of an item: `sha256:<hex>` over its normalized spec, its name and its
@@ -108,7 +108,7 @@ export function itemRev(area: RevLayout, item: { name: string; key?: string | nu
   return sha256(stringifyCanonical({
     spec: normalizeSpecValue(area, item.spec),
     name: area.informationalName ? null : item.name,
-    key: item.key ?? null,
+    key: area.assignedKeys ? null : item.key ?? null,
   }))
 }
 

@@ -409,9 +409,33 @@ export const configDecisionsSchema = z.object({
   /** For a create that collides on a unique name: the new name to use. */
   renames: z.array(z.object({ area: configAreaKeySchema, ref: z.string(), name: z.string().min(1).max(300) }).strict()).default([]),
   people: z.object({ sendInviteEmails: z.boolean().default(false) }).strict().default({ sendInviteEmails: false }),
+  /** `false`: this import only changes what already exists. An item that would be created is blocked until it is matched or left out. */
+  createMissing: z.boolean().optional(),
+  /** Set by the server when these answers started as those of an earlier import of the same source: that request's id. */
+  reusedFrom: z.string().optional(),
 }).strict();
 export type ConfigDecisions = z.infer<typeof configDecisionsSchema>;
 export const EMPTY_CONFIG_DECISIONS: ConfigDecisions = { matches: [], refs: [], deletes: [], overrides: [], skips: [], renames: [], people: { sendInviteEmails: false } };
+
+/**
+ * The answers of one import, kept next to the export they were given for and
+ * sent to `PUT …/change-requests/:id/decisions` of a later import of the same
+ * source into the same organization. It carries what was matched, pointed
+ * elsewhere, left out and renamed; deletes, overwrites of drifted items and
+ * invitation emails are decided again each time.
+ */
+export const CONFIG_DECISIONS_FILE_FORMAT = "openwork.config-decisions";
+export const configDecisionsFileSchema = z.object({
+  format: z.literal(CONFIG_DECISIONS_FILE_FORMAT),
+  formatVersion: z.literal(1),
+  /** The organization the imported file was exported from; null when the file did not say. */
+  source: z.object({ organizationId: z.string() }).strict().nullable(),
+  /** The organization the answers were given in: ids in them are its items. */
+  target: z.object({ organizationId: z.string() }).strict(),
+  changeRequestId: z.string(),
+  decisions: configDecisionsSchema.pick({ matches: true, refs: true, skips: true, renames: true }).strict(),
+}).strict();
+export type ConfigDecisionsFile = z.infer<typeof configDecisionsFileSchema>;
 
 export const configSecretInputSchema = z.discriminatedUnion("decision", [
   z.object({ path: z.string(), decision: z.literal("keep") }).strict(),

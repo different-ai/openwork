@@ -232,12 +232,17 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
 
   // `people/<member id>` (exports for callers who may not read emails) compares as the member's email here.
   const blobAreas = input.people ? namePeopleByEmail(input.blobAreas, input.people) : input.blobAreas
+  // Natural keys behind a feature are used only while it is on.
   const ordered = sortAreas(input.areas)
   const areaByKey = new Map(ordered.map((area) => [area.key, area]))
   const scope = new Set(input.scope)
   for (const key of input.scope) if (!areaByKey.has(key)) addError(`area ${key} is not available on this server`, key)
   for (const key of Object.keys(blobAreas)) {
     if (!input.scope.some((scoped) => scoped === key)) issues.push({ level: "warning", message: `area ${key} is in the blob but not in its scope: ignored` })
+  }
+  if (decisions.reusedFrom) {
+    const answers = decisions.matches.length + decisions.refs.length + decisions.skips.length + decisions.renames.length
+    issues.push({ level: "info", message: `${answers} ${answers === 1 ? "answer was" : "answers were"} reused from an earlier import of this source (${decisions.reusedFrom}): what was left out, pointed elsewhere, matched or renamed then is answered the same way here. Change any of them in this review.` })
   }
   if (input.mode === "merge" && decisions.deletes.length > 0) issues.push({ level: "warning", message: "deletes are ignored in merge mode" })
 
@@ -602,6 +607,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
           : { area: area.key, ref: match.ref, kind: "create", op: "create", matchedBy: match.matchedBy, item: execItem, refs, secrets: secrets.execution, name: blob.name, changes: [], secretPaths: [], irreversible: [], ...(preferredId ? { preferredId } : {}) }
         setIrreversible(area, item, draft.exec, decisions)
         applyVerdict(item, preflight.get(key))
+        if (decisions.createMissing === false && draft.exec.kind === "create") applyVerdict(item, { block: MATCH_ONLY_BLOCK })
         draft.uniqueProbe = { id: match.target?.id ?? blobItemAsConfigItem(blob, match.index).id, key: blob.key ?? match.target?.key ?? null, name: blob.name, spec: localized }
       }
     }
@@ -668,6 +674,26 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         if (value === null || (counts.get(value) ?? 0) < 2) continue
         if (!draft.item.flags.includes("collision.unique")) draft.item.flags.push("collision.unique")
         draft.item.reasons = [...(draft.item.reasons ?? []), `another item already has ${unique.label} "${value}": rename this one, match it to the existing item, or skip it`]
+      }
+    }
+  }
+
+  // Creates of one import that can't both exist (see `uniqueAmongCreates`).
+  for (const state of states) {
+    if (!state.match || !state.area.uniqueAmongCreates?.length) continue
+    const creates = (blobDrafts.get(state.area.key) ?? []).filter((draft) => draft.exec?.kind === "create" && draft.uniqueProbe)
+    for (const unique of state.area.uniqueAmongCreates) {
+      const counts = new Map<string, number>()
+      const valueOf = (draft: Draft) => draft.uniqueProbe ? unique.get(draft.uniqueProbe) : null
+      for (const draft of creates) {
+        const value = valueOf(draft)
+        if (value !== null) counts.set(value, (counts.get(value) ?? 0) + 1)
+      }
+      for (const draft of creates) {
+        const value = valueOf(draft)
+        if (value === null || (counts.get(value) ?? 0) < 2) continue
+        if (!draft.item.flags.includes("collision.unique")) draft.item.flags.push("collision.unique")
+        draft.item.reasons = [...(draft.item.reasons ?? []), `this import creates more than one item with ${unique.label} "${draft.item.blob?.name ?? value}": rename this one or skip it`]
       }
     }
   }
@@ -770,6 +796,8 @@ export function withInviteEmails(execution: ExecutionPlan, send: boolean): Execu
   if (!send) return execution
   return { ...execution, ops: execution.ops.map((op) => withInviteEmail(op, send)) }
 }
+
+const MATCH_ONLY_BLOCK = "This import only changes what already exists, and nothing here matches this item: choose the item it is, or leave it out."
 
 /** A preflight `block` (the `blocked` flag and its reason) and warnings on a planned write. */
 function applyVerdict(item: ConfigPlanItem, verdict: ConfigPreflightResult | undefined): void {

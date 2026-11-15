@@ -34,6 +34,16 @@ For each area: candidates are the blob items and the target items in scope. Pair
 | 6. Proposed | similarity score above a threshold, see below | **no: needs confirmation** |
 | 7. None | — | becomes *create* (blob side) or *untouched / delete* (target side, depending on mode) |
 
+### Keys of plugins and skills
+
+Teams, collections, permission sets, limits and desktop policies take the key the admin gives them. Plugins and config objects (skills, agents, commands…) get theirs from the server (`assignedKeys` on the area), so an export always carries one:
+
+- **Default.** A slug of the name (`Field notes` → `field-notes`; `-2`, `-3`… when another item of the organization has it), unique per organization. It is assigned once, on create, or on the first export or import of an item that has none, and stored in `external_key`.
+- **Never recomputed.** A rename does not move the key, so the same item is found again whatever it is called by then.
+- **Editable.** `PATCH /v1/plugins/:pluginId` (`externalKey`, null clears it) and `PUT /v1/config-objects/:configObjectId/key`; a key another item has is refused (409 `external_key_taken`). Giving two items created apart the same key on both sides links them.
+- **Import.** A matched item that has no key takes the file's (shown as a `key` change); an item that has a key keeps it, and a different key on the two sides is not a change. The key is left out of these areas' `rev`. A create whose key is already taken here gets a default instead.
+- **Name fallback.** Without a key in common (the first contact of two organizations that created the same item apart), tier 5 matches a shared plugin by name and a shared config object by type and title.
+
 **What tiers 1 to 5 are:** checks for being the same item, never guesses. **Tier 6 only produces suggestions.**
 
 **When tiers disagree** (the ID matches item A, but the key matches item B), the item is marked `conflict.identity` and must be confirmed. We never pick one ourselves.
