@@ -131,6 +131,7 @@ import {
   getChangeRequest,
   deleteAliasesForLocalIds,
   insertAliases,
+  latestAppliedFromSource,
   listAliasRows,
   listChangeRequests,
   listChangeRequestStatuses,
@@ -710,6 +711,26 @@ export async function dryRunChangeRequest(org: ConfigOrganization, caller: Confi
   return { plan: planFor(planned.plan, caller, people), errors: people ? planned.fatal.map(people.text) : planned.fatal }
 }
 
+const REUSE_ANSWERS_FEATURE = "configImportDecisionsFile"
+
+/**
+ * The answers a new import of a source starts with: those of the last applied
+ * import of the same source into this organization. What was matched, pointed
+ * elsewhere, left out and renamed; an invitation is not repeated (the person
+ * was invited then), and deletes, overwrites and invitation emails are
+ * decided each time. The plan says they were reused, and the review can
+ * change any of them.
+ */
+async function earlierAnswers(org: ConfigOrganization, blob: ConfigBlob): Promise<ConfigDecisions | null> {
+  if (!org.features[REUSE_ANSWERS_FEATURE] || !blob.source) return null
+  const earlier = await latestAppliedFromSource(org.id, { instanceId: blob.source.instanceId, organizationId: blob.source.organization.id })
+  if (!earlier?.decisions) return null
+  const { matches, skips, renames } = earlier.decisions
+  const refs = earlier.decisions.refs.filter((entry) => !("invite" in entry.resolution))
+  if (matches.length + refs.length + skips.length + renames.length === 0) return null
+  return { ...EMPTY_CONFIG_DECISIONS, matches, refs, skips, renames, reusedFrom: earlier.id }
+}
+
 export async function submitChangeRequest(org: ConfigOrganization, caller: ConfigCaller, input: SubmitInput, options: { source?: "ui" | "api" | "revert"; revertsChangeRequestId?: ConfigChangeRequestId; decisions?: ConfigDecisions } = {}): Promise<ConfigChangeRequestSummary> {
   const source = options.source ?? (caller.apiKeyId ? "api" : "ui")
   const { blob, scope } = checkSubmission(caller, input.blob, { internal: source === "revert" })
@@ -730,7 +751,7 @@ export async function submitChangeRequest(org: ConfigOrganization, caller: Confi
     sourceDeployment: blob.source?.deployment ?? null,
     areas: scope,
     baseHash: blob.baseHash ?? null,
-    decisions: options.decisions ?? null,
+    decisions: options.decisions ?? (source === "revert" ? null : await earlierAnswers(org, blob)),
     autoApply: input.autoApply,
     availableAt: new Date(),
     ...(options.revertsChangeRequestId ? { revertsChangeRequestId: options.revertsChangeRequestId } : {}),
@@ -1077,7 +1098,7 @@ export async function replayDecisionsFile(organizationId: OrganizationId, id: st
   if ((file.source?.organizationId ?? null) !== sourceOrganizationId(row)) {
     throw new ConfigBlobError(409, { error: "decisions_other_source", message: "These answers were given for a file exported from another organization. Answers only carry over to a later import of the same source." })
   }
-  return updateDecisions(organizationId, id, caller, { ...(row.decisions ?? EMPTY_CONFIG_DECISIONS), ...file.decisions })
+  return updateDecisions(organizationId, id, caller, { ...(row.decisions ?? EMPTY_CONFIG_DECISIONS), ...file.decisions, reusedFrom: file.changeRequestId })
 }
 
 /**

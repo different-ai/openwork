@@ -11,7 +11,13 @@ Reviewing a configuration import means answering questions: leave this
 person out, point this reference at that team, treat this item as that one,
 rename this plugin. Importing the same export again asked all of them again.
 
-With the feature on, the API has an answers file:
+With the feature on, a new import starts with the answers of the last
+applied import of the same source into the same organization. The plan says
+how many answers were reused and from which request, and the review can
+change any of them. An invitation is not repeated (the person was invited
+then).
+
+The API also has an answers file, for answers kept outside OpenWork:
 
 - `GET /v1/config-blobs/change-requests/:id/decisions` downloads the answers
   given on a request (`format: "openwork.config-decisions"`). Keep it next to
@@ -36,18 +42,18 @@ request already says about them is kept.
   default model's team) is still refused in the plan, so replaying never
   widens who an item applies to.
 - Answers about items the later file no longer holds do nothing.
-- Nothing is stored on the server besides what a request already stores.
+- Nothing new is stored: the answers are read from the earlier request.
 
 ## How to try it
 
 Turn it on for one organization in `/admin`. Import an export, answer the
 review, apply. Download the answers of that request, upload the same export
-again, and `PUT` the answers file to the new request's decisions: the plan
-comes back without open questions.
+again: the plan comes back without open questions. With a file: download the
+answers of a request and `PUT` them to another request's decisions.
 
 ## Turning it off
 
-The download route answers 404 `feature_disabled`, and so does a `PUT` whose
+A new import starts unanswered. The download route answers 404 `feature_disabled`, and so does a `PUT` whose
 body is an answers file. Plain decisions keep working. Files already
 downloaded stay valid for when it is turned on again.
 

@@ -83,6 +83,7 @@ import {
 
 const BASE = "/v1/config-blobs"
 const DECISIONS_FILE_FEATURE = "configImportDecisionsFile"
+const MATCH_ONLY_FEATURE = "configImportMatchOnly"
 const TAGS = ["Config blobs"]
 
 // ---------------------------------------------------------------------------
@@ -544,7 +545,10 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
         const { org, caller } = await configCaller(c, getConfigTokenAreas(c))
         const body = c.req.valid("json")
         const id = c.req.valid("param").changeRequestId
-        if (!("format" in body)) return c.json(await updateDecisions(org.id, id, caller, body))
+        if (!("format" in body)) {
+          if (body.createMissing === false && !org.features[MATCH_ONLY_FEATURE]) return c.json({ error: "feature_disabled", feature: MATCH_ONLY_FEATURE }, 404)
+          return c.json(await updateDecisions(org.id, id, caller, body))
+        }
         if (!org.features[DECISIONS_FILE_FEATURE]) return c.json({ error: "feature_disabled", feature: DECISIONS_FILE_FEATURE }, 404)
         return c.json(await replayDecisionsFile(org.id, id, caller, body))
       } catch (error) {

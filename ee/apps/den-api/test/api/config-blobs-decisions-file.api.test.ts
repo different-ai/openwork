@@ -160,6 +160,11 @@ test("the answers of one import, given to the next import of the same file, leav
   await apply(ian, target.orgId, first.id, answered)
   firstId = first.id
 
+  // Off, the same file again asks about the person again.
+  const second = await upload(apiB, exported, "Second import")
+  const unanswered = [...blocking(second.plan), ...writes(second.plan)]
+  assert.ok(unanswered.length > 0, describe(planItems(second.plan)))
+
   // Off, there is no answers file to download or to give.
   const off = await apiB("GET", `/v1/config-blobs/change-requests/${first.id}/decisions`)
   assert.equal(off.status, 404, summary(off))
@@ -172,11 +177,6 @@ test("the answers of one import, given to the next import of the same file, leav
   assert.ok(file.decisions.skips.length === 2 && file.decisions.refs.length > 0, JSON.stringify(file.decisions))
   assert.deepEqual(Object.keys(file.decisions).sort(), ["matches", "refs", "renames", "skips"])
 
-  // The same file again: unanswered, it asks about the person again.
-  const second = await upload(apiB, exported, "Second import")
-  const unanswered = [...blocking(second.plan), ...writes(second.plan)]
-  assert.ok(unanswered.length > 0, describe(planItems(second.plan)))
-
   const replayed = await decide(apiB, second.id, file)
   assert.deepEqual(blocking(replayed).map(label), [], describe(blocking(replayed)))
   assert.deepEqual(writes(replayed).map(label), [], describe(writes(replayed)))
@@ -184,6 +184,53 @@ test("the answers of one import, given to the next import of the same file, leav
   assert.equal(item(replayed, "ai-gateway.limits", "Engineering spend").op, "skip")
   // What the file says is what the request now holds, and its own answers file is the same.
   assert.deepEqual((await answersOf(apiB, second.id)).decisions, file.decisions)
+  await ok(apiB("POST", `/v1/config-blobs/change-requests/${second.id}/cancel`, {}), "cancel")
+})
+
+test("with the feature on, the next import of the same source starts with the earlier answers", async () => {
+  const third = await upload(apiB, exported, "Third import")
+  assert.deepEqual(blocking(third.plan).map(label), [], describe(blocking(third.plan)))
+  assert.deepEqual(writes(third.plan).map(label), [], describe(writes(third.plan)))
+  assert.equal(item(third.plan, "members.people", cal.name).op, "skip")
+  // The plan says where the answers came from, and the request holds them.
+  assert.ok(third.plan.issues.some((issue) => issue.level === "info" && issue.message.includes(firstId) && /reused from an earlier import/.test(issue.message)), JSON.stringify(third.plan.issues))
+  const saved = field((await ok(apiB("GET", `/v1/config-blobs/change-requests/${third.id}/plan`), "plan")).body, "decisions")
+  assert.equal(field(saved, "reusedFrom"), firstId)
+  // The review can still change them: without the answers, the questions are back.
+  const cleared = await decide(apiB, third.id, {})
+  assert.ok(blocking(cleared).length + writes(cleared).length > 0, describe(planItems(cleared)))
+  assert.ok(!cleared.issues.some((issue) => /reused from an earlier import/.test(issue.message)))
+  await ok(apiB("POST", `/v1/config-blobs/change-requests/${third.id}/cancel`, {}), "cancel")
+
+  // An export of another organization starts unanswered.
+  const other = await den.createOrg(ada, "Answers other source")
+  const apiO = den.as(ada, other.orgId)
+  await ok(apiO("POST", "/v1/plugins", { name: "Other notes", description: "Notes of another organization" }), "other plugin")
+  const fromOther = await upload(apiB, asBlob((await ok(apiO("GET", "/v1/config-blobs/export?areas=plugins.plugins"), "other export")).body), "Other source")
+  assert.ok(!fromOther.plan.issues.some((issue) => /reused from an earlier import/.test(issue.message)), JSON.stringify(fromOther.plan.issues))
+  await ok(apiB("POST", `/v1/config-blobs/change-requests/${fromOther.id}/cancel`, {}), "cancel")
+})
+
+test("an import told to create nothing blocks what the organization doesn't hold", async () => {
+  const request = await upload(apiB, exported, "Match only")
+  const off = await apiB("PUT", `/v1/config-blobs/change-requests/${request.id}/decisions`, { createMissing: false })
+  assert.equal(off.status, 404, summary(off))
+  assert.equal(field(off.body, "feature"), "configImportMatchOnly")
+  assert.equal((await den.setFeature(target.orgId, "configImportMatchOnly", true)).status, 200, "configImportMatchOnly on")
+
+  const plan = await decide(apiB, request.id, { createMissing: false })
+  const creates = planItems(plan).filter((entry) => entry.op === "create")
+  assert.ok(creates.some((entry) => entry.area === "ai-gateway.limits"), describe(planItems(plan)))
+  for (const entry of creates) {
+    assert.ok(entry.flags.includes("blocked"), describe([entry]))
+    assert.match(reasons(entry), /only changes what already exists/)
+  }
+  // What the first import created is still recognised, and not blocked.
+  assert.ok(!item(plan, "plugins.plugins", "Field notes").flags.includes("blocked"), describe(planItems(plan)))
+  // Left out, nothing is blocked any more.
+  const skipped = await decide(apiB, request.id, { createMissing: false, skips: creates.map((entry) => ({ area: entry.area, ref: entry.ref })) })
+  assert.deepEqual(planItems(skipped).filter((entry) => entry.flags.includes("blocked")).map(label), [])
+  await ok(apiB("POST", `/v1/config-blobs/change-requests/${request.id}/cancel`, {}), "cancel")
 })
 
 test("an answers file is refused for another organization, another source, and with the feature off", async () => {
@@ -213,7 +260,8 @@ test("an answers file is refused for another organization, another source, and w
 
 test("a replayed \"leave it out\" is still refused where it would widen who an item applies to", async () => {
   const request = await upload(apiB, exported, "Widening")
-  const limit = item(request.plan, "ai-gateway.limits", "Engineering spend")
+  // Without the earlier answers (which skip the limit), the limit is planned.
+  const limit = item(await decide(apiB, request.id, {}), "ai-gateway.limits", "Engineering spend")
   const provider = (limit.refs ?? []).find((ref) => ref.path === "provider")
   assert.ok(provider && (provider.refuses ?? []).includes("drop"), describe([limit]))
 

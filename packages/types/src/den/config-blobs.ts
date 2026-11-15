@@ -409,6 +409,10 @@ export const configDecisionsSchema = z.object({
   /** For a create that collides on a unique name: the new name to use. */
   renames: z.array(z.object({ area: configAreaKeySchema, ref: z.string(), name: z.string().min(1).max(300) }).strict()).default([]),
   people: z.object({ sendInviteEmails: z.boolean().default(false) }).strict().default({ sendInviteEmails: false }),
+  /** `false`: this import only changes what already exists. An item that would be created is blocked until it is matched or left out. */
+  createMissing: z.boolean().optional(),
+  /** Set by the server when these answers started as those of an earlier import of the same source: that request's id. */
+  reusedFrom: z.string().optional(),
 }).strict();
 export type ConfigDecisions = z.infer<typeof configDecisionsSchema>;
 export const EMPTY_CONFIG_DECISIONS: ConfigDecisions = { matches: [], refs: [], deletes: [], overrides: [], skips: [], renames: [], people: { sendInviteEmails: false } };

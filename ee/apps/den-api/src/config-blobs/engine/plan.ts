@@ -242,6 +242,10 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
   for (const key of Object.keys(blobAreas)) {
     if (!input.scope.some((scoped) => scoped === key)) issues.push({ level: "warning", message: `area ${key} is in the blob but not in its scope: ignored` })
   }
+  if (decisions.reusedFrom) {
+    const answers = decisions.matches.length + decisions.refs.length + decisions.skips.length + decisions.renames.length
+    issues.push({ level: "info", message: `${answers} ${answers === 1 ? "answer was" : "answers were"} reused from an earlier import of this source (${decisions.reusedFrom}): what was left out, pointed elsewhere, matched or renamed then is answered the same way here. Change any of them in this review.` })
+  }
   if (input.mode === "merge" && decisions.deletes.length > 0) issues.push({ level: "warning", message: "deletes are ignored in merge mode" })
 
   // Size caps: matching and diffing are at least linear per item, and
@@ -605,6 +609,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
           : { area: area.key, ref: match.ref, kind: "create", op: "create", matchedBy: match.matchedBy, item: execItem, refs, secrets: secrets.execution, name: blob.name, changes: [], secretPaths: [], irreversible: [], ...(preferredId ? { preferredId } : {}) }
         setIrreversible(area, item, draft.exec, decisions)
         applyVerdict(item, preflight.get(key))
+        if (decisions.createMissing === false && draft.exec.kind === "create") applyVerdict(item, { block: MATCH_ONLY_BLOCK })
         draft.uniqueProbe = { id: match.target?.id ?? blobItemAsConfigItem(blob, match.index).id, key: blob.key ?? match.target?.key ?? null, name: blob.name, spec: localized }
       }
     }
@@ -793,6 +798,8 @@ export function withInviteEmails(execution: ExecutionPlan, send: boolean): Execu
   if (!send) return execution
   return { ...execution, ops: execution.ops.map((op) => withInviteEmail(op, send)) }
 }
+
+const MATCH_ONLY_BLOCK = "This import only changes what already exists, and nothing here matches this item: choose the item it is, or leave it out."
 
 /** A preflight `block` (the `blocked` flag and its reason) and warnings on a planned write. */
 function applyVerdict(item: ConfigPlanItem, verdict: ConfigPreflightResult | undefined): void {
