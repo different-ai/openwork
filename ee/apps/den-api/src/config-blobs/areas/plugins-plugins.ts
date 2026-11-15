@@ -38,6 +38,7 @@ import {
   MarketplaceTable,
   PluginConfigObjectTable,
   PluginMcpRequirementBindingTable,
+  PluginTable,
   externalMcpAuthTypeValues,
 } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -373,7 +374,14 @@ export const pluginsPluginsArea = defineConfigArea({
     // Built-in plugins have one copy per organization, named the same everywhere.
     label: "built-in plugin name",
     get: (item) => item.spec.builtIn === true ? `builtin:${normalizeText(item.name)}` : null,
+  }, {
+    // A plugin of the same name the organization already shares is the same plugin, not a second one.
+    label: "name",
+    feature: "configImportMatchByName",
+    get: (item) => item.spec.builtIn === true ? null : normalizeText(item.name) || null,
   }],
+  // createPlugin refuses a second active plugin of the same name by the same person: an import's creates are all one person's.
+  uniqueAmongCreates: [{ label: "the name", get: (item) => item.name.trim() || null }],
   similarity: (blob, target) => {
     const reasons: string[] = []
     const name = nameSimilarity(blob.name, target.name)
@@ -419,7 +427,20 @@ export const pluginsPluginsArea = defineConfigArea({
     return readPlugins(ctx, ids)
   },
 
-  preflight: ownManagerAccessPreflight,
+  async preflight(ctx, op) {
+    if (op.kind !== "create") return ownManagerAccessPreflight(ctx, op)
+    // The same check createPlugin makes, before approval instead of in the middle of the apply.
+    const name = op.item.name.trim()
+    const [existing] = await ctx.db.select({ id: PluginTable.id }).from(PluginTable).where(and(
+      eq(PluginTable.organizationId, normalizeDenTypeId("organization", ctx.organizationId)),
+      eq(PluginTable.createdByOrgMembershipId, normalizeDenTypeId("member", ctx.actor.memberId)),
+      eq(PluginTable.name, name),
+      eq(PluginTable.status, "active"),
+      isNull(PluginTable.deletedAt),
+    )).limit(1)
+    if (!existing) return null
+    return { block: `You already have an active plugin named "${name}" (${existing.id}), and a person can't have two. Match this item to it if it is listed, rename one of them, archive yours, or skip this item.` }
+  },
 
   async apply(ctx, op) {
     return applyWithSteps(async (log) => {

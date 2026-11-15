@@ -133,6 +133,8 @@ export type ConfigNaturalKey = {
   label: string
   /** Normalised value, or null when the item has none. Only used when unique on BOTH sides. */
   get: (item: ConfigItem) => string | null
+  /** The key is only used while this feature is on for the organization. */
+  feature?: FeatureKey
 }
 
 /**
@@ -248,6 +250,13 @@ export type ConfigArea = {
   cosmeticFields?: string[]
   /** Unique constraints on the target that a create/rename could break, e.g. team name. */
   uniqueFields?: Array<{ label: string; get: (item: ConfigItem | ResolvedConfigItem) => string | null }>
+  /**
+   * Values two items created by one import can't share, though items the
+   * target already holds may (a plugin's name is unique among the plugins one
+   * person created, and an import creates all of its plugins as one person).
+   * The second create would fail at apply, so both are flagged in the plan.
+   */
+  uniqueAmongCreates?: Array<{ label: string; get: (item: ConfigItem | ResolvedConfigItem) => string | null }>
   /**
    * Whether `apply` writes only through `ctx.db` (so the engine may pass a transaction).
    * False when it calls services that use the global db or make external calls.
