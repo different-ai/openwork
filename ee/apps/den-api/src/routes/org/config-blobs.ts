@@ -25,6 +25,7 @@ import {
   approveConfigChangeRequestSchema,
   configAreaKeySchema,
   configBlobSettingsPatchSchema,
+  configDecisionsFileSchema,
   configDecisionsSchema,
   configDeploymentSchema,
   configSecretInputsSchema,
@@ -54,6 +55,8 @@ import {
   revertChangeRequest,
   submitChangeRequest,
   updateConfigBlobSettings,
+  getDecisionsFile,
+  replayDecisionsFile,
   updateDecisions,
   updateInputs,
   type ConfigCaller,
@@ -61,6 +64,7 @@ import {
 } from "../../config-blobs/service.js"
 import { configBlobJsonSchema } from "../../config-blobs/json-schema.js"
 import { allowConfigTokenSecrets, apiKeyHasConfigScope, getConfigTokenAreas, requireConfigScope } from "../../config-blobs/token.js"
+import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, paramValidator, publicRoute, queryValidator, requireOrgPermission } from "../../middleware/index.js"
 import { refuseMachineSecrets } from "../../middleware/refuse-machine-secrets.js"
 import { checkFreshPrivilegedSession, organizationPrivilegedSessionMaxAgeMs } from "../../privileged-session.js"
@@ -78,6 +82,7 @@ import {
 } from "./shared.js"
 
 const BASE = "/v1/config-blobs"
+const DECISIONS_FILE_FEATURE = "configImportDecisionsFile"
 const TAGS = ["Config blobs"]
 
 // ---------------------------------------------------------------------------
@@ -502,6 +507,27 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
     },
   )
 
+  app.get(
+    `${BASE}/change-requests/:changeRequestId/decisions`,
+    describe("Download a change request's answers", "The answers given on this request (what was matched, pointed elsewhere, left out and renamed) as a file to keep next to the export. Send it as the body of `PUT …/decisions` on a later import of the same source into this organization to give the same answers again.", { status: 200, schema: configDecisionsFileSchema, description: "The answers file." }, {
+      404: jsonResponse("The request doesn't exist, or the feature is off.", errorSchema),
+    }),
+    orgMemberRoute(),
+    requireFeature(DECISIONS_FILE_FEATURE),
+    primaryReadsMiddleware,
+    requireConfigScope("config:submit"),
+    paramValidator(changeRequestParams),
+    async (c) => {
+      try {
+        const { org, caller } = await configCaller(c, getConfigTokenAreas(c))
+        const id = c.req.valid("param").changeRequestId
+        return attachment(await getDecisionsFile(org.id, id, caller), `openwork-config-${org.slug}-answers-${id}.json`)
+      } catch (error) {
+        return refusal(error)
+      }
+    },
+  )
+
   app.put(
     `${BASE}/change-requests/:changeRequestId/decisions`,
     describe("Save config change decisions", "Replaces the request's decisions (matches, references, deletes, overrides, skips, renames, invitation emails) and re-plans at once. A different plan hash drops approvals.", { status: 200, schema: planUpdateResponseSchema, description: "Decisions saved; the new plan." }, {
@@ -512,11 +538,15 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
     primaryReadsMiddleware,
     requireConfigScope("config:submit"),
     paramValidator(changeRequestParams),
-    jsonValidator(configDecisionsSchema),
+    jsonValidator(z.union([configDecisionsFileSchema, configDecisionsSchema])),
     async (c) => {
       try {
         const { org, caller } = await configCaller(c, getConfigTokenAreas(c))
-        return c.json(await updateDecisions(org.id, c.req.valid("param").changeRequestId, caller, c.req.valid("json")))
+        const body = c.req.valid("json")
+        const id = c.req.valid("param").changeRequestId
+        if (!("format" in body)) return c.json(await updateDecisions(org.id, id, caller, body))
+        if (!org.features[DECISIONS_FILE_FEATURE]) return c.json({ error: "feature_disabled", feature: DECISIONS_FILE_FEATURE }, 404)
+        return c.json(await replayDecisionsFile(org.id, id, caller, body))
       } catch (error) {
         return refusal(error)
       }
