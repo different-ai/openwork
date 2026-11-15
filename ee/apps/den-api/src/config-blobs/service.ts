@@ -42,6 +42,7 @@ import {
   CONFIG_BLOB_FORMAT_VERSION,
   CONFIG_BLOB_MAX_BYTES,
   CONFIG_CHANGE_REQUEST_OPEN_STATUSES,
+  CONFIG_DECISIONS_FILE_FORMAT,
   EMPTY_CONFIG_DECISIONS,
   configBlobSchema,
   flattenConfigAreas,
@@ -64,6 +65,7 @@ import {
   type ConfigChangeRequestStatus,
   type ConfigChangeRequestSummary,
   type ConfigDecisions,
+  type ConfigDecisionsFile,
   type ConfigDeployment,
   type ConfigImportMode,
   type ConfigPlan,
@@ -1006,6 +1008,45 @@ export async function updateDecisions(organizationId: OrganizationId, id: string
   const invitedBefore = new Set((row.decisions?.refs ?? []).filter((entry) => "invite" in entry.resolution).map(inviteKey))
   if (decisions.refs.some((entry) => "invite" in entry.resolution && !invitedBefore.has(inviteKey(entry)))) await authorizeWrites(caller, [PEOPLE_AREA_KEY])
   return replan(row, caller, { decisions })
+}
+
+/** The organization the request's file was exported from, when the file says. */
+function sourceOrganizationId(row: Pick<ConfigChangeRequestRow, "blob">): string | null {
+  const envelope = parseEnvelope(row.blob)
+  return envelope.ok ? envelope.value.blob.source?.organization.id ?? null : null
+}
+
+/** The answers given on a request, as a file to keep next to the export (see `configDecisionsFileSchema`). */
+export async function getDecisionsFile(organizationId: OrganizationId, id: string, caller: Pick<ConfigCaller, "can" | "tokenAreas">): Promise<ConfigDecisionsFile> {
+  const row = await loadVisible(organizationId, id, caller)
+  const { matches, refs, skips, renames } = row.decisions ?? EMPTY_CONFIG_DECISIONS
+  const source = sourceOrganizationId(row)
+  return {
+    format: CONFIG_DECISIONS_FILE_FORMAT,
+    formatVersion: 1,
+    source: source ? { organizationId: source } : null,
+    target: { organizationId },
+    changeRequestId: row.id,
+    decisions: { matches, refs, skips, renames },
+  }
+}
+
+/**
+ * Gives a request the answers of an earlier import. Only of the same source
+ * into this organization: the ids in the answers are this organization's
+ * items, and the handles are the source file's. The answers go through the
+ * same planning as answers given by hand, so one the plan refuses (leaving
+ * out a reference an item can't be imported without) is refused here too.
+ */
+export async function replayDecisionsFile(organizationId: OrganizationId, id: string, caller: ConfigCaller, file: ConfigDecisionsFile) {
+  if (file.target.organizationId !== organizationId) {
+    throw new ConfigBlobError(409, { error: "decisions_other_organization", message: "These answers were given in another organization. Answers only carry over to a later import into the same organization." })
+  }
+  const row = await loadEditable(organizationId, id, caller)
+  if ((file.source?.organizationId ?? null) !== sourceOrganizationId(row)) {
+    throw new ConfigBlobError(409, { error: "decisions_other_source", message: "These answers were given for a file exported from another organization. Answers only carry over to a later import of the same source." })
+  }
+  return updateDecisions(organizationId, id, caller, { ...(row.decisions ?? EMPTY_CONFIG_DECISIONS), ...file.decisions })
 }
 
 /**
