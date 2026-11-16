@@ -100,8 +100,10 @@ import {
   setExternalMcpSharedApiKey,
   updateExternalMcpConnection,
   upsertConnectedAccountForExternalMcpIdentity,
+  type ExternalMcpAccessInput,
   type ExternalMcpConnectionRow,
 } from "../../capability-sources/external-mcp-connections.js"
+import { normalizeEntraTenantId } from "../../capability-sources/oauth-tenant.js"
 import { evaluateToolPolicy } from "../../capability-sources/external-mcp-tool-policy.js"
 import { credentialPromptSchema, type CredentialPrompt } from "@openwork/types/den/credential-prompt"
 import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-connection-action"
@@ -2598,6 +2600,90 @@ export async function deleteExternalConnection(
   return { deleted }
 }
 
+export type CreateNativeProviderConnectionBody = z.infer<typeof createNativeProviderConnectionBodySchema>
+
+/**
+ * The native-provider branch of POST /v1/mcp-connections, callable outside a
+ * request (config-blob imports). The dashboard always shares a new built-in
+ * connection with the whole organization; an import recreates the access the
+ * source had (`access`), keeps its stable key (`externalKey`) and tenant
+ * (`tenantId`), and may reuse its id (`preferredId`).
+ */
+export async function createNativeProviderConnectionResponse(
+  c: McpConnectionResponseContext,
+  payload: McpConnectionOrganizationContext,
+  body: CreateNativeProviderConnectionBody,
+  options: {
+    preferredId?: ExternalMcpConnectionRow["id"]
+    externalKey?: string
+    access?: ExternalMcpAccessInput
+    tenantId?: string
+  } = {},
+): Promise<Response> {
+  const access = options.access ?? { orgWide: true, memberIds: [], teamIds: [] }
+  const orgWideDenied = await orgWideShareDenial(c, payload, { orgWide: access.orgWide })
+  if (orgWideDenied) return orgWideDenied
+  const provider = getNativeOAuthProvider(body.nativeProviderKey)
+  if (!provider) {
+    return c.json({ error: "invalid_request", message: `"${body.nativeProviderKey}" is not a known native OAuth provider.` }, 400)
+  }
+  const unknownFeatures = (body.oauthClient.features ?? []).filter((feature) => !Object.hasOwn(provider.optionalFeatures ?? {}, feature))
+  if (unknownFeatures.length > 0) {
+    return c.json({ error: "invalid_request", message: `Unknown optional feature(s): ${unknownFeatures.join(", ")}.` }, 400)
+  }
+  const tenantId = options.tenantId === undefined ? null : normalizeEntraTenantId(options.tenantId)
+  if (options.tenantId !== undefined && (!provider.tenantIdExtraKey || !tenantId)) {
+    return c.json({
+      error: "invalid_request",
+      message: provider.tenantIdExtraKey
+        ? "A valid Microsoft Entra tenant ID (GUID) or verified tenant domain is required."
+        : `tenantId is not supported for "${provider.providerId}".`,
+    }, 400)
+  }
+  if (options.externalKey) {
+    const existing = await getExternalMcpConnectionByExternalKey({ organizationId: payload.organization.id, externalKey: options.externalKey })
+    if (existing) {
+      return c.json({ error: "external_key_exists", message: `A connection with externalKey "${options.externalKey}" already exists (${existing.id}).` }, 409)
+    }
+  }
+  const extra = {
+    ...(body.oauthClient.features ? { features: body.oauthClient.features } : {}),
+    ...(provider.tenantIdExtraKey && tenantId ? { [provider.tenantIdExtraKey]: tenantId } : {}),
+  }
+  const created = await createExternalMcpConnection({
+    organizationId: payload.organization.id,
+    name: body.name,
+    ...(options.externalKey ? { externalKey: options.externalKey } : {}),
+    url: provider.websiteUrl,
+    authType: "oauth",
+    kind: "native_provider",
+    nativeProviderKey: provider.providerId,
+    credentialMode: "per_member",
+    createdByOrgMembershipId: payload.currentMember.id,
+    access,
+    ...(options.preferredId ? { id: options.preferredId } : {}),
+  })
+  await upsertOrgOAuthClient({
+    organizationId: payload.organization.id,
+    providerId: created.id,
+    clientId: body.oauthClient.clientId,
+    clientSecret: body.oauthClient.clientSecret ?? null,
+    ...(Object.keys(extra).length > 0 ? { extra } : {}),
+    createdByOrgMembershipId: payload.currentMember.id,
+  })
+  const response = await toConnectionResponse(created, {
+    fresh: true,
+    callerOrgMembershipId: payload.currentMember.id,
+    callerCanRemoveAnyConnection: await callerHasPermission(payload, "connections.delete"),
+    createdByName: resolveCreatorName(await organizationMembers(payload), created.createdByOrgMembershipId),
+    includeAccess: true,
+    requiredBy: [],
+    identityManagedBy: [],
+    requiredAuthTypes: new Set(),
+  })
+  return c.json({ ...response, links: memberConnectLinks(created) })
+}
+
 /**
  * "Add any MCP server" — org-level External MCP Connections. Unlike
  * oauth-providers.ts (one registry entry per native provider we implement
@@ -3457,50 +3543,10 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       }
       const sessionId = c.get("session")?.id
       if (body.kind === "native_provider") {
-        // Native providers are always shared with the whole organization.
-        const orgWideDenied = await orgWideShareDenial(c, payload, { orgWide: true })
-        if (orgWideDenied) return orgWideDenied
         if (isAgentOAuthClientConnection({ oauthClient: body.oauthClient, sessionId })) {
           return c.json({ error: "invalid_request", message: "OAuth client credentials cannot be set from the agent. Add them in the OpenWork Cloud dashboard under Extensions." }, 400)
         }
-        const provider = getNativeOAuthProvider(body.nativeProviderKey)
-        if (!provider) {
-          return c.json({ error: "invalid_request", message: `"${body.nativeProviderKey}" is not a known native OAuth provider.` }, 400)
-        }
-        const unknownFeatures = (body.oauthClient.features ?? []).filter((feature) => !Object.hasOwn(provider.optionalFeatures ?? {}, feature))
-        if (unknownFeatures.length > 0) {
-          return c.json({ error: "invalid_request", message: `Unknown optional feature(s): ${unknownFeatures.join(", ")}.` }, 400)
-        }
-        const created = await createExternalMcpConnection({
-          organizationId: payload.organization.id,
-          name: body.name,
-          url: provider.websiteUrl,
-          authType: "oauth",
-          kind: "native_provider",
-          nativeProviderKey: provider.providerId,
-          credentialMode: "per_member",
-          createdByOrgMembershipId: payload.currentMember.id,
-          access: { orgWide: true, memberIds: [], teamIds: [] },
-        })
-        await upsertOrgOAuthClient({
-          organizationId: payload.organization.id,
-          providerId: created.id,
-          clientId: body.oauthClient.clientId,
-          clientSecret: body.oauthClient.clientSecret ?? null,
-          ...(body.oauthClient.features ? { extra: { features: body.oauthClient.features } } : {}),
-          createdByOrgMembershipId: payload.currentMember.id,
-        })
-        const response = await toConnectionResponse(created, {
-          fresh: true,
-          callerOrgMembershipId: payload.currentMember.id,
-          callerCanRemoveAnyConnection: await callerHasPermission(payload, "connections.delete"),
-          createdByName: resolveCreatorName(await organizationMembers(payload), created.createdByOrgMembershipId),
-          includeAccess: true,
-          requiredBy: [],
-          identityManagedBy: [],
-          requiredAuthTypes: new Set(),
-        })
-        return c.json({ ...response, links: memberConnectLinks(created) })
+        return createNativeProviderConnectionResponse(c, payload, body)
       }
       if (body.externalKey) {
         const existing = await getExternalMcpConnectionByExternalKey({
