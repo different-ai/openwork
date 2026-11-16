@@ -12,6 +12,7 @@ import {
   type EnterpriseMcpDiagnosticEvent,
 } from "@openwork/enterprise-mcp-client"
 import { env } from "../env.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
 import { parseStoredExternalMcpRequestHeaders, withExternalMcpRequestHeaders } from "./external-mcp-request-headers.js"
 import { memberApiKeyStillCurrent, rejectMemberApiKey, resolveMemberApiKey, type ExternalMcpConnectionRow } from "./external-mcp-connections.js"
@@ -44,6 +45,7 @@ function toEnterpriseConnection(
   member: ExternalMcpMemberContext | undefined,
   tracker: ExternalMcpDiagnosticTracker,
   memberApiKey: MemberApiKeyCredential | undefined,
+  requestSelectedScopesOnly: boolean,
 ): EnterpriseMcpConnection {
   if (connection.kind !== "external_mcp") {
     throw new Error("Native provider connectors do not expose an MCP server.")
@@ -70,6 +72,7 @@ function toEnterpriseConnection(
             : undefined,
           authorizationServerIssuer: connection.oauthConfiguration?.authorizationServerIssuer ?? undefined,
           requestedScopes: connection.oauthConfiguration?.requestedScopes ?? [],
+          requestSelectedScopesOnly,
         },
       },
     }
@@ -300,8 +303,11 @@ async function runEnterpriseMcpOperation<T>(input: OperationInput & {
       if (!input.member) throw new Error("A member identity is required for this connection.")
       memberApiKey = await resolveMemberApiKey(input.connection, input.member.orgMembershipId)
     }
+    // A saved choice applies only while the feature is on, so turning the feature off restores the default sign-in.
+    const requestSelectedScopesOnly = input.connection.oauthConfiguration?.requestSelectedScopesOnly === true
+      && await organizationFeatureEnabled(input.connection.organizationId, "connectionSelectedScopesOnly")
     const client = createOperationClient(input, tracker, memberApiKey)
-    return await input.operation(client, toEnterpriseConnection(input.connection, input.member, tracker, memberApiKey))
+    return await input.operation(client, toEnterpriseConnection(input.connection, input.member, tracker, memberApiKey, requestSelectedScopesOnly))
   } catch (error) {
     throw translateEnterpriseMcpError(error, tracker)
   }

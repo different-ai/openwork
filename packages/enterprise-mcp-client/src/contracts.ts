@@ -183,6 +183,12 @@ export type EnterpriseMcpOAuthConfiguration = {
   clientMetadataUrl?: string
   authorizationServerIssuer?: string
   requestedScopes?: string[]
+  /**
+   * Ask for `requestedScopes` alone at sign-in, even when the server's sign-in
+   * challenge names more. Off by default: challenge scopes are otherwise kept.
+   * Ignored while `requestedScopes` is empty.
+   */
+  requestSelectedScopesOnly?: boolean
 }
 
 export type EnterpriseMcpRequestPhase =

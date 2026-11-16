@@ -7,6 +7,7 @@ export { default as browserDemonstrations } from "@openwork/features/flags/brows
 export { default as connectEngineTools } from "@openwork/features/flags/connect-engine-tools"
 export { default as connectStandardTools } from "@openwork/features/flags/connect-standard-tools"
 export { default as connectionMcpServers } from "@openwork/features/flags/connection-mcp-servers"
+export { default as connectionSelectedScopesOnly } from "@openwork/features/flags/connection-selected-scopes-only"
 export { default as denGreySidebar } from "@openwork/features/flags/den-grey-sidebar"
 export { default as followUpSuggestions } from "@openwork/features/flags/follow-up-suggestions"
 export { default as importOpencodeConnections } from "@openwork/features/flags/import-opencode-connections"

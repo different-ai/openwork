@@ -153,6 +153,11 @@ export type ExternalMcpOAuthConfiguration = {
   version: 1
   authorizationServerIssuer: string | null
   requestedScopes: string[]
+  /**
+   * Sign-in asks for `requestedScopes` alone, leaving out any others the
+   * server's sign-in challenge names. Absent means the challenge's are kept.
+   */
+  requestSelectedScopesOnly?: boolean
   callbackMode: ExternalMcpOAuthCallbackMode
   /** Explicit administrator-pinned endpoints; absent on discovery-based connections. */
   manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string }
