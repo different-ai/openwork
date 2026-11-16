@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { WorkbotRemoteJob } from "@openwork/types/workbot-remote-jobs"
-import { deviceWork } from "../../../packages/workbot-ui/src/device-work.js"
+import { deviceTaskLine, deviceWork } from "../../../packages/workbot-ui/src/device-work.js"
 
 /** What a Devices row says Workbot is doing on its computer. */
 
@@ -42,4 +42,19 @@ test("Workbot's own computer follows Den's word about its chat, not this chat's 
   const own = { kind: "vm", provider: "workbot", computerId: null } as const
   assert.equal(deviceWork({ ...own, workingSince: null }, [job("a", "running")]), null)
   assert.deepEqual(deviceWork({ ...own, workingSince: "2026-11-13T10:00:00.000Z" }, []), { label: "Workbot is working in its chat", detail: null, needsYou: false })
+})
+
+test("a desktop row promises tasks only while other devices may start them there", () => {
+  const desktop = { kind: "desktop", computerId: MAC } as const
+  const access = (effective: "off" | "created" | "all", reason: "organization" | "not_chosen" | "update_required" | null, chosen = reason === null) => ({ effective, chosen, reason })
+  assert.equal(deviceTaskLine({ ...desktop, remoteAccess: access("created", null) }), "Takes tasks from Workbot")
+  assert.equal(deviceTaskLine({ ...desktop, remoteAccess: access("all", null) }), "Takes tasks from Workbot")
+  assert.equal(deviceTaskLine({ ...desktop, remoteAccess: access("created", "organization", true) }), "Takes tasks from Workbot", "a narrower organization limit still takes tasks")
+  assert.equal(deviceTaskLine({ ...desktop, remoteAccess: null }), "Takes tasks from Workbot", "a server from before the owner's choice says nothing about it")
+  assert.equal(deviceTaskLine({ ...desktop, remoteAccess: access("off", "not_chosen") }), "Takes no tasks until you allow it in Settings › Devices on that computer")
+  assert.equal(deviceTaskLine({ ...desktop, remoteAccess: access("off", "update_required") }), "Takes no tasks until OpenWork is updated on that computer")
+  assert.equal(deviceTaskLine({ ...desktop, remoteAccess: access("off", "organization") }), "Takes no tasks while your organization has them turned off")
+  assert.equal(deviceTaskLine({ ...desktop, remoteAccess: access("off", null) }), "Takes no tasks while they are turned off in Settings › Devices on that computer")
+  assert.equal(deviceTaskLine({ ...desktop, computerId: null, remoteAccess: null }), null, "a desktop that never takes tasks says nothing")
+  assert.equal(deviceTaskLine({ kind: "vm", computerId: null, remoteAccess: null }), null)
 })

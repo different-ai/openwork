@@ -60,6 +60,9 @@ turn remote access off for everyone.
   there and why (not allowed yet, turned off, needs an update, limited by the
   organization). Admins see the same in a computer's detail on **Manage →
   Computers**. Both come with the Computers pages; no other feature is needed.
+- Workbot's **Devices** page says the same on each of the person's own
+  computers: "Takes tasks from Workbot", or that it takes none and what would
+  change that.
 
 ## Turning it off
 
