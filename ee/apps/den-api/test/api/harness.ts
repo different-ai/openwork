@@ -375,9 +375,12 @@ export async function startFakeMcpServer(options: {
  * An MCP server that signs people in as its own OAuth authorization server
  * (RFC 9728 discovery, dynamic client registration, PKCE code flow).
  * `responseIssuer` adds RFC 9207 `iss` to the authorization reply;
- * `protectedResource` makes it declare a resource other than its own /mcp.
+ * `protectedResource` makes it declare a resource other than its own /mcp;
+ * `challengeScopes` makes its sign-in challenge name those scopes, which it
+ * then also advertises as the ones it supports.
  */
-export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolean; protectedResource?: string } = {}) {
+export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolean; protectedResource?: string; challengeScopes?: string[] } = {}) {
+  const scopesSupported = options.challengeScopes ?? ["mcp:read"]
   const requests: { method: string; path: string }[] = []
   /** When set, a signed-in MCP request is refused with this status and JSON body. */
   let refusal: { status: number; body: Json } | null = null
@@ -392,7 +395,7 @@ export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolea
     const url = new URL(request.url ?? "/", issuer)
     requests.push({ method: request.method ?? "", path: url.pathname })
     if (url.pathname.startsWith("/.well-known/oauth-protected-resource") || url.pathname === "/mcp/.well-known/oauth-protected-resource") {
-      json(response, 200, { resource: options.protectedResource ?? `${issuer}/mcp`, authorization_servers: [issuer], scopes_supported: ["mcp:read"], bearer_methods_supported: ["header"] })
+      json(response, 200, { resource: options.protectedResource ?? `${issuer}/mcp`, authorization_servers: [issuer], scopes_supported: scopesSupported, bearer_methods_supported: ["header"] })
       return
     }
     if (url.pathname.startsWith("/.well-known/oauth-authorization-server") || url.pathname.startsWith("/.well-known/openid-configuration")) {
@@ -406,7 +409,7 @@ export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolea
         grant_types_supported: ["authorization_code", "refresh_token"],
         token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
         code_challenge_methods_supported: ["S256"],
-        scopes_supported: ["mcp:read"],
+        scopes_supported: scopesSupported,
       })
       return
     }
@@ -443,7 +446,8 @@ export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolea
     if (url.pathname === "/mcp") {
       const bearer = (request.headers.authorization ?? "").replace(/^Bearer /, "")
       if (!issued.has(bearer)) {
-        response.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource"` }).end()
+        const scope = options.challengeScopes ? `, scope="${options.challengeScopes.join(" ")}"` : ""
+        response.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource"${scope}` }).end()
         return
       }
       if (refusal) return json(response, refusal.status, refusal.body)

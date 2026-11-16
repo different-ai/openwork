@@ -393,6 +393,9 @@ const clientMetadataResponseSchema = z.object({
   token_endpoint_auth_method: z.literal("none"),
 }).meta({ ref: "ExternalMcpClientMetadata" })
 
+const REQUEST_SELECTED_SCOPES_ONLY_DESCRIPTION = "When true, sign-in asks for requestedScopes alone, leaving out any others the server's sign-in challenge names. Needs at least one requested scope. People who already signed in keep their current access until they sign in again."
+const REQUEST_SELECTED_SCOPES_ONLY_NEEDS_SCOPES = "List the scopes to request before asking for only those."
+
 const createExternalConnectionBodySchema = z.object({
   kind: z.literal("external_mcp").optional(),
   name: z.string().trim().min(1).max(255),
@@ -414,6 +417,7 @@ const createExternalConnectionBodySchema = z.object({
   manualOAuthEndpoints: manualOAuthEndpointsSchema.nullable().optional().describe("Administrator-pinned authorization and token URLs. Both required; null restores strict discovery. Changing them clears saved sign-ins."),
   authorizationServerIssuer: z.string().trim().url().max(2048).nullable().optional(),
   requestedScopes: z.array(z.string().trim().min(1).max(255)).max(ENTERPRISE_MCP_REQUESTED_SCOPES_LIMIT).optional(),
+  requestSelectedScopesOnly: z.boolean().optional().describe(REQUEST_SELECTED_SCOPES_ONLY_DESCRIPTION),
   /** Who can USE the connection. Defaults to org-wide so the naive quick-add path matches expectations, but it's an explicit, editable choice. */
   access: accessInputSchema.optional().default({ orgWide: true, memberIds: [], teamIds: [] }),
 })
@@ -460,6 +464,7 @@ const updateConnectionBodySchema = z.object({
   manualOAuthEndpoints: manualOAuthEndpointsSchema.nullable().optional().describe("Administrator-pinned authorization and token URLs. Both required; null restores strict discovery. Changing them clears saved sign-ins."),
   authorizationServerIssuer: z.string().trim().url().max(2048).nullable().optional(),
   requestedScopes: z.array(z.string().trim().min(1).max(255)).max(ENTERPRISE_MCP_REQUESTED_SCOPES_LIMIT).optional(),
+  requestSelectedScopesOnly: z.boolean().optional().describe(`${REQUEST_SELECTED_SCOPES_ONLY_DESCRIPTION} Omitted keeps the stored value.`),
   access: accessInputSchema,
 })
 
@@ -605,6 +610,7 @@ const connectionResponseSchema = z.object({
   oauthRegistrationSource: z.enum(["pre-registered", "client-metadata", "dynamic"]).nullable().optional(),
   authorizationServerIssuer: z.string().nullable().optional(),
   requestedScopes: z.array(z.string()).optional(),
+  requestSelectedScopesOnly: z.boolean().optional().describe("Whether sign-in asks for requestedScopes alone, leaving out any others the server's sign-in challenge names."),
 }).meta({ ref: "ExternalMcpConnectionResponse" })
 
 const connectionDeleteByKeyResponseSchema = z.object({
@@ -1559,6 +1565,7 @@ async function toConnectionResponse(
       ...(options.includeManualOAuthEndpoints ? { manualOAuthEndpoints: row.oauthConfiguration?.manualOAuthEndpoints ?? null, oauthClientHasSecret: Boolean(oauthClient?.clientSecret) } : {}),
       authorizationServerIssuer: row.oauthConfiguration?.authorizationServerIssuer ?? null,
       requestedScopes: row.oauthConfiguration?.requestedScopes ?? [],
+      requestSelectedScopesOnly: row.oauthConfiguration?.requestSelectedScopesOnly === true,
       grantedScopes,
     } : {}),
   }
@@ -2040,7 +2047,7 @@ export async function createExternalConnectionResponse(
   }
   const orgWideDenied = await orgWideShareDenial(c, payload, { orgWide: body.access.orgWide })
   if (orgWideDenied) return orgWideDenied
-  if (body.authType !== "oauth" && (body.authorizationServerIssuer !== undefined || (body.requestedScopes?.length ?? 0) > 0)) {
+  if (body.authType !== "oauth" && (body.authorizationServerIssuer !== undefined || (body.requestedScopes?.length ?? 0) > 0 || body.requestSelectedScopesOnly === true)) {
     return c.json({ error: "invalid_request", message: "OAuth issuer and scopes are only allowed when authType is oauth." }, 400)
   }
   if (body.credentialMode === "per_member" && (body.authType === "none" || body.apiKey !== undefined)) {
@@ -2071,6 +2078,12 @@ export async function createExternalConnectionResponse(
     authorizationServerIssuer: body.authorizationServerIssuer,
     requestedScopes: body.requestedScopes,
   })
+  if (body.requestSelectedScopesOnly === true && !payload.features.connectionSelectedScopesOnly) {
+    return c.json({ error: "feature_disabled", feature: "connectionSelectedScopesOnly" }, 404)
+  }
+  if (body.requestSelectedScopesOnly === true && oauthConfiguration.requestedScopes.length === 0) {
+    return c.json({ error: "invalid_request", message: REQUEST_SELECTED_SCOPES_ONLY_NEEDS_SCOPES }, 400)
+  }
   if (body.authType === "oauth" && !body.manualOAuthEndpoints) {
     const denial = await automaticOAuthSetupDenial({
       serverUrl: body.url,
@@ -2092,6 +2105,7 @@ export async function createExternalConnectionResponse(
     oauthConfiguration: body.authType === "oauth" ? {
       version: 1,
       ...oauthConfiguration,
+      ...(body.requestSelectedScopesOnly === true ? { requestSelectedScopesOnly: true } : {}),
       ...(body.manualOAuthEndpoints ? { manualOAuthEndpoints: body.manualOAuthEndpoints } : {}),
     } : null,
     createdByOrgMembershipId: payload.currentMember.id,
@@ -2205,6 +2219,17 @@ export async function replaceExternalConnectionResponse(
         ? connection.oauthConfiguration.requestedScopes
         : undefined),
   })
+  const storedRequestSelectedScopesOnly = connection.authType === "oauth" && connection.oauthConfiguration?.requestSelectedScopesOnly === true
+  // Omitted keeps the stored choice while the identity is unchanged and there are still scopes for it to apply to.
+  const requestSelectedScopesOnly = body.authType === "oauth"
+    && (body.requestSelectedScopesOnly
+      ?? (!identityChanged && storedRequestSelectedScopesOnly && oauthConfigurationDefaults.requestedScopes.length > 0))
+  if (body.requestSelectedScopesOnly === true && !payload.features.connectionSelectedScopesOnly) {
+    return c.json({ error: "feature_disabled", feature: "connectionSelectedScopesOnly" }, 404)
+  }
+  if (requestSelectedScopesOnly && oauthConfigurationDefaults.requestedScopes.length === 0) {
+    return c.json({ error: "invalid_request", message: REQUEST_SELECTED_SCOPES_ONLY_NEEDS_SCOPES }, 400)
+  }
   const manualOAuthEndpoints = body.manualOAuthEndpoints === undefined
     ? (!identityChanged ? connection.oauthConfiguration?.manualOAuthEndpoints : undefined)
     : body.manualOAuthEndpoints ?? undefined
@@ -2227,6 +2252,7 @@ export async function replaceExternalConnectionResponse(
     || connection.oauthConfiguration !== null
     || body.authorizationServerIssuer !== undefined
     || body.requestedScopes !== undefined
+    || body.requestSelectedScopesOnly !== undefined
     || body.manualOAuthEndpoints !== undefined
   const oauthConfiguration: ExternalMcpOAuthConfiguration | null | undefined = !shouldWriteOAuthConfiguration
     ? undefined
@@ -2235,6 +2261,7 @@ export async function replaceExternalConnectionResponse(
           version: 1,
           authorizationServerIssuer: oauthConfigurationDefaults.authorizationServerIssuer,
           requestedScopes: oauthConfigurationDefaults.requestedScopes,
+          ...(requestSelectedScopesOnly ? { requestSelectedScopesOnly: true } : {}),
           ...(manualOAuthEndpoints ? { manualOAuthEndpoints } : {}),
           ...(body.manualOAuthEndpoints === undefined && !identityChanged && connection.authType === "oauth" && connection.oauthConfiguration?.discovery
             ? { discovery: connection.oauthConfiguration.discovery }
@@ -2250,6 +2277,7 @@ export async function replaceExternalConnectionResponse(
     || connection.apiKeyAuthScheme !== apiKeyAuthScheme
     || body.authorizationServerIssuer !== undefined
     || body.requestedScopes !== undefined
+    || (body.requestSelectedScopesOnly !== undefined && body.requestSelectedScopesOnly !== storedRequestSelectedScopesOnly)
     || body.manualOAuthEndpoints !== undefined
   const activeBindings = await listActiveExternalMcpConnectionBindings({
     organizationId: payload.organization.id,
@@ -2310,6 +2338,7 @@ export async function replaceExternalConnectionResponse(
   if (body.authType !== "oauth" && (
     body.authorizationServerIssuer !== undefined
     || body.requestedScopes !== undefined
+    || body.requestSelectedScopesOnly === true
   )) {
     return c.json({ error: "invalid_request", message: "OAuth issuer and scopes are only allowed when authType is oauth." }, 400)
   }
@@ -3636,6 +3665,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         ...(body.manualOAuthEndpoints !== undefined ? { manualOAuthEndpoints: body.manualOAuthEndpoints } : {}),
         ...(body.authorizationServerIssuer !== undefined ? { authorizationServerIssuer: body.authorizationServerIssuer } : {}),
         ...(body.requestedScopes !== undefined ? { requestedScopes: body.requestedScopes } : {}),
+        ...(body.requestSelectedScopesOnly !== undefined ? { requestSelectedScopesOnly: body.requestSelectedScopesOnly } : {}),
         access: body.access,
       }, connection, canUpdateAnyConnection, c.get("session"), c.get("requestId"))
     },

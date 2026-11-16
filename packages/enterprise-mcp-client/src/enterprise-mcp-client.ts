@@ -60,6 +60,7 @@ const oauthConfigurationSchema = z.object({
   clientMetadataUrl: clientMetadataUrlSchema.optional(),
   authorizationServerIssuer: z.string().trim().url().optional(),
   requestedScopes: z.array(z.string().trim().min(1)).max(ENTERPRISE_MCP_REQUESTED_SCOPES_LIMIT).optional(),
+  requestSelectedScopesOnly: z.boolean().optional(),
 })
 const toolNameSchema = z.string().trim().min(1)
 const resourceUriSchema = z.string().trim().min(1).max(ENTERPRISE_MCP_RESOURCE_URI_LIMIT_BYTES).refine(
