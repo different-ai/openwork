@@ -85,7 +85,7 @@ export class Computers {
   private readonly vms = new Map<string, Promise<SandboxHandle>>()
   private readonly pauseTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly pausing = new Map<string, Promise<void>>()
-  /** Sessions in a pause that starting the computer calls off, so `vm()` doesn't wait for it. */
+  /** Sessions in a pause, or the idle guest update before it, that starting the computer calls off, so `vm()` doesn't wait for it. */
   private readonly checkpointing = new Set<string>()
   /** Saved file ids already copied into each session's VM by this process. */
   private readonly copied = new Map<string, Set<string>>()
@@ -410,8 +410,20 @@ export class Computers {
         log("in_use")
         return this.release(sessionId)
       }
-      // Nobody is using it: the moment to move a computer built from an older image onto the current one.
-      if (!this.working.has(sessionId) && await this.staleImage(sessionId, vm)) vm = await this.replace(sessionId, vm, { required: false }) ?? vm
+      // Nobody is using it: the moment to move a computer built from an older image onto the current one, or to bring
+      // an older guest up to this runner's, so the paused computer already carries it.
+      const behind = this.working.has(sessionId) ? null : await this.behind(sessionId, vm)
+      if (behind === "image") vm = await this.replace(sessionId, vm, { required: false }) ?? vm
+      if (behind === "guest" && this.desktop) {
+        // Someone coming back doesn't wait for this: `vm()` calls it off as it does a checkpoint, and a start of theirs
+        // shares the update under way.
+        this.checkpointing.add(sessionId)
+        const began = Date.now()
+        // Not fatal: the computer pauses with the guest it has, and its next use updates it as before.
+        const outcome = await this.desktop.update(vm).then(changed => changed ? "updated" : "unchanged", (error: unknown) => `failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 300)}`)
+        console.log(`[headless-computer] idle guest update ${JSON.stringify({ sessionId, outcome, ms: Date.now() - began })}`)
+        if (!this.checkpointing.delete(sessionId)) return log("called_off")
+      }
       // A provider that can neither pause nor stop keeps the computer running until its own expiry.
       if (!this.provider.describe().stopResume) {
         log("cannot_pause")
@@ -509,20 +521,22 @@ export class Computers {
   }
 
   /**
-   * Whether the session's computer was built from an older image (known from its last start here, else asked) and
-   * moving it could help: a replacement that just came up on an older image shows new computers aren't there yet.
+   * What on the session's computer is older than this runner's (known from its last start here, else asked): its
+   * `image`, when moving it could help (a replacement that just came up on an older image shows new computers aren't
+   * there yet), or only its `guest`, which is installed into the computer where it is.
    */
-  private async staleImage(sessionId: string, box: SandboxHandle) {
-    if (!this.desktop) return false
+  private async behind(sessionId: string, box: SandboxHandle): Promise<"image" | "guest" | null> {
+    if (!this.desktop) return null
     const known = this.desktops.get(sessionId)
-    if (known === "current") return false
+    if (known === "current") return null
     if (!known) {
       // A helper from before in-place updates can't carry anything over, so such a computer is only replaced once its
       // desktop is needed, never while idle.
       const versions = await this.desktop.versions(box).catch(() => null)
-      if (versions === null || versions.image === this.desktop.image) return false
+      if (versions === null) return null
+      if (versions.image === this.desktop.image) return versions.guest === this.desktop.guest ? null : "guest"
     }
-    return !await this.desktop.replacedInVain(box, IDLE_REPLACEMENT_RETRY_MS)
+    return await this.desktop.replacedInVain(box, IDLE_REPLACEMENT_RETRY_MS) ? null : "image"
   }
 
   /**
