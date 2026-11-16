@@ -80,10 +80,13 @@ testOff("a member outside the rollout still restores an archived conversation be
     await user.click({ role: "button", label: "Restore" });
     await user.see("composer", { editable: true, timeoutMs: 60_000 });
     await user.notSee(archivedBanner);
+    await user.see({ text: "Session unarchived" });
+    await user.see({ role: "button", label: "Undo" });
+    await user.see({ role: "button", label: "View" });
     const archived = archivedOf(await read(probe, world.sessionPath));
     const messages = messagesOf(await read(probe, `${world.sessionPath}/message?limit=100`));
     const unchanged = JSON.stringify(messages) === JSON.stringify(baseline);
-    evidence.recordAssertionEvidence("The existing restore-only behavior is unchanged outside the rollout", `archived=${archived}; messages before=${baseline.length}; after=${messages.length}; no new user message`, !archived && unchanged);
+    evidence.recordAssertionEvidence("Explicit Restore retains its ordinary Undo and View notification without sending", `archived=${archived}; messages before=${baseline.length}; after=${messages.length}; Session unarchived, Undo and View visible; no new user message`, !archived && unchanged);
     expect(archived).toBe(false);
     expect(messages).toEqual(baseline);
     await user.screenshot();
@@ -135,12 +138,22 @@ test("a member in the rollout drafts in an archive and explicitly sends one foll
     await user.see("composer", { text: world.followup.prompt });
     await user.see({ role: "button", label: "Send & unarchive" });
     await user.see({ text: hint });
+    const [hintBounds, composerBounds] = await Promise.all([
+      probe.dom('[data-testid="archived-composer-hint"]'),
+      probe.dom('[class~="@container/composer"]'),
+    ]);
+    expect(hintBounds.elements).toHaveLength(1);
+    expect(composerBounds.elements).toHaveLength(1);
+    const hintLeft = hintBounds.elements[0]?.rect.left;
+    const composerLeft = composerBounds.elements[0]?.rect.left;
+    if (hintLeft === undefined || composerLeft === undefined) throw new Error("The archived hint and composer must be visible");
+    expect(Math.abs(hintLeft - composerLeft), "the hint aligns to the composer rather than the pane").toBeLessThanOrEqual(1);
     const archived = archivedOf(await read(probe, world.sessionPath));
     const messages = messagesOf(await read(probe, `${world.sessionPath}/message?limit=100`));
     const requests = await world.requests();
     const previousCalls = requests.filter(request => request.promptMarker === world.original.prompt).length;
     const neighbors = await unchangedNeighbors();
-    evidence.recordAssertionEvidence("Drafting sends nothing and changes neither archive state nor other conversations", `archived=${archived}; messages=${messages.length}/${baseline.length}; earlier model calls=${previousCalls}/${originalCalls}; follow-up calls=${newCalls(requests).length}; group and two neighbors unchanged`, archived && JSON.stringify(messages) === JSON.stringify(baseline) && previousCalls === originalCalls && newCalls(requests).length === 0 && neighbors);
+    evidence.recordAssertionEvidence("Drafting sends nothing and changes neither archive state nor other conversations", `archived=${archived}; messages=${messages.length}/${baseline.length}; earlier model calls=${previousCalls}/${originalCalls}; follow-up calls=${newCalls(requests).length}; hint/composer left=${hintLeft}/${composerLeft}px; group and two neighbors unchanged`, archived && JSON.stringify(messages) === JSON.stringify(baseline) && previousCalls === originalCalls && newCalls(requests).length === 0 && neighbors && Math.abs(hintLeft - composerLeft) <= 1);
     expect(archived).toBe(true);
     expect(messages).toEqual(baseline);
     expect(previousCalls).toBe(originalCalls);
@@ -151,8 +164,16 @@ test("a member in the rollout drafts in an archive and explicitly sends one foll
 
   await step("the member chooses Send & unarchive and receives exactly one new reply in the same conversation", async () => {
     await user.click({ role: "button", label: "Send & unarchive" });
+    await probe.eventually(() => probe.composer(), {
+      within: 30_000, label: "the follow-up enters the conversation after restoration",
+      until: value => value.userMessageCount === 2,
+    });
+    await user.notSee({ text: "Session unarchived" });
     await user.see({ text: world.followup.reply }, { timeoutMs: 90_000 });
     await user.notSee({ text: hint });
+    await user.notSee({ text: "Session unarchived" });
+    const restoreToasts = await probe.dom('[data-sonner-toast]');
+    expect(restoreToasts.elements.some(element => /Session unarchived|Undo/.test(element.text))).toBe(false);
     await user.see("composer", { editable: true });
     const session = sessionSchema.parse(dataOf(await read(probe, world.sessionPath)));
     const messages = messagesOf(await read(probe, `${world.sessionPath}/message?limit=100`));
@@ -160,7 +181,7 @@ test("a member in the rollout drafts in an archive and explicitly sends one foll
     const requests = await world.requests();
     const archived = (session.time.archived ?? 0) > 0;
     const neighbors = await unchangedNeighbors();
-    evidence.recordAssertionEvidence("One human send restores only its own conversation and adds one follow-up", `same conversation=${session.id === world.session.sessionId}; archived=${archived}; user messages=${users.length}; new follow-up model replies=${newCalls(requests).length}; two neighbors and Review queue unchanged`, session.id === world.session.sessionId && !archived && users.length === 2 && newCalls(requests).length === 1 && neighbors);
+    evidence.recordAssertionEvidence("One human send adds one follow-up without an unsafe unarchive Undo notification", `same conversation=${session.id === world.session.sessionId}; archived=${archived}; user messages=${users.length}; new follow-up model replies=${newCalls(requests).length}; unarchive/Undo toast absent; two neighbors and Review queue unchanged`, session.id === world.session.sessionId && !archived && users.length === 2 && newCalls(requests).length === 1 && neighbors && !restoreToasts.elements.some(element => /Session unarchived|Undo/.test(element.text)));
     expect(session.id).toBe(world.session.sessionId);
     expect(archived).toBe(false);
     expect(users.map(message => message.text).sort()).toEqual([world.original.prompt, world.followup.prompt].sort());

@@ -1,6 +1,25 @@
 import type { DenSettings } from "@/app/lib/den-types";
 import { holdSessionWork } from "@/app/lib/opencode-interruption";
+import { t } from "@/i18n";
 import { dispatchQueuedDrain } from "./queued-drain-machine";
+
+type ArchivedComposerRestoreFailure = "unarchive_failed" | "verification_failed" | "timeout";
+
+export class ArchivedComposerRestoreError extends Error {
+  readonly code: ArchivedComposerRestoreFailure;
+
+  constructor(code: ArchivedComposerRestoreFailure) {
+    super(code);
+    this.name = "ArchivedComposerRestoreError";
+    this.code = code;
+  }
+}
+
+/** Only known reasons reach the composer, never an engine/transport error or credentials. */
+export function archivedComposerRestoreErrorMessage(error: unknown): string {
+  const code = error instanceof ArchivedComposerRestoreError ? error.code : "unarchive_failed";
+  return t(`session_management.archived_compose_${code}`);
+}
 
 export function isConfirmedUnarchivedSession(sessionId: string, session: {
   id: string;
@@ -55,17 +74,20 @@ export async function confirmArchivedComposerRestore(input: {
   try {
     if (!current()) return false;
     const restore = async () => {
-      if (!await input.restore(controller.signal)) {
-        throw new Error("Couldn't unarchive this conversation. Your draft is saved. Try Send & unarchive again.");
+      let failure: ArchivedComposerRestoreFailure = "unarchive_failed";
+      try {
+        if (!await input.restore(controller.signal)) throw new ArchivedComposerRestoreError(failure);
+        if (!current()) return false;
+        failure = "verification_failed";
+        if (!await input.verify(controller.signal)) throw new ArchivedComposerRestoreError(failure);
+        return current();
+      } catch {
+        if (!current()) return false;
+        throw new ArchivedComposerRestoreError(failure);
       }
-      if (!current()) return false;
-      if (!await input.verify(controller.signal)) {
-        throw new Error("Couldn't verify that this conversation was unarchived. Your draft is saved. Try sending again.");
-      }
-      return current();
     };
     confirmed = await Promise.race([restore(), cancelled]);
-    if (timedOut) throw new Error("Unarchiving timed out. Your draft is saved. Try sending again.");
+    if (timedOut) throw new ArchivedComposerRestoreError("timeout");
     return confirmed;
   } finally {
     clearTimeout(timeout);

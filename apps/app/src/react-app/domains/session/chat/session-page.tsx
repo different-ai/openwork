@@ -61,7 +61,7 @@ import { MainSidebarControls } from "../sidebar/sidebar-chrome";
 import { MobileChatActions, MobileChatNavigation } from "./mobile-chat-navigation";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import { captureSessionActionTarget, type SessionActionTarget } from "../sidebar/session-menu-actions";
-import type { ArchiveSessionOutcome, SessionArchiveToggle } from "../sidebar/use-session-archive";
+import type { ArchiveSessionOptions, ArchiveSessionOutcome, SessionArchiveToggle } from "../sidebar/use-session-archive";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
 import { useSessionFindStore } from "../surface/find-store";
 import {
@@ -310,7 +310,7 @@ export type SessionPageProps = {
   newTaskComposer?: NewTaskComposerContext | null;
   onRenameSession?: (sessionId: string, title: string, workspaceId: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string, workspaceId: string) => Promise<void> | void;
-  onArchiveSession?: (sessionId: string, archived: boolean, workspaceId: string, signal?: AbortSignal) => Promise<ArchiveSessionOutcome>;
+  onArchiveSession?: (sessionId: string, archived: boolean, workspaceId: string, options?: ArchiveSessionOptions) => Promise<ArchiveSessionOutcome>;
   archiveDisabledReason?: string;
   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
   /** Settings content rendered inside the right pane when the settings rail icon is active. */
@@ -1903,7 +1903,7 @@ export function SessionPage(props: SessionPageProps) {
                             workspaceId={props.runtimeWorkspaceId!}
                             sessionId={props.selectedSessionId!}
                             archived={archivedInWorkspace(props.selectedWorkspaceId, props.selectedSessionId)}
-                            onRestoreSession={async (signal) => (await props.onArchiveSession?.(props.selectedSessionId!, false, props.selectedWorkspaceId!, signal))?.kind === "done"}
+                            onRestoreSession={async (options) => (await props.onArchiveSession?.(props.selectedSessionId!, false, props.selectedWorkspaceId!, options))?.kind === "done"}
                             isControlTarget={activeWorkbenchPane === "primary"}
                             chatPane={canRenderSplitSurface ? "primary" : undefined}
                             opencodeBaseUrl={reactSessionBaseUrl}
@@ -1988,7 +1988,7 @@ export function SessionPage(props: SessionPageProps) {
                                   sandboxBackend={splitPaneRuntime.sandboxBackend}
                                   sessionId={splitSession.sessionId}
                                   archived={archivedInWorkspace(splitSession.workspaceId, splitSession.sessionId)}
-                                  onRestoreSession={async (signal) => (await props.onArchiveSession?.(splitSession.sessionId, false, splitSession.workspaceId, signal))?.kind === "done"}
+                                  onRestoreSession={async (options) => (await props.onArchiveSession?.(splitSession.sessionId, false, splitSession.workspaceId, options))?.kind === "done"}
                                   isControlTarget={activeWorkbenchPane === "secondary"}
                                   chatPane="secondary"
                                   opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}

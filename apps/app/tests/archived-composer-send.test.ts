@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { captureArchivedSendSelection, confirmArchivedComposerRestore as restoreBoundary, isConfirmedUnarchivedSession, sameArchivedSendIdentity } from "../src/react-app/domains/session/surface/archived-composer-send";
+import { ArchivedComposerRestoreError, archivedComposerRestoreErrorMessage, captureArchivedSendSelection, confirmArchivedComposerRestore as restoreBoundary, isConfirmedUnarchivedSession, sameArchivedSendIdentity } from "../src/react-app/domains/session/surface/archived-composer-send";
 import { holdSessionWork, sessionWorkHeld } from "../src/app/lib/opencode-interruption";
 import { claimQueuedSend, dispatchQueuedDrain, getQueuedDrainState } from "../src/react-app/domains/session/surface/queued-drain-machine";
 
@@ -92,7 +92,7 @@ describe("archived composer restore boundary", () => {
           controller.abort();
           expect(await pending).toBe(false);
         } else {
-          await expect(pending).rejects.toThrow("timed out");
+          await expect(pending).rejects.toMatchObject({ name: "ArchivedComposerRestoreError", code: "timeout" });
         }
         expect(operationSignal?.aborted).toBe(true);
         expect(getQueuedDrainState(sessionId).phase).toMatchObject({ kind: "halted", itemId });
@@ -173,14 +173,14 @@ describe("archived composer restore boundary", () => {
       restore: async () => false,
       verify: async () => { verified = true; return true; },
       isCurrent: () => true,
-    })).rejects.toThrow("Your draft is saved");
+    })).rejects.toMatchObject({ name: "ArchivedComposerRestoreError", code: "unarchive_failed" });
     expect(verified).toBe(false);
   });
 
   test("an archived or missing cache result cannot authorize a send", async () => {
     await expect(confirmArchivedComposerRestore({
       restore: async () => true, verify: async () => false, isCurrent: () => true,
-    })).rejects.toThrow("Couldn't verify");
+    })).rejects.toMatchObject({ name: "ArchivedComposerRestoreError", code: "verification_failed" });
   });
 
   test("an invalid owner/feature/model context never invokes restore", async () => {
@@ -210,10 +210,30 @@ describe("archived composer restore boundary", () => {
     });
   }
 
-  test("transport errors cannot become a success receipt", async () => {
-    await expect(confirmArchivedComposerRestore({
-      restore: async () => { throw new Error("offline"); },
-      verify: async () => true, isCurrent: () => true,
-    })).rejects.toThrow("offline");
+  for (const stage of ["restore", "verify"]) {
+    test(`transport errors during ${stage} become a safe, stage-specific reason`, async () => {
+      await expect(confirmArchivedComposerRestore({
+        restore: async () => { if (stage === "restore") throw new Error("secret transport payload"); return true; },
+        verify: async () => { throw new Error("secret transport payload"); },
+        isCurrent: () => true,
+      })).rejects.toMatchObject({ name: "ArchivedComposerRestoreError", code: stage === "restore" ? "unarchive_failed" : "verification_failed" });
+    });
+  }
+
+  test("inline errors distinguish restore, verification and timeout, always preserving the draft", () => {
+    const messages = [
+      new ArchivedComposerRestoreError("unarchive_failed"),
+      new ArchivedComposerRestoreError("verification_failed"),
+      new ArchivedComposerRestoreError("timeout"),
+    ].map(archivedComposerRestoreErrorMessage);
+    expect(messages[0]).toContain("Couldn't unarchive");
+    expect(messages[1]).toContain("Couldn't verify");
+    expect(messages[2]).toContain("timed out");
+    for (const message of messages) {
+      expect(message).toContain("Your draft is saved.");
+      expect(message).toContain("Try");
+    }
+    expect(new Set(messages).size).toBe(3);
+    expect(archivedComposerRestoreErrorMessage(new Error("secret transport payload"))).toBe(messages[0]);
   });
 });
