@@ -1295,7 +1295,7 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
           const userEmail = asString(user.email);
           const userName = asString(user.name);
           const userIdentity = asString(user.id);
-          if (!id || !role || !userEmail || !userName || !userIdentity) {
+          if (!id || !role || !userEmail || !userIdentity) {
             return null;
           }
 
@@ -1314,7 +1314,7 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
             user: {
               id: userIdentity,
               email: userEmail,
-              name: userName,
+              name: userName?.trim() ? userName : userEmail,
               image: asString(user.image),
             },
           } satisfies DenOrgMember;
