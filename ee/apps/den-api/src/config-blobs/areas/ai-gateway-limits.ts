@@ -18,8 +18,12 @@
  *   archivePolicy), so revision checks, entitlement locks, provider validation,
  *   expiry of stale increase requests and the usage audit stay identical.
  *   Only what the plan's changes name is written.
+ * - With the `limitsForInvitedMembers` feature on, people who have not accepted
+ *   their invitation yet hold a limit like anyone else: their member row
+ *   already exists, so the people a run invites are assigned in that same run.
+ *   The rest of this note is the behaviour with the feature off.
  * - People who have not accepted their invitation yet can't hold a limit (the
- *   service only assigns to members who have joined, as the dashboard does).
+ *   service only assigns to members who have joined).
  *   An import usually invites the people it names in the same run, so those
  *   assignments are left out with a warning instead of failing the item (and
  *   the run): the plan says so before approval, and importing again once they
@@ -300,7 +304,7 @@ async function applyLimits(ctx: ConfigAreaContext, op: ConfigApplyOp) {
     const waiting = await notJoined(ctx, spec.assignments.memberIds)
     for (const memberId of spec.assignments.memberIds) {
       if (waiting.ids.has(memberId)) continue
-      await steps.run({ action: "add", target: "assignments.members", detail: memberId }, "assignments.members", () => service.assign(scope, policyId, memberTarget(memberId)))
+      await steps.run({ action: "add", target: "assignments.members", detail: memberId }, "assignments.members", () => service.assign(scope, policyId, memberTarget(memberId), { invited: invitedMayHoldLimits(ctx) }))
     }
     return { localId: policyId, steps: steps.done, ...(waiting.warning ? { warnings: [waiting.warning] } : {}) }
   }
@@ -364,7 +368,7 @@ async function applyLimits(ctx: ConfigAreaContext, op: ConfigApplyOp) {
       if (waiting.warning) warnings.push(waiting.warning)
       for (const memberId of adding) {
         if (waiting.ids.has(memberId)) continue
-        await steps.run({ action: "add", target: "assignments.members", detail: memberId }, "assignments.members", () => service.assign(scope, current.id, { memberId }))
+        await steps.run({ action: "add", target: "assignments.members", detail: memberId }, "assignments.members", () => service.assign(scope, current.id, { memberId }, { invited: invitedMayHoldLimits(ctx) }))
       }
     }
   }
@@ -373,6 +377,11 @@ async function applyLimits(ctx: ConfigAreaContext, op: ConfigApplyOp) {
 
 // ---------------------------------------------------------------------------
 // People who have not joined yet
+
+/** With `limitsForInvitedMembers` on, an invited person holds a limit like anyone else: nothing waits for them to join. */
+function invitedMayHoldLimits(ctx: ConfigAreaContext): boolean {
+  return ctx.features.limitsForInvitedMembers
+}
 
 /** "ada@example.com", "ada@example.com and bo@example.com", "ada@example.com, bo@example.com and 3 more". */
 function listPeople(names: readonly string[]): string {
@@ -391,6 +400,7 @@ function whoIsWaiting(names: readonly string[], count: number): string {
 
 /** Of the members a limit is to be assigned to, the ones who have not accepted their invitation (and the warning to report). */
 async function notJoined(ctx: ConfigAreaContext, memberIds: readonly string[]): Promise<{ ids: Set<string>; warning: string | null }> {
+  if (invitedMayHoldLimits(ctx)) return { ids: new Set(), warning: null }
   const pending = await loadPendingMemberIds(ctx.db, ctx.organizationId, memberIds)
   const ids = new Set(memberIds.filter((id) => isDenTypeId("member", id) && pending.has(normalizeDenTypeId("member", id))))
   if (ids.size === 0) return { ids, warning: null }
@@ -407,7 +417,7 @@ const MEMBERS_PATH = /^assignments\.members\[\d+\]$/
  * skipped instead of running to assign nobody.
  */
 async function limitsPreflight(ctx: ConfigAreaContext, op: ConfigApplyOp, info: ConfigPreflightInfo): Promise<ConfigPreflightResult | null> {
-  if (op.kind === "delete" || !info.refs) return null
+  if (op.kind === "delete" || !info.refs || invitedMayHoldLimits(ctx)) return null
   const people = info.refs.filter((ref) => MEMBERS_PATH.test(ref.path) && ref.ref.startsWith(PEOPLE_PREFIX))
   if (people.length === 0) return null
   const existing = people.flatMap((ref) => ref.resolution === "target" && ref.id ? [ref.id] : [])
