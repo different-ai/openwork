@@ -49,7 +49,7 @@ import { loadProviderCatalogFromFile } from "./provider-catalog.js"
 import type { CatalogProvider, ProviderCatalog } from "./provider-catalog.js"
 import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provider-credentials.js"
 import type { GatewayCredential, GatewayProvider, LoadProviderCredential, ResolvedUpstreamCredential } from "./provider-credentials.js"
-import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBody, RequestBodyLimitError, upstreamLifetime } from "./relay.js"
+import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBody, RequestBodyLimitError, upstreamLifetime, describeUpstreamFetchFailure } from "./relay.js"
 import { env } from "./env.js"
 import { gatewayLog } from "./log.js"
 import { respondBeforeUpstream } from "./early-response.js"
@@ -1145,29 +1145,24 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         validateInferenceUrl(prepared.url)
         lifetime.signal.throwIfAborted()
         upstream = await dependencies.fetch(prepared.url, { method, headers, body: prepared.body, signal: lifetime.signal, redirect: "error" })
-      } catch {
+      } catch (error) {
+        const failure = describeUpstreamFetchFailure(error, {
+          clientAborted: request.signal.aborted,
+          timedOut: lifetime.timedOut,
+          target: `the model provider at ${prepared.url.hostname}`,
+        })
         lifetime.dispose()
-        console.error("[gateway] Failed to reach provider upstream", {
-          openworkRequestId,
-          organizationId: identity.organizationId,
-          inferenceProviderId: provider.id,
-          upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
+        // An unreachable provider is answered to the caller, not reported as a Gateway error.
+        gatewayLog[failure.outcome === "client_aborted" ? "debug" : "warn"]("provider upstream not reached", {
+          request_id: openworkRequestId,
+          organization_id: identity.organizationId,
+          inference_provider_id: provider.id,
+          upstream_url: `${prepared.url.origin}${prepared.url.pathname}`,
+          error_code: failure.code,
+          network_error: failure.cause,
         })
-        dependencies.reporter.handledError({
-          reason: "upstream_unreachable",
-          organizationId: identity.organizationId,
-          orgMembershipId: identity.orgMembershipId,
-          gatewayKeyId: identity.gatewayKeyId,
-          openworkRequestId,
-          route: c.req.path,
-          method,
-          headers: incomingHeaders,
-          incomingModel: prepared.requestedModel,
-          status: 502,
-          upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
-        })
-        void recorder.finish({ status: 502, outcome: lifetime.signal.aborted && !lifetime.timedOut ? "client_aborted" : "upstream_unreachable", errorCode: lifetime.timedOut ? "upstream_timeout" : "upstream_unreachable" })
-        const response = gatewayError(502, "upstream_unreachable", "Failed to reach the inference provider upstream.", { provider_id: provider.id })
+        void recorder.finish({ status: failure.status, outcome: failure.outcome, errorCode: failure.code })
+        const response = gatewayError(failure.status, failure.code, failure.message, { provider_id: provider.id })
         response.headers.set("x-openwork-request-id", openworkRequestId)
         return response
       }
