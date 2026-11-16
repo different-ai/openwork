@@ -31,3 +31,19 @@ export function deviceWork(device: Pick<RemoteDevice, "kind" | "provider" | "com
   if (job.status.state === "starting") return { label: "Workbot's task is waiting to start here", detail: job.title, needsYou: false };
   return { label: "Workbot is working here", detail: job.status.latestStep ?? job.title, needsYou: false };
 }
+
+/**
+ * Whether Workbot can start a task on one of the person's own computers, as the line under its name. Den says what
+ * other devices may do there (`remoteAccess`): while that is off the computer takes nothing, so the line says what
+ * would change that. A server from before that answer sends none, which reads as a computer that takes tasks. Null
+ * for every computer that never takes tasks.
+ */
+export function deviceTaskLine(device: Pick<RemoteDevice, "kind" | "computerId" | "remoteAccess">): string | null {
+  if (device.kind !== "desktop" || device.computerId === null) return null;
+  const access = device.remoteAccess;
+  if (!access || access.effective !== "off") return "Takes tasks from Workbot";
+  if (access.reason === "organization") return "Takes no tasks while your organization has them turned off";
+  if (access.reason === "update_required") return "Takes no tasks until OpenWork is updated on that computer";
+  if (access.reason === "not_chosen") return "Takes no tasks until you allow it in Settings › Devices on that computer";
+  return "Takes no tasks while they are turned off in Settings › Devices on that computer";
+}
