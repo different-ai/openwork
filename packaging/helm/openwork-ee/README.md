@@ -1225,6 +1225,18 @@ config:
 
 Local sign-in lockout protections stay enabled either way.
 
+Each organization API key can make 600 requests a minute by default. To change
+that, set `config.auth.apiKeyRateLimitMax` (renders `DEN_API_KEY_RATE_LIMIT_MAX`):
+
+```yaml
+config:
+  auth:
+    apiKeyRateLimitMax: 1200
+```
+
+The limit is saved on each key when it is created, so it applies to keys created
+after the change. Existing keys keep their limit until they are replaced.
+
 Den API also protects External MCP connection URLs with an SSRF guard. On a
 hosted multi-tenant deployment, someone who can add an MCP connection could
 otherwise make Den fetch localhost, private-network services, or cloud metadata

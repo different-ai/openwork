@@ -6,7 +6,8 @@
 // "Cannot access 'DEN_API_KEY_DEFAULT_PREFIX' before initialization".
 export const DEN_API_KEY_HEADER = "x-api-key"
 export const DEN_API_KEY_DEFAULT_PREFIX = "den_"
-export const DEN_API_KEY_RATE_LIMIT_MAX = 600
+// Used when DEN_API_KEY_RATE_LIMIT_MAX is unset; read the limit from env.apiKeyRateLimitMax.
+export const DEN_API_KEY_RATE_LIMIT_MAX_DEFAULT = 600
 export const DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS = 60_000
 export const DEN_API_KEY_EXPIRES_IN_DAYS = 90
 export const DEN_API_KEY_EXPIRES_IN_SECONDS = DEN_API_KEY_EXPIRES_IN_DAYS * 24 * 60 * 60
