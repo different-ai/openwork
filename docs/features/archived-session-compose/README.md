@@ -75,12 +75,20 @@ unarchive **Undo / View** toast.
 
 ![The follow-up is answered in the same conversation](./follow-up-sent.png)
 
+By contrast, explicit Restore still shows its ordinary Undo/View notification.
+
+![Explicit Restore preserves Undo and View](./manual-restore.png)
+
 ## Verification
 
 The focused archived-composer tests cover restore-before-send, timeout and
 cancellation cleanup of real shared send claims/holds, identity and agent
-capture, and late-receipt exclusion. Restore failures occur before the normal
-composer-clearing/submission path. Existing send failures retain normal recovery.
+capture, and late-receipt exclusion. Archive-hook tests verify that silent
+composer restores suppress both success and error notifications (including
+missing/disconnected targets), while ordinary restore notifications remain.
+Feedback component tests cover localized hints and reason-specific inline errors.
+Restore failures occur before the normal composer-clearing/submission path.
+Existing send failures retain normal recovery.
 
 `evals/proofs/archived-session-compose.proof.test.ts` exercises both flag states
 through the real UI, drafting without restoration, hint-to-composer alignment,
