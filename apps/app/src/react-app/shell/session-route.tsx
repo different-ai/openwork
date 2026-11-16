@@ -135,6 +135,10 @@ import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-noti
 import { ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sync";
 import { carryDraftBrowser } from "@/react-app/domains/session/panel/use-browser-presentation";
 import { createSessionChildIdsSelector, useSessionActivityStore, type SessionWaitingKind } from "@/react-app/domains/session/status/session-activity-store";
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
+import { canLinkSessionTo } from "@/react-app/domains/session/sidebar/session-tree";
+import { SessionReportBridge } from "@/react-app/domains/session/links/session-report-bridge";
+import type { SessionLink } from "@openwork/types/session-link";
 import { createWorkspaceSessionAttentionSelector, sessionAttentionLabel, sessionAttentionSidebarStatus } from "@/react-app/domains/session/status/session-attention";
 import { buildOpenworkSessionSystemContext } from "@/react-app/domains/session/sync/env-context";
 import {
@@ -160,7 +164,9 @@ import { hasPendingGatewayModelSelection } from "@/react-app/domains/connections
 import { captureFavoriteModelTarget, isFavoriteModelTargetCurrent } from "./favorite-model-shortcut";
 import { getSessionModelSelection, useSessionModelStore } from "@/react-app/domains/session/surface/session-model-store";
 import { getSessionAgentSelection, useSessionAgentSelection, useSessionAgentStore } from "@/react-app/domains/session/surface/session-mode-memory";
-import { useWorkbenchStore } from "@/react-app/domains/session/chat/workbench-store";
+import { isSameWorkbenchSession, useWorkbenchStore, workbenchSessionKey } from "@/react-app/domains/session/chat/workbench-store";
+import { setPendingChatSeed } from "@/react-app/domains/session/chat/pending-chat-seed";
+import { appendQuoteToDraft } from "@/react-app/domains/session/links/selection-quote";
 import { withSideChatActivity } from "@/react-app/domains/session/sidebar/side-chat-status";
 import { resolveWorkbenchPaneEndpoint } from "@/react-app/domains/session/chat/pane-runtime";
 import {
@@ -259,6 +265,7 @@ import { useBootOverlayVisible } from "./boot-state";
 import {
   createDenClient,
   isDenOrgAdminRole,
+  markFeatureUsed,
   readDenSettings,
   type DenOrgRole,
 } from "@/app/lib/den";
@@ -405,6 +412,8 @@ function singlePickedDirectory(selection: string | string[] | null) {
       ? selection[0] ?? null
       : null;
 }
+
+const NO_ROUTE_SESSIONS: RouteSession[] = [];
 
 function focusedWorkbenchPaneOwner() {
   const workbench = useWorkbenchStore.getState();
@@ -928,6 +937,13 @@ export function SessionRoute() {
   const attentionLocale = currentLocale();
   const remoteAttentionKey = useRemoteThreadAttentionKey();
   const sideChats = useWorkbenchStore((state) => state.sideChats);
+  const sessionTreeEnabled = useDesktopFeature("sessionTree");
+  // A side chat records the session it was opened from, so it is listed under it everywhere.
+  const sideChatLinkFor = useCallback((parent: { workspaceId: string; sessionId: string } | null | undefined, workspaceId: string): SessionLink | undefined => {
+    if (!sessionTreeEnabled || !parent || parent.workspaceId !== workspaceId) return undefined;
+    if (!canLinkSessionTo(sessionsByWorkspaceIdRef.current[workspaceId] ?? [], parent.sessionId)) return undefined;
+    return { kind: "side", parentID: parent.sessionId };
+  }, [sessionTreeEnabled, sessionsByWorkspaceIdRef]);
   const sidebarSessionAttention = useMemo(() => {
     const remoteAttention = remoteThreadAttentionBySession(remoteAttentionKey);
     const statusById: Record<string, string> = {};
@@ -2714,7 +2730,7 @@ export function SessionRoute() {
       // and used to surface as a dead-end "unavailable" toast that only Cmd+R
       // seemed to fix. Retry transient failures with a visible countdown first.
       const created = await withTransientEngineRetry({
-        load: () => createRouteSessionOnEngine(endpoint, workspace.path?.trim() || undefined),
+        load: () => createRouteSessionOnEngine(endpoint, workspace.path?.trim() || undefined, sideChatLinkFor(sideChatOwner, workspaceId)),
         retryDelaysMs: TASK_CREATE_RETRY_DELAYS_MS,
         onRetry: (attempt) => {
           const notice = describeTaskCreateRetry({ developerMode, attempt, attempts });
@@ -2810,7 +2826,7 @@ export function SessionRoute() {
       }
       return null;
     }
-  }, [applyWorkspaceDefaultToSession, developerMode, endpointForWorkspace, loading, navigateToWorkspaceSession, newTaskAgent, refreshCloudProviderSync, refreshRouteState, reloadWorkspaceSessions, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, workspaces]);
+  }, [applyWorkspaceDefaultToSession, developerMode, endpointForWorkspace, loading, navigateToWorkspaceSession, newTaskAgent, refreshCloudProviderSync, refreshRouteState, reloadWorkspaceSessions, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, sideChatLinkFor, workspaces]);
 
   const handleCreateTaskInWorkspace = useCallback((workspaceId: string) => {
     openNewSessionDraft({ workspaceId }, navigate);
@@ -2833,6 +2849,37 @@ export function SessionRoute() {
     },
     [navigate],
   );
+
+  // Text selected in a reply starts a side chat of that session with the text
+  // quoted. A side chat already beside it is a conversation of its own, so this
+  // opens a new draft; an open draft just gets the quote added.
+  const handleStartSideChatWithQuote = useCallback((text: string) => {
+    const workbench = useWorkbenchStore.getState();
+    const parent = workbench.primary;
+    if (!parent) return;
+    const groupId = sessionManagementStore.getState().groupsByWorkspace[parent.workspaceId]?.assignments[parent.sessionId];
+    const destination = { workspaceId: parent.workspaceId, groupId, parent };
+    const ownerKey = newSessionDraftOwnerKey(sessionDraftScope, destination);
+    if (!ownerKey) return;
+    const composer = useComposerStateStore.getState();
+    const existing = composer.sessions[ownerKey]?.draft
+      || getSessionDraft(sessionDraftScope, destination.workspaceId, newSessionDraftSlot(destination))?.text
+      || "";
+    const draft = appendQuoteToDraft(existing, text);
+    const attached = workbench.sideChats[workbenchSessionKey(parent)];
+    if (attached?.draftDestination && isSameWorkbenchSession(workbench.secondary, attached)) {
+      // That draft's composer is on screen and owns its text: hand it the new text.
+      setPendingChatSeed(draft);
+    } else {
+      saveSessionDraft(sessionDraftScope, destination.workspaceId, newSessionDraftSlot(destination), { text: persistableComposerDraftText(draft), mode: "prompt" });
+      composer.setDraft(ownerKey, draft);
+      const tab = { workspaceId: parent.workspaceId, workspaceTitle: parent.workspaceTitle, sessionId: newSessionDraftSlot(destination), title: "Draft", draftDestination: destination };
+      workbench.openTab(tab);
+      workbench.setSideChat(parent, tab);
+    }
+    markFeatureUsed("sessionTree");
+    focusPromptSoon();
+  }, [sessionDraftScope]);
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
@@ -3123,6 +3170,7 @@ export function SessionRoute() {
     refreshRouteState,
     reloadWorkspaceSessions,
     archiveSession,
+    sessionTreeEnabled,
   });
 
   const seedUnavailableModelControlAction = useMemo<OpenworkControlAction | null>(() => {
@@ -3913,6 +3961,13 @@ export function SessionRoute() {
         onSessionDeleted={handleRuntimeSessionDeleted}
       />
     ) : null}
+    {sessionTreeEnabled && selectedWorkspaceId && opencodeBaseUrl && isOpencodeV2BaseUrl(opencodeBaseUrl) ? (
+      <SessionReportBridge
+        sessions={sessionsByWorkspaceId[selectedWorkspaceId] ?? NO_ROUTE_SESSIONS}
+        statuses={sessionActivityByWorkspaceId[selectedWorkspaceId]}
+        engine={{ baseUrl: opencodeBaseUrl, directory: selectedWorkspaceRoot || undefined, token: selectedWorkspaceServerToken || undefined }}
+      />
+    ) : null}
     <SessionPage
       currentSessionArchive={currentSessionArchive}
       sessionReferenceInventories={sessionReferenceInventories}
@@ -4019,6 +4074,7 @@ export function SessionRoute() {
       primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation || remoteTaskRouteActive)}
       primaryHeader={remoteTaskRouteActive && remoteThreadKey ? <RemoteSessionHeader key={remoteThreadKey} threadKey={remoteThreadKey} navigation={remoteHelperNavigation} /> : undefined}
       onOpenRemoteTask={openRemoteTask}
+      onStartSideChatWithQuote={sessionTreeEnabled ? handleStartSideChatWithQuote : undefined}
       retainedArtifactSlot={retainedArtifactsScope ? {
         scope: retainedArtifactsScope,
         active: dashboardRouteActive && !appsRouteActive,
@@ -4173,7 +4229,9 @@ export function SessionRoute() {
             if (!currentWorkspace) throw new Error("Workspace is unavailable. Try again.");
             const workspaceEndpoint = endpointForWorkspace(currentWorkspace);
             if (!workspaceEndpoint?.token) throw new Error("Workspace is disconnected. Reconnect and try again.");
-            return createRouteSessionOnEngine(workspaceEndpoint, currentWorkspace.path?.trim() || undefined);
+            const link = sideChatLinkFor(destination.parent, workspaceId);
+            if (link) markFeatureUsed("sessionTree");
+            return createRouteSessionOnEngine(workspaceEndpoint, currentWorkspace.path?.trim() || undefined, link);
           }, (created) => publishCreatedConversation(pending, created, agent, workspace?.displayNameResolved));
         },
         onOpenRenameWorkspace: handleOpenRenameWorkspace,

@@ -101,6 +101,7 @@ import { DebugRailProvider, DebugRailSlot } from "../panel/debug-rail-slot";
 import { SessionDebugPanel } from "../surface/debug-panel";
 import { FloatingSlotProvider, SessionFloatingLayer } from "../panel/floating-slot";
 import { useDesktopFeature } from "../status/use-desktop-feature";
+import { SelectionSideChat } from "../links/selection-side-chat";
 import { RetainedArtifactSurface } from "../../dashboard/retained-artifact-surface";
 import { CloudComputerControl } from "../computer/cloud-computer-control";
 import { ComputerControl } from "../computer/computer-control";
@@ -328,6 +329,8 @@ export type SessionPageProps = {
   primaryHeader?: React.ReactNode;
   /** Open a task on another computer in the main pane. */
   onOpenRemoteTask?: (threadKey: string) => void;
+  /** Open a side chat of the session on screen with this text quoted. Set while sessions started from a session are listed under it. */
+  onStartSideChatWithQuote?: (text: string) => void;
   terminalOpen?: boolean;
   onTerminalOpenChange?: (open: boolean) => void;
   onSessionTabsChange?: (tabs: OpenSessionTab[]) => void;
@@ -666,6 +669,8 @@ export function SessionPage(props: SessionPageProps) {
   });
   const { isPoppedOut: browserIsPoppedOut, placeOpenedBrowser, handlePanelClosed: handleBrowserPanelClosed } = browserPresentation;
   const remoteComputersFeature = useDesktopFeature("remoteComputers");
+  const sessionTreeEnabled = useDesktopFeature("sessionTree");
+  const [primaryChatElement, setPrimaryChatElement] = useState<HTMLElement | null>(null);
   // The button hides itself when this computer can't run it and no VM is connected.
   const computerUse = isElectronRuntime();
   useComputerEndTurn(props.sidebar.sessionStatusById, computerUse);
@@ -1273,7 +1278,8 @@ export function SessionPage(props: SessionPageProps) {
     for (const group of props.sidebar.workspaceSessionGroups) {
       const session = group.sessions.find((entry) => entry.id === sessionId);
       if (!session) continue;
-      const parentID = session.parentID?.trim();
+      // A side chat or a session the agent started leads back to the session it came from.
+      const parentID = session.parentID?.trim() || (sessionTreeEnabled ? session.openworkSessionLink?.parentID : undefined);
       if (!parentID) return null;
       const parent = group.sessions.find((entry) => entry.id === parentID);
       if (!parent) return null;
@@ -1284,7 +1290,7 @@ export function SessionPage(props: SessionPageProps) {
       };
     }
     return null;
-  }, [props.selectedSessionId, props.sidebar.workspaceSessionGroups]);
+  }, [props.selectedSessionId, props.sidebar.workspaceSessionGroups, sessionTreeEnabled]);
 
   const returnFromChild = useCallback(() => {
     if (!parentSessionLink) return;
@@ -1490,6 +1496,7 @@ export function SessionPage(props: SessionPageProps) {
           sessionAttentionLabelById={props.sidebar.sessionAttentionLabelById}
           sessionAttentionSourceById={props.sidebar.sessionAttentionSourceById}
           sessionAttentionKindById={props.sidebar.sessionAttentionKindById}
+          sessionTreeEnabled={sessionTreeEnabled}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
           newTaskDisabled={props.sidebar.newTaskDisabled}
@@ -1888,7 +1895,10 @@ export function SessionPage(props: SessionPageProps) {
                             onClose={closePrimaryWorkbenchPane}
                           />
                         ) : null}
-                        <div className="min-h-0 flex-1">
+                        <div className="min-h-0 flex-1" ref={setPrimaryChatElement}>
+                          {props.onStartSideChatWithQuote ? (
+                            <SelectionSideChat scope={primaryChatElement} onStart={props.onStartSideChatWithQuote} />
+                          ) : null}
                           <SessionSurface
                             // Spread `surface` first so the explicit per-workspace
                             // routing props below CAN'T be silently overridden by

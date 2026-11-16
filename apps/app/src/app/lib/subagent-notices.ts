@@ -9,6 +9,8 @@
  * Pure readers, shared by the engine adapter, the sync layer and the chat.
  */
 
+import { SESSION_REPORT_SOURCE } from "@openwork/types/session-link";
+
 export type SubagentOutcome = "finished" | "failed" | "stopped";
 
 /** What the chat shows when a background sub-agent ends. */
@@ -16,6 +18,11 @@ export type SubagentNotice = {
   childSessionId: string;
   description: string;
   outcome: SubagentOutcome;
+  /**
+   * The note is about a session the agent started with session.create, which
+   * the app reports in the engine's own shape (`source: "openwork-session"`).
+   */
+  linkedSession?: true;
 };
 
 /** The text part metadata key that marks a sub-agent notice row in the transcript. */
@@ -37,12 +44,16 @@ const ENGINE_OUTCOMES: Record<string, SubagentOutcome> = { completed: "finished"
 export function readSubagentCompletion(payload: unknown): SubagentNotice | null {
   if (!isRecord(payload)) return null;
   const metadata = isRecord(payload.metadata) ? payload.metadata : null;
-  if (!metadata || readString(metadata, "source") !== "subagent") return null;
+  const source = metadata ? readString(metadata, "source") : undefined;
+  if (!metadata || (source !== "subagent" && source !== SESSION_REPORT_SOURCE)) return null;
   const childSessionId = readString(metadata, "childID")?.trim();
   const state = readString(metadata, "state");
   const outcome = state ? ENGINE_OUTCOMES[state] : undefined;
   if (!childSessionId || !outcome) return null;
-  return { childSessionId, description: readString(payload, "description")?.trim() ?? "", outcome };
+  return {
+    childSessionId, description: readString(payload, "description")?.trim() ?? "", outcome,
+    ...(source === SESSION_REPORT_SOURCE ? { linkedSession: true } : {}),
+  };
 }
 
 /** A notice carried on a transcript part (engine part metadata or UI provider metadata). */
@@ -53,11 +64,12 @@ export function readSubagentNotice(value: unknown): SubagentNotice | null {
   const outcome = readString(value, "outcome");
   if (!childSessionId || description === undefined) return null;
   if (outcome !== "finished" && outcome !== "failed" && outcome !== "stopped") return null;
-  return { childSessionId, description, outcome };
+  return { childSessionId, description, outcome, ...(value.linkedSession === true ? { linkedSession: true } : {}) };
 }
 
-export function subagentNoticeLabel(notice: Pick<SubagentNotice, "outcome">): string {
-  if (notice.outcome === "failed") return "Sub-agent failed";
-  if (notice.outcome === "stopped") return "Sub-agent stopped";
-  return "Sub-agent finished";
+export function subagentNoticeLabel(notice: Pick<SubagentNotice, "outcome" | "linkedSession">): string {
+  const who = notice.linkedSession ? "Session" : "Sub-agent";
+  if (notice.outcome === "failed") return `${who} failed`;
+  if (notice.outcome === "stopped") return `${who} stopped`;
+  return `${who} finished`;
 }

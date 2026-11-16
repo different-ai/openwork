@@ -453,6 +453,16 @@
       "development": "./src/connect-link.ts",
       "default": "./src/connect-link.ts"
     },
+    "./session-link": {
+      "types": {
+        "openwork-build": "./dist/types/src/session-link.d.ts",
+        "default": "./src/session-link.ts"
+      },
+      "development": "./src/session-link.ts",
+      "bun": "./src/session-link.ts",
+      "browser": "./src/session-link.ts",
+      "default": "./dist/session-link.js"
+    },
     "./opencode-config-error": {
       "types": {
         "openwork-build": "./dist/types/src/opencode-config-error.d.ts",

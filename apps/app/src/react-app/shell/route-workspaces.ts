@@ -12,6 +12,7 @@ import { OpenworkServerError, type OpenworkWorkspaceInfo } from "@/app/lib/openw
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import type { WorkspaceInfo } from "@/app/lib/desktop-types";
 import type { WorkspaceSessionGroup } from "@/app/types";
+import type { SessionLink } from "@openwork/types/session-link";
 import {
   normalizeDirectoryPath,
   normalizeSessionStatus,
@@ -32,6 +33,7 @@ export type RouteSession = Session & {
   state?: unknown;
   runStatus?: unknown;
   slug?: string | null;
+  openworkSessionLink?: SessionLink | null;
 };
 
 // Absent for v1 prefix reads; null means an exhausted v2 cursor traversal.
@@ -78,11 +80,15 @@ export async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint):
 export async function createRouteSessionOnEngine(
   endpoint: ResolvedWorkspaceEndpoint,
   directory?: string,
+  /** The session this one is started from. Only the v2 engine records it. */
+  link?: SessionLink,
 ): Promise<{ session: Session; endpoint: ResolvedWorkspaceEndpoint }> {
   const native = await routeSessionEndpoint(endpoint);
-  const client = isOpencodeV2BaseUrl(native.opencodeBaseUrl)
-    ? createClientV2(native.opencodeBaseUrl, directory, { token: native.token })
-    : createClient(native.opencodeBaseUrl, directory, { token: native.token, mode: "openwork" });
+  if (isOpencodeV2BaseUrl(native.opencodeBaseUrl)) {
+    const client = createClientV2(native.opencodeBaseUrl, directory, { token: native.token });
+    return { session: unwrap(await client.session.create({ directory, ...(link ? { link } : {}) })), endpoint: native };
+  }
+  const client = createClient(native.opencodeBaseUrl, directory, { token: native.token, mode: "openwork" });
   return { session: unwrap(await client.session.create({ directory })), endpoint: native };
 }
 
