@@ -124,10 +124,11 @@ test("models the member spent on in the period are marked as what they use now",
 
 const capabilities: DenOrgCapabilities = { auditLogs: false, cloud: false, installLinks: false, mcpConnections: false, openworkWeb: false, workflows: false };
 
-test("a member with no admin permissions gets Observability › My Usage", () => {
+test("a member with no admin permissions gets Work › My Usage", () => {
   const sections = buildDashboardNavSections({
     orgSlug: "acme", access: getOrgAccessFlags("member", false, []), capabilities, orgMode: "multi_org", runtimeConfigLoaded: true,
   });
-  const observability = sections.find((section) => section.label === "Observability");
-  assert.deepEqual(observability?.items.map((item) => [item.label, item.href]), [["My Usage", "/dashboard/my-usage"]]);
+  const work = sections.find((section) => section.label === "Work");
+  assert.deepEqual(work?.items.find((item) => item.label === "My Usage")?.href, "/dashboard/my-usage");
+  assert.equal(sections.find((section) => section.label === "Observability"), undefined);
 });

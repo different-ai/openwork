@@ -150,6 +150,10 @@ export function buildDashboardNavSections({
     ...(orgSlug
       ? [{ href: getMyComputersRoute(orgSlug), label: "My Computers", icon: MonitorSmartphone, testId: "dashboard-nav-my-computers" }]
       : []),
+    // Every member's own usage; needs no permission.
+    ...(orgSlug
+      ? [{ href: getMyUsageRoute(orgSlug), label: "My Usage", icon: Gauge, testId: "dashboard-nav-my-usage" }]
+      : []),
     ...(showWeb
       ? [{ href: orgSlug ? getWebRoute(orgSlug) : "#", label: "OpenWork Web", icon: Globe }]
       : []),
@@ -170,8 +174,6 @@ export function buildDashboardNavSections({
     : [];
   const observabilityItems: DashboardNavItem[] = orgSlug
     ? [
-        // Every member's own usage; needs no permission, so the section shows for everyone.
-        { href: getMyUsageRoute(orgSlug), label: "My Usage", icon: Gauge, testId: "dashboard-nav-my-usage" },
         ...(access.canViewUsageAnalytics ? [{ href: getAnalyticsRoute(orgSlug), label: "Analytics", icon: BarChart3 }] : []),
         ...(capabilities.auditLogs
           ? [{
