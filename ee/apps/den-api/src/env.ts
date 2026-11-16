@@ -6,6 +6,7 @@ import { denUrls } from "@openwork-ee/utils/den-urls"
 import { parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env"
 import { readReplicaCredentialsFromEnv } from "@openwork-ee/den-db"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
+import { DEN_API_KEY_RATE_LIMIT_MAX_DEFAULT } from "./api-key-constants.js"
 import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { resolveDenServiceVersion } from "./service-version.js"
 import { denApiAppVersion } from "./version.js"
@@ -68,6 +69,7 @@ const EnvSchema = z.object({
   DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: z.string().optional(),
   DEN_REQUIRE_EMAIL_VERIFICATION: z.string().optional(),
   DEN_PASSWORD_BREACH_SCREENING_ENABLED: z.string().optional(),
+  DEN_API_KEY_RATE_LIMIT_MAX: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.string().optional(),
@@ -369,6 +371,17 @@ export function parseSingleOrgAllowPublicSignup(value: string | undefined, orgMo
   throw new Error("DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP must be true or false")
 }
 
+/** Requests per minute each new API key may make. Blank keeps the default. */
+export function parseApiKeyRateLimitMax(value: string | undefined): number {
+  const trimmed = value?.trim()
+  if (!trimmed) return DEN_API_KEY_RATE_LIMIT_MAX_DEFAULT
+  const parsed = Number(trimmed)
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error("DEN_API_KEY_RATE_LIMIT_MAX must be a whole number of at least 1")
+  }
+  return parsed
+}
+
 function normalizeOrigin(origin: string) {
   const value = origin.trim()
   if (value === "*") {
@@ -666,6 +679,7 @@ const requireEmailVerification = parsed.DEN_REQUIRE_EMAIL_VERIFICATION === undef
 const passwordBreachScreeningEnabled = parsed.DEN_PASSWORD_BREACH_SCREENING_ENABLED === undefined
   ? true
   : parsed.DEN_PASSWORD_BREACH_SCREENING_ENABLED.trim().toLowerCase() !== "false"
+const apiKeyRateLimitMax = parseApiKeyRateLimitMax(parsed.DEN_API_KEY_RATE_LIMIT_MAX)
 
 const daytonaSandboxPublic =
   (parsed.DAYTONA_SANDBOX_PUBLIC ?? "false").toLowerCase() === "true"
@@ -772,6 +786,7 @@ export const env = {
   },
   requireEmailVerification,
   passwordBreachScreeningEnabled,
+  apiKeyRateLimitMax,
   github: {
     clientId: optionalString(parsed.GITHUB_CLIENT_ID),
     clientSecret: optionalString(parsed.GITHUB_CLIENT_SECRET),

@@ -67,6 +67,10 @@ config:
     visibilityEnabled: "true"
   auth:
     passwordBreachScreeningEnabled: "false"
+    # Requests per minute each API key may make. Blank keeps the default of 600.
+    # Applies to keys created after the change; existing keys keep their limit.
+    # Renders DEN_API_KEY_RATE_LIMIT_MAX.
+    apiKeyRateLimitMax: ""
   email:
     # Where replies to invitation emails and their "Report abuse" link go, such as
     # your IT help desk. Leave blank to send replies to the person who invited them.

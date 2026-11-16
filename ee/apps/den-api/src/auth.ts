@@ -70,7 +70,6 @@ import {
   DEN_API_KEY_DEFAULT_PREFIX,
   DEN_API_KEY_EXPIRES_IN_DAYS,
   DEN_API_KEY_EXPIRES_IN_SECONDS,
-  DEN_API_KEY_RATE_LIMIT_MAX,
   DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
 } from "./api-key-constants.js";
 import { revokeOrganizationApiKeysForMember } from "./api-keys.js";
@@ -2129,7 +2128,7 @@ export const auth = betterAuth({
       },
       rateLimit: {
         enabled: true,
-        maxRequests: DEN_API_KEY_RATE_LIMIT_MAX,
+        maxRequests: env.apiKeyRateLimitMax,
         timeWindow: DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
       },
     }),
