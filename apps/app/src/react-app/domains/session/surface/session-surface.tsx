@@ -125,7 +125,7 @@ import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permis
 import { ComputerRequestPanel } from "@/react-app/domains/session/computer/computer-request-panel";
 import { useComputerRequest, useComputerStore } from "@/react-app/domains/session/computer/computer-store";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
-import { ComposerSubagentTracker, currentTurnSubagentParts, useComposerRemoteTasks } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
+import { ComposerSubagentTracker, useComposerRemoteTasks, useComposerSubagentParts } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
 import { ComposerBackgroundTasks } from "@/react-app/domains/session/surface/composer/composer-background-tasks";
 import { sessionBackgroundShells, settleBackgroundShell, useBackgroundShellStore } from "@/react-app/domains/session/status/background-shell-store";
 import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
@@ -2262,11 +2262,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const composerBusy = chatStreaming || status === "submitted";
   // Sub-agents of the current turn, attached to the composer (OpenCode v2 only).
   const subagentTrackerParentActive = status === "streaming" || status === "retrying" || status === "submitted";
+  // An earlier turn's helper that still works stays listed after a follow-up.
+  const subagentTrackerParts = useComposerSubagentParts(visibleMessages, props.workspaceId, {
+    enabled: snapshotEngine === "v2",
+    keepEarlier: !archived,
+  });
   const subagentTrackerToolCallIds = useMemo<ReadonlySet<string>>(
-    () => new Set(snapshotEngine === "v2"
-      ? currentTurnSubagentParts(visibleMessages).map((part) => part.toolCallId)
-      : []),
-    [snapshotEngine, visibleMessages],
+    () => new Set(subagentTrackerParts.map((part) => part.toolCallId)),
+    [subagentTrackerParts],
   );
   // Tasks the turn started on other computers join the list on either engine;
   // their state comes from Den, not the local engine.
@@ -4166,6 +4169,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     onOpenSubagentSession={openChild}
                     onStopSubagentSession={handleStopSubagentSession}
                     includeLocal={subagentTrackerToolCallIds.size > 0}
+                    parts={subagentTrackerParts}
                     remote={remoteTrackerTasks.length > 0 ? {
                       tasks: remoteTrackerTasks,
                       owner: remoteTrackerOwner,
