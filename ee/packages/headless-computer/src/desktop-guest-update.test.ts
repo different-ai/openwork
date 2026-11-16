@@ -38,7 +38,7 @@ function computer(t: TestContext, input: { answering: boolean; jobs?: number; in
     capabilities: { platform: { os: "linux", isolation: "microvm" } },
     onOperation(operation) { if (operation.name === "pause") steps.push("pause") },
     async onRun({ command }: RunSpec) {
-      if (command.startsWith("ls /workspace/.jobs/*.running")) return ok(String(input.jobs ?? 0))
+      if (command.includes("for file in /workspace/.jobs/*.running")) return ok(String(input.jobs ?? 0))
       if (command.startsWith("rm -f")) return ok()
       if (command.endsWith("openwork-desktop-bridge command")) { steps.push("command"); await gate.command; return ok() }
       if (command.endsWith("openwork-desktop-bridge versions")) { steps.push("versions"); return ok(versions()) }

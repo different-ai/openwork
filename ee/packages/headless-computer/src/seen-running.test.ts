@@ -180,17 +180,23 @@ test("a command cut short by this runner pausing the computer is not run again",
 })
 
 test("a command whose outcome is unknown is not run again, and the next one looks the computer up", async t => {
+  let waitedAgain = 0
   const f = fixture(t, { onRun(spec) {
-    if (spec.command.includes("unsure")) throw new SandboxError({ providerId: "fake", code: "timeout", retryable: false, message: "unknown outcome" })
+    const timeout = () => new SandboxError({ providerId: "fake", code: "timeout", retryable: false, message: "unknown outcome" })
+    // The request that starts the command gets no answer, and neither does the one that then only waits for it.
+    if (spec.command.includes("unsure")) throw timeout()
+    if (spec.command.includes("bash-call-") && !spec.command.includes("run=") && waitedAgain++ === 0) throw timeout()
     return undefined
   } })
   await f.computers.bash(SESSION, "echo one", 10)
   const lookups = f.lookups()
   assert.match((await f.computers.bash(SESSION, "unsure", 10)).output, /may still be running/)
-  assert.equal(f.sent("unsure"), 1)
-  assert.equal(f.lookups(), lookups)
-  await f.computers.bash(SESSION, "echo two", 10)
+  assert.equal(f.sent("unsure"), 1, "started once: the second request only waits")
+  assert.equal(waitedAgain, 1)
+  // The wait that follows a timeout looks the computer up, and so does the next command after the second timeout.
   assert.equal(f.lookups(), lookups + 1)
+  await f.computers.bash(SESSION, "echo two", 10)
+  assert.equal(f.lookups(), lookups + 2)
 })
 
 test("a desktop that failed an operation is asked for its health before the next one", async t => {
