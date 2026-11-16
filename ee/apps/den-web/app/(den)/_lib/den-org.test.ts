@@ -33,7 +33,7 @@ function payload(members: unknown[]) {
   };
 }
 
-test("ten joined members retain their identities and access when five have no display name", () => {
+test("ten joined members retain parsed identity, role and Web-access data when five have no display name", () => {
   const members = Array.from({ length: 10 }, (_, index) => {
     const entry = member(index);
     return { ...entry, user: { ...entry.user, name: index < 5 ? entry.user.name : "" } };
@@ -90,14 +90,15 @@ test("email fallback does not admit records missing required membership or linke
   assert.deepEqual(context.members, [entry]);
 });
 
-test("pending invitations and team membership references remain intact", () => {
+test("pending invitation placeholders and parsed team membership references remain intact", () => {
   const joined = member(4);
+  const pendingIdentity = member(5);
   const pending = {
-    ...member(5),
+    ...pendingIdentity,
     userId: null,
     inviteId: "invite-pending",
     joinedAt: null,
-    user: { ...member(5).user, name: "" },
+    user: { ...pendingIdentity.user, id: pendingIdentity.id, name: "member-5" },
   };
   const invitation = {
     id: "invite-pending",
@@ -122,13 +123,13 @@ test("pending invitations and team membership references remain intact", () => {
     teams: [team],
   });
   assert.ok(context);
-  assert.deepEqual(context.members, [joined, { ...pending, user: { ...pending.user, name: pending.user.email } }]);
+  assert.deepEqual(context.members, [joined, pending]);
   assert.deepEqual(context.invitations, [invitation]);
   assert.deepEqual(context.teams, [team]);
   assert.deepEqual(context.teams[0]?.memberIds, context.members.map((entry) => entry.id));
 });
 
-test("organization and current-member requirements still fail closed", () => {
+test("invalid required organization and current-member fields reject the parsed context", () => {
   const input = payload([member(6)]);
   for (const value of ["", null, undefined, 42]) {
     for (const key of ["id", "name", "slug"]) {
