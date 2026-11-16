@@ -72,7 +72,7 @@ overrides:
   "@babel/traverse@<7.29.6": 7.29.7
   "@babel/types@<7.29.6": 7.29.7
   "@ai-sdk/provider-utils@>=4.0.0-beta.10 <4.0.33": 4.0.33
-  "@react-email/ui>next": 16.4.1
+  "@react-email/ui>next": 16.4.5
   "@xmldom/xmldom@>=0.7.0 <=0.8.14": 0.8.15
   "@grpc/grpc-js@<1.14.5": 1.14.5
   "@hono/node-server@<2.1.6": 2.1.6
