@@ -313,9 +313,9 @@ test("another person imports the whole organization: applied by the first run", 
   const scim = item(first, "settings.auth-security", "SCIM provisioning")
   assert.equal(scim.op, "skip", describe([scim]))
   assert.match(reasons(scim), /generate a SCIM token in Settings › Auth & Security/)
-  // Said before approval: the source's owner is invited as an admin; people who haven't joined get no limit yet.
+  // Said before approval: the source's owner is invited as an admin. People who haven't joined are assigned their limits like anyone else.
   assert.match(reasons(item(first, "members.people", ada.name)), /invited as an admin \(an import never moves ownership\)/)
-  assert.match(reasons(item(first, "ai-gateway.limits", "Solo spend")), /will not be assigned yet/)
+  assert.doesNotMatch(reasons(item(first, "ai-gateway.limits", "Solo spend")), /will not be assigned yet|Import again/)
 
   // The importer leaves the person out, and then everything that names them.
   const decisions: Decisions = { skips: [{ area: "members.people", ref: item(first, "members.people", zoe.name).ref }], refs: [] }
@@ -344,7 +344,8 @@ test("another person imports the whole organization: applied by the first run", 
   const warnings = runWarnings(run)
   // What the run could not do is a warning on the item, with what to do about it.
   assert.ok(warnings.some((warning) => warning.startsWith("workbot.settings: Workbot's model was not changed")), warnings.join("\n"))
-  assert.ok(warnings.some((warning) => warning.startsWith("ai-gateway.limits: Not assigned to")), warnings.join("\n"))
+  // The people this run invited hold their limits already: nothing waits for a second import.
+  assert.deepEqual(warnings.filter((warning) => warning.startsWith("ai-gateway.limits")), [], warnings.join("\n"))
 
   // The importer still manages what they imported, though the file names other managers.
   const collection = await ok(apiB("GET", "/v1/marketplaces"), "collections")
