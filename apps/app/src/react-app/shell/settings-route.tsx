@@ -2443,7 +2443,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             showOpenWorkModelsDeviceRow={openWorkModelsRow.showDeviceRow}
             organizationProviderIds={organizationProviderIds}
             onOpenDen={openProviderCloudPage}
-            onUseOllama={!checkDesktopRestriction({ restriction: "allowLocalModels" })
+            onConfigureOllama={!checkDesktopRestriction({ restriction: "allowLocalModels" })
               ? () => navigateSettingsPath("ollama")
               : undefined}
             cloudProvidersView={
