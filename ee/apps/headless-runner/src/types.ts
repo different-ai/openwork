@@ -152,7 +152,13 @@ export type SessionComputer = {
   desktopViewer?(sessionId: string, input: { view: "browser" | "computer"; control: boolean; origin: string }): Promise<{ state: "paused" } | { state: "connected"; url: string; expiresAt: number; paused: boolean }>
   browserDemonstration?(sessionId: string, command: import("@openwork/types/browser-demonstration").DemonstrationCommand): Promise<import("@openwork/types/browser-demonstration").DemonstrationReply>
   desktopAction?(sessionId: string, action: "continue" | "pause" | "resume" | "rebuild"): Promise<{ ok: boolean }>
-  run(sessionId: string, name: string, input: Record<string, unknown>): Promise<ToolResult>
+  /** `callKey` names this one call for good, so a command started under it can be picked up later (`pickUp`). */
+  run(sessionId: string, name: string, input: Record<string, unknown>, callKey?: string): Promise<ToolResult>
+  /**
+   * The result of a command started under `callKey` whose result never reached the runner: its real result once it
+   * ends, or that it is still running. Null when the computer never started it. Never starts a command or a computer.
+   */
+  pickUp?(sessionId: string, name: string, input: Record<string, unknown>, callKey: string): Promise<ToolResult | null>
   /** Whether this conversation has a computer here at all (see computer-route.ts); unset means every conversation does. */
   available?(sessionId: string): boolean
   known(sessionId: string): boolean
