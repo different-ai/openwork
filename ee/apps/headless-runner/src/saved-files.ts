@@ -104,8 +104,8 @@ export class SavedFiles {
     }
   }
 
-  async add(sessionId: string, input: { name: string; mediaType?: string | null; bytes: Uint8Array<ArrayBuffer>; source: SavedFile["source"] }) {
-    this.checkFits(sessionId, input.bytes.byteLength)
+  /** A new kept file's row and where its bytes go; nothing is written yet. */
+  private newFile(sessionId: string, input: { name: string; mediaType?: string | null; size: number; source: SavedFile["source"] }) {
     const id = `fl_${randomUUID().replaceAll("-", "")}`
     const name = cleanFileName(input.name)
     const file: SavedFile = {
@@ -113,12 +113,17 @@ export class SavedFiles {
       sessionId,
       name,
       mediaType: mediaTypeFor(name, input.mediaType),
-      size: input.bytes.byteLength,
+      size: input.size,
       source: input.source,
       createdAt: this.now(),
       updatedAt: this.now(),
     }
-    const storageKey = `sessions/${sessionId}/${id}`
+    return { file, storageKey: `sessions/${sessionId}/${id}` }
+  }
+
+  async add(sessionId: string, input: { name: string; mediaType?: string | null; bytes: Uint8Array<ArrayBuffer>; source: SavedFile["source"] }) {
+    this.checkFits(sessionId, input.bytes.byteLength)
+    const { file, storageKey } = this.newFile(sessionId, { ...input, size: input.bytes.byteLength })
     // Bytes first: a row never points at an object that was not written.
     await this.blobs.put(storageKey, input.bytes, file.mediaType)
     this.store.addSavedFile({ ...file, storageKey })
@@ -150,6 +155,57 @@ export class SavedFiles {
     if (!entry) return null
     const bytes = await this.blobs.get(entry.storageKey)
     return bytes ? { file: entry.file, bytes } : null
+  }
+
+  /**
+   * A link the conversation's computer fetches a kept file from, so the bytes never pass through the runner. It
+   * reaches that one file and stops working after `expiresSeconds`. Null when the store can't make links (a disk
+   * store) or the file is gone.
+   */
+  async downloadUrl(sessionId: string, id: string, expiresSeconds: number): Promise<string | null> {
+    const entry = this.blobs.link ? this.store.getSavedFile(sessionId, id) : null
+    return entry && this.blobs.link ? this.blobs.link("GET", entry.storageKey, expiresSeconds) : null
+  }
+
+  /**
+   * Takes a file the conversation's computer sends straight to the store. The link writes one holding object and
+   * stops working after `expiresSeconds`; it never reaches a kept file. `finish` then measures what arrived, checks
+   * it against the limits, and only then copies it into place as a new kept file (or, with `replaces`, as that
+   * file's new version, like `replace`), so a kept file is never larger than its row says. `finish` gives null when
+   * nothing arrived. Throws like `add` when `size` doesn't fit; null when the store can't make links.
+   */
+  async receive(sessionId: string, input: { name: string; size: number; source: SavedFile["source"]; replaces?: string; expiresSeconds: number }) {
+    const blobs = this.blobs
+    const { link, size: sizeOf, copy } = blobs
+    if (!link || !sizeOf || !copy) return null
+    const earlier = () => (input.replaces ? this.store.getSavedFile(sessionId, input.replaces) : null)
+    this.checkFits(sessionId, input.size, earlier()?.file.size ?? 0)
+    const holding = `sessions/${sessionId}/incoming-${randomUUID().replaceAll("-", "")}`
+    const url = await link.call(blobs, "PUT", holding, input.expiresSeconds)
+    const finish = async (): Promise<SavedFile | null> => {
+      try {
+        const size = await sizeOf.call(blobs, holding)
+        if (size === null) return null
+        const entry = earlier()
+        this.checkFits(sessionId, size, entry?.file.size ?? 0)
+        if (entry) {
+          const mediaType = mediaTypeFor(entry.file.name, entry.file.mediaType)
+          await this.deletePreview(entry.storageKey)
+          await copy.call(blobs, holding, entry.storageKey, mediaType)
+          const updatedAt = this.now()
+          this.store.updateSavedFile(sessionId, entry.file.id, { size, mediaType, updatedAt })
+          return { ...entry.file, size, mediaType, updatedAt }
+        }
+        const { file, storageKey } = this.newFile(sessionId, { name: input.name, size, source: input.source })
+        // Bytes first, as in `add`: a row never points at an object that was not written.
+        await copy.call(blobs, holding, storageKey, file.mediaType)
+        this.store.addSavedFile({ ...file, storageKey })
+        return file
+      } finally {
+        await blobs.delete(holding).catch(() => undefined)
+      }
+    }
+    return { url, finish }
   }
 
   async delete(sessionId: string, id: string) {

@@ -262,7 +262,7 @@ The runner is a private service with one caller (Den), which authorizes each per
 - **Opt-in per session.** Configuring files or a computer makes them *available*; a session only gets them when it is created (or updated) with `files: true` / `computer: true`. Slack replies and Automations don't ask, so they keep their exact behavior: no file tools, no computer, no uploads, and the preview route never starts a computer for them.
 - **Files belong to one session.** Every read, download, preview and delete looks a file up by session id *and* file id, and bytes are stored under `sessions/<sessionId>/<fileId>`. Deleting a session deletes its bytes and its computer.
 - **Limits.** `HEADLESS_FILES_MAX_BYTES` (100 MB) per file, enforced while the upload streams in (with or without `Content-Length`), and on `save_file` and computer outputs. `HEADLESS_FILES_MAX_SESSION_BYTES` (5 GB) per session in total. Past either, the upload gets `413`, and the model is told why so it can say so.
-- **Storage credentials.** Use a store or bucket for this runner alone, with credentials scoped to it. Neither the storage credentials nor the Freestyle key ever enter a computer.
+- **Storage credentials.** Use a store or bucket for this runner alone, with credentials scoped to it. Neither the storage credentials nor the Freestyle key ever enter a computer. With an S3 store a computer does receive links: each reaches one object with one method, carries a signature rather than the credentials, and stops working within minutes.
 - **Computers.** One VM per session, created only when that session first runs a command; it holds no credentials and has outbound internet only.
 
 ## Computer (optional)
@@ -275,6 +275,7 @@ The runner is a private service with one caller (Den), which authorizes each per
 | `look { paths }` | Shows up to 4 files from the VM like any tool file: images and PDFs as model input, Office files and text as text |
 
 - **Files:** uploads are copied into `/workspace/files`; files written to `/workspace/out` become saved files after each command. A new version of an out file updates the same saved file (same id, newer `updatedAt`).
+- **How the bytes move:** with `HEADLESS_FILES=s3` the computer fetches uploads from the bucket and sends outputs to it itself, with `curl` over those links, so files never pass through the runner; the computer must be able to reach the bucket's endpoint. An output goes to a holding object first and is kept only after the runner has measured it against the limits. With a disk store, or when a transfer doesn't arrive, files go through the runner as before. Which uploads are already on a computer is recorded there, in `/workspace/.jobs/.copied.json`.
 - **Previews:** slide decks, documents and PDFs get page images (LibreOffice, then `pdftoppm`), served at `GET /v1/sessions/:id/saved-files/:fileId/preview` and `/preview/:page`.
 - **Only for sessions with `computer: true`.** Others never see the tools, and nothing starts a VM for them.
 - **Lifecycle:** one VM per session, found by a slug derived from the session id. Paused `HEADLESS_COMPUTER_PAUSE_SECONDS` (300) after the last turn unless a `background` job runs; deleted after `HEADLESS_COMPUTER_KEEP_DAYS` (14) unused, or with the session.
