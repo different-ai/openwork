@@ -21,14 +21,14 @@ const usd = (microUsd: number) => new Intl.NumberFormat("en-US", { style: "curre
 test("any member sees their own spend limit, past 30 days and what each model would cost them", async ({ world, user, probe, step, evidence }) => {
   const text = async (selector: string) => (await probe.dom(selector)).elements.map((element) => element.text.replace(/\s+/g, " ").trim());
 
-  await step("a regular member opens Observability › My Usage from the sidebar", async () => {
-    await user.see({ text: "Observability" }, { timeoutMs: 90_000 });
+  await step("a regular member opens Work › My Usage from the sidebar", async () => {
+    await user.see({ text: "Work" }, { timeoutMs: 90_000 });
     const links = await text('[data-testid="dashboard-nav-my-usage"]');
     await user.click({ testId: "dashboard-nav-my-usage" });
     await user.see({ text: "Spend limits" }, { timeoutMs: 60_000 });
     const api = await world.ownUsage();
     const ok = links.some((link) => link.includes("My Usage")) && api.status === 200;
-    evidence.recordAssertionEvidence("A member with no admin permissions gets Observability › My Usage", `sidebar link: ${links.join(", ")}; GET /v1/gateway/usage/me as the member: HTTP ${api.status}`, ok);
+    evidence.recordAssertionEvidence("A member with no admin permissions gets Work › My Usage", `sidebar link: ${links.join(", ")}; GET /v1/gateway/usage/me as the member: HTTP ${api.status}`, ok);
     expect(ok).toBe(true);
   });
 
