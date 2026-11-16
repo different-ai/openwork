@@ -234,8 +234,11 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
     if (!session.oauthProvider || !["tool-execution", "resource-discovery", "resource-read"].includes(input.operationPhase)) return
     const failure = session.observer.lastRequestFailure()
     if (!failure || !isMcpResourceRequest(failure.requestPhase)) return
+    // `insufficient_scope` refuses one request: the token is still valid for
+    // every request its scopes cover, and a new sign-in asks for the same
+    // scopes, so clearing it would only sign the member out again.
     const rejected = (failure.httpStatus === 401 && failure.invalidToken)
-      || (failure.httpStatus === 403 && (failure.bearerChallenge || failure.insufficientScope))
+      || (failure.httpStatus === 403 && failure.bearerChallenge && !failure.insufficientScope)
     if (!rejected) return
     await session.oauthProvider.invalidateCredentials("tokens")
     emitDiagnostic({
@@ -330,6 +333,9 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
         : oauthProvider,
       fetch: oauthProvider ? oauthProvider.exclusiveRefreshFetch(observer.fetch) : observer.fetch,
       requestInit: requestInit(input.connection.authorization),
+      // Only a sign-in can widen scopes. Outside one, the refusal is reported
+      // with the scope the server named, without a refresh or a second call.
+      onInsufficientScope: input.flow.kind === "connect" ? "reauthorize" : "throw",
     })
     const legacyEventsAdvertised = options.webhookEvents ? observeLegacyEventCapability(transport) : () => false
     const capabilities = {

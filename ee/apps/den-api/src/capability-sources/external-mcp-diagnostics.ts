@@ -61,6 +61,16 @@ export type ExternalMcpDiagnostic = {
   providerErrorMessage?: string
   providerErrorData?: string
   providerResponseExcerpt?: string
+  /** The OAuth scopes the server said a refused request needs, space separated. */
+  requiredScope?: string
+}
+
+/**
+ * A tool call the server refused because the sign-in lacks a scope. The
+ * sign-in is kept, and a new one asks for the same scopes.
+ */
+export function isToolScopeRefusal(diagnostic: Pick<ExternalMcpDiagnostic, "code" | "operationPhase">): boolean {
+  return diagnostic.code === "MCP_OAUTH_INSUFFICIENT_SCOPE" && diagnostic.operationPhase === "MCP_TOOL_EXECUTION"
 }
 
 export type ExternalMcpSafeOutbound = {
@@ -774,6 +784,30 @@ function typedOAuthErrorName(error: unknown): string | undefined {
   return undefined
 }
 
+const REQUIRED_SCOPE_MAX_CHARS = 300
+// RFC 6749 scope tokens: printable ASCII without space, quote or backslash.
+const OAUTH_SCOPE_TOKEN = /^[\x21\x23-\x5B\x5D-\x7E]+$/
+
+/**
+ * A request the server refused with an `insufficient_scope` challenge, and the
+ * scopes it named. Everything in the challenge is the server's own text, so a
+ * value that is not a plain scope list is dropped rather than shown.
+ */
+function scopeChallengeFromError(error: unknown): { requiredScope?: string } | undefined {
+  let current: unknown = error
+  for (let depth = 0; depth < 5 && current; depth += 1) {
+    if (errorName(current) === "InsufficientScopeError" && isRecord(current) && "requiredScope" in current) {
+      const tokens = (stringProperty(current, "requiredScope") ?? "").split(/\s+/).filter(Boolean)
+      const scope = tokens.join(" ")
+      return tokens.length > 0 && scope.length <= REQUIRED_SCOPE_MAX_CHARS && tokens.every((token) => OAUTH_SCOPE_TOKEN.test(token))
+        ? { requiredScope: scope }
+        : {}
+    }
+    current = errorCause(current)
+  }
+  return undefined
+}
+
 function oauthProviderDetail(error: unknown): string | undefined {
   let current: unknown = error
   const seen = new Set<unknown>()
@@ -898,6 +932,7 @@ function safeMessageFor(input: {
   jsonRpcCode?: number
   providerErrorMessage?: string
   providerDetail?: string
+  requiredScope?: string
 }): string {
   if (input.code === "MCP_OAUTH_SIGN_IN_METADATA_MISSING") {
     return "This server returns a redirect or login page and publishes no valid sign-in information for this MCP URL. Configure the connection manually or ask the server administrator."
@@ -927,7 +962,13 @@ function safeBaseMessageFor(input: {
   httpStatus?: number
   jsonRpcCode?: number
   providerErrorMessage?: string
+  requiredScope?: string
 }): string {
+  if (input.code === "MCP_OAUTH_INSUFFICIENT_SCOPE") {
+    return input.requiredScope
+      ? `The provider refused this request because the sign-in does not include a permission it requires (OAuth scope named by the provider, untrusted: ${input.requiredScope}).`
+      : "The provider refused this request because the sign-in does not include a permission (OAuth scope) it requires."
+  }
   if (input.code === "MCP_LIFECYCLE_DEADLINE") {
     return input.phase === "MCP_TOOL_EXECUTION"
       ? "The capability did not finish within the time OpenWork allows a single tool call."
@@ -1102,6 +1143,16 @@ function logProviderToolEvidence(input: {
   })
 }
 
+/**
+ * A sign-in asks for the connection's configured scopes, so after a tool call
+ * is refused for scope only a change to those scopes makes a new sign-in help.
+ */
+function insufficientScopeAction(phase: ExternalMcpDiagnosticPhase, otherwise: string): string {
+  return phase === "MCP_TOOL_EXECUTION"
+    ? "Ask an organization admin to add the scope under Requested OAuth scopes in this connection's settings, then sign in to the connection again. Signing in again without that change requests the same scopes."
+    : otherwise
+}
+
 function httpClassification(input: {
   phase: ExternalMcpDiagnosticPhase
   status: number
@@ -1193,7 +1244,7 @@ function httpClassification(input: {
         retryable: status === 401,
         actionOwner: input.insufficientScope ? "organization_admin" : "member",
         operatorAction: input.insufficientScope
-          ? "Grant the provider scopes required by this MCP resource and reconnect."
+          ? insufficientScopeAction(phase, "Grant the provider scopes required by this MCP resource and reconnect.")
           : status === 403 && !input.bearerChallenge
             ? "Verify provider access policy and token audience, tenant, and resource binding before reconnecting."
             : "Reconnect the provider account and verify token audience, tenant, and resource binding.",
@@ -1561,7 +1612,7 @@ function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase
       code: "MCP_OAUTH_INSUFFICIENT_SCOPE",
       retryable: false,
       actionOwner: "organization_admin",
-      operatorAction: "Grant the MCP resource scopes required by the provider and restart authorization.",
+      operatorAction: insufficientScopeAction(fallbackPhase, "Grant the MCP resource scopes required by the provider and restart authorization."),
     }
   }
   if (name === "InvalidTokenError") {
@@ -1938,11 +1989,16 @@ export class ExternalMcpDiagnosticTracker {
       && isOAuthTokenPhase(this.providerResponseExcerptPhase)
       ? this.providerResponseExcerpt.slice(0, EXTERNAL_MCP_OAUTH_PROVIDER_DETAIL_CHARS)
       : undefined
-    const safeOAuthProviderDetail = oauthProviderDetail(error)
-      ?? oauthProviderDetail(source.error)
-      ?? capturedOAuthProviderDetail
+    const scopeChallenge = classification.code === "MCP_OAUTH_INSUFFICIENT_SCOPE"
+      ? scopeChallengeFromError(error) ?? scopeChallengeFromError(source.error)
+      : undefined
+    // A scope challenge's only detail is its scope list, reported on its own.
+    const safeOAuthProviderDetail = scopeChallenge
+      ? undefined
+      : oauthProviderDetail(error) ?? oauthProviderDetail(source.error) ?? capturedOAuthProviderDetail
     const providerErrorMessage = providerEvidence?.message ?? safeOAuthProviderDetail
     const providerErrorData = providerEvidence?.dataExcerpt
+    const requiredScope = scopeChallenge?.requiredScope
     const diagnosticWithoutMessage = {
       referenceId: this.referenceId,
       highestPassed: this.highestPassed,
@@ -1950,6 +2006,7 @@ export class ExternalMcpDiagnosticTracker {
       ...(jsonRpcCode === undefined ? {} : { jsonRpcCode }),
       ...(providerErrorMessage ? { providerErrorMessage } : {}),
       ...(providerErrorData ? { providerErrorData } : {}),
+      ...(requiredScope ? { requiredScope } : {}),
     }
     const diagnostic: ExternalMcpDiagnostic = {
       ...diagnosticWithoutMessage,
