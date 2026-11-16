@@ -74,7 +74,9 @@ never holds Den tokens:
 
 1. The app opens `/auth/app/login` in the system's sign-in browser with its own PKCE challenge, its state and its
    return address.
-2. Workbot sends the person to Den with that challenge. Den returns to Workbot's `/auth/callback`, which hands the
+2. Workbot sends the person to Den with that challenge, marked sign-in only (`openwork_sign_in_only=true`): Den's
+   sign-in page asks for an email first and never offers to create an account, because app stores require an app
+   that creates accounts to delete them too. Den returns to Workbot's `/auth/callback`, which hands the
    code to the app's return address: `/auth/app/callback` on Workbot itself, which iOS opens only in the OpenWork app
    it verified against `/.well-known/apple-app-site-association`. Anyone can start a sign-in with a challenge of
    their own, so the code never goes to an address another app could claim. Private-use schemes are rejected on

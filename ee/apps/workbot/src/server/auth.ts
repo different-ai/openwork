@@ -462,7 +462,7 @@ export function createAuth(input: {
       }
       const login: AppLogin = { kind: "app", appState: query.data.state, redirectUri: query.data.redirect_uri, createdAt: now() }
       try {
-        return c.redirect(await den.authorizeUrl({ state: sealer.seal(APP_LOGIN_PURPOSE, login), challenge: query.data.code_challenge }), 302)
+        return c.redirect(await den.authorizeUrl({ state: sealer.seal(APP_LOGIN_PURPOSE, login), challenge: query.data.code_challenge, signInOnly: true }), 302)
       } catch (error) {
         console.error("[workbot] sign-in unavailable", { error: error instanceof Error ? error.message : "unknown" })
         report("sign_in_unavailable", error)

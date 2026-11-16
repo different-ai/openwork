@@ -16,6 +16,12 @@ import type { Tokens } from "./sealed.js"
  * is (`/v1/workbot/session`) and mint each turn's short-lived app token (`/v1/workbot/run-token`).
  */
 export const WORKBOT_CLIENT_ID = "openwork-workbot"
+/**
+ * Asks Den's sign-in page to sign an existing account in and offer no way to create one. The phone app sends it:
+ * app stores require an app that creates accounts to delete them too, and Den has no account deletion.
+ * Den's page reads the same name (ee/apps/den-web/app/mcp/workbot-sign-in.ts).
+ */
+export const SIGN_IN_ONLY_PARAM = "openwork_sign_in_only"
 const SCOPES = "openid profile email offline_access mcp:read mcp:write"
 const TIMEOUT_MS = 20_000
 /** Each remote-session:status attempt; Workbot retries once. */
@@ -310,7 +316,7 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
      * Where to send the browser to sign in; Den returns it to /auth/callback with a code. The phone app keeps its own
      * PKCE verifier and passes only its challenge, so the code is useless to anyone but the app that asked.
      */
-    async authorizeUrl(input: { state: string; chooseWorkspace?: boolean } & ({ verifier: string } | { challenge: string })) {
+    async authorizeUrl(input: { state: string; chooseWorkspace?: boolean; signInOnly?: boolean } & ({ verifier: string } | { challenge: string })) {
       const { authorizationEndpoint, resource } = await discover()
       const url = new URL(authorizationEndpoint)
       url.search = new URLSearchParams({
@@ -323,6 +329,7 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
         code_challenge_method: "S256",
         // Explicit workspace changes must not silently reuse the active workspace's existing grant.
         ...(input.chooseWorkspace ? { prompt: "consent" } : {}),
+        ...(input.signInOnly ? { [SIGN_IN_ONLY_PARAM]: "true" } : {}),
         resource,
       }).toString()
       return url.toString()

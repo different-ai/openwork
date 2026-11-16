@@ -14,6 +14,9 @@ chat: no attachments, notifications or background task controls.
 
 - Members of organizations that have both Workbot and `workbotMobile` on.
   The browser Workbot is unchanged either way.
+- The app signs existing accounts in. Its sign-in page asks for an email
+  first and offers no way to create an account; people still create
+  accounts on the web.
 - Signing in goes through Workbot and Den: the app opens `/auth/app/login`
   with its own PKCE challenge, Den returns the code to Workbot, and Workbot
   hands it to the app's verified HTTPS return address

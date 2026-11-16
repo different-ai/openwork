@@ -43,7 +43,7 @@ function world(options: { secret?: string } = {}) {
   let releaseRefresh: (() => void) | null = null
   const den: DenAuth = {
     authorizeUrl: async (input) =>
-      `https://den.test/authorize?${new URLSearchParams({ state: input.state, ...("challenge" in input ? { code_challenge: input.challenge } : {}) })}`,
+      `https://den.test/authorize?${new URLSearchParams({ state: input.state, ...("challenge" in input ? { code_challenge: input.challenge } : {}), ...(input.signInOnly ? { sign_in_only: "true" } : {}) })}`,
     exchangeCode: async (_code, verifier): Promise<Tokens> => {
       calls.exchange.push(verifier)
       return { accessToken: accessToken(0), refreshToken: "refresh-0", expiresAt: clock + 45 * 60_000 }
@@ -155,6 +155,17 @@ test("the phone app signs in with its own PKCE pair, gets a sealed session, and 
   assert.deepEqual(await elsewhere.json(), { token: "access-0-", app: true })
   assert.equal(elsewhere.headers.get("workbot-session"), null)
   assert.equal(elsewhere.headers.getSetCookie().length, 0)
+})
+
+test("the phone app asks Den to sign an existing account in; the browser can still create one", async () => {
+  const app = world().instance()
+  const phone = await app.request(`/auth/app/login?${new URLSearchParams({ code_challenge: "c".repeat(43), code_challenge_method: "S256", state: "app-state-0123456789", redirect_uri: APP_REDIRECT })}`)
+  assert.equal(phone.status, 302)
+  assert.equal(new URL(phone.headers.get("location") ?? "").searchParams.get("sign_in_only"), "true")
+
+  const browser = await app.request("/auth/login")
+  assert.equal(browser.status, 302)
+  assert.equal(new URL(browser.headers.get("location") ?? "").searchParams.get("sign_in_only"), null)
 })
 
 test("phone sign-in refuses other return addresses, plain challenges and stale or foreign sessions", async () => {

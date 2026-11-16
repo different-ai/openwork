@@ -6,7 +6,8 @@ to Workbot in one conversation.
 
 ## What the first release does
 
-- **Sign in with OpenWork** in the system's sign-in sheet, and sign out.
+- **Sign in with OpenWork** in the system's sign-in sheet, and sign out. The
+  app signs existing accounts in and offers no way to create one.
 - **One conversation with Workbot:** earlier messages, sending text, the
   answer arriving live, Stop, and Try again when an answer fails.
 - **A one-time notice** about how Workbot uses AI providers, agreed to before
@@ -35,7 +36,9 @@ The phone never holds an OpenWork token. It holds a session only the Workbot
 server can read, and that session opens nothing but Workbot.
 
 1. The app makes a PKCE pair and opens `/auth/app/login` on the Workbot server
-   in the system's sign-in sheet.
+   in the system's sign-in sheet. Workbot marks the request as sign-in only,
+   so OpenWork's sign-in page asks for an email first and never offers to
+   create an account.
 2. OpenWork signs the person in and returns to Workbot, which sends the code
    to `/auth/app/callback` on its own address. iOS opens that address only in
    this app, because the server lists the app's ID in
