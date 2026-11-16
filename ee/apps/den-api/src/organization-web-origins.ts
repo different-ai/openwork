@@ -92,10 +92,14 @@ function isCanonicalExactHttpsOrigin(origin: string) {
   return normalizeExactHttpsOrigin(origin) === origin
 }
 
+const DUPLICATE_ENTRY_MESSAGE = /\bDuplicate entry\b|\(errno 1062\)/
+
 function isDuplicateEntry(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false
   if ("code" in error && error.code === "ER_DUP_ENTRY") return true
   if ("errno" in error && error.errno === 1062) return true
+  // PlanetScale/Vitess surface MySQL errors as message text only, e.g. "... code = AlreadyExists desc = Duplicate entry 'x' for key 'y' (errno 1062) (sqlstate 23000) ...".
+  if ("message" in error && typeof error.message === "string" && DUPLICATE_ENTRY_MESSAGE.test(error.message)) return true
   return "cause" in error && error.cause !== error && isDuplicateEntry(error.cause)
 }
 

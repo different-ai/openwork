@@ -1430,17 +1430,32 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }
   }, [local, openworkClient, reloadCoordinator, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
 
+  // A provider hidden with Disconnect stays hidden until it is enabled again, so
+  // adding or syncing its models on the Ollama page brings it back first.
+  const enableLocalProviderIfHidden = useCallback(async (providerId: string) => {
+    const id = providerId.trim().toLowerCase();
+    if (!disabledProviders.some((entry) => entry.trim().toLowerCase() === id)) return true;
+    try {
+      await providerAuthStore.enableProvider(providerId);
+      return true;
+    } catch (error) {
+      setLocalProviderError(describeRouteError(error));
+      return false;
+    }
+  }, [disabledProviders, providerAuthStore]);
+
   const installLocalProvider = useCallback(async (input: LocalProviderInstallInput) => {
     const modelId = input.modelId.trim();
     if (!modelId) {
       setLocalProviderError("Model ID is required.");
       return;
     }
+    if (!await enableLocalProviderIfHidden(input.providerId)) return;
     await applyLocalProviderPatch(buildLocalProviderInstallPatch({ ...input, modelId }), {
       status: `Added ${input.name} with ${modelId}.`,
       ...(input.setDefault ? { defaultModel: { providerID: input.providerId, modelID: modelId } } : {}),
     });
-  }, [applyLocalProviderPatch]);
+  }, [applyLocalProviderPatch, enableLocalProviderIfHidden]);
 
   const syncLocalProvider = useCallback(async (input: LocalProviderSyncInput) => {
     if (input.models.length === 0) {
@@ -1448,10 +1463,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       return;
     }
     const count = input.models.length;
+    if (!await enableLocalProviderIfHidden(input.providerId)) return;
     await applyLocalProviderPatch(buildLocalProviderSyncPatch(input), {
       status: `Synced ${count} model${count === 1 ? "" : "s"} from ${input.name}.`,
     });
-  }, [applyLocalProviderPatch]);
+  }, [applyLocalProviderPatch, enableLocalProviderIfHidden]);
 
   useEffect(() => {
     local.setUi((previous) => ({ ...previous, view: "settings", tab: route.tab }));
@@ -2427,7 +2443,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             showOpenWorkModelsDeviceRow={openWorkModelsRow.showDeviceRow}
             organizationProviderIds={organizationProviderIds}
             onOpenDen={openProviderCloudPage}
-            onUseOllama={!checkDesktopRestriction({ restriction: "allowLocalModels" })
+            onConfigureOllama={!checkDesktopRestriction({ restriction: "allowLocalModels" })
               ? () => navigateSettingsPath("ollama")
               : undefined}
             cloudProvidersView={

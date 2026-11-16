@@ -540,6 +540,12 @@ function toolMessage(call: ToolCall, outcome: ToolResult): Message {
   }
 }
 
+/**
+ * Names one call of one step for good: the same when the step starts again, never shared with another step or run (a
+ * model may reuse its call ids). The computer keeps a command's result under it.
+ */
+const stepCallKey = (messageId: string, state: StepState, call: ToolCall) => `${messageId}/${state.stretchStartedAt}/${state.steps}/${call.id}`
+
 /** A step's kept answer as messages: each call with its recorded result, or `missing` as an error for the rest. */
 function pendingOutcomes(pending: PendingStep, missing: string): ToolResult[] {
   return pending.toolCalls.map((call) => pending.results.find((entry) => entry.callId === call.id)?.result ?? { output: missing, isError: true })
@@ -1109,7 +1115,7 @@ export class Runner {
   private async runCall(
     setup: TurnSetup,
     call: ToolCall,
-    context: { sessionId: string; kind: JobKind; tools: ToolSession | null; signal: AbortSignal; held: HeldCredentials },
+    context: { sessionId: string; kind: JobKind; tools: ToolSession | null; signal: AbortSignal; held: HeldCredentials; callKey?: string },
   ): Promise<ToolResult> {
     const { store } = this.options
     const { readOnly, files, reactions, taskTools, turn, computer, memory } = setup
@@ -1139,7 +1145,7 @@ export class Runner {
           ? desktopViewRefused(store.getSession(sessionId)?.desktopViews ?? null, call.input)
             ?? await computer.desktopRun(sessionId, call.input, signal, { browserRecovery: store.getSession(sessionId)?.browserRecovery === true }).catch((error: unknown) => ({ output: error instanceof Error ? error.message : "Desktop unavailable", isError: true }))
         : computer?.toolNames.has(call.name)
-          ? await computer.run(sessionId, call.name, call.input).catch((error: unknown) => ({
+          ? await computer.run(sessionId, call.name, call.input, context.callKey).catch((error: unknown) => ({
               output: `The computer didn't respond: ${error instanceof Error ? error.message : "unknown error"}. Its outcome is unknown; check before repeating it.`,
               isError: true,
             }))
@@ -1845,8 +1851,23 @@ export class Runner {
         // The step stopped while its tool calls ran: it finishes from the kept answer. A call without a recorded
         // result is not run again (it may have had side effects); the model gets an error and checks.
         answer = state.pending
+        const readOnly = (lane.held?.credentials.readOnly ?? state.readOnly) === true
+        // Except a command on the conversation's computer, which went on without the runner and kept its result
+        // there: the computer is asked for it. A command it never started stays an interrupted call.
+        const computer = session?.computer && !readOnly && kind !== "report" && this.options.computer?.available?.(sessionId) !== false ? this.options.computer : undefined
+        for (const call of answer.toolCalls) {
+          const pickUp = computer?.pickUp
+          if (!pickUp || call.inputError || !computer.toolNames.has(call.name) || answer.results.some((entry) => entry.callId === call.id)) continue
+          signal.throwIfAborted()
+          const key = stepCallKey(messageId, state, call)
+          const found = await lane.timing.tool(call.name, () => pickUp.call(computer, sessionId, call.name, call.input, key).catch(() => null))
+          if (!found) continue
+          answer.results.push({ callId: call.id, result: found })
+          state = { ...state, pending: answer }
+          store.setStepState(sessionId, messageId, state)
+        }
         outcomes = pendingOutcomes(answer, INTERRUPTED_CALL)
-        reactions = session?.reactions === true && kind === "message" && (lane.held?.credentials.readOnly ?? state.readOnly) !== true
+        reactions = session?.reactions === true && kind === "message" && !readOnly
       } else {
         const turnMessages = () => store.turnMessages(sessionId, messageId).map((entry) => entry.message)
         // History from a run in one go (or an import) may hold calls without results: never re-run.
@@ -1998,7 +2019,7 @@ export class Runner {
           store.setStepState(sessionId, messageId, state)
         }
         const runCall = (call: ToolCall) =>
-          lane.timing.tool(call.name, () => this.runCall(setup, call, { sessionId, kind, tools, signal, held: { credentials: lane.held?.credentials ?? {}, at: lane.issuedAt } }))
+          lane.timing.tool(call.name, () => this.runCall(setup, call, { sessionId, kind, tools, signal, held: { credentials: lane.held?.credentials ?? {}, at: lane.issuedAt }, callKey: stepCallKey(messageId, state, call) }))
         if (runsTogether(setup, answer.toolCalls)) {
           // Calls that can't change anything (lookups in the person's apps) run at the same time.
           signal.throwIfAborted()
