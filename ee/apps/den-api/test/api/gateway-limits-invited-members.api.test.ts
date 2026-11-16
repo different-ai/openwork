@@ -1,9 +1,8 @@
 /**
- * Spend limits for people who have not accepted their invitation yet
- * (`limitsForInvitedMembers`).
+ * Spend limits for people who have not accepted their invitation yet.
  *
- * 1. With the feature off, a limit can't be assigned to an invited person.
- *    With it on, it can: the limit is theirs from the moment they join.
+ * 1. A limit can be assigned to an invited person: it is theirs from the
+ *    moment they join.
  * 2. A canceled invitation can't be given a limit.
  * 3. Someone who became a member another way and then accepts the invitation
  *    keeps the limit that was assigned to the invitation.
@@ -28,7 +27,6 @@ const { and, eq } = await import("@openwork-ee/den-db/drizzle")
 const { GatewayUsageAssignmentTable, MemberTable } = await import("@openwork-ee/den-db/schema")
 const { createDenTypeId, normalizeDenTypeId } = await import("@openwork-ee/utils/typeid")
 
-const FEATURE = "limitsForInvitedMembers"
 const AREAS = "members.people,ai-gateway.limits"
 const BLOCKING = ["needs_mapping", "ref_unresolved", "drift", "collision.unique", "conflict.identity", "blocked", "needs_input"]
 
@@ -75,17 +73,11 @@ const ada = await den.signUp("Ada Owner")
 const orgA = await den.createOrg(ada, "Limits for invited people")
 const apiA = den.as(ada, orgA.orgId)
 
-test("a limit is assigned to an invited person only with the feature on, and applies once they join", async () => {
+test("a limit is assigned to an invited person and applies once they join", async () => {
   const bo = await den.signUp("Bo Invited")
   const pending = await invite(apiA, bo.email)
   const limit = await createLimit(apiA, "Bo spend")
 
-  const refused = await apiA("POST", `/v1/gateway/usage-limit-policies/${limit}/assignments`, { memberId: pending.memberId })
-  assert.equal(refused.status, 404, summary(refused))
-  assert.equal(field(refused.body, "error"), "member_not_found")
-  assert.deepEqual(await assignedMembers(apiA, "Bo spend"), [])
-
-  assert.ok((await den.setFeature(orgA.orgId, FEATURE, true)).status < 300)
   await ok(apiA("POST", `/v1/gateway/usage-limit-policies/${limit}/assignments`, { memberId: pending.memberId }), "assign to an invited person")
   assert.deepEqual(await assignedMembers(apiA, "Bo spend"), [pending.memberId])
 
@@ -201,7 +193,6 @@ test("an import assigns limits to the people it invites in the same run", async 
   const ian = await den.signUp("Ian Importer")
   const orgB = await den.createOrg(ian, "Limits copy")
   const apiB = den.as(ian, orgB.orgId)
-  assert.ok((await den.setFeature(orgB.orgId, FEATURE, true)).status < 300)
 
   const first = await upload(apiB, exported, "People and limits")
   const blockingItems = planItems(first.plan).filter((item) => item.flags.some((flag) => BLOCKING.includes(flag)))

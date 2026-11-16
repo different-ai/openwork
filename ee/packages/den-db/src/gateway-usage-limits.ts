@@ -321,10 +321,6 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         | { organization: true }
         | { memberId: GatewayUsageScope["memberId"] }
         | { teamId: typeof TeamTable.$inferSelect.id },
-      // `invited`: the target may be someone who has not accepted their invitation yet. Their
-      // member row already exists and keeps its id when they join, so the limit applies from
-      // their first request.
-      options: { invited?: boolean } = {},
     ) {
       return transaction(async (tx, now) => {
         await lockUsageOrganization(tx, scope.organizationId)
@@ -357,8 +353,8 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
               return fail("policy_archived", 409, "Archived policies cannot be assigned.")
             const memberId = "memberId" in target ? target.memberId : null
             const teamId = "teamId" in target ? target.teamId : null
-            if (memberId && options.invited) await assignableUsageMember(tx, { ...scope, memberId })
-            else if (memberId) await activeUsageMember(tx, { ...scope, memberId }, true)
+            // Someone invited who has not joined yet may hold a limit: their member row keeps its id when they join.
+            if (memberId) await assignableUsageMember(tx, { ...scope, memberId })
             if (teamId) {
               const [team] = await tx
                 .select()

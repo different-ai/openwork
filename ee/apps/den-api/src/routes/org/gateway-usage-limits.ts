@@ -17,7 +17,6 @@ import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Context, Hono, MiddlewareHandler } from "hono"
 import { z } from "zod"
 import { db } from "../../db.js"
-import { organizationFeatureEnabled } from "../../features.js"
 import { gatewayManagementUnavailable } from "../../gateway-deployment.js"
 import {
   jsonValidator,
@@ -236,13 +235,8 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
         const target = c.req.valid("json")
         if ("organization" in target)
           return service.assign(scope(c), c.req.valid("param").policyId, { organization: true })
-        if ("memberId" in target && isDenTypeId("member", target.memberId)) {
-          const actor = scope(c)
-          const invited = await organizationFeatureEnabled(actor.organizationId, "limitsForInvitedMembers", {
-            userId: c.get("organizationContext")?.currentMember.userId,
-          })
-          return service.assign(actor, c.req.valid("param").policyId, { memberId: target.memberId }, { invited })
-        }
+        if ("memberId" in target && isDenTypeId("member", target.memberId))
+          return service.assign(scope(c), c.req.valid("param").policyId, { memberId: target.memberId })
         if ("teamId" in target && isDenTypeId("team", target.teamId))
           return service.assign(scope(c), c.req.valid("param").policyId, { teamId: target.teamId })
         throw new GatewayUsageError("invalid_target", 400, "Invalid assignment target.")

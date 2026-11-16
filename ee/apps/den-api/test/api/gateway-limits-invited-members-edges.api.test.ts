@@ -1,6 +1,6 @@
 /**
- * Spend limits held by people who have not accepted their invitation yet
- * (`limitsForInvitedMembers`): what happens around the assignment.
+ * Spend limits held by people who have not accepted their invitation yet:
+ * what happens around the assignment.
  *
  * 1. The limits pages keep working while an invited person holds a limit:
  *    listing, inspecting that person, editing, archiving and restoring the limit.
@@ -8,11 +8,12 @@
  *    again starts without the limit.
  * 3. Someone who was removed and is invited again gets the limit assigned to
  *    the new invitation.
- * 4. Turning the feature off keeps what was assigned: it can still be removed,
- *    and it still applies when the person joins.
+ * 4. An invited person can be unassigned again: the limit then does not apply
+ *    when they join, and still does for the invited people who kept it.
  * 5. Team and organization limits reach an invited person when they join, next
  *    to a limit of their own.
- * 6. People who joined are assigned as before, with the feature on or off.
+ * 6. People who joined are assigned as before, and a member of another
+ *    organization is never a target.
  */
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
@@ -24,7 +25,6 @@ after(async () => {
   await den.close()
 })
 
-const FEATURE = "limitsForInvitedMembers"
 const POLICIES = "/v1/gateway/usage-limit-policies"
 
 type Api = ReturnType<typeof den.as>
@@ -74,8 +74,6 @@ async function ownLimits(person: Session, orgId: string): Promise<string> {
 const ada = await den.signUp("Ada Owner")
 const org = await den.createOrg(ada, "Limits for invited people, edges")
 const api = den.as(ada, org.orgId)
-assert.ok((await den.setFeature(org.orgId, FEATURE, true)).status < 300)
-
 test("the limits pages keep working while an invited person holds a limit", async () => {
   const bo = await den.signUp("Bo Pending")
   const pending = await invite(api, bo.email)
@@ -150,7 +148,7 @@ test("team and organization limits reach an invited person when they join, next 
   await ok(api("POST", `${POLICIES}/${everyone}/archive`, { revision: (await policy(api, "Everyone spend")).revision }), "archive the organization limit")
 })
 
-test("turning the feature off keeps what was assigned", async () => {
+test("an invited person can be unassigned again", async () => {
   const fay = await den.signUp("Fay Kept")
   const gil = await den.signUp("Gil Unassigned")
   const kept = await invite(api, fay.email)
@@ -159,42 +157,28 @@ test("turning the feature off keeps what was assigned", async () => {
   await ok(assign(api, limit, { memberId: kept.memberId }), "assign")
   await ok(assign(api, limit, { memberId: dropped.memberId }), "assign")
 
-  assert.ok((await den.setFeature(org.orgId, FEATURE, false)).status < 300)
-  try {
-    const refused = await assign(api, await createLimit(api, "Late spend"), { memberId: kept.memberId })
-    assert.equal(refused.status, 404, summary(refused))
+  const assignment = list((await policy(api, "Kept spend")).assignments).find((entry) => entry.memberId === dropped.memberId)
+  await ok(api("DELETE", `${POLICIES}/${limit}/assignments/${text(assignment?.id, "assignment id")}`), "unassign an invited person")
+  assert.deepEqual(await assignedMembers(api, "Kept spend"), [kept.memberId])
 
-    const assignment = list((await policy(api, "Kept spend")).assignments).find((entry) => entry.memberId === dropped.memberId)
-    await ok(api("DELETE", `${POLICIES}/${limit}/assignments/${text(assignment?.id, "assignment id")}`), "unassign an invited person")
-    assert.deepEqual(await assignedMembers(api, "Kept spend"), [kept.memberId])
-
-    await accept(fay, kept.inviteToken)
-    assert.match(await ownLimits(fay, org.orgId), /Kept spend/)
-    await accept(gil, dropped.inviteToken)
-    assert.doesNotMatch(await ownLimits(gil, org.orgId), /Kept spend/)
-  } finally {
-    assert.ok((await den.setFeature(org.orgId, FEATURE, true)).status < 300)
-  }
+  await accept(fay, kept.inviteToken)
+  assert.match(await ownLimits(fay, org.orgId), /Kept spend/)
+  await accept(gil, dropped.inviteToken)
+  assert.doesNotMatch(await ownLimits(gil, org.orgId), /Kept spend/)
 })
 
-test("people who joined are assigned as before, with the feature on or off", async () => {
+test("people who joined are assigned as before", async () => {
   const hal = await den.newMember(ada, org.orgId, "Hal Joined")
   const stranger = await den.signUp("Ian Elsewhere")
   const elsewhere = await den.createOrg(stranger, "Another organization")
-  for (const enabled of [true, false]) {
-    assert.ok((await den.setFeature(org.orgId, FEATURE, enabled)).status < 300)
-    const name = `Joined spend ${enabled ? "on" : "off"}`
-    const limit = await createLimit(api, name)
-    await ok(assign(api, limit, { memberId: hal.memberId }), "assign a joined member")
-    assert.deepEqual(await assignedMembers(api, name), [hal.memberId])
-    assert.match(await ownLimits(hal, org.orgId), new RegExp(name))
+  const limit = await createLimit(api, "Joined spend")
+  await ok(assign(api, limit, { memberId: hal.memberId }), "assign a joined member")
+  assert.deepEqual(await assignedMembers(api, "Joined spend"), [hal.memberId])
+  assert.match(await ownLimits(hal, org.orgId), /Joined spend/)
 
-    // A member of another organization is never a target.
-    const foreign = await assign(api, limit, { memberId: elsewhere.owner.memberId })
-    assert.equal(foreign.status, 404, summary(foreign))
-    assert.deepEqual(await assignedMembers(api, name), [hal.memberId])
-    // One limit wins per window: retire this one so the next round's is the one Hal sees.
-    await ok(api("POST", `${POLICIES}/${limit}/archive`, { revision: (await policy(api, name)).revision }), "archive")
-  }
-  assert.ok((await den.setFeature(org.orgId, FEATURE, true)).status < 300)
+  // A member of another organization is never a target.
+  const foreign = await assign(api, limit, { memberId: elsewhere.owner.memberId })
+  assert.equal(foreign.status, 404, summary(foreign))
+  assert.equal(field(foreign.body, "error"), "member_not_found")
+  assert.deepEqual(await assignedMembers(api, "Joined spend"), [hal.memberId])
 })

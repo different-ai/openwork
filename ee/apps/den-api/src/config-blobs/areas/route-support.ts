@@ -18,7 +18,7 @@
  * apply report and before-snapshot cover them.
  */
 import { randomUUID } from "node:crypto"
-import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, InvitationTable, MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
@@ -367,21 +367,6 @@ export async function loadMemberEmails(db: ConfigDb, organizationId: string, mem
     if (email) out.set(row.id, email.trim().toLowerCase())
   }
   return out
-}
-
-/**
- * Of these members, the ones who have not accepted their invitation yet: an
- * invitation's placeholder member row has no account. Some services refuse
- * them (a spend limit can only be assigned to someone who has joined).
- */
-export async function loadPendingMemberIds(db: ConfigDb, organizationId: string, memberIds: readonly string[]): Promise<Set<string>> {
-  const ids = [...new Set(memberIds)].filter((id) => isDenTypeId("member", id)).map((id) => normalizeDenTypeId("member", id))
-  if (ids.length === 0) return new Set()
-  const rows = await db
-    .select({ id: MemberTable.id })
-    .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, normalizeDenTypeId("organization", organizationId)), inArray(MemberTable.id, ids), isNull(MemberTable.userId)))
-  return new Set(rows.map((row) => row.id))
 }
 
 export const OWN_MANAGER_ACCESS_KEPT = "Your own manager access was kept."

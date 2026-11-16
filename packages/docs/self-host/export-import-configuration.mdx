@@ -115,12 +115,8 @@ Some areas carry only part of what their screen shows:
   organization has fewer seats left than the file invites, the last people in the
   file are blocked with the reason: skip them (or skip someone else to give them
   the seat), or free up seats first.
-- **Limits** can only be assigned to people who have joined. People the import
-  invites are left out of a limit with a note; import the file again once they have
-  accepted and they are assigned.
-  Where the **Spend limits for invited people** feature is on, this does not
-  apply: the people an import invites are assigned their limits in the same run,
-  and the limits apply from the moment they join.
+- **Limits** are assigned to the people an import invites in the same run, and
+  apply from the moment they join.
 - **Access you hold as the importer** is kept: an import never removes your own
   manager access to a collection, plugin, skill or source, also when the file
   doesn't list you.
@@ -306,8 +302,8 @@ background.
   A file that holds only part of an organization still offers the teams and people
   already in the target.
 - **Importing the same file again** is safe and is how you finish an import: what
-  was applied shows as unchanged, and what had to wait (people who have since
-  joined, a model whose provider now has its key) is applied.
+  was applied shows as unchanged, and what had to wait (a model whose provider
+  now has its key) is applied.
 - **Approvals** are tied to `planHash`. Any change to the plan or a secret value
   drops them. An organization can require a second approver (Settings › Config),
   who must differ from the uploader and the first approver.
