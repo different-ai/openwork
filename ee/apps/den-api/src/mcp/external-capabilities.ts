@@ -24,6 +24,7 @@ import {
 import {
   ExternalMcpDiagnosticError,
   externalMcpDiagnosticForLog,
+  isToolScopeRefusal,
   safeExternalMcpEndpointForLog,
   type ExternalMcpDiagnostic,
 } from "../capability-sources/external-mcp-diagnostics.js"
@@ -298,6 +299,8 @@ export function externalMcpAuthErrorCode(
     .find((current) => current instanceof ExternalMcpDiagnosticError)
   if (diagnosticError instanceof ExternalMcpDiagnosticError) {
     if (diagnosticError.diagnostic.code === "MCP_OAUTH_INVALID_GRANT") return "invalid_grant"
+    // Reconnecting cannot fix it, so it is not reported as a sign-in failure.
+    if (isToolScopeRefusal(diagnosticError.diagnostic)) return null
     if (
       diagnosticError.diagnostic.phase === "AUTH_TOKEN_ACQUISITION"
       || diagnosticError.diagnostic.phase === "AUTH_RESOURCE_VALIDATION"
