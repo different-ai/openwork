@@ -6,8 +6,6 @@
 	<string>https://$(OPENWORK_SERVER_HOST)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
-	<key>UIUserInterfaceStyle</key>
-	<string>Light</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

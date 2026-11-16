@@ -20,6 +20,18 @@ the calendar, background task controls, the computer view, and Apps. Files
 and background work that Workbot produces are named in the conversation and
 opened on the web.
 
+## How it looks
+
+The app is built from the system's own components, so it follows whatever the
+phone is set to: light or dark appearance, larger text, increased contrast,
+reduced motion and transparency. Colors are the system's, plus one accent
+with light, dark and high-contrast variants. Glass is used only where the
+system uses it, on bars and on the message field that floats over the
+conversation; the conversation itself is plain content.
+
+The app icon has default, dark and tinted variants. A layered icon made in
+Icon Composer would be the next step for the newest icon effects.
+
 ## What it asks of the phone
 
 Nothing that shows a permission prompt: no camera, photos, microphone,
@@ -122,5 +134,4 @@ the desktop app already uses this app ID there.
 
 ## What is not built yet
 
-Android, an iPad layout, dark mode, and everything listed under "leaves out"
-above.
+Android, an iPad layout, and everything listed under "leaves out" above.

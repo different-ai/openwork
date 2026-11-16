@@ -9,7 +9,7 @@ struct AccountView: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            Form {
                 if let me = model.me {
                     Section {
                         LabeledContent("Name", value: me.name)
@@ -18,39 +18,44 @@ struct AccountView: View {
                     }
                 }
                 Section {
-                    NavigationLink("How Workbot uses AI") {
+                    NavigationLink {
                         ScrollView {
                             AIUseText().padding(24)
                         }
-                        .background(Theme.background)
-                        .navigationTitle("How Workbot uses AI")
+                        .navigationTitle("How Workbot Uses AI")
                         .navigationBarTitleDisplayMode(.inline)
+                    } label: {
+                        Label("How Workbot Uses AI", systemImage: "sparkles")
                     }
-                    Link("Privacy Policy", destination: Links.privacy)
-                    Link("Terms", destination: Links.terms)
-                    Link("Contact support", destination: Links.support(subject: "OpenWork for iPhone"))
-                    Link("Report a problem", destination: Links.support(subject: "Report a problem with Workbot"))
+                    Link(destination: Links.privacy) { Label("Privacy Policy", systemImage: "hand.raised") }
+                    Link(destination: Links.terms) { Label("Terms", systemImage: "doc.text") }
+                    Link(destination: Links.support(subject: "OpenWork for iPhone")) { Label("Contact Support", systemImage: "envelope") }
+                    Link(destination: Links.support(subject: "Report a problem with Workbot")) { Label("Report a Problem", systemImage: "flag") }
                 } footer: {
                     Text("To report one of Workbot's answers, touch and hold it in the conversation.")
                 }
                 Section {
-                    Button("Sign out", role: .destructive) { confirmingSignOut = true }
+                    Button("Sign Out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) { confirmingSignOut = true }
+                        .foregroundStyle(.red)
                         .accessibilityIdentifier("sign-out-button")
+                        // Attached to the row, so the confirmation comes from the control that asked for it.
+                        .confirmationDialog("Sign out of OpenWork?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
+                            Button("Sign Out", role: .destructive) {
+                                dismiss()
+                                Task { await model.signOut() }
+                            }
+                        }
                 } footer: {
                     Text("OpenWork \(version)")
                 }
             }
+            .formStyle(.grouped)
             .navigationTitle("Account")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .confirmationDialog("Sign out of OpenWork?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
-                Button("Sign out", role: .destructive) {
-                    dismiss()
-                    Task { await model.signOut() }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(role: .close) { dismiss() }
+                        .accessibilityIdentifier("account-close")
                 }
             }
         }

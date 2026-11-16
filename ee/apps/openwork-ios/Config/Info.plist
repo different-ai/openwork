@@ -6,7 +6,5 @@
 	<string>https://$(OPENWORK_SERVER_HOST)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
-	<key>UIUserInterfaceStyle</key>
-	<string>Light</string>
 </dict>
 </plist>

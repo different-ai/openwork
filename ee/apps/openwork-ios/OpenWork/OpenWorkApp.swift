@@ -9,7 +9,6 @@ struct OpenWorkApp: App {
         WindowGroup {
             RootView()
                 .environment(model)
-                .tint(Theme.ink)
         }
     }
 }

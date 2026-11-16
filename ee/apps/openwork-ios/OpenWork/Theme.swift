@@ -1,20 +1,54 @@
 import OpenWorkKit
 import SwiftUI
 
-/// Design values, matching the Workbot web page's (`ee/packages/workbot-ui/src/styles.css`).
-enum Theme {
-    static let background = Color(red: 0xFB / 255, green: 0xFC / 255, blue: 0xFD / 255)
-    static let surface = Color.white
-    static let ink = Color(red: 0x01 / 255, green: 0x16 / 255, blue: 0x27 / 255)
-    static let text = Color(red: 0x11 / 255, green: 0x18 / 255, blue: 0x1C / 255)
-    static let muted = Color(red: 0x68 / 255, green: 0x70 / 255, blue: 0x76 / 255)
-    static let userBubble = Color(red: 0xEE / 255, green: 0xF1 / 255, blue: 0xF4 / 255)
-    static let chip = Color(red: 0xF1 / 255, green: 0xF3 / 255, blue: 0xF5 / 255)
-    static let hairline = Color(red: 0x01 / 255, green: 0x16 / 255, blue: 0x27 / 255).opacity(0.09)
-    static let danger = Color(red: 0xC4 / 255, green: 0x30 / 255, blue: 0x2B / 255)
-
-    static let bubbleRadius: CGFloat = 18
+/// Layout values. Colors, materials and control shapes come from the system, so the app follows light and dark
+/// appearance, contrast, text size and the system's own look without code here.
+enum Layout {
     static let gutter: CGFloat = 16
+    static let bubbleRadius: CGFloat = 20
+    static let composerRadius: CGFloat = 22
+}
+
+/// The one main action on a screen: the system's prominent button at full width.
+struct PrimaryButton: View {
+    let title: LocalizedStringKey
+    var isWorking = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if isWorking {
+                    ProgressView().tint(Color(.systemBackground))
+                } else {
+                    Text(title)
+                }
+            }
+            .font(.headline)
+            // The accent is near-black in light appearance and near-white in dark, so the label takes the
+            // background's color to stay readable on both.
+            .foregroundStyle(Color(.systemBackground))
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .buttonSizing(.flexible)
+        .controlSize(.large)
+        .disabled(isWorking)
+    }
+}
+
+/// The OpenWork mark, drawn in the accent color so it reads in light and dark.
+struct MarkView: View {
+    var size: CGFloat = 72
+
+    var body: some View {
+        Image("Mark")
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(.tint)
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
 }
 
 /// The person's words for what went wrong. No message here offers a purchase or points to one.

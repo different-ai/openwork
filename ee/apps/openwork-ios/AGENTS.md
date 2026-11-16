@@ -6,7 +6,8 @@ here cannot tell you. Read `README.md` for what the app does and how to run it.
 ## Facts
 
 - App ID `com.differentai.openwork` (store) and `com.differentai.openwork.dev`
-  (development). iPhone only, iOS 26 and later, portrait, light appearance.
+  (development). iPhone only, iOS 26 and later, portrait. It follows the
+  system's light and dark appearance and text size.
 - Swift 6 language mode with strict concurrency. The app target isolates to
   the main actor by default; `OpenWorkKit` does not.
 - No third-party dependencies. Adding one is a decision to raise first.
@@ -44,6 +45,21 @@ on screen, follow "Run it against the stand-in server" in `README.md`.
   keep App Review simple.
 - The sign-in contract. It is shared with the Workbot server
   (`ee/apps/workbot/src/server/auth.ts`) and tested on both sides.
+
+## Keep it native
+
+- Build screens from system components: `NavigationStack` titles and
+  toolbars, `Form`, `ContentUnavailableView`, `confirmationDialog`, system
+  button styles. Do not draw your own bars, sheets, or buttons.
+- Use system colors and styles (`.primary`, `.secondary`, `.fill.tertiary`,
+  `.tint`). The only custom color is `AccentColor`. No fixed hex colors and
+  no forced appearance.
+- Glass belongs to the control layer only: the system's bars, and the message
+  field and its button (`safeAreaBar`, `GlassEffectContainer`, `glassEffect`,
+  `.glassProminent`). Never put glass behind conversation content, and never
+  stack glass on glass.
+- Text uses system text styles so it scales. Check a change at an
+  accessibility text size and in dark appearance before calling it done.
 
 ## Use current APIs
 

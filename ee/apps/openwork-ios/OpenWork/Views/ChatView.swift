@@ -8,6 +8,7 @@ struct ChatView: View {
     @State private var draft = ""
     @State private var showingAccount = false
     @State private var position = ScrollPosition(edge: .bottom)
+    @State private var sentCount = 0
     @FocusState private var writing: Bool
 
     private var chat: ChatModel {
@@ -17,19 +18,13 @@ struct ChatView: View {
     var body: some View {
         NavigationStack {
             content
-                .background(Theme.background)
-                .safeAreaInset(edge: .bottom, spacing: 0) { composer }
+                // The composer is a bar the system knows about, so the conversation fades under it.
+                .safeAreaBar(edge: .bottom) { composer }
+                .scrollEdgeEffectStyle(.soft, for: .bottom)
+                .navigationTitle("Workbot")
+                .navigationSubtitle(model.me?.organizationName ?? "")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .principal) {
-                        VStack(spacing: 0) {
-                            Text("Workbot").font(.headline).foregroundStyle(Theme.ink)
-                            if let organization = model.me?.organizationName, !organization.isEmpty {
-                                Text(organization).font(.caption).foregroundStyle(Theme.muted)
-                            }
-                        }
-                        .accessibilityElement(children: .combine)
-                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Account", systemImage: "person.crop.circle") { showingAccount = true }
                             .accessibilityIdentifier("account-button")
@@ -37,6 +32,8 @@ struct ChatView: View {
                 }
                 .sheet(isPresented: $showingAccount) { AccountView() }
         }
+        .sensoryFeedback(.impact(weight: .light), trigger: sentCount)
+        .sensoryFeedback(.error, trigger: chat.sendProblems.count) { old, new in new > old }
         .onAppear { chat.activate() }
         .onDisappear { chat.deactivate() }
         // Live updates run only while the app is in front; coming back reads once and listens again.
@@ -54,13 +51,27 @@ struct ChatView: View {
         case .loading:
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         case let .failed(offline):
-            message(offline ? "You're offline." : "Couldn't load your conversation.", action: "Try again") {
-                Task { await chat.load() }
+            ContentUnavailableView {
+                Label(offline ? "You're Offline" : "Couldn't Load Your Conversation", systemImage: offline ? "wifi.slash" : "exclamationmark.bubble")
+            } actions: {
+                Button("Try Again") {
+                    Task { await chat.load() }
+                }
+                .buttonStyle(.bordered)
             }
+            .accessibilityIdentifier("chat-message")
         case let .unavailable(reason):
-            message(LocalizedStringKey(Wording.unavailable(reason)), action: "Check again") {
-                Task { await chat.load() }
+            ContentUnavailableView {
+                Label("Workbot Is Unavailable", systemImage: "moon.zzz")
+            } description: {
+                Text(Wording.unavailable(reason))
+            } actions: {
+                Button("Check Again") {
+                    Task { await chat.load() }
+                }
+                .buttonStyle(.bordered)
             }
+            .accessibilityIdentifier("chat-message")
         case .ready:
             conversation
         }
@@ -68,7 +79,7 @@ struct ChatView: View {
 
     private var conversation: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 20) {
+            LazyVStack(alignment: .leading, spacing: 22) {
                 if chat.turns.isEmpty {
                     intro
                 }
@@ -78,11 +89,11 @@ struct ChatView: View {
                 if chat.connectionLost {
                     Label("Can't reach Workbot. Trying again…", systemImage: "wifi.slash")
                         .font(.footnote)
-                        .foregroundStyle(Theme.muted)
+                        .foregroundStyle(.secondary)
                         .accessibilityIdentifier("connection-lost")
                 }
             }
-            .padding(.horizontal, Theme.gutter)
+            .padding(.horizontal, Layout.gutter)
             .padding(.vertical, 16)
         }
         .scrollPosition($position)
@@ -93,57 +104,59 @@ struct ChatView: View {
 
     /// The first open: who this is and a few things to try.
     private var intro: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Image("Mark")
-                .resizable()
-                .frame(width: 56, height: 56)
-                .clipShape(.rect(cornerRadius: 13))
-                .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 12) {
+            MarkView(size: 56)
             Text("Hi\(firstName.isEmpty ? "" : " \(firstName)"), I'm Workbot.")
                 .font(.title2.bold())
-                .foregroundStyle(Theme.ink)
                 .accessibilityIdentifier("chat-intro")
             Text("Ask me about your work, or hand me something to do.")
                 .font(.body)
-                .foregroundStyle(Theme.muted)
+                .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(["What can you do?", "Help me plan my day", "Draft a message for me"], id: \.self) { starter in
                     Button(starter) { send(starter) }
-                        .buttonStyle(ChipStyle())
                 }
             }
-            .padding(.top, 4)
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .padding(.top, 6)
         }
         .padding(.top, 24)
     }
 
+    /// The field and its one button float over the conversation as glass, the way the system's own bars do.
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            TextField("Message Workbot", text: $draft, axis: .vertical)
-                .lineLimit(1 ... 6)
-                .focused($writing)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Theme.surface, in: .rect(cornerRadius: 22))
-                .overlay { RoundedRectangle(cornerRadius: 22).stroke(Theme.hairline) }
-                .accessibilityIdentifier("composer-field")
-            if chat.isBusy, trimmedDraft.isEmpty {
-                Button("Stop", systemImage: "stop.fill") {
-                    Task { await chat.stop() }
+        GlassEffectContainer(spacing: 8) {
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("Message Workbot", text: $draft, axis: .vertical)
+                    .lineLimit(1 ... 6)
+                    .focused($writing)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 11)
+                    .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.composerRadius))
+                    .accessibilityIdentifier("composer-field")
+                if chat.isBusy, trimmedDraft.isEmpty {
+                    Button("Stop", systemImage: "stop.fill") {
+                        Task { await chat.stop() }
+                    }
+                    .buttonStyle(.glass)
+                    .disabled(chat.isStopping)
+                    .accessibilityIdentifier("stop-button")
+                } else {
+                    Button("Send", systemImage: "arrow.up") { send(draft) }
+                        .buttonStyle(.glassProminent)
+                        .foregroundStyle(Color(.systemBackground))
+                        .disabled(trimmedDraft.isEmpty || chat.state != .ready)
+                        .accessibilityIdentifier("send-button")
                 }
-                .buttonStyle(RoundButtonStyle())
-                .disabled(chat.isStopping)
-                .accessibilityIdentifier("stop-button")
-            } else {
-                Button("Send", systemImage: "arrow.up") { send(draft) }
-                    .buttonStyle(RoundButtonStyle())
-                    .disabled(trimmedDraft.isEmpty || chat.state != .ready)
-                    .accessibilityIdentifier("send-button")
             }
+            .labelStyle(.iconOnly)
+            .buttonBorderShape(.circle)
+            .controlSize(.large)
+            .fontWeight(.semibold)
         }
-        .padding(.horizontal, Theme.gutter)
+        .padding(.horizontal, Layout.gutter)
         .padding(.vertical, 8)
-        .background(Theme.background)
     }
 
     private var trimmedDraft: String {
@@ -160,20 +173,8 @@ struct ChatView: View {
         if text == trimmedDraft {
             draft = ""
         }
+        sentCount += 1
         Task { await chat.send(text) }
-    }
-
-    private func message(_ title: LocalizedStringKey, action: LocalizedStringKey, perform: @escaping () -> Void) -> some View {
-        VStack(spacing: 12) {
-            Text(title)
-                .font(.body)
-                .foregroundStyle(Theme.text)
-                .multilineTextAlignment(.center)
-            Button(action, action: perform).buttonStyle(.bordered)
-        }
-        .padding(.horizontal, 24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityIdentifier("chat-message")
     }
 }
 
@@ -202,7 +203,7 @@ struct TurnView: View {
                 question
             }
             if let problem = chat.sendProblems[turn.id] {
-                problemLine(Wording.sendProblem(problem), action: "Send again") {
+                problemLine(Wording.sendProblem(problem), action: "Send Again") {
                     Task {
                         if chat.isUnsent(turn) {
                             await chat.sendAgain(turn)
@@ -222,11 +223,11 @@ struct TurnView: View {
         VStack(alignment: .trailing, spacing: 4) {
             Text(turn.text)
                 .font(.body)
-                .foregroundStyle(Theme.text)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(Theme.userBubble, in: .rect(cornerRadius: Theme.bubbleRadius))
+                .background(.fill.tertiary, in: .rect(cornerRadius: Layout.bubbleRadius))
                 .textSelection(.enabled)
+                .accessibilityLabel(Text("You: \(turn.text)"))
             if !turn.attachments.isEmpty {
                 note(String(localized: "Sent with \(turn.attachments.map(\.name).formatted(.list(type: .and)))"))
             }
@@ -243,7 +244,8 @@ struct TurnView: View {
             MarkdownText(source: answer)
                 .contextMenu {
                     Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = answer }
-                    Button("Report this answer", systemImage: "flag") {
+                    ShareLink(item: answer)
+                    Button("Report This Answer", systemImage: "flag") {
                         openURL(Links.support(subject: "Report a Workbot answer", body: "Answer reference: \(turn.id)\n\nWhat was wrong with it:\n"))
                     }
                 }
@@ -253,11 +255,11 @@ struct TurnView: View {
             note(String(localized: "Up next"))
         case .working:
             if answer.isEmpty || live?.working == true {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Working…").font(.callout).foregroundStyle(Theme.muted)
-                }
-                .accessibilityIdentifier("working")
+                Label("Working…", systemImage: "ellipsis")
+                    .symbolEffect(.variableColor.iterative, options: .repeat(.continuous))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("working")
             }
         case .stopped:
             note(String(localized: "Stopped"))
@@ -265,7 +267,7 @@ struct TurnView: View {
             if let issue = turn.modelIssue {
                 problemLine(Wording.modelIssue(issue), action: nil, perform: {})
             } else {
-                problemLine(turn.error ?? String(localized: "Workbot couldn't answer that."), action: turn.retryable ? "Try again" : nil) {
+                problemLine(turn.error ?? String(localized: "Workbot couldn't answer that."), action: turn.retryable ? "Try Again" : nil) {
                     Task { await chat.retry(turn) }
                 }
             }
@@ -281,21 +283,28 @@ struct TurnView: View {
         if turn.greeting, !turn.suggestions.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(turn.suggestions, id: \.self) { suggestion in
-                    Button(suggestion) { send(suggestion) }.buttonStyle(ChipStyle())
+                    Button(suggestion) { send(suggestion) }
                 }
             }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
         }
     }
 
     private func note(_ text: String) -> some View {
-        Text(text).font(.footnote).foregroundStyle(Theme.muted)
+        Text(text).font(.footnote).foregroundStyle(.secondary)
     }
 
     private func problemLine(_ text: String, action: LocalizedStringKey?, perform: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(text).font(.callout).foregroundStyle(Theme.danger)
+            Label(text, systemImage: "exclamationmark.circle")
+                .font(.callout)
+                .foregroundStyle(.red)
             if let action {
-                Button(action, action: perform).font(.callout.weight(.semibold))
+                Button(action, action: perform)
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.small)
             }
         }
         .accessibilityIdentifier("turn-problem")
@@ -312,7 +321,6 @@ struct MarkdownText: View {
                 view(for: block)
             }
         }
-        .foregroundStyle(Theme.text)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -321,7 +329,9 @@ struct MarkdownText: View {
         case let .paragraph(text):
             Text(Markdown.inline(text)).font(.body).textSelection(.enabled)
         case let .heading(level, text):
-            Text(Markdown.inline(text)).font(level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline)
+            Text(Markdown.inline(text))
+                .font(level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline)
+                .accessibilityAddTraits(.isHeader)
         case let .bullet(text, depth):
             listItem("•", text, depth: depth)
         case let .numbered(marker, text, depth):
@@ -329,14 +339,14 @@ struct MarkdownText: View {
         case let .quote(text):
             Text(Markdown.inline(text))
                 .font(.body)
-                .foregroundStyle(Theme.muted)
+                .foregroundStyle(.secondary)
                 .padding(.leading, 12)
-                .overlay(alignment: .leading) { Rectangle().fill(Theme.hairline).frame(width: 3) }
+                .overlay(alignment: .leading) { Capsule().fill(.separator).frame(width: 3) }
         case let .code(text):
             ScrollView(.horizontal) {
                 Text(text).font(.callout.monospaced()).textSelection(.enabled).padding(12)
             }
-            .background(Theme.chip, in: .rect(cornerRadius: 10))
+            .background(.fill.quaternary, in: .rect(cornerRadius: 12))
         case .rule:
             Divider()
         }
@@ -344,35 +354,9 @@ struct MarkdownText: View {
 
     private func listItem(_ marker: String, _ text: String, depth: Int) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(marker).font(.body).foregroundStyle(Theme.muted)
+            Text(marker).font(.body).foregroundStyle(.secondary)
             Text(Markdown.inline(text)).font(.body).textSelection(.enabled)
         }
         .padding(.leading, CGFloat(min(depth, 4)) * 16)
-    }
-}
-
-struct ChipStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.callout)
-            .foregroundStyle(Theme.text)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(Theme.chip, in: .capsule)
-            .opacity(configuration.isPressed ? 0.6 : 1)
-    }
-}
-
-struct RoundButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .labelStyle(.iconOnly)
-            .font(.body.weight(.semibold))
-            .foregroundStyle(.white)
-            .frame(width: 40, height: 40)
-            .background(isEnabled ? Theme.ink : Theme.muted.opacity(0.4), in: .circle)
-            .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }

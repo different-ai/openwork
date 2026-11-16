@@ -16,24 +16,26 @@ struct RootView: View {
             case .consent:
                 ConsentView()
             case let .locked(reason):
-                NoticeView(
-                    title: reason == .phoneOff ? "Workbot on phones isn't on for your workspace yet." : "Workbot isn't on for your organization yet.",
-                    detail: "A workspace admin can turn it on.",
-                    actionTitle: "Check again"
+                StatusView(
+                    title: reason == .phoneOff ? "Workbot on iPhone Isn't On Yet" : "Workbot Isn't On Yet",
+                    symbol: "lock",
+                    detail: reason == .phoneOff
+                        ? "A workspace admin can turn on Workbot for phones."
+                        : "A workspace admin can turn on Workbot for your organization.",
+                    actionTitle: "Check Again"
                 )
             case let .unreachable(offline):
-                NoticeView(
-                    title: offline ? "You're offline." : "Workbot can't reach OpenWork right now.",
+                StatusView(
+                    title: offline ? "You're Offline" : "Can't Reach OpenWork",
+                    symbol: offline ? "wifi.slash" : "exclamationmark.icloud",
                     detail: offline ? "Connect to the internet and try again." : "Try again in a minute.",
-                    actionTitle: "Try again"
+                    actionTitle: "Try Again"
                 )
             case .chat:
                 ChatView()
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.background)
-        .preferredColorScheme(.light)
+        .animation(.default, value: model.phase)
         .task { await model.start() }
     }
 }
@@ -43,59 +45,44 @@ struct SignInView: View {
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer()
-            Image("Mark")
-                .resizable()
-                .frame(width: 96, height: 96)
-                .clipShape(.rect(cornerRadius: 22))
-                .accessibilityHidden(true)
-            Text("OpenWork")
-                .font(.largeTitle.bold())
-                .foregroundStyle(Theme.ink)
-                .padding(.top, 20)
-            Text("Talk to Workbot, your workspace's AI coworker.")
-                .font(.body)
-                .foregroundStyle(Theme.muted)
-                .multilineTextAlignment(.center)
-                .padding(.top, 6)
-            Spacer()
-            if let problem = model.signInProblem {
-                Text(Wording.signInProblem(problem))
-                    .font(.callout)
-                    .foregroundStyle(Theme.danger)
-                    .multilineTextAlignment(.center)
+        ScrollView {
+            VStack(spacing: 8) {
+                MarkView(size: 88)
                     .padding(.bottom, 12)
-                    .accessibilityIdentifier("sign-in-problem")
+                Text("OpenWork")
+                    .font(.largeTitle.bold())
+                Text("Talk to Workbot, your workspace's AI coworker.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
-            Button {
-                Task { await signIn() }
-            } label: {
-                Group {
-                    if model.isWorking {
-                        ProgressView().tint(.white)
-                    } else {
-                        Text("Sign in with OpenWork")
-                    }
-                }
-                .font(.headline)
-                .frame(maxWidth: .infinity, minHeight: 28)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(model.isWorking)
-            .accessibilityIdentifier("sign-in-button")
-
-            Text(
-                "For members of workspaces that use OpenWork. By continuing you agree to the [Terms](https://openworklabs.com/terms) and [Privacy Policy](https://openworklabs.com/privacy)."
-            )
-            .font(.footnote)
-            .foregroundStyle(Theme.muted)
-            .multilineTextAlignment(.center)
-            .padding(.top, 14)
+            .padding(.horizontal, 24)
+            .containerRelativeFrame(.vertical) { height, _ in height * 0.8 }
         }
-        .padding(.horizontal, 24)
-        .padding(.bottom, 20)
+        .scrollBounceBehavior(.basedOnSize)
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 12) {
+                if let problem = model.signInProblem {
+                    Label(Wording.signInProblem(problem), systemImage: "exclamationmark.circle")
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                        .accessibilityIdentifier("sign-in-problem")
+                }
+                PrimaryButton(title: "Sign In with OpenWork", isWorking: model.isWorking) {
+                    Task { await signIn() }
+                }
+                .accessibilityIdentifier("sign-in-button")
+                Text(
+                    "For members of workspaces that use OpenWork. By continuing you agree to the [Terms](https://openworklabs.com/terms) and [Privacy Policy](https://openworklabs.com/privacy)."
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 12)
+        }
     }
 
     /// Sign-in runs in the system's own sheet and returns only to this app, through an address the server owns.
@@ -119,40 +106,37 @@ struct ConsentView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text("Before you start")
-                        .font(.largeTitle.bold())
-                        .foregroundStyle(Theme.ink)
-                    AIUseText()
-                }
-                .padding(.top, 32)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("Before You Start")
+                    .font(.largeTitle.bold())
+                AIUseText()
             }
-            Button {
-                model.agreeToAIUse()
-            } label: {
-                Text("Agree and continue").font(.headline).frame(maxWidth: .infinity, minHeight: 28)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .accessibilityIdentifier("consent-agree")
-            Button("Not now") {
-                Task { await model.signOut() }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 14)
-            .accessibilityIdentifier("consent-decline")
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.top, 32)
         }
-        .padding(.horizontal, 24)
-        .padding(.bottom, 20)
+        // A bar the system knows about: the text fades under it instead of colliding with the buttons.
+        .safeAreaBar(edge: .bottom) {
+            VStack(spacing: 6) {
+                PrimaryButton(title: "Agree and Continue") { model.agreeToAIUse() }
+                    .accessibilityIdentifier("consent-agree")
+                Button("Not Now") {
+                    Task { await model.signOut() }
+                }
+                .controlSize(.large)
+                .accessibilityIdentifier("consent-decline")
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 8)
+        }
     }
 }
 
 /// How Workbot uses AI providers, in the words people agree to. Shown again from the account sheet.
 struct AIUseText: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 18) {
             point("sparkles", "Workbot is an AI assistant. Its answers can be wrong, so check anything important.")
             point(
                 "arrow.up.right.circle",
@@ -161,61 +145,45 @@ struct AIUseText: View {
             point("hand.raised", "Don't send anything your workspace wouldn't want processed this way.")
             Text("See the [Privacy Policy](https://openworklabs.com/privacy) for what OpenWork collects and how to ask for it to be deleted.")
                 .font(.callout)
-                .foregroundStyle(Theme.muted)
+                .foregroundStyle(.secondary)
         }
     }
 
     private func point(_ symbol: String, _ text: LocalizedStringKey) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Image(systemName: symbol)
-                .foregroundStyle(Theme.ink)
-                .frame(width: 24)
-                .accessibilityHidden(true)
+        Label {
             Text(text)
-                .font(.body)
-                .foregroundStyle(Theme.text)
+        } icon: {
+            Image(systemName: symbol)
+                .foregroundStyle(.tint)
         }
+        .font(.body)
     }
 }
 
-/// A full-screen message with one thing to do and a way out.
-struct NoticeView: View {
+/// A full-screen state with one thing to do and a way out, in the system's own form for it.
+struct StatusView: View {
     @Environment(AppModel.self) private var model
     let title: LocalizedStringKey
+    let symbol: String
     let detail: LocalizedStringKey
     let actionTitle: LocalizedStringKey
 
     var body: some View {
-        VStack(spacing: 10) {
-            Spacer()
-            Text(title)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(Theme.ink)
-                .multilineTextAlignment(.center)
+        ContentUnavailableView {
+            Label(title, systemImage: symbol)
+        } description: {
             Text(detail)
-                .font(.body)
-                .foregroundStyle(Theme.muted)
-                .multilineTextAlignment(.center)
-            Button {
+        } actions: {
+            Button(actionTitle) {
                 Task { await model.readProfile() }
-            } label: {
-                if model.isWorking {
-                    ProgressView()
-                } else {
-                    Text(actionTitle)
-                }
             }
             .buttonStyle(.bordered)
-            .padding(.top, 10)
             .disabled(model.isWorking)
             .accessibilityIdentifier("notice-action")
-            Spacer()
-            Button("Sign out") {
+            Button("Sign Out") {
                 Task { await model.signOut() }
             }
             .accessibilityIdentifier("notice-sign-out")
         }
-        .padding(.horizontal, 24)
-        .padding(.bottom, 20)
     }
 }
