@@ -54,7 +54,8 @@ review configuration changes as a diff, or to move between deployments.
   external key), a `name`, a `rev` (hash of the spec at export, used to detect
   changes made on the target since) and a `spec`, the editable part. Unknown fields
   are rejected, so typos never get dropped silently. You may remove `id` and `rev`
-  from hand-written items; they are then matched by key or name.
+  from hand-written items; they are then matched by key or name. Plugins and
+  skills always carry a `key`: see [Keys of plugins and skills](#keys-of-plugins-and-skills).
 - **References** to other items are `{ "$ref": "members.teams/tem_…", "name": "Platform" }`.
   People are referenced by email: `{ "$ref": "people/ada@example.com" }`.
 - Files are limited to 5 MB.
@@ -138,6 +139,28 @@ Some areas carry only part of what their screen shows:
   the domain, test, then enable it); SCIM tokens are never carried.
 - **Skills** that a source syncs are not imported (the source brings them), and the
   Workbot "Your agent" template travels with `workbot.proactive`.
+- **Plugins and skills** are exported only when they are shared with the
+  organization (with everyone, a team or other people). Personal ones, which only
+  their creator can reach (each member's own Workflows plugin, a skill someone made
+  and never shared), are left out, and an import never touches them. Share an item
+  before exporting if it should travel.
+- **OAuth apps** (`connectors.oauth-clients`) are the organization's own apps for
+  the built-in providers, such as Google Workspace or Microsoft 365. The client ID,
+  the optional features chosen and the tenant ID are exported; the client secret
+  is a [placeholder](#secrets) you enter again at review. An import never deletes
+  an OAuth app.
+- **MCP connections** (`connectors.mcp`) are the custom connections of
+  Connectors › MCP: address, sign-in type, who can use them, OAuth settings and
+  the OAuth client an admin registered for the connection (client ID; its secret
+  is a placeholder, like a shared API key and each request header value). Not
+  exported: connections to the built-in providers themselves (add them in the
+  target; the organization's OAuth app travels, see above), OAuth clients OpenWork
+  registered with a server by itself (the target registers its own), the tool
+  policy, and keys or sign-ins that belong to one member.
+- **Nobody's sign-in travels.** Tokens are never exported, for a shared connection
+  or a personal one: after an import, an admin signs in to each shared OAuth
+  connection again, and every member connects their own accounts and enters their
+  own keys again.
 - **Feature flags** list only the features that are on for the organization (one
   item per feature: its key as `id`, its name, and `"spec": { "enabled": true }`),
   whether they are on for everyone, locked on by the operator, or turned on for the
@@ -162,6 +185,10 @@ Some areas carry only part of what their screen shows:
 `GET /v1/config-blobs/areas` lists the areas of your server, whether each is
 supported there, and whether you may export or import it. An export leaves out the
 areas you can't view and lists them in `omitted`.
+
+An export changes one thing in the organization: a shared plugin or skill that has
+no key yet is given one, so the file always carries it (see
+[Keys of plugins and skills](#keys-of-plugins-and-skills)).
 
 Never exported: credentials and tokens, billing, usage and runtime data (sessions,
 logs, audit events). The organization's name, slug and SSO domains are exported as
@@ -235,8 +262,24 @@ background.
   items of the scoped areas that are not in the file; each delete must be ticked
   in the decisions.
 - **Matching:** an item matches by ID, then by an alias from an earlier import, then by
-  `key`, then by a natural key that is unique on both sides (for example an MCP
-  URL). A name alone only *proposes* a match that you confirm.
+  `key`, then by a natural key that is unique on both sides: an MCP connection's
+  URL, a shared plugin's name, a skill's type and title. These are matched without
+  asking. Anything looser (a similar name, a URL two items share) only *proposes* a
+  match that you confirm. When two of these point at different items (the ID says
+  one, the key another), the item is flagged and you choose.
+- **Answers from an earlier import** are reused. A new import of a file from the
+  same source organization starts with the answers of the last *applied* import of
+  that source: what was matched, pointed at another item, left out and renamed. The
+  plan says so (`decisions.reusedFrom` holds the earlier request's ID) and you can
+  change any of them. Deletes, overwriting an item that changed, and sending
+  invitation emails are decided again every time. To keep the answers in git next
+  to the export, download them with `GET …/decisions` and send that file as the
+  body of `PUT …/decisions` on a later import; it is refused (`409`) for a file from
+  another source or in another organization.
+- **Changing only what exists:** send `"createMissing": false` in the decisions to
+  make an import that creates nothing. Every item that would be created is blocked
+  until you match it to an existing item or leave it out. Use it to bring an
+  organization in line with a file without adding anything to it.
 - **Plans:** each item is `create`, `update`, `rename`, `unchanged`, `delete`,
   `untouched` or `skip`, with field-level changes. Items blocked by a missing
   decision are counted in `plan.summary.blocking`; approval is refused until it is `0`.
@@ -283,6 +326,36 @@ background.
   of the same file matches it ("matched via an earlier import").
 - **Interrupted applies** are never retried: the request fails, and you can restore
   the previous config from its before-snapshot.
+
+### Keys of plugins and skills
+
+Teams, roles, limits, desktop policies and collections use the key an admin gives
+them. Plugins and skills (and agents, commands and the other shared objects) get
+theirs from the server, so two organizations can recognise the same item whatever
+it is called by then.
+
+- **Default:** a slug of the name (`Field notes` → `field-notes`, then
+  `field-notes-2` when that is taken). A key is unique in its organization.
+- **Assigned once:** when the item is created, or on the first export or import of
+  an item that has none. A rename never changes it.
+- **Matching:** an import finds a plugin or skill by key before it looks at names.
+  The name (for a skill, its type and title) is only the fallback for the first
+  import between two organizations that made the same item separately. The matched
+  item then takes the file's key, shown as a `key` change in the plan, and later
+  imports match on it. An item that already has a key keeps it.
+- **Creating:** a new item takes the file's key, or a default one if another item
+  in the target already has that key.
+- **Editing:** set `externalKey` with `PATCH /v1/plugins/{pluginId}` for a plugin,
+  or `PUT /v1/config-objects/{configObjectId}/key` for a skill; `null` clears it.
+  A key another item has is refused with `409 external_key_taken`. Giving the same
+  key to two items made separately, one in each organization, links them. These
+  routes are not part of the Config API: use a standard API key or a signed-in
+  session, not a config token.
+
+```sh
+curl -sS --fail-with-body -X PUT -H "x-api-key: $DEN_API_KEY" -H 'Content-Type: application/json' \
+  "$DEN_API_URL/v1/config-objects/$CONFIG_OBJECT_ID/key" -d '{"externalKey":"field-notes"}'
+```
 
 ### Restore previous config
 
@@ -347,7 +420,8 @@ All routes take the token in `x-api-key`; the organization comes from the token.
 | `GET /v1/config-blobs/change-requests?state=open\|closed` | `config:submit` | The queue |
 | `GET /v1/config-blobs/change-requests/{id}` | `config:submit` | Status, approvals, apply report |
 | `GET /v1/config-blobs/change-requests/{id}/plan` | `config:submit` | Plan and saved decisions |
-| `PUT /v1/config-blobs/change-requests/{id}/decisions` | `config:submit` | Matches, references, deletes, overrides, skips, renames |
+| `GET /v1/config-blobs/change-requests/{id}/decisions` | `config:submit` | The answers given on the request, as a file (`openwork.config-decisions`) |
+| `PUT /v1/config-blobs/change-requests/{id}/decisions` | `config:submit` | Replaces the decisions: matches, references, deletes, overrides, skips, renames, `createMissing`; or an answers file from an earlier import |
 | `PUT /v1/config-blobs/change-requests/{id}/inputs` | `config:submit` | Secret decisions and values |
 | `POST /v1/config-blobs/change-requests/{id}/approve` | `config:apply` | `{ planHash }` |
 | `POST /v1/config-blobs/change-requests/{id}/apply` | `config:apply` | Queue an approved request; with `{ planHash }`, approve and queue in one call |
@@ -389,6 +463,47 @@ curl -sS --fail-with-body -X POST -H "x-api-key: $APPLY_TOKEN" -H 'Content-Type:
 
 Poll the request until it is `applied` or `failed`; the response's `report` lists
 each item.
+
+Import the next export of the same source with the answers you gave last time,
+creating nothing:
+
+```sh
+# After an import is applied: keep its answers next to the export.
+curl -sS --fail-with-body -H "x-api-key: $CONFIG_TOKEN" \
+  "$DEN_API_URL/v1/config-blobs/change-requests/$ID/decisions" > org-config.answers.json
+
+# On a later request ($NEXT_ID) for the same source: give the same answers…
+curl -sS --fail-with-body -X PUT -H "x-api-key: $CONFIG_TOKEN" -H 'Content-Type: application/json' \
+  --data-binary @org-config.answers.json "$DEN_API_URL/v1/config-blobs/change-requests/$NEXT_ID/decisions"
+
+# …and only change what already exists. PUT replaces the decisions, so send them all back.
+curl -sS -H "x-api-key: $CONFIG_TOKEN" "$DEN_API_URL/v1/config-blobs/change-requests/$NEXT_ID/plan" |
+  jq '.decisions + {createMissing: false}' |
+  curl -sS --fail-with-body -X PUT -H "x-api-key: $CONFIG_TOKEN" -H 'Content-Type: application/json' \
+    --data-binary @- "$DEN_API_URL/v1/config-blobs/change-requests/$NEXT_ID/decisions"
+```
+
+## Copy an organization to another one
+
+Use this to start a second organization from an existing one, on the same server
+or another.
+
+1. **In the source organization**, share what should travel: personal plugins and
+   skills are not exported. Then export (Settings › Config › Export).
+2. **In the target organization**, upload the file in Settings › Config › Import,
+   in `merge` mode.
+3. **Review the plan.** Plugins and skills the target already has under the same
+   key or name are matched, not duplicated; the rest are created. People become
+   invitations. Map or drop references to people and teams the target lacks.
+4. **Secrets:** enter each API key, request header value and OAuth client secret
+   again, or leave it unset and finish on the resource's page.
+5. **Approve and apply.**
+6. **Afterwards:** add the connections to built-in providers (Google Workspace,
+   Microsoft 365…) in the target's Connectors; sign in to shared OAuth connections; ask members to connect their own accounts and enter
+   their own keys. A skill someone kept personal has to be shared in the source and
+   exported again, or recreated.
+7. **Later copies** of the same source start with your earlier answers and match
+   plugins and skills by key, so only what changed shows up.
 
 ## Move from OpenWork Cloud to a self-hosted Den
 
