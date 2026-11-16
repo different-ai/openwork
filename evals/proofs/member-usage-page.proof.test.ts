@@ -22,13 +22,15 @@ test("any member sees their own spend limit, past 30 days and what each model wo
   const text = async (selector: string) => (await probe.dom(selector)).elements.map((element) => element.text.replace(/\s+/g, " ").trim());
 
   await step("a regular member opens Work › My Usage from the sidebar", async () => {
-    await user.see({ text: "Work" }, { timeoutMs: 90_000 });
-    const links = await text('[data-testid="dashboard-nav-my-usage"]');
+    await user.see({ testId: "dashboard-nav-my-usage" }, { timeoutMs: 90_000 });
+    const links = await text('[data-sidebar-section="work"] [data-testid="dashboard-nav-my-usage"]');
+    const observability = await text('[data-sidebar-section="observability"]');
+    await user.screenshot();
     await user.click({ testId: "dashboard-nav-my-usage" });
     await user.see({ text: "Spend limits" }, { timeoutMs: 60_000 });
     const api = await world.ownUsage();
-    const ok = links.some((link) => link.includes("My Usage")) && api.status === 200;
-    evidence.recordAssertionEvidence("A member with no admin permissions gets Work › My Usage", `sidebar link: ${links.join(", ")}; GET /v1/gateway/usage/me as the member: HTTP ${api.status}`, ok);
+    const ok = links.some((link) => link.includes("My Usage")) && observability.length === 0 && api.status === 200;
+    evidence.recordAssertionEvidence("A member with no admin permissions gets Work › My Usage", `link under Work: ${links.join(", ") || "none"}; Observability section shown: ${observability.length > 0}; GET /v1/gateway/usage/me as the member: HTTP ${api.status}`, ok);
     expect(ok).toBe(true);
   });
 
