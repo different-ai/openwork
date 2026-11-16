@@ -58,3 +58,20 @@ test("AI Providers shows Use Ollama only when the page is given a way to open it
   expect(withButton).toContain("ai-providers-use-ollama");
   expect(withButton).toContain("Use Ollama");
 });
+
+test("a hidden Ollama row offers Configure, which opens the Ollama page, instead of Enable", () => {
+  const disabledProviders = [{ id: "ollama", name: "ollama" }, { id: "lmstudio", name: "lmstudio" }];
+  const markup = renderToStaticMarkup(<AiSettingsView {...view} disabledProviders={disabledProviders} onEnableProvider={() => {}} onUseOllama={() => {}} />);
+  expect(markup).toContain("configure-provider-ollama");
+  expect(markup).toContain(">Configure<");
+  // LM Studio has no setup page, so it keeps Enable.
+  expect(markup.match(/data-testid="disabled-provider"/g)?.length).toBe(2);
+  expect(markup).toContain("Enable");
+  // The row is the way in, so the bottom button is not repeated.
+  expect(markup).not.toContain("ai-providers-use-ollama");
+});
+
+test("without a way to open the Ollama page, a hidden Ollama row keeps Enable", () => {
+  const markup = renderToStaticMarkup(<AiSettingsView {...view} disabledProviders={[{ id: "ollama", name: "ollama" }]} onEnableProvider={() => {}} />);
+  expect(markup).not.toContain("configure-provider-ollama");
+});
