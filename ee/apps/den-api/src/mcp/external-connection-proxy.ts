@@ -37,8 +37,13 @@ import { tokenRoute } from "../middleware/index.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { handleMcpAppServerRequest, isMcpAppServerId } from "./app-server.js"
 import { appSiteResponse, wantsAppSite } from "./app-site.js"
-import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
-import { externalMcpAppResourceUri, resolveMcpMemberIdentity } from "./external-capabilities.js"
+import { getMcpResourceContext, verifyMcpRequest, type McpPrincipal } from "./auth.js"
+import {
+  externalMcpAppResourceUri,
+  externalMcpConnectionHold,
+  mcpMemberForToken,
+  resolveMcpMemberIdentity,
+} from "./external-capabilities.js"
 import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { EXECUTE_CAPABILITY_TOOL_NAME, scoreText, SEARCH_CAPABILITIES_TOOL_NAME, tokenize } from "./search.js"
@@ -470,16 +475,38 @@ export async function handleExternalConnectionProxyRequest(input: {
   }
 }
 
+export type ExternalConnectionProxyRouteDeps = {
+  verify: (request: Request, requestId: string) => Promise<McpPrincipal | Response>
+  member: typeof resolveMcpMemberIdentity
+  connection: typeof getExternalMcpConnection
+  granted: typeof memberCanUseExternalMcpConnection
+  memberKeyReady: typeof externalMcpConnectionReadyForMember
+  toolShapes: (organizationId: Parameters<typeof organizationFeatureEnabled>[0], userId: string) => Promise<boolean>
+  proxy: typeof handleExternalConnectionProxyRequest
+}
+
+export const EXTERNAL_CONNECTION_PROXY_ROUTE_DEPS: ExternalConnectionProxyRouteDeps = {
+  verify: (request, requestId) => verifyMcpRequest(request.headers, getMcpResourceContext(request, "agent", requestId)),
+  member: resolveMcpMemberIdentity,
+  connection: getExternalMcpConnection,
+  granted: memberCanUseExternalMcpConnection,
+  memberKeyReady: externalMcpConnectionReadyForMember,
+  toolShapes: (organizationId, userId) => organizationFeatureEnabled(organizationId, "connectStandardTools", { userId }),
+  proxy: handleExternalConnectionProxyRequest,
+}
+
 /**
  * Exposes one member-authorized connection to Desktop's private App host. An
  * ordinary client receives only a bounded search/execute compatibility surface
  * unless an administrator marked the connection `exposeDirectly`, in which case
  * it is served as a standard MCP server whose tool catalog is filtered by the
- * organization's tool policy. Grants are re-checked on every request. An
- * authored App id at the same path is served as that App's own MCP server.
+ * organization's tool policy. Grants, and the holds execute_capability applies
+ * to a granted connection, are re-checked on every request. An authored App id
+ * at the same path is served as that App's own MCP server.
  */
 export function registerExternalConnectionProxyRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(
   app: Hono<T>,
+  deps: ExternalConnectionProxyRouteDeps = EXTERNAL_CONNECTION_PROXY_ROUTE_DEPS,
 ) {
   const path = "/mcp/agent/connections/:connectionId"
 
@@ -494,10 +521,7 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       const page = await appSiteResponse({ appIdOrName: c.req.param("connectionId"), publicOnly: false })
       if (page) return page
     }
-    const principal = await verifyMcpRequest(
-      c.req.raw.headers,
-      getMcpResourceContext(c.req.raw, "agent", requestId),
-    )
+    const principal = await deps.verify(c.req.raw, requestId)
     if (principal instanceof Response) return principal
 
     const preflightResponse = await preflightMcpJsonRpcRequest(c.req.raw, requestId)
@@ -515,35 +539,39 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
     }
 
     const organizationId = normalizeDenTypeId("organization", principal.organizationId)
+    const unavailable = (message?: string) => c.json({ error: "connection_not_available", ...(message ? { message } : {}) }, 403)
 
     let connectionId
     try {
       connectionId = normalizeDenTypeId("externalMcpConnection", requestedId)
     } catch {
-      throw new McpError(ErrorCode.InvalidRequest, "The MCP connection id is invalid.")
+      // A malformed id is no connection of this organization, like a well-formed id nobody has.
+      return unavailable()
     }
-    const member = await resolveMcpMemberIdentity({
+    const resolvedMember = await deps.member({
       userId: principal.userId,
       organizationId,
     })
-    if (!member) return c.json({ error: "connection_not_available" }, 403)
+    if (!resolvedMember) return unavailable()
+    const member = mcpMemberForToken(resolvedMember, principal.scopes)
 
-    const connection = await getExternalMcpConnection({ organizationId, connectionId })
-    const allowed = connection && await memberCanUseExternalMcpConnection({
+    const connection = await deps.connection({ organizationId, connectionId })
+    const granted = connection && await deps.granted({
       connectionId,
       orgMembershipId: member.orgMembershipId,
       teamIds: member.teamIds,
     })
-    if (!connection || !allowed) return c.json({ error: "connection_not_available" }, 403)
+    if (!connection || !granted) return unavailable()
+    // Only a member with a grant is told why a connection is held.
+    const hold = externalMcpConnectionHold(connection, member)
+    if (hold) return unavailable(hold.message)
     if (usesMemberApiKey(connection)
-      && !await externalMcpConnectionReadyForMember(connection, member.orgMembershipId)) {
-      return c.json({ error: "connection_not_available", message: "Connect your personal API key in Your Connections." }, 403)
+      && !await deps.memberKeyReady(connection, member.orgMembershipId)) {
+      return unavailable("Connect your personal API key in Your Connections.")
     }
 
     const directExposureEnabled = connection.exposeDirectly
-    const toolShapes = await organizationFeatureEnabled(organizationId, "connectStandardTools", {
-      userId: principal.userId,
-    })
+    const toolShapes = await deps.toolShapes(organizationId, principal.userId)
 
     const redirectUriBase = resolvePublicOrigin(c.req.raw, env.apiPublicUrl)
     const redirectUri = `${redirectUriBase}/v1/mcp-connections/${encodeURIComponent(connection.id)}/connect/callback`
@@ -554,7 +582,7 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       member: downstreamMember,
       diagnosticReferenceId: requestId,
     }
-    return handleExternalConnectionProxyRequest({
+    return deps.proxy({
       context: c,
       operation,
       scopes: principal.scopes,
