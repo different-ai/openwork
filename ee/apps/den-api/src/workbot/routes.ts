@@ -145,6 +145,8 @@ const sessionSchema = z.object({
    * older Dens.
    */
   sessionCells: z.boolean(),
+  /** The person can use Workbot from the OpenWork phone app (the workbotMobile feature). */
+  mobile: z.boolean(),
 }).meta({ ref: "WorkbotSession" })
 
 const runTokenSchema = z.object({
@@ -526,6 +528,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         gatewayModels: true,
         stepTurns: true,
         sessionCells: true,
+        mobile: features.workbotMobile,
       })
     },
   )

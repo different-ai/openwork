@@ -28,5 +28,6 @@ export { default as workbotCalmChat } from "@openwork/features/flags/workbot-cal
 export { default as workbotDeviceActivity } from "@openwork/features/flags/workbot-device-activity"
 export { default as workbotDocumentEditing } from "@openwork/features/flags/workbot-document-editing"
 export { default as workbotDocuments } from "@openwork/features/flags/workbot-documents"
+export { default as workbotMobile } from "@openwork/features/flags/workbot-mobile"
 export { default as workbotProfileComputers } from "@openwork/features/flags/workbot-profile-computers"
 export { default as workbotWorkspaceAssistant } from "@openwork/features/flags/workbot-workspace-assistant"
