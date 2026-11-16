@@ -52,26 +52,32 @@ const view: AiSettingsViewProps = {
   canAddProviders: true,
 };
 
-test("AI Providers shows Use Ollama only when the page is given a way to open it", () => {
-  expect(renderToStaticMarkup(<AiSettingsView {...view} />)).not.toContain("Use Ollama");
-  const withButton = renderToStaticMarkup(<AiSettingsView {...view} onUseOllama={() => {}} />);
-  expect(withButton).toContain("ai-providers-use-ollama");
-  expect(withButton).toContain("Use Ollama");
+test("Ollama is always listed on this device with Configure, and there is no separate Use Ollama button", () => {
+  expect(renderToStaticMarkup(<AiSettingsView {...view} />)).not.toContain("configure-provider-ollama");
+  const notSetUp = renderToStaticMarkup(<AiSettingsView {...view} onConfigureOllama={() => {}} />);
+  expect(notSetUp).toContain("local-provider-ollama-setup");
+  expect(notSetUp).toContain("Not set up");
+  expect(notSetUp).toContain(">Configure<");
+  expect(notSetUp).not.toContain("Use Ollama");
 });
 
-test("a hidden Ollama row offers Configure, which opens the Ollama page, instead of Enable", () => {
-  const disabledProviders = [{ id: "ollama", name: "ollama" }, { id: "lmstudio", name: "lmstudio" }];
-  const markup = renderToStaticMarkup(<AiSettingsView {...view} disabledProviders={disabledProviders} onEnableProvider={() => {}} onUseOllama={() => {}} />);
+test("a set-up Ollama keeps its row with Configure next to Disconnect", () => {
+  const markup = renderToStaticMarkup(<AiSettingsView {...view} connectedProviders={[{ id: "ollama", name: "Ollama (local)", source: "config" }]} onConfigureOllama={() => {}} />);
+  expect(markup).toContain("local-provider-ollama\"");
   expect(markup).toContain("configure-provider-ollama");
-  expect(markup).toContain(">Configure<");
-  // LM Studio has no setup page, so it keeps Enable.
-  expect(markup.match(/data-testid="disabled-provider"/g)?.length).toBe(2);
-  expect(markup).toContain("Enable");
-  // The row is the way in, so the bottom button is not repeated.
-  expect(markup).not.toContain("ai-providers-use-ollama");
+  expect(markup).not.toContain("local-provider-ollama-setup");
 });
 
-test("without a way to open the Ollama page, a hidden Ollama row keeps Enable", () => {
+test("a hidden Ollama row offers Configure instead of Enable; LM Studio keeps Enable", () => {
+  const disabledProviders = [{ id: "ollama", name: "ollama" }, { id: "lmstudio", name: "lmstudio" }];
+  const markup = renderToStaticMarkup(<AiSettingsView {...view} disabledProviders={disabledProviders} onEnableProvider={() => {}} onConfigureOllama={() => {}} />);
+  expect(markup.match(/configure-provider-ollama/g)?.length).toBe(1);
+  expect(markup).toContain("Enable");
+  expect(markup).not.toContain("local-provider-ollama-setup");
+});
+
+test("when local models are blocked, no Ollama row is added", () => {
   const markup = renderToStaticMarkup(<AiSettingsView {...view} disabledProviders={[{ id: "ollama", name: "ollama" }]} onEnableProvider={() => {}} />);
   expect(markup).not.toContain("configure-provider-ollama");
+  expect(markup).not.toContain("local-provider-ollama-setup");
 });
