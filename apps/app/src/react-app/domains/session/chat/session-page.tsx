@@ -103,7 +103,7 @@ import { FloatingSlotProvider, SessionFloatingLayer } from "../panel/floating-sl
 import { useDesktopFeature } from "../status/use-desktop-feature";
 import { SelectionSideChat } from "../links/selection-side-chat";
 import { SideQuestionPanel } from "../links/side-question-panel";
-import { useSideQuestionStore } from "../links/side-question-store";
+import { showSideChatTab } from "../links/side-question-store";
 import { RetainedArtifactSurface } from "../../dashboard/retained-artifact-surface";
 import { CloudComputerControl } from "../computer/cloud-computer-control";
 import { ComputerControl } from "../computer/computer-control";
@@ -1144,13 +1144,14 @@ export function SessionPage(props: SessionPageProps) {
   );
   const canRenderSplitSurface = Boolean(canRenderReactSurface && splitSession);
   const sideQuestionsEnabled = useDesktopFeature("sideQuestions");
-  const sideQuestionSessionId = useSideQuestionStore((state) => state.openSessionId);
-  const closeSideQuestions = useSideQuestionStore((state) => state.close);
-  const sideQuestionEndpoint = useMemo(() => sideQuestionsEnabled && !isMobile && props.surface && reactSessionToken && isOpencodeV2BaseUrl(reactSessionBaseUrl)
-    && props.selectedSessionId && sideQuestionSessionId === props.selectedSessionId
+  const sideQuestionEndpoint = useMemo(() => sideQuestionsEnabled && props.surface && reactSessionToken && isOpencodeV2BaseUrl(reactSessionBaseUrl)
     ? { opencodeBaseUrl: reactSessionBaseUrl, workspaceRoot: props.surface.workspaceRoot ?? "", openworkToken: reactSessionToken } : null,
-  [isMobile, props.selectedSessionId, props.surface, reactSessionBaseUrl, reactSessionToken, sideQuestionSessionId, sideQuestionsEnabled]);
-  const sideQuestionOpen = Boolean(sideQuestionEndpoint);
+  [props.surface, reactSessionBaseUrl, reactSessionToken, sideQuestionsEnabled]);
+  const sideChatSessionId = props.selectedSessionId;
+  const sideChat = useMemo(() => sideQuestionEndpoint && sideChatSessionId ? {
+    content: <SideQuestionPanel key={sideChatSessionId} sessionId={sideChatSessionId} endpoint={sideQuestionEndpoint} />,
+    onOpen: () => showSideChatTab(sideChatSessionId),
+  } : undefined, [sideChatSessionId, sideQuestionEndpoint]);
   const splitWorkspaceTitle = splitSession
     ? splitSession.workspaceTitle ?? workspaceTitleForId(props.sidebar.workspaceSessionGroups, splitSession.workspaceId)
     : "";
@@ -1475,6 +1476,7 @@ export function SessionPage(props: SessionPageProps) {
       onOpenExtensions={props.settingsSlot ? () => setCurrentSidePanel("extensions") : undefined}
       browserPresentation={browserPresentation.enabled ? { onPresent: browserPresentation.present } : undefined}
       browserShownElsewhere={browserPresentation.mode === "fullscreen"}
+      sideChat={sideChat}
     />
   ) : null;
 
@@ -1881,7 +1883,7 @@ export function SessionPage(props: SessionPageProps) {
                       props.surface.draftScope, reactSessionBaseUrl, props.runtimeWorkspaceId,
                     ]) : null}
                     primaryVisible={!isMobile || narrowPane === "chat"}
-                    secondaryVisible={sideQuestionOpen || Boolean(canRenderSplitSurface && splitSession && splitPaneRuntime && (!isMobile || narrowPane === "split"))}
+                    secondaryVisible={Boolean(canRenderSplitSurface && splitSession && splitPaneRuntime && (!isMobile || narrowPane === "split"))}
                   >
                     {!isMobile || narrowPane === "chat" ? (
                       <ResizablePanel
@@ -1949,14 +1951,7 @@ export function SessionPage(props: SessionPageProps) {
                       </div>
                       </ResizablePanel>
                     ) : null}
-                    {sideQuestionEndpoint && props.selectedSessionId ? (
-                      <>
-                        <ResizableHandle />
-                        <ResizablePanel id={SECONDARY_PANEL_ID} minSize="320px" className="min-h-0 min-w-0" data-workbench-pane="side-questions">
-                          <SideQuestionPanel key={props.selectedSessionId} sessionId={props.selectedSessionId} endpoint={sideQuestionEndpoint} onClose={closeSideQuestions} />
-                        </ResizablePanel>
-                      </>
-                    ) : canRenderSplitSurface && splitSession && splitPaneRuntime && (!isMobile || narrowPane === "split") ? (
+                    {canRenderSplitSurface && splitSession && splitPaneRuntime && (!isMobile || narrowPane === "split") ? (
                       <>
                         {!isMobile ? <ResizableHandle /> : null}
                         <ResizablePanel
