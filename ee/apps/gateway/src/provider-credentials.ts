@@ -90,10 +90,16 @@ async function materialize(
     }
     case "oauth_google":
       return { kind: "secret", credentialId: credential.id, credentialKind: parsed.kind, secret: parsed.token.accessToken }
-    case "oauth_azure":
-      // Only for the API scope the member signed in for (absent: Azure Cognitive Services); Den revokes on change.
-      if ((parsed.token.microsoftIdentity?.scope ?? null) !== input.apiScope) return { kind: "auth_required", credentialId: credential.id, reason: "inactive" }
+    case "oauth_azure": {
+      const identity = parsed.token.microsoftIdentity
+      // Fresh tokens need the same tenant, client and scope binding as renewed tokens.
+      if (input.set.credential_mode !== "member" || !identity
+        || identity.tenantId.toLowerCase() !== input.set.oauth_tenant_id?.toLowerCase()
+        || identity.clientId !== input.set.oauth_client_id || (identity.scope ?? null) !== input.apiScope) {
+        return { kind: "auth_required", credentialId: credential.id, reason: "inactive" }
+      }
       return { kind: "secret", credentialId: credential.id, credentialKind: parsed.kind, secret: parsed.token.accessToken }
+    }
     case "aws_keys":
       return { kind: "aws_keys", credentialId: credential.id, credentialKind: parsed.kind, awsKeys: parsed.awsKeys }
     case "aws_sso": {

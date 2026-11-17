@@ -90,7 +90,8 @@ function gatewayAccessQuery(scope: GatewayContext & { gatewayProviderId: Gateway
     ))
 }
 
-export const loadGatewayAccessFromDb: LoadGatewayAccess = async (scope) => loadGatewayAccess(scope, (await import("./db.js")).db)
+// Revocation fences must see committed grants and set configuration, not a lagging replica.
+export const loadGatewayAccessFromDb: LoadGatewayAccess = async (scope) => loadGatewayAccess(scope, (await import("./db.js")).db.$primary)
 
 export type GatewayGrantSelection = {
   row: GatewayAccessRow

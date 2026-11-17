@@ -9,7 +9,7 @@ import { isInferenceCredentialKindSupported } from "@openwork-ee/utils/inference
 import { liteLlmEntraScope } from "@openwork-ee/utils/litellm-catalog"
 import { microsoftRefreshScopes, microsoftSignInScopes, readMicrosoftTokens } from "@openwork-ee/utils/microsoft-entra"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { createOauthRefresher, providerHoldsRefreshableKind, type OauthCredentialRow, type OauthRefreshStore } from "../src/credentials/oauth-refresh.js"
+import { createOauthRefresher, providerHoldsRefreshableKind, sameOauthVersion, type OauthCredentialRow, type OauthRefreshStore } from "../src/credentials/oauth-refresh.js"
 import type { GatewayAccessRow } from "../src/provider-access.js"
 import type { GatewayCredential, GatewayCredentialLookup, GatewayProvider } from "../src/provider-credentials.js"
 import type { InferenceAuthVariables } from "../src/middleware/inference-auth.js"
@@ -133,22 +133,26 @@ function memberSecret(identityScope: string | undefined, accessToken = "entra-ac
 function memoryStore(initial: OauthCredentialRow) {
   let row = initial
   let revisions = 0
+  let authorized = true
   const store: OauthRefreshStore = {
-    async reloadCredential() { return { ...row } },
+    async reloadCredential() { return authorized ? { ...row } : null },
     async tryAcquireRefreshLock(input) {
+      if (!authorized || !sameOauthVersion(row, input.credential) || (row.refreshing_until && row.refreshing_until >= input.now)) return null
       row = { ...row, refreshing_until: input.until, updated_at: new Date(row.updated_at.getTime() + 1) }
       return { scope: input.scope, credential: { ...row } }
     },
     async saveRefreshedToken(input) {
+      if (!authorized || !sameOauthVersion(row, input.lock.credential) || !row.refreshing_until || row.refreshing_until <= input.now) return false
       row = { ...row, secret: input.secret, expires_at: input.expiresAt, last_refreshed_at: input.now, refreshing_until: null, last_error: null, updated_at: new Date(row.updated_at.getTime() + 1), secret_revision: `revision-${++revisions}` }
       return true
     },
     async recordRefreshFailure(input) {
+      if (!authorized || !sameOauthVersion(row, input.lock.credential) || !row.refreshing_until || row.refreshing_until <= input.now) return false
       row = { ...row, refreshing_until: null, last_error: input.error, updated_at: new Date(row.updated_at.getTime() + 1), ...(input.permanent ? { status: "refresh_failed" as const } : {}) }
       return true
     },
   }
-  return { store, current: () => row }
+  return { store, current: () => row, replace: (next: OauthCredentialRow) => { row = next }, revokeAccess: () => { authorized = false } }
 }
 
 function expiringRow(secret: string): OauthCredentialRow {
@@ -157,6 +161,19 @@ function expiringRow(secret: string): OauthCredentialRow {
     gateway_provider_id: providerId, credential_set_id: setId, organization_id: organizationId, subject: orgMembershipId, org_membership_id: orgMembershipId,
     // Thirty seconds left: inside the refresh window.
     expires_at: new Date(now.getTime() + 30_000), updated_at: new Date(now.getTime() - 3_600_000), last_refreshed_at: new Date(now.getTime() - 3_570_000), refreshing_until: null,
+  }
+}
+
+function refreshInput(secret = memberSecret(apiScope)) {
+  const row = accessRow()
+  const authorization: GatewayCredentialLookup = {
+    scope: { kind: "gateway", organizationId, orgMembershipId, keySource: "member", gatewayKeyId, gatewayProviderId: providerId },
+    selection: { row, requestedModel: model, upstreamModel: model },
+    subject: orgMembershipId,
+  }
+  return {
+    credential: expiringRow(secret), provider: { ...row.credentialSet, api_scope: apiScope },
+    authorization, subject: orgMembershipId, now, clock: () => now,
   }
 }
 
@@ -227,9 +244,86 @@ test("a renewal answered for another API is not stored", async () => {
   assert.doesNotMatch(current().secret, /entra-access-new/)
 })
 
-function app(input: { settings: Record<string, unknown>; credential: GatewayCredential }) {
+test("concurrent renewals exchange one refresh token and both reuse the winner", async () => {
+  const input = refreshInput()
+  const memory = memoryStore(input.credential)
+  let requests = 0
+  let release = () => {}
+  const ready = new Promise<void>((resolve) => { release = resolve })
+  const refresher = createOauthRefresher({
+    store: memory.store, pollMs: 1, waitMs: 20,
+    sleep: async () => { release(); await Promise.resolve() },
+    tokenFetch: async () => {
+      requests++
+      await ready
+      return Response.json(tokenResponse(apiScope))
+    },
+  })
+  const outcomes = await Promise.all([refresher(input), refresher(input)])
+  assert.equal(requests, 1)
+  for (const outcome of outcomes) {
+    assert.equal(outcome.kind, "refreshed")
+    if (outcome.kind === "refreshed") assert.equal(outcome.credential.secret, memory.current().secret)
+  }
+  assert.equal(memory.current().refreshing_until, null)
+})
+
+test("renewal failures distinguish member reauthorization, admin repair and retryable outages", async () => {
+  for (const scenario of [
+    { status: 400, error: "invalid_grant", outcome: "auth_required", storedStatus: "refresh_failed", storedError: "invalid_grant" },
+    { status: 401, error: "invalid_client", outcome: "configuration_required", storedStatus: "active", storedError: "invalid_client" },
+    { status: 429, error: "invalid_grant", outcome: "retry", storedStatus: "active", storedError: "token_endpoint_unavailable" },
+    { status: 503, error: "invalid_client", outcome: "retry", storedStatus: "active", storedError: "token_endpoint_unavailable" },
+  ]) {
+    const input = refreshInput()
+    const memory = memoryStore(input.credential)
+    const refresher = createOauthRefresher({ store: memory.store, tokenFetch: async () => Response.json({ error: scenario.error, error_description: "untrusted-response-fixture" }, { status: scenario.status }) })
+    assert.equal((await refresher(input)).kind, scenario.outcome)
+    assert.equal(memory.current().status, scenario.storedStatus)
+    assert.equal(memory.current().last_error, scenario.storedError)
+    assert.equal(memory.current().secret, input.credential.secret)
+    assert.equal(memory.current().refreshing_until, null)
+  }
+})
+
+test("late renewal success and failure never overwrite a replacement sign-in revision", async () => {
+  for (const status of [200, 400, 401]) {
+    const input = refreshInput()
+    const memory = memoryStore(input.credential)
+    const replacement = { ...input.credential, secret: memberSecret(apiScope, "replacement-access-fixture"), secret_revision: "replacement-revision", expires_at: new Date(now.getTime() + 3_600_000) }
+    const refresher = createOauthRefresher({ store: memory.store, tokenFetch: async () => {
+      // Reauthorization can occur in the same millisecond: the ciphertext revision is the fence.
+      memory.replace({ ...replacement, updated_at: memory.current().updated_at })
+      return Response.json(status === 200 ? tokenResponse(apiScope) : { error: status === 400 ? "invalid_grant" : "invalid_client" }, { status })
+    } })
+    const outcome = await refresher(input)
+    assert.equal(outcome.kind, "refreshed")
+    assert.equal(memory.current().status, "active")
+    assert.equal(memory.current().last_error, null)
+    assert.equal(memory.current().secret, replacement.secret)
+    assert.equal(memory.current().secret_revision, replacement.secret_revision)
+  }
+})
+
+test("access revocation during renewal neither stores nor returns the new token", async () => {
+  for (const status of [200, 400]) {
+    const input = refreshInput()
+    const memory = memoryStore(input.credential)
+    const refresher = createOauthRefresher({ store: memory.store, tokenFetch: async () => {
+      memory.revokeAccess()
+      return Response.json(status === 200 ? tokenResponse(apiScope) : { error: "invalid_grant" }, { status })
+    } })
+    assert.deepEqual(await refresher(input), { kind: "auth_required" })
+    assert.equal(memory.current().secret, input.credential.secret)
+    assert.equal(memory.current().last_error, null)
+  }
+})
+
+function app(input: { settings: Record<string, unknown>; credential: GatewayCredential; credentialSet?: Partial<GatewayAccessRow["credentialSet"]>; reloadedProvider?: Partial<GatewayProvider> }) {
   const sent: Request[] = []
   const row = accessRow()
+  Object.assign(row.credentialSet, input.credentialSet)
+  let providerReads = 0
   const provider: GatewayProvider = {
     id: providerId, organization_id: organizationId, provider_id: "litellm", status: "active", settings: input.settings,
     provider_config: { id: "litellm", name: "LiteLLM", npm: "@ai-sdk/openai-compatible", env: ["LITELLM_API_KEY"] },
@@ -250,7 +344,7 @@ function app(input: { settings: Record<string, unknown>; credential: GatewayCred
     updateRequestLog: async () => true,
     reporter: { request: () => {}, handledError: () => {} },
     checkUsage: async () => { throw new Error("per-member LiteLLM sign-in is budgeted by LiteLLM, not OpenWork") },
-    loadGatewayProvider: async () => provider,
+    loadGatewayProvider: async () => ++providerReads === 1 ? provider : { ...provider, ...input.reloadedProvider },
     loadGatewayAccess: async () => [row],
     loadProviderCredential: async () => input.credential,
     catalog: createProviderCatalog({ litellm: { npm: "@ai-sdk/openai-compatible", env: ["LITELLM_API_KEY"] } }),
@@ -289,6 +383,42 @@ test("a token signed in for another API scope is not sent to LiteLLM", async () 
     assert.equal(response.headers.get("x-openwork-auth-required"), "1")
     assert.equal(sent.length, 0)
     assert.doesNotMatch(await response.text(), /entra-member-access-fixture/)
+  }
+})
+
+test("fresh Microsoft tokens are bound to the selected tenant, client and member set", async () => {
+  for (const credentialSet of [
+    { oauth_tenant_id: "99999999-2222-4333-8444-555555555555" },
+    { oauth_client_id: "another-client" },
+    { oauth_tenant_id: null },
+    { oauth_client_id: null },
+    { credential_mode: "org" as const },
+  ]) {
+    const { sent, send } = app({ settings: liteLlmSettings("entra"), credential: entraCredential(apiScope), credentialSet })
+    const response = await send()
+    assert.notEqual(response.status, 200, JSON.stringify(credentialSet))
+    assert.equal(sent.length, 0)
+    assert.doesNotMatch(await response.text(), /entra-member-access-fixture|entra-refresh-old/)
+  }
+  const { send } = app({ settings: liteLlmSettings("entra"), credential: entraCredential(apiScope), credentialSet: { oauth_tenant_id: tenantId.toUpperCase() } })
+  assert.equal((await send()).status, 200)
+})
+
+test("provider changes during authorization never dispatch a token to the obsolete route", async () => {
+  for (const reloadedProvider of [
+    { settings: { ...liteLlmSettings("entra"), upstreamBaseUrl: "https://replacement.example/v1" } },
+    { settings: liteLlmSettings("entra", "member", `api://${clientId}/replacement`) },
+    { settings: liteLlmSettings("personal") },
+    { provider_id: "openai" },
+    { status: "disabled" as const },
+    { organization_id: createDenTypeId("organization") },
+    { provider_config: { id: "litellm", options: { baseURL: "https://replacement.example/v1" } } },
+  ]) {
+    const { sent, send } = app({ settings: liteLlmSettings("entra"), credential: entraCredential(apiScope), reloadedProvider })
+    const response = await send()
+    assert.equal(response.status, 503, JSON.stringify(reloadedProvider))
+    assert.equal(sent.length, 0)
+    assert.doesNotMatch(await response.text(), /entra-member-access-fixture|entra-refresh-old/)
   }
 })
 

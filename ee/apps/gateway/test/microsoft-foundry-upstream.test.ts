@@ -30,7 +30,9 @@ const credentials: Record<Mode, GatewayCredential> = {
   member: {
     id: createDenTypeId("inferenceProviderCredential"), kind: "oauth_azure", status: "active",
     expires_at: new Date(now.getTime() + 60 * 60 * 1000),
-    secret: JSON.stringify({ accessToken: "entra-member-token-fixture" }),
+    secret: JSON.stringify({ accessToken: "entra-member-token-fixture", microsoftIdentity: {
+      tenantId: "11111111-2222-4333-8444-555555555555", clientId: "foundry-client-fixture", objectId: "object-fixture", userName: null, authorizationRevision: "r".repeat(43),
+    } }),
   },
   org: { id: createDenTypeId("inferenceProviderCredential"), kind: "api_key", secret: "foundry-org-key-fixture", expires_at: null, status: "active" },
 }
@@ -41,7 +43,7 @@ function accessRow(mode: Mode): GatewayAccessRow {
   return {
     grant: { id: createDenTypeId("inferenceProviderAccess"), gateway_provider_id: providerId, model_group_id: groupId, credential_set_id: setId, audience_key: "organization", org_membership_id: null, team_id: null, created_at: now },
     group: { id: groupId, gateway_provider_id: providerId, name: "Default", description: null, status: "active", created_at: now, updated_at: now },
-    credentialSet: { id: setId, gateway_provider_id: providerId, created_by_org_membership_id: null, name: mode === "member" ? "Member sign-in" : "Organization key", credential_mode: mode, oauth_client_id: null, oauth_client_secret: null, oauth_tenant_id: null, aws_sso: null, status: "active", created_at: now, updated_at: now },
+    credentialSet: { id: setId, gateway_provider_id: providerId, created_by_org_membership_id: null, name: mode === "member" ? "Member sign-in" : "Organization key", credential_mode: mode, oauth_client_id: "foundry-client-fixture", oauth_client_secret: "foundry-secret-fixture", oauth_tenant_id: "11111111-2222-4333-8444-555555555555", aws_sso: null, status: "active", created_at: now, updated_at: now },
     model: {
       id: createDenTypeId("inferenceProviderModel"), gateway_provider_id: providerId, model_id: model, name: "Claude Sonnet 4.5", created_at: now,
       model_config: { id: model, name: "Claude Sonnet 4.5", tool_call: true, limit: { context: 200_000, output: 8_192 } },

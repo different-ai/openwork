@@ -2,6 +2,7 @@
 // (plan §5.2). Forwards the desktop's native provider request to the org's
 // configured upstream with the org/member credential, logging one row per
 // request. Never translates protocols and never returns raw credentials.
+import { isDeepStrictEqual } from "node:util"
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { GatewayProviderModelTable, GatewayProviderTable } from "@openwork-ee/den-db"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
@@ -158,7 +159,7 @@ export const loadGatewayProviderFromDb: LoadGatewayProvider = async (input) => {
     return null
   }
   const { db } = await import("./db.js")
-  const [row] = await db
+  const [row] = await db.$primary
     .select({
       id: GatewayProviderTable.id,
       organization_id: GatewayProviderTable.organization_id,
@@ -1129,6 +1130,11 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
 
     if (usageRejection) return reject(usageRejection, usageRejection.headers.get("x-openwork-error-code") ?? "openwork_gateway_accounting_unavailable", "Gateway usage admission rejected")
 
+    // Routing and token scope are provider-owned, not part of the grant or credential version.
+    const currentProvider = await dependencies.loadGatewayProvider({ inferenceProviderId, organizationId: identity.organizationId })
+    if (!currentProvider || !isDeepStrictEqual(provider, currentProvider)) {
+      return reject(gatewayError(503, "provider_configuration_changed", "The inference provider changed before dispatch. Retry the same selection."), "credential_changed", "Gateway provider changed")
+    }
     // Recheck after accounting awaits. Never reselect or materialize a fallback.
     const currentSelection = selectGatewayGrant(await dependencies.loadGatewayAccess(scope), prepared.requestedModel, selection.row.grant.id)
     if (currentSelection.kind !== "selected" || !sameGatewaySelection(selection, currentSelection.selection)) {
