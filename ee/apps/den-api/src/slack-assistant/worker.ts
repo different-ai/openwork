@@ -458,6 +458,8 @@ export async function handleSlackEventFailure(event: EventRow, error: unknown, d
           : error instanceof RemoteSessionUnavailableError
             ? "remote_session_unavailable"
             : "worker_error",
+      // Why the runner gave up (a code such as `model_access_unavailable`), without reading the runner's logs.
+      ...(error instanceof RemoteSessionUnavailableError && error.runnerError ? { runner_error: error.runnerError } : {}),
       elapsed_ms: Date.now() - event.createdAt.getTime(),
     })
   await renewSlackLease(event)

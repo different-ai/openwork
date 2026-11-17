@@ -8,6 +8,7 @@ import {
   type HeadlessRunnerDeps,
   type RunnerRepeatLimits,
 } from "../headless-runner/client.js"
+import { isModelAccessRefusal } from "../headless-runner/model-access-refusal.js"
 
 /**
  * Slack runs go to the shared headless runner (ee/apps/headless-runner). This adapter gives the Slack run loop
@@ -177,19 +178,6 @@ function stepOf(tool: { id: string; name: string; input: Record<string, unknown>
 /** Runner unavailable or overloaded: the Slack run loop retries these. */
 const retryable = (error: string): RunnerFailure => ({ ok: false, error, retryable: true, retryAfterMs: 5_000 })
 const unknownSession: RunnerFailure = { ok: false, error: "unknown_session", retryable: false }
-
-/**
- * What model resolution and token minting throw when the member may not use the model: the Slack and Workbot model
- * policies, the worker's missing installation, and the Gateway (CloudAgentGatewayAccessError and its member lookup).
- */
-const MODEL_ACCESS_REFUSALS = new Set([
-  "cloud_agent_model_unavailable",
-  "cloud_model_unavailable",
-  "model_access_unavailable",
-  "cloud_agent_gateway_model_unavailable",
-  "cloud_agent_gateway_member_not_found",
-])
-const isModelAccessRefusal = (error: unknown) => error instanceof Error && MODEL_ACCESS_REFUSALS.has(error.message)
 
 export type SlackRunnerOptions = {
   /**
