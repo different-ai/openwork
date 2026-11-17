@@ -220,7 +220,12 @@ export type RunnerSavedFile = z.infer<typeof runnerSavedFileSchema>
 
 export type RunnerResult<T> = { ok: true; value: T } | { ok: false; status: number; error: string }
 
-const REQUEST_TIMEOUT_MS = 15_000
+/**
+ * Longer than the cell host's own wait. celld holds a request for a cell it cannot start yet (its node is full, or
+ * the cell is changing owner) for up to 15 s (`CELLD_OPERATION_DEADLINE_MS`) and then answers `503 cell_unavailable`.
+ * With the same 15 s here, callers gave up at the moment the answer arrived and saw a dropped connection instead.
+ */
+const REQUEST_TIMEOUT_MS = 20_000
 
 async function request(deps: HeadlessRunnerDeps, method: string, path: string, body?: unknown, timeoutMs = REQUEST_TIMEOUT_MS) {
   const response = await deps.fetch(`${deps.config.url}${path}`, {
