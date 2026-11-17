@@ -75,6 +75,7 @@ type SidePanelProps = {
   browserPresentation?: BrowserPresentationControls;
   /** The browser is shown full screen: keep its tab but not a second native view here. */
   browserShownElsewhere?: boolean;
+  sideChat?: { content: React.ReactNode; onOpen: () => void };
 };
 
 // HMR can remount this module without unmounting BrowserPanelContent, leaving
@@ -207,7 +208,7 @@ function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
           title={tab.label}
           aria-label={`Select tab: ${tab.label}`}
         >
-          {tab.type === "browser" ? <BrowserTabIcon tab={tab} /> : (tab.type === "app" || tab.type === "mcp-app") ? <Blocks /> : tab.type === "remote-thread" ? <MessagesSquare /> : (
+          {tab.type === "browser" ? <BrowserTabIcon tab={tab} /> : (tab.type === "app" || tab.type === "mcp-app") ? <Blocks /> : (tab.type === "remote-thread" || tab.type === "side-chat") ? <MessagesSquare /> : (
             <ArtifactIcon type={tab.preview} />
           )}
           <span className="min-w-0 flex-1 truncate text-left">{tab.label}</span>
@@ -616,6 +617,7 @@ export function SidePanel({
   onOpenExtensions,
   browserPresentation,
   browserShownElsewhere = false,
+  sideChat,
 }: SidePanelProps) {
   const { tabs } = useSessionPanelState(sessionId);
   const activeTab = useActivePanelTab(sessionId);
@@ -861,6 +863,7 @@ export function SidePanel({
           <PanelEmpty
             onOpenBrowser={isBrowserAvailable ? createTab : undefined}
             onOpenExtensions={onOpenExtensions}
+            onOpenSideChat={sideChat?.onOpen}
           />
         ) : null}
         {activeTab?.type === "browser" ? (
@@ -874,6 +877,8 @@ export function SidePanel({
           )
         ) : activeTab?.type === "mcp-app" ? (
           <BuiltMcpAppPanel key={activeTab.id} tab={activeTab} onClose={onClose} />
+        ) : activeTab?.type === "side-chat" ? (
+          <div className="min-h-0 flex-1 overflow-hidden">{sideChat?.content}</div>
         ) : activeTab?.type === "remote-thread" ? (
           <div className="min-h-0 flex-1 overflow-hidden"><RemoteThreadPanel key={activeTab.id} tab={activeTab} /></div>
         ) : activeTab?.type === "app" ? (
