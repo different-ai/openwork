@@ -699,13 +699,23 @@ export class Computers {
 
   private async move(sessionId: string, box: SandboxHandle, options: { required: boolean; carryWithinMs?: number }): Promise<SandboxHandle | null> {
     const started = Date.now()
-    const carried: Array<[CarriedState, Uint8Array]> = []
-    for (const name of ["workspace", "profile"] as const) {
+    const names = ["workspace", "profile"] as const
+    const pack = async (name: CarriedState) => {
       const left = options.carryWithinMs === undefined ? undefined : started + options.carryWithinMs - Date.now()
-      const bytes = left !== undefined && left <= 0 ? null : await this.desktop?.exportState(box, name, left).catch(() => null)
-      if (bytes) carried.push([name, bytes])
-      else if (!options.required) return null
+      return left !== undefined && left <= 0 ? null : await this.desktop?.exportState(box, name, left).catch(() => null) ?? null
     }
+    let packed: Array<Uint8Array | null>
+    // Someone is waiting: both at once, since they are separate folders and the wait is then the slower one, not their sum.
+    if (options.required) packed = await Promise.all(names.map(pack))
+    else {
+      // Nobody is waiting, and the computer stays unless both come out: the workspace first, so a computer that stays
+      // doesn't have its browser closed for a profile that then goes nowhere.
+      const workspace = await pack("workspace")
+      if (!workspace) return null
+      packed = [workspace, await pack("profile")]
+    }
+    const carried = names.flatMap((name, index): Array<[CarriedState, Uint8Array]> => { const bytes = packed[index]; return bytes ? [[name, bytes]] : [] })
+    if (!options.required && carried.length < names.length) return null
     const exported = Date.now()
     await this.delete(sessionId)
     const deleted = Date.now()
@@ -715,15 +725,16 @@ export class Computers {
     pending.catch(() => { if (this.vms.get(sessionId) === pending) this.vms.delete(sessionId) })
     const fresh = await pending
     const created = Date.now()
-    const kept: CarriedState[] = []
-    for (const [name, bytes] of carried) {
+    const unpacked = await Promise.all(carried.map(async ([name, bytes]) => {
       try {
         await this.desktop?.importState(fresh, name, bytes)
-        kept.push(name)
+        return name
       } catch (error) {
         console.error("[headless-computer] carrying state over failed", { sessionId, name, error: error instanceof Error ? error.message : "unknown" })
+        return null
       }
-    }
+    }))
+    const kept = unpacked.filter((name): name is CarriedState => name !== null)
     await this.desktop?.noteReplacement(fresh).catch(() => undefined)
     const ended = Date.now()
     // Where the time went: handing over the old computer's state, deleting it, the new one coming up, and unpacking.

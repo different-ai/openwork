@@ -18,13 +18,14 @@ const INSIDE = "up=120 load=0.52 memFreeMb=900 diskFreeMb=0 starting=2 displays=
  * A computer whose desktop never answers and whose start fails, until it is replaced: the computer made after it has
  * a working desktop. `hold` keeps the first start waiting, so a test decides who is waiting on it when it fails.
  */
-function fixture(t: TestContext, input: { hold?: Promise<void> } = {}) {
+function fixture(t: TestContext, input: { hold?: Promise<void>; onCommand?: (command: string) => Promise<void> } = {}) {
   const commands: string[] = []
   const ok = (stdout: string) => ({ exitCode: 0, stdout, stderr: "" })
   const provider = createFakeProvider({
     capabilities: { platform: { os: "linux", isolation: "microvm" } },
     async onRun(spec) {
       commands.push(spec.command)
+      await input.onCommand?.(spec.command)
       const stuck = provider.fake.count("destroy") === 0
       if (spec.command.includes("/proc/uptime")) return ok(INSIDE)
       if (stuck && spec.command.includes("openwork-desktop-bridge start ")) {
@@ -88,6 +89,20 @@ test("resuming a computer whose desktop won't start hears of the replacement too
   await assert.rejects(f.computers.desktopAction(SESSION, "resume"), replacing)
   assert.equal((await f.computers.desktopViewer(SESSION, VIEW)).state, "connected")
   assert.equal(f.provider.fake.count("destroy"), 1)
+})
+
+test("the workspace and the browser profile are handed over at the same time while someone is waiting", async t => {
+  let exporting = 0
+  let most = 0
+  const f = fixture(t, { async onCommand(command) {
+    if (!command.includes("openwork-desktop-bridge export ")) return
+    most = Math.max(most, ++exporting)
+    await new Promise(resolve => setTimeout(resolve, 5))
+    exporting--
+  } })
+  assert.equal((await f.computers.desktopRun(SESSION, OPEN)).isError, false)
+  assert.equal(f.sent("openwork-desktop-bridge export "), 2)
+  assert.equal(most, 2)
 })
 
 test("the log says how far the start got, what the computer looked like inside, and where the replacement's time went", async t => {
