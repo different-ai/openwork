@@ -85,7 +85,8 @@ export function assessFleet({ instances, memoryLimitBytes, leases = null, logs =
     if (!(Number(env.CELLD_TTL_MS) >= 60_000)) add("warn", "setting_ttl", `CELLD_TTL_MS is ${env.CELLD_TTL_MS ?? "unset (10000)"}; 60000 keeps a short storage outage from stopping every node.`)
     if (!env.CELLD_IDLE_EVICT_S) add("warn", "setting_idle_evict", "CELLD_IDLE_EVICT_S is unset: idle cells stay in memory and never move to another node.")
     if (!env.CELLD_LTX_RETENTION_SECS) add("warn", "setting_retention", "CELLD_LTX_RETENTION_SECS is unset: each cell's bucket data grows on every wake.")
-    if (settings.healthCheckPath !== HEALTH_PATH) add("warn", "setting_health_path", `The service has no health check on ${HEALTH_PATH}: a rollout does not wait for a new node to be ready.`)
+    // Only where the host has an HTTP health check to set: a Render private service has none.
+    if (settings.healthCheckSupported && settings.healthCheckPath !== HEALTH_PATH) add("warn", "setting_health_path", `The service has no health check on ${HEALTH_PATH}: a rollout does not wait for a new node to be ready.`)
     const stopMs = Number(env.CELLD_SHUTDOWN_TOTAL_MS ?? 40_000)
     if (typeof settings.shutdownGraceSeconds === "number" && settings.shutdownGraceSeconds * 1000 <= stopMs) {
       add("warn", "setting_shutdown_grace", `The shutdown grace (${settings.shutdownGraceSeconds} s) is not above CELLD_SHUTDOWN_TOTAL_MS (${stopMs} ms): a stop can cut the cell handoff.`)
@@ -184,6 +185,7 @@ async function main() {
       expectedCelldVersion: EXPECTED_CELLD_VERSION || null,
       builtCelldVersion: builtCelldVersion(details.serviceDetails?.envSpecificDetails?.buildCommand),
       env,
+      healthCheckSupported: Object.hasOwn(details.serviceDetails ?? {}, "healthCheckPath"),
       healthCheckPath: details.serviceDetails?.healthCheckPath ?? null,
       shutdownGraceSeconds: details.serviceDetails?.maxShutdownDelaySeconds ?? null,
     },

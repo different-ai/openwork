@@ -195,8 +195,10 @@ Names and defaults are from [celld's docs](https://celld.dev/docs) (v0.6.3):
 - At least 2 nodes, for failover.
 - Nodes built from the same celld release as `CELLD_VERSION` in `.github/workflows/celld-runner-deploy.yml`. The
   nodes are built by the host (Render's build command), not by the deploy workflow, so the two can drift.
-- The host's health check on `/.well-known/celld/health` (public listener): it answers 503 while a node drains and
-  until a joining node has settled, so a rollout waits for each replacement.
+- Where the host has an HTTP health check (a Render private service has none): `/.well-known/celld/health` on the
+  public listener, with a rollout deadline. It answers 503 while a node drains, and a new node's first 200 waits
+  until the fleet has settled, which includes every node being under its memory reopen line. With one node full, new
+  nodes therefore do not turn healthy until that node is restarted.
 - A supervisor that always restarts, with no attempt limit: a node that loses its lease exits, and only a restart
   brings it back.
 - A backup outside the live bucket. celld's replication copies bad writes and deletes too. On S3, use versioning plus
