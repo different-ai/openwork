@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash, randomBytes } from "node:crypto"
 import { after, test } from "node:test"
 import { workbotOwner, workbotSessionId } from "@openwork-ee/headless-protocol/workbot-routing"
 import { bootDen, field, list, startFakeHttpServer, summary, text } from "./harness.js"
@@ -35,6 +36,31 @@ const chat = workbotSessionId(org.orgId, org.owner.memberId)
 const runnerId = "thread-test-runner"
 const computerId = automationRunnerRowId({ organizationId: org.orgId, ownerMemberId: org.owner.memberId, runnerId })
 let desktop = ""
+let outside = ""
+
+/** A token an outside MCP client holds after the person authorizes it, as Claude or ChatGPT does. */
+async function outsideClientToken() {
+  const { DEN_MCP_OAUTH_RESOURCE } = await import("../../src/auth.js")
+  const scope = "openid profile email mcp:read mcp:write offline_access"
+  const redirect = "http://127.0.0.1:9/callback"
+  const registered = await den.request(null, "POST", "/api/auth/oauth2/register", { body: { client_name: "Outside MCP client", redirect_uris: [redirect], token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], scope } })
+  assert.equal(registered.status, 201, summary(registered))
+  const clientId = text(field(registered.body, "client_id"), "client id")
+  const headers = { cookie: org.owner.cookie }
+  assert.equal((await den.request(org.owner.token, "POST", "/api/auth/organization/set-active", { headers, body: { organizationId: org.orgId } })).status, 200)
+  const verifier = randomBytes(32).toString("base64url")
+  const authorize = new URLSearchParams({ client_id: clientId, redirect_uri: redirect, response_type: "code", scope, resource: DEN_MCP_OAUTH_RESOURCE, state: randomBytes(8).toString("hex"), code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256" })
+  const consentPage = await den.request(org.owner.token, "GET", `/api/auth/oauth2/authorize?${authorize}`, { headers })
+  const consent = new URL(text(consentPage.headers.get("location"), `consent redirect (${summary(consentPage)})`))
+  const consented = await den.request(org.owner.token, "POST", "/api/auth/oauth2/consent", { headers, body: { accept: true, scope, oauth_query: consent.search.slice(1) } })
+  assert.equal(consented.status, 200, summary(consented))
+  const code = text(new URL(text(field(consented.body, "url"), "consent redirect")).searchParams.get("code"), "code")
+  const exchanged = await den.request(null, "POST", "/api/auth/oauth2/token", { headers: { "content-type": "application/x-www-form-urlencoded" }, rawBody: new URLSearchParams({ client_id: clientId, resource: DEN_MCP_OAUTH_RESOURCE, grant_type: "authorization_code", code, code_verifier: verifier, redirect_uri: redirect }).toString() })
+  assert.equal(exchanged.status, 200, summary(exchanged))
+  return text(field(exchanged.body, "access_token"), "access token")
+}
+const toolNames = async (bearer: string) => list(field((await rpc("tools/list", {}, bearer)).result, "tools")).map(tool => String(tool.name))
+const threadTools = (names: string[]) => names.filter(name => name.startsWith("remote_session_")).sort()
 
 async function rpc(method: string, params: Record<string, unknown> = {}, bearer = token) {
   const response = await den.request(bearer, "POST", "/mcp/agent", { headers: { accept: "application/json, text/event-stream" }, body: { jsonrpc: "2.0", id: 1, method, params } })
@@ -87,6 +113,9 @@ test("without the flag a started session says nothing about events and poll deli
   const created = await create(token)
   assert.equal(created.isError, false, created.raw)
   assert.equal(field(created.body, "event"), undefined)
+  assert.equal(created.raw.includes("MCP Events"), false, "the result is the one every client gets today")
+  outside = await outsideClientToken()
+  assert.deepEqual(threadTools(await toolNames(outside)), [], "an outside client finds remote sessions through search, as before")
   assert.deepEqual(list(field((await rpc("events/list")).result, "events")).map(event => event.delivery), [["webhook"], ["webhook"]])
   assert.equal(field((await rpc("events/poll", { name: SESSION, arguments: { commandId: text(field(created.body, "commandId"), "command") } })).error, "code"), -32601)
   assert.equal((await den.setFeature(org.orgId, "mcpThreads", true)).status, 200)
@@ -156,4 +185,31 @@ test("a hosted chat that starts a session is watched at once and gets one turn w
   assert.match(turns[0].prompt, /remote session this chat started/)
   assert.match(turns[0].prompt, /"state":"idle"/)
   assert.equal(turns[0].prompt.includes("Private result"), false)
+})
+
+test("an outside client lists and runs the thread tools; OpenWork's own token keeps capability search", async () => {
+  const listed = threadTools(await toolNames(outside))
+  for (const action of ["create", "send", "read", "status", "stop", "list", "targets"]) assert.ok(listed.includes(`remote_session_${action}`), `${action} is listed: ${listed.join(", ")}`)
+  assert.deepEqual(threadTools(await toolNames(token)), [])
+  const created = await den.callMcpTool(outside, "remote_session_create", { target: "registered", computerId, workspaceId: "fixture-workspace", title: "Outside task" })
+  assert.equal(created.isError, false, created.raw)
+  const commandId = text(field(created.body, "commandId"), "command")
+  assert.deepEqual(field(created.body, "event", "arguments"), { commandId }, "an outside client is told the event; it has no chat for Den to watch")
+  const status = await den.callMcpTool(outside, "remote_session_status", { threads: [{ commandId }] })
+  assert.equal(status.isError, false, status.raw)
+  assert.equal(list(field(status.body, "threads")).length, 1)
+  assert.equal(typeof field(list(field(status.body, "threads"))[0], "state"), "string", status.raw)
+  const polled = await rpc("events/poll", { name: SESSION, arguments: { commandId }, cursor: null }, outside)
+  assert.equal(polled.error, undefined, summary(polled))
+})
+
+test("turning the flag off restores today's tools, results and catalog", async () => {
+  assert.equal((await den.setFeature(org.orgId, "mcpThreads", false)).status, 200)
+  assert.deepEqual(threadTools(await toolNames(outside)), [])
+  const created = await den.callMcpTool(outside, "execute_capability", { name: "remote-session:create", body: { target: "registered", computerId, workspaceId: "fixture-workspace", title: "Plain task" } })
+  assert.equal(created.isError, false, created.raw)
+  assert.equal(field(created.body, "event"), undefined)
+  assert.equal(field(created.body, "watch"), undefined)
+  assert.equal(field((await rpc("events/poll", { name: SESSION, arguments: { commandId: text(field(created.body, "commandId"), "command") } })).error, "code"), -32601)
+  assert.deepEqual(list(field((await rpc("events/list")).result, "events")).map(event => event.delivery), [["webhook"], ["webhook"]])
 })

@@ -34,19 +34,19 @@ export async function followRemoteSession(input: {
   const reference = typeof payload.commandId === "string" ? { commandId: payload.commandId }
     : typeof payload.sessionId === "string" ? { sessionId: payload.sessionId } : null
   if (!reference) return input.result
-  const features = await getOrganizationFeatures(input.organizationId, { userId: input.principal.userId })
-  if (!features.mcpThreads || !features.nativeMcpEvents) return input.result
   const withFields = (fields: Record<string, unknown>): RemoteSessionToolResult => {
     const next = { ...payload, ...fields }
     return { ...input.result, content: [{ type: "text", text: JSON.stringify(next) }], structuredContent: next }
   }
-  const thread = features.mcpThreadEvents ? await eventThreadForPrincipal(input.principal) : null
-  if (!thread) return withFields({ event: { name: SESSION_EVENT, arguments: reference, delivery: ["webhook", "poll"] }, note: [payload.note, EVENT_NOTE].filter(Boolean).join(" ") })
   try {
+    const features = await getOrganizationFeatures(input.organizationId, { userId: input.principal.userId })
+    if (!features.mcpThreads || !features.nativeMcpEvents) return input.result
+    const thread = features.mcpThreadEvents ? await eventThreadForPrincipal(input.principal) : null
+    if (!thread) return withFields({ event: { name: SESSION_EVENT, arguments: reference, delivery: ["webhook", "poll"] }, note: [payload.note, EVENT_NOTE].filter(Boolean).join(" ") })
     const watch = await subscribeNativeThread(thread, [...input.principal.scopes], { name: SESSION_EVENT, arguments: reference, instruction: FOLLOW_REMOTE_SESSION_INSTRUCTION, ttlMs: MAX_SUBSCRIPTION_TTL_MS })
     return withFields({ watch: { id: watch.id, expiresAt: watch.expiresAt }, note: `${WATCHED_NOTE} The watch ends at ${watch.expiresAt}; after that, use remote-session:status.` })
   } catch (error) {
-    // Ten watches, a session that is not readable yet, or the runner being away: the chat follows it as before.
+    // A failed feature read, ten watches, a session that is not readable yet, or the runner being away: the caller follows it as before.
     appLogger.warn("remote_session_follow_failed", { component: "mcp_threads", error: error instanceof Error ? error.message : "unknown" })
     return input.result
   }
