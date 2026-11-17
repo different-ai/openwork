@@ -133,14 +133,15 @@ test("an admin adds the provider with an app registration, one API scope and a m
   assert.equal((await den.setFeature(workspace.orgId, FEATURE, true)).status, 200)
 
   // Scopes LiteLLM could never validate, and incomplete settings, are refused with what to enter instead.
-  for (const [overrides, error] of [
+  const invalid: Array<[Record<string, unknown>, string]> = [
     [{ oauthScope: "https://graph.microsoft.com/User.Read" }, "invalid_scope"],
     [{ oauthScope: "User.Read" }, "invalid_scope"],
     [{ oauthScope: "https://cognitiveservices.azure.com/.default" }, "invalid_scope"],
     [{ oauthScope: `api://${CLIENT}` }, "invalid_scope"],
     [{ oauthTenantId: "contoso.onmicrosoft.com" }, "invalid_tenant_id"],
     [{ modelIds: ["openai/*"] }, "model_required"],
-  ] as const) {
+  ]
+  for (const [overrides, error] of invalid) {
     const refused = await owner("POST", "/v1/inference-providers/litellm", entraProvider(overrides))
     assert.equal(refused.status, 400, `${JSON.stringify(overrides)}: ${summary(refused)}`)
     assert.equal(field(refused.body, "error"), error, summary(refused))
@@ -276,7 +277,8 @@ test("an admin edits the model list and the sign-in settings; changing the scope
   assert.equal(listed?.credentialStatus, "ready")
   assert.deepEqual(list(listed?.models).map((model) => model.upstreamModelId).sort(), ["gpt-fixture", "sonnet-fixture"])
 
-  for (const [body, error] of [[{ oauthScope: "https://graph.microsoft.com/.default" }, "invalid_scope"], [{ oauthTenantId: "not-a-tenant" }, "invalid_tenant_id"], [{ modelIds: ["*"] }, "model_required"]] as const) {
+  const invalid: Array<[Record<string, unknown>, string]> = [[{ oauthScope: "https://graph.microsoft.com/.default" }, "invalid_scope"], [{ oauthTenantId: "not-a-tenant" }, "invalid_tenant_id"], [{ modelIds: ["*"] }, "model_required"]]
+  for (const [body, error] of invalid) {
     const refused = await owner("PATCH", `/v1/inference-providers/${entraProviderId}/litellm`, body)
     assert.equal(refused.status, 400, summary(refused))
     assert.equal(field(refused.body, "error"), error)

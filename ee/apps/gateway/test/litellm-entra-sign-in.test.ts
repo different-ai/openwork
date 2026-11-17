@@ -66,7 +66,8 @@ test("a token response is accepted only for the API it was requested for", () =>
 
   // A provider's own API scope.
   assert.equal(readMicrosoftTokens(tokenResponse(apiScope), apiScope)?.scope, apiScope)
-  assert.ok(readMicrosoftTokens(tokenResponse(`openid profile ${apiScope.toUpperCase()}`), apiScope))
+  assert.ok(readMicrosoftTokens(tokenResponse(`openid profile api://${clientId.toUpperCase()}/access`), apiScope))
+  assert.equal(readMicrosoftTokens(tokenResponse(apiScope.toUpperCase()), apiScope), null)
   assert.ok(readMicrosoftTokens(tokenResponse(), apiScope))
   // A /.default request is answered with the API's individual scopes.
   assert.ok(readMicrosoftTokens(tokenResponse(`api://${clientId}/access api://${clientId}/models.read`), `api://${clientId}/.default`))
@@ -148,7 +149,7 @@ function memoryStore(initial: OauthCredentialRow) {
     },
     async recordRefreshFailure(input) {
       if (!authorized || !sameOauthVersion(row, input.lock.credential) || !row.refreshing_until || row.refreshing_until <= input.now) return false
-      row = { ...row, refreshing_until: null, last_error: input.error, updated_at: new Date(row.updated_at.getTime() + 1), ...(input.permanent ? { status: "refresh_failed" as const } : {}) }
+      row = { ...row, refreshing_until: null, last_error: input.error, updated_at: new Date(row.updated_at.getTime() + 1), status: input.permanent ? "refresh_failed" : row.status }
       return true
     },
   }
@@ -227,7 +228,8 @@ test("a Microsoft Foundry member's token is still renewed for Azure Cognitive Se
 })
 
 test("a token signed in for another API scope is never renewed", async () => {
-  for (const [identityScope, configuredScope] of [[`api://${clientId}/older`, apiScope], [undefined, apiScope], [apiScope, null]] as const) {
+  const bindings: Array<[string | undefined, string | null]> = [[`api://${clientId}/older`, apiScope], [undefined, apiScope], [apiScope, null]]
+  for (const [identityScope, configuredScope] of bindings) {
     const { outcome, requests, current } = await refresh({ secret: memberSecret(identityScope), configuredScope })
     assert.equal(requests.length, 0, `${identityScope} -> ${configuredScope}`)
     assert.equal(outcome.kind, "auth_required")
@@ -387,13 +389,14 @@ test("a token signed in for another API scope is not sent to LiteLLM", async () 
 })
 
 test("fresh Microsoft tokens are bound to the selected tenant, client and member set", async () => {
-  for (const credentialSet of [
+  const sets: Array<Partial<GatewayAccessRow["credentialSet"]>> = [
     { oauth_tenant_id: "99999999-2222-4333-8444-555555555555" },
     { oauth_client_id: "another-client" },
     { oauth_tenant_id: null },
     { oauth_client_id: null },
-    { credential_mode: "org" as const },
-  ]) {
+    { credential_mode: "org" },
+  ]
+  for (const credentialSet of sets) {
     const { sent, send } = app({ settings: liteLlmSettings("entra"), credential: entraCredential(apiScope), credentialSet })
     const response = await send()
     assert.notEqual(response.status, 200, JSON.stringify(credentialSet))
@@ -405,15 +408,16 @@ test("fresh Microsoft tokens are bound to the selected tenant, client and member
 })
 
 test("provider changes during authorization never dispatch a token to the obsolete route", async () => {
-  for (const reloadedProvider of [
+  const changes: Array<Partial<GatewayProvider>> = [
     { settings: { ...liteLlmSettings("entra"), upstreamBaseUrl: "https://replacement.example/v1" } },
     { settings: liteLlmSettings("entra", "member", `api://${clientId}/replacement`) },
     { settings: liteLlmSettings("personal") },
     { provider_id: "openai" },
-    { status: "disabled" as const },
+    { status: "disabled" },
     { organization_id: createDenTypeId("organization") },
     { provider_config: { id: "litellm", options: { baseURL: "https://replacement.example/v1" } } },
-  ]) {
+  ]
+  for (const reloadedProvider of changes) {
     const { sent, send } = app({ settings: liteLlmSettings("entra"), credential: entraCredential(apiScope), reloadedProvider })
     const response = await send()
     assert.equal(response.status, 503, JSON.stringify(reloadedProvider))
@@ -423,7 +427,8 @@ test("provider changes during authorization never dispatch a token to the obsole
 })
 
 test("a key-based LiteLLM provider never forwards an Entra ID token", async () => {
-  for (const keySource of ["personal", "issued"] as const) {
+  const sources: Array<"personal" | "issued"> = ["personal", "issued"]
+  for (const keySource of sources) {
     const { sent, send } = app({ settings: liteLlmSettings(keySource), credential: entraCredential(apiScope) })
     const response = await send()
     assert.equal(response.status, 502, keySource)
