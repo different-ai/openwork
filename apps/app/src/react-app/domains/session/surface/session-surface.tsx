@@ -1412,6 +1412,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
   const orgMcpConnections = useOrgMcpConnections();
+  const refreshOrgMcpConnections = orgMcpConnections.refresh;
   const connectorIdentities = useMemo(
     () => buildConnectorToolIdentities({
       mcpServers: toolMcpServers,
@@ -3601,6 +3602,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onProgress,
       });
       if (!isAuthorizationCurrent()) throw new Error("The connection request or account changed.");
+      // Every card for this connection reads the member's live status from this list.
+      void refreshOrgMcpConnections();
       recordInspectorEvent("mcp.chat_reconnect.completed", {
         workspaceId: props.workspaceId,
         sessionId: props.sessionId,
@@ -3616,7 +3619,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       });
       throw error;
     }
-  }, [props.onOpenConnect, props.sessionId, props.workspaceId]);
+  }, [props.onOpenConnect, props.sessionId, props.workspaceId, refreshOrgMcpConnections]);
 
   const handleMcpReopenAuthorization = useCallback(async (
     action: ChatToolReconnectAction,
