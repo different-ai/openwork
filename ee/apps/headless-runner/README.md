@@ -137,7 +137,9 @@ The model sees a conversation in whole turns (a message and everything that answ
   context never reads them. Removing a message that reaches a sealed turn rewrites that segment (a new object under a
   new name, the manifest swapped in one transaction, the old object deleted after).
 - **Orphan cleanup** (background job `segment-orphans`): retries object deletions queued in `storage_deletions`, and
-  once a day deletes this cell's segment and body objects that nothing references and that are over 24 hours old.
+  deletes this cell's segment and body objects that nothing references and that are over 24 hours old. That check
+  runs a day after the cell last stored an object (noted before each upload), not on a schedule: a conversation that
+  stores nothing is never checked, so the job gives an idle cell no reason to wake.
 
 `HEADLESS_SEGMENTS=off` (the default) is the kill switch: nothing new is sealed or moved; reading existing segments
 and large bodies keeps working. The schema is versioned by numbered migrations in a `meta` table (`schema_version`;
@@ -204,8 +206,9 @@ the runner keeps the latest with the session, never with the turn, in logs or in
 `ok`/`stale` are acknowledged; `rate_limited` is kept and retried (so is `index_disabled`, which only Dens from before
 the index was always on send); other rejections are dropped.
 Failures back off (immediately, 30 s, 2 min, 10 min, then hourly); rows older than 7 days, or that never got a
-capability, are dropped. Once a day the cell queues a fresh snapshot of every session. A Den outage delays the
-index, never a turn.
+capability, are dropped. At most once a day the cell queues a fresh snapshot of every session. Both happen when the
+flusher runs for an update: it asks for a run only while it has one to send, so it never wakes an idle cell. A Den
+outage delays the index, never a turn.
 
 ## Step mode
 
