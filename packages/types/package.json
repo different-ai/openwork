@@ -579,6 +579,14 @@
       "development": "./src/den/automation-settings.ts",
       "default": "./src/den/automation-settings.ts"
     },
+    "./den/admin-organization-timeline": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/admin-organization-timeline.d.ts",
+        "default": "./src/den/admin-organization-timeline.ts"
+      },
+      "development": "./src/den/admin-organization-timeline.ts",
+      "default": "./src/den/admin-organization-timeline.ts"
+    },
     "./den/admin-organization": {
       "types": {
         "openwork-build": "./dist/types/src/den/admin-organization.d.ts",

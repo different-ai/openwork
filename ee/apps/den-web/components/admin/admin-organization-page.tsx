@@ -17,18 +17,19 @@ import { requestAdmin, withStoredBearer, type AdminResult } from "./admin-reques
 import { useAdminSessionCookie } from "./admin-shell";
 import { recordAdminOrganizationVisit } from "./admin-recent-organizations";
 import { AdminOrganizationBilling } from "./admin-organization-billing";
+import { AdminOrganizationTimeline } from "./admin-organization-timeline";
 import { formatPlanDate, planName } from "../../app/(den)/_lib/plan-display";
 
 const AdminOrganizationInsights = lazy(() => import("./admin-organization-insights").then((module) => ({ default: module.AdminOrganizationInsights })));
 
-type Section = "members" | "usage" | "insights" | "features" | "billing";
+type Section = "members" | "usage" | "insights" | "features" | "billing" | "timeline";
 type DataSection = Extract<Section, "members" | "usage" | "insights">;
 type Organization = AdminOrganizationDetail["organization"];
 type PageData = AdminOrganizationDetail & { usage?: AdminOrganizationUsage["usage"]; insights?: InsightReport["insights"] };
 type Member = AdminOrganizationDetail["members"][number];
 const SECTIONS: { id: Section; label: string }[] = [
   { id: "members", label: "Members" }, { id: "usage", label: "Usage" }, { id: "insights", label: "Insights" },
-  { id: "features", label: "Features" }, { id: "billing", label: "Billing" },
+  { id: "features", label: "Features" }, { id: "billing", label: "Billing" }, { id: "timeline", label: "Timeline" },
 ];
 const zeroUsage: AdminOrganizationUsageTotals = { requests: 0, tokens: 0, costMicroUsd: 0, unreportedRequests: 0, unpricedRequests: 0 };
 const count = (value: number) => new Intl.NumberFormat().format(value);
@@ -59,7 +60,7 @@ function usersSummary(organization: Organization) {
 }
 
 function sectionPath(organizationId: string, section: Section, search: string, offset: number) {
-  if (section === "features" || section === "billing") return null;
+  if (section === "features" || section === "billing" || section === "timeline") return null;
   const listed = section !== "insights";
   const query = new URLSearchParams({ limit: listed ? String(ADMIN_LIST_PAGE_SIZE) : "1", offset: listed ? String(offset) : "0" });
   if (listed && search.trim()) query.set("search", search.trim());
@@ -288,6 +289,7 @@ export function AdminOrganizationPage({ organizationId, section }: { organizatio
     return () => { cancelled = true; window.clearTimeout(timeout); };
   }, [path, section, search, refreshKey, fail]);
 
+  if (section === "timeline") return verified ? <AdminOrganizationTimeline organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} /> : <SectionSkeleton label="Loading timeline" />;
   if (section === "features") return <OrganizationFeatures organizationId={organizationId} refreshKey={refreshKey} fail={fail} />;
   if (section === "billing") return organization ? <AdminOrganizationBilling key={organizationId} organization={organization} onSaved={refresh} onAccessFailure={fail} /> : <SectionSkeleton label="Loading billing" />;
 

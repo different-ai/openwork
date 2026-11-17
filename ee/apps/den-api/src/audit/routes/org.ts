@@ -283,6 +283,7 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   // Platform admin acting on one org (actor = admin user, origin platform_admin)
   admin("GET", "/v1/admin/organizations/:organizationId", "tenant_read", "organization.admin_detail.read"),
   admin("GET", "/v1/admin/organizations/:organizationId/insights", "tenant_read", "organization.admin_insights.read"),
+  admin("GET", "/v1/admin/organizations/:organizationId/timeline", "tenant_read", "organization.admin_timeline.read"),
   admin("GET", "/v1/admin/organizations/:organizationId/usage", "tenant_read", "organization.admin_usage.read"),
   admin("GET", "/v1/admin/organizations/:organizationId/members/:memberId/capabilities", "tenant_read", "member.capabilities.read"),
   admin("PUT", "/v1/admin/organizations/:organizationId/members/:memberId/capabilities", "tenant_change", "member.capabilities.update", { notes: "Sets or clears registry feature overrides for one active organization membership (member_feature); platform admins only." }),
