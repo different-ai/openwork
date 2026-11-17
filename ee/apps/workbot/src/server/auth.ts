@@ -533,6 +533,12 @@ export function createAuth(input: {
       try {
         const tokens = await den.exchangeCode(body.data.code, body.data.codeVerifier)
         const who = await den.session(tokens.accessToken)
+        if (!who.mobile) {
+          // The phone app is a feature a workspace turns on. Without it there is no phone session to hold, and
+          // what Den just issued is given back.
+          if (tokens.refreshToken) await den.revoke(tokens.refreshToken).catch(() => undefined)
+          return c.json({ error: "workbot_mobile_not_enabled" }, 403)
+        }
         const id = randomToken()
         const sealed = appSession({ id, userId: who.user.id, organizationId: who.organization.id, tokens, createdAt: now() })
         void den.recordSignIn?.(tokens.accessToken, id).catch(() => undefined)

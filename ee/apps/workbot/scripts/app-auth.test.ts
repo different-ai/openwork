@@ -18,10 +18,7 @@ const environment = {
   WORKBOT_RUNNER_URL: "http://runner",
   WORKBOT_RUNNER_TOKEN: "runner-token-runner-token-runner-0001",
   WORKBOT_SESSION_SECRET: SECRET,
-  // Naming the app is what turns phone sign-in on for a deployment.
-  WORKBOT_IOS_TEAM_ID: "ABCDE12345",
 }
-const { WORKBOT_IOS_TEAM_ID: _named, ...unnamed } = environment
 const config = loadConfig(environment)
 const person = (overrides: Record<string, unknown> = {}): DenSession =>
   denSessionSchema.parse({
@@ -36,7 +33,7 @@ const person = (overrides: Record<string, unknown> = {}): DenSession =>
 // About the size of Den's JWT access tokens, so the session-size limit is exercised realistically.
 const accessToken = (n: number) => `access-${n}-${"x".repeat(1_400)}`
 
-function world(options: { secret?: string } = {}) {
+function world(options: { secret?: string; who?: DenSession } = {}) {
   let clock = 1_000_000
   const calls = { refresh: [] as string[], revoke: [] as string[], exchange: [] as string[], signIns: [] as string[] }
   let refreshes = 0
@@ -56,7 +53,7 @@ function world(options: { secret?: string } = {}) {
         sessionFailures -= 1
         throw new Error("den_session_503")
       }
-      return person()
+      return options.who ?? person()
     },
     recordSignIn: async (_token, id) => { calls.signIns.push(id) },
     refresh: async (refreshToken) => {
@@ -158,6 +155,20 @@ test("the phone app signs in with its own PKCE pair, gets a sealed session, and 
   assert.deepEqual(await elsewhere.json(), { token: "access-0-", app: true })
   assert.equal(elsewhere.headers.get("workbot-session"), null)
   assert.equal(elsewhere.headers.getSetCookie().length, 0)
+})
+
+test("a workspace without the phone feature cannot sign a phone in, and what Den issued is given back", async () => {
+  const w = world({ who: person({ mobile: false }) })
+  const refused = await trade(w.instance(), { code: "den-code", codeVerifier: "v".repeat(43), redirectUri: APP_REDIRECT })
+  assert.equal(refused.status, 403)
+  assert.deepEqual(await refused.json(), { error: "workbot_mobile_not_enabled" })
+  assert.deepEqual(w.calls.revoke, ["refresh-0"])
+  assert.equal(w.calls.signIns.length, 0)
+
+  // Revoking is best effort: Den being unreachable must not turn the refusal into a session.
+  const unreachable = world({ who: person({ mobile: false }) })
+  unreachable.failRevoke()
+  assert.equal((await trade(unreachable.instance(), { code: "den-code", codeVerifier: "v".repeat(43), redirectUri: APP_REDIRECT })).status, 403)
 })
 
 test("the phone app asks Den to sign an existing account in; the browser can still create one", async () => {
@@ -276,16 +287,9 @@ test("only an HTTPS Workbot has a phone return address, and only a configured on
     createAuth({ config: loadConfig({ ...environment, ...settings }), den: unusedDen, report: () => {} }).register(app)
     return app
   }
-  // A deployment that has not named its app: nothing is served, and phone sign-in is off without asking Den.
-  assert.deepEqual(loadConfig(unnamed).appRedirectUris, [])
-  const unset = new Hono<AppEnv>()
-  createAuth({ config: loadConfig(unnamed), den: unusedDen, report: () => {} }).register(unset)
+  const unset = served({})
   assert.equal((await unset.request("/.well-known/apple-app-site-association")).status, 404)
   assert.equal((await unset.request("/.well-known/assetlinks.json")).status, 404)
-  assert.equal((await unset.request(`/auth/app/login?${new URLSearchParams({ code_challenge: "c".repeat(43), code_challenge_method: "S256", state: "app-state-0123456789", redirect_uri: APP_REDIRECT })}`)).status, 400)
-  const refused = await trade(unset, { code: "den-code", codeVerifier: "v".repeat(43), redirectUri: APP_REDIRECT })
-  assert.equal(refused.status, 400)
-  assert.deepEqual(await refused.json(), { error: "invalid_request" })
 
   const fingerprint = Array.from({ length: 32 }, () => "AB").join(":")
   const set = served({ WORKBOT_IOS_TEAM_ID: "ABCDE12345", WORKBOT_ANDROID_CERT_SHA256: fingerprint.toLowerCase() })

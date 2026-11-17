@@ -27,6 +27,8 @@ public final class AppModel {
         case failed
         case cannotReach
         case offline
+        /// The workspace has not turned Workbot on for phones, so there is nothing to sign in to yet.
+        case phoneOff
     }
 
     public private(set) var phase: Phase = .launching
@@ -91,6 +93,7 @@ public final class AppModel {
             signInProblem = switch error as? APIFailure {
             case .offline: .offline
             case .unavailable: .cannotReach
+            case .phoneNotEnabled: .phoneOff
             default: .failed
             }
             return

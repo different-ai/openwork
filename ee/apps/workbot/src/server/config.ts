@@ -69,10 +69,7 @@ export const WORKBOT_APP_ID = "com.differentai.openwork"
  * OpenWork app they verified (/.well-known); any other app can't receive it, and a browser just shows the page.
  */
 export const WORKBOT_APP_CALLBACK_PATH = "/auth/app/callback"
-function appRedirectUris(publicUrl: string, appLinks: { iosTeamId: string | null; androidCertSha256: string[] }): string[] {
-  // Until this deployment names its app there is no app to return to, so phone sign-in stays off: nobody can
-  // start one, and nothing unauthenticated reaches Den's token endpoint through it.
-  if (appLinks.iosTeamId === null && appLinks.androidCertSha256.length === 0) return []
+function appRedirectUris(publicUrl: string): string[] {
   // A loopback address cannot establish app-link ownership. Never send OAuth
   // codes to a private-use scheme, including on a development server.
   return publicUrl.startsWith("https:") ? [`${publicUrl}${WORKBOT_APP_CALLBACK_PATH}`] : []
@@ -114,7 +111,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     throw new Error(`Invalid Workbot configuration:\n${issues.join("\n")}`)
   }
   const value = parsed.data
-  const appLinks = { iosTeamId: value.WORKBOT_IOS_TEAM_ID ?? null, androidCertSha256: certFingerprints(value.WORKBOT_ANDROID_CERT_SHA256) }
   return {
     publicUrl: value.WORKBOT_PUBLIC_URL,
     denApiUrl: value.WORKBOT_DEN_API_URL,
@@ -125,8 +121,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     dev: value.WORKBOT_DEV === "1",
     calendarMockUrl: value.WORKBOT_CALENDAR_MOCK_URL ?? null,
     secureCookies: value.WORKBOT_PUBLIC_URL.startsWith("https:"),
-    appRedirectUris: appRedirectUris(value.WORKBOT_PUBLIC_URL, appLinks),
-    appLinks,
+    appRedirectUris: appRedirectUris(value.WORKBOT_PUBLIC_URL),
+    appLinks: { iosTeamId: value.WORKBOT_IOS_TEAM_ID ?? null, androidCertSha256: certFingerprints(value.WORKBOT_ANDROID_CERT_SHA256) },
     errorReporting: value.WORKBOT_SENTRY_DSN
       ? {
           dsn: value.WORKBOT_SENTRY_DSN,

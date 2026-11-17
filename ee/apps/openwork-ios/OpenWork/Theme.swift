@@ -85,6 +85,7 @@ enum Wording {
         case .failed: String(localized: "Signing in didn't finish. Try again.")
         case .cannotReach: String(localized: "Workbot can't reach OpenWork right now. Try again in a minute.")
         case .offline: String(localized: "You're offline. Connect and try again.")
+        case .phoneOff: String(localized: "Workbot on iPhone isn't on for your workspace yet. A workspace admin can turn it on.")
         }
     }
 }

@@ -416,6 +416,20 @@ struct AppModelTests {
         #expect(model.phase == .chat)
     }
 
+    @Test func saysWhenTheWorkspaceHasNotTurnedPhonesOn() async throws {
+        let fake = FakeServer()
+        fake.answer("POST", "/auth/app/token", status: 403, json: #"{"error":"workbot_mobile_not_enabled"}"#)
+        let (model, store) = app(fake, signedIn: false)
+        await model.start()
+
+        let attempt = model.beginSignIn()
+        try await model.completeSignIn(callback: #require(URL(string: "https://workbot.test/auth/app/callback?code=the-code&state=\(attempt.state)")))
+
+        #expect(model.signInProblem == .phoneOff)
+        #expect(model.phase == .signedOut)
+        #expect(store.load() == nil)
+    }
+
     @Test func anAnswerToSomeoneElsesSignInIsRefused() async throws {
         let fake = FakeServer()
         let (model, store) = app(fake, signedIn: false)

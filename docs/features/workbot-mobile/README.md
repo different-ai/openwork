@@ -24,10 +24,9 @@ chat: no attachments, notifications or background task controls.
   sealed Workbot session it sends as a bearer token; it never holds Den
   tokens. Details: [Workbot's README](../../../ee/apps/workbot/README.md#the-phone-app).
 - iOS only hands the return address to the app once Workbot serves the
-  app's identity: set `WORKBOT_IOS_TEAM_ID`. `WORKBOT_ANDROID_CERT_SHA256`
-  does the same for an Android app, which does not exist yet. While both are
-  unset, phone sign-in is off for the whole deployment: its routes refuse
-  without asking Den.
+  app's identity: set `WORKBOT_IOS_TEAM_ID`. Unset, the iPhone app can't
+  finish signing in. `WORKBOT_ANDROID_CERT_SHA256` does the same for an
+  Android app, which does not exist yet.
 
 ## How to try it
 
@@ -38,10 +37,11 @@ the organization in `/admin` › Features, then follow the
 
 ## Turning it off
 
-Nothing is deleted. `/v1/workbot/me` still answers so the app can say the
-phone app is off, and every other `/v1/workbot` request from the app is
-refused with `403 workbot_mobile_not_enabled` on its next request. Browser
-sessions are not affected.
+Nothing is deleted. While it is off, signing in from the phone is refused
+(`POST /auth/app/token` answers `403 workbot_mobile_not_enabled`), and the app
+says an admin can turn it on. A phone already signed in gets the same refusal
+on its next `/v1/workbot` request, while `/v1/workbot/me` still answers so the
+app can say why. Browser sessions are not affected.
 
 ## What to watch
 
