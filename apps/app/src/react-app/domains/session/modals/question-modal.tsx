@@ -134,6 +134,15 @@ export function clearQuestionDrafts() {
   questionDrafts.clear();
 }
 
+/**
+ * The panel sits above the composer and takes its height from the chat, so
+ * a long question and a long list of options each scroll inside a share of
+ * the window instead of pushing the conversation out of view.
+ */
+const QUESTION_TEXT_CLASS =
+  "mt-1 max-h-[min(9rem,22vh)] overflow-y-auto wrap-anywhere text-sm leading-6 text-gray-11";
+const QUESTION_BODY_CLASS = "max-h-[min(18rem,40vh)] space-y-3 overflow-auto px-4 py-3";
+
 export function QuestionPanel(props: QuestionPanelProps) {
   const draftKey = props.collapsible ? props.requestId : undefined;
   const [state, dispatch] = useReducer(
@@ -251,7 +260,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
   if (!currentQuestion) return null;
 
   const body = (
-      <div className="max-h-72 space-y-3 overflow-auto px-4 py-3">
+      <div className={QUESTION_BODY_CLASS} data-question-body="">
         {options.length > 0 ? (
           <div className="space-y-2">
             {options.map((opt, idx) => {
@@ -387,7 +396,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
                     })}
                   </div>
                 </div>
-                <div className="mt-1 text-sm leading-6 text-gray-11">{currentQuestion.question}</div>
+                <div className={QUESTION_TEXT_CLASS} data-question-text="">{currentQuestion.question}</div>
               </div>
             )}
             <CollapsibleTrigger
@@ -443,9 +452,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
                 })}
               </div>
             </div>
-            <div className="mt-1 text-sm leading-6 text-gray-11">
-              {currentQuestion.question}
-            </div>
+            <div className={QUESTION_TEXT_CLASS} data-question-text="">{currentQuestion.question}</div>
           </div>
           {props.onDismiss ? (
             <Button
