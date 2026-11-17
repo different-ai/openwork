@@ -1,0 +1,13 @@
+{
+  "name": "@openwork/product-analytics",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Privacy-safe product event projections and lifecycle measurements.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

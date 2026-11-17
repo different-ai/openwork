@@ -180,6 +180,9 @@ importers:
       '@openwork/install-config':
         specifier: workspace:*
         version: link:../../packages/install-config
+      '@openwork/product-analytics':
+        specifier: workspace:*
+        version: link:../../packages/product-analytics
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1914,6 +1917,8 @@ importers:
       '@types/react':
         specifier: ^19.1.13
         version: 19.2.14
+
+  packages/product-analytics: {}
 
   packages/remote-sessions: {}
 

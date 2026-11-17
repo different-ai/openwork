@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import type { Ref } from "react";
 import {
   ArrowUpRight,
   Cloud,
@@ -19,6 +20,7 @@ import { SignInFallbackNotice } from "./signin-fallback-notice";
 export type DenSignInSurfaceVariant = "panel" | "fullscreen";
 
 export type DenSignInSurfaceProps = {
+  ref?: Ref<HTMLDivElement>;
   variant?: DenSignInSurfaceVariant;
   appName?: string;
   logoUrl?: string | null;
@@ -219,7 +221,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
     // Paper first-load spec: same centered welcome card as WelcomePage.
     // Forced sign-in only removes the "Use Without Cloud" option.
     return (
-      <div className="relative min-h-dvh bg-background text-foreground">
+      <div ref={props.ref} className="relative min-h-dvh bg-background text-foreground">
         {/* Pixel-dither mosaic background (dark:invert keeps it visible in dark mode) */}
         <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden opacity-[0.1] dark:invert">
           <DitherBackdrop />

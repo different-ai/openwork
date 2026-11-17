@@ -1598,6 +1598,10 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
   // Remote-session callers choose a computer by this label, then a workspace and model.
   describeComputer: describeThisComputer,
   log: (state) => console.info(`[automation-runner] ${state}`),
+  onRunLifecycle: (event) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send("openwork:automation-runner:lifecycle", event);
+  },
   // `reason` tells a disconnected computer (wait for a new sign-in) from a credential to replace now.
   onCredentialRejected: (rejection) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -3084,6 +3088,9 @@ registerSessionPins({
 
 ipcMain.on("openwork:desktop-bootstrap-sync", (event) => {
   event.returnValue = workspaceStore.readDesktopBootstrapConfigSync();
+});
+ipcMain.on("openwork:app-packaged-sync", (event) => {
+  event.returnValue = app.isPackaged;
 });
 ipcMain.on("openwork:desktop-distribution-sync", (event) => {
   event.returnValue = DESKTOP_DISTRIBUTION;

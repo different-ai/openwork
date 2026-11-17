@@ -729,6 +729,7 @@ jobs:
           # TARGET tells prepare-sidecar.mjs which architecture's opencode binary
           # to download (critical for cross-arch builds like x64 on arm64 mac).
           TARGET: ${{ matrix.target_triple }}
+          VITE_OPENWORK_OFFICIAL_RELEASE: ${{ github.repository == 'different-ai/openwork' && inputs.benchmark_only != true && '1' || '0' }}
         run: pnpm --filter @openwork/desktop build:electron
 
       - name: Package Electron (macOS, signed + notarized)

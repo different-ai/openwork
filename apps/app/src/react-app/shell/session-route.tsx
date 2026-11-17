@@ -19,7 +19,8 @@ import { useLocation, useNavigate } from "react-router";
 import { toast } from "@/components/ui/sonner";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
-import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
+import { captureAnalyticsEvent, markTaskRunStart, featureAnalytics, taskRunQuality, captureOnboardingEvent } from "@/app/lib/analytics";
+import { useOnboardingStep } from "./use-onboarding-step";
 import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { noteActivationConnectionStatuses, noteActivationRunStarted } from "../domains/cloud/activation/use-activation";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
@@ -1846,7 +1847,12 @@ export function SessionRoute() {
                 },
                 prompt: async () => {
                   assertCurrent();
+                  captureOnboardingEvent("onboarding_composer_submitted", { has_attachments: draft.attachments.length > 0 });
+                  captureOnboardingEvent("onboarding_model_resolved", {
+                    source: sessionModelSelection ? "session" : sendModel ? "app_default" : "none",
+                  });
                   captureAnalyticsEvent("task_message_sent", {
+                    is_first_run_on_install: taskRunQuality.isFirstRun(),
                     mode: draft.mode ?? "prompt",
                     is_command: Boolean(draft.command),
                     attachment_count: draft.attachments.length,
@@ -1856,6 +1862,7 @@ export function SessionRoute() {
                     model_id: sendModel?.modelID ?? null,
                   });
                   markTaskRunStart(targetSessionId);
+                  taskRunQuality.start(targetSessionId, sendModel);
                   // Den org adoption signals (auth-gated inside; no-op when signed out).
                   // This remains inside the post-readiness send closure so a blocked
                   // Cloud submission cannot create a run or report that one started.
@@ -2235,7 +2242,12 @@ export function SessionRoute() {
                 },
                 prompt: async () => {
                   assertCurrent();
+                  captureOnboardingEvent("onboarding_composer_submitted", { has_attachments: draft.attachments.length > 0 });
+                  captureOnboardingEvent("onboarding_model_resolved", {
+                    source: sessionModelSelection ? "session" : sendModel ? "app_default" : "none",
+                  });
                   captureAnalyticsEvent("task_message_sent", {
+                    is_first_run_on_install: taskRunQuality.isFirstRun(),
                     mode: draft.mode ?? "prompt",
                     is_command: Boolean(draft.command),
                     attachment_count: draft.attachments.length,
@@ -2245,6 +2257,7 @@ export function SessionRoute() {
                     model_id: sendModel?.modelID ?? null,
                   });
                   markTaskRunStart(targetSessionId);
+                  taskRunQuality.start(targetSessionId, sendModel);
                   const projectDimension = readWorkspaceProjectDimension(workspace.id);
                   const modelSelection = sessionModelSelection ? "manual" : "default";
                   const telemetryDimensions = [
@@ -2525,6 +2538,7 @@ export function SessionRoute() {
       onModelChange: (model: ModelRef, variant?: string | null) => {
         changeNewTaskModel(model, variant !== undefined ? variant
           : newTaskModel?.providerID === model.providerID && newTaskModel.modelID === model.modelID ? newTaskVariant : null);
+        featureAnalytics.modelChanged(newTaskModel, model, false);
         modelPicker.setCompactOpen(false);
       },
       openWorkModelsEntitled,
@@ -2982,6 +2996,7 @@ export function SessionRoute() {
         gatewayModelSelectionRef.current?.select(option, () => {
           if (activeSessionId) useSessionModelStore.getState().setModel(activeSessionId, next, variant);
           else changeNewTaskModel(next, variant);
+          featureAnalytics.modelChanged(selection?.model ?? (activeSessionId ? local.prefs.defaultModel : newTaskModel), next, Boolean(activeSessionId));
           useModelCollectionsStore.getState().recordRecent(next);
         }, () => isFavoriteModelTargetCurrent(target, useWorkbenchStore.getState(), favoriteModelScope.current)
           && (!activeSessionId || getSessionModelSelection(activeSessionId) === selection));
@@ -3042,6 +3057,7 @@ export function SessionRoute() {
       }
       // Without a focused conversation the shortcut sets the new-task model, which follows the workspace default.
       else changeNewTaskModel(modelRef, decision.variant);
+      featureAnalytics.modelChanged(selection?.model ?? (activeSessionId ? local.prefs.defaultModel : newTaskModel), modelRef, Boolean(activeSessionId));
       useModelCollectionsStore.getState().recordRecent(modelRef);
     };
     const isCurrent = () => isFavoriteModelTargetCurrent(target, useWorkbenchStore.getState(), favoriteModelScope.current)
@@ -3428,6 +3444,7 @@ export function SessionRoute() {
     behavior?: { value: string | null },
   ) => {
     const explicitBehavior = behavior !== undefined;
+    const previous = targetSessionId ? getSessionModelSelection(targetSessionId)?.model ?? local.prefs.defaultModel : newTaskModel;
     useModelCollectionsStore.getState().recordRecent(next);
     if (targetSessionId) {
       const sessionStore = useSessionModelStore.getState();
@@ -3436,8 +3453,9 @@ export function SessionRoute() {
     }
     if (!targetSessionId) changeNewTaskModel(next, explicitBehavior ? behavior.value
       : newTaskModel?.providerID === next.providerID && newTaskModel.modelID === next.modelID ? newTaskVariant : null);
+    featureAnalytics.modelChanged(previous, next, Boolean(targetSessionId));
     focusPromptSoon();
-  }, [changeNewTaskModel, newTaskModel, newTaskVariant]);
+  }, [changeNewTaskModel, local.prefs.defaultModel, newTaskModel, newTaskVariant]);
 
   // Refresh the non-tab fields of the nav ref during render. The `options`
   // field is maintained by the `onSessionTabsChange` callback from SessionPage.
@@ -3715,6 +3733,7 @@ export function SessionRoute() {
     if (!folder) return;
     const agent = newTaskAgent;
     const projectLabel = options?.projectLabel?.trim() ?? "";
+    captureOnboardingEvent("onboarding_workspace_started", { choice: onPrepared ? "default_chat" : "folder" });
     setCreateWorkspaceBusy(true);
     setCreateWorkspaceError(null);
     try {
@@ -3830,6 +3849,7 @@ export function SessionRoute() {
         if (session?.id) focusPromptSoon();
       }
     } catch (error) {
+      captureOnboardingEvent("onboarding_workspace_failed", { reason: "workspace_setup_failed" });
       setCreateWorkspaceError(describeWorkspaceCreateError(error));
       if (onPrepared || options?.firstTaskPrompt || options?.firstTaskAttachments?.length) throw error;
     } finally {
@@ -3940,6 +3960,8 @@ export function SessionRoute() {
     focusPromptSoon();
   };
 
+  const composerImpressionRef = useOnboardingStep("composer", !effectiveLoading && !selectedSessionId && !activityRouteActive && !cloudWorkspaceMainContentTakeover);
+
   return (
     <WorkspaceProvider
       client={opencodeClient}
@@ -3978,6 +4000,7 @@ export function SessionRoute() {
       />
     ) : null}
     <SessionPage
+      ref={composerImpressionRef}
       currentSessionArchive={currentSessionArchive}
       sessionReferenceInventories={sessionReferenceInventories}
       createWorkspaceSessionMetadataCallbacks={createWorkspaceSessionMetadataCallbacks}
