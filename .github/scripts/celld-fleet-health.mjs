@@ -8,7 +8,10 @@
  * average and does not see this. See ee/apps/headless-runner/OWNER-CELLS.md, "When a node is full".
  *
  * Reads only: Render's service settings, memory metrics and log counts, and (when given) celld's own fleet sample
- * from the bucket. Prints a summary; exits 1 when something needs action now.
+ * from the bucket. Exits 1 when something needs action now.
+ *
+ * The repository is public, and so are its run logs and summaries. In GitHub Actions this prints only how many
+ * alerts and warnings there are; node names, memory and settings go to Slack. Run by hand, it prints everything.
  */
 import { appendFileSync, readFileSync } from "node:fs"
 import { pathToFileURL } from "node:url"
@@ -112,6 +115,22 @@ export function renderSummary({ level, findings }, { instances, memoryLimitBytes
   return lines.join("\n")
 }
 
+/** What a public run log may say: how many findings, never which node or setting. */
+export function publicSummary({ level, findings }) {
+  const alerts = findings.filter((finding) => finding.level === "alert").length
+  const warnings = findings.length - alerts
+  const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`
+  if (level === "ok") return "Runner fleet check: healthy."
+  const counts = [alerts > 0 ? plural(alerts, "alert") : "", warnings > 0 ? plural(warnings, "warning") : ""].filter(Boolean).join(", ")
+  return `Runner fleet check: ${counts}. The detail is in Slack; for a fresh reading run .github/scripts/celld-fleet-health.mjs by hand.`
+}
+
+/** The standing warnings as one Slack message, sent once a day. */
+export function slackWarningsText({ findings }) {
+  const warnings = findings.filter((finding) => finding.level === "warn").map((finding) => `• ${finding.text}`)
+  return [":warning: *Cloud runner fleet: warnings*", ...warnings].join("\n")
+}
+
 /** The alert as one Slack message: only what needs action. */
 export function slackText({ findings }, runUrl) {
   const alerts = findings.filter((finding) => finding.level === "alert").map((finding) => `• ${finding.text}`)
@@ -135,7 +154,7 @@ export function highestPerInstance(series) {
 const SETTING_NAMES = ["CELLD_DURABILITY", "CELLD_TTL_MS", "CELLD_IDLE_EVICT_S", "CELLD_LTX_RETENTION_SECS", "CELLD_SHUTDOWN_TOTAL_MS"]
 
 async function main() {
-  const { RENDER_API_KEY: key, RENDER_SERVICE_ID: service, EXPECTED_CELLD_VERSION, FLEET_SAMPLE_FILE, SLACK_WEBHOOK_URL, RUN_URL, GITHUB_STEP_SUMMARY, GITHUB_OUTPUT } = process.env
+  const { RENDER_API_KEY: key, RENDER_SERVICE_ID: service, EXPECTED_CELLD_VERSION, FLEET_SAMPLE_FILE, SLACK_WEBHOOK_URL, RUN_URL, GITHUB_ACTIONS, GITHUB_STEP_SUMMARY, GITHUB_OUTPUT } = process.env
   if (!key || !service) throw new Error("RENDER_API_KEY and RENDER_SERVICE_ID are required")
   const windowMinutes = Number(process.env.WINDOW_MINUTES ?? 20)
   const now = Date.now()
@@ -192,13 +211,20 @@ async function main() {
   }
   if (instances.length === 0) throw new Error("Render returned no memory series for the fleet")
   const result = assessFleet(input)
-  const summary = renderSummary(result, input)
+  // Actions logs and summaries of this repository are public: counts there, the detail to Slack or a local terminal.
+  const summary = GITHUB_ACTIONS === "true" ? publicSummary(result) : renderSummary(result, input)
   console.log(summary)
   if (GITHUB_STEP_SUMMARY) appendFileSync(GITHUB_STEP_SUMMARY, `${summary}\n`)
   if (GITHUB_OUTPUT) appendFileSync(GITHUB_OUTPUT, `level=${result.level}\n`)
-  if (result.level === "alert" && SLACK_WEBHOOK_URL && process.env.NOTIFY !== "false") {
-    const posted = await fetch(SLACK_WEBHOOK_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: slackText(result, RUN_URL) }), signal: AbortSignal.timeout(15_000) }).catch(() => null)
-    if (!posted?.ok) console.log("::warning::The Slack alert could not be posted.")
+  const post = async (text) => {
+    const posted = await fetch(SLACK_WEBHOOK_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }), signal: AbortSignal.timeout(15_000) }).catch(() => null)
+    if (!posted?.ok) console.log("::warning::The Slack message could not be posted.")
+  }
+  if (result.level === "alert" && SLACK_WEBHOOK_URL && process.env.NOTIFY !== "false") await post(slackText(result, RUN_URL))
+  const warned = result.findings.some((finding) => finding.level === "warn")
+  if (warned && SLACK_WEBHOOK_URL && process.env.NOTIFY_WARNINGS === "true") await post(slackWarningsText(result))
+  if (result.level !== "ok" && !SLACK_WEBHOOK_URL && GITHUB_ACTIONS === "true") {
+    console.log("::notice title=Fleet findings not delivered::no Slack webhook is set on the celld-production environment, so this run's detail went nowhere.")
   }
   if (result.level === "alert") process.exitCode = 1
 }
