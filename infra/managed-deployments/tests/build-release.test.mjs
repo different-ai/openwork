@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { buildRelease, GCP_REPOSITORIES, HEALTH_SOURCE, resolveGcpImages, resolveAwsImages, validateModuleReferences } from "../tools/build-release.mjs";
+import "./aws-assistant-bootstrap.test.mjs";
+import { AWS_REPOSITORIES, buildRelease, GCP_REPOSITORIES, HEALTH_SOURCE, resolveGcpImages, resolveAwsImages, validateModuleReferences } from "../tools/build-release.mjs";
 
 const digest = (character) => "sha256:" + character.repeat(64);
 const metadata = (character, os = "linux", architecture = "amd64") => ({
@@ -129,6 +130,73 @@ test("AWS tag resolution verifies both unique Linux/amd64 manifests", () => {
     assert.throws(() => resolveAwsImages("0.18.65", undefined, () => response), /Linux\/amd64/);
   }
   assert.deepEqual(resolveAwsImages("0.18.65", pins, inspect), pins);
+});
+
+const assistantPins = { ...pins,
+  headless_runner: AWS_REPOSITORIES.headless_runner + "@" + digest("e"),
+  workbot: AWS_REPOSITORIES.workbot + "@" + digest("f"),
+};
+const inspectAssistants = (source) => source.includes("openwork-headless-runner") ? metadata("e")
+  : source.includes("openwork-workbot") ? metadata("f") : inspect(source);
+
+test("AWS explicitly opts into resolving the complete assistant image set", () => {
+  const calls = [];
+  assert.deepEqual(resolveAwsImages("0.18.65", undefined, (source) => {
+    calls.push(source);
+    return [metadata("d", "linux", "arm64"), inspectAssistants(source)];
+  }, true), assistantPins);
+  assert.deepEqual(calls, Object.entries(AWS_REPOSITORIES).flatMap(([kind, repository]) => [repository + ":0.18.65", assistantPins[kind]]));
+  assert.deepEqual(resolveAwsImages(assistantPins, inspectAssistants), assistantPins);
+  assert.deepEqual(resolveAwsImages("0.18.65", assistantPins, inspectAssistants), assistantPins);
+});
+
+test("AWS refuses partial assistant inventories and validates every fixed repository before registry access", () => {
+  for (const candidate of [
+    { ...pins, headless_runner: assistantPins.headless_runner }, { ...pins, workbot: assistantPins.workbot },
+    { ...assistantPins, extra: pins.den_api }, { ...assistantPins, health: HEALTH_SOURCE },
+    { ...assistantPins, headless_runner: AWS_REPOSITORIES.headless_runner + ":0.18.65" },
+    { ...assistantPins, workbot: "ghcr.io/other/workbot@" + digest("f") },
+    { ...assistantPins, workbot: assistantPins.headless_runner }, { ...assistantPins, workbot: assistantPins.workbot + "\n" },
+  ]) {
+    let contacted = false;
+    assert.throws(() => resolveAwsImages(candidate, () => { contacted = true; return metadata("a"); }));
+    assert.equal(contacted, false);
+  }
+  assert.throws(() => resolveAwsImages("0.18.65", pins, inspectAssistants, true), /complete/);
+  assert.throws(() => resolveAwsImages(assistantPins, (source) => {
+    if (source.includes("headless-runner")) throw new Error("assistant image missing");
+    return inspectAssistants(source);
+  }), /assistant image missing/);
+  assert.throws(() => resolveAwsImages(assistantPins, (source) => source.includes("workbot") ? metadata("e") : inspectAssistants(source)), /Approved pin/);
+  // Google Cloud still rejects optional AWS images instead of expanding its scope.
+  assert.throws(() => resolveGcpImages("0.18.65", assistantPins, inspectAssistants), /exactly den_api and den_web/);
+});
+
+test("AWS builder packages opt-in tag and explicit-pin inventories without changing the baseline", () => {
+  const output = mkdtempSync(join(tmpdir(), "openwork-assistant-build-"));
+  try {
+    const approved = join(output, "approved.json");
+    writeFileSync(approved, JSON.stringify(assistantPins));
+    for (const options of [["--include-assistants"], ["--image-pins", approved], ["--image-pins", approved, "--include-assistants"]]) {
+      buildRelease(["aws", "0.18.65", output, ...options], inspectAssistants);
+      const release = JSON.parse(execFileSync("tar", ["-xOf", join(output, "bundle.tar.gz"), "release.json"], { encoding: "utf8" }));
+      assert.deepEqual(release.images, assistantPins);
+      assert.equal(Object.hasOwn(release.images, "health"), false);
+      assert.equal(Object.keys(release.files).some((file) => file.includes("/gcp/")), false);
+    }
+    buildRelease(["aws", "0.18.65", output], inspectAssistants);
+    const baseline = JSON.parse(execFileSync("tar", ["-xOf", join(output, "bundle.tar.gz"), "release.json"], { encoding: "utf8" }));
+    assert.deepEqual(baseline.images, pins);
+    assert.equal(Object.hasOwn(baseline.images, "headless_runner"), false);
+    assert.equal(Object.hasOwn(baseline.images, "workbot"), false);
+  } finally { rmSync(output, { force: true, recursive: true }); }
+});
+
+test("assistant CLI opt-in is AWS-only and rejects duplicate, missing and unknown options", () => {
+  for (const options of [["--include-assistants", "--include-assistants"], ["--image-pins"], ["--image-pins", "--include-assistants"], ["--skip-verification"]]) {
+    assert.throws(() => buildRelease(["aws", "0.18.65", "/unused", ...options], inspectAssistants), /Use --image-pins/);
+  }
+  assert.throws(() => buildRelease(["gcp", "0.18.65", "/unused", "--include-assistants"], inspectAssistants), /AWS-only/);
 });
 
 for (const provider of ["aws", "gcp"]) {
