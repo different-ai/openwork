@@ -3,7 +3,7 @@ title: "Use your LiteLLM proxy"
 description: "Connect your own LiteLLM proxy to OpenWork AI Gateway with one organization key, each person's own LiteLLM key, keys OpenWork creates for each person, or Microsoft sign-in for a proxy that only accepts JWTs."
 ---
 
-Connect a LiteLLM proxy you already run to OpenWork AI Gateway. OpenWork reads the proxy's models, creates model groups for them, and routes requests through the gateway to LiteLLM.
+Connect a LiteLLM proxy you already run to OpenWork AI Gateway. With LiteLLM keys, OpenWork reads the proxy's models and creates model groups for them. With Microsoft sign-in, you supply the model list. Both route requests through the gateway to LiteLLM.
 
 ## Pick how keys work
 
@@ -119,7 +119,7 @@ sequenceDiagram
   LL-->>GW: response (LiteLLM budgets Alice's key)
 ```
 
-The admin key is used only to read LiteLLM. For a key without a team, LiteLLM lists every model on the proxy but only serves the ones its owner may use, so OpenWork checks the owner's own model list and grants just those. Each request uses the person's own key, so LiteLLM's user, team and key budgets apply and LiteLLM's logs show the real person. OpenWork logs tokens but not cost. If LiteLLM later rejects a key, the next sync revokes it and the person sees **Connect** again.
+The admin key is used only to read LiteLLM. For a key without a team, LiteLLM lists every model on the proxy but only serves the ones its owner may use, so OpenWork checks the owner's own model list and grants just those. Each request uses the person's own key, so LiteLLM's user, team and key budgets apply and LiteLLM's logs show the real person. OpenWork records token usage counts, not cost, and never logs access or refresh tokens. If LiteLLM later rejects a key, the next sync revokes it and the person sees **Connect** again.
 
 ### OpenWork creates keys
 
@@ -147,7 +147,7 @@ sequenceDiagram
   LL-->>GW: response (LiteLLM budgets Alice and the team)
 ```
 
-People do nothing. Spend lands in LiteLLM on the right person and team, and OpenWork logs tokens but not cost.
+People do nothing. Spend lands in LiteLLM on the right person and team, and OpenWork records token usage counts, not cost, and never logs access or refresh tokens.
 
 ## Keys OpenWork creates
 
@@ -186,7 +186,7 @@ Use this when your proxy runs LiteLLM's JWT auth (`enable_jwt_auth`) with Micros
 - Each person signs in with their Microsoft work account once, in the browser. OpenWork keeps the sign-in on the server, renews it, and sends the person's own Entra **access token** to LiteLLM as `Authorization: Bearer …`.
 - LiteLLM validates each token (signing keys, issuer, audience), maps it to a user or team, and applies that person's model access and budgets.
 - OpenWork can't read your proxy's models, teams or keys without a key, so you enter the model names people may use. There is no **Sync models**.
-- OpenWork logs tokens but not cost, and its spend limits don't apply. LiteLLM budgets each person.
+- OpenWork records token usage counts, not cost, and never logs access or refresh tokens, and its spend limits don't apply. LiteLLM budgets each person.
 
 ```mermaid
 sequenceDiagram
@@ -194,22 +194,22 @@ sequenceDiagram
   actor Admin
   participant Den as OpenWork Cloud
   participant Entra as Microsoft Entra ID
-  actor Alice
+  actor Member
   participant GW as AI Gateway
   participant LL as LiteLLM proxy
 
   Admin->>Den: Add LiteLLM: proxy URL, app registration, API scope, model names
-  Alice->>Den: open OpenWork
-  Den-->>Alice: LiteLLM needs connecting
-  Alice->>Entra: Connect: sign in with Microsoft
+  Member->>Den: open OpenWork
+  Den-->>Member: LiteLLM needs connecting
+  Member->>Entra: Connect: sign in with Microsoft
   Entra-->>Den: authorization code
   Den->>Entra: exchange the code for an access token (your API scope) and a refresh token
   Den->>Den: store both encrypted
-  Alice->>GW: prompt with her AI Gateway key
+  Member->>GW: prompt with their AI Gateway key
   GW->>Entra: renew the access token when it is about to expire
-  GW->>LL: same request with Alice's Entra access token
+  GW->>LL: same request with the member's Entra access token
   LL->>Entra: fetch signing keys (cached)
-  LL-->>GW: response (LiteLLM budgets Alice)
+  LL-->>GW: response (LiteLLM budgets the member)
 ```
 
 ### 1. Register an app in Entra ID
@@ -241,7 +241,7 @@ With `requestedAccessTokenVersion` set to `2`, the tokens OpenWork sends carry:
 | `iss` | `https://login.microsoftonline.com/<tenant-id>/v2.0` |
 | `aud` | The app registration's **Application (client) ID** |
 
-LiteLLM picks its settings by the token's issuer, so an issuer can be listed only once: a second entry for the same issuer is never used. If your tenant's v2.0 issuer is already configured, add the OpenWork app's client ID as an additional audience on that entry. `audience` takes one value or a list:
+Use a LiteLLM version that supports `litellm_jwtauth.issuers` and audience lists. LiteLLM uses the first entry matching the token's exact issuer, so list each issuer only once. If your tenant's v2.0 issuer is already configured, add the OpenWork app's client ID as an additional audience on that entry. `audience` takes one value or a list:
 
 ```yaml
 general_settings:
@@ -249,12 +249,19 @@ general_settings:
   litellm_jwtauth:
     issuers:
       - issuer: "https://login.microsoftonline.com/<tenant-id>/v2.0"
+        jwks_url: "https://login.microsoftonline.com/<tenant-id>/discovery/v2.0/keys"
         audience:
           - "<the audience you already accept>"
           - "<openwork-application-id>"
 ```
 
-A proxy set up with the global `JWT_ISSUER` and `JWT_AUDIENCE` variables expects one audience. To accept OpenWork's tokens next to the ones it already accepts, move the issuer into an `issuers` entry like the one above. Keep the claim mappings your proxy already uses to find the user and team. Two things to know about Entra tokens:
+A proxy set up with the global `JWT_ISSUER` and `JWT_AUDIENCE` variables expects one audience, not a JSON or comma-separated audience list. To accept OpenWork's tokens next to the ones it already accepts, configure the matching `issuers` entry like the one above. For a new proxy, list only the OpenWork application ID, not the placeholder for an existing audience. Keep the claim mappings your proxy already uses to find the user and team.
+
+<Warning>
+  LiteLLM's `issuers` list routes validation; it is not an issuer allowlist. An unmatched issuer falls back to global JWT validation. Keep `JWT_ISSUER`, `JWT_AUDIENCE` and `JWT_PUBLIC_KEY_URL` configured for that fallback, or explicitly reject unmatched issuers in your proxy's validation policy. Do not disable issuer or audience validation to make sign-in work.
+</Warning>
+
+Two things to know about Entra tokens:
 
 - Entra ID puts a token's scopes in the `scp` claim. LiteLLM's scope settings read `scope`, so they don't see Entra scopes: map people from other claims, such as `oid`, `groups` or `roles`.
 - The person must resolve to a LiteLLM user or team that may call the models you list in OpenWork. LiteLLM refuses the others.
@@ -276,9 +283,11 @@ An Entra access token's format follows the app registration that exposes the sco
 | `requestedAccessTokenVersion` | `iss` | `aud` |
 | --- | --- | --- |
 | `2` (recommended) | `https://login.microsoftonline.com/<tenant-id>/v2.0` | The application (client) ID |
-| `null` or `1` (the default) | `https://sts.windows.net/<tenant-id>/` | The Application ID URI, `api://<application-id>` |
+| `null` or `1` (the default) | `https://sts.windows.net/<tenant-id>/` | The client ID or resource URI used in the request, such as `api://<application-id>` |
 
-Leaving the default is the usual reason LiteLLM answers `Invalid issuer` or `Audience doesn't match` even though sign-in worked. Set version `2`: tokens issued from then on use the new format. People who are already signed in get one within the hour, when OpenWork renews their token, or right away if they sign out in **My Library → Models** and connect again.
+These audience rules come from Microsoft's [access-token claims reference](https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference#payload-claims). The application that exposes the API controls the [token version](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#token-formats), even when OpenWork uses the v2.0 token endpoint.
+
+A version mismatch can make LiteLLM answer `Invalid issuer` or `Audience doesn't match` even though sign-in worked. Set version `2`: newly issued tokens use the new format. Existing tokens keep their original format until OpenWork renews them when needed; changing the manifest does not invalidate them. To obtain a new token sooner, people can sign out in **My Library → Models** and connect again.
 
 ### Change or rotate the settings
 
