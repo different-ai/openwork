@@ -26,6 +26,7 @@ export { default as remoteTasksOptIn } from "@openwork/features/flags/remote-tas
 export { default as sandboxGateway } from "@openwork/features/flags/sandbox-gateway"
 export { default as sessionTree } from "@openwork/features/flags/session-tree"
 export { default as settingsFind } from "@openwork/features/flags/settings-find"
+export { default as sideQuestions } from "@openwork/features/flags/side-questions"
 export { default as workbotAgentBrief } from "@openwork/features/flags/workbot-agent-brief"
 export { default as workbotAgentCheckGate } from "@openwork/features/flags/workbot-agent-check-gate"
 export { default as workbotAgentSendCheck } from "@openwork/features/flags/workbot-agent-send-check"
