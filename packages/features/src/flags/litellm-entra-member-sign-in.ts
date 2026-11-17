@@ -6,7 +6,7 @@ export default defineFeature({
   category: "models",
   added: "2026-11-17",
   since: "2026-11",
-  author: "benjaminshafii",
+  author: "openwork",
   docs: "docs/features/litellm-entra-member-sign-in/README.md",
   deployments: everywhere,
   default: false,

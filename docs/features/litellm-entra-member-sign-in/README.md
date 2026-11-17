@@ -1,7 +1,7 @@
 # LiteLLM: member Microsoft Entra sign-in
 
 Feature key: `litellmEntraMemberSignIn` (cloud and self-hosted, off by default).
-Author: `benjaminshafii`.
+Author: `openwork` (team).
 
 ## What changes
 
@@ -75,7 +75,9 @@ LiteLLM keys, with Microsoft Entra ID as the identity provider.
 
 - No new LiteLLM provider can be added in this mode, and an existing one's
   sign-in settings and model list cannot be changed (`403 feature_disabled`).
-  Its page shows the settings read only, with the reason.
+  Setup keeps Microsoft sign-in visible but locked; an existing provider's
+  settings are read only. Both name the deployment administrator as the person
+  who can turn it on.
 - **Connect** stops: the connect page says Microsoft sign-in for this provider
   is turned off and that an admin can turn it back on. A sign-in already in
   the browser is refused at the callback and nothing is stored.
