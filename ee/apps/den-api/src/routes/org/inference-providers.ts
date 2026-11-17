@@ -3,7 +3,7 @@ import { and, desc, eq, gt, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, LlmProviderAccessTable, LlmProviderMemberCredentialTable, LlmProviderModelTable, LlmProviderTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, GATEWAY_PROVIDER_CREDENTIAL_MODES, GATEWAY_PROVIDER_CREDENTIAL_STATUSES, GATEWAY_PROVIDER_STATUSES, type GatewayAccessGrantWrite, type GatewayProviderConnectResponse, type GatewayProviderSummary } from "@openwork/types/den/gateway"
-import { GATEWAY_MEMBER_SIGN_IN_METHODS, gatewayAwsSsoSettingsSchema, gatewayMemberConnectionsResponseSchema } from "@openwork/types/den/inference"
+import { GATEWAY_MEMBER_SIGN_IN_METHODS, gatewayAwsSsoSettingsSchema, gatewayMemberConnectionsResponseSchema, microsoftApiScopeError, microsoftTenantIdSchema } from "@openwork/types/den/inference"
 import type { Context, Hono, MiddlewareHandler } from "hono"
 import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/request-capture.js"
 import { sessionTokenMatches } from "../../session-token.js"
@@ -16,6 +16,8 @@ import { bindProviderGrantAuditTarget, loadProviderAudit, providerAuditMutation,
 import { recheckAuditEntitlement } from "../../audit/capture.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
+import { markFeaturesUsed } from "../../feature-usage.js"
+import { organizationFeatureEnabled } from "../../features.js"
 import { gatewayManagementUnavailable, gatewayManagementUnavailableSchema } from "../../gateway-deployment.js"
 import { ensureMemberGatewayKey } from "../../gateway-keys.js"
 import { gatewayMemberConnections } from "../../llm/gateway-member-connections.js"
@@ -25,16 +27,16 @@ import { GatewayWriteError, normalizeCredential, reusableAwsCredential, enableGa
 import { buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, readProviderConfigNpm, upstreamBaseUrlSettingError } from "../../llm/inference-provider-config.js"
 import { buildGoogleAuthorizeUrl, exchangeGoogleAuthorizationCode, googleOAuthClientBinding, googleOAuthNonce, readGoogleOAuthAttempt, revokeGoogleToken, verifyGoogleIdentity } from "../../llm/inference-provider-google-oauth.js"
 import { buildMicrosoftAuthorizeUrl, exchangeMicrosoftAuthorizationCode, microsoftOAuthNonce, verifyMicrosoftIdentity } from "../../llm/inference-provider-microsoft-oauth.js"
-import { gatewayMemberSignInMethod, memberSignInBinding, memberSignInBrand, memberSignInConfigurationError, readAwsSsoSettings, type GatewayMemberSignInMethod } from "../../llm/gateway-member-sign-in.js"
+import { memberSignInBinding, memberSignInBrand, memberSignInConfigurationError, providerMemberSignInMethod, providerMemberSignInScope, readAwsSsoSettings, type GatewayMemberSignInMethod } from "../../llm/gateway-member-sign-in.js"
 import { awsSsoFetch, pollAwsSsoSignIn, readAwsSsoAttempt, startAwsSsoSignIn } from "../../llm/inference-provider-aws-sso.js"
 import { AwsSsoError, logoutAwsSso } from "@openwork-ee/utils/aws-identity-center"
 import { effectiveGatewayGrants, lockMemberOAuthAuthorization, memberGatewayTeams, revokeUpstreamCredentials } from "../../llm/inference-provider-lifecycle.js"
 import { isMigrationSourceLockConflict } from "../../llm/inference-provider-migration.js"
 import { getModelsDevProvider } from "../../llm/models-dev.js"
-import { LiteLlmError, createLiteLlmClient, normalizeLiteLlmBaseUrl } from "../../llm/litellm.js"
-import { liteLlmCatalogProvider } from "../../llm/litellm-settings.js"
+import { LiteLlmError, createLiteLlmClient, liteLlmStaticModels, normalizeLiteLlmBaseUrl } from "../../llm/litellm.js"
+import { isLiteLlmEntraSignIn, liteLlmCatalogProvider } from "../../llm/litellm-settings.js"
 import { liteLlmMemberIssueStatus, provisionLiteLlmMember, pruneLiteLlmIssuedKeys, reconcileLiteLlmIssuedKeys, scheduleLiteLlmProvisioning } from "../../llm/litellm-issued.js"
-import { applyLiteLlmSync, connectLiteLlmMemberKey, createLiteLlmProvider, liteLlmAdminKey, updateLiteLlmIssueSettings, disconnectLiteLlmMember, emptySettings, liteLlmEndpoints, liteLlmErrorResponse, liteLlmMemberSet, planLiteLlmCatalog, planLiteLlmSync, pruneLiteLlmAssignments, readLiteLlmSettings, recordLiteLlmSyncError, replaceLiteLlmSyncKey, verifyLiteLlmKey } from "../../llm/litellm-sync.js"
+import { applyLiteLlmSync, connectLiteLlmMemberKey, createLiteLlmEntraProvider, createLiteLlmProvider, liteLlmAdminKey, updateLiteLlmEntraProvider, updateLiteLlmIssueSettings, disconnectLiteLlmMember, emptyEntraSettings, emptySettings, liteLlmEndpoints, liteLlmErrorResponse, liteLlmMemberSet, planLiteLlmCatalog, planLiteLlmSync, pruneLiteLlmAssignments, readLiteLlmSettings, recordLiteLlmSyncError, replaceLiteLlmSyncKey, verifyLiteLlmKey } from "../../llm/litellm-sync.js"
 import { LITELLM_PROVIDER_ID, isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
 import { TRUEFOUNDRY_PROVIDER_ID, isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
 import { TrueFoundryError, createTrueFoundryClient, normalizeTrueFoundryEndpoints } from "../../llm/truefoundry.js"
@@ -132,7 +134,7 @@ const trueFoundryCreateSchema = z.object({ name: nameSchema.default("TrueFoundry
 const trueFoundryModelPickSchema = z.array(z.string().trim().min(1).max(255)).min(1).max(500).nullable().describe("The TrueFoundry models people get: model ids from availableModels (\"Only the ones I pick\"), or null for every TrueFoundry model, including ones added later.")
 const trueFoundrySyncResultSchema = z.object({ modelCount: z.number().int(), people: z.number().int(), tokensCreated: z.number().int(), usersCreated: z.number().int(), notInTrueFoundry: z.number().int(), noModels: z.number().int(), tokenLimit: z.number().int(), errors: z.number().int(), removed: z.number().int() })
 const trueFoundryMemberStatusSchema = z.object({ status: z.string(), message: z.string().nullable(), ready: z.boolean() })
-const liteLlmStatusSchema = z.object({ mode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES), keySource: z.enum(["personal", "issued"]).nullable(), issueStrategy: z.enum(["per_team", "mirror"]).nullable(), mirrorFallback: z.enum(["per_team", "error"]).nullable(), issuedMemberCount: z.number().int(), attentionCount: z.number().int(), attention: z.array(z.object({ memberId: denTypeIdSchema("member"), name: z.string().nullable(), email: z.string().nullable(), reason: z.enum(["not_in_litellm", "no_key_to_mirror", "no_models", "error"]) })), baseUrl: z.string().nullable(), spendTracking: z.boolean(), hasSyncKey: z.boolean(), lastSyncedAt: z.string().datetime().nullable(), lastSyncError: z.string().nullable(), modelCount: z.number().int(), teamCount: z.number().int(), connectedMemberCount: z.number().int() }).meta({ ref: "GatewayLiteLlmStatus" })
+const liteLlmStatusSchema = z.object({ mode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES), keySource: z.enum(["personal", "issued", "entra"]).nullable(), issueStrategy: z.enum(["per_team", "mirror"]).nullable(), mirrorFallback: z.enum(["per_team", "error"]).nullable(), issuedMemberCount: z.number().int(), attentionCount: z.number().int(), attention: z.array(z.object({ memberId: denTypeIdSchema("member"), name: z.string().nullable(), email: z.string().nullable(), reason: z.enum(["not_in_litellm", "no_key_to_mirror", "no_models", "error"]) })), baseUrl: z.string().nullable(), spendTracking: z.boolean(), hasSyncKey: z.boolean(), lastSyncedAt: z.string().datetime().nullable(), lastSyncError: z.string().nullable(), modelCount: z.number().int(), teamCount: z.number().int(), connectedMemberCount: z.number().int(), entraScope: z.string().optional().describe("keySource entra: the API scope members' Microsoft access tokens are issued for. Only for callers who hold Manage Gateway providers.") }).meta({ ref: "GatewayLiteLlmStatus" })
 const detailsSchema = summarySchema.extend({ litellm: liteLlmStatusSchema.optional(), truefoundry: trueFoundryStatusSchema.optional().describe("TrueFoundry providers: addresses, sync state and people OpenWork has no working token for. Never a key or token."), custom: gatewayCustomProviderStatusSchema.meta({ ref: "GatewayCustomProviderStatus" }).optional().describe("Custom OpenAI-compatible providers: address, models and whether a key is stored (never the key). Only for callers who hold Manage Gateway providers."), settings: z.record(z.string(), z.unknown()), modelGroups: z.array(groupSchema), credentialSets: z.array(setSchema), accessGrants: z.array(grantSchema), oauthCallbackUrl: z.string().optional(), credentials: z.array(z.object({ id: denTypeIdSchema("inferenceProviderCredential"), credentialSetId: denTypeIdSchema("gatewayCredentialSet"), subject: z.string(), orgMembershipId: denTypeIdSchema("member").nullable(), memberName: z.string().nullable(), memberEmail: z.string().nullable(), kind: z.enum(GATEWAY_PROVIDER_CREDENTIAL_KINDS), status: z.enum(GATEWAY_PROVIDER_CREDENTIAL_STATUSES), expiresAt: z.string().datetime().nullable() })).optional().describe("Per-person credential rows. Only for callers who hold Manage Gateway providers."), credentialCounts: z.object({ total: z.number().int(), active: z.number().int(), revoked: z.number().int(), refreshFailed: z.number().int() }).optional().describe("Credential counts by status, returned instead of credentials to callers who may only view providers.") }).meta({ ref: "GatewayProviderDetails" })
 const detailsResponse = z.object({ inferenceProvider: detailsSchema })
 const connectResponse = z.object({ inferenceProvider: summarySchema.extend({ apiKey: z.string(), apiKeys: z.record(z.string(), z.string()) }) })
@@ -149,7 +151,18 @@ const liteLlmKeySchema = z.string().trim().min(1).max(4096)
 const liteLlmModeSchema = z.enum(["org", "member", "issued"]).describe("org: one organization LiteLLM key for everyone, with OpenWork spend tracking. member: each person connects their own LiteLLM key. issued: OpenWork creates a LiteLLM key for each allowed person, found by their OpenWork email. In member and issued modes apiKey is a LiteLLM admin key and OpenWork spend tracking is off.")
 const liteLlmIssueStrategySchema = z.enum(["per_team", "mirror"]).describe("issued mode. per_team: one key per LiteLLM team the person belongs to, or one key without a team when they are in none. mirror: a copy of their oldest active key (team, models, aliases, tags, expiry; never key-level budgets or rate limits).")
 const liteLlmMirrorFallbackSchema = z.enum(["per_team", "error"]).describe("issued + mirror: for someone with no key to copy, create per-team keys, or report them and create nothing.")
-const liteLlmCreateSchema = z.object({ name: nameSchema.default("LiteLLM"), baseUrl: z.string().trim().min(1).max(2048).describe("LiteLLM proxy URL, with or without /v1."), mode: liteLlmModeSchema, issueStrategy: liteLlmIssueStrategySchema.optional(), mirrorFallback: liteLlmMirrorFallbackSchema.optional(), apiKey: liteLlmKeySchema.describe("Organization key (org mode) or admin key (member and issued modes). Write-only."), allMembers: z.boolean().optional(), memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() }).strict()
+const liteLlmKeyCreateSchema = z.object({ name: nameSchema.default("LiteLLM"), baseUrl: z.string().trim().min(1).max(2048).describe("LiteLLM proxy URL, with or without /v1."), mode: liteLlmModeSchema, issueStrategy: liteLlmIssueStrategySchema.optional(), mirrorFallback: liteLlmMirrorFallbackSchema.optional(), apiKey: liteLlmKeySchema.describe("Organization key (org mode) or admin key (member and issued modes). Write-only."), allMembers: z.boolean().optional(), memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() }).strict()
+// Member Microsoft Entra sign-in (feature litellmEntraMemberSignIn): a proxy that accepts sign-in tokens instead of LiteLLM keys.
+const liteLlmEntraFields = {
+  oauthTenantId: z.string().trim().min(1).max(64).describe("Directory (tenant) ID of the Entra ID tenant, a GUID."),
+  oauthClientId: z.string().trim().min(1).max(255).describe("Application (client) ID of the Entra app registration people sign in to."),
+  oauthClientSecret: z.string().trim().min(1).max(4096).describe("A client secret of that app registration. Write-only."),
+  oauthScope: z.string().trim().min(1).max(512).describe("One API scope that app registration exposes, for example api://<application-id>/access. LiteLLM must accept access tokens for it; Microsoft Graph and Azure Cognitive Services scopes are refused."),
+  modelIds: z.array(z.string().trim().min(1).max(255)).min(1).max(500).describe("The LiteLLM model names people may use. OpenWork holds no LiteLLM key in this mode, so it cannot read them from the proxy."),
+}
+const liteLlmEntraCreateSchema = z.object({ name: nameSchema.default("LiteLLM"), baseUrl: z.string().trim().min(1).max(2048).describe("LiteLLM proxy URL, with or without /v1."), mode: z.literal("entra").describe("entra: the proxy accepts sign-in tokens instead of LiteLLM keys (LiteLLM JWT auth). Each allowed person signs in with Microsoft Entra ID, and their own access token is sent to LiteLLM. No LiteLLM key is stored, nothing is synced, and OpenWork spend tracking is off. Needs the litellmEntraMemberSignIn feature."), ...liteLlmEntraFields, allMembers: z.boolean().optional(), memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() }).strict()
+const liteLlmCreateSchema = z.discriminatedUnion("mode", [liteLlmKeyCreateSchema, liteLlmEntraCreateSchema])
+const liteLlmUpdateSchema = z.object({ apiKey: liteLlmKeySchema.optional(), issueStrategy: liteLlmIssueStrategySchema.optional(), mirrorFallback: liteLlmMirrorFallbackSchema.optional(), oauthTenantId: liteLlmEntraFields.oauthTenantId.optional(), oauthClientId: liteLlmEntraFields.oauthClientId.optional(), oauthClientSecret: liteLlmEntraFields.oauthClientSecret.optional(), oauthScope: liteLlmEntraFields.oauthScope.optional(), modelIds: liteLlmEntraFields.modelIds.optional() }).strict().refine((input) => Object.keys(input).length > 0, "Provide apiKey, issueStrategy or mirrorFallback.")
 const liteLlmSyncResultSchema = z.object({ modelCount: z.number().int(), groupCount: z.number().int(), teamCount: z.number().int(), members: z.object({ matched: z.number().int(), rejected: z.number().int(), unavailable: z.number().int(), removed: z.number().int() }), warnings: z.array(z.string()), issued: z.object({ people: z.number().int(), keys: z.number().int(), notInLiteLlm: z.number().int(), noKeyToMirror: z.number().int(), noModels: z.number().int(), errors: z.number().int(), removed: z.number().int() }).optional() })
 const liteLlmIssueStatusSchema = z.object({ status: z.string(), message: z.string().nullable(), keyCount: z.number().int() })
 const liteLlmConnectResultSchema = z.object({ connected: z.literal(true), modelGroupId: denTypeIdSchema("gatewayModelGroup"), modelGroupName: z.string(), modelIds: z.array(z.string()) })
@@ -357,13 +370,42 @@ async function selectOAuthSet(provider: GatewayProvider, memberId: GatewayMember
 /**
  * Binds a browser entry attempt to the set's sign-in configuration. Google
  * attempts bind the OAuth client; LiteLLM attempts bind the provider and set,
- * because each member pastes their own LiteLLM key instead.
+ * because each member pastes their own LiteLLM key instead. A LiteLLM provider
+ * whose members sign in with Microsoft binds that sign-in's configuration.
  */
 function memberAttemptBinding(provider: GatewayProvider, set: GatewaySet, verifier: string): string | null {
+  const method = providerMemberSignInMethod(provider)
+  if (method) return memberSignInBinding(method, set, verifier, providerMemberSignInScope(provider))
   if (isLiteLlmProviderId(provider.provider_id)) return googleOAuthClientBinding(verifier, `litellm:${provider.id}`, set.id)
   if (isTrueFoundryProviderId(provider.provider_id)) return googleOAuthClientBinding(verifier, `truefoundry:${provider.id}`, set.id)
-  const method = gatewayMemberSignInMethod(provider.provider_id)
-  return method ? memberSignInBinding(method, set, verifier) : null
+  return null
+}
+
+const LITELLM_ENTRA_FEATURE = "litellmEntraMemberSignIn"
+
+/**
+ * Member Microsoft Entra sign-in for LiteLLM is a rollout. With it off nobody adds or changes a
+ * provider in that mode and nobody signs in through one; a use is recorded for /admin when asked.
+ */
+async function requireLiteLlmEntraSignIn(input: { organizationId: GatewayProvider["organization_id"]; userId: string; memberId: GatewayMemberId; audience: "admin" | "member"; used?: boolean }) {
+  if (!await organizationFeatureEnabled(input.organizationId, LITELLM_ENTRA_FEATURE, { userId: input.userId })) {
+    throw new GatewayWriteError(403, "feature_disabled", input.audience === "admin"
+      ? "Microsoft sign-in for LiteLLM is not turned on for this organization."
+      : "Microsoft sign-in for this provider is turned off for your organization. An admin can turn it back on.")
+  }
+  if (input.used !== false) markFeaturesUsed({ organizationId: input.organizationId, memberId: input.memberId, keys: [LITELLM_ENTRA_FEATURE] })
+}
+
+/** The admin's Microsoft sign-in settings and model list, checked before anything is stored. */
+function liteLlmEntraInput(input: { oauthTenantId?: string; oauthScope?: string; modelIds?: string[] }) {
+  if (input.oauthTenantId !== undefined && !microsoftTenantIdSchema.safeParse(input.oauthTenantId).success) {
+    throw new GatewayWriteError(400, "invalid_tenant_id", "Enter the Entra ID directory (tenant) ID, a GUID such as 00000000-0000-0000-0000-000000000000.")
+  }
+  const scopeError = input.oauthScope === undefined ? null : microsoftApiScopeError(input.oauthScope)
+  if (scopeError) throw new GatewayWriteError(400, "invalid_scope", scopeError)
+  const models = input.modelIds === undefined ? undefined : liteLlmStaticModels(input.modelIds)
+  if (models && !models.length) throw new GatewayWriteError(400, "model_required", "Enter at least one LiteLLM model name. Wildcards such as openai/* are not model names.")
+  return { tenantId: input.oauthTenantId?.toLowerCase(), scope: input.oauthScope, models }
 }
 
 async function liteLlmCall<T>(run: () => Promise<T>): Promise<T> {
@@ -407,7 +449,7 @@ async function loadBrowserSignInAttempt(c: Context, handle: string, method: Gate
   if (attempt.userId !== session.userId) throw new GatewayWriteError(403, "browser_account_mismatch", "Use the same OpenWork account that started Connect. Sign out in this browser and sign in with that account.")
   const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, entry.gateway_provider_id))
   const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
-  if (!provider || !set || provider.status !== "active" || gatewayMemberSignInMethod(provider.provider_id) !== method
+  if (!provider || !set || provider.status !== "active" || providerMemberSignInMethod(provider) !== method
     || attempt.clientBinding !== memberSignInBinding(method, set, attempt.verifier)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
   // The live signed cookie matches the entry's initiating user: attribute to
   // the provider's organization and the entry's member before any write.
@@ -873,9 +915,11 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       if (provider.status !== "active") throw new GatewayWriteError(404, "inference_provider_not_found")
       const query = c.req.valid("query")
       const set = await selectOAuthSet(provider, actor.currentMember.id, query.credentialSetId)
-      const signInMethod = gatewayMemberSignInMethod(provider.provider_id)
-      if (!isLiteLlmProviderId(provider.provider_id) && !isTrueFoundryProviderId(provider.provider_id)) {
-        const configurationError = signInMethod ? memberSignInConfigurationError(signInMethod, set) : "This provider does not support member sign-in."
+      const signInMethod = providerMemberSignInMethod(provider)
+      const signInScope = providerMemberSignInScope(provider)
+      // LiteLLM and TrueFoundry sets hold a key per person and need no sign-in setup, except a LiteLLM provider whose members sign in with Microsoft.
+      if (signInMethod || (!isLiteLlmProviderId(provider.provider_id) && !isTrueFoundryProviderId(provider.provider_id))) {
+        const configurationError = signInMethod ? memberSignInConfigurationError(signInMethod, set, signInScope) : "This provider does not support member sign-in."
         if (configurationError) throw new GatewayWriteError(400, "oauth_client_required", `An administrator must finish this credential set's sign-in setup. ${configurationError}`)
       }
       const redirectTo = oauthRedirect(query.redirectTo)
@@ -919,9 +963,11 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
       if (!provider || !set || attempt.clientBinding !== memberAttemptBinding(provider, set, attempt.verifier)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
       oauthRedirect(entry.redirect_to ?? undefined)
-      const liteLlmMode = isLiteLlmProviderId(provider.provider_id) ? readLiteLlmSettings(provider.settings)?.keySource ?? "personal" : null
-      const signInMethod = gatewayMemberSignInMethod(provider.provider_id)
+      const signInMethod = providerMemberSignInMethod(provider)
+      // A LiteLLM provider whose members sign in with Microsoft is a Microsoft sign-in here, not a key.
+      const liteLlmMode = isLiteLlmProviderId(provider.provider_id) && signInMethod === null ? readLiteLlmSettings(provider.settings)?.keySource ?? "personal" : null
       const method = isTrueFoundryProviderId(provider.provider_id) ? "truefoundry_issued" as const : liteLlmMode === "issued" ? "litellm_issued" as const : liteLlmMode ? "litellm_key" as const : signInMethod ?? "google"
+      if (providerMemberSignInScope(provider) !== null) await requireLiteLlmEntraSignIn({ organizationId: provider.organization_id, userId: attempt.userId, memberId: entry.org_membership_id, audience: "member", used: false })
       // The live signed cookie matches the entry's initiating user: attribute to
       // the provider's organization and the entry's member before any write.
       const auditBlocked = await attributeMemberOAuthEntry(c, { organizationId: provider.organization_id, userId: session.userId, memberId: entry.org_membership_id })
@@ -954,11 +1000,14 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       if (attempt.userId !== session.userId) throw new GatewayWriteError(403, "browser_account_mismatch", "Use the same OpenWork account that started Connect. Sign out in this browser and sign in with that account.")
       const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, entry.gateway_provider_id))
       const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
-      if (provider && isLiteLlmProviderId(provider.provider_id)) throw new GatewayWriteError(400, "litellm_key_required", "This provider uses your own LiteLLM key, not Google sign-in.")
+      const method = provider ? providerMemberSignInMethod(provider) : null
+      // The API scope members' Microsoft tokens are for: a LiteLLM provider's own, or null (Azure Cognitive Services, Microsoft Foundry).
+      const signInScope = provider ? providerMemberSignInScope(provider) : null
+      if (provider && isLiteLlmProviderId(provider.provider_id) && method === null) throw new GatewayWriteError(400, "litellm_key_required", "This provider uses your own LiteLLM key, not Google sign-in.")
       if (provider && isTrueFoundryProviderId(provider.provider_id)) throw new GatewayWriteError(400, "truefoundry_keys_managed", "OpenWork creates your TrueFoundry key for this provider; there is nothing to sign in to.")
-      const method = provider ? gatewayMemberSignInMethod(provider.provider_id) : null
       if (method === "aws_sso") throw new GatewayWriteError(400, "aws_device_sign_in_required", "This provider uses AWS sign-in. Start it from the connect page.")
-      if (!provider || !set || !method || attempt.clientBinding !== memberSignInBinding(method, set, attempt.verifier)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
+      if (!provider || !set || !method || attempt.clientBinding !== memberSignInBinding(method, set, attempt.verifier, signInScope)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
+      if (signInScope !== null) await requireLiteLlmEntraSignIn({ organizationId: provider.organization_id, userId: attempt.userId, memberId: entry.org_membership_id, audience: "member" })
       oauthRedirect(entry.redirect_to ?? undefined)
       // The live signed cookie matches the entry's initiating user: attribute to
       // the provider's organization and the entry's member before any write.
@@ -966,7 +1015,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       if (auditBlocked) return auditBlocked
       const { verifier, challenge } = createPkcePair()
       const state = `${method}.${randomBytes(32).toString("base64url")}`
-      const clientBinding = memberSignInBinding(method, set, verifier)
+      const clientBinding = memberSignInBinding(method, set, verifier, signInScope)
       if (!clientBinding) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
       const nextAttempt = { verifier, userId: attempt.userId, clientBinding }
       await db.transaction(async (tx) => {
@@ -979,7 +1028,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       })
       const redirectUri = `${publicBase(c.req.raw)}/v1/inference-providers/oauth/callback`
       const authUrl = method === "microsoft"
-        ? buildMicrosoftAuthorizeUrl({ tenantId: set.oauth_tenant_id ?? "", clientId: set.oauth_client_id ?? "", redirectUri, state, codeChallenge: challenge, nonce: microsoftOAuthNonce(verifier, state) })
+        ? buildMicrosoftAuthorizeUrl({ tenantId: set.oauth_tenant_id ?? "", clientId: set.oauth_client_id ?? "", redirectUri, state, codeChallenge: challenge, nonce: microsoftOAuthNonce(verifier, state), apiScope: signInScope })
         : buildGoogleAuthorizeUrl({ clientId: set.oauth_client_id ?? "", redirectUri, state, codeChallenge: challenge, nonce: googleOAuthNonce(verifier, state) })
       if (c.req.header("accept")?.includes("application/json")) return c.json({ authUrl })
       return c.redirect(authUrl, 302)
@@ -1024,7 +1073,9 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     if (state.used_at || state.expires_at.getTime() <= Date.now()) return fail("This sign-in link has expired or was already used. Start Connect again.")
     const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, state.gateway_provider_id))
     const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, state.credential_set_id))
-    if (!provider || !set || gatewayMemberSignInMethod(provider.provider_id) !== stateMethod || attempt.clientBinding !== memberSignInBinding(stateMethod, set, attempt.verifier)) return fail("This credential set is no longer available.")
+    const signInScope = provider ? providerMemberSignInScope(provider) : null
+    if (!provider || !set || providerMemberSignInMethod(provider) !== stateMethod || attempt.clientBinding !== memberSignInBinding(stateMethod, set, attempt.verifier, signInScope)) return fail("This credential set is no longer available.")
+    if (signInScope !== null && !await organizationFeatureEnabled(provider.organization_id, LITELLM_ENTRA_FEATURE, { userId: attempt.userId })) return fail("Microsoft sign-in for this provider is turned off for your organization. An admin can turn it back on.")
     const clientId = set.oauth_client_id ?? ""
     const clientSecret = set.oauth_client_secret ?? ""
     let redirectTo: string | null = null
@@ -1050,10 +1101,11 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       let values: { kind: "oauth_google" | "oauth_azure"; secret: string; expires_at: Date; scopes: string | null }
       if (stateMethod === "microsoft") {
         const tenantId = set.oauth_tenant_id ?? ""
-        const tokens = await exchangeMicrosoftAuthorizationCode({ tenantId, clientId, clientSecret, code: query.code, codeVerifier: attempt.verifier, redirectUri })
+        const tokens = await exchangeMicrosoftAuthorizationCode({ tenantId, clientId, clientSecret, code: query.code, codeVerifier: attempt.verifier, redirectUri, apiScope: signInScope })
         const identity = await verifyMicrosoftIdentity({ idToken: tokens.idToken, tenantId, clientId, nonce: microsoftOAuthNonce(attempt.verifier, state.state) })
+        // A provider's own API scope is stored with the token: it is renewed and sent only while the provider still configures that scope.
         values = { kind: "oauth_azure", expires_at: new Date(exchangeStartedAt + tokens.expiresIn * 1000), scopes: tokens.scope,
-          secret: JSON.stringify({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, tokenType: "Bearer", microsoftIdentity: { ...identity, authorizationRevision: randomBytes(32).toString("base64url") } }) }
+          secret: JSON.stringify({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, tokenType: "Bearer", microsoftIdentity: { ...identity, authorizationRevision: randomBytes(32).toString("base64url"), ...(signInScope === null ? {} : { scope: signInScope }) } }) }
       } else {
         const tokens = await exchangeGoogleAuthorizationCode({ clientId, clientSecret, code: query.code, codeVerifier: attempt.verifier, redirectUri })
         issuedToken = tokens.refresh_token
@@ -1175,13 +1227,26 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.post("/v1/inference-providers/litellm", route("Create LiteLLM gateway provider", "Connects the organization's own LiteLLM proxy and syncs its models. mode=org stores one organization LiteLLM key used for everyone, creates an \"All LiteLLM models\" group granted to the given audiences, and keeps OpenWork spend tracking and limits on. mode=member stores a LiteLLM admin key used only to sync models and teams; each person then connects their own LiteLLM key, which picks the shared group matching that key's models. The given audiences are granted the empty \"Can connect a LiteLLM key\" group, and OpenWork spend tracking is off because LiteLLM budgets those keys. Keys are write-only. Requires the Manage Gateway providers permission and Gateway management; session callers must recently reauthenticate.", z.object({ inferenceProvider: detailsSchema, sync: liteLlmSyncResultSchema }), 201, true), orgMemberRoute(), managementWrite, jsonValidator(liteLlmCreateSchema), async (c) => {
+  app.post("/v1/inference-providers/litellm", route("Create LiteLLM gateway provider", "Connects the organization's own LiteLLM proxy and syncs its models. mode=entra (feature litellmEntraMemberSignIn, otherwise 403 feature_disabled) is for a proxy that accepts sign-in tokens instead of LiteLLM keys: it stores the Entra app registration (oauthTenantId, oauthClientId, write-only oauthClientSecret), one API scope (oauthScope) and the model list (modelIds), creates an \"All LiteLLM models\" group granted to the given audiences, reads nothing from the proxy, and each person then signs in with Microsoft through oauth/start. mode=org stores one organization LiteLLM key used for everyone, creates an \"All LiteLLM models\" group granted to the given audiences, and keeps OpenWork spend tracking and limits on. mode=member stores a LiteLLM admin key used only to sync models and teams; each person then connects their own LiteLLM key, which picks the shared group matching that key's models. The given audiences are granted the empty \"Can connect a LiteLLM key\" group, and OpenWork spend tracking is off because LiteLLM budgets those keys. Keys are write-only. Requires the Manage Gateway providers permission and Gateway management; session callers must recently reauthenticate.", z.object({ inferenceProvider: detailsSchema, sync: liteLlmSyncResultSchema }), 201, true), orgMemberRoute(), managementWrite, jsonValidator(liteLlmCreateSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const input = c.req.valid("json")
       const endpoints = await liteLlmCall(async () => normalizeLiteLlmBaseUrl(input.baseUrl))
       const urlError = upstreamBaseUrlSettingError({ upstreamBaseUrl: endpoints.inferenceBaseUrl })
       if (urlError) throw new GatewayWriteError(400, "invalid_settings", urlError)
+      if (input.mode === "entra") {
+        // No LiteLLM key exists in this mode: nothing is read from the proxy, and each person signs in with Microsoft later.
+        await requireLiteLlmEntraSignIn({ organizationId: actor.organization.id, userId: actor.currentMember.userId, memberId: actor.currentMember.id, audience: "admin" })
+        const entra = liteLlmEntraInput(input)
+        const now = new Date()
+        const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: LITELLM_PROVIDER_ID, name: input.name, model_ids: [], pinned_model_ids: [], provider_config: buildProviderConfigSnapshot(liteLlmCatalogProvider({ settings: {} })), settings: { upstreamBaseUrl: endpoints.inferenceBaseUrl, litellm: emptyEntraSettings(input.oauthScope) }, credential_mode: "member", oauth_client_id: null, oauth_client_secret: null, status: "active", created_at: now, updated_at: now }
+        const sync = await db.transaction(async (tx) => {
+          const member = await liveMember(tx, actor, true)
+          await requireLiveManage(tx, actor)
+          return createLiteLlmEntraProvider(tx, provider, { signIn: { tenantId: input.oauthTenantId.toLowerCase(), clientId: input.oauthClientId, clientSecret: input.oauthClientSecret }, models: entra.models ?? [], audiences: liteLlmAudiences(input), creatorId: member.id })
+        })
+        return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync }, 201)
+      }
       if (input.mode !== "issued" && (input.issueStrategy !== undefined || input.mirrorFallback !== undefined)) throw new GatewayWriteError(400, "invalid_request", "issueStrategy and mirrorFallback apply to issued mode only.")
       const credentialMode = input.mode === "org" ? "org" as const : "member" as const
       const client = createLiteLlmClient(endpoints)
@@ -1201,7 +1266,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.post("/v1/inference-providers/:inferenceProviderId/litellm/sync", route("Sync LiteLLM models and groups", "Reads the LiteLLM proxy with the stored organization key (org mode) or admin key (member mode) and refreshes the provider's models. Org mode refreshes the \"All LiteLLM models\" group. Member mode refreshes team groups, re-checks every connected member key, moves members to the group matching their key's models, revokes keys LiteLLM rejects, and removes automatic grants of people who may no longer connect. A failed read keeps the last synced catalog and records the error. Requires the Manage Gateway providers permission and Gateway management.", z.object({ inferenceProvider: detailsSchema, sync: liteLlmSyncResultSchema }), 200, false, { "x-mcp-search-aliases": ["sync litellm models", "refresh litellm model groups"] }), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), async (c) => {
+  app.post("/v1/inference-providers/:inferenceProviderId/litellm/sync", route("Sync LiteLLM models and groups", "Reads the LiteLLM proxy with the stored organization key (org mode) or admin key (member mode) and refreshes the provider's models. A provider whose members sign in with Microsoft has no key to read the proxy with and answers 409 litellm_sync_unavailable; change its modelIds with PATCH instead. Org mode refreshes the \"All LiteLLM models\" group. Member mode refreshes team groups, re-checks every connected member key, moves members to the group matching their key's models, revokes keys LiteLLM rejects, and removes automatic grants of people who may no longer connect. A failed read keeps the last synced catalog and records the error. Requires the Manage Gateway providers permission and Gateway management.", z.object({ inferenceProvider: detailsSchema, sync: liteLlmSyncResultSchema }), 200, false, { "x-mcp-search-aliases": ["sync litellm models", "refresh litellm model groups"] }), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
@@ -1219,13 +1284,24 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.patch("/v1/inference-providers/:inferenceProviderId/litellm", route("Update LiteLLM key or key creation", "Verifies and stores a new organization LiteLLM key (org mode) or LiteLLM admin key (member and issued modes), and in issued mode changes how keys are created, then syncs. Changing issueStrategy replaces existing created keys at that sync. The proxy URL and mode are fixed; create a new provider to change them. Keys are write-only. Requires the Manage Gateway providers permission and Gateway management; session callers must recently reauthenticate.", z.object({ inferenceProvider: detailsSchema, sync: liteLlmSyncResultSchema }), 200, true), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(z.object({ apiKey: liteLlmKeySchema.optional(), issueStrategy: liteLlmIssueStrategySchema.optional(), mirrorFallback: liteLlmMirrorFallbackSchema.optional() }).strict().refine((input) => Object.keys(input).length > 0, "Provide apiKey, issueStrategy or mirrorFallback.")), async (c) => {
+  app.patch("/v1/inference-providers/:inferenceProviderId/litellm", route("Update LiteLLM key or key creation", "Verifies and stores a new organization LiteLLM key (org mode) or LiteLLM admin key (member and issued modes), and in issued mode changes how keys are created, then syncs. Changing issueStrategy replaces existing created keys at that sync. For a provider whose members sign in with Microsoft (feature litellmEntraMemberSignIn): changes oauthTenantId, oauthClientId, oauthClientSecret, oauthScope and/or modelIds without contacting the proxy; changing any sign-in setting revokes every member's token and cancels pending sign-ins, so people sign in again. The proxy URL and mode are fixed; create a new provider to change them. Keys are write-only. Requires the Manage Gateway providers permission and Gateway management; session callers must recently reauthenticate.", z.object({ inferenceProvider: detailsSchema, sync: liteLlmSyncResultSchema }), 200, true), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(liteLlmUpdateSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const input = c.req.valid("json")
       const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
       const settings = isLiteLlmProviderId(before.provider_id) ? readLiteLlmSettings(before.settings) : null
       if (!settings) throw new GatewayWriteError(409, "litellm_not_configured", "Only LiteLLM providers have a LiteLLM key.")
+      if (isLiteLlmEntraSignIn(settings)) {
+        if (input.apiKey !== undefined || input.issueStrategy !== undefined || input.mirrorFallback !== undefined) throw new GatewayWriteError(409, "litellm_microsoft_sign_in", "This provider uses Microsoft sign-in. It has no LiteLLM key or key creation settings.")
+        await requireLiteLlmEntraSignIn({ organizationId: actor.organization.id, userId: actor.currentMember.userId, memberId: actor.currentMember.id, audience: "admin" })
+        const entra = liteLlmEntraInput(input)
+        const result = await providerTransaction(c, async (tx, provider) => ({ provider, ...await updateLiteLlmEntraProvider(tx, provider, { tenantId: entra.tenantId, clientId: input.oauthClientId, clientSecret: input.oauthClientSecret, scope: entra.scope, models: entra.models }) }))
+        await revokeUpstreamCredentials(result.revoked)
+        return c.json({ inferenceProvider: await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync: result.sync })
+      }
+      if (input.oauthTenantId !== undefined || input.oauthClientId !== undefined || input.oauthClientSecret !== undefined || input.oauthScope !== undefined || input.modelIds !== undefined) {
+        throw new GatewayWriteError(409, "litellm_not_entra", "Only LiteLLM providers that use Microsoft sign-in have these settings.")
+      }
       const issuedMode = settings.mode === "member" && settings.keySource === "issued"
       if (!issuedMode && (input.issueStrategy !== undefined || input.mirrorFallback !== undefined)) throw new GatewayWriteError(409, "litellm_not_issued", "Only providers where OpenWork creates keys have key creation settings.")
       const client = createLiteLlmClient(liteLlmEndpoints(before))
@@ -1283,6 +1359,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, entry.gateway_provider_id))
       const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
       if (!provider || !set || !isLiteLlmProviderId(provider.provider_id) || attempt.clientBinding !== memberAttemptBinding(provider, set, attempt.verifier)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
+      if (providerMemberSignInMethod(provider) !== null) throw new GatewayWriteError(409, "litellm_microsoft_sign_in", "This provider uses Microsoft sign-in, not a LiteLLM key.")
       // The live signed cookie matches the entry's initiating user: attribute to
       // the provider's organization and the entry's member before any write.
       const auditBlocked = await attributeMemberOAuthEntry(c, { organizationId: provider.organization_id, userId: session.userId, memberId: entry.org_membership_id })
