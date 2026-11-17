@@ -29,6 +29,7 @@ import {
   type OpenworkSessionModel,
 } from "@openwork/types/openwork-affordance";
 import { automationProposalSchema } from "@openwork/types/automations";
+import { withOnceTimestamp } from "../automation-proposal-input.js";
 import { SESSION_TREE_QUERY_ID, sessionLinkMetadata, type SessionLink } from "@openwork/types/session-link";
 import {
   appendAgentInstructions,
@@ -1701,7 +1702,7 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
  * Automation but only a person can create one.
  */
 function proposeAutomation(rawArgs: unknown, context: OpenCodeContext): object {
-  const { workspaceId: _modelSupplied, ...parsed } = automationProposalSchema.parse(rawArgs);
+  const { workspaceId: _modelSupplied, ...parsed } = automationProposalSchema.parse(withOnceTimestamp(rawArgs));
   // Pin the proposing conversation's workspace so the Automation keeps running
   // there even after the person activates a different workspace. The pin comes
   // from the engine-provided context only: a model-supplied workspaceId is
