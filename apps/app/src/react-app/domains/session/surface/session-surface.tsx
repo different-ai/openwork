@@ -2285,6 +2285,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[props.workspaceId]?.running);
   const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
   const followUpSuggestionsEnabled = useDesktopFeature("followUpSuggestions");
+  const followUpDeliveryEnabled = useDesktopFeature("followUpDelivery");
   const questionMinimizeEnabled = useDesktopFeature("questionMinimize");
   const followUpSuggestion = useFollowUpSuggestion({
     enabled: followUpSuggestionsEnabled && !archived && !snapshot?.session.parentID,
@@ -3946,6 +3947,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       client={props.client}
                       mcpAppEngine={isOpencodeV2BaseUrl(props.opencodeBaseUrl) ? "v2" : "v1"}
                       readOnly={archived || !archiveStateKnown || archiveHeld}
+                      followUpDelivery={followUpDeliveryEnabled}
                       workspaceId={props.workspaceId}
                       sessionId={props.sessionId}
                       showThinking={showThinking}
@@ -4084,6 +4086,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         stopping={stopping}
         steering={steering}
         followUpDefault={local.prefs.followUpDefault}
+        followUpChords={followUpDeliveryEnabled}
         submissionPreparing={preparingCloudTools || sending || autoSending}
         queuedCount={queuedItems.length}
         disabled={!archiveStateKnown || archiveHeld || model.transitionState !== "idle" || sessionModelPending || sessionModelUnavailable || queuedDrainState.phase.kind === "admission_unknown"}

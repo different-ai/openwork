@@ -84,6 +84,13 @@ import {
   settleBackgroundShell,
   useBackgroundShellStore,
 } from "../status/background-shell-store";
+import { FOLLOW_UP_SETTLED_EVENT, FOLLOW_UP_WAITING_EVENT } from "@/app/lib/follow-up-delivery";
+import {
+  addWaitingFollowUp,
+  clearWaitingFollowUps,
+  settleWaitingFollowUp,
+  useFollowUpDeliveryStore,
+} from "../status/follow-up-delivery-store";
 
 export { type SyncStreamPhase } from "./sync-stream-lifecycle";
 export {
@@ -1106,6 +1113,20 @@ function applyBackgroundShellEvent(entry: SyncEntry, workspaceId: string, event:
   }
 }
 
+/**
+ * A message sent while the agent works waits for the current step to end.
+ * Record it until the engine hands it to the agent or it is cancelled.
+ */
+function applyFollowUpDeliveryEvent(workspaceId: string, event: OpencodeEvent) {
+  const props = eventRecord(event);
+  const sessionId = sessionIdFromProperties(props);
+  const messageId = stringField(props, "messageID");
+  if (!sessionId || !messageId) return;
+  useFollowUpDeliveryStore.getState().update(workspaceId, (book) => event.type === FOLLOW_UP_WAITING_EVENT
+    ? addWaitingFollowUp(book, sessionId, messageId)
+    : settleWaitingFollowUp(book, sessionId, messageId));
+}
+
 function isBackgroundShellEvent(event: OpencodeEvent) {
   return event.type === SHELL_CREATED_EVENT || event.type === SHELL_EXITED_EVENT || event.type === SHELL_DELETED_EVENT
     || event.type === BACKGROUND_SHELL_STARTED_EVENT || event.type === BACKGROUND_SHELL_FINISHED_EVENT;
@@ -1198,6 +1219,11 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
   if (isBackgroundShellEvent(event)) {
     applyBackgroundShellEvent(entry, workspaceId, event);
+    return;
+  }
+
+  if (event.type === FOLLOW_UP_WAITING_EVENT || event.type === FOLLOW_UP_SETTLED_EVENT) {
+    applyFollowUpDeliveryEvent(workspaceId, event);
     return;
   }
 
@@ -1330,6 +1356,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     entry.titleRecovery?.resolve(sessionId);
     useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
     useBackgroundShellStore.getState().update(workspaceId, (book) => clearBackgroundShellSession(book, sessionId));
+    useFollowUpDeliveryStore.getState().update(workspaceId, (book) => clearWaitingFollowUps(book, sessionId));
     historyBackgroundShellIds.delete(historyBackgroundShellKey(workspaceId, sessionId));
     useWorkbenchStore.getState().closeTab({ workspaceId, sessionId });
     stopTrackingLiveSession(entry, sessionId);
@@ -1889,6 +1916,8 @@ function applySessionRunStatus(
   }
 
   const live = isLiveStatus(status);
+  // A missed delivery event must not leave a message marked as waiting.
+  if (!live) useFollowUpDeliveryStore.getState().update(workspaceId, (book) => clearWaitingFollowUps(book, sessionId));
   if (live && (!wasLive || !entry.gatewayUsageRuns.has(sessionId))) {
     useProviderCredentialHealth.getState().bindWorkspace(workspaceId, providerCredentialScope(entry.input.baseUrl));
     entry.gatewayUsageRuns.set(sessionId, newGatewayUsageRun(`${workspaceId}:${sessionId}:run:${++gatewayUsageRunSequence}`));

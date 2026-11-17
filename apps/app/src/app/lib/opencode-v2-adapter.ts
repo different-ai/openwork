@@ -34,6 +34,7 @@ import {
   mentionText,
 } from "../../react-app/domains/session/surface/composer/sent-message-tokens";
 import { readShowThinkingPreference } from "../../react-app/kernel/local-preferences-storage";
+import { FOLLOW_UP_SETTLED_EVENT, FOLLOW_UP_WAITING_EVENT } from "./follow-up-delivery";
 import {
   BACKGROUND_SHELL_FINISHED_EVENT,
   BACKGROUND_SHELL_NOTICE_KEY,
@@ -1603,13 +1604,24 @@ export function translateV2Event(
     return [
       { type: "message.updated", properties: { info: message.info } },
       ...message.parts.map((part): OpencodeEvent => ({ type: "message.part.updated", properties: { part } })),
+      { type: FOLLOW_UP_WAITING_EVENT, properties: { sessionID, messageID } },
     ];
+  }
+
+  if (type === "session.inbox.delivered") {
+    const messageID = readString(properties, "inboxID");
+    return sessionID && messageID
+      ? [{ type: FOLLOW_UP_SETTLED_EVENT, properties: { sessionID, messageID } }]
+      : null;
   }
 
   if (type === "session.inbox.cancelled") {
     const messageID = readString(properties, "inboxID");
     return sessionID && messageID
-      ? [{ type: "message.removed", properties: { sessionID, messageID } }]
+      ? [
+        { type: "message.removed", properties: { sessionID, messageID } },
+        { type: FOLLOW_UP_SETTLED_EVENT, properties: { sessionID, messageID } },
+      ]
       : null;
   }
 

@@ -1714,6 +1714,7 @@ export default {
   "session.remote_answer_other_row": "Other answer…",
   "session.remote_answer_choose": "Answer {option}",
   "session.remote_answer_failed": "Couldn't send your answer: {reason}",
+  "session.follow_up_waiting": "Waiting for the current step to finish",
   "session.remote_task_steps_other": "{count} steps",
   "session.remote_task_steps_one": "1 step",
   "session.remote_task_place_cloud": "in the Cloud",
