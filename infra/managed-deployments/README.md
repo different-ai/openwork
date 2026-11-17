@@ -220,8 +220,8 @@ replacement runner is ready. Plan a maintenance window, stop sending new turns
 and let known active runs finish before approving an update. The installer does
 not force an additional runner restart during the core Den strict-TLS redeploy.
 
-Enabling Workbot on an existing install expands the ACM certificate with
-`chat.<domain_name>`. The module validates the replacement certificate before
+Enabling Workbot expands the ACM certificate with `chat.<domain_name>`; the
+Gateway profile also adds `models.<domain_name>`. The module validates the replacement certificate before
 switching the HTTPS listener, then retires the old certificate. An already-issued
 certificate is not sent through the failed-certificate retry replacement path.
 The saved-plan guard continues to protect data-bearing resources. This ordering

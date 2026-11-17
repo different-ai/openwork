@@ -2,7 +2,7 @@ import { XMLParser } from "fast-xml-parser"
 import { z } from "zod"
 // Self-reference, not "./schema.js": den-api loads this package's TypeScript
 // source at runtime, where only package exports resolve to the .ts files.
-import { assistantsEnabled, awsRegionSchema, type AwsTarget } from "@openwork/managed-deployments/schema"
+import { assistantsEnabled, awsRegionSchema, gatewayAssistants, type AwsTarget } from "@openwork/managed-deployments/schema"
 
 /**
  * AWS adapter: bootstrap (CloudFormation), naming shared with the Terraform
@@ -96,6 +96,8 @@ export type AwsLaunch = {
   target: AwsTarget
   /** Explicitly configured runs also send false/empty values to disable an installed runner. */
   includeAssistantParameters?: boolean
+  /** Omit on untouched historical records whose installer template predates runtime profiles. */
+  includeRuntimeProfileParameter?: boolean
   domainName: string
   ownerEmail: string
   size: string
@@ -111,25 +113,28 @@ function networkParameters(network: AwsTarget["network"]) {
 }
 
 function launchParameters(input: AwsLaunch) {
+  const gateway = input.target.runtimeProfile === "gateway"
+  const assistants = gateway ? gatewayAssistants(input.target.assistants) : input.target.assistants
   return {
     DeploymentId: input.deploymentId, RunId: input.runId, Challenge: input.challenge,
     ExpectedAccountId: input.target.accountId, ControlPlaneOrigin: input.release.apiOrigin,
     BundleUrl: input.release.bundleUrl, BundleSha256: input.release.bundleSha256, OpenWorkVersion: input.release.version,
     DomainName: input.domainName, Route53ZoneId: input.target.route53ZoneId, OwnerEmail: input.ownerEmail, Size: input.size,
     ...networkParameters(input.target.network),
-    ...((input.includeAssistantParameters ?? assistantsEnabled(input.target.assistants)) ? {
-      HeadlessRunnerEnabled: String(input.target.assistants.headlessRunnerEnabled),
-      WorkbotEnabled: String(input.target.assistants.workbotEnabled),
-      SlackAssistantEnabled: String(input.target.assistants.slackAssistantEnabled),
-      HeadlessModelProtocol: input.target.assistants.modelProtocol ?? "anthropic",
-      HeadlessModelBaseUrl: input.target.assistants.modelBaseUrl ?? "",
-      HeadlessModel: input.target.assistants.model ?? "",
-      HeadlessModelSecretArn: input.target.assistants.modelSecretArn ?? "",
-      HeadlessComputerProvider: input.target.assistants.computerProvider,
-      HeadlessComputerSecretArn: input.target.assistants.computerProvider === "off" ? "" : input.target.assistants.computerSecretArn ?? "",
-      HeadlessComputerSnapshot: input.target.assistants.computerProvider === "daytona" ? input.target.assistants.computerSnapshot ?? "" : "",
-      DaytonaApiUrl: input.target.assistants.daytonaApiUrl ?? "https://app.daytona.io/api",
-      DaytonaTarget: input.target.assistants.daytonaTarget ?? "us",
+    ...((input.includeRuntimeProfileParameter ?? gateway) ? { ManagedRuntimeProfile: input.target.runtimeProfile } : {}),
+    ...((gateway || (input.includeAssistantParameters ?? assistantsEnabled(assistants))) ? {
+      HeadlessRunnerEnabled: String(assistants.headlessRunnerEnabled),
+      WorkbotEnabled: String(assistants.workbotEnabled),
+      SlackAssistantEnabled: String(assistants.slackAssistantEnabled),
+      HeadlessModelProtocol: assistants.modelProtocol ?? "anthropic",
+      HeadlessModelBaseUrl: assistants.modelBaseUrl ?? "",
+      HeadlessModel: assistants.model ?? "",
+      HeadlessModelSecretArn: assistants.modelSecretArn ?? "",
+      HeadlessComputerProvider: assistants.computerProvider,
+      HeadlessComputerSecretArn: assistants.computerProvider === "off" ? "" : assistants.computerSecretArn ?? "",
+      HeadlessComputerSnapshot: assistants.computerProvider === "daytona" ? assistants.computerSnapshot ?? "" : "",
+      DaytonaApiUrl: assistants.daytonaApiUrl ?? "https://app.daytona.io/api",
+      DaytonaTarget: assistants.daytonaTarget ?? "us",
     } : {}),
   }
 }

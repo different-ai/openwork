@@ -52,43 +52,45 @@ published release and approved customer-project install pass. Design and contrac
    `DEN_INITIAL_ADMIN_BOOTSTRAP_CODE`. OpenWork never receives this code.
    Configure SMTP and SSO after setup.
 
-## Optional AWS Workbot, Slack and headless execution
+## Gateway-backed AWS runtime
 
-The AWS form and approved-Update flow can offer **Workbot and assistants** when
-both `managedDeployments` and `managedDeploymentAssistants` are enabled for the
-organization (cloud only, off). All installation options remain off unless the
-owner explicitly selects them. GCP keeps its existing profile.
+With `managedDeployments` and `managedDeploymentAssistants` enabled for the
+organization (cloud only, off), new AWS installations include the complete
+Gateway-backed runtime. Only computers are optional. Existing core/legacy
+installations keep their topology until an explicit newer approved Update
+selects the Gateway profile. GCP keeps its existing profile.
 
-- **Headless runner**: one private Fargate task with conversation history and
-  files on encrypted EFS. Existing networks need exactly one private service
-  subnet per availability zone for EFS mount targets. Select a direct model endpoint, model ID and protocol
-  (`anthropic`, `openai` or `openai-responses`). No AI Gateway is added.
-- **Workbot**: the browser chat app at `https://chat.<address>`. It requires the
-  runner, adds a DNS record and expands the HTTPS certificate. Existing installs
-  enable it through a newer approved installer Update, not a same-version Retry.
-- **Slack assistant**: replies run on that runner. The customer still creates
-  the Slack app in the installed Den's connector settings and authorizes it in
-  the intended Slack workspace; this option does not do that setup.
-- **Cloud computers (optional)**: keep these **Off** unless a conversation needs
-  a sandbox. Daytona is the preferred provider; Freestyle is also available.
-  They are not required for installation, Workbot, Slack or headless Automations.
-  Daytona requires a chosen computer snapshot. **Daytona computers execute in
-  Daytona's cloud, and Freestyle computers execute in Freestyle's cloud, outside
-  the customer's AWS account.** Review that boundary before enabling either.
-  An external runner URL is not offered by this installer profile.
+- **AI/model Gateway**: included at `https://models.<address>`. After first
+  sign-in, configure upstream provider credentials, model grants and the default
+  model inside the installed Den. Model traffic uses existing Gateway
+  authorization; no shared upstream model key is injected into the runner.
+- **Headless runner**: one private Fargate task with conversation history/files
+  on encrypted EFS. Existing networks need exactly one private service subnet per
+  availability zone for EFS mount targets. No external runner URL is offered.
+- **Workbot**: included browser chat at `https://chat.<address>`. Gateway and
+  Workbot add DNS records and expand the HTTPS certificate.
+- **Slack and Automations**: execution is included on that runner. Slack still
+  needs its real app, connection, OAuth and workspace policy configured inside
+  the installed Den. Installed services alone do not complete that setup.
+- **Computers (optional)**: **Off** by default. Daytona is preferred when a
+  conversation needs a sandbox; Freestyle is also supported. Daytona requires a
+  chosen snapshot. These are not required for chat, Slack replies or
+  connector-based headless Automations. **Computers run in the selected
+  provider's cloud, outside the customer's AWS account.**
 
-Create the model and optional Daytona/Freestyle API-key secrets directly in the target
-AWS account/region's Secrets Manager before approval. Supply only the full
-secret ARNs to OpenWork; never paste the key values into the deployment form,
-MCP request, approval command or chat. ECS reads these customer-owned secrets
-directly. Hosted OpenWork, Terraform and the installer do not receive their
-plaintext values. This profile uses the default Secrets Manager encryption key;
-custom KMS-key grants are a separate reviewed configuration. Keep the secrets
-available through updates. Existing generated application/runner secrets still
-live in the customer's encrypted Terraform state.
+Only an enabled computer provider needs its API-key secret in the target AWS
+account/region's Secrets Manager. Supply the full ARN, never the value. ECS reads
+it directly; hosted OpenWork, Terraform and the installer do not receive its
+plaintext. The reference uses the AWS-managed Secrets Manager encryption key;
+custom KMS grants need separate review. Keep it available through updates.
+Model credentials belong in the installed Den's encrypted Gateway provider
+workflow, never the hosted deployment form, Terraform inputs, approval command
+or chat. Legacy direct-model inputs remain compatible for legacy installs but
+are ignored by the Gateway profile. Generated application/runner secrets remain
+in the customer's encrypted Terraform state.
 
-The core-only cost estimate above excludes the extra runner and Workbot Fargate
-tasks, EFS, backups and Freestyle/model-provider charges. Daily EFS recovery points
+The core-only cost estimate above excludes the extra Gateway, runner and Workbot
+Fargate tasks, EFS, backups and computer/model-provider charges. Daily EFS recovery points
 are kept for seven days. A recovery point is not an application-consistent SQLite
 export or proof that a restore has succeeded. The health panel reports runner,
 Workbot, EFS and completed-backup checks without reading conversation content.
@@ -118,10 +120,14 @@ certificate cutover, encrypted EFS/backup and secret-preservation checks passed.
 `provider_unavailable` at the current runtime's Gateway-only model-selection
 policy. This was tested with fixed OpenWork `0.18.67` application digests and
 isolated test-only installer versions, not production release coordinates.
-Do not add a Gateway to mask this mismatch or treat infrastructure health as a
-successful model turn. A separately reviewed direct-model runtime option and
-complete new proof are required. The installer README records individual
-`Passed`, `Failed` and `NotRun` results.
+Those failures are retained for the legacy/direct configuration. The selected
+architecture now includes the native Gateway and keeps runtime authorization
+unchanged. The direct-model runtime proposal was cancelled before any code or
+images were created. A new approved Gateway-profile Update and complete model
+checks remain required; infrastructure health is not a successful model turn.
+The actual scheduled daily EFS backup has since completed encrypted with its
+configured plan/role; restore remains untested. The installer README keeps each
+`Passed`, `Failed` and `NotRun` result distinct.
 
 ## From an agent (MCP)
 

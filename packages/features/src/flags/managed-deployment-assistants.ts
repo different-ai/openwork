@@ -1,8 +1,8 @@
 import { defineFeature } from "@openwork/features/define"
 
 export default defineFeature({
-  label: "Managed deployment assistants",
-  description: "Organization admins add a managed runner, Workbot, Slack assistants and optional cloud computers to OpenWork in their own AWS account.",
+  label: "Gateway-managed deployments",
+  description: "New AWS installations include the model gateway, managed runner, Workbot and Slack/Automations. Existing installations upgrade only with approval; cloud computers stay optional.",
   category: "administration",
   added: "2026-11-16",
   since: "2026-11",

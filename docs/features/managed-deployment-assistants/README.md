@@ -1,167 +1,185 @@
-# Managed deployment assistants
+# Gateway-managed AWS runtime
 
-- Feature: `managedDeploymentAssistants`
+- Feature key: `managedDeploymentAssistants` (unchanged)
+- Label: Gateway-managed deployments
 - Deployment: cloud only, off by default
 - Owner: `benjaminshafii`
 - Prerequisite: `managedDeployments`
 
-An organization owner can include a managed runner, Workbot, Slack assistants and
-optional Daytona or Freestyle computers when creating an AWS managed deployment. An existing
-installation can change these settings through a **version-increasing Update**;
-Retry cannot change them. Google Cloud and external runner URLs are not supported
-by this installer profile.
+New AWS managed installations include **Den, the native AI/model gateway, the
+managed runner, Workbot and Slack/Automations**. These are included services, not
+optional switches. Only cloud computers are optional, defaulting to **Off**;
+Daytona is preferred when choosing a provider, with Freestyle also available.
+This uses the existing native `ai_gateway_enabled` module and model gateway, not
+OpenWork Web's den-gateway and not a new gateway implementation.
 
-## Inputs and ownership
+## New creates and historical views have different defaults
 
-The AWS target accepts an optional `assistants` object. An omitted object retains
-the original deployment profile, with all capabilities off:
+AWS targets accept `runtimeProfile: "legacy" | "gateway"` in their existing JSON.
+There is no database migration.
 
-```json
-{
-  "headlessRunnerEnabled": false,
-  "workbotEnabled": false,
-  "slackAssistantEnabled": false,
-  "computerProvider": "off"
-}
-```
+- `awsTargetCreateSchema` preserves an omitted profile. Only
+  `normalizeAwsTargetForCreate(input, { gatewayByDefault })` chooses the new-create
+  default: **gateway when this caller's feature is on**, legacy otherwise.
+- `awsTargetSchema` / `normalizeAwsTargetForView` always interpret a missing
+  profile as **legacy**. Reading a historical record never upgrades or rewrites
+  it. An explicit legacy create remains core-only for client compatibility.
+- Gateway normalization sets `headlessRunnerEnabled`, `workbotEnabled` and
+  `slackAssistantEnabled` to `true`, even if legacy clients sent `false`, and
+  removes `modelProtocol`, `modelBaseUrl`, `model` and `modelSecretArn`.
+- Old direct-model fields remain parseable on historical legacy views. They are
+  not offered by the hosted form or used by the gateway profile. New legacy
+  direct-model runtimes, changes to saved legacy assistant settings, and
+  gateway-to-legacy downgrades are refused. Unchanged historical settings may
+  Retry, reopen or receive an ordinary newer Update without profile adoption,
+  behind the same authorization and feature checks.
+- GCP retains its existing target, flow and qualification boundaries; it does
+  not accept AWS runtime profiles or computer settings.
+
+## Provider setup stays inside the installation
+
+After first sign-in, the customer configures upstream model providers and their
+credentials in **Models inside the installed Den**. Slack needs the customer's
+own app and credentials in that installation's **Connectors**. The hosted form
+has no model protocol, upstream endpoint, model ID or upstream-key input.
+
+Included infrastructure does **not** mean models or Slack are configured or
+ready to answer. Provider setup and Slack credentials remain required. This
+feature does not change runtime authentication or gateway authorization scopes.
+The operator's reviewed release pins all application images, including
+`ghcr.io/different-ai/openwork-inference`; customers do not enter gateway image
+or external-gateway overrides here.
+
+## Optional computer settings
+
+The AWS `assistants` object retains these computer options:
 
 | Field | Values / requirement |
 | --- | --- |
-| `headlessRunnerEnabled` | Boolean, default `false` |
-| `workbotEnabled` | Boolean, default `false`; requires managed runner |
-| `slackAssistantEnabled` | Boolean, default `false`; requires managed runner |
-| `modelProtocol` | `anthropic`, `openai`, `openai-responses`; required for runner |
-| `modelBaseUrl` | HTTPS endpoint; no userinfo, query or fragment; required for runner |
-| `model` | Model ID; required for runner |
-| `modelSecretArn` | Customer-created plain-string Secrets Manager secret ARN; required for runner |
-| `computerProvider` | `off` (default), `daytona` (preferred when choosing computers), or `freestyle`; non-off requires runner |
-| `computerSecretArn` | Customer-created plain-string selected computer provider API key secret ARN; required only when computers are selected |
-| `computerSnapshot` | Daytona computer snapshot ID; required only for Daytona, not for runner-only or Freestyle |
-| `daytonaApiUrl` | Optional HTTPS endpoint, default `https://app.daytona.io/api`; no credentials, query or fragment |
-| `daytonaTarget` | Optional managed-installer target, default `us` |
+| `computerProvider` | `off` (default), `daytona` (preferred), or `freestyle` |
+| `computerSecretArn` | Customer-created plain-string provider API key secret ARN; required only when a computer provider is selected |
+| `computerSnapshot` | Computer snapshot ID, required only for Daytona |
+| `daytonaApiUrl` | Optional credential-free HTTPS API URL; adapter/UI default `https://app.daytona.io/api` |
+| `daytonaTarget` | Optional target; managed-installer adapter/UI default `us` |
 
-Both secret ARNs must belong to the target AWS account and region and identify a
-complete secret, without JSON-field or version selectors. Neither plaintext keys
-nor hosted OpenWork credentials are accepted. The installer injects the secret
-by reference; hosted OpenWork never reads the secret value. ARN validation cannot
-prove the referenced value is plain-string: the customer creates that secret and
+The selected computer key secret must belong to the target AWS account and
+region, using the complete Secrets Manager ARN with no JSON-field or version
+selector. Plaintext keys and hosted OpenWork credentials are not accepted.
+Hosted OpenWork receives the reference, never reads the key value, and cannot
+prove an existing secret contains a plain string. The customer owns that secret;
 ECS resolves the reference while starting the task. The installer does not read
-the value; an unavailable or invalid credential fails task startup or the real
-provider call instead of being treated as a successful installation proof.
+the value. An unavailable or invalid credential fails task startup or the real
+provider call instead of becoming successful installation evidence.
 
-The customer creates their own Slack app from **Connectors in the installed
-Den**, after installation. This form does not request Slack tokens. Daytona and
-Freestyle computers execute **outside the customer's AWS account**, with separate
-provider billing. Computers are optional: runner-only installation requires the
-model key but no computer key, snapshot or sandbox account. Selecting Daytona
-requires its computer snapshot, not an OpenWork Web image. Model use, runner
-storage and backups add charges beyond the core small profile.
+Daytona and Freestyle computers execute **outside the customer's AWS account**
+and have separate provider billing. Off requires no computer account, key or
+snapshot. The Daytona computer snapshot is distinct from an OpenWork Web image.
+The shared Terraform module's own Daytona target currently defaults empty; the
+managed installer deliberately supplies `us` without changing that module default.
 
-The managed installer explicitly selects `us` when Daytona is used and no target
-is entered. The shared Terraform module itself currently defaults `daytona.target`
-to an empty string; this feature does not change that module default.
+## Explicit approved upgrades, never automatic adoption
 
-## API and MCP
+`POST /v1/managed-deployments/:id/launch` accepts:
 
-- `POST /v1/managed-deployments`: AWS `target.assistants` configures a fresh install.
-- `POST /v1/managed-deployments/:id/launch`: `{ "kind": "update", "assistants": ... }`
-  configures an existing installation. The published version must be newer than
-  its installed version. Same-version Update, Install/Retry settings changes and
-  non-AWS settings are refused.
-- `GET /v1/managed-deployments/configuration`: `assistantsAvailable` tells MCP
-  clients whether this caller can configure assistants. The same routes and
-  permissions enforce assistant rollout for MCP and browser clients.
+```json
+{ "kind": "update", "runtimeProfile": "gateway" }
+```
 
-The deployment row is locked while checking the feature, creating a run and
-saving its target. The target is immutable for an active approval/provisioning
-run. Reopening an identical pending approval returns its exact run and handoff;
-different settings receive `deployment_settings_frozen`. There is no independent
-settings write, and expired/superseded installer runs cannot enroll. No database
-migration is needed: the settings live in the existing JSON target.
+An optional `assistants` object selects computers. `runtimeProfile` and computer
+changes are accepted only for AWS, only with a **version-increasing Update** and
+only while the feature is enabled. Install/Retry cannot change them. Omitting
+these fields on an existing legacy deployment keeps its old profile unchanged.
 
-Unconfigured legacy targets keep their existing CloudFormation parameter set.
-Explicit assistant configuration sends the twelve bootstrap parameters, including
-false/empty values for an explicit configuration. Removing an installed runner,
-its disk/backup protection or generated secrets is not an automatic Update:
-the installer refuses protected-resource deletion and requires customer-run
-manual decommissioning.
+The deployment row is locked while checking features and atomically writing its
+new target and run. A live approval/provisioning run freezes both profile and
+settings. Changed pending input answers **409 `deployment_settings_frozen`**;
+unchanged input reopens the identical run and handoff, including under concurrent
+requests. There is no settings-only write. Superseded runs cannot enroll.
 
-## Turning it off
+Gateway or explicitly selected profiles send `ManagedRuntimeProfile` with exactly
+`legacy` or `gateway`. Untouched historical legacy targets omit that new
+CloudFormation parameter, preserving older template compatibility. Gateway
+handoffs force all included runtime booleans true and clear direct model endpoint,
+model and key-ARN parameters; model protocol's historical template default is
+unused by this profile. The gateway image comes only from the operator release.
 
-The flag blocks enabling assistants and all new/reopened launches whose stored
-settings enable assistants. It never deletes services or stops billable
-resources. Existing configuration, installer progress, authenticated enrollment,
-allowlisted health reports and authentication continue to work. Previously
-issued approval commands cannot be revoked remotely; the customer controls
-execution in AWS. Use a reviewed newer Update to add or reconfigure services;
-protected disk/secret/backup removal requires manual decommissioning instead.
+MCP uses the same routes, permissions, normalization and locks.
+`configuration.assistantsAvailable` reports whether this caller may configure
+or approve the new runtime. Agent descriptions direct provider and Slack setup
+to the installed Den, not a hosted credential prompt.
 
-The UI preserves the current settings behind a lock and names the operator or
-workspace owner who can change access. Assistant settings stay frozen while an
-approval or installer run is live. Status checks recognize `runner_service`,
-`workbot_available`, `runner_storage` and `runner_backups`; a failed optional check
-degrades health without masking the core API/database/web checks.
+## Kill switch and health
 
-## Local UI evidence
+Turning the feature off blocks new gateway-profile creation, upgrades, launches
+and reopening, even when the profile is already stored. It never deletes or
+stops customer services. Already issued commands remain customer-controlled.
+Existing configuration, authentication, enrolled progress and signed health
+reporting remain available. The UI preserves the configured runtime under a
+lock and removes executable handoff links when its configuration poll sees the
+kill switch.
 
-These are real Den web captures in headless Chrome at 1440 × 1100, using a
-throwaway local MySQL database, neutral fixtures and dummy installer coordinates.
-The existing-install record was arranged locally; no AWS approval command was
-executed. They do **not** prove a live managed installation, its authentication,
-model execution, Slack delivery or computer execution.
+`ai_gateway_available` is a critical health check: failure makes infrastructure
+health **Down**; unknown/warning makes it **Degraded**. Existing runner, Workbot,
+storage and backup checks retain their allowlisted labels. These checks are not
+a claim that an upstream model provider or Slack app has been configured.
 
-Computers stay optional: with the managed runner, Workbot and Slack enabled,
-**Cloud computers (optional)** remains **Off** and no computer key or snapshot
-field is required.
+## Historical qualification failures — preserved
 
-![Managed runner without a computer provider dependency](./runner-only.png)
+On 17 November 2026, an isolated test account used registry-verified OpenWork
+`0.18.67` application digests and test-only installer versions **`0.18.71` →
+`0.18.72`**. These are not production release coordinates. The overall
+application qualification **failed**:
 
-Enabled: an owner selects preferred Daytona for an existing installation's newer
-Update, supplies its computer snapshot and customer-owned secret references, and
-sees both ownership boundaries.
+| Observation | Result |
+| --- | --- |
+| Managed CloudFormation/CodeBuild fresh core install | Passed: six real milestones and successful customer CodeBuild |
+| IAM-approved Update adding runner, Workbot and EFS/Backup | Passed: four intended services completed; core-secret fingerprints unchanged |
+| Workbot certificate expansion on the already-live install | Passed: one listener certificate cutover, both certificates issued, zero API/database/web failures across 370 HTTPS samples |
+| EFS encryption and backup | Passed: encrypted EFS; an encrypted recovery point completed with the configured backup role/vault; daily seven-day plan verified |
+| Customer model/computer keys in Terraform state | Passed: the actual external key values were absent from raw state |
+| Workbot chat | Failed: real UI login succeeded, but Send returned HTTP 403 `gateway_not_configured`; no turn was accepted |
+| Scheduled headless Automation | Failed: scheduled Cloud/headless dispatch returned `provider_unavailable` at model selection |
+| Slack assistant and Freestyle command | NotRun: no successful model turn yet; Slack app setup also remains required |
+| Further forced runner/core Update and post-Update behaviours | NotRun |
+| Scheduled daily backup occurrence | Passed: the actual configured daily plan completed an encrypted recovery point using its configured role |
+| Restore | NotRun |
+| Gateway-profile approved Update and model checks | NotRun |
 
-![Assistants enabled with model and computer secret references](./assistants-on.png)
+![Actual historical managed Workbot model-access failure, not a successful chat](./live-model-blocked.png)
 
-After **Update to 1.0.2**, the real API returned HTTP 200 with the chosen settings
-and an `update` run in `awaiting_approval`. The controls are frozen.
+These failures belong to the earlier legacy/direct configuration. The proposed
+direct-model runtime change was **cancelled before implementation**: no runtime
+PR or application images were created. The chosen architecture is now the
+included Gateway profile, reusing existing runtime policy unchanged. Its approved
+Update and real model checks are **NotRun** until the main installer owners
+complete and record them. Process/HTTPS/backup health is not inference evidence;
+the historical failures are not overwritten by the local proof below.
 
-![Assistant settings frozen for a pending customer approval](./assistants-pending.png)
+## Local UI proof and qualification boundary
 
-After the isolated administrator killed the feature through its public admin
-API, the page's configuration poll locked the unchanged settings and removed the
-command/approval links without a reload. The managed runner remains selected;
-it is not represented as remotely stopped.
+The captures below are the real Den web/API in headless Chrome with throwaway
+local MySQL and neutral fixtures. No AWS approval command was executed. A local
+historical record was arranged to exercise the upgrade flow. These captures do
+**not** certify a live AWS install, its authentication, model calls, Slack delivery,
+automation execution, optional computers or restore. The main installer owners
+retain those live gates for the exact reviewed release.
 
-![Killed feature preserves settings and blocks assistant approvals](./assistants-killed.png)
+New creation defaults to included gateway runtime; only computers are optional.
 
-## Observed managed AWS runtime boundary
+![New Gateway runtime includes services; only computers are optional](https://litter.catbox.moe/v9bjw9.png)
 
-On 17 November 2026, a real isolated managed install and IAM-approved enablement
-Update completed with fixed `0.18.67` application digests. Its certificate,
-service, EFS backup and secret-preservation checks passed. **The model path did
-not:** actual Workbot UI sign-in succeeded, but Send returned HTTP 403
-`gateway_not_configured`; the thread remained idle with zero turns. A scheduled
-headless Automation likewise failed `provider_unavailable` at model selection.
-No AI Gateway was added to disguise that incompatibility.
+Ephemeral review image (24-hour host); original retained privately.
 
-![Actual managed Workbot model-access failure, not a successful chat](./live-model-blocked.png)
+A legacy deployment stays legacy until its owner explicitly includes the gateway
+runtime in a newer, approved Update.
 
-The infrastructure health panel cannot substitute for a completed model turn.
-Full gatewayless qualification remains blocked on a separately reviewed runtime
-option and new real application checks. The migration-validator correction is
-also a separate change; this installer test's controller used official production
-bootstrap followed by its unchanged strict verifier.
+![Legacy installation requires an explicit Gateway upgrade](https://litter.catbox.moe/m2u3v0.png)
 
-## Verification and rollout
+The prepared update freezes the chosen profile and computer settings.
 
-Local schema/handoff tests and real Den API tests cover default-off behavior,
-secret boundaries, existing-install Update, identical handoff replay, immutable
-pending settings, permissions, tenant isolation and kill-switch continuity.
-These are not live AWS install, model execution, Slack delivery, computer
-execution or backup-restore receipts. Those remain separate qualification gates
-for the exact published installer/images before rollout.
+![Gateway approval freezes the reviewed runtime and computer settings](https://litter.catbox.moe/6pwzjr.png)
 
-Start with a controlled internal organization, turn on both flags, configure a
-customer-owned secret reference, and review the generated AWS permissions and
-charges before approving. Watch installer milestones and all four optional
-health checks; treat absent or stale reports as unverified, not successful.
+Killing the feature preserves that profile but locks new approvals and hides its
+command links without requiring a reload.
+
+![Feature kill blocks new approvals without changing existing services](https://litter.catbox.moe/is3j9w.png)
