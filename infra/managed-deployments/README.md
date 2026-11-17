@@ -315,6 +315,7 @@ production release coordinates. The overall application qualification **failed**
 | Gateway scheduled headless Automation | Passed: actual scheduler trigger, cloud/headless engine, linked thread, nonce/42, model token usage and successful terminal event |
 | Freestyle command | Passed after normal computer permission/snapshot setup: fresh actual UI request, matching raw bash/exit 0 and verified provider VM, repeated after `.77`; original failed turn retained |
 | Slack thread | NotRun: developer sign-in/app setup was not completed; no placeholder connector/app created |
+| Scoped cloud/provider teardown | Passed: normal Terraform plus exact retained cleanup; 114 original refs/29 detailed residual checks and 22 independent high-level checks found no remaining active/chargeable owned resources. Shared zone/original keys preserved. AWS terminal task/stack/NAT metadata may remain; local shutdown recorded separately |
 
 These failures belong to the earlier legacy/direct configuration. The chosen
 architecture is now the included Gateway profile, reusing existing runtime

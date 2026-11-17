@@ -125,7 +125,7 @@ a claim that an upstream model provider or Slack app has been configured.
 
 ## Historical qualification failures — preserved
 
-On 17 November 2026, an isolated test account used registry-verified OpenWork
+On 17 November 2026 UTC (16–17 November Pacific time), an isolated test account used registry-verified OpenWork
 `0.18.67` application digests and test-only installer versions **`0.18.71` →
 `0.18.72`**. These are not production release coordinates. The overall
 application qualification **failed**:
@@ -195,6 +195,39 @@ observed after the Update. Identity correlation uses the runtime's stable sessio
 slug; no provider per-command execution receipt is claimed. Computer permission
 was enabled through the installed Den's normal operator controls for only the
 synthetic owner, with no kill-switch, lock or Gateway-authorization bypass.
+
+## Recorded scoped teardown
+
+Normal Terraform destroy completed after applying only the reviewed supported
+same-ID disposable-test database settings. No migration, source guard, state or
+IAM bypass was applied. Retained resources were reconciled separately against
+frozen exact identities; empty Terraform state alone did not count as absence.
+
+The cloud audit covers 114 original references and 29 residual checks, plus 22
+independent high-level checks. No remaining active/chargeable owned resources or
+unknown findings were observed in that scope. Both owned recovery points and
+vault, five AWS secrets, eight managed DNS records, three historical certificates,
+all owned compute/data/network/IAM/log/bootstrap resources, and both buckets were
+removed. The public bucket's 27 versions and the retained state bucket's 61
+versions/18 markers were purged only after Terraform finished. The shared root
+zone, original upstream/Infisical keys, stock computer snapshot, global roles and
+AWS-managed keys were excluded and preserved.
+
+The owned Freestyle VM, private prepared snapshot and builder each had provider
+absence verified. Separate local receipts verify the owned API/controller,
+Redis/tunnel/browser and recorded UI-test processes stopped, the exact test
+MySQL container/volume removed, and known ports closed. Ten synthetic local
+credential/control files were removed without logging their values; original
+SSO/Infisical/upstream keys and other user processes were left untouched.
+Neutral proof records, screenshots and manifests remain preserved.
+
+AWS can retain terminal history: last observation showed 18 task-definition
+revisions in `DELETE_IN_PROGRESS`, zero `ACTIVE`; inactive cluster/service,
+stopped-task, deleted-NAT and deleted-stack history may remain. This is not a
+claim of total metadata erasure, account-wide absence, zero cost or a final bill.
+The original denied vault Describe was not treated as absence: a separate
+successful paginated exact-name vault list established it. All failed attempts
+and original proof hashes remain preserved.
 
 ## Local UI proof and qualification boundary
 
