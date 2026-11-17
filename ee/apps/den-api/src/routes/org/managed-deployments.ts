@@ -22,7 +22,7 @@ import { markFeaturesUsed } from "../../feature-usage.js"
 import { awsRelease, gcpRelease, releaseReadiness, type ManagedDeploymentRelease } from "../../managed-deployments/config.js"
 import { jsonValidator, orgPermissionRoute, paramValidator, tokenRoute } from "../../middleware/index.js"
 import { jsonResponse } from "../../openapi.js"
-import { checkRateLimit } from "../../utils/rate-limit.js"
+import { checkFixedWindowRateLimit, checkRateLimit } from "../../utils/rate-limit.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const PATH = "/v1/managed-deployments"
@@ -408,7 +408,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const [row] = await db.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, deploymentId)).limit(1)
       if (!row || (row.provider !== "aws" && row.provider !== "gcp")) return c.json({ error: "deployment_not_found" }, 404)
       if (row.provider === "gcp" && !report.data.nonce) return c.json({ error: "invalid_report" }, 400)
-      const retryAfter = await checkRateLimit(`managed-heartbeat:${deploymentId}`, 30, 60 * 60_000, Date.now())
+      const retryAfter = await checkFixedWindowRateLimit(`managed-heartbeat:${deploymentId}`, 30, 60 * 60_000, Date.now())
       if (retryAfter !== null) {
         c.header("Retry-After", String(retryAfter))
         return c.json({ error: "rate_limited" }, 429)
