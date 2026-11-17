@@ -193,12 +193,53 @@ Names and defaults are from [celld's docs](https://celld.dev/docs) (v0.6.3):
   before celld cancels its work.
 - Platform shutdown grace above `CELLD_SHUTDOWN_TOTAL_MS` (default 40 s), or SIGKILL cuts the cell handoff.
 - At least 2 nodes, for failover.
+- Nodes built from the same celld release as `CELLD_VERSION` in `.github/workflows/celld-runner-deploy.yml`. The
+  nodes are built by the host (Render's build command), not by the deploy workflow, so the two can drift.
+- The host's health check on `/.well-known/celld/health` (public listener): it answers 503 while a node drains and
+  until a joining node has settled, so a rollout waits for each replacement.
 - A supervisor that always restarts, with no attempt limit: a node that loses its lease exits, and only a restart
   brings it back.
 - A backup outside the live bucket. celld's replication copies bad writes and deletes too. On S3, use versioning plus
   replication to a second bucket (expire noncurrent versions, or epoch GC frees no space). R2 has no versioning: use
   dated snapshots in a second bucket ([Backups and restore](#backups-and-restore)).
 - `HEADLESS_COMPUTER=off` until the computer is verified on celld (see [Check it](#check-it)).
+
+## When a node is full
+
+celld closes a node to new cells once its memory passes a ceiling (`CELLD_MAX_RSS_MB`; unset, 80% of the machine) and
+reopens it only below 80% of that ceiling (64% of the machine). While it is closed:
+
+- A **new** cell that reaches it is handed to the least loaded node with room, so new conversations still start.
+- A **hibernated** cell wakes only on the node that owns it. Every conversation the closed node owns stops answering
+  until the node is back under its reopen line, or until balancing has moved the cell away (at most 32 idle cells
+  per round, and by cell count, not by memory). The other nodes being idle does not help.
+- celld holds each such request for `CELLD_OPERATION_DEADLINE_MS` (15 s) and then fails it with
+  `route failed: CapacityExhausted`.
+
+Adding nodes does not empty a full node, and an autoscaler that reads the fleet average does not see one: with one
+node at 86% and three near 20%, the average is 33%.
+
+**What callers get.** The router answers `503 { "error": "cell_unavailable", "reason": "capacity_exhausted" }` with
+`Retry-After: 5` (`src/worker/route-failure.ts`): nothing of the request ran, so sending it again is safe. The same
+answer, with its own `reason`, covers a node that is restarting or lost its lease (`node_fenced`, `node_unavailable`,
+`owner_unreachable` and the other route failures). Callers wait 20 s for an answer, longer than celld's 15 s, so they
+receive it instead of timing out first. With `HEADLESS_SENTRY_DSN`, these are reported as the warning
+`cell_unavailable`, one issue per reason, apart from `request_failed`.
+
+**What to do.**
+
+1. Confirm which node: `.github/workflows/celld-fleet-health.yml` runs every 15 minutes and names it (run it by hand
+   for a fresh reading). It alerts in Slack when a node passes 75% of its memory, when celld reports a node under
+   pressure, when requests were refused, or when only one node is left.
+2. Before restarting, record what is using the memory, on that node: `curl -s 127.0.0.1:8081/state` (celld's
+   internal listener). `node_load` has `resident_cells`, `rss_bytes` and `in_use_bytes`; `allocator`, `libc_malloc`
+   and `deployment.isolates` (`heap_bytes`, `external_bytes`, `retiring`) say whether it is cells, V8 heaps or native
+   memory. A `retiring` count that stays up means a turn or a request still holds a heap.
+3. Restart that node with a normal stop (SIGTERM; on Render, restart the instance). It hands every cell to the other
+   nodes at once, and the conversations answer again.
+4. If nodes fill up regularly, close them earlier and more gently with `CELLD_MAX_RESIDENT_CELLS`: at that cap a
+   node sheds its least recently used idle cell to admit the next one, instead of refusing until memory falls. Size
+   it from step 2: the cap times the memory per resident cell must stay under the ceiling.
 
 ## Step mode: turns that outlast a deploy
 

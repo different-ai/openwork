@@ -16,6 +16,7 @@ import { CellCallError, INTERNAL_PATHS, SESSION_CELL_ID, SessionCells, sessionCe
 import { localMemory } from "../memory.js"
 import { serviceHealthResponse } from "../service-health.js"
 import { durableObjectSql } from "./sql.js"
+import { CELL_UNAVAILABLE, CELL_UNAVAILABLE_RETRY_SECONDS, cellRouteFailure, type CellRouteFailure } from "./route-failure.js"
 
 /**
  * The runner on celld (or any Durable Objects host): the same HTTP API as the Node server, so callers keep their URL
@@ -438,7 +439,7 @@ function reporterFor(config: Config) {
   return reporter
 }
 /** Reports a router failure (the route and error type, never the request); a no-op without HEADLESS_SENTRY_DSN. */
-function reportRouterError(c: Context<{ Bindings: CellEnv }>, error: Error) {
+function reportRouterError(c: Context<{ Bindings: CellEnv }>, error: Error, unavailable: CellRouteFailure | null = null) {
   let config: Config
   try {
     config = configFor(c.env)
@@ -448,7 +449,11 @@ function reportRouterError(c: Context<{ Bindings: CellEnv }>, error: Error) {
   }
   const reporter = reporterFor(config)
   if (!reporter.enabled) return
-  const sent = reporter.report({ code: "request_failed", tags: { route: routePath(c), method: c.req.method }, error })
+  // An unreachable cell is its own issue, a warning, grouped by reason: a full node answers this way for every
+  // conversation it owns, and that must not drown the reports of real failures.
+  const sent = unavailable
+    ? reporter.report({ code: CELL_UNAVAILABLE, kind: `${CELL_UNAVAILABLE}:${unavailable.reason}`, level: "warning", tags: { reason: unavailable.reason, route: routePath(c), method: c.req.method } })
+    : reporter.report({ code: "request_failed", tags: { route: routePath(c), method: c.req.method }, error })
   try {
     c.executionCtx.waitUntil(sent)
   } catch {
@@ -456,6 +461,14 @@ function reportRouterError(c: Context<{ Bindings: CellEnv }>, error: Error) {
   }
 }
 router.onError((error, c) => {
+  const unavailable = cellRouteFailure(error)
+  if (unavailable) {
+    // The host could not reach the cell, so nothing of the request ran: tell the caller to send it again, instead of
+    // an internal error it cannot tell from a bug (route-failure.ts).
+    console.warn("[headless-cells] cell unavailable", { path: c.req.path, reason: unavailable.reason })
+    reportRouterError(c, error, unavailable)
+    return c.json({ error: CELL_UNAVAILABLE, reason: unavailable.reason }, 503, { "Retry-After": String(CELL_UNAVAILABLE_RETRY_SECONDS), "Cache-Control": "no-store" })
+  }
   console.error("[headless-cells] request failed", { path: c.req.path, error: error.message })
   reportRouterError(c, error)
   return c.json({ error: "internal_error" }, 500)
