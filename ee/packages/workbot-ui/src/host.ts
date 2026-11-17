@@ -53,6 +53,8 @@ export type WorkbotHost = {
   documentAuthorization?: "signin" | "blocked" | "disabled"
   /** Moves Devices into the profile as Computers (`workbotProfileComputers`). Off when unset. */
   profileComputers?: boolean
+  /** Devices rows say what Workbot is doing on each computer (`workbotDeviceActivity`). Off when unset. */
+  deviceActivity?: boolean
   /**
    * The calm chat look: a labelled sidebar, Workbot's name and status as one pill, a narrower column, replies as plain
    * text, and compact browser and file cards (`workbotCalmChat`). Looks only; off when unset.

@@ -16,6 +16,7 @@ import {
   ORGANIZATION_COMPUTER_STALE_MS,
   REMOTE_DEVICE_DESKTOP_RETENTION_MS,
   REMOTE_DEVICE_ONLINE_WINDOW_MS,
+  REMOTE_DEVICE_WORKING_MAX_MS,
   remoteDeviceAvailability,
   type OrganizationComputerRecord,
   type OrganizationComputerDetailResponse,
@@ -171,11 +172,22 @@ function quietSince(lastSeenAt: Date | null, now: number, ms: number) {
   return lastSeenAt === null || now - lastSeenAt.getTime() > ms
 }
 
+/**
+ * Since when Workbot has been working in a Workbot computer's chat, from the
+ * runner's own report of its running turn. A turn Den never heard end stops
+ * counting after a day.
+ */
+function workingSinceOf(row: Pick<DeviceRow, "provider">, activeTurnSince: Date | null | undefined, now: number): string | null {
+  if (row.provider !== "workbot" || !activeTurnSince) return null
+  return now - activeTurnSince.getTime() <= REMOTE_DEVICE_WORKING_MAX_MS ? activeTurnSince.toISOString() : null
+}
+
 function deviceView(row: DeviceRow, input: {
   viewer: RemoteDeviceActor
   canManageShared: boolean
   runner: RunnerFacts | null
-  title: string | null
+  /** Den's index row for a Workbot computer's chat; null for every other computer. */
+  session: WorkbotSession | null
   disconnectedAt: Date | null
   /** The viewer's own policy: every desktop they see is theirs. Null when none of them takes tasks. */
   policy: RemoteSessionAccessPolicy | null
@@ -192,7 +204,7 @@ function deviceView(row: DeviceRow, input: {
     provider: row.provider,
     source: row.source,
     platform: row.platform,
-    label: labelOf(row, input.title),
+    label: labelOf(row, input.session?.title || null),
     access: mine ? "mine" : "shared",
     availability: disconnected ? "offline" : availabilityOf(row, lastSeenAt, input.now),
     state: row.state,
@@ -202,6 +214,7 @@ function deviceView(row: DeviceRow, input: {
     appVersion: input.runner?.appVersion ?? row.appVersion,
     computerId: row.kind === "desktop" && input.runner?.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY) ? row.externalId : null,
     workbotChat: row.workbotChat,
+    workingSince: workingSinceOf(row, input.session?.activeTurnSince, input.now),
     // Desktops name themselves and Workbot's computers are named after their chat.
     canRename: manages && row.source === "manual",
     canRemove: manages && (!signedIn || disconnected || quietSince(lastSeenAt, input.now, REMOTE_DEVICE_DESKTOP_RETENTION_MS)),
@@ -287,32 +300,35 @@ async function runnerFacts(ids: readonly string[]): Promise<Map<string, RunnerFa
   return new Map(rows.map((row) => [row.id, { lastSeenAt: row.lastSeenAt, capabilities: row.capabilities ?? [], appVersion: row.appVersion, sessionAccess: row.sessionAccess }]))
 }
 
-async function sessionTitles(devices: readonly DeviceRow[]): Promise<Map<string, string>> {
-  const workbot = devices.filter((row) => row.provider === "workbot" && row.workbotChat !== "main" && row.ownerMemberId !== null)
+type WorkbotSession = { title: string; activeTurnSince: Date | null }
+
+/** Den's index rows for the chats Workbot's computers belong to: the chat's name and the turn running in it. */
+async function workbotSessions(devices: readonly DeviceRow[]): Promise<Map<string, WorkbotSession>> {
+  const workbot = devices.filter((row) => row.provider === "workbot" && row.ownerMemberId !== null)
   if (workbot.length === 0) return new Map()
   // Never enrich a forged or historical device row from another tenant/member's session.
-  const rows = await db.select({ deviceId: RemoteDeviceTable.id, title: HeadlessSessionIndexTable.title })
+  const rows = await db.select({ deviceId: RemoteDeviceTable.id, title: HeadlessSessionIndexTable.title, activeTurnSince: HeadlessSessionIndexTable.activeTurnSince })
     .from(RemoteDeviceTable).innerJoin(HeadlessSessionIndexTable, and(
       eq(HeadlessSessionIndexTable.sessionId, RemoteDeviceTable.externalId),
       eq(HeadlessSessionIndexTable.organizationId, RemoteDeviceTable.organizationId),
       eq(HeadlessSessionIndexTable.memberId, RemoteDeviceTable.ownerMemberId),
       eq(HeadlessSessionIndexTable.kind, "workbot"),
     )).where(inArray(RemoteDeviceTable.id, workbot.map((row) => row.id)))
-  return new Map(rows.filter((row) => row.title).map((row) => [row.deviceId, row.title]))
+  return new Map(rows.map((row) => [row.deviceId, { title: row.title, activeTurnSince: row.activeTurnSince }]))
 }
 
 /** What a member's view of these rows needs besides the rows; `actor` is the member whose list it is. */
 async function related(rows: readonly DeviceRow[], actor: RemoteDeviceActor) {
-  const [runners, titles, disconnections] = await Promise.all([
+  const [runners, sessions, disconnections] = await Promise.all([
     runnerFacts(rows.filter((row) => row.kind === "desktop").map((row) => row.externalId)),
-    sessionTitles(rows),
+    workbotSessions(rows),
     deviceDisconnections(rows.filter((row) => row.provider === DESKTOP_PROVIDER).map((row) => row.id)),
   ])
   // Read only when one of their desktops takes tasks from other devices.
   const policy = rows.some((row) => row.ownerMemberId === actor.memberId && takesRemoteTasks(row, runners.get(row.externalId) ?? null, disconnections.has(row.id)))
     ? await readRemoteSessionAccessPolicy(actor.organizationId, { memberId: actor.memberId })
     : null
-  return { runners, titles, disconnections, policy }
+  return { runners, sessions, disconnections, policy }
 }
 
 function visibleTo(actor: RemoteDeviceActor) {
@@ -330,12 +346,12 @@ export async function listMemberRemoteDevices(actor: RemoteDeviceActor, options:
   const now = options.now ?? new Date()
   await syncDesktopsFromRunners({ organizationId: actor.organizationId, memberId: actor.memberId }, now)
   const rows = await db.$primary.select().from(RemoteDeviceTable).where(visibleTo(actor)).limit(500)
-  const { runners, titles, disconnections, policy } = await related(rows, actor)
+  const { runners, sessions, disconnections, policy } = await related(rows, actor)
   const stale = now.getTime() - REMOTE_DEVICE_DESKTOP_RETENTION_MS
   const recent = (at: string | null) => at !== null && Date.parse(at) >= stale
   return rows
     .map((row) => deviceView(row, {
-      viewer: actor, canManageShared: options.canManageShared, runner: runners.get(row.externalId) ?? null, title: titles.get(row.id) ?? null,
+      viewer: actor, canManageShared: options.canManageShared, runner: runners.get(row.externalId) ?? null, session: sessions.get(row.id) ?? null,
       disconnectedAt: disconnections.get(row.id) ?? null, policy, now: now.getTime(),
     }))
     // A desktop nobody has heard from in a month is gone, as its runner registration is; a disconnected one a month after that.
@@ -351,9 +367,9 @@ async function visibleRow(actor: RemoteDeviceActor, deviceId: DeviceId, database
 }
 
 async function viewOne(row: DeviceRow, actor: RemoteDeviceActor, canManageShared: boolean, now: Date) {
-  const { runners, titles, disconnections, policy } = await related([row], actor)
+  const { runners, sessions, disconnections, policy } = await related([row], actor)
   return deviceView(row, {
-    viewer: actor, canManageShared, runner: runners.get(row.externalId) ?? null, title: titles.get(row.id) ?? null,
+    viewer: actor, canManageShared, runner: runners.get(row.externalId) ?? null, session: sessions.get(row.id) ?? null,
     disconnectedAt: disconnections.get(row.id) ?? null, policy, now: now.getTime(),
   })
 }
@@ -829,7 +845,7 @@ async function organizationComputerViews(
   const runnerOf = (row: OrganizationComputerRow) => row.runnerCapabilities ? { capabilities: row.runnerCapabilities, sessionAccess: row.runnerSessionAccess } : null
   // The policy is each owner's own (features can be on for some members only): one batched read for the page.
   const taskOwners = rows.flatMap((row) => row.device.ownerMemberId && takesRemoteTasks(row.device, runnerOf(row), row.disconnectedAt !== null) ? [row.device.ownerMemberId] : [])
-  const [problems, lastEvents, policies] = await Promise.all([
+  const [problems, lastEvents, policies, sessions] = await Promise.all([
     ids.length === 0 ? [] : db.select({ deviceId: RemoteDeviceEventTable.deviceId, total: sql<number>`count(*)` }).from(RemoteDeviceEventTable)
       .where(and(eq(RemoteDeviceEventTable.organizationId, organizationId), inArray(RemoteDeviceEventTable.deviceId, ids), inArray(RemoteDeviceEventTable.level, ["warning", "error"]), gte(RemoteDeviceEventTable.createdAt, since)))
       .groupBy(RemoteDeviceEventTable.deviceId),
@@ -837,6 +853,7 @@ async function organizationComputerViews(
     Promise.all(ids.map(async (id) => (await db.select().from(RemoteDeviceEventTable).where(and(eq(RemoteDeviceEventTable.organizationId, organizationId), eq(RemoteDeviceEventTable.deviceId, id)))
       .orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(1))[0] ?? null)),
     readRemoteSessionAccessPolicies(organizationId, taskOwners),
+    workbotSessions(rows.map((row) => row.device)),
   ])
   const problemCount = new Map(problems.map((row) => [row.deviceId, Number(row.total)]))
   return rows.map((row, index) => {
@@ -862,6 +879,7 @@ async function organizationComputerViews(
       appVersion: row.runnerAppVersion ?? device.appVersion,
       computerId: device.kind === "desktop" && row.runnerCapabilities?.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY) ? device.externalId : null,
       workbotChat: device.workbotChat,
+      workingSince: workingSinceOf(device, sessions.get(device.id)?.activeTurnSince, now.getTime()),
       organization: { id: device.organizationId, name: row.organizationName ?? "Deleted organization" },
       owner: device.ownerMemberId ? { memberId: device.ownerMemberId, name: row.ownerName, email: row.ownerEmail, former } : null,
       shared: device.ownerMemberId === null,

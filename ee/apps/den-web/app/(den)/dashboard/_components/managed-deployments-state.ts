@@ -1,6 +1,16 @@
 import type { ManagedDeployment } from "@openwork/types/den/managed-deployments";
 
 export type DeploymentTone = "neutral" | "warning" | "danger";
+
+/** Settings are part of a customer-approved newer run, never a mutable handoff. */
+export function assistantSettingsState(deployment: ManagedDeployment, enabled: boolean, canManage: boolean): { editable: boolean; reason: string | null } {
+  if (!enabled) return { editable: false, reason: "Gateway-managed runtimes aren't enabled for this workspace. Ask your OpenWork operator to enable them. Existing services and health reports are unchanged; new gateway-runtime approvals are blocked." };
+  if (!canManage) return { editable: false, reason: "Read only. A workspace owner or someone with deployment management access can change the runtime profile or computers." };
+  const run = deployment.run;
+  if (run && !run.expired && (run.state === "awaiting_approval" || run.state === "provisioning")) return { editable: false, reason: "The runtime profile and computer settings are frozen for this approval. They can change with the next version-increasing Update." };
+  if (!deployment.installedVersion || !deployment.updateAvailable) return { editable: false, reason: "The runtime profile and computers can change when a newer installer is available. Retry keeps the approved settings." };
+  return { editable: true, reason: null };
+}
 export type ProviderReadiness = {
   provider: "aws" | "gcp" | "azure";
   available: boolean;

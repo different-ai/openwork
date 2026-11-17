@@ -2,6 +2,7 @@ import {
   BarChart3,
   Box,
   CalendarClock,
+  Gauge,
   Radar,
   Globe,
   Laptop,
@@ -38,6 +39,7 @@ import {
   getMcpConnectionsRoute,
   getMembersRoute,
   getMyComputersRoute,
+  getMyUsageRoute,
   getOrgSettingsRoute,
   getPermissionsRoute,
   getPluginsRoute,
@@ -147,6 +149,10 @@ export function buildDashboardNavSections({
     // Every member sees their own and shared computers; the team-wide list is Manage › Computers.
     ...(orgSlug
       ? [{ href: getMyComputersRoute(orgSlug), label: "My Computers", icon: MonitorSmartphone, testId: "dashboard-nav-my-computers" }]
+      : []),
+    // Every member's own usage; needs no permission.
+    ...(orgSlug
+      ? [{ href: getMyUsageRoute(orgSlug), label: "My Usage", icon: Gauge, testId: "dashboard-nav-my-usage" }]
       : []),
     ...(showWeb
       ? [{ href: orgSlug ? getWebRoute(orgSlug) : "#", label: "OpenWork Web", icon: Globe }]
@@ -259,6 +265,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   "My Computers": ["devices", "my devices", "laptop", "desktop", "virtual computers", "workbot computer", "remote access", "other devices", "tasks"],
   "My bot": ["agent", "my agent", "morning brief", "meeting prep", "proactive", "notifications"],
   "My Library": ["skills", "plugins", "connections"],
+  "My Usage": ["usage", "spend", "cost", "limits", "budget", "tokens", "prices", "models"],
   "OpenWork Models": ["llm", "provider", "managed", "inference"],
   "OpenWork Web": ["cloud", "sessions"],
   Plugins: ["skills", "commands", "plugin directory"],

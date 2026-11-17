@@ -6,8 +6,8 @@ import { parseMySqlConnectionConfig } from "../src/mysql-config.ts"
 import { ensureSchemaRepairs, type Executor } from "../src/schema-repairs.ts"
 import {
   MigrationSafetyError, foundationSql, historyPrefix, inspectSchema, journalTable,
-  loadMigrationPlan, planAuthLookupIndexRepairs, preflightRepairs, recognizeBaseline, record, recovery,
-  schemaDifferences, snapshotShape, stateTable, type MigrationPlan,
+  loadMigrationPlan, physicalSchemaShape, planAuthLookupIndexRepairs, preflightRepairs, recognizeBaseline, record, recordedSchemaLayout, recovery,
+  schemaDifferences, snapshotShape, stateTable, type MigrationPlan, type PhysicalSchemaLayout,
 } from "./migration-baseline.ts"
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
@@ -95,10 +95,10 @@ export async function migrateLocalDatabase(executor: Executor, plan: MigrationPl
       for (const repair of lookupRepairs) plannedShape.set(repair.key, repair.definition)
       applied = recognizeBaseline(plan, plannedShape)
     }
+    let physicalLayout: PhysicalSchemaLayout = "historical-replay"
     if (!empty && !baseline) {
-      const snapshot = plan[applied - 1]?.snapshot
-      if (!snapshot) throw new MigrationSafetyError(`No known snapshot for the recorded history prefix. ${recovery}`)
-      const differences = schemaDifferences(snapshotShape(snapshot), shape)
+      physicalLayout = recordedSchemaLayout(plan, applied, shape)
+      const differences = schemaDifferences(physicalSchemaShape(plan, applied, physicalLayout), shape)
       if (differences.length) throw new MigrationSafetyError(`Schema differs from its recorded migration (${differences.slice(0, 8).join(", ")}). ${recovery}`)
     }
     if (empty && applied) throw new MigrationSafetyError(`Migration receipts exist but the application schema is empty. ${recovery}`)
@@ -146,10 +146,8 @@ export async function migrateLocalDatabase(executor: Executor, plan: MigrationPl
     }
     await executor.query(`UPDATE \`${stateTable}\` SET step='schema-repairs' WHERE id=1`)
     await ensureSchemaRepairs(executor)
-    const finalSnapshot = plan[plan.length - 1]?.snapshot
-    if (!finalSnapshot) throw new MigrationSafetyError("Missing final migration snapshot")
     const finalShape = (await inspectSchema(executor)).shape
-    const differences = schemaDifferences(snapshotShape(finalSnapshot), finalShape)
+    const differences = schemaDifferences(physicalSchemaShape(plan, plan.length, physicalLayout), finalShape)
     if (differences.length) throw new MigrationSafetyError(`Replay schema differs from the final snapshot (${differences.slice(0, 8).join(", ")}). ${recovery}`)
     const recorded = historyPrefix(plan, await executor.query(`SELECT hash, created_at FROM \`${journalTable}\` ORDER BY id`))
     if (recorded !== plan.length) throw new MigrationSafetyError(`Final migration receipts are incomplete. ${recovery}`)

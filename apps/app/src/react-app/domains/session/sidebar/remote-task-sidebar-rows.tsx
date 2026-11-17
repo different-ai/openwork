@@ -44,9 +44,11 @@ function useRemoteTaskRowsKey(sessionId: string): string {
  * The title sits on the sidebar's label lane, the same left edge as the chat
  * title above it, with no glyph of its own. Only tasks this window follows.
  */
-export function RemoteTaskSidebarRows({ sessionId, sessionTitle, onOpen }: {
+export function RemoteTaskSidebarRows({ sessionId, sessionTitle, depth = 0, onOpen }: {
   sessionId: string;
   sessionTitle: string;
+  /** How far the chat's own row is nested, so its tasks line up under its title. */
+  depth?: number;
   onOpen: (routeId: string) => void;
 }) {
   const key = useRemoteTaskRowsKey(sessionId);
@@ -62,7 +64,7 @@ export function RemoteTaskSidebarRows({ sessionId, sessionTitle, onOpen }: {
           isActive={selected}
           aria-label={`${row.title}, ${row.word}`}
           className="relative h-8 w-full gap-2 rounded-md pe-2.5 text-start text-[13px] text-sidebar-foreground/70 group-hover/menu-sub-item:bg-black/[0.05] data-active:bg-black/[0.07] data-active:text-sidebar-foreground dark:group-hover/menu-sub-item:bg-white/[0.09] dark:data-active:bg-white/[0.12]"
-          style={{ paddingInlineStart: sidebarRowPaddingInlineStart(0) + LABEL_LANE_OFFSET_PX }}
+          style={{ paddingInlineStart: sidebarRowPaddingInlineStart(depth) + LABEL_LANE_OFFSET_PX }}
           onClick={() => {
             const entry = useRemoteThreadStore.getState().threads[row.threadKey];
             const owner = entry ? Object.values(entry.owners).find((candidate) => candidate.sessionId === sessionId) : undefined;

@@ -17,10 +17,12 @@ import type {
   ConfigPlanItem,
   ConfigPlanOp,
   ConfigPlanRef,
+  ConfigPlanRefTargets,
   ConfigSecretInput,
   ConfigSpec,
 } from "@openwork/types/den/config-blobs"
 import {
+  CONFIG_AREA_KEYS,
   CONFIG_BLOB_MAX_ITEMS,
   CONFIG_BLOB_MAX_ITEMS_PER_AREA,
   CONFIG_BLOCKING_FLAGS,
@@ -47,7 +49,7 @@ import {
 } from "./refs.js"
 import { namePeopleByEmail } from "./people.js"
 import { checkSecretFields, findSecrets, planSecrets, redactRawSecrets, replacesSecretValue, type ExecutionSecret } from "./secrets.js"
-import { isPlainObject, sha256, typeIdPrefix } from "./util.js"
+import { isPlainObject, normalizeEmail, sha256, typeIdPrefix } from "./util.js"
 
 
 export type BuildPlanInput = {
@@ -230,12 +232,17 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
 
   // `people/<member id>` (exports for callers who may not read emails) compares as the member's email here.
   const blobAreas = input.people ? namePeopleByEmail(input.blobAreas, input.people) : input.blobAreas
+  // Natural keys behind a feature are used only while it is on.
   const ordered = sortAreas(input.areas)
   const areaByKey = new Map(ordered.map((area) => [area.key, area]))
   const scope = new Set(input.scope)
   for (const key of input.scope) if (!areaByKey.has(key)) addError(`area ${key} is not available on this server`, key)
   for (const key of Object.keys(blobAreas)) {
     if (!input.scope.some((scoped) => scoped === key)) issues.push({ level: "warning", message: `area ${key} is in the blob but not in its scope: ignored` })
+  }
+  if (decisions.reusedFrom) {
+    const answers = decisions.matches.length + decisions.refs.length + decisions.skips.length + decisions.renames.length
+    issues.push({ level: "info", message: `${answers} ${answers === 1 ? "answer was" : "answers were"} reused from an earlier import of this source (${decisions.reusedFrom}): what was left out, pointed elsewhere, matched or renamed then is answered the same way here. Change any of them in this review.` })
   }
   if (input.mode === "merge" && decisions.deletes.length > 0) issues.push({ level: "warning", message: "deletes are ignored in merge mode" })
 
@@ -429,6 +436,20 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
   const overrides = new Set(decisions.overrides.map((entry) => skippedKey(entry.area, entry.ref)))
   const renames = new Map(decisions.renames.map((entry) => [skippedKey(entry.area, entry.ref), entry.name]))
 
+  // A person most items reference by email alone is shown by the name the file's own people list gives them.
+  // Display only: the name is not part of the item, its diff or the plan hash.
+  const blobPeopleNames = new Map<string, string>()
+  for (const person of blobAreas[PEOPLE_AREA]?.items ?? []) {
+    const email = person.spec.email
+    if (typeof email === "string" && person.name) blobPeopleNames.set(normalizeEmail(email), person.name)
+  }
+  const namedPersonRef = (ref: ConfigPlanRef): ConfigPlanRef => {
+    if (ref.name !== undefined) return ref
+    const parsed = parseConfigRef(ref.ref)
+    const name = parsed?.area === "people" ? blobPeopleNames.get(normalizeEmail(parsed.target)) : undefined
+    return name === undefined ? ref : { ...ref, name }
+  }
+
   // References into areas the caller can't view: ids stay, names and reasons go.
   const visibleAreas = input.visibleAreas
   const hiddenRef = (ref: string): boolean => {
@@ -535,7 +556,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
       item.fields = fields
 
       const writes = item.op === "create" || item.op === "update" || item.op === "rename"
-      if (refs.length) item.refs = refs.map((ref) => planRefView(toPlanRef(ref), hiddenRef(ref.ref)))
+      if (refs.length) item.refs = refs.map((ref) => planRefView(namedPersonRef(toPlanRef(ref)), hiddenRef(ref.ref)))
       if (writes) {
         const unresolved = refs.filter((ref) => ref.resolution.kind === "unresolved")
         if (unresolved.length) {
@@ -586,6 +607,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
           : { area: area.key, ref: match.ref, kind: "create", op: "create", matchedBy: match.matchedBy, item: execItem, refs, secrets: secrets.execution, name: blob.name, changes: [], secretPaths: [], irreversible: [], ...(preferredId ? { preferredId } : {}) }
         setIrreversible(area, item, draft.exec, decisions)
         applyVerdict(item, preflight.get(key))
+        if (decisions.createMissing === false && draft.exec.kind === "create") applyVerdict(item, { block: MATCH_ONLY_BLOCK })
         draft.uniqueProbe = { id: match.target?.id ?? blobItemAsConfigItem(blob, match.index).id, key: blob.key ?? match.target?.key ?? null, name: blob.name, spec: localized }
       }
     }
@@ -652,6 +674,26 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         if (value === null || (counts.get(value) ?? 0) < 2) continue
         if (!draft.item.flags.includes("collision.unique")) draft.item.flags.push("collision.unique")
         draft.item.reasons = [...(draft.item.reasons ?? []), `another item already has ${unique.label} "${value}": rename this one, match it to the existing item, or skip it`]
+      }
+    }
+  }
+
+  // Creates of one import that can't both exist (see `uniqueAmongCreates`).
+  for (const state of states) {
+    if (!state.match || !state.area.uniqueAmongCreates?.length) continue
+    const creates = (blobDrafts.get(state.area.key) ?? []).filter((draft) => draft.exec?.kind === "create" && draft.uniqueProbe)
+    for (const unique of state.area.uniqueAmongCreates) {
+      const counts = new Map<string, number>()
+      const valueOf = (draft: Draft) => draft.uniqueProbe ? unique.get(draft.uniqueProbe) : null
+      for (const draft of creates) {
+        const value = valueOf(draft)
+        if (value !== null) counts.set(value, (counts.get(value) ?? 0) + 1)
+      }
+      for (const draft of creates) {
+        const value = valueOf(draft)
+        if (value === null || (counts.get(value) ?? 0) < 2) continue
+        if (!draft.item.flags.includes("collision.unique")) draft.item.flags.push("collision.unique")
+        draft.item.reasons = [...(draft.item.reasons ?? []), `this import creates more than one item with ${unique.label} "${draft.item.blob?.name ?? value}": rename this one or skip it`]
       }
     }
   }
@@ -755,6 +797,8 @@ export function withInviteEmails(execution: ExecutionPlan, send: boolean): Execu
   return { ...execution, ops: execution.ops.map((op) => withInviteEmail(op, send)) }
 }
 
+const MATCH_ONLY_BLOCK = "This import only changes what already exists, and nothing here matches this item: choose the item it is, or leave it out."
+
 /** A preflight `block` (the `blocked` flag and its reason) and warnings on a planned write. */
 function applyVerdict(item: ConfigPlanItem, verdict: ConfigPreflightResult | undefined): void {
   if (!verdict) return
@@ -779,10 +823,48 @@ function sharedTypeIdPrefix(items: readonly ConfigItem[]): string | null {
 }
 
 /** A plan ref as the caller sees it: for areas they can't view, no name hint. */
+/**
+ * What a reference left to the admin could be pointed at, in the areas the
+ * file does not carry: the organization's own items there, named. The items
+ * of an area in scope are already in the plan; without this list a file that
+ * holds only part of an organization could offer nothing but leaving a
+ * reference out. Never an area the plan's author may not view. Display only:
+ * built after the plan, outside its hash.
+ */
+export function planRefTargets(plan: ConfigPlan, input: {
+  scope: readonly ConfigAreaKey[]
+  targetItems: ReadonlyMap<ConfigAreaKey, readonly ConfigItem[]>
+  /** Current members: member id → what they are called. */
+  members?: ReadonlyMap<string, string>
+  visibleAreas?: ReadonlySet<ConfigAreaKey>
+}): ConfigPlanRefTargets[] {
+  const wanted = new Set<ConfigAreaKey>()
+  for (const area of plan.areas) {
+    for (const item of area.items) {
+      for (const ref of item.refs ?? []) {
+        // Resolved on its own (an existing item, or one this file adds): nothing to choose.
+        if (ref.via === "target" || (ref.via === "planned" && !ref.decision)) continue
+        const key = refArea(ref.ref)
+        if (key !== null && !input.scope.includes(key) && (!input.visibleAreas || input.visibleAreas.has(key))) wanted.add(key)
+      }
+    }
+  }
+  const out: ConfigPlanRefTargets[] = []
+  for (const key of CONFIG_AREA_KEYS) {
+    if (!wanted.has(key)) continue
+    const items = key === PEOPLE_AREA
+      ? [...(input.members ?? [])].map(([id, name]) => ({ id, name }))
+      : (input.targetItems.get(key) ?? []).map((item) => ({ id: item.id, name: item.name }))
+    if (items.length > 0) out.push({ area: key, items: items.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id)) })
+  }
+  return out
+}
+
 function planRefView(ref: ConfigPlanRef, hidden: boolean): ConfigPlanRef {
   if (!hidden || ref.name === undefined) return ref
   const out: ConfigPlanRef = { path: ref.path, ref: ref.ref, resolvedId: ref.resolvedId, via: ref.via }
   if (ref.decision !== undefined) out.decision = ref.decision
+  if (ref.refuses !== undefined) out.refuses = ref.refuses
   return out
 }
 

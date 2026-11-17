@@ -7,6 +7,7 @@ import { GatewayProviderModelTable, GatewayProviderTable } from "@openwork-ee/de
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
 import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
+import { isMicrosoftFoundryOverrideAllowed } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import { isLiteLlmProviderId, liteLlmSpendTrackingEnabled } from "@openwork-ee/utils/litellm-catalog"
 import { isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
@@ -48,7 +49,7 @@ import { loadProviderCatalogFromFile } from "./provider-catalog.js"
 import type { CatalogProvider, ProviderCatalog } from "./provider-catalog.js"
 import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provider-credentials.js"
 import type { GatewayCredential, GatewayProvider, LoadProviderCredential, ResolvedUpstreamCredential } from "./provider-credentials.js"
-import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBody, RequestBodyLimitError, upstreamLifetime } from "./relay.js"
+import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBody, RequestBodyLimitError, upstreamLifetime, describeUpstreamFetchFailure } from "./relay.js"
 import { env } from "./env.js"
 import { gatewayLog } from "./log.js"
 import { respondBeforeUpstream } from "./early-response.js"
@@ -267,10 +268,21 @@ function awsUpstreamBase(family: "bedrock" | "bedrock_mantle", settings: Record<
   return override === undefined ? defaultBaseUrl(family, settings) : override
 }
 
+// Microsoft Foundry egress is <resource>.services.ai.azure.com. The request can
+// carry a member's own Entra ID token, so catalog URLs and admin-entered hosts
+// never choose it: a saved override is used only on that same origin or on an
+// operator-allowlisted one, and any other saved override is refused.
+function foundryUpstreamBase(settings: Record<string, unknown>) {
+  const override = settings.upstreamBaseUrl
+  if (typeof override !== "string" || !override) return defaultBaseUrl("microsoft_foundry", settings)
+  return isMicrosoftFoundryOverrideAllowed(settings.resourceName, override, inferenceEgressAllowedOrigins()) ? override : null
+}
+
 function upstreamBase(provider: GatewayProvider, catalog: CatalogProvider | null, family: ProtocolFamily) {
   if (family === "google_vertex") return vertexPublisherBase(provider.settings, "google")
   if (family === "google_vertex_anthropic") return vertexPublisherBase(provider.settings, "anthropic")
   if (isAwsFamily(family)) return awsUpstreamBase(family, provider.settings)
+  if (family === "microsoft_foundry") return foundryUpstreamBase(provider.settings)
   return readBaseUrl(provider, catalog, family)
 }
 
@@ -282,7 +294,9 @@ function resolveUpstream(provider: GatewayProvider, catalog: CatalogProvider | n
     return {
       error: family === "google_vertex" || family === "google_vertex_anthropic"
         ? "Vertex providers require settings.project and settings.location."
-        : `Provider ${provider.provider_id} has no upstream base URL.`,
+        : family === "microsoft_foundry"
+          ? "Microsoft Foundry providers reach their own resource; settings.resourceName is required and a custom upstream URL must be an operator-approved origin."
+          : `Provider ${provider.provider_id} has no upstream base URL.`,
     }
   }
   const forwardedRest = family === "google_vertex" || family === "google_vertex_anthropic" || family === "bedrock_mantle" ? stripApiVersionPrefix(rest) : rest
@@ -1131,29 +1145,24 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         validateInferenceUrl(prepared.url)
         lifetime.signal.throwIfAborted()
         upstream = await dependencies.fetch(prepared.url, { method, headers, body: prepared.body, signal: lifetime.signal, redirect: "error" })
-      } catch {
+      } catch (error) {
+        const failure = describeUpstreamFetchFailure(error, {
+          clientAborted: request.signal.aborted,
+          timedOut: lifetime.timedOut,
+          target: `the model provider at ${prepared.url.hostname}`,
+        })
         lifetime.dispose()
-        console.error("[gateway] Failed to reach provider upstream", {
-          openworkRequestId,
-          organizationId: identity.organizationId,
-          inferenceProviderId: provider.id,
-          upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
+        // An unreachable provider is answered to the caller, not reported as a Gateway error.
+        gatewayLog[failure.outcome === "client_aborted" ? "debug" : "warn"]("provider upstream not reached", {
+          request_id: openworkRequestId,
+          organization_id: identity.organizationId,
+          inference_provider_id: provider.id,
+          upstream_url: `${prepared.url.origin}${prepared.url.pathname}`,
+          error_code: failure.code,
+          network_error: failure.cause,
         })
-        dependencies.reporter.handledError({
-          reason: "upstream_unreachable",
-          organizationId: identity.organizationId,
-          orgMembershipId: identity.orgMembershipId,
-          gatewayKeyId: identity.gatewayKeyId,
-          openworkRequestId,
-          route: c.req.path,
-          method,
-          headers: incomingHeaders,
-          incomingModel: prepared.requestedModel,
-          status: 502,
-          upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
-        })
-        void recorder.finish({ status: 502, outcome: lifetime.signal.aborted && !lifetime.timedOut ? "client_aborted" : "upstream_unreachable", errorCode: lifetime.timedOut ? "upstream_timeout" : "upstream_unreachable" })
-        const response = gatewayError(502, "upstream_unreachable", "Failed to reach the inference provider upstream.", { provider_id: provider.id })
+        void recorder.finish({ status: failure.status, outcome: failure.outcome, errorCode: failure.code })
+        const response = gatewayError(failure.status, failure.code, failure.message, { provider_id: provider.id })
         response.headers.set("x-openwork-request-id", openworkRequestId)
         return response
       }

@@ -51,6 +51,7 @@ import { ORGANIZATION_DELETION_METADATA_KEY } from "./organization-metadata.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js"
 import { getScimManagedTeamIds } from "./scim-groups.js"
+import { moveUsageMemberAssignments } from "@openwork-ee/den-db/gateway-usage-limits"
 import { effectiveOrganizationRole, listMemberAdminTeams, listOrganizationAdminTeamGrants, withOrganizationMembershipUsageMutation, withOrganizationTeamMutation, type OrganizationAdminTeam } from "./organization-team-roles.js"
 import {
   DEFAULT_ORGANIZATION_LIMITS,
@@ -789,6 +790,8 @@ async function acceptInvitationRecord(invitation: InvitationRow, userId: UserId,
         .set({ role: existingRole, joinedAt: existingJoinedAt })
         .where(eq(MemberTable.id, existingMember.id))
       if (invitedMember.id !== existingMember.id) {
+        // Limits assigned to the invitation while it was pending belong to the person.
+        await moveUsageMemberAssignments(tx, currentInvitation.organizationId, invitedMember.id, existingMember.id)
         await tx.delete(MemberTable).where(eq(MemberTable.id, invitedMember.id))
       }
       member = { ...existingMember, role: existingRole, joinedAt: existingJoinedAt }

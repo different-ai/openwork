@@ -99,6 +99,24 @@ function verifyRuntimeDependencies(context) {
     }
   }
   verifyCompiledTypes(appAsarPath, packagedFiles);
+  verifyUnusedDependencyFiles(packagedFiles);
+}
+
+// The packaging filters leave out dependency files that only a debugger or a
+// compiler reads. Fail the package if they return, or if the filters take the
+// one TypeScript file computer use imports.
+function verifyUnusedDependencyFiles(packagedFiles) {
+  const typescript = "/node_modules/typescript";
+  if (packagedFiles.has(`${typescript}/package.json`) && !packagedFiles.has(`${typescript}/lib/typescript.js`)) {
+    throw new Error("Packaged TypeScript is missing lib/typescript.js, which computer use imports.");
+  }
+  const unused = [...packagedFiles].filter((entry) =>
+    /\.[cm]?[jt]s\.map$|\.d\.[cm]?ts$/.test(entry)
+    || /\/typescript\/(?:bin|lib\/(?!typescript\.js$)[^/]+)(?:\/|$)/.test(entry)
+    || /\/better-sqlite3\/(?:deps|src)(?:\/|$)/.test(entry));
+  if (unused.length > 0) {
+    throw new Error(`Packaged app.asar ships files the app never loads: ${unused.slice(0, 5).join(", ")}`);
+  }
 }
 
 // The app loads @openwork/types as plain Node, which refuses TypeScript under
@@ -209,4 +227,5 @@ module.exports = afterPack;
 module.exports.default = afterPack;
 module.exports.normalizeAsarEntryPath = normalizeAsarEntryPath;
 module.exports.verifyCompiledTypes = verifyCompiledTypes;
+module.exports.verifyUnusedDependencyFiles = verifyUnusedDependencyFiles;
 module.exports.canonicalizeSidecars = canonicalizeSidecars;

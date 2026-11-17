@@ -344,7 +344,8 @@ export type ConfigRefEntry = ConfigPlanEntry & { reference: ConfigPlanRef };
 export function refEntries(plan: ConfigPlan | null): ConfigRefEntry[] {
   return planEntries(plan).flatMap((entry) => (entry.item.refs ?? [])
     // A reference to an item this same file adds ("planned") resolves on apply; it needs no decision.
-    .filter((reference) => (reference.resolvedId === null && reference.via !== "planned") || reference.via === "decision")
+    // One an admin chose to invite is also "planned", and stays listed so the choice can be changed.
+    .filter((reference) => (reference.resolvedId === null && reference.via !== "planned") || reference.via === "decision" || reference.decision === "invite")
     .map((reference) => ({ ...entry, reference })));
 }
 
@@ -356,11 +357,114 @@ export function isPeopleRef(ref: ConfigPlanRef): boolean {
   return parseConfigRef(ref.ref)?.area === "people";
 }
 
-/** Invitations this request creates: new people in `members.people`, plus people references set to invite. */
-export function inviteCount(plan: ConfigPlan | null, decisions: ConfigDecisions | null): number {
-  const created = planEntries(plan).filter((entry) => entry.area === "members.people" && entry.item.op === "create").length;
-  const invitedRefs = decisions?.refs.filter((ref) => "invite" in ref.resolution).length ?? 0;
-  return created + invitedRefs;
+/** What a reference is called on screen: its name hint, else the handle as written. */
+export function refName(reference: ConfigPlanRef): string {
+  return reference.name ?? parseConfigRef(reference.ref)?.target ?? reference.ref;
+}
+
+/** A person's email, for the hover text of a row that shows their name; nothing for other references (their handle is an id). */
+export function refHandle(reference: ConfigPlanRef): string | undefined {
+  const parsed = parseConfigRef(reference.ref);
+  return parsed?.area === "people" && parsed.target.includes("@") && parsed.target !== refName(reference) ? parsed.target : undefined;
+}
+
+/** A reference decision as the select's value: `target:<id>`, `invite`, `drop`, or "" when nothing is decided. */
+export type ConfigRefChoice = string;
+
+export function refChoice(decisions: ConfigDecisions | null, entry: ConfigRefEntry): ConfigRefChoice {
+  const found = decisions?.refs.find((decision) => decision.area === entry.area && decision.ref === entry.item.ref && decision.path === entry.reference.path);
+  if (!found) return "";
+  if ("targetId" in found.resolution) return `target:${found.resolution.targetId}`;
+  return "drop" in found.resolution ? "drop" : "invite";
+}
+
+/**
+ * Every use of one referenced person or item: a person twelve items grant
+ * access to is one decision, not twelve.
+ */
+export type ConfigRefGroup = {
+  /** Stable React key: the handle as written, or one use's own key when uses can't be told apart. */
+  key: string;
+  name: string;
+  reference: ConfigPlanRef;
+  uses: ConfigRefEntry[];
+  /** Uses that still need a decision. */
+  open: number;
+};
+
+/** People the caller may not see all share this handle (`engine/people.ts`), so their uses are never grouped. */
+const HIDDEN_PERSON_REF = "people/hidden";
+
+/** Unresolved references grouped by what they point to, in the order the plan first mentions each. */
+export function refGroups(plan: ConfigPlan | null): ConfigRefGroup[] {
+  const groups = new Map<string, ConfigRefGroup>();
+  for (const entry of refEntries(plan)) {
+    const { reference } = entry;
+    const key = reference.ref === HIDDEN_PERSON_REF ? `${entry.area}:${entry.item.ref}:${reference.path}` : reference.ref;
+    const group = groups.get(key);
+    const open = isRefOpen(reference) ? 1 : 0;
+    if (!group) {
+      groups.set(key, { key, name: refName(reference), reference, uses: [entry], open });
+      continue;
+    }
+    group.uses.push(entry);
+    group.open += open;
+    // The first use that carries a name hint names the group.
+    if (group.reference.name === undefined && reference.name !== undefined) {
+      group.reference = reference;
+      group.name = refName(reference);
+    }
+  }
+  return [...groups.values()];
+}
+
+/** Whether the plan says it would refuse `choice` for this reference (`ConfigPlanRef.refuses`), so it isn't offered. */
+export function refusesChoice(reference: ConfigPlanRef, choice: ConfigRefChoice): boolean {
+  return (choice === "drop" || choice === "invite") && (reference.refuses ?? []).includes(choice);
+}
+
+/**
+ * The choice a group's uses share, leaving aside uses that can't take it; ""
+ * while some use is still free to take one, `null` when uses differ.
+ */
+export function refGroupChoice(decisions: ConfigDecisions | null, group: ConfigRefGroup): ConfigRefChoice | null {
+  const chosen = new Set(group.uses.map((entry) => refChoice(decisions, entry)).filter((choice) => choice !== ""));
+  if (chosen.size > 1) return null;
+  const [choice] = chosen;
+  if (choice === undefined) return "";
+  return group.uses.every((entry) => refChoice(decisions, entry) === choice || refusesChoice(entry.reference, choice)) ? choice : "";
+}
+
+/**
+ * A use whose decision the plan could not take, so it is still open: leaving
+ * out the team a spend limit applies to, or a target that no longer exists.
+ */
+export function isRefChoiceRefused(decisions: ConfigDecisions | null, entry: ConfigRefEntry): boolean {
+  return isRefOpen(entry.reference) && refChoice(decisions, entry) !== "";
+}
+
+/**
+ * Decisions with `choice` set on every given use ("" clears them); other
+ * decisions are kept, and so is a use the plan would refuse the choice for.
+ */
+export function decideRefs(decisions: ConfigDecisions, allUses: readonly ConfigRefEntry[], choice: ConfigRefChoice): ConfigDecisions {
+  const useKey = (area: ConfigAreaKey, ref: string, path: string) => `${area}\u0000${ref}\u0000${path}`;
+  const uses = allUses.filter((entry) => !refusesChoice(entry.reference, choice));
+  const decided = new Set(uses.map((entry) => useKey(entry.area, entry.item.ref, entry.reference.path)));
+  const rest = decisions.refs.filter((decision) => !decided.has(useKey(decision.area, decision.ref, decision.path)));
+  if (!choice) return { ...decisions, refs: rest };
+  const resolution: ConfigDecisions["refs"][number]["resolution"] = choice.startsWith("target:")
+    ? { targetId: choice.slice("target:".length) }
+    : choice === "invite" ? { invite: true } : { drop: true };
+  return { ...decisions, refs: [...rest, ...uses.map((entry) => ({ area: entry.area, ref: entry.item.ref, path: entry.reference.path, resolution }))] };
+}
+
+/**
+ * Invitations this request creates: the people it adds. A person a reference
+ * chose to invite is one of them, once, however many items name that person.
+ */
+export function inviteCount(plan: ConfigPlan | null): number {
+  return planEntries(plan).filter((entry) => entry.area === "members.people" && entry.item.op === "create").length;
 }
 
 export type ConfigStepInfo = { step: ConfigStep; label: string; open: number };
@@ -375,7 +479,7 @@ export function planSteps(plan: ConfigPlan | null, decisions: ConfigDecisions | 
   const secrets = planEntries(plan).flatMap((entry) => (entry.item.secrets ?? []).map((secret) => ({ entry, secret })));
   // Only secrets of items that write count as open; an unchanged item's placeholder changes nothing.
   if (secrets.length > 0) steps.push({ step: "secrets", label: "Secrets", open: secrets.filter(({ entry, secret }) => secret.decision === null && entry.item.flags.includes("needs_input")).length });
-  if (inviteCount(plan, decisions) > 0) steps.push({ step: "people", label: "People", open: 0 });
+  if (inviteCount(plan) > 0) steps.push({ step: "people", label: "People", open: 0 });
   steps.push({ step: "review", label: "Review", open: reviewEntries(plan).length });
   return steps;
 }
@@ -411,15 +515,26 @@ export function isDeletable(item: ConfigPlanItem, mode: ConfigPlan["mode"]): boo
   return item.op === "delete" || (mode === "mirror" && !item.blob && item.op === "untouched");
 }
 
-/** Target items of an area the plan already knows about: choices for mapping a reference. */
+/**
+ * What is already in the organization that a reference into an area could be
+ * pointed at: the area's items in the plan when the file carries that area,
+ * else the plan's own list for it (`refTargets`, a file that holds only part
+ * of an organization).
+ */
 export function targetChoices(plan: ConfigPlan | null, area: ConfigAreaKey | "people"): Array<{ id: string; name: string }> {
   const key: ConfigAreaKey = area === "people" ? "members.people" : area;
   const seen = new Set<string>();
   const choices: Array<{ id: string; name: string }> = [];
+  const add = (id: string, name: string) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    choices.push({ id, name });
+  };
   for (const entry of planEntries(plan)) {
-    if (entry.area !== key || !entry.item.target || seen.has(entry.item.target.id)) continue;
-    seen.add(entry.item.target.id);
-    choices.push({ id: entry.item.target.id, name: entry.item.target.name });
+    if (entry.area === key && entry.item.target) add(entry.item.target.id, entry.item.target.name);
+  }
+  for (const listed of plan?.refTargets ?? []) {
+    if (listed.area === key) for (const item of listed.items) add(item.id, item.name);
   }
   return choices;
 }

@@ -38,6 +38,7 @@ import {
   MarketplaceTable,
   PluginConfigObjectTable,
   PluginMcpRequirementBindingTable,
+  PluginTable,
   externalMcpAuthTypeValues,
 } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -60,7 +61,10 @@ import { defineConfigArea, type ConfigAreaContext, type ConfigItem } from "../ar
 import {
   accessByRoleSchema,
   accessSpec,
+  adoptItemKey,
   applyAccess,
+  ensureItemKeys,
+  itemKey,
   exportedRefIds,
   jaccard,
   loadAudienceNames,
@@ -77,6 +81,7 @@ import {
   ConfigApplyError,
   applyWithSteps,
   isJsonObject,
+  ownManagerAccessPreflight,
   resolvedRefIds,
   specObject,
   specRefSchema,
@@ -216,7 +221,7 @@ async function readPlugins(ctx: ConfigAreaContext, ids: readonly string[] | null
       .where(and(
         eq(PluginMcpRequirementBindingTable.organizationId, organizationId),
         inArray(PluginMcpRequirementBindingTable.pluginId, pluginIds),
-        // connectors.mcp carries external MCP connections only.
+        // Bindings to built-in provider connections are not carried: plugins bind them by provider, not by connection.
         eq(ExternalMcpConnectionTable.kind, "external_mcp"),
       )),
   ])
@@ -251,7 +256,7 @@ async function readPlugins(ctx: ConfigAreaContext, ids: readonly string[] | null
       })
     return {
       id: row.id,
-      key: null,
+      key: row.externalKey,
       name: row.name,
       spec: {
         description: row.description ?? null,
@@ -368,11 +373,19 @@ export const pluginsPluginsArea = defineConfigArea({
   viewPermission: "sharing.manage_all",
   managePermission: "sharing.manage_all",
   tables: ["plugin", "plugin_config_object", "plugin_access_grant", "plugin_mcp_requirement_binding", "marketplace_plugin"],
+  assignedKeys: true,
+  ensureKeys: (ctx, items) => ensureItemKeys("plugin", ctx.organizationId, items),
   naturalKeys: [{
     // Built-in plugins have one copy per organization, named the same everywhere.
     label: "built-in plugin name",
     get: (item) => item.spec.builtIn === true ? `builtin:${normalizeText(item.name)}` : null,
+  }, {
+    // First contact, for plugins that have no key in common yet: the same name is the same plugin.
+    label: "name",
+    get: (item) => item.spec.builtIn === true ? null : normalizeText(item.name) || null,
   }],
+  // createPlugin refuses a second active plugin of the same name by the same person: an import's creates are all one person's.
+  uniqueAmongCreates: [{ label: "the name", get: (item) => item.name.trim() || null }],
   similarity: (blob, target) => {
     const reasons: string[] = []
     const name = nameSimilarity(blob.name, target.name)
@@ -396,6 +409,8 @@ export const pluginsPluginsArea = defineConfigArea({
   secretFields: [],
   arrayKeys: { components: "$ref", collections: "$ref" },
   informationalFields: ["sourceRepositoryUrl", "sourceFormat", "managedBy", "builtIn"],
+  // A binding ties a skill's MCP server to a connection: without either there is no binding.
+  requiredRefs: ["mcpConnections[].component", "mcpConnections[].connection"],
   transactional: false,
   protectedFromDelete: (item) => {
     if (item.spec.builtIn === true) return `"${item.name}" is built into the OpenWork Marketplace.`
@@ -414,6 +429,21 @@ export const pluginsPluginsArea = defineConfigArea({
 
   async readItems(ctx, ids) {
     return readPlugins(ctx, ids)
+  },
+
+  async preflight(ctx, op) {
+    if (op.kind !== "create") return ownManagerAccessPreflight(ctx, op)
+    // The same check createPlugin makes, before approval instead of in the middle of the apply.
+    const name = op.item.name.trim()
+    const [existing] = await ctx.db.select({ id: PluginTable.id }).from(PluginTable).where(and(
+      eq(PluginTable.organizationId, normalizeDenTypeId("organization", ctx.organizationId)),
+      eq(PluginTable.createdByOrgMembershipId, normalizeDenTypeId("member", ctx.actor.memberId)),
+      eq(PluginTable.name, name),
+      eq(PluginTable.status, "active"),
+      isNull(PluginTable.deletedAt),
+    )).limit(1)
+    if (!existing) return null
+    return { block: `You already have an active plugin named "${name}" (${existing.id}), and a person can't have two. Match this item to it if it is listed, rename one of them, archive yours, or skip this item.` }
   },
 
   async apply(ctx, op) {
@@ -444,6 +474,7 @@ export const pluginsPluginsArea = defineConfigArea({
           context: actor,
           ...(op.preferredId ? { id: normalizeDenTypeId("plugin", op.preferredId) } : {}),
           name,
+          ...(itemKey(op.item.key) ? { externalKey: itemKey(op.item.key) } : {}),
           description: spec.description,
           sourceFormat: spec.sourceFormat,
           sourceRepositoryUrl: spec.sourceRepositoryUrl,
@@ -473,6 +504,7 @@ export const pluginsPluginsArea = defineConfigArea({
       pluginId = normalizeDenTypeId("plugin", op.targetId)
       const id = normalizeDenTypeId("plugin", pluginId)
       const renamed = name !== op.previous.name
+      await adoptItemKey({ kind: "plugin", organizationId: ctx.organizationId, id }, op, log, warnings)
       if (renamed || touches(op.changes, "description")) {
         await log.run(
           renamed && touches(op.changes, "description") ? { action: "update", target: "plugin", detail: "name and description" }

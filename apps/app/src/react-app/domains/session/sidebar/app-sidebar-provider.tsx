@@ -3,6 +3,7 @@ import * as React from "react";
 import type { WorkspaceConnectionState } from "../../../../app/types";
 import type { SessionNumberShortcutOs } from "../../../shell/session-number-shortcuts";
 import type { SessionWaitingKind } from "../status/session-activity-store";
+import type { SessionTree } from "./session-tree";
 
 export type SidebarContextValue = {
   draftScope?: string | null;
@@ -36,6 +37,8 @@ export type SidebarContextValue = {
   expandedWorkspaceIds: Set<string>;
   sessionNumberShortcutOs: SessionNumberShortcutOs;
   sessionNumberShortcutByTarget: ReadonlyMap<string, number>;
+  /** Sessions listed under the session they were started from, per workspace. Empty while that is off. */
+  sessionTreeFor: (workspaceId: string) => SessionTree;
 };
 
 export const SidebarContext = React.createContext<SidebarContextValue | null>(null);

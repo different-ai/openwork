@@ -101,6 +101,8 @@ function stepSystem(base: string, askedToStop: boolean, cutOffs: number) {
 
 /** A failed connection to the person's apps is tried again after each of these waits; then the turn fails. */
 export const MCP_CONNECT_RETRY_MS = [500, 2_000]
+/** The result of a call that was never sent: a step-mode run's later step couldn't connect (see laterStepTools). */
+export const APPS_UNREACHABLE = "The person's apps couldn't be reached, so this call was not made. Try it again."
 
 const abortableSleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
@@ -259,6 +261,13 @@ type StepLane = {
   finished: boolean
   /** The current turn's files, read once and shown to the model on every step. */
   expanded: Map<string, Message>
+  /**
+   * What the run's first step read over the network, which its later steps use as it is, as a turn run in one go
+   * does: the person's apps' tools (for the token they were listed with) and the memory files. Every step's request
+   * so starts the same, and a later step's model call waits for neither (see laterStepTools).
+   */
+  tools?: { token: string; specs: ToolSpec[] }
+  memoryFiles?: MemoryFiles
   startedAt: number
   steps: number
   toolCalls: number
@@ -268,6 +277,7 @@ type StepLane = {
   /** What a step that failed unexpectedly threw, for the error report. */
   thrown?: unknown
 }
+type MemoryFiles = Array<{ path: string; content: string }>
 /** What a turn may use and is told, the same for every step of one run. */
 type TurnSetup = {
   turn: Turn | null
@@ -280,6 +290,8 @@ type TurnSetup = {
   taskTools: boolean
   /** Where memory/ lives when it isn't this conversation's own (memory.ts). */
   memory: MemoryAccess | null
+  /** The memory files in `baseSystem`, for a step-mode run's later steps (StepLane.memoryFiles). */
+  memoryFiles: MemoryFiles
   baseSystem: string
   toolSpecs: ToolSpec[]
   /** Tools whose calls only read: the local read tools, and app tools whose server says so (ToolSpec.readOnly). */
@@ -528,6 +540,12 @@ function toolMessage(call: ToolCall, outcome: ToolResult): Message {
   }
 }
 
+/**
+ * Names one call of one step for good: the same when the step starts again, never shared with another step or run (a
+ * model may reuse its call ids). The computer keeps a command's result under it.
+ */
+const stepCallKey = (messageId: string, state: StepState, call: ToolCall) => `${messageId}/${state.stretchStartedAt}/${state.steps}/${call.id}`
+
 /** A step's kept answer as messages: each call with its recorded result, or `missing` as an error for the rest. */
 function pendingOutcomes(pending: PendingStep, missing: string): ToolResult[] {
   return pending.toolCalls.map((call) => pending.results.find((entry) => entry.callId === call.id)?.result ?? { output: missing, isError: true })
@@ -606,6 +624,47 @@ export class Runner {
         if (signal.aborted || attempt >= MCP_CONNECT_RETRY_MS.length) throw error
         await sleep(MCP_CONNECT_RETRY_MS[attempt], signal)
       }
+    }
+  }
+
+  /**
+   * A step-mode run's tools after its first step: the list that step got, so the model call doesn't wait for the
+   * person's apps, and a connection only if the model calls one of them (`prepare`: as soon as it starts writing such
+   * a call). When that connection can't be made, the step's calls to them were never sent and say so; the next step
+   * connects again.
+   */
+  private laterStepTools(mcp: McpConnector, token: string, specs: ToolSpec[], signal: AbortSignal): ToolSession & { prepare(name: string): void } {
+    const names = new Set(specs.map((tool) => tool.name))
+    // Ends a connection attempt still under way when the step is over.
+    const closing = new AbortController()
+    let connecting: Promise<ToolSession> | null = null
+    const connect = () => {
+      if (!connecting) {
+        connecting = this.connectTools(mcp, token, AbortSignal.any([signal, closing.signal]))
+        // Each call awaits it; a failure before any call does must not go unhandled.
+        connecting.catch(() => undefined)
+      }
+      return connecting
+    }
+    return {
+      tools: specs,
+      prepare: (name) => {
+        if (names.has(name)) void connect()
+      },
+      call: async (name, input, callSignal) => {
+        let session: ToolSession
+        try {
+          session = await connect()
+        } catch (error) {
+          if (signal.aborted) throw error
+          return { output: APPS_UNREACHABLE, isError: true }
+        }
+        return session.call(name, input, callSignal)
+      },
+      close: async () => {
+        closing.abort(new Error("step_ended"))
+        await connecting?.then((session) => session.close(), () => undefined)
+      },
     }
   }
 
@@ -941,7 +1000,7 @@ export class Runner {
    * What the turn may use and is told: its tools, files, computer and system prompt. The same for every step of a run,
    * so the provider's prompt cache keeps hitting.
    */
-  private async turnSetup(sessionId: string, messageId: string, kind: JobKind, tools: ToolSession | null, credentials: TurnCredentials): Promise<TurnSetup> {
+  private async turnSetup(sessionId: string, messageId: string, kind: JobKind, tools: ToolSession | null, credentials: TurnCredentials, knownMemory?: MemoryFiles): Promise<TurnSetup> {
     const { store } = this.options
     const session = store.getSession(sessionId)
     const turn = store.getTurn(sessionId, messageId)
@@ -957,9 +1016,9 @@ export class Runner {
     const sentFiles = store.turnMessages(sessionId, messageId).some(({ message }) => message.role === "user" && (message.attachments?.length ?? 0) > 0)
     if (computer && (sentFiles || computer.known(sessionId))) computer.prewarm(sessionId)
     // A person's conversations share one memory: the owner's (memoryScope), or another conversation's (memoryOf, while
-    // it exists). Read once here, for every step of this run (once per step in step mode).
+    // it exists). Read once, for every step of this run: a step-mode run's later steps pass what its first step read.
     const memory = session ? this.memory(session) : null
-    const memoryFiles = memory ? await memory.list() : store.memoryFiles(sessionId)
+    const memoryFiles = knownMemory ?? (memory ? await memory.list() : store.memoryFiles(sessionId))
     // Everything here stays the same from one turn to the next, so the provider's prompt cache keeps hitting.
     const baseSystem = [
       this.options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
@@ -983,7 +1042,7 @@ export class Runner {
       if (tool.readOnly && !named.has(tool.name)) readOnlyTools.add(tool.name)
       named.add(tool.name)
     }
-    return { turn, session, repeatLimits, files, readOnly, computer, reactions, taskTools, memory, baseSystem, toolSpecs, readOnlyTools }
+    return { turn, session, repeatLimits, files, readOnly, computer, reactions, taskTools, memory, memoryFiles, baseSystem, toolSpecs, readOnlyTools }
   }
 
   /** The current turn's files as the model sees them, read once (into `expanded`) and shown on every step. */
@@ -1056,7 +1115,7 @@ export class Runner {
   private async runCall(
     setup: TurnSetup,
     call: ToolCall,
-    context: { sessionId: string; kind: JobKind; tools: ToolSession | null; signal: AbortSignal; held: HeldCredentials },
+    context: { sessionId: string; kind: JobKind; tools: ToolSession | null; signal: AbortSignal; held: HeldCredentials; callKey?: string },
   ): Promise<ToolResult> {
     const { store } = this.options
     const { readOnly, files, reactions, taskTools, turn, computer, memory } = setup
@@ -1086,7 +1145,7 @@ export class Runner {
           ? desktopViewRefused(store.getSession(sessionId)?.desktopViews ?? null, call.input)
             ?? await computer.desktopRun(sessionId, call.input, signal, { browserRecovery: store.getSession(sessionId)?.browserRecovery === true }).catch((error: unknown) => ({ output: error instanceof Error ? error.message : "Desktop unavailable", isError: true }))
         : computer?.toolNames.has(call.name)
-          ? await computer.run(sessionId, call.name, call.input).catch((error: unknown) => ({
+          ? await computer.run(sessionId, call.name, call.input, context.callKey).catch((error: unknown) => ({
               output: `The computer didn't respond: ${error instanceof Error ? error.message : "unknown error"}. Its outcome is unknown; check before repeating it.`,
               isError: true,
             }))
@@ -1792,8 +1851,23 @@ export class Runner {
         // The step stopped while its tool calls ran: it finishes from the kept answer. A call without a recorded
         // result is not run again (it may have had side effects); the model gets an error and checks.
         answer = state.pending
+        const readOnly = (lane.held?.credentials.readOnly ?? state.readOnly) === true
+        // Except a command on the conversation's computer, which went on without the runner and kept its result
+        // there: the computer is asked for it. A command it never started stays an interrupted call.
+        const computer = session?.computer && !readOnly && kind !== "report" && this.options.computer?.available?.(sessionId) !== false ? this.options.computer : undefined
+        for (const call of answer.toolCalls) {
+          const pickUp = computer?.pickUp
+          if (!pickUp || call.inputError || !computer.toolNames.has(call.name) || answer.results.some((entry) => entry.callId === call.id)) continue
+          signal.throwIfAborted()
+          const key = stepCallKey(messageId, state, call)
+          const found = await lane.timing.tool(call.name, () => pickUp.call(computer, sessionId, call.name, call.input, key).catch(() => null))
+          if (!found) continue
+          answer.results.push({ callId: call.id, result: found })
+          state = { ...state, pending: answer }
+          store.setStepState(sessionId, messageId, state)
+        }
         outcomes = pendingOutcomes(answer, INTERRUPTED_CALL)
-        reactions = session?.reactions === true && kind === "message" && (lane.held?.credentials.readOnly ?? state.readOnly) !== true
+        reactions = session?.reactions === true && kind === "message" && !readOnly
       } else {
         const turnMessages = () => store.turnMessages(sessionId, messageId).map((entry) => entry.message)
         // History from a run in one go (or an import) may hold calls without results: never re-run.
@@ -1832,16 +1906,24 @@ export class Runner {
         // Again after a refresh: Den may have issued fresh scoped access with the token.
         const chosen = this.turnModel(sessionId, messageId, credentials)
         if (!chosen) return end("failed", "model_credentials_missing")
+        // Between steps nothing is held open. The run's first step (and the first with a fresh token) connects to
+        // list the tools; later steps show the model that list and connect only for a call.
+        let later: ReturnType<Runner["laterStepTools"]> | null = null
         if (needsTools && this.options.mcp && credentials.mcpToken) {
-          try {
-            // Every step connects again (between steps nothing is held open), so one failed connect is retried.
-            tools = await this.connectTools(this.options.mcp, credentials.mcpToken, signal)
-          } catch (error) {
-            if (signal.aborted) throw error
-            return end("failed", "mcp_unavailable")
+          if (lane.tools?.token === credentials.mcpToken) {
+            tools = later = this.laterStepTools(this.options.mcp, credentials.mcpToken, lane.tools.specs, signal)
+          } else {
+            try {
+              tools = await this.connectTools(this.options.mcp, credentials.mcpToken, signal)
+            } catch (error) {
+              if (signal.aborted) throw error
+              return end("failed", "mcp_unavailable")
+            }
+            lane.tools = { token: credentials.mcpToken, specs: tools.tools }
           }
         }
-        const setup = await this.turnSetup(sessionId, messageId, kind, tools, credentials)
+        const setup = await this.turnSetup(sessionId, messageId, kind, tools, credentials, lane.memoryFiles)
+        lane.memoryFiles = setup.memoryFiles
         reactions = setup.reactions
         const modelStep = turnMessages().filter((message) => message.role === "assistant").length
         const { messages, cacheAfter } = await this.stepContext(sessionId, messageId, kind, setup, lane.expanded)
@@ -1894,6 +1976,8 @@ export class Runner {
             },
             onTool: (tool: string, description?: string, view?: DesktopView) => {
               lane.timing.output()
+              // Connecting while the model still writes the call, so the call itself doesn't wait for it.
+              later?.prepare(tool)
               events?.emit(sessionId, { type: "tool", messageId, step: modelStep, tool, ...(description ? { description } : {}), ...(view ? { view } : {}) })
             },
           })
@@ -1935,7 +2019,7 @@ export class Runner {
           store.setStepState(sessionId, messageId, state)
         }
         const runCall = (call: ToolCall) =>
-          lane.timing.tool(call.name, () => this.runCall(setup, call, { sessionId, kind, tools, signal, held: { credentials: lane.held?.credentials ?? {}, at: lane.issuedAt } }))
+          lane.timing.tool(call.name, () => this.runCall(setup, call, { sessionId, kind, tools, signal, held: { credentials: lane.held?.credentials ?? {}, at: lane.issuedAt }, callKey: stepCallKey(messageId, state, call) }))
         if (runsTogether(setup, answer.toolCalls)) {
           // Calls that can't change anything (lookups in the person's apps) run at the same time.
           signal.throwIfAborted()

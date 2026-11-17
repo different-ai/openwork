@@ -6,6 +6,7 @@ import { denUrls } from "@openwork-ee/utils/den-urls"
 import { parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env"
 import { readReplicaCredentialsFromEnv } from "@openwork-ee/den-db"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
+import { DEN_API_KEY_RATE_LIMIT_MAX_DEFAULT } from "./api-key-constants.js"
 import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { resolveDenServiceVersion } from "./service-version.js"
 import { denApiAppVersion } from "./version.js"
@@ -13,8 +14,6 @@ import { z } from "zod"
 import { readFreeInferenceConfig } from "@openwork/types/den/inference"
 import { parseFeatureEnvironment } from "@openwork/features"
 import { partitionConfigSecretEnvAllowlist } from "./config-blobs/env-secrets.js"
-
-export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
 
 const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1).optional(),
@@ -70,6 +69,7 @@ const EnvSchema = z.object({
   DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: z.string().optional(),
   DEN_REQUIRE_EMAIL_VERIFICATION: z.string().optional(),
   DEN_PASSWORD_BREACH_SCREENING_ENABLED: z.string().optional(),
+  DEN_API_KEY_RATE_LIMIT_MAX: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.string().optional(),
@@ -86,8 +86,6 @@ const EnvSchema = z.object({
   DEN_BOTID_PROTECTION_ENABLED: z.string().optional(),
   DEN_ALLOW_PRIVATE_MCP_URLS: z.string().optional(),
   DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST: z.string().optional(),
-  DEN_DIAGNOSTICS_ORIGIN: z.string().optional(),
-  DEN_DIAGNOSTICS_BEARER_TOKEN: z.string().optional(),
   DEN_MAINTENANCE_TOKEN: z.string().optional(),
   DEN_HEADLESS_RUNNER_TOKEN: z.string().optional(),
   DEN_HEADLESS_RUNNER_CALLBACK_TOKEN: z.string().optional(),
@@ -373,6 +371,17 @@ export function parseSingleOrgAllowPublicSignup(value: string | undefined, orgMo
   throw new Error("DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP must be true or false")
 }
 
+/** Requests per minute each new API key may make. Blank keeps the default. */
+export function parseApiKeyRateLimitMax(value: string | undefined): number {
+  const trimmed = value?.trim()
+  if (!trimmed) return DEN_API_KEY_RATE_LIMIT_MAX_DEFAULT
+  const parsed = Number(trimmed)
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error("DEN_API_KEY_RATE_LIMIT_MAX must be a whole number of at least 1")
+  }
+  return parsed
+}
+
 function normalizeOrigin(origin: string) {
   const value = origin.trim()
   if (value === "*") {
@@ -444,28 +453,6 @@ function normalizeRedisUrl(value: string | undefined, allowInsecureInternal: boo
   }
 
   return url.toString()
-}
-
-function normalizeDiagnosticsOrigin(value: string | undefined, allowInsecureHttp: boolean) {
-  const configured = optionalString(value) ?? DEFAULT_DEN_DIAGNOSTICS_ORIGIN
-
-  let url: URL
-  try {
-    url = new URL(configured)
-  } catch {
-    throw new Error("DEN_DIAGNOSTICS_ORIGIN must be an absolute http or https origin.")
-  }
-
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("DEN_DIAGNOSTICS_ORIGIN must be an absolute http or https origin.")
-  }
-  if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) {
-    throw new Error("DEN_DIAGNOSTICS_ORIGIN cannot contain credentials, a path, a query string, or a fragment.")
-  }
-  if (url.protocol !== "https:" && !allowInsecureHttp) {
-    throw new Error("DEN_DIAGNOSTICS_ORIGIN must use HTTPS outside development.")
-  }
-  return url.origin
 }
 
 function normalizeOptionalHttpsOrigin(envName: string, value: string | undefined) {
@@ -599,11 +586,6 @@ for (const { entry, problem } of configSecretEnvAllowlist.ignored) {
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
 const port = Number(parsed.PORT ?? "8790")
 const botIdProtectionEnabled = (parsed.DEN_BOTID_PROTECTION_ENABLED ?? "0").trim() === "1"
-const diagnosticsOrigin = normalizeDiagnosticsOrigin(parsed.DEN_DIAGNOSTICS_ORIGIN, devMode)
-const diagnosticsBearerToken = optionalString(parsed.DEN_DIAGNOSTICS_BEARER_TOKEN)
-if (diagnosticsBearerToken && diagnosticsBearerToken.length < 24) {
-  throw new Error("DEN_DIAGNOSTICS_BEARER_TOKEN must contain at least 24 characters.")
-}
 // Bearer token for scheduled maintenance callers (POST /internal/*). Unset hides those routes (404).
 const maintenanceToken = optionalString(parsed.DEN_MAINTENANCE_TOKEN)
 if (maintenanceToken && maintenanceToken.length < 24) {
@@ -697,6 +679,7 @@ const requireEmailVerification = parsed.DEN_REQUIRE_EMAIL_VERIFICATION === undef
 const passwordBreachScreeningEnabled = parsed.DEN_PASSWORD_BREACH_SCREENING_ENABLED === undefined
   ? true
   : parsed.DEN_PASSWORD_BREACH_SCREENING_ENABLED.trim().toLowerCase() !== "false"
+const apiKeyRateLimitMax = parseApiKeyRateLimitMax(parsed.DEN_API_KEY_RATE_LIMIT_MAX)
 
 const daytonaSandboxPublic =
   (parsed.DAYTONA_SANDBOX_PUBLIC ?? "false").toLowerCase() === "true"
@@ -769,10 +752,6 @@ export const env = {
     // entries inside the `OPENWORK_IMPORT_` namespace are kept.
     secretEnvAllowlist: configSecretEnvAllowlist.allowed,
   },
-  diagnostics: {
-    origin: diagnosticsOrigin,
-    bearerToken: diagnosticsBearerToken,
-  },
   maintenanceToken,
   headlessRunnerCallbackToken,
   // Vercel AI Gateway key for the evaluation model behind Your agent's check gate and send check. Unset: the gate
@@ -807,6 +786,7 @@ export const env = {
   },
   requireEmailVerification,
   passwordBreachScreeningEnabled,
+  apiKeyRateLimitMax,
   github: {
     clientId: optionalString(parsed.GITHUB_CLIENT_ID),
     clientSecret: optionalString(parsed.GITHUB_CLIENT_SECRET),

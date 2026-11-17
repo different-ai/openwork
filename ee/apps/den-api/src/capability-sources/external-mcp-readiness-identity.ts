@@ -16,6 +16,8 @@ function configurationIdentity(connection: ReadinessIdentity) {
     connection.oauthConfiguration?.authorizationServerIssuer, connection.oauthConfiguration?.requestedScopes,
     connection.oauthConfiguration?.callbackMode, connection.oauthIssuerReviewRequiredAt,
     connection.oauthConfiguration?.manualOAuthEndpoints,
+    // Added only when on, so fingerprints saved before this setting existed still match.
+    ...(connection.oauthConfiguration?.requestSelectedScopesOnly === true ? ["selected-scopes-only"] : []),
   ]
 }
 

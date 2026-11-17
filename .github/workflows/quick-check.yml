@@ -100,17 +100,20 @@ jobs:
           .github/scripts/build-inputs.test.mjs
           .github/scripts/classify-ci-changes.test.mjs
           .github/scripts/require-quick-check.test.mjs
+          .github/scripts/production-deploy.test.mjs
           .github/scripts/typecheck-shipped.test.mjs
           .github/scripts/docs-validation.test.mjs
           .github/scripts/ee-image-inputs.test.mjs
           .github/scripts/managed-stable-release.test.mjs
           .github/scripts/render-build-filters.test.mjs
+          .github/scripts/celld-fleet-health.test.mjs
           .github/scripts/runtime-scope.test.mjs
           .github/scripts/build-boundaries-native.test.mjs
           .github/scripts/build-boundaries-codeql.test.mjs
           scripts/ci/codeql-config.test.mjs
           scripts/ci/check-codeql-results.test.mjs
           scripts/den-db-migrate-target.test.mjs
+          scripts/check.test.mjs
       - name: Check outbound access manifest
         run: node scripts/check-outbound-access.mjs
       - name: Setup pnpm
@@ -134,6 +137,20 @@ jobs:
         run: |
           node --test scripts/check-node-source-imports.test.mjs
           node scripts/check-node-source-imports.mjs
+      # The app's layering and habits, frozen where they stand: no new
+      # wrong-direction imports, legacy-folder files, comments or effects.
+      - name: Check the app's structure and code habits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          node --test scripts/check-app-structure.test.mjs scripts/check-code-habits.test.mjs
+          node scripts/check-app-structure.mjs
+          if [ -n "${BASE_SHA:-}" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+            node scripts/check-code-habits.mjs --base "$BASE_SHA"
+          else
+            node scripts/check-code-habits.mjs
+          fi
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
       - name: Test the feature resolver

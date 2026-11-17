@@ -467,7 +467,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Direct uploads", description: "Multipart uploads that stream workspace files straight to a provider." },
       { name: "Connectors", description: "Connector accounts and instances (GitHub and other sources) and their sync state." },
       { name: "GitHub", description: "GitHub App installation, repository discovery, and plugin import from GitHub." },
-      { name: "Diagnostics", description: "Controlled egress diagnostics for self-hosted deployments." },
+      { name: "Diagnostics", description: "Settings › Diagnostics: desktop app startups, model providers, connectors and installation services." },
       { name: "Telemetry", description: "Telemetry event ingestion and adoption analytics." },
       { name: "Webhooks", description: "Signed inbound webhooks from third-party providers." },
       { name: "Admin", description: "Platform administration routes for allowlisted OpenWork administrators." },

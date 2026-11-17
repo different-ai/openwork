@@ -325,6 +325,8 @@ export const membersAgentPermissionsArea = defineConfigArea({
   // The name is Everyone or the team's: renaming the team is a members.teams change.
   informationalName: true,
   secretFields: [],
+  // A team's policy is that team's: without the team it would become everyone's.
+  requiredRefs: ["team"],
   // Every write goes through ctx.db in one transaction (with the audit change).
   transactional: true,
   irreversible: () => [],

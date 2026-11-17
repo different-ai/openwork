@@ -675,10 +675,26 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       {/* Same height as the top bar so the two bottom borders form one line (SHELL_BAR_HEIGHT). */}
       <div className={`flex ${SHELL_BAR_HEIGHT} shrink-0 items-center border-b border-[var(--den-shell-line)] px-4`}>
         <div className="flex w-full items-center justify-between gap-3">
-          <SidebarBrandMark
-            metadata={orgContext?.organization.metadata}
-            organizationName={activeOrg?.name ?? runtimeConfig.singleOrgName}
-          />
+          {activeOrg ? (
+            <Link
+              href={getOrgDashboardRoute(activeOrg.slug)}
+              aria-label="Go to dashboard"
+              title="Dashboard"
+              className="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-gray-300"
+              onClick={() => setSidebarOpen(false)}
+              data-testid="den-sidebar-brand-link"
+            >
+              <SidebarBrandMark
+                metadata={orgContext?.organization.metadata}
+                organizationName={activeOrg.name}
+              />
+            </Link>
+          ) : (
+            <SidebarBrandMark
+              metadata={orgContext?.organization.metadata}
+              organizationName={runtimeConfig.singleOrgName}
+            />
+          )}
           <button
             type="button"
             className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-[var(--den-shell-sidebar-hover)] hover:text-gray-700 md:hidden"

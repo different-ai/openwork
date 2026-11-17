@@ -131,6 +131,7 @@ declare global {
         onEvent?: (callback: (payload: SpeechDictationEvent) => void) => () => void;
       };
       automationRunner?: {
+        onRunLifecycle?: (callback: (event: unknown) => void) => () => void;
         /** `computer_disconnected`: Den refuses this computer until someone signs in on it again. */
         onCredentialRejected?: (
           callback: (rejection?: { reason: "computer_disconnected" | "credential_rejected" }) => void,
@@ -290,6 +291,8 @@ declare global {
         distribution?: DesktopDistributionInfo;
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
+        arch?: string;
+        isPackaged?: boolean;
         version?: string;
         evalFatalBootstrapFailure?: string | null;
       };

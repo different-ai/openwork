@@ -12,6 +12,8 @@ import { readOpenWorkAutomationCatalog, renderOpenWorkAutomationInstruction } fr
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { syncManagedProviderAuth, type ManagedProviderAuthResult } from "../managed-provider-auth.js";
 import { ApiError } from "../errors.js";
+import { readDiskSpace } from "../disk-space.js";
+import { runtimeStorageDir } from "../runtime-db.js";
 import { callExperimentalExtensionAction, listExperimentalExtensionActions } from "../extensions/index.js";
 import { takeApprovedDriveUpload } from "../extensions/approved-drive-upload.js";
 import { callDriveFileAction } from "../extensions/drive-files.js";
@@ -258,6 +260,12 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
         host: config.hostTokenSource,
       },
     });
+  });
+
+  // Free space on the disk that holds this server's saved data, so the app
+  // can warn before writes start failing.
+  addRoute(routes, "GET", "/disk-space", "client", async () => {
+    return jsonResponse(await readDiskSpace(runtimeStorageDir(config)));
   });
 
   addRoute(routes, "GET", "/runtime/versions", "client", async () => {

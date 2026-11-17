@@ -9,7 +9,8 @@ import {
   useElapsedSeconds,
   useSubagentRunState,
 } from "@/components/chat/subagent-run-line"
-import { isTaskToolPart, type TaskToolPart } from "@/lib/build-in-tools"
+import { isTaskToolPart, taskChildSessionId, type TaskToolPart } from "@/lib/build-in-tools"
+import { useSessionActivityStore, type SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store"
 import { REMOTE_SESSION_STATUS_THREADS_MAX } from "@openwork/types/automations"
 import { readDenSettings } from "@/app/lib/den"
 import {
@@ -60,6 +61,78 @@ export function currentTurnSubagentParts(messages: readonly UIMessage[]): TaskTo
     }
   }
   return parts
+}
+
+/** Sub-agent tasks earlier turns started, before the latest message the person sent, once each. */
+export function earlierTurnSubagentParts(messages: readonly UIMessage[]): TaskToolPart[] {
+  const start = currentTurnStart(messages)
+  const seen = new Set<string>()
+  const parts: TaskToolPart[] = []
+  for (const message of messages.slice(0, start)) {
+    if (message.role !== "assistant") continue
+    for (const part of message.parts) {
+      if (!isToolUIPart(part) || !isTaskToolPart(part) || seen.has(part.toolCallId)) continue
+      seen.add(part.toolCallId)
+      parts.push(part)
+    }
+  }
+  return parts
+}
+
+function currentTurnKey(messages: readonly UIMessage[]): string {
+  const start = currentTurnStart(messages)
+  return start === 0 ? "" : messages[start - 1]?.id ?? ""
+}
+
+/** Whether a helper's own chat still works or waits on the person. */
+function childStillActive(status: SessionActivityStatus | undefined): boolean {
+  return status !== undefined && status !== "idle" && status !== "error"
+}
+
+const NO_PARTS: readonly TaskToolPart[] = []
+
+/**
+ * The local helpers the Agents list shows: the current turn's, plus (unless
+ * `keepEarlier` is off, as in an archived chat) an earlier turn's helper whose chat still works or
+ * waits on the person (a helper started in the background keeps working after
+ * the person sends a follow-up). Once listed during a turn, an earlier helper
+ * stays until that turn ends, so it settles to Done in place instead of
+ * vanishing mid-turn. Earlier helpers come first, in the order they started.
+ */
+export function useComposerSubagentParts(
+  messages: readonly UIMessage[],
+  workspaceId: string,
+  options: { enabled: boolean; keepEarlier: boolean },
+): readonly TaskToolPart[] {
+  const current = useMemo(() => options.enabled ? currentTurnSubagentParts(messages) : [], [options.enabled, messages])
+  const earlier = useMemo(
+    () => options.enabled && options.keepEarlier ? earlierTurnSubagentParts(messages) : [],
+    [options.enabled, options.keepEarlier, messages],
+  )
+  const turnKey = currentTurnKey(messages)
+  const candidates = earlier
+    .map((part) => ({ part, childSessionId: taskChildSessionId(part) }))
+    .filter((entry): entry is { part: TaskToolPart; childSessionId: string } => Boolean(entry.childSessionId))
+  // A string that changes only when which earlier helpers are active does.
+  const activeSignature = useSessionActivityStore((state) => {
+    const statuses = state.statusesByWorkspaceId[workspaceId]
+    return candidates
+      .filter((entry) => childStillActive(statuses?.[entry.childSessionId]))
+      .map((entry) => entry.part.toolCallId)
+      .join("\n")
+  })
+  const kept = useRef<{ turnKey: string; ids: Set<string> }>({ turnKey, ids: new Set() })
+  const active = activeSignature ? activeSignature.split("\n") : []
+  // A new turn keeps only what still works; within a turn the set only grows.
+  if (kept.current.turnKey !== turnKey) kept.current = { turnKey, ids: new Set(active) }
+  else for (const id of active) kept.current.ids.add(id)
+  const keptSignature = [...kept.current.ids].sort().join("\n")
+  return useMemo(() => {
+    const ids = new Set(keptSignature ? keptSignature.split("\n") : [])
+    const listed = earlier.filter((part) => ids.has(part.toolCallId))
+    if (listed.length === 0 && current.length === 0) return NO_PARTS
+    return [...listed, ...current]
+  }, [earlier, current, keptSignature])
 }
 
 /** A task the current turn started on another computer. */
@@ -236,6 +309,8 @@ type ComposerSubagentTrackerProps = {
   onStopSubagentSession?: (sessionId: string) => void | Promise<void>
   /** Local helpers are listed only where their state can be followed (OpenCode v2); defaults to true. */
   includeLocal?: boolean
+  /** The local helpers to list (useComposerSubagentParts); defaults to the current turn's. */
+  parts?: readonly TaskToolPart[]
   /** Tasks the turn started on other computers, listed and counted with the local helpers. */
   remote?: {
     tasks: readonly RemoteTrackerTask[]
@@ -254,7 +329,11 @@ const NO_REMOTE_TASKS: readonly RemoteTrackerTask[] = []
  */
 export function ComposerSubagentTracker(props: ComposerSubagentTrackerProps) {
   const includeLocal = props.includeLocal !== false
-  const parts = useMemo(() => includeLocal ? currentTurnSubagentParts(props.messages) : [], [includeLocal, props.messages])
+  const providedParts = props.parts
+  const parts = useMemo(
+    () => !includeLocal ? [] : providedParts ?? currentTurnSubagentParts(props.messages),
+    [includeLocal, providedParts, props.messages],
+  )
   const remote = props.remote
   const remoteTasks = remote?.tasks ?? NO_REMOTE_TASKS
   const ids = [...parts.map((part) => part.toolCallId), ...remoteTasks.map((task) => task.start.key)]

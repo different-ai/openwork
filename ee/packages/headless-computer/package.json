@@ -32,7 +32,7 @@
     "@openwork/types": "workspace:*"
   },
   "devDependencies": {
-    "@daytonaio/sdk": "^0.201.0",
+    "@daytonaio/sdk": "^0.214.0",
     "@types/node": "^24.0.0",
     "@types/ws": "8.18.1",
     "esbuild": "0.25.12",

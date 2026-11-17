@@ -16,10 +16,10 @@ import { toast } from "@/components/ui/sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
-import { captureAnalyticsEvent } from "@/app/lib/analytics";
+import { captureAnalyticsEvent, takeTaskRunStart, featureAnalytics, taskRunQuality } from "@/app/lib/analytics";
 import { createSessionInterruptionClient, hasTerminalSessionReply, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
 import { createClient, createPromptMessageID, isPromptAdmissionUnknown, promptAdmissionFailure, readPromptAdmission, unwrap } from "@/app/lib/opencode";
-import { createClientV2, isOpencodeV2BaseUrl, v2AcknowledgementText } from "@/app/lib/opencode-v2-adapter";
+import { createClientV2, isOpencodeV2BaseUrl, isOpencodeV2Client, v2AcknowledgementText } from "@/app/lib/opencode-v2-adapter";
 import * as opencodeSessionNative from "@/app/lib/opencode-session-native";
 import type { NativeSessionSnapshotTarget } from "@/app/lib/opencode-session-native";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
@@ -103,10 +103,11 @@ import {
   messageHasVisibleAssistantOutput,
   resolveAdmissionOutcome,
 } from "./session-admission-outcome";
-import { describeOpencodeSessionError, interruptedTaskRecoveryPrompt, presentOpencodeSessionError, sessionErrorPresentationFromUIMessage, type OpencodeSessionErrorPresentation } from "@/react-app/domains/session/sync/session-error";
+import { describeOpencodeSessionError, interruptedTaskRecoveryPrompt, presentOpencodeSessionError, sessionErrorAnalyticsProperties, sessionErrorPresentationFromUIMessage, type OpencodeSessionErrorPresentation } from "@/react-app/domains/session/sync/session-error";
 import { createSessionErrorUIMessage } from "@/react-app/domains/session/sync/usechat-adapter";
 import { TaskRecovery } from "@/components/chat/task-recovery";
 import { SignInHandoffNotice } from "@/react-app/domains/cloud/sign-in-handoff-notice";
+import { RemoteAccessAsk } from "@/react-app/domains/devices/remote-access-ask";
 import { autoAccessRefreshEvent, autoAccessWallFromError, preflightAutoSubmission, type AutoAccessBlock } from "@/app/lib/inference-access";
 import { isAutoModel } from "@/react-app/domains/models/model-catalog";
 import { modelRefKey } from "../models/model-collections-store";
@@ -128,11 +129,13 @@ import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permis
 import { ComputerRequestPanel } from "@/react-app/domains/session/computer/computer-request-panel";
 import { useComputerRequest, useComputerStore } from "@/react-app/domains/session/computer/computer-store";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
-import { ComposerSubagentTracker, currentTurnSubagentParts, useComposerRemoteTasks } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
+import { ComposerSubagentTracker, useComposerRemoteTasks, useComposerSubagentParts } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
 import { ComposerBackgroundTasks } from "@/react-app/domains/session/surface/composer/composer-background-tasks";
 import { sessionBackgroundShells, settleBackgroundShell, useBackgroundShellStore } from "@/react-app/domains/session/status/background-shell-store";
 import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { useFollowUpSuggestion } from "./composer/use-follow-up-suggestion";
+import { parseSideQuestionCommand } from "../links/side-question";
+import { useSideQuestionStore } from "../links/side-question-store";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
 import { deriveOpenTargets, deriveSessionFileEvidence, sameOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
@@ -1350,6 +1353,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.onModelPickerOpenChange]);
   const handleModelChange = useCallback((nextModel: ModelRef, variant?: string | null) => {
     sessionModel.setModel(nextModel, variant);
+    featureAnalytics.modelChanged(sessionModel.selectedModel, nextModel, true);
     props.onModelChange(nextModel, variant);
     setModelPickerOpen(false);
   }, [props.onModelChange, sessionModel]);
@@ -1379,12 +1383,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [props.draftScope, props.opencodeBaseUrl, props.workspaceId, props.sessionId]);
   const activeSessionOwnerRef = useRef(sessionOwner);
   activeSessionOwnerRef.current = sessionOwner;
+  const archiveRestoreControllerRef = useRef<AbortController | null>(null);
   const autoSubmissionRef = useRef({ model: modelRefKey(sessionModel.selectedModel), client: props.client, mounted: true });
   autoSubmissionRef.current.model = modelRefKey(sessionModel.selectedModel);
   autoSubmissionRef.current.client = props.client;
   useEffect(() => {
     autoSubmissionRef.current.mounted = true;
-    return () => { autoSubmissionRef.current.mounted = false; };
+    return () => {
+      autoSubmissionRef.current.mounted = false;
+      archiveRestoreControllerRef.current?.abort();
+    };
   }, []);
   const snapshotTargetRef = useRef<NativeSessionSnapshotTarget>({
     owner: sessionOwner,
@@ -1414,6 +1422,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
   const orgMcpConnections = useOrgMcpConnections();
+  const refreshOrgMcpConnections = orgMcpConnections.refresh;
   const connectorIdentities = useMemo(
     () => buildConnectorToolIdentities({
       mcpServers: toolMcpServers,
@@ -2267,11 +2276,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const composerBusy = chatStreaming || status === "submitted";
   // Sub-agents of the current turn, attached to the composer (OpenCode v2 only).
   const subagentTrackerParentActive = status === "streaming" || status === "retrying" || status === "submitted";
+  // An earlier turn's helper that still works stays listed after a follow-up.
+  const subagentTrackerParts = useComposerSubagentParts(visibleMessages, props.workspaceId, {
+    enabled: snapshotEngine === "v2",
+    keepEarlier: !archived,
+  });
   const subagentTrackerToolCallIds = useMemo<ReadonlySet<string>>(
-    () => new Set(snapshotEngine === "v2"
-      ? currentTurnSubagentParts(visibleMessages).map((part) => part.toolCallId)
-      : []),
-    [snapshotEngine, visibleMessages],
+    () => new Set(subagentTrackerParts.map((part) => part.toolCallId)),
+    [subagentTrackerParts],
   );
   // Tasks the turn started on other computers join the list on either engine;
   // their state comes from Den, not the local engine.
@@ -2286,6 +2298,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[props.workspaceId]?.running);
   const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
   const followUpSuggestionsEnabled = useDesktopFeature("followUpSuggestions");
+  const questionMinimizeEnabled = useDesktopFeature("questionMinimize");
   const followUpSuggestion = useFollowUpSuggestion({
     enabled: followUpSuggestionsEnabled && !archived && !snapshot?.session.parentID,
     client: opencodeClient,
@@ -2295,6 +2308,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
     model: sessionModel.selectedModel,
   });
   const backgroundTasksShown = backgroundShells.length > 0 && !archived;
+  const sideQuestionsEnabled = useDesktopFeature("sideQuestions")
+    && props.chatPane !== "secondary" && !snapshot?.session.parentID && isOpencodeV2Client(opencodeClient);
 
   useEffect(() => {
     if (!hasFullHistory || admissionOutcome !== "unresolved") {
@@ -2436,16 +2451,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
   };
 
-  // Identity changes invalidate an in-flight consent, even after returning to
-  // the same route/model. Archive itself is deliberately not a key.
   const archiveComposeContext = useMemo(() => ({}), [sessionOwner, props.client, props.openworkToken, props.workspaceRoot,
     archivedSessionCompose, archiveStateKnown, sessionModelPending, sessionModelUnavailable,
     sessionModel.selectedModel.providerID, sessionModel.selectedModel.modelID, sessionModel.modelVariant, model.transitionState]);
   const archiveComposeContextRef = useRef(archiveComposeContext);
   archiveComposeContextRef.current = archiveComposeContext;
   const archivedSendRef = useRef(false);
-  const archiveRestoreControllerRef = useRef<AbortController | null>(null);
-  useEffect(() => () => { archiveRestoreControllerRef.current?.abort(); }, [archiveComposeContext]);
 
   // Immediate sends interrupt foreground delegation, but otherwise steer the
   // running loop. Explicit queueing and automatic draining stay separate.
@@ -2554,7 +2565,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       dispatchQueuedDrain(props.sessionId, { type: "send_error", itemId });
       const parsed = parseSessionError(nextError);
-      captureAnalyticsEvent("task_send_failed", {});
+      captureAnalyticsEvent("task_send_failed", sessionErrorAnalyticsProperties(
+        parsed.kind === "model-not-found" ? "model-unavailable" : (parsed.presentation ?? presentOpencodeSessionError(nextError)).kind,
+        { providerId: sessionModel.selectedModel.providerID, modelId: sessionModel.selectedModel.modelID },
+      ));
       setError(parsed);
       useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
       if (activeSessionOwnerRef.current === sessionOwner) {
@@ -2575,7 +2589,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
   // share the same immediate path.
+  const askSideQuestionFromComposer = useCallback(() => {
+    if (!sideQuestionsEnabled || !isOpencodeV2Client(opencodeClient)) return false;
+    const current = useComposerStateStore.getState().sessions[props.sessionId];
+    if (!current || current.attachments.length > 0) return false;
+    const question = parseSideQuestionCommand(current.draft);
+    if (question === null) return false;
+    const sideChat = useSideQuestionStore.getState();
+    if (question) {
+      markFeatureUsed("sideQuestions");
+      sideChat.ask(opencodeClient, props.sessionId, question);
+    } else sideChat.open(props.sessionId);
+    clearComposer();
+    return true;
+  }, [clearComposer, opencodeClient, props.sessionId, sideQuestionsEnabled]);
+
   const handleSend = useCallback(async (sourceComposer?: ComposerSessionState, humanArchiveConsent = false) => {
+    if (!sourceComposer && askSideQuestionFromComposer()) return;
     const restoreForSend = archived && archivedSessionCompose && humanArchiveConsent;
     if ((archived && !restoreForSend) || !archiveStateKnown || archivedSendRef.current
       || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
@@ -2745,7 +2775,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } finally {
       setAttachmentsUploading(false);
     }
-  }, [archived, archivedSessionCompose, archiveComposeContext, archiveStateKnown, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.onRestoreSession, props.opencodeBaseUrl, props.sessionId, props.selectedAgent, sendDraft, sessionOwner, setError, sessionModelPending, sessionModelUnavailable, model.transitionState, queryClient, snapshotQuery.refetch, snapshotQueryKey]);
+  }, [archived, archivedSessionCompose, archiveComposeContext, archiveStateKnown, askSideQuestionFromComposer, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.onRestoreSession, props.opencodeBaseUrl, props.sessionId, props.selectedAgent, sendDraft, sessionOwner, setError, sessionModelPending, sessionModelUnavailable, model.transitionState, queryClient, snapshotQuery.refetch, snapshotQueryKey]);
 
   // One-step run from the empty-state hero: the route keeps the continuation
   // in this session's composer and marks the submitted snapshot for auto-send.
@@ -2779,6 +2809,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       void handleSend();
       return;
     }
+    if (askSideQuestionFromComposer()) return;
     if (archived || !archiveStateKnown || pendingStopsRef.current.has(sessionOwner)
       || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     // A one-step run seeded without a snapshot sends whatever the composer holds
@@ -2795,7 +2826,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       agent: getSessionAgentSelection(props.sessionId, props.selectedAgent),
     } : undefined);
     clearComposer();
-  }, [archived, archiveStateKnown, appendQueuedDraft, buildDraft, clearComposer, handleSend, props.opencodeBaseUrl, props.selectedAgent, props.sessionId, sessionOwner]);
+  }, [archived, archiveStateKnown, appendQueuedDraft, askSideQuestionFromComposer, buildDraft, clearComposer, handleSend, props.opencodeBaseUrl, props.selectedAgent, props.sessionId, sessionOwner]);
 
   const handleSteer = useCallback(async () => {
     if (pendingStopsRef.current.has(sessionOwner)) return;
@@ -2928,13 +2959,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
       // without it the server resolves the default project, finds no live run,
       // and answers `200: false` while the stream keeps going (#2014).
       const stopClient = createSessionInterruptionClient(props.opencodeBaseUrl, opencodeClient, props.workspaceRoot, props.openworkToken);
+      taskRunQuality.stopping(props.sessionId, true);
       await interruptSessionTurn(props.opencodeBaseUrl, stopClient, props.sessionId,
         props.workspaceRoot.trim() || undefined, {
           admissionUnknown: phase.kind === "admission_unknown",
           admissionMessageID: phase.kind === "admission_unknown" ? phase.messageID : undefined,
           onStopped: () => dispatchQueuedDrain(props.sessionId, { type: "stop_confirmed" }),
         });
-      captureAnalyticsEvent("task_run_stopped", {});
+      takeTaskRunStart(props.sessionId);
+      captureAnalyticsEvent("task_run_stopped", taskRunQuality.finish(props.sessionId));
       // The surface survives navigation; refresh the stopped conversation, not
       // whichever query the observer is showing when cancellation finishes.
       if (isDesktopRuntime() && !isOpencodeV2BaseUrl(props.opencodeBaseUrl)) {
@@ -2947,6 +2980,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setError({ message: error instanceof Error ? error.message : t("session.stop_failed") });
       return false;
     } finally {
+      taskRunQuality.stopping(props.sessionId, false);
       pendingStopsRef.current.delete(sessionOwner);
       setPendingStopSessions([...pendingStopsRef.current]);
     }
@@ -3669,6 +3703,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onProgress,
       });
       if (!isAuthorizationCurrent()) throw new Error("The connection request or account changed.");
+      // Every card for this connection reads the member's live status from this list.
+      void refreshOrgMcpConnections();
       recordInspectorEvent("mcp.chat_reconnect.completed", {
         workspaceId: props.workspaceId,
         sessionId: props.sessionId,
@@ -3684,7 +3720,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       });
       throw error;
     }
-  }, [props.onOpenConnect, props.sessionId, props.workspaceId]);
+  }, [props.onOpenConnect, props.sessionId, props.workspaceId, refreshOrgMcpConnections]);
 
   const handleMcpReopenAuthorization = useCallback(async (
     action: ChatToolReconnectAction,
@@ -4136,6 +4172,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         {attachmentsUploading ? <div role="status" className="mx-3 mb-2 text-xs text-muted-foreground" data-attachment-status="uploading">
           Preparing attachments...
         </div> : null}
+        <RemoteAccessAsk />
         <SignInHandoffNotice workspaceId={props.workspaceId} sessionId={props.sessionId} hasDraft={Boolean(persistableComposerDraftText(draft).trim())} />
         <ReactSessionComposer
           runModeControl={<WorkspaceRunModeMenu client={props.client} workspaceId={props.workspaceId} busy={composerBusy || preparingCloudTools || Boolean(props.activePermission || props.activeQuestion)} />}
@@ -4241,6 +4278,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     onOpenSubagentSession={openChild}
                     onStopSubagentSession={handleStopSubagentSession}
                     includeLocal={subagentTrackerToolCallIds.size > 0}
+                    parts={subagentTrackerParts}
                     remote={remoteTrackerTasks.length > 0 ? {
                       tasks: remoteTrackerTasks,
                       owner: remoteTrackerOwner,
@@ -4261,6 +4299,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   <QuestionPanel
                     questions={composerQuestion.questions}
                     busy={props.questionReplyBusy ?? false}
+                    collapsible={questionMinimizeEnabled}
+                    requestId={composerQuestion.id}
+                    shortcutActive={props.isControlTarget}
                     onReply={(answers) => {
                       if (composerQuestion) {
                         void Promise.resolve(props.respondQuestion?.(composerQuestion.id, answers)).catch(() => {});

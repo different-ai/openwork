@@ -452,8 +452,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     });
   }
 
+  // Absent unless this launch opened the debug port. Browser tools never need it.
   function cdpBrowserUrl() {
-    return `http://127.0.0.1:${remoteDebugPort}`;
+    return remoteDebugPort > 0 ? `http://127.0.0.1:${remoteDebugPort}` : undefined;
   }
 
   /**

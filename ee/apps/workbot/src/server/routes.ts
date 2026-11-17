@@ -218,8 +218,18 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     return null
   }
 
-  app.use("/v1/workbot/*", input.sameOrigin, input.member)
-  app.use("/v1/workbot", input.sameOrigin, input.member)
+  /**
+   * The phone app works only where its feature is on. `/me` still answers, so the app can say so instead of failing;
+   * turning the feature off stops every phone on its next request.
+   */
+  const phoneAllowed: MiddlewareHandler<AppEnv> = async (c, next) => {
+    const member = c.get("member")
+    if (member.app && !member.den.mobile && c.req.path !== "/v1/workbot/me") return c.json({ error: "workbot_mobile_not_enabled" }, 403)
+    await next()
+  }
+
+  app.use("/v1/workbot/*", input.sameOrigin, input.member, phoneAllowed)
+  app.use("/v1/workbot", input.sameOrigin, input.member, phoneAllowed)
   const teachingSaves = new Map<string, { markdown: string; name: string; saving: ReturnType<Den["saveBrowserSkill"]> }>()
   app.post("/v1/workbot/teaching", bodyLimit({ maxSize: 8192 }), async c => {
     c.header("Cache-Control", "no-store")
@@ -309,9 +319,11 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       quietCalendar: who.enabled && who.calendar === true,
       scrollToBottom: who.enabled,
       profileComputers: who.enabled && who.profileComputers,
+      deviceActivity: who.enabled && who.deviceActivity,
       calmChat: who.enabled && who.calmChat,
       devices: who.enabled,
       commandPalette: true,
+      mobile: who.enabled && who.mobile,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })
   })
@@ -325,6 +337,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     if (code === "desktop_outdated") return c.json({ error: code, message: rebuilt ? "Your computer still needs an update after rebuilding. Ask your workspace admin for help." : "Your computer needs an update before it can connect. Rebuild it, or ask your workspace admin if that doesn't help." }, 409)
     // The runner moves the computer to the new version itself once the work running on it finishes.
     if (code === "desktop_updating") return c.json({ error: code, message: "Your computer is updating. It will be ready when its current work finishes." }, 409)
+    // Its desktop wouldn't start, so the runner is replacing it. The view says so and asks again, which waits for the new one.
+    if (code === "desktop_replacing") return c.json({ error: code, message: "Your computer's desktop didn't start, so it is being replaced. This usually takes about a minute." }, 409)
     return c.json({ error: "desktop_unavailable", message: "Your computer is unavailable. Try reconnecting." }, 409)
   }
   /** One automatic rebuild per computer at a time: the Browser view and the chat's live glimpse can both find it outdated. */
@@ -354,7 +368,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     /** The chat's computer, once this request knows which runner session it is. */
     let computer: { sessionId: string; chat: WorkbotChat } | null = null
     const failed = (code: string, rebuilt = false) => {
-      if (computer) report(computer, { event: "failed", code })
+      // A computer being replaced hasn't failed: the runner is already bringing up the new one.
+      if (computer && code !== "desktop_replacing") report(computer, { event: "failed", code })
       return desktopFailure(c, operation, code, rebuilt)
     }
     /** The views Den allows right now, or null when this request isn't allowed. The runner is told only these. */

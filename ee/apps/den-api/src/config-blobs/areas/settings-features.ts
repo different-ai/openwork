@@ -16,13 +16,15 @@
  * - An import only ever turns features ON, as an organization override set
  *   through `updateOrganizationFeatureOverrides`, the function /admin and
  *   `den_set_org_capability` use (feature_change records the applying user).
- *   Only a platform admin (the /v1/admin check) may: anyone else gets a block
- *   at plan time, so the admin can skip these and apply the rest.
+ *   Only a platform admin (the /v1/admin check) may. For anyone else the
+ *   plan skips these with the reason and the rest applies: an organization
+ *   admin can do nothing about them here, and a block would only make them
+ *   tick every feature off by hand.
  * - Never turned off: deletes are refused (`protectedFromDelete`), and the
  *   spec is constant, so there is nothing to update.
- * - Skipped at plan time: a key this server doesn't know (or has retired), a
- *   feature not part of this deployment, one whose kill switch is on, one the
- *   operator locked off. `permanent` features are treated like any other:
+ * - Also skipped at plan time: a key this server doesn't know (or has
+ *   retired), a feature not part of this deployment, one whose kill switch is
+ *   on, one the operator locked off, one that is already on. `permanent` features are treated like any other:
  *   permanent only says the switch stays in the product, and turning one on
  *   for an organization is what /admin does with it.
  */
@@ -48,6 +50,11 @@ const AREA = "settings.features"
 
 export const PLATFORM_ADMIN_ONLY_MESSAGE = "Only platform admins can turn on features."
 const NEVER_OFF_MESSAGE = "Imports never turn features off."
+
+/** Why a feature the file has on is left off for an importer who isn't a platform admin. */
+function platformAdminOnlyReason(key: FeatureKey): string {
+  return `${featureDefinition(key).label} stays off here: only a platform admin can turn a feature on. Ask one to turn it on, then import this file again for the settings that need it.`
+}
 
 const featureSpecSchema = z.object({
   /** Always true: only features that are on are exported, and an import only turns features on. */
@@ -147,7 +154,8 @@ export const settingsFeaturesArea = defineConfigArea({
     const reason = notApplicable(key, resolved)
     if (reason) return { skip: reason }
     if (resolved.enabled) return { skip: `${featureDefinition(key).label} is already on here.` }
-    if (!await isAdminRouteUserId(ctx.actor.userId)) return { block: PLATFORM_ADMIN_ONLY_MESSAGE }
+    // Not a block: an organization admin can't fix this, and the rest of the file doesn't wait for it.
+    if (!await isAdminRouteUserId(ctx.actor.userId)) return { skip: platformAdminOnlyReason(key) }
     return null
   },
 

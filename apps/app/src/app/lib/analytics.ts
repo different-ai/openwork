@@ -14,7 +14,9 @@
  *   (`window.__openwork.record("analytics.<event>")`) so coded evals can
  *   assert instrumentation without any analytics backend.
  */
-import { denSessionUpdatedEvent, type DenSessionUpdatedDetail } from "./den-session-events";
+import { denSessionUpdatedEvent, denSettingsChangedEvent, type DenSessionUpdatedDetail } from "./den-session-events";
+import { readDenSettings } from "./den";
+import { analyticsLaunchProperties, analyticsRuntimeProperties, recordAnalyticsLaunch, createRunQualityTracker, createFeatureAnalytics, createFeatureToolObserver, recordDesktopAutomationLifecycle, createUpdateAnalytics } from "@openwork/product-analytics";
 import { recordInspectorEvent } from "./app-inspector";
 import { resolvePosthogKey } from "./analytics-key";
 
@@ -44,6 +46,9 @@ type QueuedEvent = {
 
 const queue: QueuedEvent[] = [];
 let initialized = false;
+let launch: ReturnType<typeof recordAnalyticsLaunch> | undefined;
+let sessionId: string | undefined;
+let signedIn = false;
 
 export function isAnalyticsEnabled(): boolean {
   if (typeof window === "undefined") return false;
@@ -52,7 +57,7 @@ export function isAnalyticsEnabled(): boolean {
     if (!raw) return true;
     const parsed: unknown = JSON.parse(raw);
     if (parsed && typeof parsed === "object" && "analyticsEnabled" in parsed) {
-      return (parsed as { analyticsEnabled?: unknown }).analyticsEnabled !== false;
+      return parsed.analyticsEnabled !== false;
     }
     return true;
   } catch {
@@ -74,9 +79,18 @@ export function getAnalyticsDistinctId(): string {
 }
 
 function baseProperties(): AnalyticsProperties {
+  initAnalytics();
   return {
     app_version: ENV_APP_VERSION || null,
     platform: typeof navigator === "undefined" ? null : navigator.platform || null,
+    ...analyticsRuntimeProperties(
+      typeof window === "undefined" ? undefined : window.__OPENWORK_ELECTRON__?.meta,
+      import.meta.env.VITE_OPENWORK_OFFICIAL_RELEASE === "1",
+      typeof navigator === "undefined" ? "" : navigator.platform,
+    ),
+    ...(launch ? analyticsLaunchProperties(launch) : {}),
+    $session_id: sessionId ?? null,
+    signed_in: signedIn,
   };
 }
 
@@ -86,20 +100,17 @@ function baseProperties(): AnalyticsProperties {
  */
 export function captureAnalyticsEvent(event: string, properties: AnalyticsProperties = {}) {
   try {
-    recordInspectorEvent(`analytics.${event}`, properties);
+    const eventProperties = { ...baseProperties(), ...properties };
+    recordInspectorEvent(`analytics.${event}`, eventProperties);
+    if (!POSTHOG_KEY || !isAnalyticsEnabled()) return;
+
+    queue.push({
+      event,
+      properties: eventProperties,
+      timestamp: new Date().toISOString(),
+    });
+    if (queue.length >= MAX_BATCH) void flushAnalytics();
   } catch {
-    // Inspector unavailable (non-browser context).
-  }
-
-  if (!POSTHOG_KEY || !isAnalyticsEnabled()) return;
-
-  queue.push({
-    event,
-    properties: { ...baseProperties(), ...properties },
-    timestamp: new Date().toISOString(),
-  });
-  if (queue.length >= MAX_BATCH) {
-    void flushAnalytics();
   }
 }
 
@@ -172,6 +183,15 @@ export function takeTaskRunStart(sessionId: string): number | null {
 export function initAnalytics() {
   if (initialized || typeof window === "undefined") return;
   initialized = true;
+  let storage: Storage | undefined;
+  try { storage = window.localStorage; } catch { }
+  launch = recordAnalyticsLaunch(storage);
+  try { sessionId = crypto.randomUUID(); } catch { sessionId = undefined; }
+  const refreshSignedIn = () => {
+    try { signedIn = Boolean(readDenSettings().authToken); } catch { signedIn = false; }
+  };
+  refreshSignedIn();
+  window.addEventListener(denSettingsChangedEvent, refreshSignedIn);
 
   setInterval(() => void flushAnalytics(), FLUSH_INTERVAL_MS);
 
@@ -179,10 +199,25 @@ export function initAnalytics() {
     if (document.visibilityState === "hidden") void flushAnalytics();
   });
 
-  window.addEventListener(denSessionUpdatedEvent, ((event: CustomEvent<DenSessionUpdatedDetail>) => {
+  window.addEventListener(denSessionUpdatedEvent, (event: CustomEvent<DenSessionUpdatedDetail>) => {
+    if (event.detail?.status === "signed_out") signedIn = false;
     if (event.detail?.status !== "success") return;
+    signedIn = true;
     const userId = event.detail.user?.id?.trim() ?? "";
     if (userId) identify(userId);
     captureAnalyticsEvent("cloud_signed_in", {});
-  }) as EventListener);
+  });
+}
+
+export const taskRunQuality = createRunQualityTracker(() => typeof window === "undefined" ? undefined : window.localStorage);
+export const featureAnalytics = createFeatureAnalytics(captureAnalyticsEvent);
+export const observeFeatureTool = createFeatureToolObserver(featureAnalytics);
+export const observeDesktopAutomationLifecycle = (event: unknown) => recordDesktopAutomationLifecycle(featureAnalytics, event);
+export const updateAnalytics = createUpdateAnalytics(
+  () => typeof window === "undefined" ? undefined : window.localStorage,
+  captureAnalyticsEvent,
+);
+
+export function captureOnboardingEvent(event: `onboarding_${string}`, properties: AnalyticsProperties = {}) {
+  if (taskRunQuality.isFirstRun()) captureAnalyticsEvent(event, properties);
 }

@@ -540,6 +540,8 @@ export function CommandPalette(props: CommandPaletteProps) {
 
   const handleEscape = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (choice.loginOpen) return;
+    // An open menu inside the palette (the provider filter) takes Escape first.
+    if (event.target instanceof Element && event.target.closest('[data-slot="select-content"]')) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();

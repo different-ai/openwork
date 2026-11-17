@@ -45,6 +45,7 @@ import {
   buildExternalCapabilityName,
   listExternalMcpToolsThroughSearchCache,
   probeExternalConnectionStatus,
+  mcpMemberForToken,
   resolveMcpMemberIdentity,
   type McpMemberIdentity,
 } from "./external-capabilities.js"
@@ -220,6 +221,8 @@ export async function resolveConnectionServer(input: {
   catalog: readonly McpToolOperation[]
 }, sources: ConnectionServerSources = CONNECTION_SERVER_SOURCES): Promise<ResolvedConnectionServer | null> {
   const row = await sources.externalConnection({ organizationId: input.organizationId, connectionId: input.connectionId })
+  // Taken away from Workbot by an admin: unavailable to a Workbot turn, like a connection it was never granted.
+  if (row && input.member.withheldConnectionIds?.has(row.id)) return null
   if (row?.kind === "external_mcp") {
     return externalConnectionServer({ connection: row, member: input.member, redirectUriBase: input.redirectUriBase }, sources)
   }
@@ -434,8 +437,9 @@ export function registerConnectionServerRoutes<T extends { Variables: RequestIdV
     const preflightResponse = await preflightMcpJsonRpcRequest(c.req.raw, requestId)
     if (preflightResponse) return preflightResponse
 
-    const member = await deps.member({ userId: principal.userId, organizationId })
-    if (!member) return connectionUnavailableResponse(c.req.raw)
+    const resolvedMember = await deps.member({ userId: principal.userId, organizationId })
+    if (!resolvedMember) return connectionUnavailableResponse(c.req.raw)
+    const member = mcpMemberForToken(resolvedMember, principal.scopes)
     const catalog = await deps.catalog(app as unknown as Hono, c.env)
     const redirectUriBase = resolvePublicOrigin(c.req.raw, env.apiPublicUrl)
     const connection = await resolveConnectionServer({

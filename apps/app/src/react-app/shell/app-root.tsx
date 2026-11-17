@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 
-import { captureAnalyticsEvent, initAnalytics } from "../../app/lib/analytics";
+import { captureAnalyticsEvent, initAnalytics, captureOnboardingEvent } from "../../app/lib/analytics";
 import {
   readDenBootstrapConfig,
   readDenSettings,
@@ -37,6 +37,8 @@ import { OpenWorkWebAccessGate } from "../domains/cloud/openwork-web-access-gate
 import { OrgOnboardingPage } from "../domains/cloud/org-onboarding-page";
 import { ChatDeepLinkListener } from "./chat-deep-link-listener";
 import { NewProvidersListener } from "./new-providers-listener";
+import { LowStorageNotifier } from "./low-storage-notifier";
+import { AutomationFailureNotifier } from "@/react-app/domains/automations/automation-failure-notifier";
 import { useDesktopFontZoomBehavior } from "./font-zoom";
 import { LoadingOverlay } from "./loading-overlay";
 import { useVisualViewportInset } from "../../hooks/use-visual-viewport-inset";
@@ -167,6 +169,9 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   // restoration a brief chance to settle before treating the user as new.
   useEffect(() => {
     const handler = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
+      if (event.detail?.status === "error") {
+        captureOnboardingEvent("onboarding_signin_failed", { reason: "handoff_failed" });
+      }
       if (event.detail?.status !== "success") return;
       const signInLocation = locationRef.current;
       const signInAttempt = readSignInReturnTarget();
@@ -682,6 +687,8 @@ export function AppRoot() {
         true app-level signal.
       */}
       <NewProvidersListener />
+      <AutomationFailureNotifier />
+      <LowStorageNotifier />
       <DevProfilerOverlay />
       <ReactRenderWatchdogOverlay />
     </>

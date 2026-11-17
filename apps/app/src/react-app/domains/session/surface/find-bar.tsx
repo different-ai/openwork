@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
-import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { FindField } from "@/components/find-field";
 import { useSessionFindStore } from "./find-store";
 import { SEARCH_HIGHLIGHT_SELECTOR } from "./text-highlights";
 import { SESSION_SCROLL_NAVIGATION_EVENT } from "./scroll-controller";
@@ -275,92 +272,17 @@ export function SessionFindBar({
 
   return (
     <div className="absolute top-2 right-3 z-30 sm:right-5">
-      <div className="flex items-center gap-1 rounded-xl border border-dls-border bg-dls-surface/95 px-1.5 py-1 shadow-(--dls-card-shadow) backdrop-blur-md">
-        <Search className="ml-1 size-3.5 shrink-0 text-dls-secondary" />
-        <input
-          ref={inputRef}
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              if (event.shiftKey) {
-                jumpToPrevious();
-              } else {
-                jumpToNext();
-              }
-              return;
-            }
-
-            if (event.key === "Escape") {
-              event.preventDefault();
-              closeFind();
-            }
-          }}
-          className="h-7 w-48 bg-transparent px-1 text-sm text-dls-text outline-none placeholder:text-dls-secondary sm:h-8 sm:w-56"
-          placeholder="Find in conversation"
-          aria-label="Find in conversation"
-        />
-        <span className={cn(
-          "min-w-14 text-right text-xs tabular-nums text-muted-foreground",
-          counterText === "No matches" && "min-w-20",
-        )} aria-live="polite">
-          {counterText}
-        </span>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Previous match"
-                disabled={totalMatches === 0}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={jumpToPrevious}
-              >
-                <ChevronUp />
-              </Button>
-            }
-          />
-          <TooltipContent>Previous match (⇧↵)</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Next match"
-                disabled={totalMatches === 0}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={jumpToNext}
-              >
-                <ChevronDown />
-              </Button>
-            }
-          />
-          <TooltipContent>Next match (↵)</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Close find"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={closeFind}
-              >
-                <X />
-              </Button>
-            }
-          />
-          <TooltipContent>Close (Esc)</TooltipContent>
-        </Tooltip>
-      </div>
+      <FindField
+        inputRef={inputRef}
+        label="Find in conversation"
+        query={query}
+        onQueryChange={setQuery}
+        counterText={counterText}
+        hasMatches={totalMatches > 0}
+        onNext={jumpToNext}
+        onPrevious={jumpToPrevious}
+        onClose={closeFind}
+      />
     </div>
   );
 }

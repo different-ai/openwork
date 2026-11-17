@@ -7,6 +7,7 @@ import { Hono } from "hono"
 import type { Context } from "hono"
 import { createMiddleware } from "hono/factory"
 import { env } from "./env.js"
+import { gatewayLog } from "./log.js"
 import type { assertOrganizationManagedModelsAllowed as assertOrganizationManagedModelsAllowedFn, findActiveInferenceKey as findActiveInferenceKeyFn, getOpenRouterProviderKey as getOpenRouterProviderKeyFn } from "./keys.js"
 import type { ensureUsableBuckets as ensureUsableBucketsFn } from "./limits.js"
 import {
@@ -36,7 +37,7 @@ import { createGcpServiceAccountTokenMinter } from "./credentials/gcp-service-ac
 import { loadProviderCatalogFromFile } from "./provider-catalog.js"
 import { gatewayProviderTestPath, registerProviderTestRoute } from "./provider-test.js"
 import type { GatewayDependencies } from "./gateway.js"
-import { isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./relay.js"
+import { describeUpstreamFetchFailure, isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./relay.js"
 import { createRequestLogRecorder, insertRequestLogIntoDb, REQUEST_LOG_UNAVAILABLE_MESSAGE } from "./request-log.js"
 import { HEADLESS_SESSION_HEADER, parseHeadlessSessionHeader } from "@openwork/types/den/workbot-usage"
 import { openWorkModelsAllowanceResponse } from "./models-allowance.js"
@@ -748,36 +749,26 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
           return reject(dispatchRejection, "managed_models_policy_rejected")
         }
         upstream = await dependencies.fetch(upstreamUrl, upstreamInit)
-      } catch {
+      } catch (error) {
         clearTimeout(headerTimeout)
         c.req.raw.signal.removeEventListener("abort", cancel)
         finishAnalytics("failed")
-        const error = abortError() ?? inferenceError("upstream_unreachable", "The selected model could not be reached. Your work is preserved; retry when the provider recovers.")
-        logProxyError("Failed to reach OpenRouter upstream", {
-          openworkRequestId,
-          organizationId: inferenceKey.organization_id,
-          orgMembershipId: inferenceKey.org_membership_id,
-          inferenceKeyId: inferenceKey.id,
-          upstreamUrl: safeAccessUrl(upstreamUrl.toString()),
-          modelAlias: prepared.modelAlias,
-          upstreamModel: prepared.upstreamModel,
+        const failure = describeUpstreamFetchFailure(error, {
+          clientAborted: clientAborted(),
+          timedOut: abort.signal.aborted && !clientAborted(),
+          target: "the selected model's provider",
         })
-        reporter.handledError({
-          reason: error.error.code,
-          organizationId: inferenceKey.organization_id,
-          orgMembershipId: inferenceKey.org_membership_id,
-          inferenceKeyId: inferenceKey.id,
-          openworkRequestId,
-          route: c.req.path,
-          method: c.req.method,
-          headers: incomingHeaders,
-          incomingModel: prepared.incomingModel,
-          resolvedUpstreamModel: prepared.upstreamModel,
-          status: 502,
-          upstreamUrl: safeAccessUrl(upstreamUrl.toString()),
+        // An unreachable provider is answered to the caller, not reported as a Gateway error.
+        gatewayLog[failure.outcome === "client_aborted" ? "debug" : "warn"]("OpenRouter upstream not reached", {
+          request_id: openworkRequestId,
+          organization_id: inferenceKey.organization_id,
+          upstream_url: safeAccessUrl(upstreamUrl.toString()),
+          upstream_model: prepared.upstreamModel,
+          error_code: failure.code,
+          network_error: failure.cause,
         })
-        void recorder.finish({ status: 502, outcome: clientAborted() ? "client_aborted" : "upstream_unreachable", errorCode: error.error.code })
-        return c.json(error, 502)
+        void recorder.finish({ status: failure.status, outcome: failure.outcome, errorCode: failure.code })
+        return c.json(inferenceError(failure.code, failure.message), failure.status)
       }
       clearTimeout(headerTimeout)
 

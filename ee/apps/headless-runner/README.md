@@ -69,7 +69,7 @@ return credentials or URLs. Public `/health` remains a liveness check. See
 Turn status is one of `queued`, `running`, `completed`, `failed`, `interrupted` or `aborted`. `failed` and `interrupted` can be resumed by re-sending the same `messageId` with fresh credentials; `aborted` cannot. Resuming continues the same turn (Workbot's "Try again" does this), so the conversation never gets a second copy of the message. A failed turn's `errorDetail` says what the model provider answered, with its request id, and the turn's `turn ended` log line carries it too; it is for support, never for the person. The `error` field holds a stable code:
 
 - `model_credentials_missing`
-- `mcp_unavailable` (connecting to `HEADLESS_MCP_URL` failed three times in a row, 0.5 s and 2 s apart)
+- `mcp_unavailable` (connecting to `HEADLESS_MCP_URL` failed three times in a row, 0.5 s and 2 s apart, before the turn's tools were listed; see [Step mode](#step-mode) for later steps)
 - `model_http_<status>`
 - `turn_timeout`
 - `max_steps_exceeded` (only with `HEADLESS_MAX_STEPS` set: the turn made that many model calls)
@@ -137,7 +137,9 @@ The model sees a conversation in whole turns (a message and everything that answ
   context never reads them. Removing a message that reaches a sealed turn rewrites that segment (a new object under a
   new name, the manifest swapped in one transaction, the old object deleted after).
 - **Orphan cleanup** (background job `segment-orphans`): retries object deletions queued in `storage_deletions`, and
-  once a day deletes this cell's segment and body objects that nothing references and that are over 24 hours old.
+  deletes this cell's segment and body objects that nothing references and that are over 24 hours old. That check
+  runs a day after the cell last stored an object (noted before each upload), not on a schedule: a conversation that
+  stores nothing is never checked, so the job gives an idle cell no reason to wake.
 
 `HEADLESS_SEGMENTS=off` (the default) is the kill switch: nothing new is sealed or moved; reading existing segments
 and large bodies keeps working. The schema is versioned by numbered migrations in a `meta` table (`schema_version`;
@@ -204,8 +206,9 @@ the runner keeps the latest with the session, never with the turn, in logs or in
 `ok`/`stale` are acknowledged; `rate_limited` is kept and retried (so is `index_disabled`, which only Dens from before
 the index was always on send); other rejections are dropped.
 Failures back off (immediately, 30 s, 2 min, 10 min, then hourly); rows older than 7 days, or that never got a
-capability, are dropped. Once a day the cell queues a fresh snapshot of every session. A Den outage delays the
-index, never a turn.
+capability, are dropped. At most once a day the cell queues a fresh snapshot of every session. Both happen when the
+flusher runs for an update: it asks for a run only while it has one to send, so it never wakes an idle cell. A Den
+outage delays the index, never a turn.
 
 ## Step mode
 
@@ -219,6 +222,12 @@ interrupt, the repeat check and `credentials_refresh` work the same way.
 - **A step** is: build the context, one streaming model call, that call's tool calls, then one SQLite transaction
   that writes the step's messages and tool results, the turn's next step (`step_schedule`) and the attempt reset. A
   crash leaves the whole step or none of it.
+- **Tools and memory are read once per run.** The first step lists the OpenWork MCP tools and reads `memory/`;
+  later steps show the model the same list and memory, as a turn run in one go does, so every request starts the
+  same and no later step waits on either before its model call. A later step connects only when the model calls
+  an MCP tool, starting as soon as the model begins writing that call. If that connection fails (three tries),
+  the step's MCP calls get an error saying they were not made and the next step connects again; the turn does not
+  end `mcp_unavailable`. A restart or a fresh MCP token lists the tools again.
 - **Between steps nothing runs.** On celld, steps run from the cell's durable alarm (the same alarm as self-resume,
   set for whichever is due first), each to completion, lanes in parallel. Between two alarms the cell is idle, so a
   runner deploy switches it to the new code there instead of cancelling a step after `CELLD_DEPLOY_MAX_AGE_S`. On
@@ -256,7 +265,7 @@ The runner is a private service with one caller (Den), which authorizes each per
 - **Opt-in per session.** Configuring files or a computer makes them *available*; a session only gets them when it is created (or updated) with `files: true` / `computer: true`. Slack replies and Automations don't ask, so they keep their exact behavior: no file tools, no computer, no uploads, and the preview route never starts a computer for them.
 - **Files belong to one session.** Every read, download, preview and delete looks a file up by session id *and* file id, and bytes are stored under `sessions/<sessionId>/<fileId>`. Deleting a session deletes its bytes and its computer.
 - **Limits.** `HEADLESS_FILES_MAX_BYTES` (100 MB) per file, enforced while the upload streams in (with or without `Content-Length`), and on `save_file` and computer outputs. `HEADLESS_FILES_MAX_SESSION_BYTES` (5 GB) per session in total. Past either, the upload gets `413`, and the model is told why so it can say so.
-- **Storage credentials.** Use a store or bucket for this runner alone, with credentials scoped to it. Neither the storage credentials nor the Freestyle key ever enter a computer.
+- **Storage credentials.** Use a store or bucket for this runner alone, with credentials scoped to it. Neither the storage credentials nor the Freestyle key ever enter a computer. With an S3 store a computer does receive links: each reaches one object with one method, carries a signature rather than the credentials, and stops working within minutes.
 - **Computers.** One VM per session, created only when that session first runs a command; it holds no credentials and has outbound internet only.
 
 ## Computer (optional)
@@ -269,6 +278,7 @@ The runner is a private service with one caller (Den), which authorizes each per
 | `look { paths }` | Shows up to 4 files from the VM like any tool file: images and PDFs as model input, Office files and text as text |
 
 - **Files:** uploads are copied into `/workspace/files`; files written to `/workspace/out` become saved files after each command. A new version of an out file updates the same saved file (same id, newer `updatedAt`).
+- **How the bytes move:** with `HEADLESS_FILES=s3` the computer fetches uploads from the bucket and sends outputs to it itself, with `curl` over those links, so files never pass through the runner; the computer must be able to reach the bucket's endpoint. An output goes to a holding object first and is kept only after the runner has measured it against the limits. With a disk store, or when a transfer doesn't arrive, files go through the runner as before. Which uploads are already on a computer is recorded there, in `/workspace/.jobs/.copied.json`.
 - **Previews:** slide decks, documents and PDFs get page images (LibreOffice, then `pdftoppm`), served at `GET /v1/sessions/:id/saved-files/:fileId/preview` and `/preview/:page`.
 - **Only for sessions with `computer: true`.** Others never see the tools, and nothing starts a VM for them.
 - **Lifecycle:** one VM per session, found by a slug derived from the session id. Paused `HEADLESS_COMPUTER_PAUSE_SECONDS` (300) after the last turn unless a `background` job runs; deleted after `HEADLESS_COMPUTER_KEEP_DAYS` (14) unused, or with the session.
@@ -515,9 +525,11 @@ the old one.
 
 A new guest on the same image needs no rebuild. The runner installs its guest
 into the computers it starts, which adds about 4 s to a new computer's first
-open. Guests change most days, and a template takes about five minutes to build
-and a Differently configuration change to adopt, so the template follows the
-image and not the guest.
+open, and into an idle computer just before pausing it, so one used since the
+deploy opens without that wait. A computer paused before the deploy gets the
+guest on its next open. Guests change most days, and a template takes about
+five minutes to build and a Differently configuration change to adopt, so the
+template follows the image and not the guest.
 
 Opt-in verification, creating and cleaning one real computer:
 

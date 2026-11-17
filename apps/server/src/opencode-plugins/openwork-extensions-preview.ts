@@ -29,6 +29,7 @@ import {
   type OpenworkSessionModel,
 } from "@openwork/types/openwork-affordance";
 import { automationProposalSchema } from "@openwork/types/automations";
+import { SESSION_TREE_QUERY_ID, sessionLinkMetadata, type SessionLink } from "@openwork/types/session-link";
 import {
   appendAgentInstructions,
   createInstructionSection,
@@ -160,6 +161,7 @@ Keep ordinary tool activity compact. Use a standard MCP App only when its intera
 Use openwork_context when the request depends on the current OpenWork screen, open tabs, split view, focused pane, sidebar, side panel, settings panel, or available app actions.
 Each affordance declares its effects and executor. Use openwork_query only for side-effect-free affordances whose executor is OpenWork. Use openwork_execute for OpenWork commands without activating the desktop window. If executor names another tool, call that exact tool instead.
 Reading another session does not require opening it. Prefer session.search then session.read for transcript questions; use session.create for new chats and a UI command only when the user asks to navigate.
+A thread, sub thread or separate session the person asks for is a session of its own in the sidebar: start it with session.create, not a sub-agent or a remote-session tool, which only reaches other computers and the cloud. Sub-agents are for work whose result only feeds your reply.
 Messaging another session does not require opening it either: use session.send { sessionId, text } to append a prompt to that session by id; nothing on screen changes unless you pass reveal: true. composer.set_text and composer.send type into whichever composer the person currently has focused, so never use them to reach a different session.
 To open settings or navigate the app, use openwork_execute with ids from openwork_context such as settings.panel.open — never browser_* tools for the OpenWork app itself.`;
 
@@ -211,6 +213,8 @@ type CreatedOpenWorkSessionResult = {
   /** The model the engine bound to the session, read from its create response. */
   model: OpenworkSessionModel | null;
   route: string;
+  /** Listed under the calling session, which gets a report when this one finishes a turn. */
+  linked?: true;
 };
 type FailedOpenWorkSessionResult = {
   ok: false;
@@ -1273,7 +1277,7 @@ async function sendToOpenWorkSession(rawArgs: unknown, context: OpenCodeContext)
   const messageId = createSendMessageId();
   await postJson(
     `/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(session.id)}/prompt_async`,
-    { messageID: messageId, parts: [{ type: "text", text: args.text }] },
+    { messageID: messageId, parts: [{ type: "text", text: args.text }], ...promptSender(context) },
   );
   const result: SendToOpenWorkSessionResult = {
     ok: true,
@@ -1578,11 +1582,39 @@ function sessionArgumentError(error: z.ZodError, rawArgs: unknown): { ok: false;
   return { ok: false, error: issues.map((issue) => issue.message).join("; "), issues };
 }
 
+/**
+ * Names the calling session on a prompt its agent sends, so the receiving
+ * session's record shows the turn was asked for by an agent, not typed by the
+ * person. Only the v2 engine keeps message metadata.
+ */
+function promptSender(context: OpenCodeContext): { sentBy?: string } {
+  const sessionId = context.sessionID?.trim();
+  return sessionId && openworkReadTransport.getStore() ? { sentBy: sessionId } : {};
+}
+
+/**
+ * The link for sessions the calling session starts, when the app lists such
+ * sessions under their parent. Only the v2 engine keeps session metadata, and
+ * only the app knows whether the feature is on and the caller can be a parent,
+ * so anything short of its yes means no link.
+ */
+async function agentSessionLink(workspaceId: string, context: OpenCodeContext): Promise<SessionLink | undefined> {
+  const sessionId = context.sessionID?.trim();
+  if (!sessionId || !openworkReadTransport.getStore()) return undefined;
+  const envelope = openworkAffordanceResultSchema.safeParse(await uiControlRequest("query", {
+    id: SESSION_TREE_QUERY_ID, args: { workspaceId, sessionId },
+  }));
+  if (!envelope.success || !envelope.data.ok || envelope.data.id !== SESSION_TREE_QUERY_ID) return undefined;
+  const result = envelope.data.result;
+  return isRecord(result) && result.canStartLinked === true ? { kind: "sub", parentID: sessionId } : undefined;
+}
+
 async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
   const parsed = sessionCreateArgsSchema.safeParse(rawArgs);
   if (!parsed.success) return sessionArgumentError(parsed.error, rawArgs);
   const args = parsed.data;
   const workspace = await resolveContextWorkspace(args.workspaceId, context);
+  const link = await agentSessionLink(workspace.id, context);
   let catalog: OpenworkCatalogModel[];
   let models: Array<OpenworkSessionModel | undefined>;
   try {
@@ -1611,12 +1643,12 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
     try {
       const payload = sessionInfoSchema.parse(await postJson(
         `/workspace/${encodeURIComponent(workspace.id)}/opencode/session`,
-        { title: session.title, ...(model ? { model: engineSessionCreateModel(model) } : {}) },
+        { title: session.title, ...(model ? { model: engineSessionCreateModel(model) } : {}), ...(link ? { metadata: sessionLinkMetadata(link) } : {}) },
       ));
       createdOnEngine = true;
       await postJson(
         `/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(payload.id)}/prompt_async`,
-        { ...(model ? enginePromptModel(model) : {}), parts: [{ type: "text", text: session.prompt }] },
+        { ...(model ? enginePromptModel(model) : {}), parts: [{ type: "text", text: session.prompt }], ...promptSender(context) },
       );
       return {
         ok: true,
@@ -1626,6 +1658,7 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
         started: true,
         model: labelOpenworkSessionModel(sessionModelOf(payload), catalog),
         route: `/workspace/${encodeURIComponent(workspace.id)}/session/${encodeURIComponent(payload.id)}`,
+        ...(link ? { linked: true } : {}),
       };
     } catch (error) {
       return {
@@ -1655,6 +1688,8 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
     workspace: workspaceLabel(workspace),
     created,
     failures,
+    // Said once, here, where the agent decides whether to poll.
+    ...(link && created.length > 0 ? { reports: "Each linked session reports to this session when it finishes a turn. Wait for the report; do not poll with session.read." } : {}),
   };
 }
 

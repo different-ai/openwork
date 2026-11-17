@@ -342,6 +342,18 @@ function MarkdownBlockInner({
       if (event.target instanceof HTMLImageElement) sync();
     };
 
+    // A chat image that cannot load (a page URL, a dead link) reads as its
+    // plain link. Only the picture itself counts: the fallback link's favicon
+    // failing must not replace an image that loaded.
+    const handleImageError = (event: Event) => {
+      const image = event.target;
+      if (!(image instanceof HTMLImageElement) || !image.parentElement?.hasAttribute("data-openwork-image-preview")) return;
+      const box = image.closest("[data-openwork-image]");
+      const fallback = box?.querySelector(":scope > [data-openwork-image-fallback]");
+      if (!box || !root.contains(box) || !(fallback instanceof HTMLElement)) return;
+      box.replaceWith(...Array.from(fallback.childNodes));
+    };
+
     const handleSessionReference = (event: MouseEvent) => {
       if (!sessionReferences || !(event.target instanceof Element)) return false;
       const link = event.target.closest("a[data-openwork-session-reference]");
@@ -463,6 +475,7 @@ function MarkdownBlockInner({
     };
 
     root.addEventListener("load", handleLoad, true);
+    root.addEventListener("error", handleImageError, true);
     root.addEventListener("click", handleClick);
     root.addEventListener("auxclick", handleAuxClick);
     root.addEventListener("mousedown", handleMouseDown);
@@ -472,6 +485,7 @@ function MarkdownBlockInner({
     if (globalThis.ResizeObserver === undefined) {
       return () => {
         root.removeEventListener("load", handleLoad, true);
+        root.removeEventListener("error", handleImageError, true);
         root.removeEventListener("click", handleClick);
         root.removeEventListener("auxclick", handleAuxClick);
         root.removeEventListener("mousedown", handleMouseDown);
@@ -486,6 +500,7 @@ function MarkdownBlockInner({
     return () => {
       observer.disconnect();
       root.removeEventListener("load", handleLoad, true);
+      root.removeEventListener("error", handleImageError, true);
       root.removeEventListener("click", handleClick);
       root.removeEventListener("auxclick", handleAuxClick);
       root.removeEventListener("mousedown", handleMouseDown);

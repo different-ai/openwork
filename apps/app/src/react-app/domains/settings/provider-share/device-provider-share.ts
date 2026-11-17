@@ -1,6 +1,7 @@
 import type { DeviceShareOptions } from "@openwork/types/den/device-provider-share";
 import { isCloudManagedProviderKey } from "../../connections/provider-auth/cloud-provider-config";
 import type { ProviderCredentialHealth } from "../../connections/provider-auth/credential-health";
+import type { SharedDeviceProviderArrival } from "../../connections/provider-auth/shared-provider-sync";
 
 /**
  * Sharing a key saved on this device with the organization: what Settings › AI
@@ -76,10 +77,12 @@ export function shareLockedLine(managerName: string | null, organizationName: st
 }
 
 /** What the person agrees to, as label and value rows (DESIGN P9: action, data, risk, reversibility). */
-export function shareConsentFacts(input: { providerName: string; organizationName: string }): Array<{ label: string; value: string }> {
+export function shareConsentFacts(input: { providerName: string; organizationName: string; guided?: boolean }): Array<{ label: string; value: string }> {
   return [
     { label: "Who can use it", value: `Everyone in ${input.organizationName}, including people you invite later` },
-    { label: "Your key", value: "Leaves this device and is stored encrypted in AI Gateway. Members never see it" },
+    { label: "Your key", value: input.guided
+      ? "A copy is stored encrypted in AI Gateway. Members never see it. Afterwards you choose whether it also stays on this device"
+      : "Leaves this device and is stored encrypted in AI Gateway. Members never see it" },
     { label: "Cost", value: `Their usage is billed to your ${input.providerName} account` },
     { label: "Changing it", value: "Limit who uses it, or remove it, in AI Gateway" },
   ];
@@ -118,4 +121,35 @@ export function shareNeedsReview(error: unknown): boolean {
     "feature_disabled", "no_session", "organization_mismatch", "account_mismatch",
     "share_failed", "den_unreachable", "verification_required", "invalid_provider",
   ].includes(code);
+}
+
+/**
+ * Whether a share Den accepted is listed under the organization on this
+ * device yet. `pending` is not a failure: the share happened and has not
+ * arrived here.
+ */
+export type SharedProviderArrival = SharedDeviceProviderArrival;
+
+/**
+ * After a share, this device holds the provider twice: the person's key and
+ * the organization's copy. What each choice does, as label and value rows
+ * (DESIGN P9), so the person decides which one this device keeps.
+ */
+export function shareOutcomeFacts(input: { providerName: string; organizationName: string; arrival: SharedProviderArrival }): Array<{ label: string; value: string }> {
+  if (input.arrival.status === "pending") return [
+    { label: "Shared", value: `${input.organizationName} has ${input.providerName} in AI Gateway` },
+    { label: "This device", value: `Not listed under ${input.organizationName} here yet. Your key on this device still works` },
+  ];
+  return [
+    { label: "Shared as", value: `${input.arrival.name}, listed under From ${input.organizationName}` },
+    { label: "Use their copy", value: `Removes your key from this device. ${input.providerName} models run through ${input.organizationName}` },
+    { label: "Keep both", value: `Your key stays on this device, and ${input.providerName} models are listed twice` },
+  ];
+}
+
+/** "Anthropic is shared with Acme" once it is here; "…is not on this device yet" while it is not. */
+export function shareOutcomeTitle(input: { providerName: string; organizationName: string; arrival: SharedProviderArrival }): string {
+  return input.arrival.status === "arrived"
+    ? `${input.providerName} is shared with ${input.organizationName}`
+    : `${input.providerName} is shared, but not on this device yet`;
 }

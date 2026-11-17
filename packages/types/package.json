@@ -220,22 +220,6 @@
       "development": "./src/den/remote-sessions.ts",
       "default": "./src/den/remote-sessions.ts"
     },
-    "./den/connect-diagnostics": {
-      "types": {
-        "openwork-build": "./dist/types/src/den/connect-diagnostics.d.ts",
-        "default": "./src/den/connect-diagnostics.ts"
-      },
-      "development": "./src/den/connect-diagnostics.ts",
-      "default": "./src/den/connect-diagnostics.ts"
-    },
-    "./den/egress-diagnostics": {
-      "types": {
-        "openwork-build": "./dist/types/src/den/egress-diagnostics.d.ts",
-        "default": "./src/den/egress-diagnostics.ts"
-      },
-      "development": "./src/den/egress-diagnostics.ts",
-      "default": "./src/den/egress-diagnostics.ts"
-    },
     "./den/managed-models-policy": {
       "types": {
         "openwork-build": "./dist/types/src/den/managed-models-policy.d.ts",
@@ -284,6 +268,14 @@
       "development": "./src/den/gateway-usage-limits.ts",
       "bun": "./src/den/gateway-usage-limits.ts",
       "default": "./dist/den/gateway-usage-limits.js"
+    },
+    "./den/gateway-member-usage": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/gateway-member-usage.d.ts",
+        "default": "./src/den/gateway-member-usage.ts"
+      },
+      "development": "./src/den/gateway-member-usage.ts",
+      "default": "./src/den/gateway-member-usage.ts"
     },
     "./den/gateway-usage": {
       "types": {
@@ -461,6 +453,16 @@
       "development": "./src/connect-link.ts",
       "default": "./src/connect-link.ts"
     },
+    "./session-link": {
+      "types": {
+        "openwork-build": "./dist/types/src/session-link.d.ts",
+        "default": "./src/session-link.ts"
+      },
+      "development": "./src/session-link.ts",
+      "bun": "./src/session-link.ts",
+      "browser": "./src/session-link.ts",
+      "default": "./dist/session-link.js"
+    },
     "./opencode-config-error": {
       "types": {
         "openwork-build": "./dist/types/src/opencode-config-error.d.ts",
@@ -600,6 +602,14 @@
       },
       "development": "./src/den/admin-free-auto.ts",
       "default": "./src/den/admin-free-auto.ts"
+    },
+    "./den/admin-runner-fleet": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/admin-runner-fleet.d.ts",
+        "default": "./src/den/admin-runner-fleet.ts"
+      },
+      "development": "./src/den/admin-runner-fleet.ts",
+      "default": "./src/den/admin-runner-fleet.ts"
     },
     "./den/connection-state": {
       "types": {

@@ -18,9 +18,23 @@ export type ChatMcpReconnectRecord = {
   responseSubmitted?: boolean
 }
 
+/**
+ * A sign-in that is still in the browser. It belongs to the connection, not to
+ * the tool call whose card started it: the card moves to the newest report of
+ * a connection, and the sign-in must outlive that move.
+ */
+export type ChatMcpReconnectAttempt = {
+  id: number
+  phase: "opening" | "authorization_opened"
+  authorizeUrl: string | null
+}
+
 type ChatMcpReconnectStore = {
   records: Record<string, ChatMcpReconnectRecord>
+  attempts: Record<string, ChatMcpReconnectAttempt>
   setRecord: (key: string, record: ChatMcpReconnectRecord) => void
+  setAttempt: (connectionKey: string, attempt: ChatMcpReconnectAttempt | null) => void
+  settleAttempt: (connectionKey: string, keys: readonly string[], record: ChatMcpReconnectRecord) => void
   reset: () => void
 }
 
@@ -30,16 +44,54 @@ export function chatMcpReconnectKey(toolCallId: string, connectionId: string, sc
   return JSON.stringify([scope, toolCallId, connectionId])
 }
 
+export function chatMcpConnectionKey(connectionId: string, scope = ""): string {
+  return JSON.stringify([scope, connectionId])
+}
+
+function withoutAttempt(attempts: Record<string, ChatMcpReconnectAttempt>, connectionKey: string) {
+  return Object.fromEntries(Object.entries(attempts).filter(([key]) => key !== connectionKey))
+}
+
 export const useChatMcpReconnectStore = create<ChatMcpReconnectStore>((set) => ({
   records: {},
+  attempts: {},
   setRecord: (key, record) => set((state) => ({
     records: { ...state.records, [key]: { ...state.records[key], ...record } },
   })),
-  reset: () => set({ records: {} }),
+  setAttempt: (connectionKey, attempt) => set((state) => ({
+    attempts: attempt ? { ...state.attempts, [connectionKey]: attempt } : withoutAttempt(state.attempts, connectionKey),
+  })),
+  // The outcome lands on the tool calls that were showing the sign-in, so a
+  // report that arrives later for the same connection starts from its own state.
+  settleAttempt: (connectionKey, keys, record) => set((state) => ({
+    attempts: withoutAttempt(state.attempts, connectionKey),
+    records: {
+      ...state.records,
+      ...Object.fromEntries(keys.flatMap((key) => {
+        const phase = state.records[key]?.phase
+        return phase === "skipped" || phase === "connected" ? [] : [[key, { ...state.records[key], ...record }]]
+      })),
+    },
+  })),
+  reset: () => set({ records: {}, attempts: {} }),
 }))
 
-export function chatMcpReconnectRecord(key: string): ChatMcpReconnectRecord {
-  return useChatMcpReconnectStore.getState().records[key] ?? READY_RECORD
+/** What a tool call's card shows: its own outcome, else the connection's sign-in in flight. */
+export function effectiveChatMcpReconnectRecord(
+  state: Pick<ChatMcpReconnectStore, "records" | "attempts">,
+  key: string,
+  connectionKey: string,
+): ChatMcpReconnectRecord {
+  const own = state.records[key]
+  if (own?.phase === "connected" || own?.phase === "skipped") return own
+  const attempt = state.attempts[connectionKey]
+  if (attempt) return { ...own, phase: attempt.phase, error: null, authorizeUrl: attempt.authorizeUrl }
+  return own ?? READY_RECORD
+}
+
+export function chatMcpReconnectRecord(key: string, connectionKey?: string): ChatMcpReconnectRecord {
+  const state = useChatMcpReconnectStore.getState()
+  return connectionKey ? effectiveChatMcpReconnectRecord(state, key, connectionKey) : state.records[key] ?? READY_RECORD
 }
 
 export async function respondChatConnectionDecision(

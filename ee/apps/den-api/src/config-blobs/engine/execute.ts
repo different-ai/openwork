@@ -36,7 +36,7 @@ import type {
 import { isConfigSecret } from "@openwork/types/den/config-blobs"
 import { ConfigApplyItemError, type ConfigApplyOp, type ConfigArea, type ConfigAreaContext, type ResolvedConfigItem } from "../area.js"
 import type { ExecutionOp, ExecutionPlan } from "./plan.js"
-import { DROP_REF, PEOPLE_AREA, inviteRef, rewriteRefs } from "./refs.js"
+import { DROP_ENTRY, DROP_REF, PEOPLE_AREA, inviteRef, rewriteRefs } from "./refs.js"
 import { isPlainObject, isUnsafeKey } from "./util.js"
 
 export type ExecuteOptions = {
@@ -236,7 +236,7 @@ export function resolveSpec(
         return { ...ref, id: localId }
       }
       case "drop":
-        return DROP_REF
+        return resolution.entry ? DROP_ENTRY : DROP_REF
       case "invite": {
         const localId = planned.get(`${PEOPLE_AREA}\u0000${inviteRef(resolution.email)}`)
         if (!localId) throw new Error(`${path}: ${resolution.email} was to be invited earlier in this import, but was not`)
@@ -246,6 +246,8 @@ export function resolveSpec(
         throw new Error(`${path}: ${resolution.reason}`)
     }
   })
+  // Planning refuses this drop (the reference is the item's own); never write an item emptied by one.
+  if (withRefs === DROP_ENTRY) throw new Error("a reference this item can't be imported without was dropped")
   const decisions = new Map<string, ExecutionOp["secrets"][number]>()
   for (const secret of op.secrets) {
     if (decisions.has(secret.path)) throw new Error(`secret ${secret.path}: placed more than once in this item`)

@@ -1401,6 +1401,13 @@
       "when": 1794528647377,
       "tag": "0200_native_mcp_events",
       "breakpoints": true
+    },
+    {
+      "idx": 201,
+      "version": "5",
+      "when": 1794771929581,
+      "tag": "0201_plugin_skill_external_key",
+      "breakpoints": true
     }
   ]
 }

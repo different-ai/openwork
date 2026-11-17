@@ -27,7 +27,8 @@
     "test:steps": "tsx --test scripts/steps.test.ts scripts/steps-scoped-model.test.ts",
     "test:checkpoints": "tsx --test scripts/checkpoints.test.ts",
     "test:event-socket": "tsx --conditions=development --test scripts/event-socket.test.ts",
-    "test:session-cells": "tsx --test scripts/session-cells.test.ts"
+    "test:session-cells": "tsx --test scripts/session-cells.test.ts",
+    "test:saved-files": "tsx --test scripts/saved-file-reading.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.1.6",

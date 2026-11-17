@@ -14,6 +14,7 @@ import { SettingsNotice } from "../settings-section";
 import { LayoutStack } from "../settings-layout";
 import { SettingsPanel, SettingsPanelDescription, SettingsPanelHeading, SettingsPanelTitle } from "../shell/panel";
 import { getSettingsTabLabel } from "../shell/settings-page";
+import { OLLAMA_PROVIDER_CONFIG } from "../openai-image-extension";
 import { CredentialHealthStatus, LocalProviderStatus, ProviderList, ProviderMeta, ProviderRow, ProviderStatus, ProviderTile } from "./provider-rows";
 import type { DeviceProviderShareRow } from "../provider-share/device-provider-share";
 
@@ -77,6 +78,8 @@ export type AiSettingsViewProps = {
   /** Device provider sharing: which keys on this device can be shared with the organization, or already are. */
   shareRows?: ReadonlyMap<string, DeviceProviderShareRow>;
   onShareProvider?: (provider: { id: string; name: string }) => void;
+  /** Opens the Ollama page. Ollama is then always listed on this device, with Configure. */
+  onConfigureOllama?: () => void;
 };
 
 function deviceSourceLabel(source: ConnectedProvider["source"]) {
@@ -138,6 +141,11 @@ export function AiSettingsView(props: AiSettingsViewProps) {
   const rowsBusy = props.busy || props.providerAuthBusy || props.disconnectingProviderId !== null;
   const organizationLabel = props.organizationName || "your organization";
   const shareState = (providerId: string) => props.shareRows?.get(providerId)?.state ?? null;
+  // Ollama is set up on its own page: its row is always listed and Configure opens that page.
+  const isOllama = (providerId: string) => Boolean(props.onConfigureOllama) && providerId.toLowerCase() === OLLAMA_PROVIDER_CONFIG.providerId;
+  const configureOllamaButton = <Button variant="ghost" data-testid="configure-provider-ollama" onClick={props.onConfigureOllama}>Configure</Button>;
+  const showOllamaSetupRow = Boolean(props.onConfigureOllama) && ready
+    && !local.some((provider) => isOllama(provider.id)) && !disabled.some((provider) => isOllama(provider.id));
   const needsCredentialRecovery = (providerId: string) => providerHealth(providerId) === "rejected"
     && props.localProviderStates?.get(providerId) !== "managed_by_organization"
     && props.localProviderStates?.get(providerId) !== "not_on_engine";
@@ -167,7 +175,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
 
       {loading && !props.connectedProviders.length ? <div role="status" aria-label={t("settings.loading_providers")} className="grid gap-2">{[0, 1].map((key) => <div key={key} className="h-16 animate-pulse rounded-2xl bg-muted" />)}</div> : null}
 
-      {claudeConnected || showAuto || local.length || disabled.length ? <ProviderList>
+      {claudeConnected || showAuto || local.length || disabled.length || showOllamaSetupRow ? <ProviderList>
         {claudeConnected ? <ProviderRow
           testId="local-provider-claude-agent"
           scope="device"
@@ -208,6 +216,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
             : needsCredentialRecovery(provider.id)
             ? <Button variant="outline" disabled={rowsBusy || !ready || locked || !props.onReplaceProviderKey} onClick={() => void props.onReplaceProviderKey?.(provider.id)}>Replace key</Button>
             : <>
+              {isOllama(provider.id) ? configureOllamaButton : null}
               {shareState(provider.id) === "shareable" && props.onShareProvider ? <Button variant="outline" data-testid={`share-provider-${provider.id}`} aria-label={`Share ${provider.name} with ${organizationLabel}`} title={`Share ${provider.name} with ${organizationLabel}`} disabled={rowsBusy} onClick={() => props.onShareProvider?.({ id: provider.id, name: provider.name })}>Share</Button> : null}
               <Button variant="ghost" disabled={rowsBusy || !ready || !props.canDisconnectProvider(provider)} onClick={() => void props.onDisconnectProvider(provider.id)}>{props.disconnectingProviderId === provider.id ? t("settings.disconnecting") : props.canDisconnectProvider(provider) ? t("settings.disconnect") : t("settings.managed_by_env")}</Button>
             </>}
@@ -220,8 +229,19 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           name={provider.name}
           status={<ProviderStatus tone="neutral">{t("settings.provider_disabled_badge")}</ProviderStatus>}
           meta={<ProviderMeta id={provider.id} parts={[t("settings.provider_disabled_hint")]} />}
-          actions={<Button variant="ghost" disabled={rowsBusy || (props.enablingProviderId ?? null) !== null} onClick={() => void props.onEnableProvider?.(provider.id)}>{props.enablingProviderId === provider.id ? t("settings.enabling_provider") : t("settings.enable_provider")}</Button>}
+          actions={isOllama(provider.id)
+            ? configureOllamaButton
+            : <Button variant="ghost" disabled={rowsBusy || (props.enablingProviderId ?? null) !== null} onClick={() => void props.onEnableProvider?.(provider.id)}>{props.enablingProviderId === provider.id ? t("settings.enabling_provider") : t("settings.enable_provider")}</Button>}
         />)}
+        {showOllamaSetupRow ? <ProviderRow
+          testId="local-provider-ollama-setup"
+          scope="device"
+          tile={<ProviderTile providerId={OLLAMA_PROVIDER_CONFIG.providerId} name="Ollama" />}
+          name="Ollama"
+          status={<ProviderStatus tone="neutral">Not set up</ProviderStatus>}
+          meta={<ProviderMeta id={OLLAMA_PROVIDER_CONFIG.providerId} parts={["Run models on this device"]} />}
+          actions={configureOllamaButton}
+        /> : null}
       </ProviderList> : ready ? <p className="text-sm text-muted-foreground">{t("settings.no_providers_connected")}</p> : null}
 
       {props.autoError ? <SettingsNotice tone="error">{props.autoError}</SettingsNotice> : null}

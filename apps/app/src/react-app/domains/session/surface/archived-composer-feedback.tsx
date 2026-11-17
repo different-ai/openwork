@@ -1,6 +1,5 @@
 import { t } from "@/i18n";
 
-/** Keep restore feedback on the same centered column and responsive gutters as the composer. */
 export function ArchivedComposerFeedback(props: { archived: boolean; error: string | null }) {
   if (!props.archived && !props.error) return null;
   return (

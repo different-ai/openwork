@@ -53,6 +53,7 @@
 
 /*
  * One viewport owner: iOS's keyboard changes visualViewport, not 100dvh. Safe areas belong to the page, not the arrow.
+ * Android's keyboard resizes the page instead (interactive-widget=resizes-content), so 100dvh already fits there.
  * The shell is absolute in the document, never `position: fixed`: Safari 26 on iPhone samples the edges of fixed
  * elements and paints that colour as a solid bar behind its status bar and floating toolbar (any colour at 75% opacity
  * or more counts as solid). A fixed, full-screen shell made both bars opaque, so nothing ever showed through them.

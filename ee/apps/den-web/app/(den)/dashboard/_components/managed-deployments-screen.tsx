@@ -2,9 +2,9 @@
 
 import { Dialog } from "@base-ui/react/dialog";
 import {
-  awsRegionSchema, gcpRegionSchema, deploymentStepSchema, managedDeploymentConfigurationSchema, managedDeploymentInputSchema,
+  awsAssistantsSchema, awsTargetSchema, assistantsEnabled, gatewayAssistants, normalizeAwsTargetForCreate, awsRegionSchema, gcpRegionSchema, deploymentStepSchema, managedDeploymentConfigurationSchema, managedDeploymentInputSchema,
   managedDeploymentLaunchSchema, managedDeploymentListSchema, managedDeploymentSchema,
-  type ManagedDeployment,
+  type AwsAssistants, type AwsRuntimeProfile, type ManagedDeployment,
 } from "@openwork/types/den/managed-deployments";
 import { AlertTriangle, CheckCircle2, CircleDashed, Copy, ExternalLink, LockKeyhole, X, XCircle } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -21,7 +21,8 @@ import { getOrgAccessFlags, orgFeatureEnabled, permissionLockReason } from "../.
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ConfirmDialog } from "./item-list";
 import { useFeatureIntro } from "../_features/feature-intros";
-import { deploymentStatus, providerName, readinessMessage, type DeploymentTone, type ProviderReadiness } from "./managed-deployments-state";
+import { assistantSettingsState, deploymentStatus, providerName, readinessMessage, type DeploymentTone, type ProviderReadiness } from "./managed-deployments-state";
+import { ManagedDeploymentAssistants } from "./managed-deployment-assistants";
 export { deploymentStatus } from "./managed-deployments-state";
 
 type Configuration = z.infer<typeof managedDeploymentConfigurationSchema>;
@@ -54,7 +55,8 @@ function gcpFailureMessage(code: string) {
 const CHECK_LABELS: Record<Check["id"], string> = {
   api_health: "API", database_ready: "Database connection", web_available: "Web app", services_running: "Services",
   load_balancer_targets: "Load balancer", database_instance: "Database instance", database_storage: "Database storage",
-  database_backups: "Backups", certificate: "HTTPS certificate",
+  database_backups: "Backups", certificate: "HTTPS certificate", runner_service: "Managed runner", workbot_available: "Workbot",
+  runner_storage: "Runner storage", runner_backups: "Runner backups", ai_gateway_available: "Model gateway",
 };
 const CODE_LABELS: Record<string, string> = {
   http_error: "Returns an error", unreachable: "Not reachable", slow: "Slow", not_running: "Not running", unhealthy: "Unhealthy",
@@ -78,12 +80,16 @@ function checkDetail(check: Check) {
   }
   switch (check.id) {
     case "api_health": case "web_available": return `${Math.round(value)} ms`;
+    case "ai_gateway_available": return check.value === undefined ? "Available" : `${Math.round(value)} ms`;
     case "database_ready": return "Connected";
     case "services_running": return `${value} of ${check.total ?? 0} services running`;
     case "load_balancer_targets": return `${value} of ${check.total ?? 0} routes serving`;
     case "database_instance": return "Available";
     case "database_storage": return `${value.toFixed(1)} of ${check.total ?? 0} GiB free`;
-    case "database_backups": return value < 1 ? "Backed up within the last hour" : `Last backup ${Math.round(value)} h ago`;
+    case "database_backups": case "runner_backups": return value < 1 ? "Backed up within the last hour" : `Last backup ${Math.round(value)} h ago`;
+    case "runner_service": return "Running";
+    case "workbot_available": return "Available";
+    case "runner_storage": return check.value === undefined ? "Available" : `${value.toFixed(1)} GiB`;
     case "certificate": return `Renews automatically · ${Math.floor(value)} days left`;
   }
 }
@@ -131,6 +137,7 @@ export function ManagedDeploymentsScreen() {
   const enabled = orgFeatureEnabled(orgContext, "managedDeployments");
   const [deployments, setDeployments] = useState<ManagedDeployment[]>([]);
   const [configuration, setConfiguration] = useState<Configuration | null>(null);
+  const assistantsAvailable = enabled && orgFeatureEnabled(orgContext, "managedDeploymentAssistants") && (configuration?.assistantsAvailable ?? false);
   const [loading, setLoading] = useState(true);
   const [loadedAt, setLoadedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -184,12 +191,16 @@ export function ManagedDeploymentsScreen() {
     setDeployments((previous) => previous.some((entry) => entry.id === item.id) ? previous.map((entry) => entry.id === item.id ? item : entry) : [...previous, item]);
   }
 
-  async function prepare(deployment: ManagedDeployment, kind: Launch["kind"]) {
+  async function prepare(deployment: ManagedDeployment, kind: Launch["kind"], assistants?: AwsAssistants, runtimeProfile?: AwsRuntimeProfile) {
+    if ((assistants || runtimeProfile) && deployment.provider === "aws") {
+      const parsed = awsTargetSchema.safeParse({ ...deployment.target, ...(runtimeProfile ? { runtimeProfile } : {}), ...(assistants ? { assistants } : {}) });
+      if (!parsed.success) { setActionError(parsed.error.issues[0]?.message ?? "Check the assistant settings."); return; }
+    }
     const current = generation.current;
     setBusy(true); setActionError(null); setCopied(false);
     try {
       await runReauthableAction(kind === "install" ? `Prepare ${providerName(deployment.provider)} approval` : kind === "update" ? "Prepare update" : "Prepare retry", async () => {
-        const result = await requestJson(`/v1/managed-deployments/${deployment.id}/launch`, { method: "POST", body: JSON.stringify({ kind }) });
+        const result = await requestJson(`/v1/managed-deployments/${deployment.id}/launch`, { method: "POST", body: JSON.stringify({ kind, ...(assistants ? { assistants } : {}), ...(runtimeProfile ? { runtimeProfile } : {}) }) });
         if (!result.response.ok) throw getRequestError(result.payload, result.response, "Couldn't prepare the installer.");
         const parsed = managedDeploymentLaunchSchema.parse(result.payload);
         if (generation.current === current) { setLaunch(parsed); replace(parsed.deployment); }
@@ -233,7 +244,7 @@ export function ManagedDeploymentsScreen() {
   }, [newRequested, loading, enabled, access.canManageDeployments, available]);
 
   const createDialog = (
-    <CreateDeploymentDialog open={dialogOpen} onOpenChange={setDialogOpen} configuration={configuration} runReauthableAction={runReauthableAction}
+    <CreateDeploymentDialog open={dialogOpen} onOpenChange={setDialogOpen} configuration={configuration} assistantsAvailable={assistantsAvailable} runReauthableAction={runReauthableAction}
       onCreated={(item) => { replace(item); setSelectedId(item.id); setLaunch(null); setDialogOpen(false); }} />
   );
 
@@ -287,9 +298,9 @@ export function ManagedDeploymentsScreen() {
             </ul>
           )}
           {selected ? (
-            <DeploymentDetail deployment={selected} launch={launch?.deployment.id === selected.id ? launch : null} busy={busy} canManage={access.canManageDeployments}
-              copied={copied} actionError={actionError} canPrepare={configuration?.providers.some((entry) => entry.provider === selected.provider && entry.available) ?? false}
-              onPrepare={(kind) => { void prepare(selected, kind); }}
+            <DeploymentDetail key={`${selected.id}:${selected.run?.id ?? "none"}`} deployment={selected} launch={launch?.deployment.id === selected.id ? launch : null} busy={busy} canManage={access.canManageDeployments}
+              assistantsAvailable={assistantsAvailable} copied={copied} actionError={actionError} canPrepare={(configuration?.providers.some((entry) => entry.provider === selected.provider && entry.available) ?? false) && !(selected.provider === "aws" && (selected.target.runtimeProfile === "gateway" || assistantsEnabled(selected.target.assistants)) && !assistantsAvailable)}
+              onPrepare={(kind, assistants, profile) => { void prepare(selected, kind, assistants, profile); }}
               onCopy={(command) => { void navigator.clipboard.writeText(command).then(() => setCopied(true)).catch(() => setActionError("Couldn't copy. Open Technical details and copy the command.")); }}
               onRemove={() => { setActionError(null); setDeploymentToRemove(selected); }} />
           ) : null}
@@ -305,10 +316,13 @@ export function ManagedDeploymentsScreen() {
   );
 }
 
-function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, copied, actionError, onPrepare, onCopy, onRemove }: {
-  deployment: ManagedDeployment; launch: Launch | null; busy: boolean; canManage: boolean; canPrepare: boolean; copied: boolean;
-  actionError: string | null; onPrepare: (kind: Launch["kind"]) => void; onCopy: (command: string) => void; onRemove: () => void;
+function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, assistantsAvailable, copied, actionError, onPrepare, onCopy, onRemove }: {
+  deployment: ManagedDeployment; launch: Launch | null; busy: boolean; canManage: boolean; canPrepare: boolean; assistantsAvailable: boolean; copied: boolean;
+  actionError: string | null; onPrepare: (kind: Launch["kind"], assistants?: AwsAssistants, runtimeProfile?: AwsRuntimeProfile) => void; onCopy: (command: string) => void; onRemove: () => void;
 }) {
+  const [assistantDraft, setAssistantDraft] = useState<AwsAssistants | null>(null);
+  const [runtimeProfileDraft, setRuntimeProfileDraft] = useState<AwsRuntimeProfile | null>(null);
+  const assistantState = assistantSettingsState(deployment, assistantsAvailable, canManage);
   const status = deploymentStatus(deployment);
   const cloud = providerName(deployment.provider);
   const gcp = deployment.provider === "gcp";
@@ -334,6 +348,10 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, cop
         <Row label="Updates">Approval required</Row>
         {installed ? <Row label="Last health report">{relativeTime(health.reportedAt)}</Row> : null}
       </div>
+
+      {deployment.provider === "aws" ? <ManagedDeploymentAssistants value={assistantDraft ?? deployment.target.assistants} profile={runtimeProfileDraft ?? deployment.target.runtimeProfile} onChange={setAssistantDraft}
+        onUpgrade={() => { setRuntimeProfileDraft("gateway"); setAssistantDraft(gatewayAssistants(deployment.target.assistants)); }}
+        enabled={assistantsAvailable} disabled={!assistantState.editable || busy} lockReason={assistantState.reason ?? undefined} /> : null}
 
       {installed ? (
         <section aria-labelledby="checks-heading" className="space-y-2">
@@ -376,7 +394,7 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, cop
         </section>
       ) : null}
 
-      {launch?.command && run?.state === "awaiting_approval" && !run.expired ? (
+      {canPrepare && launch?.command && run?.state === "awaiting_approval" && !run.expired ? (
         <section className="space-y-2" aria-label={`Run in ${gcp ? "Google Cloud Shell" : "AWS CloudShell"}`}>
           <p className="text-[13px] text-gray-700">{deployment.provider === "gcp"
             ? `Review and run this command in Google Cloud Shell for project ${deployment.target.projectId}. Running it approves the ${launch.kind === "update" ? "update" : "installation"} and creates or changes billable resources in your project. OpenWork does not run it for you.`
@@ -393,12 +411,12 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, cop
 
       <div className="flex flex-wrap items-center gap-2">
         {canManage && !installed && (!run || (run.state === "awaiting_approval" && !run.expired)) ? (
-          launch?.approvalUrl ? (
+          canPrepare && launch?.approvalUrl ? (
             <a className={buttonVariants({})} href={launch.approvalUrl} target="_blank" rel="noopener noreferrer">Review and approve in AWS<ExternalLink aria-hidden className="size-4" /></a>
           ) : !launch?.command ? <DenButton type="button" loading={busy} disabled={!canPrepare} onClick={() => onPrepare("install")}>Prepare {cloud} approval</DenButton> : null
         ) : null}
         {canManage && runFailed ? <DenButton type="button" loading={busy} disabled={!canPrepare} onClick={() => onPrepare(installed || run?.events.length || run?.state === "failed" ? "retry" : "install")}>Prepare retry</DenButton> : null}
-        {canManage && installed && deployment.updateAvailable && !runFailed && run?.state !== "provisioning" && (launch?.kind !== "update" || run?.state === "ready") ? <DenButton type="button" loading={busy} disabled={!canPrepare} onClick={() => onPrepare("update")}>Update to {deployment.availableVersion}</DenButton> : null}
+        {canManage && installed && deployment.updateAvailable && !(run?.state === "provisioning" && !run.expired) && (launch?.kind !== "update" || run?.state === "ready") ? <DenButton type="button" loading={busy} disabled={!canPrepare || (runtimeProfileDraft === "gateway" && !assistantsAvailable)} onClick={() => onPrepare("update", assistantState.editable ? assistantDraft ?? undefined : undefined, assistantState.editable ? runtimeProfileDraft ?? undefined : undefined)}>Update to {deployment.availableVersion}</DenButton> : null}
         {installed ? <a className={buttonVariants({ variant: "secondary" })} href={deployment.webUrl} target="_blank" rel="noopener noreferrer">Open OpenWork<ExternalLink aria-hidden className="size-4" /></a> : null}
         <a className={buttonVariants({ variant: "ghost" })} href={deployment.consoleUrl} target="_blank" rel="noopener noreferrer">Open in {cloud}<ExternalLink aria-hidden className="size-4" /></a>
         {canManage && neverStarted ? <DenButton type="button" variant="secondary" disabled={busy} data-testid="managed-deployment-remove" onClick={onRemove}>Remove</DenButton> : null}
@@ -416,8 +434,8 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, cop
   );
 }
 
-function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthableAction, onCreated }: {
-  open: boolean; onOpenChange: (open: boolean) => void; configuration: Configuration | null;
+function CreateDeploymentDialog({ open, onOpenChange, configuration, assistantsAvailable, runReauthableAction, onCreated }: {
+  open: boolean; onOpenChange: (open: boolean) => void; configuration: Configuration | null; assistantsAvailable: boolean;
   runReauthableAction: (label: string, action: () => Promise<void>) => Promise<void>; onCreated: (deployment: ManagedDeployment) => void;
 }) {
   const [chosenProvider, setChosenProvider] = useState<"aws" | "gcp" | null>(null);
@@ -438,6 +456,7 @@ function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthab
   const [serviceSubnets, setServiceSubnets] = useState("");
   const [loadBalancerSubnets, setLoadBalancerSubnets] = useState("");
   const [clusterArn, setClusterArn] = useState("");
+  const [assistants, setAssistants] = useState<AwsAssistants>(() => awsAssistantsSchema.parse({}));
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -451,8 +470,12 @@ function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthab
     if (!readiness?.available) { setError("This cloud is not ready. Ask your OpenWork operator to resolve the deployment lock."); return; }
     const parsed = managedDeploymentInputSchema.safeParse(provider === "gcp"
       ? { provider, name, domainName, ownerEmail, target: { projectId: projectId.trim(), projectNumber: projectNumber.trim(), region: gcpRegion, dnsZoneName: dnsZoneName.trim() } }
-      : { provider, name, domainName, ownerEmail, target: { accountId: accountId.trim(), region, route53ZoneId: zoneId.trim(), network } });
+      : { provider, name, domainName, ownerEmail, target: { accountId: accountId.trim(), region, route53ZoneId: zoneId.trim(), network, ...(assistantsAvailable ? { runtimeProfile: "gateway", assistants: gatewayAssistants(assistants) } : {}) } });
     if (!parsed.success) { setError(parsed.error.issues[0]?.message ?? "Check the deployment details."); return; }
+    if (parsed.data.provider === "aws") {
+      try { normalizeAwsTargetForCreate(parsed.data.target, { gatewayByDefault: assistantsAvailable }); }
+      catch (failure) { setError(failure instanceof z.ZodError ? failure.issues[0]?.message ?? "Check the runtime settings." : "Check the runtime settings."); return; }
+    }
     if (!consent) { setError("Confirm the cloud account, permissions and costs first."); return; }
     setBusy(true); setError(null);
     try {
@@ -492,6 +515,7 @@ function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthab
               </DenSelect>
             </div>
             <label className="block space-y-1 text-[13px]"><span className="text-gray-700">Name</span><DenInput value={name} onChange={(event) => setName(event.target.value)} required maxLength={80} /></label>
+            {provider === "aws" ? <ManagedDeploymentAssistants value={assistants} profile={assistantsAvailable ? "gateway" : "legacy"} onChange={setAssistants} enabled={assistantsAvailable} disabled={busy} openByDefault={assistantsAvailable} /> : null}
             {provider === "aws" ? <>
             <label className="block space-y-1 text-[13px]"><span className="text-gray-700">AWS account ID</span><DenInput value={accountId} onChange={(event) => setAccountId(event.target.value)} required inputMode="numeric" placeholder="123456789012" /></label>
             <div className="space-y-1 text-[13px]">
@@ -531,7 +555,7 @@ function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthab
             <label className="block space-y-1 text-[13px]"><span className="text-gray-700">First administrator email</span><DenInput type="email" value={ownerEmail} onChange={(event) => setOwnerEmail(event.target.value)} required /></label>
             <label className="flex items-start gap-3 text-[13px] text-gray-700">
               <input type="checkbox" className="mt-0.5" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
-              <span className="min-w-0" data-testid="deployment-cost-consent">{provider === "gcp" ? "I control this Google Cloud project and public DNS zone, with billing enabled. I'll review the installer's permissions and run its command in Google Cloud Shell to approve. Only running the command creates or changes billable Cloud Run, Cloud SQL, load balancer and storage resources in my project. Removing this record does not delete those resources or stop charges. OpenWork receives deployment progress and health checks, never the first-sign-in code." : `I control this AWS account and hosted zone. AWS bills my account for the containers, database and load balancer${networkMode === "dedicated" ? " and NAT gateway (about $100–150 a month at the small size)" : " (about $60–100 a month at the small size, plus my network's own costs)"}. I'll review the installer's permissions in AWS before approving.`}</span>
+              <span className="min-w-0" data-testid="deployment-cost-consent">{provider === "gcp" ? "I control this Google Cloud project and public DNS zone, with billing enabled. I'll review the installer's permissions and run its command in Google Cloud Shell to approve. Only running the command creates or changes billable Cloud Run, Cloud SQL, load balancer and storage resources in my project. Removing this record does not delete those resources or stop charges. OpenWork receives deployment progress and health checks, never the first-sign-in code." : `I control this AWS account and hosted zone. AWS bills my account for the containers, database and load balancer${networkMode === "dedicated" ? " and NAT gateway (about $100–150 a month at the small size)" : " (about $60–100 a month at the small size, plus my network's own costs)"}. I'll review the installer's permissions in AWS before approving.${assistantsAvailable ? " The included model gateway, runner, Workbot, file storage, backups and model usage add charges. I'll configure providers in the installed Den after first sign-in; optional Daytona or Freestyle computers are billed separately and run outside my AWS account." : ""}`}</span>
             </label>
             {error ? <p role="alert" className="text-[13px] text-red-700">{error}</p> : null}
             <DenButton type="submit" data-testid="create-deployment-submit" loading={busy} disabled={!consent || !readiness?.available}>Create deployment</DenButton>

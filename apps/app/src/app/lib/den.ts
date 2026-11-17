@@ -42,6 +42,7 @@ import type {
 import { generatedArtifactViewSchema, savedAppDetailSchema, savedAppSummarySchema, type SaveApp, type WorkflowDetail } from "@openwork/types/workflows";
 import { canScheduleWorkflow, type WorkflowAccessRole } from "./workflow-run-access";
 import { gatewayUsageStatusSchema, gatewayUsageResetRequestSchema } from "@openwork/types/den/gateway-usage-limits";
+import { GATEWAY_MEMBER_USAGE_DAYS, gatewayMemberUsageResponseSchema } from "@openwork/types/den/gateway-member-usage";
 import {
   remoteDeviceDesktopReportResponseSchema,
   remoteDeviceDetailResponseSchema,
@@ -3357,6 +3358,13 @@ export function createDenClient(options: {
       }));
       if (status.organizationId !== orgId) throw new Error("Usage response belongs to a different organization.");
       return status;
+    },
+    /** The member's own past 30 days by model, token mix and usable models with prices. */
+    async getGatewayMemberUsage(orgId: string) {
+      if (!token || !orgId.trim()) throw new Error("Sign in and select an organization to view your usage.");
+      return gatewayMemberUsageResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/gateway/usage/me?days=${GATEWAY_MEMBER_USAGE_DAYS}`, {
+        method: "GET", token, organizationId: orgId, cache: "no-store",
+      }));
     },
     async requestGatewayUsageReset(orgId: string, input: { bucketId: string; reason: string }) {
       if (!token || !orgId.trim()) throw new Error("Sign in and select an organization to request an increase.");

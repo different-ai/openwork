@@ -46,7 +46,6 @@ export type ArchiveSessionOutcome =
 
 export type ArchiveSessionOptions = {
   signal?: AbortSignal;
-  /** Composer restore reports failure inline; explicit Restore and Undo keep their existing feedback. */
   silentRestore?: boolean;
   requester?: { sessionId: string };
   /** Agent path: a working target (or the requester's own tree) is refused instead of asking the person. */

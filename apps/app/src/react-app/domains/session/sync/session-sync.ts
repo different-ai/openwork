@@ -10,7 +10,7 @@ import { mergeReplyMetadata, replyModelFromInfo } from "./reply-model";
 import { providerCredentialScope, useProviderCredentialHealth } from "../../connections/provider-auth/credential-health";
 import { isProviderCredentialRejection } from "./session-error";
 import { closeSessionBrowserTabs } from "@/app/lib/desktop";
-import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
+import { captureAnalyticsEvent, takeTaskRunStart, taskRunQuality, observeFeatureTool, captureOnboardingEvent } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
 import { noteActivationRunCompleted } from "../../cloud/activation/use-activation";
 import { observeModelsTaskEvent } from "@/app/lib/models-task-analytics";
@@ -31,6 +31,7 @@ import {
 import {
   describeOpencodeSessionError,
   presentOpencodeSessionError,
+  sessionErrorAnalyticsProperties,
 } from "./session-error";
 import {
   parseDynamicToolUIPart,
@@ -144,7 +145,7 @@ type SyncEntry = {
   statusReconcileFailures: number;
   runActiveObservedAt: Map<string, number>;
   assistantMessageCompletedAt: Map<string, number>;
-  gatewayUsageRuns: Map<string, { scope: number; key: string; providerId: string | null; completed: boolean; startedAt: number; failed: boolean; responseCompleted: boolean }>;
+  gatewayUsageRuns: Map<string, { scope: number; key: string; providerId: string | null; modelId: string | null; completed: boolean; startedAt: number; failed: boolean; responseCompleted: boolean }>;
   nativeSequenceBySession: Map<string, { sequence: number; revision: number }>;
   nativeSequenceRevision: number;
   nativeTerminalSessions: Set<string>;
@@ -164,14 +165,24 @@ type DeltaFlushScheduler = (
 ) => () => void;
 
 let gatewayUsageRunSequence = 0;
-function newGatewayUsageRun(key: string): { scope: number; key: string; providerId: string | null; completed: boolean; startedAt: number; failed: boolean; responseCompleted: boolean } {
-  return { scope: readGatewayUsageScope().generation, key, providerId: null, completed: false, startedAt: 0, failed: false, responseCompleted: false };
+function newGatewayUsageRun(key: string): { scope: number; key: string; providerId: string | null; modelId: string | null; completed: boolean; startedAt: number; failed: boolean; responseCompleted: boolean } {
+  return { scope: readGatewayUsageScope().generation, key, providerId: null, modelId: null, completed: false, startedAt: 0, failed: false, responseCompleted: false };
 }
 
 function gatewayUsageProviderId(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   if ("providerID" in value && typeof value.providerID === "string") return value.providerID;
   if ("model" in value && value.model && typeof value.model === "object" && "providerID" in value.model && typeof value.model.providerID === "string") return value.model.providerID;
+  return null;
+}
+
+function gatewayUsageModelId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  if ("modelID" in value && typeof value.modelID === "string") return value.modelID;
+  if ("model" in value && value.model && typeof value.model === "object") {
+    if ("modelID" in value.model && typeof value.model.modelID === "string") return value.model.modelID;
+    if ("id" in value.model && typeof value.model.id === "string") return value.model.id;
+  }
   return null;
 }
 
@@ -585,6 +596,12 @@ function partHasVisibleAssistantOutput(part: Part) {
   const partType = String(part.type);
   if ("text" in part && typeof part.text === "string" && part.text.trim().length > 0) return true;
   return partType === "tool" || partType === "file" || partType === "agent";
+}
+
+function observeAnalyticsOutput(workspaceId: string, sessionId: string, messageId: string) {
+  const role = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.messageRoles[messageId];
+  if (role !== "assistant") return;
+  if (taskRunQuality.output(sessionId)) captureOnboardingEvent("onboarding_reply_received");
 }
 
 function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: string) {
@@ -1222,6 +1239,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       const usageRun = entry.gatewayUsageRuns.get(sessionId);
       if (usageRun) {
         usageRun.providerId = gatewayUsageProviderId(event.properties);
+        usageRun.modelId = gatewayUsageModelId(event.properties);
         const props = event.properties;
         const timestamp = props && typeof props === "object" && "timestamp" in props ? props.timestamp : undefined;
         // Receiving/reconciling a busy run is not its start time. Unknown or
@@ -1355,6 +1373,11 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       const runStartedAt = takeTaskRunStart(sessionId);
       if (runStartedAt !== null) {
         captureAnalyticsEvent("task_run_errored", {
+          ...sessionErrorAnalyticsProperties(errorPresentation.kind, {
+            providerId: credentialRun?.providerId ?? taskRunQuality.model(sessionId)?.providerId,
+            modelId: credentialRun?.modelId ?? taskRunQuality.model(sessionId)?.modelId,
+          }),
+          ...taskRunQuality.finish(sessionId),
           duration_ms: Date.now() - runStartedAt,
         });
         trackTaskFailed(sessionId, Date.now() - runStartedAt);
@@ -1431,6 +1454,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const permission = event.properties as PermissionRequest;
     if (!permission?.id || !permission.sessionID) return;
     if (queryClient.getQueryData<string[]>(settledPermissionsKey(workspaceId, permission.sessionID))?.includes(permission.id)) return;
+    taskRunQuality.permission(permission.sessionID, permission.id);
     notifyDesktopEvent({
       type: "permission.asked",
       sessionId: permission.sessionID,
@@ -1453,6 +1477,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const permission = event.properties as PermissionV2Request;
     if (!permission?.id || !permission.sessionID) return;
     if (queryClient.getQueryData<string[]>(settledPermissionsKey(workspaceId, permission.sessionID))?.includes(permission.id)) return;
+    taskRunQuality.permission(permission.sessionID, permission.id);
     notifyDesktopEvent({
       type: "permission.asked",
       sessionId: permission.sessionID,
@@ -1518,6 +1543,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const usageRun = entry.gatewayUsageRuns.get(info.sessionID);
     if (usageRun && info.role === "assistant") {
       usageRun.providerId = gatewayUsageProviderId(info) ?? usageRun.providerId;
+      usageRun.modelId = gatewayUsageModelId(info) ?? usageRun.modelId;
       if (usageRun.startedAt === 0 && typeof info.time?.created === "number" && info.time.created > 0) usageRun.startedAt = info.time.created;
     }
     useSessionActivityStore.getState().markMessageRole(workspaceId, info.sessionID, info.id, info.role);
@@ -1617,12 +1643,15 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const props = (event.properties ?? {}) as { part?: Part };
     const part = props.part;
     if (!part?.sessionID || !part.messageID) return;
+    if (part.type === "tool") taskRunQuality.tool(part.sessionID, part.callID);
     if (partHasVisibleAssistantOutput(part)) {
+      observeAnalyticsOutput(workspaceId, part.sessionID, part.messageID);
       clearSessionRetry(entry, workspaceId, part.sessionID);
       useSessionActivityStore.getState().markAssistantOutput(workspaceId, part.sessionID, part.messageID);
     }
     if (isTerminalToolPart(part)) settleOrphanedInteractions(workspaceId, part.sessionID, new Set([part.callID]));
     if (!isTrackedSession(entry, part.sessionID)) return;
+    if (part.type === "tool") observeFeatureTool(entry, part);
     const [mapped, ...attachments] = toUIParts(part);
     if (!mapped) return;
     const pendingKey = JSON.stringify([part.sessionID, part.messageID, part.id]);
@@ -1688,6 +1717,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       delta?: string;
     };
     if (!props.sessionID || !props.messageID || !props.partID || typeof props.delta !== "string" || !props.delta) return;
+    observeAnalyticsOutput(workspaceId, props.sessionID, props.messageID);
     const activity = useSessionActivityStore.getState();
     if (activity.recordsByWorkspaceId[workspaceId]?.[props.sessionID]?.runActive) {
       clearSessionRetry(entry, workspaceId, props.sessionID);
@@ -1911,9 +1941,11 @@ function applySessionRunStatus(
     // A level-triggered idle response is as authoritative as the SSE edge.
     // Converge through the same terminal path so a missed status event also
     // flushes final deltas and refreshes any final persisted message parts.
-    const runStartedAt = takeTaskRunStart(sessionId);
+    const runStartedAt = taskRunQuality.isStopping(sessionId) || !(options.completed ?? !v2)
+      ? null : takeTaskRunStart(sessionId);
     if (runStartedAt !== null && (options.completed ?? !v2)) {
       captureAnalyticsEvent("task_run_completed", {
+        ...taskRunQuality.finish(sessionId, true),
         duration_ms: Date.now() - runStartedAt,
       });
       trackTaskCompleted(sessionId, Date.now() - runStartedAt);

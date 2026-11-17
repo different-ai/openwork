@@ -15,10 +15,13 @@ export class ArchivedComposerRestoreError extends Error {
   }
 }
 
-/** Only known reasons reach the composer, never an engine/transport error or credentials. */
 export function archivedComposerRestoreErrorMessage(error: unknown): string {
   const code = error instanceof ArchivedComposerRestoreError ? error.code : "unarchive_failed";
-  return t(`session_management.archived_compose_${code}`);
+  switch (code) {
+    case "verification_failed": return t("session_management.archived_compose_verification_failed");
+    case "timeout": return t("session_management.archived_compose_timeout");
+    case "unarchive_failed": return t("session_management.archived_compose_unarchive_failed");
+  }
 }
 
 export function isConfirmedUnarchivedSession(sessionId: string, session: {
@@ -30,21 +33,15 @@ export function isConfirmedUnarchivedSession(sessionId: string, session: {
 
 export type ArchivedSendIdentity = Pick<DenSettings, "authToken" | "baseUrl" | "activeOrgId">;
 
-/** Freeze both selections at the human action, before any restore/readiness wait. */
 export function captureArchivedSendSelection(identity: ArchivedSendIdentity, agent: string | null) {
   return { identity: { authToken: identity.authToken, baseUrl: identity.baseUrl, activeOrgId: identity.activeOrgId }, agent };
 }
 
-/** Capture before Restore; never adopt a different member or organization during the wait. */
 export function sameArchivedSendIdentity(captured: ArchivedSendIdentity, current: ArchivedSendIdentity): boolean {
   return captured.authToken === current.authToken && captured.baseUrl === current.baseUrl
     && captured.activeOrgId === current.activeOrgId;
 }
 
-/**
- * Own the restore-only lease, even when a transport ignores abort. Late work
- * can reconcile archive metadata, but has no continuation that can send.
- */
 export async function confirmArchivedComposerRestore(input: {
   lease: { baseUrl: string; sessionId: string; itemId: string };
   restore: (signal: AbortSignal) => Promise<boolean>;
@@ -59,7 +56,6 @@ export async function confirmArchivedComposerRestore(input: {
   let timedOut = false;
   const abort = () => controller.abort();
   const timeout = setTimeout(() => { timedOut = true; abort(); }, input.timeoutMs ?? 15_000);
-  // Stop/generation and Den identity can change without a React render.
   const contextCheck = setInterval(() => { if (!input.isCurrent()) abort(); }, 50);
   input.signal?.addEventListener("abort", abort, { once: true });
   if (input.signal?.aborted || !input.isCurrent()) abort();
@@ -95,7 +91,6 @@ export async function confirmArchivedComposerRestore(input: {
     input.signal?.removeEventListener("abort", abort);
     removeAbortListener();
     controller.abort();
-    // The reducer matches itemId, so a late cleanup cannot release a newer send.
     if (!confirmed) dispatchQueuedDrain(input.lease.sessionId, { type: "send_error", itemId: input.lease.itemId });
     release();
   }

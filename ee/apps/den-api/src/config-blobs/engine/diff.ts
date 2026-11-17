@@ -17,6 +17,7 @@ import {
   arrayElementKey,
   comparableTop,
   elementSchemaPath,
+  isDerivedField,
   isInformationalField,
   isOrderedArray,
   isPlainObject,
@@ -42,7 +43,7 @@ function walk(layout: ArrayLayout, before: unknown, after: unknown, path: string
   const displayPath = path || "(spec)"
   if (isStructObject(before) && isStructObject(after)) {
     const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])]
-      .filter((key) => !isInformationalField(layout, joinPath(schemaPath, key)))
+      .filter((key) => !isInformationalField(layout, joinPath(schemaPath, key)) && !isDerivedField(layout, joinPath(schemaPath, key)))
       .sort(compareStrings)
     for (const key of keys) walk(layout, before[key], after[key], joinPath(path, key), joinPath(schemaPath, key), out)
     return
@@ -114,7 +115,7 @@ export type MatchedClassification = {
 }
 
 export type ClassifyMatchedInput = {
-  area: Pick<ConfigArea, "orderedArrays" | "arrayKeys" | "informationalFields" | "comparableSpec" | "informationalName" | "cosmeticFields">
+  area: Pick<ConfigArea, "orderedArrays" | "arrayKeys" | "informationalFields" | "derivedFields" | "comparableSpec" | "informationalName" | "assignedKeys" | "cosmeticFields">
   blob: Pick<ConfigBlobItem, "name" | "key" | "rev" | "spec">
   /** The blob spec with refs rewritten to the target's ids (what would be written). */
   localizedSpec: ConfigSpec
@@ -135,7 +136,10 @@ export function classifyMatched(input: ClassifyMatchedInput): MatchedClassificat
   const oursRev = itemRev(area, blob)
   const fields = diffSpecs(area, target.spec, input.localizedSpec)
   const nameChanged = !area.informationalName && blob.name !== target.name
-  const keyChanged = blob.key !== undefined && (blob.key ?? null) !== (target.key ?? null)
+  // Assigned keys are only filled in: an item that has a key keeps it.
+  const keyChanged = area.assignedKeys
+    ? Boolean(blob.key) && !target.key
+    : blob.key !== undefined && (blob.key ?? null) !== (target.key ?? null)
   const flags: ConfigPlanFlag[] = []
   const reasons: string[] = []
   if (nameChanged) fields.unshift({ path: "name", from: target.name, to: blob.name })

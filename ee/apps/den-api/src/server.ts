@@ -24,6 +24,7 @@ import { startModelsAnalyticsExportLoop } from "./models-analytics-export.js"
 import { markServerListening } from "./server-start.js"
 import { startMcpRegistrationProbeLoop } from "./mcp-registration/probe.js"
 import { startAdminMetricsRefreshLoop } from "./admin-metrics/worker.js"
+import { startRunnerFleetSampler } from "./runner-fleet/service.js"
 import { startConfigBlobWorker } from "./config-blobs/worker.js"
 
 const stopSlackAssistantWorker = startSlackAssistantWorker()
@@ -41,6 +42,7 @@ const stopGithubSyncWorker = startGithubSyncWorker()
 const stopModelsAnalyticsExportLoop = startModelsAnalyticsExportLoop()
 const stopMcpRegistrationProbeLoop = startMcpRegistrationProbeLoop()
 const stopAdminMetricsRefreshLoop = startAdminMetricsRefreshLoop()
+const stopRunnerFleetSampler = startRunnerFleetSampler()
 const stopConfigBlobWorker = startConfigBlobWorker()
 const automationScheduler = startAutomationSchedulerLoop({ enabled: env.automations.runtimeEnabled })
 
@@ -76,6 +78,7 @@ async function stopBackgroundLoops() {
     stopGithubSyncWorker(),
     stopMcpRegistrationProbeLoop(),
     stopAdminMetricsRefreshLoop(),
+    stopRunnerFleetSampler(),
     stopConfigBlobWorker(),
     automationScheduler.stop(),
   ])

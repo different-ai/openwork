@@ -78,7 +78,6 @@ type ComposerProps = {
   mentions: Record<string, ComposerMentionKind>;
   onDraftChange: (value: string) => void;
   onSend: () => void | Promise<void>;
-  /** The round send button's accessible name and tooltip. */
   sendLabel?: string;
   onSteer: () => void | Promise<void>;
   onQueue: () => void | Promise<void>;

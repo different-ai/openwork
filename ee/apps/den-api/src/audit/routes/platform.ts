@@ -156,6 +156,9 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   // Global platform admin
   platform("GET", "/v1/admin/services", "platform.service_readiness.read", "platform.admin", "service_readiness", null, `${ADMIN} Cached diagnostics; stale-while-revalidate schedules read-only outbound probes through bounded durable admission (not a pure metadata read). No credentials or upstream error bodies.`),
   platform("POST", "/v1/admin/services/check", "platform.service_readiness.check", "platform.admin", "service_readiness", null, `${ADMIN} Queues read-only deployment probes, globally rate limited; request evidence only. Never sends messages, invokes inference or provisions resources.`),
+  platform("GET", "/v1/admin/runner-fleet", "platform.runner_fleet.read", "platform.admin", "platform_report", null, `${ADMIN} Reads each runner node's own state endpoint on the private network (GET only, hosts from deployment configuration). Counts, byte sizes and opaque cell id prefixes; no tenant data.`),
+  platform("GET", "/v1/admin/runner-fleet/history", "platform.runner_fleet_history.read", "platform.admin", "platform_report", null, `${ADMIN} Reads recorded fleet readings from admin_metric_snapshot only.`),
+  platform("GET", "/v1/admin/runner-fleet/events", "platform.runner_fleet.watch", "platform.admin", "platform_report", null, `${ADMIN} SSE of the same reading every five seconds. Ends itself after 150 seconds so the watcher is authorized again; at most three streams per admin per replica.`),
   platform("GET", "/v1/admin/overview", "platform.overview.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/dashboard", "platform.dashboard.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/dashboard/active-users", "platform.active_users.read", "platform.admin", "platform_report", null, ADMIN),

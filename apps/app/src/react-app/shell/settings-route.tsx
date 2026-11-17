@@ -21,6 +21,7 @@ import {
   resolveOpenWorkExtensionCatalogPlatform,
 } from "@/app/constants";
 import type { EnablementContext } from "@/app/enablement";
+import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import {
   createOpenworkServerClient,
@@ -107,6 +108,8 @@ import { GeneralSettingsView } from "@/react-app/domains/settings/pages/general-
 import { AuthorizedFoldersPanel } from "@/react-app/domains/settings/panels/authorized-folders-panel";
 import { EffectivePermissionsPanel } from "@/react-app/domains/settings/panels/effective-permissions-panel";
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
+import { SETTINGS_FIND_LABEL } from "@/react-app/domains/settings/find/settings-find";
+import { useSettingsFindStore } from "@/react-app/domains/settings/find/settings-find-store";
 import { AdvancedView } from "@/react-app/domains/settings/pages/advanced-view";
 import { ClaudeImportView } from "@/react-app/domains/settings/pages/claude-import-view";
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
@@ -749,6 +752,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     (scope: "project" | "global") => connectionsStore.readMcpConfigFile(scope),
     [connectionsStore],
   );
+  const providerFilterSyncFixEnabled = useDesktopFeature("providerFilterSyncFix");
+  const providerFilterSyncFixRef = useRef(providerFilterSyncFixEnabled);
+  providerFilterSyncFixRef.current = providerFilterSyncFixEnabled;
   const providerAuthStore = useMemo(
     () =>
       createProviderAuthStore({
@@ -769,6 +775,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           routeStateRef.current.selectedWorkspaceId.trim() ||
           null,
         openworkServer: openworkServerStore,
+        providerFilterSyncFixEnabled: () => providerFilterSyncFixRef.current,
         setProviders,
         setProviderDefaults,
         setProviderConnectedIds,
@@ -1171,6 +1178,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   const runtimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspace?.id ?? null;
   const importOpencodeConnectionsEnabled = useDesktopFeature("importOpencodeConnections");
+  const settingsFindEnabled = useDesktopFeature("settingsFind");
   const opencodeConnectionsImport = useMemo(() => {
     if (!importOpencodeConnectionsEnabled || !openworkClient || !runtimeWorkspaceId) return undefined;
     return {
@@ -1310,6 +1318,23 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setCloudMcpHealthResult({ workspaceId, health });
     return health;
   }, [currentCloudMcpModel, openworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
+  // Same report as the command palette's "Copy diagnostics", plus the Cloud check shown on the Advanced page.
+  const copyDiagnosticsReport = useCallback(async () => {
+    try {
+      const report = await buildDiagnosticsBundleJson({
+        clientConnected: Boolean(opencodeClient),
+        developerMode,
+        openworkServerStatus: openworkServerSnapshot.openworkServerStatus,
+        openworkServerUrl: openworkClient?.baseUrl ?? "",
+        runtimeWorkspaceId,
+        cloudMcpHealth,
+      });
+      await navigator.clipboard.writeText(report);
+      toast.success(t("session.diagnostics_copied"));
+    } catch (error) {
+      toast.error(t("session.diagnostics_failed"), { description: describeRouteError(error) });
+    }
+  }, [cloudMcpHealth, developerMode, opencodeClient, openworkClient, openworkServerSnapshot.openworkServerStatus, runtimeWorkspaceId]);
   const { commandPaletteOpen, setCommandPaletteOpen } = useCommandPaletteShortcut(!props.embedded);
   const developerModePaletteItem = useMemo(
     () => settingsDeveloperModePaletteItem(developerMode, () => {
@@ -1318,6 +1343,18 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }),
     [developerMode, setCommandPaletteOpen, toggleDeveloperMode],
   );
+  // The same find as Cmd/Ctrl+F and the header button, from the command palette.
+  const settingsFindPaletteItem = useMemo<PaletteItem | null>(() => settingsFindEnabled ? {
+    id: "settings-find.open",
+    title: SETTINGS_FIND_LABEL,
+    detail: "Search the settings page you have open",
+    meta: "Cmd/Ctrl+F",
+    searchText: "find search text settings page",
+    action: () => {
+      setCommandPaletteOpen(false);
+      useSettingsFindStore.getState().openFind();
+    },
+  } : null, [setCommandPaletteOpen, settingsFindEnabled]);
   const paletteSessionOptions = useMemo(
     () => buildCommandPaletteSessions(workspaces, sessionsByWorkspaceId, selectedWorkspaceId),
     [sessionsByWorkspaceId, selectedWorkspaceId, workspaces],
@@ -1397,17 +1434,32 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }
   }, [local, openworkClient, reloadCoordinator, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
 
+  // A provider hidden with Disconnect stays hidden until it is enabled again, so
+  // adding or syncing its models on the Ollama page brings it back first.
+  const enableLocalProviderIfHidden = useCallback(async (providerId: string) => {
+    const id = providerId.trim().toLowerCase();
+    if (!disabledProviders.some((entry) => entry.trim().toLowerCase() === id)) return true;
+    try {
+      await providerAuthStore.enableProvider(providerId);
+      return true;
+    } catch (error) {
+      setLocalProviderError(describeRouteError(error));
+      return false;
+    }
+  }, [disabledProviders, providerAuthStore]);
+
   const installLocalProvider = useCallback(async (input: LocalProviderInstallInput) => {
     const modelId = input.modelId.trim();
     if (!modelId) {
       setLocalProviderError("Model ID is required.");
       return;
     }
+    if (!await enableLocalProviderIfHidden(input.providerId)) return;
     await applyLocalProviderPatch(buildLocalProviderInstallPatch({ ...input, modelId }), {
       status: `Added ${input.name} with ${modelId}.`,
       ...(input.setDefault ? { defaultModel: { providerID: input.providerId, modelID: modelId } } : {}),
     });
-  }, [applyLocalProviderPatch]);
+  }, [applyLocalProviderPatch, enableLocalProviderIfHidden]);
 
   const syncLocalProvider = useCallback(async (input: LocalProviderSyncInput) => {
     if (input.models.length === 0) {
@@ -1415,10 +1467,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       return;
     }
     const count = input.models.length;
+    if (!await enableLocalProviderIfHidden(input.providerId)) return;
     await applyLocalProviderPatch(buildLocalProviderSyncPatch(input), {
       status: `Synced ${count} model${count === 1 ? "" : "s"} from ${input.name}.`,
     });
-  }, [applyLocalProviderPatch]);
+  }, [applyLocalProviderPatch, enableLocalProviderIfHidden]);
 
   useEffect(() => {
     local.setUi((previous) => ({ ...previous, view: "settings", tab: route.tab }));
@@ -1952,6 +2005,24 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     runtimeWorkspaceId,
     organizationName: cloudSession.activeOrgName,
     share: providerAuthStore.shareDeviceProvider,
+    guided: providerFilterSyncFixEnabled ? {
+      confirmArrival: providerAuthStore.syncSharedDeviceProvider,
+      removeDeviceKey: async (providerId, organizationProviderId) => {
+        // A default model on the key being removed moves to the same model from the organization.
+        const current = local.prefs.defaultModel;
+        if (current?.providerID === providerId) {
+          const name = providers.find((provider) => provider.id === providerId)?.models?.[current.modelID]?.name?.trim().toLowerCase();
+          const organizationModels = providers.find((provider) => provider.id === organizationProviderId)?.models ?? {};
+          const match = name ? Object.values(organizationModels).find((model) => model.name?.trim().toLowerCase() === name) : undefined;
+          if (match) local.setPrefs((previous) => ({ ...previous, defaultModel: { providerID: organizationProviderId, modelID: match.id } }));
+        }
+        // The closing toast reports the removal; the status line would repeat it.
+        await providerAuthStore.disconnectProvider(providerId);
+      },
+      showOrganizationProviders: () => {
+        document.querySelector('[data-provider-scope="organization"]')?.scrollIntoView({ block: "center", behavior: "smooth" });
+      },
+    } : undefined,
   });
   // Someone who cannot manage AI Gateway already has "My model connections";
   // a second link to an admin-only page would only bounce them (DESIGN P4).
@@ -2301,7 +2372,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onNavigateTab={(tab) => navigateSettingsPath(tab)}
             developerMode={developerMode}
             onSendFeedback={() => platform.openLink(buildFeedbackUrl({ entrypoint: "settings" }))}
-            onJoinDiscord={() => platform.openLink("https://discord.gg/VEhNQXxYMB")}
             onReportIssue={() => platform.openLink("https://github.com/different-ai/openwork/issues/new?template=bug.yml")}
           />
         );
@@ -2395,6 +2465,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             showOpenWorkModelsDeviceRow={openWorkModelsRow.showDeviceRow}
             organizationProviderIds={organizationProviderIds}
             onOpenDen={openProviderCloudPage}
+            onConfigureOllama={!checkDesktopRestriction({ restriction: "allowLocalModels" })
+              ? () => navigateSettingsPath("ollama")
+              : undefined}
             cloudProvidersView={
               <CloudProvidersView
                 runtimeWorkspaceId={runtimeWorkspaceId}
@@ -2642,6 +2715,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               }}
               cloudMcpHealth={cloudMcpHealth}
               refreshCloudMcpHealth={refreshCloudMcpHealth}
+              canCheckCloudMcpHealth={Boolean((selectedWorkspaceEndpoint?.client ?? openworkClient) && runtimeWorkspaceId?.trim())}
+              appVersion={electronUpdaterState.appVersion}
+              copyDiagnosticsReport={copyDiagnosticsReport}
               organizationServer={denSession}
               engineClient={openworkClient}
             />
@@ -2787,6 +2863,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             navigationSessionId,
           )))}
           compact={props.embedded}
+          findEnabled={settingsFindEnabled}
         >
           {settingsView}
         </SettingsShell>
@@ -2831,7 +2908,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         selectedModelBehavior={local.prefs.modelVariant ?? null}
         onSelectModel={(next, behavior) => local.setPrefs((prev) => applyDefaultModelPreference(prev, next, behavior))}
         sessions={paletteSessionOptions}
-        extraItems={checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]}
+        extraItems={[
+          ...(checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]),
+          ...(settingsFindPaletteItem ? [settingsFindPaletteItem] : []),
+        ]}
       />
 
       <ProviderAuthModal

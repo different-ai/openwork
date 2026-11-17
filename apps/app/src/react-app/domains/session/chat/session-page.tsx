@@ -5,7 +5,7 @@ import { childOrigin, prepareChildReturn } from "@/lib/child-navigation";
 import { newSessionDraftOwnerKey } from "./new-session-destination";
 import { usePendingConversationStore } from "./pending-conversation-store";
 import { PendingConversationView } from "./pending-conversation";
-import type { CSSProperties } from "react";
+import type { CSSProperties, Ref } from "react";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
@@ -101,6 +101,9 @@ import { DebugRailProvider, DebugRailSlot } from "../panel/debug-rail-slot";
 import { SessionDebugPanel } from "../surface/debug-panel";
 import { FloatingSlotProvider, SessionFloatingLayer } from "../panel/floating-slot";
 import { useDesktopFeature } from "../status/use-desktop-feature";
+import { SelectionSideChat } from "../links/selection-side-chat";
+import { SideQuestionPanel } from "../links/side-question-panel";
+import { useSideQuestionStore } from "../links/side-question-store";
 import { RetainedArtifactSurface } from "../../dashboard/retained-artifact-surface";
 import { CloudComputerControl } from "../computer/cloud-computer-control";
 import { ComputerControl } from "../computer/computer-control";
@@ -235,6 +238,7 @@ export type SessionPagePaneRuntime = {
 };
 
 export type SessionPageProps = {
+  ref?: Ref<HTMLDivElement>;
   /** Archive state of the open session; one toggle shared with the palette and shortcut. */
   currentSessionArchive?: SessionArchiveToggle;
   sessionReferenceInventories?: readonly SessionReferenceInventory[];
@@ -328,6 +332,8 @@ export type SessionPageProps = {
   primaryHeader?: React.ReactNode;
   /** Open a task on another computer in the main pane. */
   onOpenRemoteTask?: (threadKey: string) => void;
+  /** Open a side chat of the session on screen with this text quoted. Set while sessions started from a session are listed under it. */
+  onStartSideChatWithQuote?: (text: string) => void;
   terminalOpen?: boolean;
   onTerminalOpenChange?: (open: boolean) => void;
   onSessionTabsChange?: (tabs: OpenSessionTab[]) => void;
@@ -666,6 +672,8 @@ export function SessionPage(props: SessionPageProps) {
   });
   const { isPoppedOut: browserIsPoppedOut, placeOpenedBrowser, handlePanelClosed: handleBrowserPanelClosed } = browserPresentation;
   const remoteComputersFeature = useDesktopFeature("remoteComputers");
+  const sessionTreeEnabled = useDesktopFeature("sessionTree");
+  const [primaryChatElement, setPrimaryChatElement] = useState<HTMLElement | null>(null);
   // The button hides itself when this computer can't run it and no VM is connected.
   const computerUse = isElectronRuntime();
   useComputerEndTurn(props.sidebar.sessionStatusById, computerUse);
@@ -1135,6 +1143,14 @@ export function SessionPage(props: SessionPageProps) {
       props.surface,
   );
   const canRenderSplitSurface = Boolean(canRenderReactSurface && splitSession);
+  const sideQuestionsEnabled = useDesktopFeature("sideQuestions");
+  const sideQuestionSessionId = useSideQuestionStore((state) => state.openSessionId);
+  const closeSideQuestions = useSideQuestionStore((state) => state.close);
+  const sideQuestionEndpoint = useMemo(() => sideQuestionsEnabled && !isMobile && props.surface && reactSessionToken && isOpencodeV2BaseUrl(reactSessionBaseUrl)
+    && props.selectedSessionId && sideQuestionSessionId === props.selectedSessionId
+    ? { opencodeBaseUrl: reactSessionBaseUrl, workspaceRoot: props.surface.workspaceRoot ?? "", openworkToken: reactSessionToken } : null,
+  [isMobile, props.selectedSessionId, props.surface, reactSessionBaseUrl, reactSessionToken, sideQuestionSessionId, sideQuestionsEnabled]);
+  const sideQuestionOpen = Boolean(sideQuestionEndpoint);
   const splitWorkspaceTitle = splitSession
     ? splitSession.workspaceTitle ?? workspaceTitleForId(props.sidebar.workspaceSessionGroups, splitSession.workspaceId)
     : "";
@@ -1273,7 +1289,8 @@ export function SessionPage(props: SessionPageProps) {
     for (const group of props.sidebar.workspaceSessionGroups) {
       const session = group.sessions.find((entry) => entry.id === sessionId);
       if (!session) continue;
-      const parentID = session.parentID?.trim();
+      // A side chat or a session the agent started leads back to the session it came from.
+      const parentID = session.parentID?.trim() || (sessionTreeEnabled ? session.openworkSessionLink?.parentID : undefined);
       if (!parentID) return null;
       const parent = group.sessions.find((entry) => entry.id === parentID);
       if (!parent) return null;
@@ -1284,7 +1301,7 @@ export function SessionPage(props: SessionPageProps) {
       };
     }
     return null;
-  }, [props.selectedSessionId, props.sidebar.workspaceSessionGroups]);
+  }, [props.selectedSessionId, props.sidebar.workspaceSessionGroups, sessionTreeEnabled]);
 
   const returnFromChild = useCallback(() => {
     if (!parentSessionLink) return;
@@ -1467,7 +1484,7 @@ export function SessionPage(props: SessionPageProps) {
       isReferenceCurrent={props.isSessionReferenceCurrent}
       onOpenReference={handleOpenSessionReference}
     >
-    <div data-chat-viewport className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(74,111,255,0.12),transparent_42%),var(--app-bg,#0b1020)] text-dls-text max-lg:fixed max-lg:inset-x-0 max-lg:top-[var(--chat-viewport-top,0px)] max-lg:h-[var(--chat-viewport-height,100dvh)] max-lg:overflow-hidden max-lg:pt-[env(safe-area-inset-top)] mac:bg-transparent">
+    <div ref={props.ref} data-chat-viewport className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(74,111,255,0.12),transparent_42%),var(--app-bg,#0b1020)] text-dls-text max-lg:fixed max-lg:inset-x-0 max-lg:top-[var(--chat-viewport-top,0px)] max-lg:h-[var(--chat-viewport-height,100dvh)] max-lg:overflow-hidden max-lg:pt-[env(safe-area-inset-top)] mac:bg-transparent">
       <SidebarProvider
         open={sidebarOpen}
         onOpenChange={setSidebarOpen}
@@ -1490,6 +1507,7 @@ export function SessionPage(props: SessionPageProps) {
           sessionAttentionLabelById={props.sidebar.sessionAttentionLabelById}
           sessionAttentionSourceById={props.sidebar.sessionAttentionSourceById}
           sessionAttentionKindById={props.sidebar.sessionAttentionKindById}
+          sessionTreeEnabled={sessionTreeEnabled}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
           newTaskDisabled={props.sidebar.newTaskDisabled}
@@ -1863,7 +1881,7 @@ export function SessionPage(props: SessionPageProps) {
                       props.surface.draftScope, reactSessionBaseUrl, props.runtimeWorkspaceId,
                     ]) : null}
                     primaryVisible={!isMobile || narrowPane === "chat"}
-                    secondaryVisible={Boolean(canRenderSplitSurface && splitSession && splitPaneRuntime && (!isMobile || narrowPane === "split"))}
+                    secondaryVisible={sideQuestionOpen || Boolean(canRenderSplitSurface && splitSession && splitPaneRuntime && (!isMobile || narrowPane === "split"))}
                   >
                     {!isMobile || narrowPane === "chat" ? (
                       <ResizablePanel
@@ -1888,7 +1906,10 @@ export function SessionPage(props: SessionPageProps) {
                             onClose={closePrimaryWorkbenchPane}
                           />
                         ) : null}
-                        <div className="min-h-0 flex-1">
+                        <div className="min-h-0 flex-1" ref={setPrimaryChatElement}>
+                          {props.onStartSideChatWithQuote ? (
+                            <SelectionSideChat scope={primaryChatElement} onStart={props.onStartSideChatWithQuote} />
+                          ) : null}
                           <SessionSurface
                             // Spread `surface` first so the explicit per-workspace
                             // routing props below CAN'T be silently overridden by
@@ -1928,7 +1949,14 @@ export function SessionPage(props: SessionPageProps) {
                       </div>
                       </ResizablePanel>
                     ) : null}
-                    {canRenderSplitSurface && splitSession && splitPaneRuntime && (!isMobile || narrowPane === "split") ? (
+                    {sideQuestionEndpoint && props.selectedSessionId ? (
+                      <>
+                        <ResizableHandle />
+                        <ResizablePanel id={SECONDARY_PANEL_ID} minSize="320px" className="min-h-0 min-w-0" data-workbench-pane="side-questions">
+                          <SideQuestionPanel key={props.selectedSessionId} sessionId={props.selectedSessionId} endpoint={sideQuestionEndpoint} onClose={closeSideQuestions} />
+                        </ResizablePanel>
+                      </>
+                    ) : canRenderSplitSurface && splitSession && splitPaneRuntime && (!isMobile || narrowPane === "split") ? (
                       <>
                         {!isMobile ? <ResizableHandle /> : null}
                         <ResizablePanel

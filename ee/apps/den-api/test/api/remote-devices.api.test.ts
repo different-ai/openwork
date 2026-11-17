@@ -8,6 +8,7 @@ import {
   REMOTE_DEVICE_AVAILABILITIES,
   REMOTE_DEVICE_EVENT_LIMIT,
   REMOTE_DEVICE_ONLINE_WINDOW_MS,
+  REMOTE_DEVICE_WORKING_MAX_MS,
   organizationComputerDetailResponseSchema,
   organizationComputerInstanceDetailResponseSchema,
   organizationComputerListResponseSchema,
@@ -317,6 +318,10 @@ test("Workbot lists the same computers and reports what happens to its own", asy
 
   const session = await den.request(token, "GET", "/v1/workbot/session")
   assert.equal(field(session.body, "devices"), true, summary(session))
+  // What Workbot is doing on each computer is its own feature, off until turned on.
+  assert.equal(field(session.body, "deviceActivity"), false)
+  assert.equal((await den.setFeature(orgId, "workbotDeviceActivity", true)).status, 200)
+  assert.equal(field((await den.request(token, "GET", "/v1/workbot/session")).body, "deviceActivity"), true)
   const before = devicesOf(await den.request(token, "GET", "/v1/workbot/devices"))
   assert.deepEqual(before.map((device) => device.id).sort(), devicesOf(await asMember("GET", "/v1/remote-devices")).map((device) => device.id).sort())
   assert.ok(before.filter((device) => device.access === "shared").every((device) => !device.canRename && !device.canRemove), "Workbot never manages shared computers")
@@ -390,11 +395,25 @@ test("Workbot cannot preclaim sessions or disclose another owner or tenant's tit
   const cellRow = (await db.select().from(RemoteDeviceTable).where(eq(RemoteDeviceTable.externalId, cell)))[0]!
   assert.match(devicesOf(await asMember("GET", "/v1/remote-devices")).find((device) => device.id === cellRow.id)!.label, /Private cell title/)
 
+  // A turn running in the chat shows on its computer, to its owner and in the team list, for a day at most.
+  const working = async () => devicesOf(await asMember("GET", "/v1/remote-devices")).find((device) => device.id === cellRow.id)!.workingSince
+  const turn = (activeTurnSince: Date | null) => db.update(HeadlessSessionIndexTable).set({ activeTurnSince }).where(eq(HeadlessSessionIndexTable.sessionId, cell))
+  assert.equal(await working(), null)
+  const since = new Date(Date.now() - 60_000)
+  await turn(since)
+  assert.equal(await working(), since.toISOString())
+  assert.equal(organizationComputerListResponseSchema.parse((await asAdmin("GET", "/v1/org/computers")).body).devices.find((device) => device.id === cellRow.id)?.workingSince, since.toISOString())
+  assert.ok(devicesOf(await asMember("GET", "/v1/remote-devices")).every((device) => device.provider === "workbot" || device.workingSince === null), "only Workbot's computers")
+  await turn(new Date(Date.now() - REMOTE_DEVICE_WORKING_MAX_MS - 60_000))
+  assert.equal(await working(), null, "a turn Den never heard end stops counting")
+  await turn(since)
+
   // Simulate a historical poisoned registry row. Reads must independently fence title enrichment.
   await db.update(HeadlessSessionIndexTable).set({ memberId: normalizeDenTypeId("member", other.memberId) }).where(eq(HeadlessSessionIndexTable.sessionId, cell))
   assert.equal((await report(cell, chat)).status, 403)
   const detail = await asMember("GET", `/v1/remote-devices/${cellRow.id}`)
   assert.equal(field(detail.body, "device", "label"), "Workbot's computer")
+  assert.equal(field(detail.body, "device", "workingSince"), null, "another member's turn is not this computer's")
   assert.equal(JSON.stringify((await asMember("GET", "/v1/remote-devices")).body).includes("Private cell title"), false)
   await db.update(HeadlessSessionIndexTable).set({ organizationId: normalizeDenTypeId("organization", elsewhere.orgId), memberId: normalizeDenTypeId("member", member.memberId) }).where(eq(HeadlessSessionIndexTable.sessionId, cell))
   assert.equal((await report(cell, chat)).status, 403)

@@ -108,7 +108,10 @@ const trueFoundryStatusSchema: z.ZodType<GatewayTrueFoundryStatus> = z.object({
   controlPlaneUrl: z.string().nullable(), gatewayBaseUrl: z.string().nullable(),
   createMissingUsers: z.boolean().catch(false), hasAdminKey: z.boolean(),
   lastSyncedAt: z.string().nullable(), lastSyncError: z.string().nullable(),
-  modelCount: z.number(), activeMemberCount: z.number().catch(0), createdUserCount: z.number().catch(0), attentionCount: z.number().catch(0),
+  modelCount: z.number(),
+  availableModels: z.array(z.object({ id: z.string(), name: z.string() })).catch([]),
+  selectedModelIds: z.array(z.string()).nullable().catch(null),
+  activeMemberCount: z.number().catch(0), createdUserCount: z.number().catch(0), attentionCount: z.number().catch(0),
   attention: z.array(z.object({ memberId: z.string(), name: z.string().nullable(), email: z.string().nullable(), reason: z.enum(["not_in_truefoundry", "user_inactive", "token_limit", "no_models", "error"]), message: z.string().nullable() })).catch([]),
 });
 const authorizationRequestSchema: z.ZodType<GatewayAuthorizationRequest> = z.object({

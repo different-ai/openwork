@@ -37,7 +37,7 @@ its rule, the spec step that took the screenshot, where in the code to look
 (the DOM hook and class list of the boxes involved) and the command that
 reproduces it, plus the same notes as JSON. The images stay in the report;
 nothing is posted twice and the verdict never changes. `pnpm --dir evals design:review -- --test-run latest --json` gives the
-same entries locally. The `fix-design-notes` skill is the loop: read the
+same entries locally. The loop: read the
 check, reproduce, fix, re-run, push.
 
 ## In CI

@@ -48,6 +48,8 @@ export const REMOTE_DEVICE_ONLINE_WINDOW_MS = 10 * 60_000
 export const REMOTE_DEVICE_DESKTOP_RETENTION_MS = 30 * 24 * 60 * 60_000
 /** How often a signed-in desktop reports when nothing changed. */
 export const REMOTE_DEVICE_REPORT_INTERVAL_SECONDS = 5 * 60
+/** A turn Den was never told ended stops counting as Workbot working after this long. */
+export const REMOTE_DEVICE_WORKING_MAX_MS = 24 * 60 * 60_000
 /** Events kept per device. */
 export const REMOTE_DEVICE_EVENT_LIMIT = 200
 export const REMOTE_DEVICE_EVENT_RETENTION_MS = 30 * 24 * 60 * 60_000
@@ -124,6 +126,13 @@ export const remoteDeviceSchema = z.object({
   computerId: z.string().nullable(),
   /** For Workbot's computers: the chat it belongs to (`main` or a side chat id). */
   workbotChat: z.string().nullable(),
+  /**
+   * For Workbot's computers: since when Workbot has been working in the chat
+   * the computer belongs to, as the runner last told Den. Null while it is
+   * not, for every other computer and from older servers. Work in the chat
+   * does not prove the computer itself is in use.
+   */
+  workingSince: timestampSchema.nullable().default(null),
   canRename: z.boolean(),
   canRemove: z.boolean(),
   /**
