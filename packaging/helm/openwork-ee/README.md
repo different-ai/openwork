@@ -757,6 +757,31 @@ upgrade after the CA resource is corrected.
 
 ## Observability
 
+### Local operational snapshot
+
+Operational diagnostics are off by default. Enable local-only Den API stdout
+output explicitly:
+
+```yaml
+config:
+  diagnostics:
+    enabled: true
+    output: stdout
+    intervalMinutes: 60
+```
+
+The strict block becomes JSON in `DEN_DIAGNOSTICS`; the default chart renders
+no diagnostic variable, timer or output. The interval is an integer from 5 to
+1440 minutes. Each prefixed JSON line contains only the product version,
+instance/deployment kinds, coarse uptime, minute time and fixed component health
+states. Unchecked components are `unknown`. It never contains identifiers,
+addresses or error messages, and never leaves the instance through OpenWork.
+Operator-provided log collectors may independently forward stdout. This
+process-level output uses the operator block alone; organization-scoped feature
+flags cannot gate an entire replica. See
+[operational diagnostics](../../../docs/features/operational-diagnostics/README.md)
+for the desktop's additional resolved-feature gate and full contract.
+
 The chart exposes first-class runtime observability settings for `den-api` and
 `den-web` only. `observability.backend` defaults to `none`; set it to `otel` or
 `sentry` to enable the matching runtime environment. The chart injects distinct

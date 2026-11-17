@@ -234,6 +234,7 @@ export type DenBootstrapConfig = DenBaseUrls & {
   source: DenBootstrapSource;
   requireSignin: boolean;
   requireActivation?: boolean;
+  diagnostics?: ShellDesktopBootstrapConfig["diagnostics"];
   brandAppName?: string | null;
   brandLogoUrl?: string | null;
   brandIconUrl?: string | null;
@@ -972,6 +973,7 @@ function resolveDenBootstrapConfig(
     apiBaseUrl?: string | null;
     requireSignin?: boolean | null;
     requireActivation?: boolean | null;
+    diagnostics?: ShellDesktopBootstrapConfig["diagnostics"];
     brandAppName?: string | null;
     brandLogoUrl?: string | null;
     brandIconUrl?: string | null;
@@ -990,6 +992,7 @@ function resolveDenBootstrapConfig(
     ...(typeof input.requireActivation === "boolean"
       ? { requireActivation: input.requireActivation }
       : {}),
+    ...(input.diagnostics ? { diagnostics: input.diagnostics } : {}),
     ...(input.brandAppName?.trim() ? { brandAppName: input.brandAppName.trim().slice(0, 64) } : {}),
     ...(input.brandLogoUrl?.trim() ? { brandLogoUrl: input.brandLogoUrl.trim() } : {}),
     ...(input.brandIconUrl?.trim() ? { brandIconUrl: input.brandIconUrl.trim() } : {}),
@@ -1147,6 +1150,7 @@ function getPendingBootstrapConfig(next: DenSettings): DenBootstrapConfig | null
     apiBaseUrl: next.apiBaseUrl ?? previous.apiBaseUrl,
     requireSignin: previous.requireSignin,
     requireActivation: previous.requireActivation,
+    ...(previous.diagnostics ? { diagnostics: previous.diagnostics } : {}),
     brandAppName: previous.brandAppName,
     brandLogoUrl: previous.brandLogoUrl,
     brandIconUrl: previous.brandIconUrl,
@@ -1379,6 +1383,7 @@ export async function setDenBootstrapConfig(
   const previous = readDenBootstrapConfig();
   const normalized = await resolveDenBootstrapConfigWithRuntimeApi({
     ...next,
+    ...(next.diagnostics ?? previous.diagnostics ? { diagnostics: next.diagnostics ?? previous.diagnostics } : {}),
     // An omitted stamp retains the previous one; an explicit null clears it.
     // Cross-origin handoffs rely on the explicit clear: the old control
     // plane's activation must never mark a new control plane as activated.
@@ -1399,6 +1404,7 @@ export async function setDenBootstrapConfig(
       ...(typeof normalized.requireActivation === "boolean"
         ? { requireActivation: normalized.requireActivation }
         : {}),
+      ...(normalized.diagnostics ? { diagnostics: normalized.diagnostics } : {}),
       ...(normalized.brandAppName ? { brandAppName: normalized.brandAppName } : {}),
       ...(normalized.brandLogoUrl ? { brandLogoUrl: normalized.brandLogoUrl } : {}),
       ...(normalized.brandIconUrl ? { brandIconUrl: normalized.brandIconUrl } : {}),

@@ -161,6 +161,15 @@ function renderSchema(full) {
       config: {
         type: "object",
         properties: {
+          diagnostics: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              enabled: { type: "boolean", default: false },
+              output: { type: "string", enum: ["stdout", "file"], default: "stdout" },
+              intervalMinutes: { type: "integer", minimum: 5, maximum: 1440, default: 60 },
+            },
+          },
           administratorRecovery: {
             type: "object",
             additionalProperties: false,

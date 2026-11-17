@@ -25,11 +25,18 @@ export const installExperienceConfigSchema = installConfigSchema.extend({
 
 export type InstallExperienceConfig = z.infer<typeof installExperienceConfigSchema>
 
+export const desktopDiagnosticsConfigSchema = z.strictObject({
+  enabled: z.boolean().default(false),
+  output: z.enum(["stdout", "file"]).default("file"),
+  intervalMinutes: z.number().int().min(5).max(1440).default(60),
+})
+
 export const desktopBootstrapConfigSchema = z.object({
   baseUrl: z.string().trim().url(),
   apiBaseUrl: z.string().trim().url().optional(),
   requireSignin: z.boolean(),
   requireActivation: z.boolean().optional(),
+  diagnostics: desktopDiagnosticsConfigSchema.optional(),
   brandAppName: z.string().trim().min(1).max(64).optional(),
   brandLogoUrl: z.string().trim().url().optional(),
   brandIconUrl: z.string().trim().url().optional(),

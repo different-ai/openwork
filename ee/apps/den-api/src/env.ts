@@ -15,6 +15,8 @@ import { readFreeInferenceConfig } from "@openwork/types/den/inference"
 import { parseFeatureEnvironment } from "@openwork/features"
 import { partitionConfigSecretEnvAllowlist } from "./config-blobs/env-secrets.js"
 
+import { parseOperationalDiagnosticsEnv } from "./operational-diagnostics-config.js"
+
 const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1).optional(),
   DATABASE_HOST: z.string().min(1).optional(),
@@ -860,6 +862,7 @@ export const env = {
     callbackBaseUrl: optionalString(parsed.DEN_DOCUMENTS_CALLBACK_BASE_URL) ?? apiPublicUrl,
   },
   apiPublicUrl,
+  diagnostics: parseOperationalDiagnosticsEnv(process.env),
   serviceVersion: resolveDenServiceVersion({
     configuredVersion: parsed.DEN_API_VERSION,
     renderGitCommit: parsed.RENDER_GIT_COMMIT,

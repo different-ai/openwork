@@ -1,3 +1,7 @@
+import { startOperationalDiagnostics } from "./operational-diagnostics.js"
+import { checkDatabaseReadiness } from "./database-readiness.js"
+import { BUILD_LATEST_APP_VERSION } from "./generated/app-version.js"
+import { operationalDiagnosticSnapshotSchema } from "@openwork/types/operational-diagnostics"
 import { startNativeEventWorker } from "./native-mcp-events/worker.js"
 import { startMcpEventWorker } from "./mcp-events/worker.js"
 import { Server } from "node:http"
@@ -57,9 +61,24 @@ const server = serveDenHttp({ fetch: trackEventStreams(app.fetch), port: env.por
 
 if (!(server instanceof Server)) throw new Error("den-api expects an HTTP/1.1 server")
 
+const stopOperationalDiagnostics = startOperationalDiagnostics(env.diagnostics, {
+  version: operationalDiagnosticSnapshotSchema.shape.version.safeParse(env.serviceVersion).success
+    ? env.serviceVersion
+    : BUILD_LATEST_APP_VERSION,
+  deploymentKind: env.features.deployment,
+  producers: {
+    localServer: () => server.listening ? "ok" : "down",
+    database: async () => {
+      try { await checkDatabaseReadiness(); return "ok" } catch { return "down" }
+    },
+  },
+})
+
+
 const OBSERVABILITY_SHUTDOWN_TIMEOUT_MS = 2_500
 
 async function stopBackgroundLoops() {
+  stopOperationalDiagnostics()
   stopModelsAnalyticsExportLoop()
   const results = await Promise.allSettled([
     stopScimMaintenanceLoop(),

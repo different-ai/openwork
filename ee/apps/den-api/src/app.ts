@@ -5,7 +5,7 @@ import { registerWorkbotRoutes } from "./workbot/routes.js"
 import { registerHeadlessRunnerRoutes } from "./headless-runner/routes.js"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { swaggerUI } from "@hono/swagger-ui"
-import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
 import { cors } from "hono/cors"
 import { Hono } from "hono"
@@ -14,6 +14,7 @@ import { requestId } from "hono/request-id"
 import { describeRoute, generateSpecs, resolver } from "hono-openapi"
 import { z } from "zod"
 import { db } from "./db.js"
+import { checkDatabaseReadiness } from "./database-readiness.js"
 import { env } from "./env.js"
 import { getOrganizationFeatures } from "./features.js"
 import { publicRoute } from "./middleware/index.js"
@@ -281,7 +282,7 @@ app.get(
   async (c) => {
     let database: "ok" | "error" = "ok"
     try {
-      await db.execute(sql`select 1`)
+      await checkDatabaseReadiness()
     } catch (error) {
       appLogger.error("readiness database check failed", { component: "readiness", error })
       database = "error"
