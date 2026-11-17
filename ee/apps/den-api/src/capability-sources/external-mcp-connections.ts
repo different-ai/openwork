@@ -662,19 +662,6 @@ export async function repairExternalMcpIssuerConfiguration(input: {
       || connection.connectedAt,
     )
     if (!input.allowCredentialInvalidation && (sharedCredentialPresent || accounts.length > 0)) {
-      if (!connection.oauthIssuerReviewRequiredAt) {
-        const updatedAt = new Date(Math.max(Date.now(), connection.updatedAt.getTime() + 1))
-        await tx
-          .update(ExternalMcpConnectionTable)
-          .set({
-            oauthIssuerReviewRequiredAt: new Date(),
-            updatedAt,
-          })
-          .where(and(
-            eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
-            eq(ExternalMcpConnectionTable.id, input.connectionId),
-          ))
-      }
       return { status: "credentials_present" }
     }
 
@@ -725,7 +712,6 @@ export async function repairExternalMcpIssuerConfiguration(input: {
         pendingCodeVerifier: null,
         connectedAt: null,
         credentialHealth: null,
-        oauthIssuerReviewRequiredAt: null,
         updatedAt,
       })
       .where(and(
@@ -746,50 +732,9 @@ export async function repairExternalMcpIssuerConfiguration(input: {
         pendingCodeVerifier: null,
         connectedAt: null,
         credentialHealth: null,
-        oauthIssuerReviewRequiredAt: null,
         updatedAt,
       },
     }
-  })
-}
-
-export async function markExternalMcpOAuthIssuerReviewRequired(input: {
-  organizationId: OrganizationId
-  connectionId: ExternalMcpConnectionId
-  expectedIdentityBinding: string
-  expectedIssuer: string
-}): Promise<boolean> {
-  return db.transaction(async (tx) => {
-    const rows = await tx
-      .select()
-      .from(ExternalMcpConnectionTable)
-      .where(and(
-        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
-        eq(ExternalMcpConnectionTable.id, input.connectionId),
-      ))
-      .limit(1)
-      .for("update")
-    const connection = rows[0]
-    if (
-      !connection
-      || connection.authType !== "oauth"
-      || !connection.oauthConfiguration
-      || externalMcpIdentityBinding(connection) !== input.expectedIdentityBinding
-      || connection.oauthConfiguration.authorizationServerIssuer !== input.expectedIssuer
-    ) return false
-    if (connection.oauthIssuerReviewRequiredAt) return true
-
-    await tx
-      .update(ExternalMcpConnectionTable)
-      .set({
-        oauthIssuerReviewRequiredAt: new Date(),
-        updatedAt: new Date(Math.max(Date.now(), connection.updatedAt.getTime() + 1)),
-      })
-      .where(and(
-        eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
-        eq(ExternalMcpConnectionTable.id, input.connectionId),
-      ))
-    return true
   })
 }
 
@@ -1249,7 +1194,6 @@ export async function updateExternalMcpConnection(
           expiresAt: null,
           pendingCodeVerifier: null,
           credentialHealth: null,
-          ...(identityChanged || issuerChanged || manualEndpointsChanged ? { oauthIssuerReviewRequiredAt: null } : {}),
           connectedAt: input.authType === "none" ? input.validatedAt ?? changedAt : null,
           updatedAt: changedAt,
         })
@@ -1417,7 +1361,6 @@ export async function confirmExternalMcpIssuerReview(input: {
           ...configuration,
           authorizationServerIssuer: input.authorizationServerIssuer,
         },
-        oauthIssuerReviewRequiredAt: null,
         ...(issuerChanged
           ? {
               accessToken: null,
@@ -1505,7 +1448,6 @@ export async function externalMcpConnectionReadyForMember(
   orgMembershipId: OrgMembershipId,
   readAccount: typeof readConnectedAccountForExternalMcpIdentity = readConnectedAccountForExternalMcpIdentity,
 ): Promise<boolean> {
-  if (connection.oauthIssuerReviewRequiredAt) return false
   if (connection.authType === "none") return true
   if (connection.credentialMode === "shared") {
     if (connection.authType === "oauth") return Boolean(connection.accessToken)

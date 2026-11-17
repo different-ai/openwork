@@ -36,7 +36,6 @@ export function isSlackConnection(connection: ExternalMcpConnectionRow) {
   return (
     connection.credentialMode === "per_member" &&
     connection.authType === "oauth" &&
-    connection.oauthIssuerReviewRequiredAt === null &&
     new URL(connection.url).hostname === "mcp.slack.com"
   )
 }
@@ -50,8 +49,7 @@ export function isSlackAssistantConnection(connection: ExternalMcpConnectionRow,
   return (
     isSandboxSlackToken(installation?.botToken) &&
     connection.credentialMode === "per_member" &&
-    connection.authType === "oauth" &&
-    connection.oauthIssuerReviewRequiredAt === null
+    connection.authType === "oauth"
   )
 }
 /**

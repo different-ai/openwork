@@ -101,7 +101,6 @@ function viewLifecycle(views: GeneratedArtifactView[]) {
 function connectionReadiness(connection: MemberUsableConnectionFacts) {
   if (
     connection.setupRequired
-    || connection.issuerReviewRequired
     || connection.reconnectActionOwner === "organization_admin"
     || connection.authPolicyConfirmed === false
     || connection.authTypeMismatch

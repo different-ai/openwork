@@ -564,7 +564,7 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
     if (!connection || !granted) return unavailable()
     // Only a member with a grant is told why a connection is held.
     const hold = externalMcpConnectionHold(connection, member)
-    if (hold) return unavailable(hold.message)
+    if (hold) return unavailable(hold)
     if (usesMemberApiKey(connection)
       && !await deps.memberKeyReady(connection, member.orgMembershipId)) {
       return unavailable("Connect your personal API key in Your Connections.")

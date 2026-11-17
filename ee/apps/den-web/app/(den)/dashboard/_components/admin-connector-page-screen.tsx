@@ -128,7 +128,7 @@ export function AdminConnectorPageScreen({ connection, confirmRemove = false }: 
   const disconnect = useDisconnectMcpConnection();
   const signIn = useMemberSignIn();
   const [saving, setSaving] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(Boolean(connection.setupRequired) || Boolean(connection.issuerReviewRequired)
+  const [settingsOpen, setSettingsOpen] = useState(Boolean(connection.setupRequired)
     || (connection.oauthClientRequired === true && connection.oauthClientConfigured !== true)
     || (connection.authType === "apikey" && connection.credentialMode === "shared" && !connection.connected));
   const [error, setError] = useState<string | null>(null);
@@ -198,7 +198,6 @@ export function AdminConnectorPageScreen({ connection, confirmRemove = false }: 
 
   const accountValue = signedIn
     ? connection.authType === "none" ? "Not needed" : connection.externalAccountId ?? "Signed in"
-    : connection.issuerReviewRequired ? <DenButton variant="secondary" size="xs" onClick={() => setSettingsOpen(true)}>Review sign-in server</DenButton>
     : <DenButton variant="secondary" size="xs" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>Sign in</DenButton>;
 
   const details = [

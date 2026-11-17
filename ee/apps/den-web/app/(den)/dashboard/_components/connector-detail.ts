@@ -16,7 +16,6 @@ export function displayedConnectorConnections(
 export function connectorAccountReady(connection: ExternalMcpConnection): boolean {
   return !connection.setupRequired
     && !connectionNeedsOAuthClientConfiguration(connection)
-    && !connection.issuerReviewRequired
     && !connection.needsReconnect
     && connection.credentialHealth !== "reconnect_required"
     && (connection.credentialMode === "per_member" ? connection.connectedForMe : connection.connected);

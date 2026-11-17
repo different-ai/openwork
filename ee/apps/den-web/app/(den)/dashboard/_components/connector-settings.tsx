@@ -237,10 +237,9 @@ function ConnectorIssuerReview({ connection, onSaved }: { connection: ExternalMc
   }
 
   return (
-    <details className="group/issuer border-t border-[var(--den-list-line)] py-3" open={connection.issuerReviewRequired === true}>
+    <details className="group/issuer border-t border-[var(--den-list-line)] py-3">
       <summary className={DETAILS_SUMMARY_CLASS}><ChevronRight className="h-3.5 w-3.5 text-gray-500 transition-transform group-open/issuer:rotate-90" aria-hidden />Authorization server selection</summary>
       <div className="mt-3 flex flex-col gap-3">
-      {connection.issuerReviewRequired ? <p className="text-[13px] text-gray-600">The sign-in server changed. An admin must review it.</p> : null}
       <DenButton type="button" variant="secondary" size="sm" loading={review.isPending} onClick={() => void inspect()}>Choose authorization server</DenButton>
       {preview ? <>
         <p className="text-[12px] text-gray-500">Saved server: {preview.currentIssuer ?? "None"}</p>

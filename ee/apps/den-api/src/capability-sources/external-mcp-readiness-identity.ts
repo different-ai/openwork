@@ -2,7 +2,7 @@ import type { ConnectedAccountTable, ExternalMcpConnectionTable, ExternalMcpRead
 
 type Connection = typeof ExternalMcpConnectionTable.$inferSelect
 type Account = typeof ConnectedAccountTable.$inferSelect
-export type ReadinessIdentity = Pick<Connection, "url" | "authType" | "credentialMode" | "apiKeyAuthScheme" | "oauthConfiguration" | "oauthIssuerReviewRequiredAt" | "accessToken" | "apiKey" | "readinessCredentialBinding">
+export type ReadinessIdentity = Pick<Connection, "url" | "authType" | "credentialMode" | "apiKeyAuthScheme" | "oauthConfiguration" | "accessToken" | "apiKey" | "readinessCredentialBinding">
 export type ReadinessAccountIdentity = Pick<Account, "accessToken" | "externalAccountId" | "readinessCredentialBinding">
 export type VisibleReadiness = Pick<ExternalMcpReadinessCheck, "status" | "checkedAt" | "lastSuccessfulAt" | "reason"> & {
   failure: ExternalMcpReadinessCheck["failure"]
@@ -14,7 +14,8 @@ function configurationIdentity(connection: ReadinessIdentity) {
   return [
     connection.url, connection.authType, connection.credentialMode, connection.apiKeyAuthScheme,
     connection.oauthConfiguration?.authorizationServerIssuer, connection.oauthConfiguration?.requestedScopes,
-    connection.oauthConfiguration?.callbackMode, connection.oauthIssuerReviewRequiredAt,
+    // The null keeps the place of a retired setting, so fingerprints saved before its removal still match.
+    connection.oauthConfiguration?.callbackMode, null,
     connection.oauthConfiguration?.manualOAuthEndpoints,
     // Added only when on, so fingerprints saved before this setting existed still match.
     ...(connection.oauthConfiguration?.requestSelectedScopesOnly === true ? ["selected-scopes-only"] : []),

@@ -284,11 +284,7 @@ export const ExternalMcpConnectionTable = mysqlTable(
     readinessCheck: compatJsonColumn<ExternalMcpReadinessCheck>("readiness_check"),
     /** Rotated on API-key replacement or a new OAuth grant, never routine refresh. */
     readinessCredentialBinding: varchar("readiness_credential_binding", { length: 64 }),
-    /**
-     * Set when live discovery no longer matches the selected OAuth issuer.
-     * The mismatch remains fail-closed until an administrator explicitly
-     * confirms one of the issuers currently advertised by the resource.
-     */
+    /** No longer written or read; kept until a migration drops the column. */
     oauthIssuerReviewRequiredAt: timestamp("oauth_issuer_review_required_at", { fsp: 3 }),
     connectedAt: timestamp("connected_at", { fsp: 3 }),
     createdByOrgMembershipId: denTypeIdColumn(

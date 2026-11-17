@@ -532,9 +532,6 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
           .update(ExternalMcpConnectionTable)
           .set({
             oauthConfiguration: configuration,
-            ...(input.reason === "issuer-mismatch"
-              ? { oauthIssuerReviewRequiredAt: new Date() }
-              : {}),
           })
           .where(eq(ExternalMcpConnectionTable.id, connection.id))
         assertCommitActive(input.context)

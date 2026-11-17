@@ -7,7 +7,7 @@ import type { ExternalMcpConnectionRow } from "../../src/capability-sources/exte
 import type { McpPrincipal } from "../../src/mcp/auth.js"
 import type { ConnectionServerRouteDeps } from "../../src/mcp/connection-server.js"
 import type { ExternalConnectionProxyRouteDeps } from "../../src/mcp/external-connection-proxy.js"
-import { bootDen, field } from "./harness.js"
+import { bootDen, field, startFakeMcpServer, summary, text } from "./harness.js"
 
 /**
  * The two routes that serve one connection on its own answer the same access
@@ -117,16 +117,6 @@ test("a connection the member was granted is served", async () => {
   assert.equal(route.served.length, 1)
 })
 
-test("a connection held for an admin's review of its changed sign-in provider is not served", async () => {
-  const route = connectionRoute({ row: connection({ oauthIssuerReviewRequiredAt: new Date() }) })
-  const reply = await route.call()
-
-  assert.equal(reply.status, 403)
-  assert.equal(reply.error, "connection_not_available")
-  assert.match(reply.message, /"Team Notes" is blocked until an organization admin reviews its changed OAuth issuer/)
-  assert.deepEqual(route.served, [])
-})
-
 test("a connection an admin took away from Workbot is not served to a Workbot turn", async () => {
   const row = connection()
   const workbot = connectionRoute({ row, scopes: [`${WORKBOT_WITHOUT}${row.id}`] })
@@ -143,8 +133,9 @@ test("a connection an admin took away from Workbot is not served to a Workbot tu
   assert.equal(elsewhere.served.length, 1)
 })
 
-test("a member without a grant is not told why a connection is held", async () => {
-  const route = connectionRoute({ row: connection({ oauthIssuerReviewRequiredAt: new Date() }), granted: false })
+test("a Workbot turn without a grant is not told why a connection is unavailable", async () => {
+  const row = connection()
+  const route = connectionRoute({ row, granted: false, scopes: [`${WORKBOT_WITHOUT}${row.id}`] })
   const reply = await route.call()
 
   assert.equal(reply.status, 403)
@@ -169,6 +160,36 @@ test("a malformed connection id is refused like an unknown one", async () => {
   assert.equal(field(malformed.body, "error"), "connection_not_available")
   assert.equal(unknown.status, 403, unknown.text)
   assert.deepEqual(malformed.body, unknown.body)
+})
+
+test("a connection carrying the retired sign-in server review block is used like any other", async () => {
+  const provider = await startFakeMcpServer({ tools: [{ name: "list_notes", description: "List the team's notes", text: "notes listed" }] })
+  try {
+    const owner = await den.signUp("Notes Owner")
+    const { orgId } = await den.createOrg(owner, "Retired Review Org")
+    const created = await den.as(owner, orgId)("POST", "/v1/mcp-connections", {
+      name: "Team Notes", url: `${provider.url}/mcp`, authType: "none", credentialMode: "shared", access: { orgWide: true, memberIds: [], teamIds: [] },
+    })
+    assert.equal(created.status, 200, summary(created))
+    const id = text(field(created.body, "id"), "connection id")
+
+    // ARRANGE ONLY: the mark the retired block left on the connections it held.
+    const { client } = await import("../../src/db.js")
+    if (!("getConnection" in client)) throw new Error("this test needs MySQL mode")
+    await client.execute("UPDATE external_mcp_connection SET oauth_issuer_review_required_at = NOW(3) WHERE id = ?", [id])
+
+    const token = await den.mintMcpToken(owner, orgId)
+    const call = await den.callMcpTool(token, "execute_capability", { name: `mcp:${id}:list_notes`, body: {} })
+    assert.equal(call.isError || call.rpcError !== null, false, call.raw.slice(0, 400))
+    assert.ok(call.raw.includes("notes listed"), call.raw.slice(0, 400))
+
+    const view = await den.as(owner, orgId)("GET", `/v1/mcp-connections/${id}`)
+    assert.equal(view.status, 200, summary(view))
+    assert.equal(view.text.includes("issuerReviewRequired"), false)
+    assert.equal(view.text.includes('"needsReconnect":true'), false)
+  } finally {
+    await provider.close()
+  }
 })
 
 /** The connection's own MCP server route, with the connection connected and one tool. */

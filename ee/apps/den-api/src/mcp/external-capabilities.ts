@@ -133,21 +133,16 @@ export function mcpMemberForToken<T extends McpMemberIdentity>(member: T, scopes
 
 /**
  * Why this caller may not use a connection the member was granted, or null: an
- * admin took it away from Workbot, or its OAuth issuer changed and waits for an
- * admin's review. execute_capability and the routes that serve one connection
- * answer from here.
+ * admin took it away from Workbot. execute_capability and the routes that
+ * serve one connection answer from here.
  */
 export function externalMcpConnectionHold(
-  connection: Pick<ExternalMcpConnectionRow, "id" | "name" | "oauthIssuerReviewRequiredAt">,
+  connection: Pick<ExternalMcpConnectionRow, "id" | "name">,
   member: Pick<McpMemberIdentity, "withheldConnectionIds">,
-): { reason: "withheld_from_workbot" | "issuer_review"; message: string } | null {
-  if (member.withheldConnectionIds?.has(connection.id)) {
-    return { reason: "withheld_from_workbot", message: `"${connection.name}" ${WORKBOT_CONNECTION_WITHHELD_MESSAGE}` }
-  }
-  if (connection.oauthIssuerReviewRequiredAt) {
-    return { reason: "issuer_review", message: `"${connection.name}" is blocked until an organization admin reviews its changed OAuth issuer.` }
-  }
-  return null
+): string | null {
+  return member.withheldConnectionIds?.has(connection.id)
+    ? `"${connection.name}" ${WORKBOT_CONNECTION_WITHHELD_MESSAGE}`
+    : null
 }
 
 /** The member identity plus the team rows it was built from, for callers that also need the teams. */
@@ -166,7 +161,6 @@ export async function resolveMcpMember(input: {
 }
 
 function hasSharedCredential(connection: ExternalMcpConnectionRow): boolean {
-  if (connection.oauthIssuerReviewRequiredAt) return false
   if (connection.authType === "oauth") return Boolean(connection.accessToken)
   if (connection.authType === "apikey") return Boolean(connection.apiKey)
   return true
@@ -805,28 +799,6 @@ async function probeExternalMcpConnection(input: {
   }
   const connection = input.connection
   if (connection.toolPolicy?.allDisabled) return matches
-  if (connection.oauthIssuerReviewRequiredAt) {
-    const nameTokens = tokenize(connection.name)
-    const score = scoreText(nameTokens, nameTokens, input.queryTokens)
-    if (score > 0) {
-      const message = `${connection.name} is blocked until an organization admin reviews its changed OAuth issuer.`
-      add(statusMatch({
-        connection,
-        score,
-        summary: `[${connection.name}] OAuth provider settings changed and require administrator review.`,
-        status: "error",
-        hint: `Ask an org admin to open OpenWork Cloud -> Connectors, review the live OAuth issuer for "${connection.name}", and reconnect if requested. ${CONNECTION_CARD_HINT}`,
-        connectionStatus: buildExternalConnectionStatus({
-          connection,
-          state: "reauth_required",
-          errorCode: "unauthorized",
-          message,
-          actionOwner: "organization_admin",
-        }),
-      }))
-    }
-    return matches
-  }
   if (connection.credentialMode === "per_member") {
     const account = await getConnectedAccountForListing({
       organizationId: connection.organizationId,
@@ -1178,20 +1150,6 @@ export async function probeExternalConnectionStatus(input: {
   if (!canUse) {
     return { ok: false, error: "forbidden", message: `You have not been granted access to "${connection.name}".` }
   }
-  if (connection.oauthIssuerReviewRequiredAt) {
-    const message = `"${connection.name}" is blocked until an organization admin reviews its changed OAuth issuer.`
-    return {
-      ok: true,
-      connected: false,
-      status: buildExternalConnectionStatus({
-        connection,
-        state: "reauth_required",
-        errorCode: "unauthorized",
-        message,
-        actionOwner: "organization_admin",
-      }),
-    }
-  }
   if (connection.credentialMode === "per_member") {
     const account = await getConnectedAccountForListing({
       organizationId: connection.organizationId,
@@ -1271,8 +1229,8 @@ async function prepareExternalCapability(input: {
     return { ok: false, error: "unknown_capability", message: `Connection "${input.connectionId}" is a native provider connector and does not expose MCP tools.` }
   }
   const hold = externalMcpConnectionHold(connection, input.member)
-  if (hold?.reason === "withheld_from_workbot") {
-    return { ok: false, error: "forbidden", message: hold.message }
+  if (hold) {
+    return { ok: false, error: "forbidden", message: hold }
   }
 
   const canUse = await memberCanUseExternalMcpConnection({
@@ -1293,22 +1251,6 @@ async function prepareExternalCapability(input: {
       message: `${input.toolName} is disabled for your organization${policyDecision.disabledBy ? ` by ${policyDecision.disabledBy}` : ""}.`,
       sameArgumentsRetryable: false,
       retry: { action: "search_capabilities", searchRequired: true },
-    }
-  }
-
-  if (hold?.reason === "issuer_review") {
-    const message = hold.message
-    return {
-      ok: false,
-      error: "needs_connection",
-      message,
-      connectionStatus: buildExternalConnectionStatus({
-        connection,
-        state: "reauth_required",
-        errorCode: "unauthorized",
-        message,
-        actionOwner: "organization_admin",
-      }),
     }
   }
 

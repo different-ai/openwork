@@ -79,9 +79,9 @@ export function buildCodemodeConnectionNamespaceMaps(input: {
 }
 
 export function isCodemodeEligibleConnection(
-  connection: Pick<ExternalMcpConnectionRow, "toolPolicy" | "oauthIssuerReviewRequiredAt">,
+  connection: Pick<ExternalMcpConnectionRow, "toolPolicy">,
 ): boolean {
-  return !connection.toolPolicy?.allDisabled && !connection.oauthIssuerReviewRequiredAt
+  return !connection.toolPolicy?.allDisabled
 }
 
 export type CodemodeConnectionNamespaceContext = {

@@ -31,7 +31,7 @@ export async function connectionActionToolResult(context: Context, input: z.infe
       connectionId: normalizeDenTypeId("externalMcpConnection", input.connectionId),
     })
     if (!source || source.authType !== "oauth" || source.credentialMode !== "per_member"
-      || source.oauthIssuerReviewRequiredAt || (!probe.connected && (connection.actor !== "member"
+      || (!probe.connected && (connection.actor !== "member"
         || !["connect", "reconnect"].includes(connection.action?.type ?? "")))) {
       return { isError: true, content: [{ type: "text", text: "This connection requires setup outside this App." }] }
     }

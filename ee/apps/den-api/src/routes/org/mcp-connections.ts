@@ -91,7 +91,6 @@ import {
   listRetiredPluginOwnedExternalMcpConnectionIds,
   listVisibleExternalMcpConnections,
   markExternalMcpConnectionConnected,
-  markExternalMcpOAuthIssuerReviewRequired,
   memberCanUseExternalMcpConnection,
   normalizeExternalMcpIdentityUrl,
   repairExternalMcpIssuerConfiguration,
@@ -377,7 +376,6 @@ const issuerReviewBodySchema = z.discriminatedUnion("action", [
 const issuerReviewResponseSchema = z.object({
   currentIssuer: z.string().nullable(),
   advertisedIssuers: z.array(z.string()),
-  reviewRequired: z.boolean(),
   issuerChanged: z.boolean().optional(),
   reconnectionRequired: z.boolean().optional(),
   updatedAt: z.string().datetime().optional(),
@@ -576,7 +574,6 @@ const connectionResponseSchema = z.object({
     "post_authorization_validation_failed",
   ]).nullable().optional(),
   credentialHealthCheckedAt: z.string().datetime().nullable().optional(),
-  issuerReviewRequired: z.boolean().optional(),
   reconnectActionOwner: z.enum(["member", "organization_admin"]).nullable().optional(),
   /** Native provider feature ids whose scopes are missing from the member's saved grant. */
   missingFeatures: z.array(z.string()).optional(),
@@ -997,16 +994,6 @@ async function resolveExternalMcpToolCredential(
   connection: ExternalMcpConnectionRow,
   orgMembershipId: DenTypeId<"member">,
 ): Promise<ExternalMcpToolCredentialContext> {
-  if (connection.oauthIssuerReviewRequiredAt) {
-    const message = "A workspace admin must review this MCP connection's changed OAuth issuer before its tools can be used."
-    return {
-      ok: false,
-      message,
-      connectionStatus: buildExternalConnectionStatus({
-        connection, state: "reauth_required", errorCode: "unauthorized", message, actionOwner: "organization_admin",
-      }),
-    }
-  }
   if (connection.credentialMode === "per_member") {
     const account = await getConnectedAccount({
       organizationId: connection.organizationId,
@@ -1494,10 +1481,9 @@ async function toConnectionResponse(
     || (oauthClientRequired && !oauthClientConfigured)
     || (!connected && (row.authType === "apikey" || row.authType === "none"))
   )
-  const issuerReviewRequired = row.oauthIssuerReviewRequiredAt !== null
   const credentialReconnectRequired = callerCredentialHealth?.status === "reconnect_required"
-  const needsReconnect = issuerReviewRequired || credentialReconnectRequired
-  const reconnectActionOwner = issuerReviewRequired || (credentialReconnectRequired && row.credentialMode === "shared")
+  const needsReconnect = credentialReconnectRequired
+  const reconnectActionOwner = credentialReconnectRequired && row.credentialMode === "shared"
     ? "organization_admin"
     : credentialReconnectRequired
       ? "member"
@@ -1540,7 +1526,6 @@ async function toConnectionResponse(
       ? { readiness: visibleReadiness(readinessCheck, fingerprint) } : {}),
     ...(row.kind === "external_mcp" && options.includeAccess
       ? { organizationReadiness: storedOrganizationReadiness(row) ?? visibleReadiness(readinessCheck, fingerprint) } : {}),
-    issuerReviewRequired,
     reconnectActionOwner,
     requiredBy: options.requiredBy,
     identityManagedBy: options.identityManagedBy,
@@ -1588,7 +1573,6 @@ export type MemberUsableConnectionFacts = {
   oauthClientConfigured?: boolean
   oauthClientRequired?: boolean
   setupRequired?: boolean
-  issuerReviewRequired?: boolean
   reconnectActionOwner?: string | null
   /** The caller's own last check, or why their last sign-in did not connect. External MCP rows only. */
   readiness?: VisibleReadiness | null
@@ -2907,7 +2891,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({
           currentIssuer,
           advertisedIssuers,
-          reviewRequired: connection.oauthIssuerReviewRequiredAt !== null,
         })
       }
       if (!advertisedIssuers.includes(body.authorizationServerIssuer)) {
@@ -2935,7 +2918,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       return c.json({
         currentIssuer: result.connection.oauthConfiguration?.authorizationServerIssuer ?? null,
         advertisedIssuers,
-        reviewRequired: false,
         issuerChanged: result.issuerChanged,
         reconnectionRequired: result.reconnectionRequired,
         updatedAt: result.connection.updatedAt.toISOString(),
@@ -4364,15 +4346,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             selectedIssuer: configuredIssuer,
             requirements,
           })
-          if (!replacementIssuer) {
-            await markExternalMcpOAuthIssuerReviewRequired({
-              organizationId: payload.organization.id,
-              connectionId: externalMcpConnectionId,
-              expectedIdentityBinding: externalMcpIdentityBinding(connection),
-              expectedIssuer: configuredIssuer,
-            })
-            throw error
-          }
+          if (!replacementIssuer) throw error
           const repair = await repairExternalMcpIssuerConfiguration({
             organizationId: payload.organization.id,
             connectionId: externalMcpConnectionId,

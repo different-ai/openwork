@@ -49,7 +49,6 @@ export type WorkbotAppFact = {
   connectedForMe: boolean
   needsReconnect: boolean
   setupRequired?: boolean
-  issuerReviewRequired?: boolean
   reconnectActionOwner?: string | null
   readiness?: { status: "ready" | "could_not_verify"; failure?: string | null } | null
 }
@@ -82,7 +81,7 @@ export function workbotApps(facts: readonly WorkbotAppFact[], input: {
       memberFixes = false
     } else if (fact.needsReconnect || failedCheck) {
       status = "needs_attention"
-      memberFixes = perMember && fact.issuerReviewRequired !== true && (
+      memberFixes = perMember && (
         fact.reconnectActionOwner === "member"
         || (fact.needsReconnect && fact.reconnectActionOwner == null)
         || (!fact.needsReconnect && SIGN_IN_FAILURES.has(fact.readiness?.failure ?? ""))

@@ -132,7 +132,6 @@ export type ExternalMcpConnection = {
   credentialHealth?: "unknown" | "ready" | "reconnect_required";
   credentialHealthReason?: "authorization_rejected" | "credential_expired" | "post_authorization_validation_failed" | null;
   credentialHealthCheckedAt?: string | null;
-  issuerReviewRequired?: boolean;
   reconnectActionOwner?: "member" | "organization_admin" | null;
   missingFeatures?: string[];
   externalAccountId?: string | null;
@@ -209,7 +208,6 @@ export type McpRequirementsDiscovery = {
 export type McpIssuerReview = {
   currentIssuer: string | null;
   advertisedIssuers: string[];
-  reviewRequired: boolean;
   issuerChanged?: boolean;
   reconnectionRequired?: boolean;
   updatedAt?: string;
@@ -692,7 +690,6 @@ async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string
     ...(connection.credentialHealth === "unknown" || connection.credentialHealth === "ready" || connection.credentialHealth === "reconnect_required"
       ? { credentialHealth: connection.credentialHealth }
       : {}),
-    ...(typeof connection.issuerReviewRequired === "boolean" ? { issuerReviewRequired: connection.issuerReviewRequired } : {}),
     ...(connection.reconnectActionOwner === "member" || connection.reconnectActionOwner === "organization_admin" || connection.reconnectActionOwner === null
       ? { reconnectActionOwner: connection.reconnectActionOwner }
       : {}),
