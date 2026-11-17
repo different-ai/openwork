@@ -220,6 +220,51 @@ export type RunnerSavedFile = z.infer<typeof runnerSavedFileSchema>
 
 export type RunnerResult<T> = { ok: true; value: T } | { ok: false; status: number; error: string }
 
+/** The runner asks its providers one after another page; each call is bounded there, so this only bounds the whole. */
+const COMPUTERS_TIMEOUT_MS = 30_000
+const fleetText = z.string().max(2_000).nullable()
+const fleetCount = z.number().finite().nullable()
+/** One computer as the runner's `GET /v1/computers` lists it (ee/apps/headless-runner/src/computer-fleet.ts). */
+export const runnerComputerSchema = z.object({
+  id: z.string().min(1).max(200),
+  key: fleetText,
+  source: z.enum(["gateway", "direct"]),
+  provider: z.string().min(1).max(40),
+  status: z.string().min(1).max(40),
+  statusReason: fleetText,
+  pool: fleetText,
+  backend: fleetText,
+  region: fleetText,
+  cpu: fleetCount,
+  memoryMb: fleetCount,
+  diskGb: fleetCount,
+  createdAt: fleetText,
+  updatedAt: fleetText,
+  startedAt: fleetText,
+  pausedAt: fleetText,
+  lastActivityAt: fleetText,
+  expiresAt: fleetText,
+  endedAt: fleetText,
+  attempts: fleetCount,
+})
+export type RunnerComputer = z.infer<typeof runnerComputerSchema>
+export const runnerComputerSourceSchema = z.object({
+  source: z.enum(["gateway", "direct"]),
+  provider: z.string().min(1).max(40),
+  status: z.enum(["ok", "unreachable", "unsupported"]),
+  error: z.string().max(40).nullable(),
+  truncated: z.boolean(),
+  pools: z.array(z.object({ name: z.string().max(200), backend: fleetText, region: fleetText, enabled: z.boolean(), health: z.string().max(40) })).max(64),
+})
+export type RunnerComputerSource = z.infer<typeof runnerComputerSourceSchema>
+export const runnerComputerFleetSchema = z.object({
+  version: z.literal(1),
+  generatedAt: z.string().max(40),
+  sources: z.array(runnerComputerSourceSchema).max(8),
+  sandboxes: z.array(runnerComputerSchema).max(8_000),
+})
+export type RunnerComputerFleet = z.infer<typeof runnerComputerFleetSchema>
+
 /**
  * Longer than the cell host's own wait. celld holds a request for a cell it cannot start yet (its node is full, or
  * the cell is changing owner) for up to 15 s (`CELLD_OPERATION_DEADLINE_MS`) and then answers `503 cell_unavailable`.
@@ -845,6 +890,22 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       const result = modelProbeSchema.safeParse(payload)
       if (status !== 200 || !result.success || result.data.requestedModel !== model) return null
       return result.data
+    },
+
+    /**
+     * Every computer the runner's providers hold now (the runner's `GET /v1/computers`): the sandbox gateway's and
+     * the direct provider's, read with the runner's own keys. For Den's admin page; a 404 is a runner from before it.
+     */
+    async listComputers(): Promise<RunnerResult<RunnerComputerFleet>> {
+      let answer: Awaited<ReturnType<typeof request>>
+      try {
+        answer = await request(deps, "GET", "/v1/computers", undefined, COMPUTERS_TIMEOUT_MS)
+      } catch (error) {
+        return { ok: false, status: 503, error: error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "timeout" : "unreachable" }
+      }
+      if (answer.status !== 200) return { ok: false, status: answer.status, error: `http_${answer.status}` }
+      const parsed = runnerComputerFleetSchema.safeParse(answer.payload)
+      return parsed.success ? { ok: true, value: parsed.data } : { ok: false, status: 502, error: "invalid_response" }
     },
 
     /** Scoped catalogs use an authenticated POST; legacy deployment catalogs keep the existing GET. */
