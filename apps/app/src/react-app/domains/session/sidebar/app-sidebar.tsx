@@ -119,6 +119,7 @@ import {
   type SessionNumberShortcutsState,
 } from "../../../shell/session-number-shortcuts";
 import type { SidebarContextValue } from "./app-sidebar-provider";
+import type { SessionLinkKind } from "@openwork/types/session-link";
 import {
   MAX_SESSIONS_PREVIEW,
   buildGlobalArchivedSessions,
@@ -164,6 +165,7 @@ import {
 import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
 import { isSameWorkbenchSession, useWorkbenchStore, workbenchSessionKey } from "../chat/workbench-store";
 import { shouldHideAttachedSideChat } from "./side-chat-status";
+import { EMPTY_SESSION_TREE, buildSessionTree, sessionTreeKindLabel, type SessionTree } from "./session-tree";
 import { SidebarDestination } from "./sidebar-destination";
 import { SessionTitle } from "./session-title";
 import { VirtualFeedRows } from "./virtual-feed-rows";
@@ -571,6 +573,8 @@ export type AppSidebarProps = {
   sessionAttentionLabelById?: Record<string, string>;
   sessionAttentionSourceById?: Record<string, "child" | "descendant">;
   sessionAttentionKindById?: Record<string, SessionWaitingKind>;
+  /** List side chats and sessions the agent started under the session they came from. */
+  sessionTreeEnabled?: boolean;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
@@ -676,6 +680,23 @@ export function AppSidebar(props: AppSidebarProps) {
     }));
   };
 
+  const pinnedIds = useSessionManagementStore((state) => state.pinnedIds);
+  const sessionTrees = React.useMemo(() => {
+    const trees = new Map<string, SessionTree>();
+    if (!props.sessionTreeEnabled) return trees;
+    // Pinned sessions live in Pinned, so they are never listed under their parent.
+    const standaloneIds = new Set(pinnedIds);
+    for (const group of props.workspaceSessionGroups) {
+      const tree = buildSessionTree(group.sessions, { standaloneIds });
+      if (tree !== EMPTY_SESSION_TREE) trees.set(group.workspace.id, tree);
+    }
+    return trees;
+  }, [pinnedIds, props.sessionTreeEnabled, props.workspaceSessionGroups]);
+  const sessionTreeFor = React.useCallback(
+    (workspaceId: string) => sessionTrees.get(workspaceId) ?? EMPTY_SESSION_TREE,
+    [sessionTrees],
+  );
+
   const contextValue: SidebarContextValue = {
     draftScope: props.draftScope,
     selectedWorkspaceId: props.selectedWorkspaceId,
@@ -707,11 +728,11 @@ export function AppSidebar(props: AppSidebarProps) {
     expandedWorkspaceIds,
     sessionNumberShortcutOs: props.sessionNumberShortcuts.os,
     sessionNumberShortcutByTarget,
+    sessionTreeFor,
   };
 
   const brandLogoUrl = useBrandLogoUrl();
   const brandAppName = useBrandAppName();
-  const pinnedIds = useSessionManagementStore((state) => state.pinnedIds);
   const pinnedSessions = React.useMemo(
     () => buildGlobalPinnedSessions(props.workspaceSessionGroups, pinnedIds),
     [pinnedIds, props.workspaceSessionGroups],
@@ -725,6 +746,7 @@ export function AppSidebar(props: AppSidebarProps) {
     enabled: sidebarView === "feed",
     statusById: props.sessionStatusById,
     selectedSessionId: props.selectedSessionId,
+    treeFor: sessionTreeFor,
   });
   const feedView = feed !== null;
 
@@ -1060,10 +1082,11 @@ function FeedOrderMenu() {
 }
 
 /** Every workspace's sessions in one Feed, or null outside the Feed view. */
-function useSessionFeed(groups: WorkspaceSessionGroup[], { enabled, statusById, selectedSessionId }: {
+function useSessionFeed(groups: WorkspaceSessionGroup[], { enabled, statusById, selectedSessionId, treeFor }: {
   enabled: boolean;
   statusById: Record<string, string> | undefined;
   selectedSessionId: string | null;
+  treeFor: (workspaceId: string) => SessionTree;
 }): SessionFeed | null {
   const sideChats = useWorkbenchStore((state) => state.sideChats);
   const attachedSideChatKeys = React.useMemo(() => new Set(Object.values(sideChats).map(workbenchSessionKey)), [sideChats]);
@@ -1089,7 +1112,8 @@ function useSessionFeed(groups: WorkspaceSessionGroup[], { enabled, statusById, 
     placementById,
     statusById,
     now,
-  }), [attachedSideChatKeys, enabled, feedFolders, groupBy, groups, groupsByWorkspace, now, pinnedIdList, placementById, selectedSessionId, sortBy, statusById, unreadIdList, workedAtById]);
+    treeFor,
+  }), [attachedSideChatKeys, enabled, feedFolders, groupBy, groups, groupsByWorkspace, now, pinnedIdList, placementById, selectedSessionId, sortBy, statusById, treeFor, unreadIdList, workedAtById]);
 }
 
 /** The workspace, and the group when it has one, stands in for the project on each Feed row. */
@@ -1114,8 +1138,10 @@ function FeedSessionRow({ entry, subtitleFor, draggable = false }: {
       session={entry.session}
       workspaceId={entry.group.workspace.id}
       workspaceName={workspaceLabel(entry.group.workspace)}
-      feedRow={{ subtitle: subtitleFor(entry) }}
-      draggable={draggable}
+      // A nested row sits under its parent, which already names the workspace: say what it is instead.
+      feedRow={{ subtitle: entry.nested ? sessionTreeKindLabel(entry.nested.kind) : subtitleFor(entry) }}
+      draggable={draggable && !entry.nested}
+      nested={entry.nested}
     />
   );
 }
@@ -1527,8 +1553,13 @@ function WorkspaceSidebarGroup({
     () => partitionArchivedSessions(group.sessions),
     [group.sessions],
   );
-  // Pinned sessions live in the global Pinned section, so they do not appear in the group lists.
-  const hiddenRootIds = pinnedIds;
+  // Pinned sessions live in the global Pinned section, and a session started from another is
+  // listed under it, so neither gets a row of its own in the group lists.
+  const nestedIds = ctx.sessionTreeFor(workspace.id).nestedIds;
+  const hiddenRootIds = React.useMemo(
+    () => nestedIds.size === 0 ? pinnedIds : new Set([...pinnedIds, ...nestedIds]),
+    [nestedIds, pinnedIds],
+  );
   const sessionRows = React.useMemo(() => flattenSessionRows(
     group.sessions,
     wsGroups.length > 0 ? Number.MAX_SAFE_INTEGER : previewCount,
@@ -2237,6 +2268,8 @@ type SessionMenuItemProps = {
   workspaceName?: string;
   /** Feed rows: a quiet second line naming the workspace and group. */
   feedRow?: { subtitle: string };
+  /** Set when this row is listed under the session it was started from. */
+  nested?: { depth: number; kind: SessionLinkKind };
 };
 
 /** Feed rows: Archive (or Unarchive) one click away, just before the More menu, on hover or focus. */
@@ -2296,6 +2329,10 @@ function SessionNumberShortcutSlot({ digit, children, sharedWithMenu = false }: 
   );
 }
 
+const NO_NESTED_ROWS: ReturnType<SessionTree["descendantsOf"]> = [];
+/** Half the 16px glyph slot: the rail runs down the middle of the parent's glyph lane. */
+const SESSION_TREE_RAIL_OFFSET_PX = 8;
+
 export function SessionMenuItem({
   session,
   workspaceId,
@@ -2303,8 +2340,11 @@ export function SessionMenuItem({
   draggable = false,
   workspaceName,
   feedRow,
+  nested,
 }: SessionMenuItemProps) {
   const ctx = useSidebarContext();
+  // The Feed lists nested sessions as rows of its own list; elsewhere this row renders them.
+  const nestedRows = nested ? NO_NESTED_ROWS : ctx.sessionTreeFor(workspaceId).descendantsOf(session.id);
   const attachedAsSideChat = useWorkbenchStore((state) => Object.values(state.sideChats).some((chat) =>
     isSameWorkbenchSession(chat, { workspaceId, sessionId: session.id })));
   const [isTitleHovered, setIsTitleHovered] = React.useState(false);
@@ -2351,7 +2391,7 @@ export function SessionMenuItem({
 
   const { dragProps, dropPosition, isDragging } = useSessionReorderTarget(session.id, workspaceId, draggable);
 
-  const accessibleState = isStarting
+  const ownState = isStarting
     ? `${displayTitle}, ${t("workspace_list.session_starting")}`
     : resolvedActiveWork && isSessionActivityStatus(sessionActivityStatus)
       ? `${displayTitle}, ${getSessionActivityStatusLabel(sessionActivityStatus)}`
@@ -2360,8 +2400,9 @@ export function SessionMenuItem({
         : isUnread
           ? `${displayTitle}, ${t("workspace_list.session_unread")}`
           : itemTitle;
+  const accessibleState = nested ? `${ownState}, ${sessionTreeKindLabel(nested.kind)}` : ownState;
 
-  const rowButtonStyle = { paddingInlineStart: sidebarRowPaddingInlineStart(0) };
+  const rowButtonStyle = { paddingInlineStart: sidebarRowPaddingInlineStart(nested?.depth ?? 0) };
   const waitingKind = isNeedsAttentionSessionStatus(sessionActivityStatus) ? ctx.sessionAttentionKindById?.[session.id] : undefined;
   // Feed rows name only a decision the person owes, quietly; the leading dot already marks it.
   const decisionLabel = !feedRow || !isNeedsAttentionSessionStatus(sessionActivityStatus) ? null
@@ -2409,7 +2450,18 @@ export function SessionMenuItem({
       data-session-dragging={isDragging ? "true" : undefined}
       data-sidebar-session-id={session.id}
       data-sidebar-session-workspace-id={workspaceId}
+      data-session-tree-depth={nested?.depth}
+      data-session-tree-kind={nested?.kind}
     >
+      {nested ? (
+        // One hairline down the parent's glyph lane ties the nested rows to the session above them.
+        <span
+          aria-hidden="true"
+          data-session-tree-rail
+          className="pointer-events-none absolute inset-y-0 w-px bg-sidebar-border"
+          style={{ insetInlineStart: sidebarRowPaddingInlineStart(nested.depth - 1) + SESSION_TREE_RAIL_OFFSET_PX }}
+        />
+      ) : null}
       <SessionContextMenu
         sessionId={session.id}
         workspaceId={workspaceId}
@@ -2440,7 +2492,7 @@ export function SessionMenuItem({
               // Calm Feed: 48px two-line row, 12px × 6px padding, every lane fixed.
               feedRow && "h-12 translate-x-0 items-start gap-2 rounded-md px-3 pe-3 py-1.5 rtl:translate-x-0",
             )}
-            style={feedRow ? undefined : rowButtonStyle}
+            style={feedRow && !nested ? undefined : rowButtonStyle}
           >
             {feedRow ? (
               <>
@@ -2482,12 +2534,24 @@ export function SessionMenuItem({
     </SidebarMenuSubItem>
   );
 
-  if (shouldHideAttachedSideChat(attachedAsSideChat, isSelected, sessionActivityStatus)) return null;
-  if (feedRow || workspaceName) return item;
+  // A nested row, or a row with sessions listed under it, is part of the tree and always shows.
+  if (!nested && nestedRows.length === 0 && shouldHideAttachedSideChat(attachedAsSideChat, isSelected, sessionActivityStatus)) return null;
+  if (feedRow) return item;
+  const nestedItems = nestedRows.map((child) => (
+    <SessionMenuItem
+      key={child.session.id}
+      session={child.session}
+      workspaceId={workspaceId}
+      workspaceName={workspaceName}
+      nested={{ depth: child.depth, kind: child.kind }}
+    />
+  ));
+  if (workspaceName) return <>{item}{nestedItems}</>;
   return (
     <>
       {item}
-      <RemoteTaskSidebarRows sessionId={session.id} sessionTitle={displayTitle} onOpen={(routeId) => ctx.onOpenSession(workspaceId, routeId)} />
+      <RemoteTaskSidebarRows sessionId={session.id} sessionTitle={displayTitle} depth={nested?.depth} onOpen={(routeId) => ctx.onOpenSession(workspaceId, routeId)} />
+      {nestedItems}
     </>
   );
 }

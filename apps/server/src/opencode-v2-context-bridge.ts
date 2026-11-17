@@ -5,6 +5,7 @@ import { OpenWorkExtensionsPreview } from "./opencode-plugins/openwork-extension
 import { openworkReadTransport, type OpenworkReadTransport } from "./opencode-plugins/openwork-read-transport.js";
 import { createV2ReadAdapter, readV2SessionActivity } from "./opencode-v2-read-adapter.js";
 import { isRecord } from "./workspace-kv-store.js";
+import { SESSION_LINK_METADATA_KEY, SESSION_PROMPT_SENDER_KEY, readSessionLink, sessionLinkMetadata } from "@openwork/types/session-link";
 import { createV2BrowserBridge } from "./opencode-v2-browser-bridge.js";
 import { DRIVE_UPLOAD_PERMISSION, GMAIL_DRAFT_PERMISSION, OPENWORK_CLOUD_UPLOADS_EXTENSION_ID, OUTLOOK_DRAFT_PERMISSION } from "./extensions/cloud-upload-constants.js";
 import { createDriveFileTools, DRIVE_FILE_ACTIONS, type DriveFileAction } from "./opencode-plugins/drive-file-tools.js";
@@ -137,7 +138,12 @@ export async function postV2SessionWrite(path: string, body: Record<string, unkn
   const base = `/workspace/${match[1]}/opencode2/api/session`;
   const sessionId = match[2];
   if (!sessionId) {
-    const created = await post(base, { ...(typeof body.title === "string" ? { title: body.title } : {}), ...(isRecord(body.model) ? { model: body.model } : {}) });
+    // The only metadata a created session may carry is the link to the session that started it.
+    const link = isRecord(body.metadata) ? readSessionLink(body.metadata[SESSION_LINK_METADATA_KEY]) : null;
+    const created = await post(base, {
+      ...(typeof body.title === "string" ? { title: body.title } : {}), ...(isRecord(body.model) ? { model: body.model } : {}),
+      ...(link ? { metadata: sessionLinkMetadata(link) } : {}),
+    });
     const row = isRecord(created) && "data" in created ? created.data : created;
     const info = isRecord(row) && isRecord(row.info) ? row.info : row;
     if (!isRecord(info) || typeof info.id !== "string") throw new Error("Invalid engine session response");
@@ -157,6 +163,7 @@ export async function postV2SessionWrite(path: string, body: Record<string, unkn
   const text = parts.map(part => isRecord(part) && part.type === "text" && typeof part.text === "string" ? part.text : "").join("");
   await post(`${base}/${sessionId}/prompt`, {
     text, ...(typeof body.messageID === "string" ? { id: body.messageID } : {}), delivery: "steer",
+    ...(typeof body.sentBy === "string" && body.sentBy ? { metadata: { [SESSION_PROMPT_SENDER_KEY]: body.sentBy } } : {}),
   });
   return null;
 }
