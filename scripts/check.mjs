@@ -8,6 +8,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { reportProcessTiming } from "./lib/process-timing.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -87,12 +88,17 @@ async function main(argv) {
     console.error("Dependencies are not installed. Run `pnpm install`, then `pnpm check`.");
     return 1;
   }
+  const startedAt = new Date().toISOString();
+  const started = performance.now();
   const selected = selectChecks(argv.filter((arg) => !arg.startsWith("--")));
   const runnable = [];
+  const skipped = [];
   for (const check of selected) {
     const reason = skipReason(check);
-    if (reason) console.log(`skip ${check.name}: ${reason}; CI still runs it.`);
-    else runnable.push(check);
+    if (reason) {
+      console.log(`skip ${check.name}: ${reason}; CI still runs it.`);
+      skipped.push({ step: check.name, seconds: 0, outcome: "skipped" });
+    } else runnable.push(check);
   }
   const results = await Promise.all(runnable.map(run));
   const failed = results.filter((result) => result.code !== 0);
@@ -101,6 +107,17 @@ async function main(argv) {
     console.error(`\n--- ${result.check.name}: ${result.check.command.join(" ")}\n${result.output.trim()}\n\nFix: ${result.check.fix}`);
   }
   if (failed.length) console.error(`\n${failed.length} check(s) failed. Rerun one with \`pnpm check ${failed[0].check.name}\`.`);
+  await reportProcessTiming({
+    process: "check",
+    startedAt,
+    totalSeconds: (performance.now() - started) / 1000,
+    outcome: failed.length ? "fail" : "ok",
+    steps: [...results.map((result) => ({
+      step: result.check.name,
+      seconds: result.seconds,
+      outcome: result.code === 0 ? "ok" : "fail",
+    })), ...skipped],
+  });
   return failed.length ? 1 : 0;
 }
 

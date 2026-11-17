@@ -74,6 +74,10 @@ jobs:
     name: Static CI, outbound access and feature registry
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      OPENWORK_PROCESS_TIMING_URL: ${{ secrets.OPENWORK_PROCESS_TIMING_URL }}
+      OPENWORK_PROCESS_TIMING_KEY: ${{ secrets.OPENWORK_PROCESS_TIMING_KEY }}
+      OPENWORK_PROCESS_TIMING_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -113,6 +117,7 @@ jobs:
           scripts/ci/check-codeql-results.test.mjs
           scripts/den-db-migrate-target.test.mjs
           scripts/check.test.mjs
+          scripts/lib/process-timing.test.mjs
       - name: Check outbound access manifest
         run: node scripts/check-outbound-access.mjs
       - name: Setup pnpm
@@ -149,6 +154,10 @@ jobs:
     name: Typecheck shipped code
     runs-on: blacksmith-16vcpu-ubuntu-2204
     timeout-minutes: 10
+    env:
+      OPENWORK_PROCESS_TIMING_URL: ${{ secrets.OPENWORK_PROCESS_TIMING_URL }}
+      OPENWORK_PROCESS_TIMING_KEY: ${{ secrets.OPENWORK_PROCESS_TIMING_KEY }}
+      OPENWORK_PROCESS_TIMING_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -160,6 +169,8 @@ jobs:
         with:
           engine: "false"
           evals: "false"
+      - name: Test process timing integrations
+        run: node --test scripts/check.test.mjs packages/world/src/process-timing.test.mjs
       - name: Typecheck changed packages and their dependents
         env:
           EVENT_NAME: ${{ github.event_name }}

@@ -1,7 +1,8 @@
 import { access, readdir, rm } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import { styleText } from "node:util";
-import { eventsPath, readEvents, tailEvents, type WorldEvent } from "./events.ts";
+import { eventsPath, readEvents, tailEvents, worldTimingSteps, type WorldEvent } from "./events.ts";
+import { reportProcessTiming } from "../../../scripts/lib/process-timing.mjs";
 import { ledgerPath, readLedger } from "./ledger.ts";
 import { discoverWorlds, displayWorldPath, resolveWorldScript } from "./loader.ts";
 import { formatOutputLines, MASK } from "./outputs.ts";
@@ -798,6 +799,25 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
     return command.error ? 1 : 0;
   }
   if (command.kind === "up") {
+    const timingStarted = Date.now();
+    let timingPath: string | undefined;
+    let timingReport: Promise<void> | undefined;
+    let timingOutcome: "ok" | "fail" = "fail";
+    const finishTiming = (): Promise<void> => {
+      timingReport ??= (async () => {
+        const endedAt = Date.now();
+        const events = timingPath ? await readEvents(timingPath).catch(() => []) : [];
+        const steps = worldTimingSteps(events, endedAt);
+        await reportProcessTiming({
+          process: "world",
+          startedAt: new Date(timingStarted).toISOString(),
+          totalSeconds: (endedAt - timingStarted) / 1000,
+          outcome: timingOutcome,
+          steps: steps.length ? steps : [{ step: "launch", seconds: (endedAt - timingStarted) / 1000, outcome: timingOutcome }],
+        });
+      })();
+      return timingReport;
+    };
     try {
       const script = await resolveWorldScript(command.source, options);
       const stage = resolveStage(process.env, command.stage);
@@ -896,6 +916,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       if (state.kind === "running") {
         printOutputs(state.snapshot, print);
         print(`World ${JSON.stringify(stagedName)} is already running (pid ${state.snapshot.pid}); adopted.`);
+        timingOutcome = "ok";
         return 0;
       }
       if (state.kind === "changed") {
@@ -928,6 +949,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       }
       const logPath = scriptWorldLogPath(snapshotDirectory, stagedName);
       const eventPath = eventsPath(snapshotDirectory, stagedName);
+      timingPath = eventPath;
       await rm(eventPath, { force: true });
       const { view, mode } = createCliView(options, { plain: command.plain });
       view.header({
@@ -967,6 +989,8 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
           downHint: `pnpm world down ${script.name}${stage ? ` --stage ${stage}` : ""}`,
           ...(command.detach || mode === "tty" ? { log: logPath } : {}),
         });
+        timingOutcome = "ok";
+        await finishTiming();
       };
       const receiptPoll = setInterval(() => {
         void showReady().catch((error: unknown) => {
@@ -1040,10 +1064,13 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       } else {
         view.stop();
       }
+      timingOutcome = code === 0 ? "ok" : "fail";
       return code;
     } catch (error) {
       print(messageText(error));
       return 1;
+    } finally {
+      await finishTiming();
     }
   }
   if (command.kind === "attach") {

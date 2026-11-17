@@ -1,6 +1,32 @@
 import { appendFile, chmod, mkdir, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { OutputMeta } from "./outputs.ts";
+import type { TimingStep } from "../../../scripts/lib/process-timing.mjs";
+
+export function worldTimingSteps(events: WorldEvent[], endedAt: number): TimingStep[] {
+  const starts = new Map<string, number>();
+  const steps: TimingStep[] = [];
+  for (const event of events) {
+    if (event.type !== "step") continue;
+    const at = Date.parse(event.t);
+    if (!Number.isFinite(at)) continue;
+    if (event.status === "start") {
+      if (!starts.has(event.id)) starts.set(event.id, at);
+    } else {
+      const start = starts.get(event.id);
+      if (start !== undefined) {
+        steps.push({ step: timingStepId(event.id), seconds: (at - start) / 1000, outcome: event.status });
+        starts.delete(event.id);
+      }
+    }
+  }
+  for (const [step, start] of starts) steps.push({ step: timingStepId(step), seconds: (endedAt - start) / 1000, outcome: "fail" });
+  return steps;
+}
+
+function timingStepId(id: string): string {
+  return /^(electron|signin|workspace)-/.exec(id)?.[1] ?? id;
+}
 
 export const EVENTS_ENV = "OPENWORK_WORLD_EVENTS";
 
