@@ -8,7 +8,7 @@ import {
 import { cloudShellCommand, consoleUrl as gcpConsoleUrl, enrollmentAudience, gcpEnrollmentSchema, heartbeatAudience, serviceAccountEmail, verifyGcpIdentity, type GcpLaunch } from "@openwork/managed-deployments/gcp"
 import { compareVersions, hashToken, summarizeHealth, tokenMatches, validateEventTransition } from "@openwork/managed-deployments/lifecycle"
 import {
-  awsTargetSchema, gcpTargetSchema, deploymentEventInputSchema, healthCheckSchema, healthReportSchema, managedDeploymentConfigurationSchema,
+  assistantsEnabled, awsTargetSchema, gcpTargetSchema, deploymentEventInputSchema, healthCheckSchema, healthReportSchema, managedDeploymentConfigurationSchema,
   managedDeploymentInputSchema, managedDeploymentLaunchInputSchema, managedDeploymentLaunchSchema, managedDeploymentListSchema,
   managedDeploymentSchema, type ManagedDeployment,
 } from "@openwork/managed-deployments/schema"
@@ -18,6 +18,7 @@ import { z } from "zod"
 import { attributeAuditRequest, auditServiceAttribution } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { organizationFeatureEnabled, requireFeature } from "../../features.js"
+import { markFeaturesUsed } from "../../feature-usage.js"
 import { awsRelease, gcpRelease, releaseReadiness, type ManagedDeploymentRelease } from "../../managed-deployments/config.js"
 import { jsonValidator, orgPermissionRoute, paramValidator, tokenRoute } from "../../middleware/index.js"
 import { jsonResponse } from "../../openapi.js"
@@ -85,7 +86,7 @@ function launchDetails(row: DeploymentRow, run: RunRow) {
       },
     }
   }
-  const launch: AwsLaunch = { ...common, target: awsTarget(row) }
+  const launch: AwsLaunch = { ...common, target: awsTarget(row), includeAssistantParameters: Object.hasOwn(row.target, "assistants") }
   if (run.kind === "install") {
     const url = quickCreateUrl(launch)
     return {
@@ -153,6 +154,10 @@ async function oneView(row: DeploymentRow, options: { primary?: boolean } = {}) 
   return view
 }
 
+function launchError<S extends 400 | 404 | 409>(error: string, status: S) {
+  return { error, status }
+}
+
 function bearerToken(header: string | undefined) {
   const token = header?.replace(/^Bearer /, "") ?? ""
   return /^[A-Za-z0-9_-]{43}$/.test(token) ? token : null
@@ -171,6 +176,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
           gcp,
         ],
         updateMode: "approval",
+        assistantsAvailable: await organizationFeatureEnabled(org.organization.id, "managedDeploymentAssistants", { userId: org.currentMember.userId }),
       }))
     })
 
@@ -182,17 +188,28 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       return c.json({ deployments: await deploymentViews(rows) })
     })
 
-  app.post(PATH, operation("Create a managed deployment", "Records a new installation target (cloud account or project, region, address). Nothing is launched or billed until an owner prepares and approves it in their cloud. Agents confirm the target, address and that the person's cloud account will be billed before calling this.", managedDeploymentSchema, { mcp: true }),
+  app.post(PATH, operation("Create a managed deployment", "Records a new installation target (cloud account or project, region, address). Nothing is launched or billed until an owner prepares and approves it in their cloud. Agents confirm the target, address and that the person's cloud account will be billed before calling this. Optional AWS target.assistants requires assistantsAvailable in configuration: only customer-created plain-string Secrets Manager ARNs in that account/region, never hosted keys or plaintext. The customer creates their Slack app in the installed Den's Connectors; optional Daytona or Freestyle computers execute outside AWS. Computers default off; Daytona additionally requires a computer snapshot.", managedDeploymentSchema, { mcp: true }),
     orgPermissionRoute("deployments.manage"), requireFeature("managedDeployments"), jsonValidator(managedDeploymentInputSchema), async (c) => {
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
       const body = c.req.valid("json")
       if (!(body.provider === "aws" ? awsRelease() : gcpRelease())) return c.json({ error: "release_not_configured" }, 503)
       const id = randomUUID()
-      await db.insert(ManagedDeploymentTable).values({
-        id, org_id: org.organization.id, provider: body.provider, name: body.name, target: body.target,
-        domain_name: body.domainName, owner_email: body.ownerEmail, size: body.size,
+      const created = await db.transaction(async (tx) => {
+        if (!await organizationFeatureEnabled(org.organization.id, "managedDeployments", { database: tx, lock: "share", userId: org.currentMember.userId })) return false
+        if (body.provider === "aws" && assistantsEnabled(body.target.assistants)
+          && !await organizationFeatureEnabled(org.organization.id, "managedDeploymentAssistants", { database: tx, lock: "share", userId: org.currentMember.userId })) return false
+        const target = body.provider === "aws" && !assistantsEnabled(body.target.assistants)
+          ? { accountId: body.target.accountId, region: body.target.region, route53ZoneId: body.target.route53ZoneId, network: body.target.network }
+          : body.target
+        await tx.insert(ManagedDeploymentTable).values({
+          id, org_id: org.organization.id, provider: body.provider, name: body.name, target,
+          domain_name: body.domainName, owner_email: body.ownerEmail, size: body.size,
+        })
+        return true
       })
+      if (!created) return c.json({ error: "feature_disabled" }, 404)
+      if (body.provider === "aws" && assistantsEnabled(body.target.assistants)) markFeaturesUsed({ organizationId: org.organization.id, memberId: org.currentMember.id, keys: ["managedDeploymentAssistants"] })
       // Primary: reads back the row inserted above.
       const [row] = await db.$primary.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, id)).limit(1)
       if (!row) return c.json({ error: "deployment_not_found" }, 404)
@@ -220,21 +237,30 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       return c.json({ ok: true })
     })
 
-  app.post(`${PATH}/:deploymentId/launch`, operation("Prepare an install, retry or approved update", "Creates or reuses an installer run pinned to the published release and returns handoff: the one step the person takes in their own cloud. open_link: give them handoff.url to approve. run_in_cloud_shell: give them handoff.url and handoff.command to paste. OpenWork never runs it; repeating this call reopens the same pending run.", managedDeploymentLaunchSchema, { mcp: true }),
+  app.post(`${PATH}/:deploymentId/launch`, operation("Prepare an install, retry or approved update", "Creates or reuses an installer run pinned to the published release and returns handoff: the one step the person takes in their own cloud. open_link: give them handoff.url to approve. run_in_cloud_shell: give them handoff.url and handoff.command to paste. OpenWork never runs it; repeating this call reopens the same pending run. Optional assistants changes apply only to AWS with kind update and a newer version, while assistantsAvailable is true. Settings freeze with the run: a different pending configuration returns 409, not a new approval. Existing enabled settings cannot launch when the assistant feature is disabled.", managedDeploymentLaunchSchema, { mcp: true }),
     orgPermissionRoute("deployments.manage"), requireFeature("managedDeployments"), paramValidator(deploymentParam), jsonValidator(managedDeploymentLaunchInputSchema), async (c) => {
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
       const id = c.req.valid("param").deploymentId
-      const { kind } = c.req.valid("json")
+      const { kind, assistants } = c.req.valid("json")
       const now = new Date()
       const result = await db.transaction(async (tx) => {
         const [row] = await tx.select().from(ManagedDeploymentTable).where(and(eq(ManagedDeploymentTable.id, id), eq(ManagedDeploymentTable.org_id, org.organization.id))).limit(1).for("update")
         if (!row) return { error: "deployment_not_found", status: 404 } as const
         if (!await organizationFeatureEnabled(org.organization.id, "managedDeployments", { database: tx, lock: "share", userId: org.currentMember.userId })) return { error: "feature_disabled", status: 404 } as const
+        if (assistants && row.provider !== "aws") return launchError("assistants_aws_only", 400)
+        const storedTarget = row.provider === "aws" ? awsTarget(row) : null
+        const changedTarget = storedTarget && assistants ? awsTargetSchema.safeParse({ ...storedTarget, assistants }) : null
+        if (changedTarget && !changedTarget.success) return launchError("invalid_assistant_settings", 400)
+        const target = changedTarget?.success ? changedTarget.data : storedTarget
+        if (target && (assistants || (storedTarget && assistantsEnabled(storedTarget.assistants)) || assistantsEnabled(target.assistants))
+          && !await organizationFeatureEnabled(org.organization.id, "managedDeploymentAssistants", { database: tx, lock: "share", userId: org.currentMember.userId })) return launchError("feature_disabled", 404)
         const release = releaseFor(row)
         if (!release) return { error: "release_not_configured", status: 503 } as const
         const [active] = row.active_run_id ? await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, row.active_run_id)).limit(1) : []
         const live = active && active.expires_at > now && (active.state === "awaiting_approval" || active.state === "provisioning")
+        // The target is frozen for the whole live run, including its approval URL.
+        if (live && assistants && storedTarget && target && JSON.stringify(storedTarget.assistants) !== JSON.stringify(target.assistants)) return launchError("deployment_settings_frozen", 409)
         // Reopening a prepared approval returns the same run (no duplicates).
         if (live && active.state === "awaiting_approval" && active.kind === kind) return { row, run: active }
         if (live) return { error: "deployment_run_in_progress", status: 409 } as const
@@ -254,12 +280,16 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
           bundle_sha256: release.bundleSha256, api_origin: release.apiOrigin, challenge: randomBytes(32).toString("hex"),
           state: "awaiting_approval", expires_at: new Date(now.getTime() + RUN_LIFETIME_MS),
         })
-        await tx.update(ManagedDeploymentTable).set({ active_run_id: runId }).where(eq(ManagedDeploymentTable.id, id))
+        // One row lock and transaction bind the target to this run. No settings-only
+        // write can change what an already-issued customer approval will install.
+        const nextTarget = changedTarget?.success ? changedTarget.data : row.target
+        await tx.update(ManagedDeploymentTable).set({ active_run_id: runId, target: nextTarget }).where(eq(ManagedDeploymentTable.id, id))
         const [run] = await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, runId)).limit(1)
         if (!run) return { error: "deployment_not_found", status: 404 } as const
-        return { row: { ...row, active_run_id: runId }, run }
+        return { row: { ...row, active_run_id: runId, target: nextTarget }, run }
       })
       if ("error" in result) return c.json({ error: result.error }, result.status)
+      if (assistants || (result.row.provider === "aws" && assistantsEnabled(awsTarget(result.row).assistants))) markFeaturesUsed({ organizationId: org.organization.id, memberId: org.currentMember.id, keys: ["managedDeploymentAssistants"] })
       return c.json(managedDeploymentLaunchSchema.parse({
         deployment: await oneView(result.row, { primary: true }), kind: result.run.kind,
         ...launchDetails(result.row, result.run),

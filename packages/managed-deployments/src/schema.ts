@@ -34,13 +34,62 @@ export const awsNetworkSchema = z.discriminatedUnion("mode", [
 ])
 export type AwsNetwork = z.infer<typeof awsNetworkSchema>
 
+const customerSecretArnSchema = z.string().trim().max(2048)
+  .regex(/^arn:aws:secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6}$/, "Enter the complete ARN of a customer-created plain-string Secrets Manager secret, without a JSON field or version suffix.")
+const modelBaseUrlSchema = z.string().trim().max(2048).url().refine((value) => {
+  if (!URL.canParse(value)) return false
+  const url = new URL(value)
+  return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash
+}, "Use an HTTPS endpoint without credentials, query parameters or a fragment.")
+
+export const awsAssistantsSchema = z.object({
+  headlessRunnerEnabled: z.boolean().default(false),
+  workbotEnabled: z.boolean().default(false),
+  slackAssistantEnabled: z.boolean().default(false),
+  modelProtocol: z.enum(["anthropic", "openai", "openai-responses"]).optional(),
+  modelBaseUrl: modelBaseUrlSchema.optional(),
+  model: z.string().trim().min(1).max(200).regex(/^[^\s\x00-\x1f\x7f]+$/, "Enter a model ID without spaces or control characters.").optional(),
+  modelSecretArn: customerSecretArnSchema.optional(),
+  computerProvider: z.enum(["off", "daytona", "freestyle"]).default("off"),
+  computerSecretArn: customerSecretArnSchema.optional(),
+  computerSnapshot: z.string().trim().min(1).max(200).regex(/^[^\s\x00-\x1f\x7f]+$/, "Enter a computer snapshot ID without spaces or control characters.").optional(),
+  daytonaApiUrl: modelBaseUrlSchema.optional(),
+  daytonaTarget: z.string().trim().min(1).max(80).regex(/^[A-Za-z0-9_-]+$/, "Enter a Daytona target such as us or eu.").optional(),
+}).strict().superRefine((assistants, context) => {
+  if (!assistants.headlessRunnerEnabled && (assistants.workbotEnabled || assistants.slackAssistantEnabled || assistants.computerProvider !== "off")) {
+    context.addIssue({ code: "custom", path: ["headlessRunnerEnabled"], message: "Enable the managed runner for Workbot, Slack assistants or cloud computers." })
+  }
+  if (assistants.headlessRunnerEnabled) {
+    for (const key of ["modelProtocol", "modelBaseUrl", "model", "modelSecretArn"] satisfies (keyof typeof assistants)[]) {
+      if (!assistants[key]) context.addIssue({ code: "custom", path: [key], message: "Configure the model protocol, HTTPS endpoint, model ID and customer-owned secret ARN for the managed runner." })
+    }
+  }
+  if (assistants.computerProvider !== "off" && !assistants.computerSecretArn) {
+    context.addIssue({ code: "custom", path: ["computerSecretArn"], message: "Enter the ARN of your plain-string computer provider API key secret." })
+  }
+  if (assistants.computerProvider === "daytona" && !assistants.computerSnapshot) {
+    context.addIssue({ code: "custom", path: ["computerSnapshot"], message: "Choose a Daytona computer snapshot before enabling Daytona computers." })
+  }
+})
+export type AwsAssistants = z.infer<typeof awsAssistantsSchema>
+export function assistantsEnabled(assistants: AwsAssistants) {
+  return assistants.headlessRunnerEnabled || assistants.workbotEnabled || assistants.slackAssistantEnabled || assistants.computerProvider !== "off"
+}
+
 export const awsTargetSchema = z.object({
   accountId: z.string().regex(/^\d{12}$/, "Enter the 12-digit AWS account ID."),
   region: awsRegionSchema,
   route53ZoneId: z.string().trim().regex(/^Z[A-Z0-9]{1,31}$/, "Enter the Route 53 hosted zone ID, starting with Z."),
   // Deployments created before network choice existed are dedicated.
   network: awsNetworkSchema.default({ mode: "dedicated" }),
+  assistants: awsAssistantsSchema.default({ headlessRunnerEnabled: false, workbotEnabled: false, slackAssistantEnabled: false, computerProvider: "off" }),
 }).strict().superRefine((target, context) => {
+  for (const key of ["modelSecretArn", "computerSecretArn"] satisfies (keyof AwsAssistants)[]) {
+    const arn = target.assistants[key]
+    if (arn && typeof arn === "string" && !arn.startsWith(`arn:aws:secretsmanager:${target.region}:${target.accountId}:secret:`)) {
+      context.addIssue({ code: "custom", path: ["assistants", key], message: "Use a Secrets Manager secret in this deployment's AWS account and region." })
+    }
+  }
   const network = target.network
   if (network.mode !== "existing") return
   if (network.ecsClusterArn && !new RegExp(`^arn:aws:ecs:${target.region}:${target.accountId}:cluster/[A-Za-z0-9_-]{1,255}$`).test(network.ecsClusterArn)) {
@@ -95,6 +144,7 @@ export type DeploymentEventInput = z.infer<typeof deploymentEventInputSchema>
 export const healthCheckIdSchema = z.enum([
   "api_health", "database_ready", "web_available", "services_running", "load_balancer_targets",
   "database_instance", "database_storage", "database_backups", "certificate",
+  "runner_service", "workbot_available", "runner_storage", "runner_backups",
 ])
 export const healthCheckStatusSchema = z.enum(["ok", "warning", "failing", "unknown"])
 export const healthCheckCodeSchema = z.enum([
@@ -162,7 +212,13 @@ export const managedDeploymentSchema = z.discriminatedUnion("provider", [
   managedDeploymentViewSchema.extend({ provider: z.literal("gcp"), target: gcpTargetSchema }),
 ])
 export const managedDeploymentListSchema = z.object({ deployments: z.array(managedDeploymentSchema) })
-export const managedDeploymentLaunchInputSchema = z.object({ kind: deploymentRunKindSchema.default("install") }).strict()
+export const managedDeploymentLaunchInputSchema = z.object({
+  kind: deploymentRunKindSchema.default("install"),
+  /** Reconfigure AWS assistants only with a newer, customer-approved installer. */
+  assistants: awsAssistantsSchema.optional(),
+}).strict().superRefine((input, context) => {
+  if (input.assistants && input.kind !== "update") context.addIssue({ code: "custom", path: ["assistants"], message: "Change assistant settings with a version-increasing Update, not Install or Retry." })
+})
 export const managedDeploymentLaunchSchema = z.object({
   deployment: managedDeploymentSchema,
   kind: deploymentRunKindSchema,
@@ -184,6 +240,8 @@ export const managedDeploymentLaunchSchema = z.object({
   expiresAt: z.string().datetime(),
 })
 export const managedDeploymentConfigurationSchema = z.object({
+  /** Requires both managed deployment features for this caller. */
+  assistantsAvailable: z.boolean().default(false),
   providers: z.array(z.object({
     provider: managedDeploymentProviderSchema,
     available: z.boolean(),
