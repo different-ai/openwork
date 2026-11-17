@@ -16,7 +16,7 @@ import { toast } from "@/components/ui/sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
-import { captureAnalyticsEvent } from "@/app/lib/analytics";
+import { captureAnalyticsEvent, takeTaskRunStart, featureAnalytics, taskRunQuality } from "@/app/lib/analytics";
 import { createSessionInterruptionClient, hasTerminalSessionReply, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
 import { createClient, createPromptMessageID, isPromptAdmissionUnknown, promptAdmissionFailure, readPromptAdmission, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl, v2AcknowledgementText } from "@/app/lib/opencode-v2-adapter";
@@ -100,7 +100,7 @@ import {
   messageHasVisibleAssistantOutput,
   resolveAdmissionOutcome,
 } from "./session-admission-outcome";
-import { describeOpencodeSessionError, interruptedTaskRecoveryPrompt, presentOpencodeSessionError, sessionErrorPresentationFromUIMessage, type OpencodeSessionErrorPresentation } from "@/react-app/domains/session/sync/session-error";
+import { describeOpencodeSessionError, interruptedTaskRecoveryPrompt, presentOpencodeSessionError, sessionErrorAnalyticsProperties, sessionErrorPresentationFromUIMessage, type OpencodeSessionErrorPresentation } from "@/react-app/domains/session/sync/session-error";
 import { createSessionErrorUIMessage } from "@/react-app/domains/session/sync/usechat-adapter";
 import { TaskRecovery } from "@/components/chat/task-recovery";
 import { SignInHandoffNotice } from "@/react-app/domains/cloud/sign-in-handoff-notice";
@@ -1348,6 +1348,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.onModelPickerOpenChange]);
   const handleModelChange = useCallback((nextModel: ModelRef, variant?: string | null) => {
     sessionModel.setModel(nextModel, variant);
+    featureAnalytics.modelChanged(sessionModel.selectedModel, nextModel, true);
     props.onModelChange(nextModel, variant);
     setModelPickerOpen(false);
   }, [props.onModelChange, sessionModel]);
@@ -2542,7 +2543,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       dispatchQueuedDrain(props.sessionId, { type: "send_error", itemId });
       const parsed = parseSessionError(nextError);
-      captureAnalyticsEvent("task_send_failed", {});
+      captureAnalyticsEvent("task_send_failed", sessionErrorAnalyticsProperties(
+        parsed.kind === "model-not-found" ? "model-unavailable" : (parsed.presentation ?? presentOpencodeSessionError(nextError)).kind,
+        { providerId: sessionModel.selectedModel.providerID, modelId: sessionModel.selectedModel.modelID },
+      ));
       setError(parsed);
       useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
       if (activeSessionOwnerRef.current === sessionOwner) {
@@ -2861,13 +2865,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
       // without it the server resolves the default project, finds no live run,
       // and answers `200: false` while the stream keeps going (#2014).
       const stopClient = createSessionInterruptionClient(props.opencodeBaseUrl, opencodeClient, props.workspaceRoot, props.openworkToken);
+      taskRunQuality.stopping(props.sessionId, true);
       await interruptSessionTurn(props.opencodeBaseUrl, stopClient, props.sessionId,
         props.workspaceRoot.trim() || undefined, {
           admissionUnknown: phase.kind === "admission_unknown",
           admissionMessageID: phase.kind === "admission_unknown" ? phase.messageID : undefined,
           onStopped: () => dispatchQueuedDrain(props.sessionId, { type: "stop_confirmed" }),
         });
-      captureAnalyticsEvent("task_run_stopped", {});
+      takeTaskRunStart(props.sessionId);
+      captureAnalyticsEvent("task_run_stopped", taskRunQuality.finish(props.sessionId));
       // The surface survives navigation; refresh the stopped conversation, not
       // whichever query the observer is showing when cancellation finishes.
       if (isDesktopRuntime() && !isOpencodeV2BaseUrl(props.opencodeBaseUrl)) {
@@ -2880,6 +2886,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setError({ message: error instanceof Error ? error.message : t("session.stop_failed") });
       return false;
     } finally {
+      taskRunQuality.stopping(props.sessionId, false);
       pendingStopsRef.current.delete(sessionOwner);
       setPendingStopSessions([...pendingStopsRef.current]);
     }

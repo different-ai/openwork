@@ -5,7 +5,7 @@ import { childOrigin, prepareChildReturn } from "@/lib/child-navigation";
 import { newSessionDraftOwnerKey } from "./new-session-destination";
 import { usePendingConversationStore } from "./pending-conversation-store";
 import { PendingConversationView } from "./pending-conversation";
-import type { CSSProperties } from "react";
+import type { CSSProperties, Ref } from "react";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
@@ -236,6 +236,7 @@ export type SessionPagePaneRuntime = {
 };
 
 export type SessionPageProps = {
+  ref?: Ref<HTMLDivElement>;
   /** Archive state of the open session; one toggle shared with the palette and shortcut. */
   currentSessionArchive?: SessionArchiveToggle;
   sessionReferenceInventories?: readonly SessionReferenceInventory[];
@@ -1473,7 +1474,7 @@ export function SessionPage(props: SessionPageProps) {
       isReferenceCurrent={props.isSessionReferenceCurrent}
       onOpenReference={handleOpenSessionReference}
     >
-    <div data-chat-viewport className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(74,111,255,0.12),transparent_42%),var(--app-bg,#0b1020)] text-dls-text max-lg:fixed max-lg:inset-x-0 max-lg:top-[var(--chat-viewport-top,0px)] max-lg:h-[var(--chat-viewport-height,100dvh)] max-lg:overflow-hidden max-lg:pt-[env(safe-area-inset-top)] mac:bg-transparent">
+    <div ref={props.ref} data-chat-viewport className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(74,111,255,0.12),transparent_42%),var(--app-bg,#0b1020)] text-dls-text max-lg:fixed max-lg:inset-x-0 max-lg:top-[var(--chat-viewport-top,0px)] max-lg:h-[var(--chat-viewport-height,100dvh)] max-lg:overflow-hidden max-lg:pt-[env(safe-area-inset-top)] mac:bg-transparent">
       <SidebarProvider
         open={sidebarOpen}
         onOpenChange={setSidebarOpen}

@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { useMemo, useState } from "react"
 import { createPortal } from "react-dom"
+import { featureAnalytics } from "@/app/lib/analytics"
 import { useQuery } from "@tanstack/react-query"
 import {
   AlertCircle,
@@ -363,6 +364,7 @@ export function AutomationsPage(props: {
                     ...input,
                     ...(workspaceId ? { workspaceId } : {}),
                   })
+              featureAnalytics.automationCreated(chosenPlacement)
               await refresh()
               openAutomation(detail.automation.id)
               toast.success("Automation created and active")

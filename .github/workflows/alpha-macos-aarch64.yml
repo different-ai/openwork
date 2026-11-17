@@ -274,6 +274,7 @@ jobs:
         env:
           TARGET: aarch64-apple-darwin
           OPENWORK_REUSE_NATIVE_HELPERS: "true"
+          VITE_OPENWORK_OFFICIAL_RELEASE: ${{ github.repository == 'different-ai/openwork' && '1' || '0' }}
         run: |
           set -euo pipefail
           # Capture provenance at build start, not when the rolling release or
@@ -529,6 +530,7 @@ jobs:
         id: alpha-build
         env:
           TARGET: x86_64-pc-windows-msvc
+          VITE_OPENWORK_OFFICIAL_RELEASE: ${{ github.repository == 'different-ai/openwork' && '1' || '0' }}
         run: |
           set -euo pipefail
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"

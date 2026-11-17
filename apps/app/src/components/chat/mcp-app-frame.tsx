@@ -1015,14 +1015,14 @@ export function isNativeConnectionAppLaunch(part: DynamicToolUIPart): boolean {
     && (launch.resourceUri === connectionActionAppResourceUri || launch.resourceUri === legacyConnectionActionAppResourceUri)
 }
 
-export function McpAppFrame({ part, origin }: { part: DynamicToolUIPart; origin?: McpAppOrigin }) {
+export function McpAppFrame({ part, origin, onReady }: { part: DynamicToolUIPart; origin?: McpAppOrigin; onReady?: () => void }) {
   const result = preservedResult(part)
   if (isRetiredFirstPartyConfirmation(part.toolName, result)) return null
   if (isNativeConnectionAppLaunch(part)) return null
-  return <EmbeddedMcpAppFrame part={part} origin={origin} />
+  return <EmbeddedMcpAppFrame part={part} origin={origin} onReady={onReady} />
 }
 
-function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToolUIPart; origin?: McpAppOrigin }) {
+function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin, onReady }: { part: DynamicToolUIPart; origin?: McpAppOrigin; onReady?: () => void }) {
   const context = useOptionalMessageList()
   const nextOrigin = surfaceOrigin ?? context?.mcpAppOrigin ?? null
   const { uiStateOwner, readOnly, getConnectionDecision, onMcpReconnect } = context ?? {}
@@ -1214,6 +1214,7 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
       result={result}
       connectionController={connectionController}
       unavailableNotice={CHAT_MCP_APP_UNAVAILABLE_NOTICE}
+      onReady={onReady}
       openKey={JSON.stringify([scope, part.toolCallId, resolveToken])}
       onRequestTeardown={() => {
         const launchId = (liveApp ?? app).launchId
