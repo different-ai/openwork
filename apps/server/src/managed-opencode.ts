@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join, relative, resolve, isAbsolute } from "node:path";
 import { deleteEnv, mergeEnv } from "@openwork/paths";
 import { startupPhase } from "./startup-phase.js";
+import { reportEngineProcessFailure } from "./telemetry.js";
 import { randomUUID } from "node:crypto";
 import { appendEngineOutputTail, createEngineStartupLineReader } from "./engine-output.js";
 
@@ -262,6 +263,12 @@ async function startManagedOpencodeServer(
   });
 
   const processLifecycle = createManagedProcessClose(child);
+  let ready = false;
+  let closing = false;
+  const close = () => { closing = true; return processLifecycle.close(); };
+  child.once("exit", (exitCode, signal) => {
+    if (ready && !closing) reportEngineProcessFailure("run", Object.assign(new Error(), { exitCode, signal }));
+  });
 
   let url: string;
   try {
@@ -328,6 +335,7 @@ async function startManagedOpencodeServer(
     throw error;
   }
 
+  ready = true;
   return {
     url,
     username,
@@ -340,12 +348,17 @@ async function startManagedOpencodeServer(
       env: injectedEnv,
     },
     isAlive: processLifecycle.isAlive,
-    close: processLifecycle.close,
+    close,
   };
 }
 
 export async function createManagedOpencodeServer(options: ManagedOpencodeServerOptions): Promise<ManagedOpencodeServer> {
-  return startupPhase("engine.v1.serve", () => createManagedOpencodeServerInner(options));
+  try {
+    return await startupPhase("engine.v1.serve", () => createManagedOpencodeServerInner(options));
+  } catch (error) {
+    reportEngineProcessFailure("start", error);
+    throw error;
+  }
 }
 
 async function createManagedOpencodeServerInner(options: ManagedOpencodeServerOptions): Promise<ManagedOpencodeServer> {

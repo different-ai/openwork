@@ -46,6 +46,14 @@
       "bun": "./src/microsoft-drive-transfer.ts",
       "default": "./dist/microsoft-drive-transfer.js"
     },
+    "./den/client-failures": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/client-failures.d.ts",
+        "default": "./src/den/client-failures.ts"
+      },
+      "development": "./src/den/client-failures.ts",
+      "default": "./src/den/client-failures.ts"
+    },
     "./den/managed-deployments": {
       "types": {
         "openwork-build": "./dist/types/src/den/managed-deployments.d.ts",

@@ -12,6 +12,7 @@
  * main process resolves. Results marked `unknown` are not yet modeled —
  * tighten them instead of widening call sites.
  */
+import type { ClientFailureReport } from "./den/client-failures.js";
 import type { ConnectLinkVerifyFailure, ConnectLinkVerifyResult } from "./connect-link.js";
 import type { WorkspaceWire } from "./workspace.js";
 
@@ -516,6 +517,10 @@ export type DesktopCommandMap = {
   // App / bridge info
   appBuildInfo: { args: []; result: AppBuildInfo };
   startupTimings: { args: []; result: DesktopStartupTimings };
+  clientFailuresConfigure: { args: [input: { enabled: boolean; principalId?: string; organizationId?: string; denBaseUrl?: string; token?: string }]; result: void };
+  clientFailuresRecord: { args: [failure: Pick<ClientFailureReport, "component" | "phase" | "reason"> & Partial<Pick<ClientFailureReport, "httpStatus" | "exitCode">>, target: { baseUrl: string; organizationId: string; token: string }]; result: void };
+  clientFailuresBatch: { args: []; result: ClientFailureReport[] };
+  clientFailuresSettle: { args: [ids: string[], delivered: boolean]; result: void };
   desktopNotificationShow: {
     args: [input: DesktopNotificationInput];
     result: DesktopNotificationResult;

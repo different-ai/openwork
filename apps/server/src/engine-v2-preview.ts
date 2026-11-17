@@ -12,7 +12,7 @@ import { agentPermissionEngineMcpDenial, agentPermissionRulesOf } from "./agent-
 import { CONNECT_MCP_APP_HOST_CAPABILITY_HEADER, registeredOrganizationMcpServers } from "./connect-mcp-server-catalog.js";
 import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
 import { MCP_READINESS_RPC_ID } from "./opencode-v2-mcp-readiness.js";
-import { captureServerException } from "./telemetry.js";
+import { captureServerException, reportClientFailure } from "./telemetry.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -900,6 +900,10 @@ export function createEngineV2Preview(options: {
         method: "PUT", body: { config: mcpConfig }, directory, timeoutMs: 30_000,
       }).then((result) => result.status, (error) => { warn(`MCP ${name}: ${errorMessage(error)}`); return 0; });
       if (status !== 204) {
+        reportClientFailure({ component: "mcp_connection", phase: status === 401 || status === 403 ? "auth" : "connect",
+          reason: status === 401 || status === 403 ? "unauthorized" : status >= 500 ? "server_error" : "unknown",
+          ...(status >= 100 && status <= 599 ? { httpStatus: status } : {}),
+        });
         attempts.set(name, { fingerprint, at: Date.now() });
         if (status !== 0) warn(`MCP ${name}: registration failed (${status})`);
         return;
@@ -912,6 +916,7 @@ export function createEngineV2Preview(options: {
       // connection is restarted with /connect. On a healthy client /connect
       // closes and reopens it, which is why only unhealthy ones get here.
       attempts.set(name, { fingerprint, at: Date.now() });
+      if (live?.get(name) !== "disabled") reportClientFailure({ component: "mcp_connection", phase: live?.get(name) === "needs_auth" ? "auth" : "connect", reason: live?.get(name) === "needs_auth" ? "unauthorized" : "unknown" });
       warn(`MCP ${name}: connection ${live?.get(name) ?? "missing"}; reconnecting`);
       const result = await active.fetchJson(`/api/experimental/mcp/${encodeURIComponent(name)}/connect`, { method: "POST", directory, timeoutMs: 30_000 });
       if (result.status !== 204) warn(`MCP ${name}: reconnect failed (${result.status})`);

@@ -1,3 +1,4 @@
+export * from "@openwork/types/den/client-failures"
 import { z } from "zod"
 import { denServerFactsSchema, deploymentServiceReadinessSchema } from "@openwork/types/den/service-readiness"
 

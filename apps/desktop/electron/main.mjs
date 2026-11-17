@@ -27,6 +27,7 @@ import { pickRemoteDebugPort, remoteDebugMenuItems, remoteDebugRelaunchArgs, res
 import { registerSessionPins } from "./session-pins.mjs";
 import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./runtime.mjs";
 import { registerUpdaterIpc, resolveAppVersion } from "./updater.mjs";
+import { createClientFailureOutbox } from "./client-failure-outbox.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { createNativeContextMenus } from "./context-menu.mjs";
@@ -97,6 +98,7 @@ import {
   captureStartupException,
   clearOpenworkSentrySession,
   initOpenworkSentry,
+  openworkTelemetryDisabled,
   setOpenworkSentrySession,
 } from "./sentry.mjs";
 import { installStdioErrorHandlers } from "./stdio-errors.mjs";
@@ -461,6 +463,12 @@ const userDataPath = BLANK_SLATE_LAUNCH.userDataPath ?? resolveUserDataPath({
 });
 app.setPath("userData", userDataPath);
 const desktopStartupLog = createStartupLog({ directory: path.join(userDataPath, "logs") });
+const clientFailureOutbox = createClientFailureOutbox({
+  directory: path.join(userDataPath, "client-failures"),
+  appVersion: resolveAppVersion(app),
+  disabled: openworkTelemetryDisabled(),
+});
+globalThis.__openworkClientFailureReport = (failure) => { void clientFailureOutbox.record(failure); };
 const endAppReady = startupPhase("app.ready");
 app.once("quit", () => desktopStartupLog.close());
 const linuxDesktopIntegration = createLinuxDesktopIntegration({
@@ -2101,6 +2109,12 @@ const desktopCommandHandlers = {
         openworkDevMode: process.env.OPENWORK_DEV_MODE === "1",
       };
   },
+  "clientFailuresConfigure": async (_event, input) => {
+    await clientFailureOutbox.configure({ ...input, enabled: input?.enabled === true && !openworkTelemetryDisabled() });
+  },
+  "clientFailuresRecord": async (_event, input, target) => { await clientFailureOutbox.record(input, target); },
+  "clientFailuresBatch": async () => clientFailureOutbox.batch(),
+  "clientFailuresSettle": async (_event, ids, delivered) => { await clientFailureOutbox.settle(ids, delivered === true); },
   "startupTimings": async (event, ...args) => {
       return { ...startupTimings };
   },

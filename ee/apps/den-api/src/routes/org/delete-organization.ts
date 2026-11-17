@@ -38,6 +38,7 @@ import {
   DesktopPolicyMemberTable,
   DesktopPolicyTable,
   DesktopStartupReportTable,
+  ClientFailureReportTable,
   ExternalIdentityTable,
   SessionSsoAuthenticationTable,
   SessionSsoProofTable,
@@ -691,6 +692,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
 
         await tx.delete(OrganizationDiagnosticCredentialTable).where(eq(OrganizationDiagnosticCredentialTable.organizationId, organizationId))
         await tx.delete(DesktopStartupReportTable).where(eq(DesktopStartupReportTable.organizationId, organizationId))
+        await tx.delete(ClientFailureReportTable).where(eq(ClientFailureReportTable.organizationId, organizationId))
         await tx.delete(OrganizationWebOriginTable).where(eq(OrganizationWebOriginTable.organizationId, organizationId))
 
         await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.organizationId, organizationId))

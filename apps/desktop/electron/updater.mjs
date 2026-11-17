@@ -20,6 +20,13 @@ import {
 
 const ELECTRON_UPDATER_CHANNEL_FILENAME = "electron-updater-channel.v1.json";
 
+function reportUpdaterFailure(phase, error) {
+  const code = error && typeof error === "object" ? Reflect.get(error, "code") : undefined;
+  const reason = code === "ERR_UPDATER_CHECKSUM_MISMATCH" ? "checksum"
+    : code === "ENOSPC" ? "disk" : code === "EACCES" || code === "EPERM" ? "permission" : "unknown";
+  try { globalThis.__openworkClientFailureReport?.({ component: "updater", phase, reason }); } catch {}
+}
+
 // In dev mode, app.getVersion() returns the Electron framework version
 // (e.g. "35.7.5") instead of the OpenWork app version. Read from
 // package.json so the UI always shows the correct version.
@@ -345,6 +352,10 @@ export function registerUpdaterIpc({
   let recoveryReleases = [];
   const recoveryWitness = { installRequests: [], openedArtifactUrls: [], quitRequested: false };
   let updaterOperationQueue = Promise.resolve();
+  let installRequested = false;
+  app.on?.("before-quit", () => {
+    if (updateDownloaded && autoUpdaterInstance?.autoInstallOnAppQuit) installRequested = true;
+  });
   // Set once Windows starts ending the session; never cleared for this process.
   let sessionEnding = false;
 
@@ -403,6 +414,7 @@ export function registerUpdaterIpc({
             // bundles (see enableSquirrelDirectContentsWrite for why).
             await enableSquirrelDirectContentsWrite(shipItDefaultsDomain, writeDefaults);
             autoUpdaterInstance.on("error", (err) => {
+              if (installRequested) { reportUpdaterFailure("install", err); installRequested = false; }
               // Do not invalidate a staged download on arbitrary updater errors.
               // A later transient check failure does not delete the downloaded
               // update; quitAndInstall reports a descriptive failure if it is gone.
@@ -779,6 +791,7 @@ export function registerUpdaterIpc({
         ...channelState,
       };
     } catch (error) {
+      reportUpdaterFailure("check", error);
       checkedUpdateVersion = null;
       checkedUpdateTargetVersion = null;
       checkedUpdateChannel = null;
@@ -842,6 +855,7 @@ export function registerUpdaterIpc({
       console.info(`[updater] update ${checkedUpdateVersion} is staged and installs on quit`);
       return { ok: true };
     } catch (error) {
+      reportUpdaterFailure("download", error);
       updateDownloaded = false;
       return { ok: false, reason: String(error?.message ?? error) };
     }
@@ -856,9 +870,12 @@ export function registerUpdaterIpc({
       // Re-assert the in-place-write default right before the swap; the ShipIt
       // defaults domain may have been wiped when stale state was cleaned.
       await enableSquirrelDirectContentsWrite(shipItDefaultsDomain, writeDefaults);
+      installRequested = true;
       updater.quitAndInstall(false, true);
       return { ok: true };
     } catch (error) {
+      installRequested = false;
+      reportUpdaterFailure("install", error);
       return { ok: false, reason: String(error?.message ?? error) };
     }
   }));

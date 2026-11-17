@@ -1,3 +1,4 @@
+import type { ClientFailureReport } from "@openwork/types/den/diagnostics";
 import { isDiskFullError, watchedDiskFreeMegabytes } from "./disk-space.js";
 
 export type ServerTelemetryContext = {
@@ -16,7 +17,24 @@ export type OpenworkDesktopTelemetry = {
   captureException: (error: unknown, context?: ServerTelemetryContext) => boolean;
 };
 
+export type ClientFailure = Pick<ClientFailureReport, "component" | "phase" | "reason"> & Partial<Pick<ClientFailureReport, "exitCode" | "httpStatus">>;
+
+export function reportClientFailure(failure: ClientFailure): void {
+  try { globalThis.__openworkClientFailureReport?.(failure); } catch {}
+}
+
+export function reportEngineProcessFailure(phase: "start" | "run", error: unknown): void {
+  const exitCode = error instanceof Error && "exitCode" in error && typeof error.exitCode === "number"
+    && Number.isInteger(error.exitCode) && error.exitCode >= -255 && error.exitCode <= 255 ? error.exitCode : undefined;
+  const signal = error instanceof Error && "signal" in error && typeof error.signal === "string";
+  reportClientFailure({ component: "engine", phase,
+    reason: signal ? "signal" : exitCode !== undefined && exitCode !== 0 ? "exit_nonzero" : "unknown",
+    ...(exitCode === undefined ? {} : { exitCode }),
+  });
+}
+
 declare global {
+  var __openworkClientFailureReport: ((failure: ClientFailure) => void) | undefined;
   // Provided by the Electron host when the embedded server runs in desktop mode.
   // The standalone openwork-server package leaves this unset.
   var __openworkDesktopTelemetry: OpenworkDesktopTelemetry | undefined;

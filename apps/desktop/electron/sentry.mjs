@@ -84,6 +84,10 @@ function envFlagEnabled(name) {
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
+export function openworkTelemetryDisabled() {
+  return envFlagEnabled("OPENWORK_DESKTOP_SENTRY_DISABLED");
+}
+
 function normalizeIdentifier(value) {
   const trimmed = String(value ?? "").trim();
   return trimmed || null;
@@ -126,7 +130,7 @@ function readBuildConfig(app) {
 export async function initOpenworkSentry({ app, distribution, packageMetadata }) {
   const buildConfig = readBuildConfig(app);
   const dsn = buildConfig.dsn;
-  if (!dsn || envFlagEnabled("OPENWORK_DESKTOP_SENTRY_DISABLED")) return false;
+  if (!dsn || openworkTelemetryDisabled()) return false;
 
   sentry = await import("@sentry/electron/main");
   const appVersion = resolveOpenworkSentryAppVersion({ app, packageMetadata });

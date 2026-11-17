@@ -4,6 +4,7 @@ export { default as activationLocalSetup } from "@openwork/features/flags/activa
 export { default as administratorRecovery } from "@openwork/features/flags/administrator-recovery"
 export { default as automationFailureNotifications } from "@openwork/features/flags/automation-failure-notifications"
 export { default as browserDemonstrations } from "@openwork/features/flags/browser-demonstrations"
+export { default as clientFailureReports } from "@openwork/features/flags/client-failure-reports"
 export { default as connectEngineTools } from "@openwork/features/flags/connect-engine-tools"
 export { default as connectStandardTools } from "@openwork/features/flags/connect-standard-tools"
 export { default as connectionMcpServers } from "@openwork/features/flags/connection-mcp-servers"

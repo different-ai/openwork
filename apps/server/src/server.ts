@@ -130,7 +130,7 @@ import { registerUiControlRoutes } from "./routes/ui-control.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
 import { UiControlMailbox } from "./ui-control.js";
-import { captureServerException, isExpectedRequestCancellation } from "./telemetry.js";
+import { captureServerException, isExpectedRequestCancellation, reportClientFailure } from "./telemetry.js";
 import {
   completeLocalManagedMcpAuthorization,
   createLocalManagedMcpConnection,
@@ -1256,6 +1256,7 @@ export async function startServer(
     });
   } catch (error) {
     await taskRecovery?.stop().catch(() => undefined);
+    reportClientFailure({ component: "local_server", phase: "start", reason: error instanceof Error && "code" in error && error.code === "EACCES" ? "permission" : "unknown" });
     captureServerException(error, { method: "START", route: "startServer" });
     anonymousInference.stop();
     cloudProviderSync.stop();
@@ -5926,6 +5927,8 @@ async function postMcpEntryWithRetry(
         // diagnostics evidence: an absent or malformed status must fail closed
         // to `not-recorded` without turning accepted delivery into a failure.
         const registration = await parseEngineMcpRegistrationStatus(response, name);
+        if (registration.status === "failed") reportClientFailure({ component: "mcp_connection", phase: "connect", reason: "unknown" });
+        if (registration.status === "needs-auth" || registration.status === "needs-client-registration") reportClientFailure({ component: "mcp_connection", phase: "auth", reason: "unauthorized" });
         return {
           name,
           status: registration.status,
