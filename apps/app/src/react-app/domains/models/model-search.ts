@@ -14,6 +14,8 @@ import { isAutoModel, modelTitle } from "./model-catalog";
  * Model words must match the name (typos forgiven, versions exact). Provider
  * words rank a provider first without hiding the rest. Option words (fast,
  * high, max…) choose how the model runs and never filter the list.
+ * With providerFilterSyncFix, every model word and every recognized provider
+ * must match; a miss stays empty instead of broadening to other providers.
  */
 
 export type ModelSearchIntent = { fast?: true; effort?: string };
@@ -27,6 +29,8 @@ export type ModelSearchResult = {
   provider?: { label: string; found: boolean };
   /** The words that named the model, for "No opus 5.5 on OpenRouter". */
   modelWords: string[];
+  /** The recognized provider words, retained when clearing only the model terms. */
+  providerQuery?: string;
 };
 
 const EFFORTS: Record<string, string> = {
@@ -111,7 +115,7 @@ function bestScore(query: string, words: Iterable<string>) {
 
 type ProviderHint = { key: string; label: string; ids: Set<string>; words: Set<string> };
 
-function providerIndex(options: readonly ModelOption[]): ProviderHint[] {
+function providerIndex(options: readonly ModelOption[], scoped: boolean): ProviderHint[] {
   const hints = new Map<string, ProviderHint>();
   const add = (key: string, label: string, words: readonly string[], id?: string) => {
     const hint = hints.get(key) ?? { key, label, ids: new Set<string>(), words: new Set<string>() };
@@ -123,6 +127,16 @@ function providerIndex(options: readonly ModelOption[]): ProviderHint[] {
   for (const option of options) {
     const label = option.description?.trim() || option.providerID;
     const words = [...nameWords(option.providerID), ...nameWords(label)];
+    if (scoped) {
+      const known = Object.keys(KNOWN_PROVIDERS).filter((key) => words.includes(key)
+        || normalize(KNOWN_PROVIDERS[key]) === normalize(label)
+        || (key === "openwork" && isAutoModel(option)));
+      if (known.length) {
+        // A label can name both its host and maker without making those names synonyms.
+        for (const key of known) add(key, KNOWN_PROVIDERS[key], [], option.providerID);
+        continue;
+      }
+    }
     // Free Auto and OpenWork Models answer to "openwork"/"ow".
     const key = isAutoModel(option) || option.providerID === "openwork" ? "openwork"
       : Object.keys(KNOWN_PROVIDERS).find((known) => words.includes(known) || normalize(KNOWN_PROVIDERS[known]) === normalize(label)) ?? normalize(label);
@@ -143,18 +157,20 @@ function matchProvider(word: string, hints: readonly ProviderHint[]): ProviderHi
   return best?.hint;
 }
 
-export function searchModels(options: readonly ModelOption[], query: string): ModelSearchResult {
+export function searchModels(options: readonly ModelOption[], query: string, settings: { providerFilterSyncFix?: boolean } = {}): ModelSearchResult {
+  const scoped = settings.providerFilterSyncFix === true;
   const typed = normalize(query).split(/[\s,]+/).map((word) => word.replace(/^[^a-z0-9]+|[^a-z0-9.]+$/g, "")).filter(Boolean);
   const indexed = options.filter((option) => !option.disabled).map((option) => {
     const title = modelTitle(option);
     return { option, title, words: new Set([...nameWords(title), ...nameWords(option.modelID)]) };
   });
   const allWords = new Set(indexed.flatMap((entry) => [...entry.words]));
-  const hints = providerIndex(indexed.map((entry) => entry.option));
+  const hints = providerIndex(indexed.map((entry) => entry.option), scoped);
   const intent: ModelSearchIntent = {};
   const modelWords: string[] = [];
   const optionalWords: string[] = [];
   const providers: ProviderHint[] = [];
+  const providerWords: string[] = [];
   for (const word of typed) {
     if (FAST_WORDS.has(word) || EFFORTS[word]) {
       if (FAST_WORDS.has(word)) intent.fast = true;
@@ -168,7 +184,11 @@ export function searchModels(options: readonly ModelOption[], query: string): Mo
     // A near-miss ("grok" vs Groq) only counts as a provider when it names no model.
     const hint = matchProvider(word, hints);
     const exact = hint?.words.has(ALIASES[word] ?? word) ?? false;
-    if (hint && (exact || bestScore(word, allWords) < 80)) { if (!providers.includes(hint)) providers.push(hint); continue; }
+    if (hint && (exact || bestScore(word, allWords) < 80)) {
+      if (!providers.includes(hint)) providers.push(hint);
+      providerWords.push(word);
+      continue;
+    }
     modelWords.push(word);
   }
 
@@ -184,11 +204,11 @@ export function searchModels(options: readonly ModelOption[], query: string): Mo
       if (value > 0) matched++;
       score += value;
     }
-    if (modelWords.length > 0 && matched === 0) continue;
+    if (scoped ? matched !== modelWords.length : modelWords.length > 0 && matched === 0) continue;
     for (const word of optionalWords) if (bestScore(word, entry.words) >= 80) score += 15;
     const providerHits = providers.filter((hint) => servedBy(hint, entry)).length;
-    // Provider words alone list that provider's models; with model words they only rank.
-    if (modelWords.length === 0 && providers.length > 0 && providerHits === 0) continue;
+    // Scoped searches require every named provider, even when model words have no match.
+    if (scoped ? providerHits !== providers.length : modelWords.length === 0 && providers.length > 0 && providerHits === 0) continue;
     const complete = matched === modelWords.length;
     // A model that can honour the typed options (fast, high…) ranks above one that cannot.
     const honoured = intent.fast || intent.effort ? resolveSearchIntent(entry.option, intent).applied.length : 0;
@@ -198,6 +218,7 @@ export function searchModels(options: readonly ModelOption[], query: string): Mo
   matches.sort((a, b) => b.score - a.score);
   return {
     matches, intent, modelWords,
+    ...(scoped && providerWords.length ? { providerQuery: providerWords.join(" ") } : {}),
     ...(providers.length ? { provider: {
       label: providers.map((hint) => hint.label).join(" "),
       found: matches.some((match) => match.complete && match.preferredProvider),

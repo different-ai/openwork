@@ -3536,6 +3536,14 @@ function createRoutes(
     return new Response(null, { status: 204 });
   });
 
+  addRoute(routes, "POST", "/cloud-provider-sync/gateway/refresh", "host-token", async () => {
+    ensureWritable(config);
+    // Wake the native inventory owner, never the legacy config writer. This is
+    // an invalidation only; the caller still verifies arrival in the catalog.
+    engineV2Preview.refreshGatewayInventory();
+    return jsonResponse({ ok: true });
+  });
+
   addRoute(routes, "POST", "/cloud-provider-sync/run", "host-token", async (ctx) => {
     ensureWritable(config);
     const body = await readJsonBody(ctx.request);

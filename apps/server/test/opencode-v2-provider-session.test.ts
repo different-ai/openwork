@@ -102,6 +102,27 @@ test("an identity switch while awaiting upstream headers or JSON body fences the
   }
 });
 
+test("a host refresh wakes native inventory streams without forwarding credentials or crossing identities", async () => {
+  let session = original;
+  let output: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const bridge = await createV2ProviderSessionBridge(() => session, { fetch: async () => new Response(new ReadableStream<Uint8Array>({ start(controller) {
+    output = controller;
+    controller.enqueue(new TextEncoder().encode(": connected\n\n"));
+  } }), { headers: { "content-type": "text/event-stream" } }) });
+  try {
+    const response = await fetch(new URL(bridge.url).origin + paths[2], { headers: { authorization: `Bearer ${bridge.token}`, "x-openwork-provider-identity": providerSessionIdentity(original) } });
+    assert.ok(response.body);
+    const reader = response.body.getReader();
+    await reader.read();
+    bridge.invalidateInventory();
+    assert.equal(new TextDecoder().decode((await reader.read()).value), "event: inventory.changed\ndata: {}\n\n");
+    session = { ...original, orgId: "org_other" };
+    bridge.invalidateInventory();
+    output?.close();
+    assert.equal((await reader.read()).done, true, "new identity cannot wake the previous identity's native source");
+  } finally { await bridge.close(); }
+});
+
 test("an established SSE is identity-fenced before forwarding each later chunk", async () => {
   let session = original;
   let output: ReadableStreamDefaultController<Uint8Array> | undefined;
