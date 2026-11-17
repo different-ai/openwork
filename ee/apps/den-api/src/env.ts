@@ -16,6 +16,7 @@ import { parseFeatureEnvironment } from "@openwork/features"
 import { partitionConfigSecretEnvAllowlist } from "./config-blobs/env-secrets.js"
 
 const EnvSchema = z.object({
+  PROCESS_TIMING_INGEST_KEY: z.string().trim().optional(),
   DATABASE_URL: z.string().min(1).optional(),
   DATABASE_HOST: z.string().min(1).optional(),
   DATABASE_USERNAME: z.string().min(1).optional(),
@@ -709,6 +710,7 @@ const sandboxDefaultModels = sandboxGatewayProvider === "openrouter"
 const sandboxCreditUsd = Number.parseInt(optionalString(parsed.DEN_SANDBOX_CREDIT_USD) ?? "50", 10)
 
 export const env = {
+  processTimingIngestKey: optionalString(parsed.PROCESS_TIMING_INGEST_KEY),
   databaseUrl: parsed.DATABASE_URL,
   dbEncryptionKey: optionalString(parsed.DEN_DB_ENCRYPTION_KEY),
   dbMode: parsed.DB_MODE ?? (parsed.DATABASE_URL ? "mysql" : "planetscale"),

@@ -55,6 +55,43 @@ export const desktopStartupReportSchema = z.strictObject({
 }).meta({ ref: "DesktopStartupReport" })
 export type DesktopStartupReport = z.infer<typeof desktopStartupReportSchema>
 
+export const processTimingProcessSchema = z.enum(["check", "world", "evals"])
+export const processTimingEnvironmentSchema = z.enum(["local", "ci"])
+export const processTimingStepSchema = z.strictObject({
+  step: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,63}$/),
+  seconds: z.number().min(0).max(86_400),
+  outcome: z.enum(["ok", "fail", "skipped"]),
+})
+export const processTimingReportSchema = z.strictObject({
+  version: z.literal(1),
+  runId: z.string().uuid(),
+  process: processTimingProcessSchema,
+  environment: processTimingEnvironmentSchema,
+  commit: z.string().regex(/^[a-f0-9]{40}$/).nullable(),
+  startedAt: z.string().datetime({ offset: true }),
+  totalSeconds: z.number().min(0).max(86_400),
+  outcome: z.enum(["ok", "fail"]),
+  steps: z.array(processTimingStepSchema).min(1).max(200),
+}).meta({ ref: "ProcessTimingReport" })
+export type ProcessTimingReport = z.infer<typeof processTimingReportSchema>
+
+const processTimingStatisticsSchema = z.strictObject({
+  process: processTimingProcessSchema,
+  environment: processTimingEnvironmentSchema,
+  runCount: z.number().int().nonnegative(),
+  medianSeconds: z.number().nonnegative().nullable(),
+  p90Seconds: z.number().nonnegative().nullable(),
+  failureRate: z.number().min(0).max(1).nullable(),
+})
+export const processTimingSummarySchema = z.strictObject({
+  windowDays: z.number().int().min(1).max(90),
+  reportingEnabled: z.boolean(),
+  processes: z.array(processTimingStatisticsSchema),
+  steps: z.array(processTimingStatisticsSchema.extend({ step: z.string() })),
+  latestRuns: z.array(processTimingReportSchema.extend({ receivedAt: z.string().datetime() })).max(50),
+}).meta({ ref: "ProcessTimingSummary" })
+export type ProcessTimingSummary = z.infer<typeof processTimingSummarySchema>
+
 // ── Sections ───────────────────────────────────────────────────────────────
 
 export const diagnosticsSectionIdSchema = z.enum(["desktop", "providers", "connectors", "installation"])
