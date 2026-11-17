@@ -113,8 +113,6 @@ jobs:
           scripts/ci/check-codeql-results.test.mjs
           scripts/den-db-migrate-target.test.mjs
           scripts/check.test.mjs
-          scripts/check-app-structure.test.mjs
-          scripts/check-code-habits.test.mjs
       - name: Check outbound access manifest
         run: node scripts/check-outbound-access.mjs
       - name: Setup pnpm
@@ -144,6 +142,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          node --test scripts/check-app-structure.test.mjs scripts/check-code-habits.test.mjs
           node scripts/check-app-structure.mjs
           if [ -n "${BASE_SHA:-}" ]; then
             git fetch --no-tags --depth=1 origin "$BASE_SHA"
