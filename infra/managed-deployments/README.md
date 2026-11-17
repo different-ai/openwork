@@ -42,6 +42,56 @@ version-increasing, customer-approved Update with the new template and complete
 image inventory. GCP keeps its legacy behavior. Offline plans are not live
 qualification; Gateway infrastructure health alone does not prove model access.
 
+## Stable installer candidate verification
+
+`Managed Stable Installer` discovers the published stable release through GitHub's
+latest-release API and resolves its tag to a commit. AWS candidates must contain
+**all five** runtime images: `den_api`, `den_web`, `headless_runner`, `workbot`, and
+`ai_gateway` (published as `openwork-inference`, not `openwork-den-gateway`). Each
+stable version tag must exist; preparation selects its unique Linux/amd64 manifest,
+re-reads the digest, then checks the pulled image's digest, platform, OCI revision
+and repository source against that published stable commit. A missing or stale
+runner/Gateway image fails preparation; there is no `dev`/`latest` fallback.
+Packaging supplies both `--image-pins` and AWS `--include-assistants`, so a legacy
+two-/four-image bundle cannot silently become a new AWS candidate. GCP retains its
+core pair and the builder's separately pinned Python health image.
+
+Run the dependency-free helper tests with Node 24:
+
+```sh
+node --test .github/scripts/managed-stable-release.test.mjs .github/scripts/managed-stable-release-smoke.test.mjs
+RELEASE_DIRECTORY=dist/managed-stable node .github/scripts/managed-stable-release-smoke.mjs
+```
+
+The smoke command needs Docker and an already prepared `candidate.json`. It
+bootstraps a fresh local MySQL database, starts all five exact AWS images in
+production mode with Gateway enabled and HTTPS public-origin configuration, and
+checks every service's health plus the AI Gateway's database-backed `/ready`.
+The runner boots keyless with the managed Gateway profile's OpenAI protocol,
+Gateway origin and model sentinel: no global model/upstream API credential is
+injected. Den includes runner/Workbot wiring, the Slack worker and Automations.
+Computers are explicitly off and require no computer key or snapshot. No model
+generation is requested. Only ephemeral loopback ports and unique
+`exp-managed-release-*` resources are used; containers, the database volume and
+network are removed even on failure. GCP smoke continues to start only its core
+Den pair. Every health probe is repeated with all five AWS services still running;
+an earlier service dying or being OOM-killed cannot pass. Docker needs enough
+memory for the whole stack concurrently, not only an individual service.
+
+This is boot, migration, health and database-readiness evidence. Public HTTPS
+origins are configuration fixtures, not a TLS or cross-service roundtrip proof.
+The smoke does **not** qualify public HTTPS/DNS/certificates, member-scoped model
+access, Slack processing, real-cloud fresh installation or approved Update. Those
+remain separate qualification requirements.
+
+Preparation and smoke never publish or change installer defaults. Promotion still
+requires exact-byte real-cloud fresh-install **and** approved-Update review, the
+dedicated non-self-review approval environment, explicit opt-in and serialized
+expected-current checks. An existing immutable installer version cannot be reused
+with different bundle bytes: if an older two-image candidate was already published
+under that version, stop and obtain a separately approved new release version;
+never overwrite its objects or bypass the promotion review.
+
 ## AWS shared-module adoption
 
 The AWS root consumes `infra/terraform/modules/openwork-aws-ecs`. The former
