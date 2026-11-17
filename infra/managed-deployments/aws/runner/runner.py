@@ -238,6 +238,10 @@ def verify_network():
         clusters = aws("ecs", "describe-clusters", "--clusters", inputs["ecs_cluster_arn"]).get("clusters", [])
         cluster = clusters[0] if clusters else None
     problems = network_problems(vpcs[0] if vpcs else None, dns, subnets, tables, cluster, inputs)
+    if boolean_input("HEADLESS_RUNNER_ENABLED"):
+        service_zones = [subnet.get("AvailabilityZone") for subnet in subnets if subnet.get("SubnetId") in inputs["service_subnet_ids"]]
+        if len(set(service_zones)) != len(inputs["service_subnet_ids"]):
+            problems.append("the runner needs exactly one private service subnet per availability zone for EFS mount targets")
     if problems:
         print("The existing network cannot host OpenWork: " + "; ".join(problems) + ".")
         raise StepFailure("network_check_failed")

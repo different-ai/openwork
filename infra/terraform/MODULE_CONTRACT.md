@@ -206,6 +206,52 @@ coverage NotRun and failed steps Failed. Later offline hardening is not a new
 live run; fixture-established desktop authentication is not proof of an OS-level
 OAuth/protocol-handler handoff. Screenshots illustrate results, not decide them.
 
+## Optional AWS managed assistant qualification
+
+The AWS managed installer may opt into the shared module's runner, Workbot,
+Slack assistant and Freestyle computers. They remain off by default and are not
+part of the core C7 conformance verdict. The managed runner calls its model
+endpoint directly with `anthropic`, `openai` or `openai-responses`; there is no AI
+Gateway on this install path. Freestyle executes outside the customer's AWS
+account, and the customer configures their Slack app in Den connector settings.
+
+The installer accepts only customer-owned, same-account/region Secrets Manager
+ARNs for model and Freestyle API keys. ECS injects those values without a Terraform
+secret-value data source. This avoids new plaintext key copies in hosted OpenWork
+or Terraform state; it does not erase existing state-backed core/generated runner
+credentials or historical state. Customer-managed KMS keys need separate grants.
+
+A managed runner adds encrypted EFS and daily encrypted AWS Backup recovery
+points with seven-day retention. Keep backup resources protected alongside the
+conversation disk. Report the latest completed recovery point, not just an
+existing backup plan. These are filesystem backups, not a validated live SQLite
+export/restore. Application-consistent restore proof remains a separate check.
+
+The runner is a single SQLite owner: each task-definition rollout stops it before
+starting its replacement. No turn-drain protocol is provided; active turns and
+Automations may be interrupted and need outcome inspection before any deliberate
+retry. The installer documents a maintenance window. Core TLS redeployment must
+never force a second runner restart. Adding Workbot must preserve existing runner
+credentials/disk and validate the expanded ACM certificate before listener cutover;
+it must not bypass protected-resource checks.
+
+Qualification must use the **managed CloudFormation/CodeBuild path**, an isolated
+release channel and a disposable authorized test account. Native tests, direct
+module conformance, local product tests and plans do not satisfy it. Record:
+
+- A managed baseline, then a version-increasing Update enabling Workbot with
+  customer IAM re-approval and live HTTPS continuity observations.
+- Actual Workbot chat output, installed Slack assistant thread delivery, a
+  completed headless Automation, and a Freestyle command from Workbot.
+- Another approved Update on the same install, with preserved conversations/core
+  secret fingerprints and the same behaviours rechecked.
+- Redacted evidence, followed by destroy and independent retained/soft-deleted
+  resource inventory. Never publish secret material, state or customer identity.
+
+Until that candidate-specific sequence has been observed, mark the optional
+profile **NotRun / unqualified**. Publishing a production managed release or
+changing hosted release configuration requires a separate operator action.
+
 ## Known per-cloud limitations
 
 - **Azure migration waiter:** job start is native AzAPI, but terminal waiting is a

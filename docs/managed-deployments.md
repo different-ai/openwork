@@ -52,6 +52,61 @@ published release and approved customer-project install pass. Design and contrac
    `DEN_INITIAL_ADMIN_BOOTSTRAP_CODE`. OpenWork never receives this code.
    Configure SMTP and SSO after setup.
 
+## Optional AWS Workbot, Slack and headless execution
+
+The AWS form and approved-Update flow can offer **Workbot and assistants** when
+both `managedDeployments` and `managedDeploymentAssistants` are enabled for the
+organization (cloud only, off). All installation options remain off unless the
+owner explicitly selects them. GCP keeps its existing profile.
+
+- **Headless runner**: one private Fargate task with conversation history and
+  files on encrypted EFS. Existing networks need exactly one private service
+  subnet per availability zone for EFS mount targets. Select a direct model endpoint, model ID and protocol
+  (`anthropic`, `openai` or `openai-responses`). No AI Gateway is added.
+- **Workbot**: the browser chat app at `https://chat.<address>`. It requires the
+  runner, adds a DNS record and expands the HTTPS certificate. Existing installs
+  enable it through a newer approved installer Update, not a same-version Retry.
+- **Slack assistant**: replies run on that runner. The customer still creates
+  the Slack app in the installed Den's connector settings and authorizes it in
+  the intended Slack workspace; this option does not do that setup.
+- **Freestyle computers**: optional tools used from runner conversations.
+  **They execute in Freestyle's cloud, outside the customer's AWS account.**
+  Review that boundary before enabling them. Other direct-module backends and
+  an external runner URL are not offered by this installer profile.
+
+Create the model and optional Freestyle API-key secrets directly in the target
+AWS account/region's Secrets Manager before approval. Supply only the full
+secret ARNs to OpenWork; never paste the key values into the deployment form,
+MCP request, approval command or chat. ECS reads these customer-owned secrets
+directly. Hosted OpenWork, Terraform and the installer do not receive their
+plaintext values. This profile uses the default Secrets Manager encryption key;
+custom KMS-key grants are a separate reviewed configuration. Keep the secrets
+available through updates. Existing generated application/runner secrets still
+live in the customer's encrypted Terraform state.
+
+The core-only cost estimate above excludes the extra runner and Workbot Fargate
+tasks, EFS, backups and Freestyle/model-provider charges. Daily EFS recovery points
+are kept for seven days. A recovery point is not an application-consistent SQLite
+export or proof that a restore has succeeded. The health panel reports runner,
+Workbot, EFS and completed-backup checks without reading conversation content.
+A newly installed disk is not reported as backed up before a recovery point
+exists.
+
+**Updates need a maintenance window.** The single runner stops before its
+replacement starts to prevent two tasks opening the same SQLite database.
+Active turns and headless Automations can be interrupted; there is no automatic
+turn drain. Stop new work and let known active runs finish before approval.
+Inspect the actual outcome before retrying an interrupted action. Extra EFS and
+Backup IAM grants require customer re-approval of the new CloudFormation template
+**before** its Terraform payload runs. See the installer README for ordering,
+certificate handover, secret preservation and retained-resource cleanup.
+
+This optional profile is **unqualified until its real managed-install and
+approved-Update proof is recorded**. Offline tests alone do not establish that
+Workbot chat, Slack thread delivery, headless Automations or Freestyle commands
+work on a live install. Do not enable production installer publication based on
+an available form or a green plan.
+
 ## From an agent (MCP)
 
 With `managedDeployments` on for the organization (cloud only, off by

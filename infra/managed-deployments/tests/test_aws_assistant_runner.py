@@ -72,6 +72,20 @@ class AssistantInputTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     runner.assistant_inputs()
 
+    def test_runner_rejects_duplicate_mount_target_zones_before_apply(self):
+        inputs = {"network_mode": "existing", "vpc_id": "vpc-test", "service_subnet_ids": ["private-a", "private-b"],
+                  "load_balancer_subnet_ids": ["public-a", "public-b"], "ecs_cluster_arn": ""}
+        def aws(*args):
+            if args[:2] == ("ec2", "describe-subnets"):
+                return {"Subnets": [{"SubnetId": name, "AvailabilityZone": "zone-a"} for name in inputs["service_subnet_ids"]]}
+            if args[:2] == ("ec2", "describe-vpc-attribute"):
+                return {"EnableDnsSupport": {"Value": True}, "EnableDnsHostnames": {"Value": True}}
+            return {"Vpcs": [{"VpcId": "vpc-test"}]}
+        with patch.dict(os.environ, self.ENV, clear=True), patch.object(runner, "network_inputs", return_value=inputs), \
+                patch.object(runner, "network_problems", return_value=[]), patch.object(runner, "aws", side_effect=aws):
+            with self.assertRaises(runner.StepFailure):
+                runner.verify_network()
+
 
 class AssistantReleaseTests(unittest.TestCase):
     def pins(self):

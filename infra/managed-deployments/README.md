@@ -124,9 +124,10 @@ provider upgrade. That requires the separate live Update proof.
 
 Den intentionally rejects same-version Update; Retry is not Update. For an
 isolated test-only newer installer version using a verified existing application
-pair, build with `--image-pins <approved-json-file>` containing exactly `den_api`
-and `den_web` fixed-repository Linux/amd64 digests. The builder re-verifies both
-images through the registry. The release stores those pins; the runner passes
+pair, build with `--image-pins <approved-json-file>` containing `den_api`
+and `den_web` fixed-repository Linux/amd64 digests (plus both assistant images
+when opting into the profile below). The builder re-verifies every supplied
+image through the registry. The release stores those pins; the runner passes
 them to the shared module rather than inventing a tag for the test version.
 Ordinary known release versions retain their built-in immutable image pair.
 No production publication or hosted configuration change is part of offline work.
@@ -141,6 +142,120 @@ hashes, version and image identities. A local/mock pass is not that live receipt
 it feeds `OPENWORK_MANAGED_TASK_REVISION`. For a controlled second-update fixture,
 copy `tests/second-update_override.tf` into `aws/terraform/` before ordinary build.
 Never ship that fixture in production or use administrator ECS mutation as proof.
+
+## Optional AWS assistants (qualification required)
+
+The managed AWS root can opt into the shared module's single headless runner,
+Workbot at `https://chat.<domain_name>`, Slack assistant and Freestyle computers.
+All are **off by default**. Existing core-only installations and release image
+pairs remain supported. GCP does not receive these options. The hosted creation
+and approved-Update controls additionally require `managedDeploymentAssistants`
+(cloud only, off), as well as `managedDeployments`. Turning either flag off blocks
+new approvals, not running services or authenticated health reports.
+
+The installer supports the module-managed runner, not its `external_url` fleet
+mode. Workbot, Slack and computers require that runner. Configure a direct model
+ID, HTTPS endpoint and `anthropic`, `openai` or `openai-responses` protocol. There
+is **no AI Gateway** in this path. Freestyle is the installer's only opt-in
+computer provider in this profile; direct-module Daytona support is unchanged.
+**Freestyle computers execute in Freestyle's cloud, outside the customer's AWS
+account.** Enabling the Slack assistant does not create or configure a Slack app:
+the customer still creates the app in the installed Den's connector settings.
+
+### Customer-owned key references
+
+Before approval, the customer creates two plain-string Secrets Manager secrets
+in the target account and region: the direct model API key, and (only when using
+Freestyle) the Freestyle API key. Supply their full secret ARNs, never the values.
+Use AWS's console or a customer-controlled secret provisioning process; never put
+keys in shell history, URLs, Den, CloudFormation parameters or installer logs.
+This profile supports the default Secrets Manager AWS-managed encryption key;
+a customer-managed KMS key requires a separately reviewed key policy/grant.
+
+Hosted Den stores only these references. The installer validates account/region,
+passes `headless_model_secret_arn` / `headless_computer_secret_arn` through the
+managed root, and ECS injects them directly into the runner. Terraform and the
+installer do not read their values or copy them into state. The module's existing
+generated runner/Workbot credentials remain state-backed, as do managed core
+secrets; protect encrypted customer-owned state and its retained history. Keep
+customer key secrets through updates. Updating a key's current version requires
+an approved task rollout before an ECS task consumes it; key rotation is not an
+automatic installer action.
+
+### Images, approval and update behaviour
+
+Build AWS assistant releases with `--include-assistants`, or pass
+`--image-pins <approved-json-file>` containing all four fixed-repository
+Linux/amd64 digest pins: `den_api`, `den_web`, `headless_runner`, `workbot`.
+Core-only image pin files remain valid when assistants are off. Partial optional
+inventories, mutable image tags and enabling assistants with a core-only release
+are refused. GCP retains its existing core pair plus health image inventory.
+
+**Re-approve the regenerated CloudFormation template before enabling or updating
+these services.** The additional grants cover deployment-scoped EFS, runner
+secrets, AWS Backup, the backup role, and the existing ECS/ALB/Service Connect
+resources. Use Den's version-increasing Update handoff: review IAM with
+`CAPABILITY_NAMED_IAM`, update the installer stack, and only then let its CodeBuild
+run plan/apply. Never run the expanded Terraform payload using an old approved
+role. Do not weaken the protected-resource guard or bypass it with administrator
+Terraform. Removing the runner disk, secrets or backup protection is refused.
+
+There is one runner task and one SQLite database on encrypted EFS at `/var/data`.
+**Every runner task-definition rollout stops the old task before starting the new
+one** (`minimum_healthy_percent=0`, `maximum_percent=100`). There is no turn-drain
+protocol in this change. Running Workbot/Slack turns and headless Automations may
+be interrupted; callers must inspect their actual outcome before deliberately
+retrying any tool action. Chat and headless execution are unavailable until the
+replacement runner is ready. Plan a maintenance window, stop sending new turns
+and let known active runs finish before approving an update. The installer does
+not force an additional runner restart during the core Den strict-TLS redeploy.
+
+Enabling Workbot on an existing install expands the ACM certificate with
+`chat.<domain_name>`. The module validates the replacement certificate before
+switching the HTTPS listener, then retires the old certificate. An already-issued
+certificate is not sent through the failed-certificate retry replacement path.
+The saved-plan guard continues to protect data-bearing resources. This ordering
+must still be observed on a real managed Update; a native/mock plan is not an
+outage-free certificate-rotation receipt.
+
+### Conversation disk protection and health
+
+A managed runner opts into daily AWS Backup of its EFS file system with seven-day
+retention, an encrypted deployment-specific vault and a narrowly scoped backup
+role. This adds cost. Recovery points are retained rather than force-deleted.
+Backups are filesystem recovery points, not a claimed application-consistent
+SQLite export or a tested restore procedure. Restore to a separate file system
+and validate the SQLite database, conversation history and files before any
+manual recovery; restoration is not automated by the installer.
+
+Optional content-free checks cover runner service counts, Workbot HTTPS, EFS
+availability/encryption/stored-byte count and the newest completed EFS recovery
+point. No conversation content, file names, keys or logs leave the account. A new
+vault without a completed recovery point is not reported as backed up; unavailable
+or denied reads are unknown, never success. EFS has elastic capacity: its byte
+count is usage, not a claim about free disk space.
+
+### Live proof gate
+
+No offline test, build, native Terraform test or plan qualifies this profile for
+production publication. Qualify one **test account and isolated test release
+bucket/channel**, never an existing customer install or production release
+coordinates. Retain exact source and artifact/image identities and independent
+observations for:
+
+1. A baseline managed install without Workbot, followed by a newer approved
+   release enabling it (including IAM re-approval and certificate handover).
+2. Workbot answers a chat, the installed Slack assistant replies in a real thread,
+   a real Automation completes headlessly, and a Freestyle command completes from
+   a Workbot conversation.
+3. A further version-increasing approved Update preserves conversations, core
+   secret fingerprints and all four behaviours.
+4. Saved, redacted evidence followed by destroy and an independent absence
+   inventory, including retained state, recovery points and soft-deleted assets.
+
+Until those observations exist for the candidate under review, the live verdict
+is **NotRun / unqualified**, not ready. Production installer promotion and hosted
+configuration are separate operator actions and are not part of this change.
 
 ## The contract every cloud implements
 
