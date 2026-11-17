@@ -78,6 +78,7 @@ import {
   searchRemoteSessionCapabilities,
   type RemoteSessionAction,
 } from "./remote-session-capabilities.js"
+import { followRemoteSession } from "./remote-session-events.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import {
   executeSlackSendAsBot,
@@ -799,13 +800,18 @@ const remoteSessionSource: CapabilitySource = {
     // An attach is a use of the feature that no gated route sees.
     if (parsed.action === "attach") {
     }
-    const run = () => executeRemoteSessionCapability({
-      action: parsed.action,
+    const run = async () => followRemoteSession({
+      principal: ctx.principal,
       organizationId: ctx.organizationId,
-      userId: ctx.principal.userId,
-      hasWriteScope: ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE),
-      body: input.body,
-      headlessRunTokenId: headlessRunTokenId(ctx.principal.payload),
+      action: parsed.action,
+      result: await executeRemoteSessionCapability({
+        action: parsed.action,
+        organizationId: ctx.organizationId,
+        userId: ctx.principal.userId,
+        hasWriteScope: ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE),
+        body: input.body,
+        headlessRunTokenId: headlessRunTokenId(ctx.principal.payload),
+      }),
     })
     const auditAction = remoteSessionAuditActions[parsed.action]
     if (!auditAction || !ctx.audit) return run()

@@ -1,10 +1,11 @@
 import { ProtocolError, type McpServer } from "@modelcontextprotocol/server"
 import { z } from "zod"
 import { runMcpServiceAction, type McpAuditPrincipal } from "../audit/mcp-service-audit.js"
-import { CATALOG, NativeEventError } from "./protocol.js"
+import { pollNativeEvent, pollSchema } from "./poll.js"
+import { catalog, NativeEventError } from "./protocol.js"
 import { createNativeSubscription, subscribeSchema, unsubscribeNative, unsubscribeSchema } from "./service.js"
 
-export function registerNativeMcpEvents(server: McpServer, actor: McpAuditPrincipal, request: Request, canWrite: boolean) {
+export function registerNativeMcpEvents(server: McpServer, actor: McpAuditPrincipal, request: Request, canWrite: boolean, options: { poll?: boolean } = {}) {
   const run = async <T>(method: string, name: string | undefined, action: () => Promise<T>) => {
     const expectedName = name && /^[\x20-\x7e]+$/.test(name) ? name : name ? `=?base64?${Buffer.from(name).toString("base64")}?=` : undefined
     const modern = (request.headers.get("mcp-protocol-version") ?? "") >= "2026-07-28"
@@ -16,7 +17,9 @@ export function registerNativeMcpEvents(server: McpServer, actor: McpAuditPrinci
       throw new ProtocolError(-32603, "Event operation failed")
     }
   }
-  server.server.setRequestHandler("events/list", { params: z.object({ cursor: z.string().optional() }).passthrough() }, () => run("events/list", undefined, async () => ({ resultType: "complete", events: CATALOG })))
+  server.server.setRequestHandler("events/list", { params: z.object({ cursor: z.string().optional() }).passthrough() }, () => run("events/list", undefined, async () => ({ resultType: "complete", events: catalog(options.poll === true) })))
+  // A poll changes nothing, so it needs no write scope and no audit record.
+  if (options.poll) server.server.setRequestHandler("events/poll", { params: pollSchema }, input => run("events/poll", input.name, () => pollNativeEvent(actor, input)))
   server.server.setRequestHandler("events/subscribe", { params: subscribeSchema }, input => run("events/subscribe", input.name, async () => {
     if (!canWrite) throw new NativeEventError(-32024, "Subscriptions require mcp:write")
     return runMcpServiceAction("native_mcp_event.subscribe", actor, null, () => createNativeSubscription(actor, input))
