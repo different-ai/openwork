@@ -54,6 +54,7 @@ import { registerAdminDashboardRoute } from "./dashboard.js"
 import { registerAdminControlCenterRoutes } from "./control-center.js"
 import { registerAdminOpportunitiesRoute } from "./opportunities.js"
 import { registerAdminServiceReadinessRoutes } from "./services.js"
+import { registerAdminComputerFleetRoutes } from "./computer-fleet.js"
 import { registerAdminRunnerFleetRoutes } from "./runner-fleet.js"
 import { registerAdminOrganizationDetailRoutes } from "./organization-detail.js"
 import { registerAdminSandboxOrganizationRoutes } from "./sandbox-organizations.js"
@@ -1411,6 +1412,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
   registerAdminOpportunitiesRoute(app)
   registerAdminServiceReadinessRoutes(app)
   registerAdminRunnerFleetRoutes(app)
+  registerAdminComputerFleetRoutes(app)
   registerAdminSandboxOrganizationRoutes(app)
   app.post(
     "/v1/admin/admins",

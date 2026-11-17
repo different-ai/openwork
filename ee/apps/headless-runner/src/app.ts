@@ -6,6 +6,7 @@ import { streamSSE } from "hono/streaming"
 import type { ErrorReporter } from "./error-reporting.js"
 import type { SessionEvents } from "./events.js"
 import { serviceHealthResponse, type ServiceHealthConfig } from "./service-health.js"
+import { computerFleetResponse, type ComputerFleetConfig } from "./computer-fleet.js"
 import { SavedFileLimitError, type SavedFiles } from "./saved-files.js"
 import { formatBytes } from "./tool-files.js"
 import { z } from "zod"
@@ -144,6 +145,8 @@ export function createApp(input: {
   apiToken: string
   /** Validated deployment settings, used only for the authenticated configuration-presence check. */
   healthConfig?: ServiceHealthConfig
+  /** The computer settings, for the fleet list (`GET /v1/computers`): which providers to ask, with whose key. */
+  computerFleet?: ComputerFleetConfig
   /** Models a caller may pick per turn; without it only the default is listed. */
   models?: (modelAccess?: HeadlessModelAccess) => Promise<ModelCatalog>
   /** Bounded synthetic completion with scoped access or the deployment key; no conversation is created. */
@@ -225,6 +228,8 @@ export function createApp(input: {
   })
 
   app.get("/v1/health", (c) => serviceHealthResponse(c.req.raw, input.healthConfig))
+  // Every computer the providers hold for this runner, for Den's admin page. Reads the providers; touches no conversation.
+  app.get("/v1/computers", () => computerFleetResponse(input.computerFleet, { fetch: (url, init) => fetch(url, init) }))
   app.get("/v1/models", async (c) => c.json(input.models ? await input.models() : { defaultModel: "", models: [] }))
   app.post("/v1/models", bodyLimit({ maxSize: 8192 }), (c) => scopedCatalogResponse(c.req.raw, input.models))
   app.post("/v1/model-probe", bodyLimit({ maxSize: 8192 }), (c) => modelProbeResponse(c.req.raw, input.modelProbe))

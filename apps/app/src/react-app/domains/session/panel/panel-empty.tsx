@@ -1,13 +1,15 @@
 /** @jsxImportSource react */
 import * as React from "react";
-import { ArrowLeft, ArrowRight, FileText, Globe, Puzzle } from "lucide-react";
+import { ArrowLeft, ArrowRight, FileText, Globe, MessagesSquare, Puzzle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 export type PanelEmptyActions = {
   onOpenBrowser?: () => void;
   onOpenExtensions?: () => void;
+  onOpenSideChat?: () => void;
 };
 
 export function handlePanelEscape(key: string, onClose: () => void) {
@@ -17,7 +19,7 @@ export function handlePanelEscape(key: string, onClose: () => void) {
 }
 
 type PanelDestination = {
-  id: "browser" | "files" | "extensions";
+  id: "browser" | "files" | "extensions" | "side-chat";
   label: string;
   description: string;
   icon: React.ReactNode;
@@ -48,6 +50,16 @@ export function getPanelDestinations(
     activate: onOpenFiles,
   });
 
+  if (actions.onOpenSideChat) {
+    destinations.push({
+      id: "side-chat",
+      label: t("session_management.split_view"),
+      description: t("side_question.destination_description"),
+      icon: <MessagesSquare aria-hidden="true" />,
+      activate: actions.onOpenSideChat,
+    });
+  }
+
   if (actions.onOpenExtensions) {
     destinations.push({
       id: "extensions",
@@ -61,7 +73,7 @@ export function getPanelDestinations(
   return destinations;
 }
 
-export function PanelEmpty({ onOpenBrowser, onOpenExtensions }: PanelEmptyActions) {
+export function PanelEmpty({ onOpenBrowser, onOpenExtensions, onOpenSideChat }: PanelEmptyActions) {
   const [destination, setDestination] = React.useState<"chooser" | "files">("chooser");
 
   if (destination === "files") {
@@ -90,7 +102,7 @@ export function PanelEmpty({ onOpenBrowser, onOpenExtensions }: PanelEmptyAction
   }
 
   const destinations = getPanelDestinations(
-    { onOpenBrowser, onOpenExtensions },
+    { onOpenBrowser, onOpenExtensions, onOpenSideChat },
     () => setDestination("files"),
   );
 

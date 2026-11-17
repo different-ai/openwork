@@ -7,9 +7,9 @@
 ## What people get
 
 A side chat for quick questions about the conversation on screen: "what did
-that mean?", "which file was that in?". It opens in the pane beside the
-conversation and each question is answered from what that conversation
-already knows.
+that mean?", "which file was that in?". It opens as a **Side chat** tab in the
+right side panel, next to the browser and files, with its message box at the
+bottom. Each question is answered from what that conversation already knows.
 
 It is not a session. Nothing is added to the conversation, no tools run, and
 nothing appears in the sidebar. A question can be asked while the agent is
@@ -20,8 +20,13 @@ Three ways in:
 - `/btw <question>` in the message box asks and opens the side chat. A bare
   `/btw` just opens it. The command is listed in the `/` menu.
 - **Start a side chat** on text selected in a reply opens it with the text
-  quoted in the side chat's message box.
+  attached above the message box as a quote from the conversation.
 - **Open side chat** in the command palette opens it.
+- **Side chat** in the side panel's list of destinations opens it.
+
+A quote is sent apart from the question, marked as a passage the person is
+asking about and not a request, so selecting "Count to 10" and asking "what
+was this for?" explains the line and does not count.
 
 Each question shows its answer with **Copy answer**, or a reason and
 **Retry** when it could not be answered. Questions are one-shot: an answer
@@ -51,8 +56,5 @@ conversation, as before, and `/btw` is not a command.
   sub-agent's conversation or one open in the side pane.
 - Questions and answers are kept while the app stays open. They are not
   saved across a restart.
-- The side chat takes the side pane while it is open; a session already
-  beside the conversation comes back when the side chat is closed.
-- Not shown at phone width.
 - **Open as side chat** on an existing session is unchanged: it shows that
   session beside this one.

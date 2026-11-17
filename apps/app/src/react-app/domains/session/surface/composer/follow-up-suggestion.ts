@@ -11,6 +11,8 @@ const CONTEXT_LIMIT = 6_000;
 /** Longer answers are explanations or several steps, not one message to send. */
 const SUGGESTION_LIMIT = 120;
 
+const ASSISTANT_OFFER_OPENER = /^(would you like|do you want|want me to|what would you like|what should i do next|how can i help|is there anything|anything else|let me know)\b/i;
+
 type FollowUpMessage = { role: "user" | "assistant"; text: string };
 type FollowUpExchange = { replyId: string; messages: FollowUpMessage[] };
 
@@ -54,9 +56,10 @@ export function followUpExchange(messages: readonly UIMessage[]): FollowUpExchan
 /** Predict what the person would type, without turning an optional offer into a new task. */
 export function followUpPrompt(exchange: Pick<FollowUpExchange, "messages">): string {
   return [
-    "Predict the next message this user is likely to type in this conversation.",
+    "Predict the next message this user is likely to type to the assistant in this conversation.",
+    "Write it as the user, never as the assistant: a request, instruction or the user's own question for the assistant. Never ask the user something, ask what to do next, or offer help.",
     "Write only that message, matching the user's language, tone and brevity. Prefer 2–8 words; never exceed 12 words. No quotes, labels or explanation.",
-    "Use the user's intent across the conversation. A brief confirmation, correction or question is enough when natural; do not turn it into a detailed task specification.",
+    "Use the user's intent across the conversation. A brief confirmation, correction, request or question is enough when natural; do not turn it into a detailed task specification.",
     "Do not invent goals, requirements, names, files, commands, dates or other details. Avoid repeating details that are already clear from context.",
     "The assistant's optional offers are not the user's intent. Do not automatically accept an offer, choose among alternatives, or add work after a completed request.",
     `Answer ${NO_SUGGESTION} if the next message is unclear, several directions are equally plausible, or the conversation is finished. Showing nothing is better than guessing.`,
@@ -71,5 +74,6 @@ export function parseFollowUpSuggestion(answer: string): string | null {
   const line = answer.trim().replace(/^["'“”‘’`]+|["'“”‘’`]+$/g, "").trim();
   if (!line || line.length > SUGGESTION_LIMIT || /[\r\n<>]/.test(line)) return null;
   if (line.replace(/[^\p{L}]/gu, "").toUpperCase() === NO_SUGGESTION) return null;
+  if (ASSISTANT_OFFER_OPENER.test(line)) return null;
   return line;
 }

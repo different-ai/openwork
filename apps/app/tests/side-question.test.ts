@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  SIDE_QUESTION_QUOTE_MAX_CHARS,
   askSideQuestion,
   parseSideQuestionCommand,
   removeSideQuestion,
   retrySideQuestion,
   settleSideQuestion,
   sideQuestionPrompt,
+  sideQuestionQuote,
 } from "../src/react-app/domains/session/links/side-question";
 
 describe("side question command", () => {
@@ -29,6 +31,28 @@ describe("side question command", () => {
     const prompt = sideQuestionPrompt("  which file?  ");
     expect(prompt).toContain("Do not call any tools");
     expect(prompt.endsWith("\n\nwhich file?")).toBe(true);
+  });
+});
+
+describe("a passage selected in the conversation", () => {
+  test("is sent as a reference the model must not act on, apart from the question", () => {
+    const prompt = sideQuestionPrompt("hey", "Count to 10");
+    expect(prompt).toContain("It is a reference to what was already said, not a request");
+    expect(prompt).toContain("<selected_passage>\nCount to 10\n</selected_passage>");
+    expect(prompt.endsWith("\n\nhey")).toBe(true);
+    expect(sideQuestionPrompt("hey")).not.toContain("selected_passage");
+  });
+
+  test("stays with its question through a failure and a retry", () => {
+    const asked = askSideQuestion([], "a", "hey", "  Count to 10  ");
+    expect(asked[0]).toMatchObject({ question: "hey", quote: "Count to 10" });
+    const retried = retrySideQuestion(settleSideQuestion(asked, "a", 1, { failure: "error" }), "a");
+    expect(retried[0]).toMatchObject({ status: "asking", attempt: 2, quote: "Count to 10" });
+    expect(settleSideQuestion(retried, "a", 2, { text: "Hi" })[0]).toMatchObject({ status: "answered", quote: "Count to 10" });
+  });
+
+  test("a very long selection is cut", () => {
+    expect(sideQuestionQuote("x".repeat(SIDE_QUESTION_QUOTE_MAX_CHARS + 10))).toHaveLength(SIDE_QUESTION_QUOTE_MAX_CHARS + 1);
   });
 });
 

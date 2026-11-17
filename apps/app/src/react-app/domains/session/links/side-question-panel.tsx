@@ -19,6 +19,14 @@ function failureText(item: Extract<SideQuestion, { status: "failed" }>) {
   return t("side_question.error");
 }
 
+function QuotedPassage({ text }: { text: string }) {
+  return (
+    <blockquote className="mb-2 line-clamp-4 whitespace-pre-wrap border-l-2 border-border pl-2 text-xs text-muted-foreground" title={text} data-side-question-quote>
+      {text}
+    </blockquote>
+  );
+}
+
 function Answer({ client, sessionId, item }: { client: SideQuestionClient; sessionId: string; item: SideQuestion }) {
   const [copied, setCopied] = useState(false);
   const retry = useSideQuestionStore((state) => state.retry);
@@ -26,7 +34,10 @@ function Answer({ client, sessionId, item }: { client: SideQuestionClient; sessi
   return (
     <li className="group flex flex-col gap-2" data-side-question={item.status}>
       <div className="flex items-start gap-2">
-        <p className="min-w-0 flex-1 whitespace-pre-wrap rounded-xl bg-muted px-3 py-2 text-sm">{item.question}</p>
+        <div className="min-w-0 flex-1 rounded-xl bg-muted px-3 py-2 text-sm">
+          {item.quote ? <QuotedPassage text={item.quote} /> : null}
+          <p className="whitespace-pre-wrap">{item.question}</p>
+        </div>
         <Button variant="ghost" size="icon-xs" className="opacity-0 focus-visible:opacity-100 group-hover:opacity-100" aria-label={t("side_question.remove")} title={t("side_question.remove")} onClick={() => remove(sessionId, item.id)}>
           <X />
         </Button>
@@ -52,7 +63,7 @@ function Answer({ client, sessionId, item }: { client: SideQuestionClient; sessi
   );
 }
 
-export function SideQuestionPanel({ sessionId, endpoint, onClose }: { sessionId: string; endpoint: SideQuestionEndpoint; onClose: () => void }) {
+export function SideQuestionPanel({ sessionId, endpoint }: { sessionId: string; endpoint: SideQuestionEndpoint }) {
   const client = useMemo(
     () => createClientV2(endpoint.opencodeBaseUrl, endpoint.workspaceRoot, { token: endpoint.openworkToken }),
     [endpoint.opencodeBaseUrl, endpoint.openworkToken, endpoint.workspaceRoot],
@@ -60,6 +71,8 @@ export function SideQuestionPanel({ sessionId, endpoint, onClose }: { sessionId:
   const questions = useSideQuestions(sessionId);
   const draft = useSideQuestionStore((state) => state.draftBySession[sessionId] ?? "");
   const setDraft = useSideQuestionStore((state) => state.setDraft);
+  const quote = useSideQuestionStore((state) => state.quoteBySession[sessionId]);
+  const setQuote = useSideQuestionStore((state) => state.setQuote);
   const ask = useSideQuestionStore((state) => state.ask);
   const listEndRef = useRef<HTMLDivElement>(null);
 
@@ -74,12 +87,6 @@ export function SideQuestionPanel({ sessionId, endpoint, onClose }: { sessionId:
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="side-question-panel">
-      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-3">
-        <span className="min-w-0 flex-1 truncate text-xs">{t("session_management.split_view")}</span>
-        <Button variant="ghost" size="icon-xs" aria-label={t("session_management.close_split_view")} title={t("session_management.close_split_view")} onClick={onClose}>
-          <X />
-        </Button>
-      </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
         {questions.length === 0 ? (
           <p className="px-1 text-sm text-muted-foreground">{t("side_question.empty")}</p>
@@ -91,6 +98,17 @@ export function SideQuestionPanel({ sessionId, endpoint, onClose }: { sessionId:
         <div ref={listEndRef} />
       </div>
       <form className="shrink-0 border-t border-border p-3" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+        {quote ? (
+          <div className="mb-2 flex items-start gap-2 rounded-xl bg-muted px-3 py-2">
+            <div className="min-w-0 flex-1">
+              <p className="mb-1 text-xs text-muted-foreground">{t("side_question.quote_label")}</p>
+              <QuotedPassage text={quote} />
+            </div>
+            <Button type="button" variant="ghost" size="icon-xs" aria-label={t("side_question.quote_remove")} title={t("side_question.quote_remove")} onClick={() => setQuote(sessionId, null)}>
+              <X />
+            </Button>
+          </div>
+        ) : null}
         <textarea
           autoFocus
           value={draft}

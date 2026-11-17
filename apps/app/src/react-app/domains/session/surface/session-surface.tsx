@@ -135,7 +135,7 @@ import { sessionBackgroundShells, settleBackgroundShell, useBackgroundShellStore
 import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { useFollowUpSuggestion } from "./composer/use-follow-up-suggestion";
 import { parseSideQuestionCommand } from "../links/side-question";
-import { useSideQuestionStore } from "../links/side-question-store";
+import { showSideChatTab, useSideQuestionStore } from "../links/side-question-store";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
 import { deriveOpenTargets, deriveSessionFileEvidence, sameOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
@@ -2595,11 +2595,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!current || current.attachments.length > 0) return false;
     const question = parseSideQuestionCommand(current.draft);
     if (question === null) return false;
-    const sideChat = useSideQuestionStore.getState();
     if (question) {
       markFeatureUsed("sideQuestions");
-      sideChat.ask(opencodeClient, props.sessionId, question);
-    } else sideChat.open(props.sessionId);
+      useSideQuestionStore.getState().ask(opencodeClient, props.sessionId, question);
+    }
+    showSideChatTab(props.sessionId);
     clearComposer();
     return true;
   }, [clearComposer, opencodeClient, props.sessionId, sideQuestionsEnabled]);

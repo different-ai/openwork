@@ -110,82 +110,48 @@ export const adminSignupCompaniesSchema = z.object({
 }).meta({ ref: "AdminSignupCompanies" })
 export type AdminSignupCompanies = z.infer<typeof adminSignupCompaniesSchema>
 
-const weeklyMetric = z.object({ current: count, previous: count })
-const weeklyOrganization = z.object({ id: z.string(), name: z.string(), current: count, previous: count })
-
 // Platform-internal sales follow-up. Never written to an organization's audit log or shown to its members.
 export const ACCOUNT_FOLLOW_UP_STAGES = ["needs_review", "ready", "contacted", "engaged", "closed", "dismissed"] as const
 export const ACCOUNT_FOLLOW_UP_ACTIONS = ["reviewed", "contacted", "replied", "meeting", "note", "closed", "dismissed", "reopened"] as const
 export const ACCOUNT_CONFIRMED_OPPORTUNITIES = ["expansion", "commercial"] as const
-export const OPPORTUNITY_KINDS = ["follow_up", "commercial", "expansion", "declining", "activation", "welcome"] as const
-export const OPPORTUNITY_SIGNALS = [
-  "follow_up_due", "ready_for_outreach", "trial_ending", "plan_ending", "seats_near_limit", "members_joined", "activity_up", "activity_down",
-  "no_observed_use", "setup_without_use", "signup", "recently_contacted",
-] as const
-export const ADOPTION_STAGES = ["no_observed_use", "quiet_this_week", "individual", "team", "expanding"] as const
 
 const isoDate = z.string().datetime()
-export const opportunitySignalSchema = z.object({
-  type: z.enum(OPPORTUNITY_SIGNALS), label: z.string(), at: isoDate.nullable(),
-  userId: z.string().nullable(),
-})
 export const accountFollowUpSchema = z.object({
   stage: z.enum(ACCOUNT_FOLLOW_UP_STAGES), ownerUserId: z.string().nullable(), ownerName: z.string().nullable(),
   nextAction: z.string().nullable(), nextFollowUpAt: isoDate.nullable(), lastContactedAt: isoDate.nullable(),
   lastActionKind: z.enum(ACCOUNT_FOLLOW_UP_ACTIONS).nullable(), lastActionAt: isoDate.nullable(),
   confirmedOpportunity: z.enum(ACCOUNT_CONFIRMED_OPPORTUNITIES).nullable(), updatedAt: isoDate,
 })
-export const opportunityAdoptionSchema = z.object({
-  stage: z.enum(ADOPTION_STAGES), members: count, joinedThisWeek: count,
-  activeUsers: weeklyMetric, lastObservedAt: isoDate.nullable(), skills: count, mcpConnections: count,
+
+// Reasons to write to an account, strongest first. An account is listed once, under its strongest reason.
+export const OUTREACH_PLAYS = ["follow_up", "payment", "cancelling", "team_no_plan", "seats_full", "company", "free_limit", "quiet_paying"] as const
+export type OutreachPlay = (typeof OUTREACH_PLAYS)[number]
+const outreachPersonSchema = z.object({
+  userId: z.string(), name: z.string().nullable(), email: z.string(), role: z.string(),
+  activeDays: count.describe("UTC days in the window on which this person ran a task."),
 })
-export const opportunityItemSchema = z.object({
-  organizationId: z.string(), organizationName: z.string(), organizationCreatedAt: isoDate,
-  kind: z.enum(OPPORTUNITY_KINDS), priority: z.enum(["high", "medium", "low"]),
-  why: z.string(), action: z.object({ label: z.string(), purpose: z.string() }),
-  signals: z.array(opportunitySignalSchema).max(12), adoption: opportunityAdoptionSchema,
+export const outreachItemSchema = z.object({
+  organizationId: z.string(), organizationName: z.string(), play: z.enum(OUTREACH_PLAYS),
+  reason: z.string(), also: z.array(z.string()).max(6).describe("Other reasons that apply to the same account."),
+  company: z.string().nullable().describe("Verified company email domain the reason is about, when there is one."),
+  contact: outreachPersonSchema.nullable(), others: z.array(outreachPersonSchema).max(5),
+  people: z.object({ members: count, active: count }),
+  billing: opportunityBillingSchema, endsAt: isoDate.nullable().describe("When the plan in the reason ends or ended."),
   followUp: accountFollowUpSchema.nullable(),
 })
-export type OpportunityItem = z.infer<typeof opportunityItemSchema>
+export type OutreachItem = z.infer<typeof outreachItemSchema>
 
-export const adminOpportunityOverviewSchema = z.object({
-  from: z.string().datetime(), to: z.string().datetime(), previousFrom: z.string().datetime(), previousTo: z.string().datetime(),
-  generatedAt: z.string().datetime(), timeZone: z.literal("UTC"),
-  signups: weeklyMetric, joinedMembers: weeklyMetric, activeUsers: weeklyMetric, activeOrganizations: weeklyMetric,
-  daily: z.array(z.object({ date: z.string(), signups: count, joinedMembers: count })).max(7),
-  recentSignups: z.array(z.object({ id: z.string(), name: z.string(), createdAt: z.string().datetime() })).max(8),
-  growingTeams: z.array(z.object({ id: z.string(), name: z.string(), joinedMembers: count })).max(8),
-  risingActivity: z.array(weeklyOrganization).max(8),
-  fallingActivity: z.array(weeklyOrganization).max(8),
-  queue: z.array(opportunityItemSchema).max(40),
-  waiting: z.array(z.object({ organizationId: z.string(), organizationName: z.string(), followUp: accountFollowUpSchema })).max(10),
-  hidden: z.object({ closed: count, dismissed: count }),
-  progress: z.object({
-    // Logged by platform admins this week. Activity, not outcomes.
-    reviewed: count, outreach: count, followUpsCompleted: count, followUpsOnTime: count,
-    // Outcomes. Conversations and confirmations are recorded by people; activation is observed and not attributed to outreach.
-    conversations: count, confirmedExpansion: count, confirmedCommercial: count, activationProgress: count,
-    dueToday: count, overdue: count,
-  }),
-}).meta({ ref: "AdminOpportunityOverview" })
-export type AdminOpportunityOverview = z.infer<typeof adminOpportunityOverviewSchema>
-
-export const adminOpportunityAccountSchema = z.object({
-  organization: z.object({ id: z.string(), name: z.string(), createdAt: isoDate, planTier: z.string(), seatLimit: count, memberCount: count }),
-  people: z.array(z.object({
-    memberId: z.string(), userId: z.string().nullable(), name: z.string().nullable(), email: z.string().nullable(), role: z.string(),
-    joinedAt: isoDate.nullable(), signedUpAt: isoDate.nullable(), lastObservedAt: isoDate.nullable(),
-  })).max(25),
-  opportunity: opportunityItemSchema.nullable(),
-  adoption: opportunityAdoptionSchema,
-  followUp: accountFollowUpSchema.nullable(),
-  history: z.array(z.object({
-    id: z.string(), kind: z.enum(ACCOUNT_FOLLOW_UP_ACTIONS), occurredAt: isoDate, actorName: z.string().nullable(),
-    contactName: z.string().nullable(), note: z.string().nullable(), followUpDueAt: isoDate.nullable(),
-  })).max(25),
-  generatedAt: isoDate, timeZone: z.literal("UTC"),
-}).meta({ ref: "AdminOpportunityAccount" })
-export type AdminOpportunityAccount = z.infer<typeof adminOpportunityAccountSchema>
+export const adminOutreachSchema = z.object({
+  generatedAt: isoDate, windowDays: count,
+  items: z.array(outreachItemSchema).max(400),
+  totals: z.record(z.enum(OUTREACH_PLAYS), count).describe("Accounts per reason before the per-reason cap."),
+  waiting: z.array(z.object({
+    organizationId: z.string(), organizationName: z.string(), contactedAt: isoDate,
+    ownerName: z.string().nullable(), followUpAt: isoDate.nullable(),
+  })).max(50),
+  hidden: count.describe("Accounts with a reason that an admin dismissed or closed."),
+}).meta({ ref: "AdminOutreach" })
+export type AdminOutreach = z.infer<typeof adminOutreachSchema>
 
 export const accountFollowUpActionInputSchema = z.object({
   requestId: z.string().uuid(),

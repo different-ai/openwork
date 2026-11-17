@@ -167,9 +167,9 @@ import { getSessionModelSelection, useSessionModelStore } from "@/react-app/doma
 import { getSessionAgentSelection, useSessionAgentSelection, useSessionAgentStore } from "@/react-app/domains/session/surface/session-mode-memory";
 import { isSameWorkbenchSession, useWorkbenchStore, workbenchSessionKey } from "@/react-app/domains/session/chat/workbench-store";
 import { setPendingChatSeed } from "@/react-app/domains/session/chat/pending-chat-seed";
-import { appendQuoteToDraft, quoteForDraft } from "@/react-app/domains/session/links/selection-quote";
+import { appendQuoteToDraft } from "@/react-app/domains/session/links/selection-quote";
 import { SIDE_QUESTION_COMMAND } from "@/react-app/domains/session/links/side-question";
-import { useSideQuestionStore } from "@/react-app/domains/session/links/side-question-store";
+import { showSideChatTab, useSideQuestionStore } from "@/react-app/domains/session/links/side-question-store";
 import { withSideChatActivity } from "@/react-app/domains/session/sidebar/side-chat-status";
 import { resolveWorkbenchPaneEndpoint } from "@/react-app/domains/session/chat/pane-runtime";
 import {
@@ -2877,7 +2877,8 @@ export function SessionRoute() {
     const parent = workbench.primary;
     if (!parent) return;
     if (sideQuestionsEnabled) {
-      useSideQuestionStore.getState().open(parent.sessionId, quoteForDraft(text));
+      useSideQuestionStore.getState().setQuote(parent.sessionId, text);
+      showSideChatTab(parent.sessionId);
       return;
     }
     const groupId = sessionManagementStore.getState().groupsByWorkspace[parent.workspaceId]?.assignments[parent.sessionId];
@@ -4391,7 +4392,7 @@ export function SessionRoute() {
       onCreateNewSession={createNewSessionInSelectedWorkspace}
       onCreateNewSplitSession={() => {
         if (sideQuestionsEnabled && selectedSessionId) {
-          useSideQuestionStore.getState().open(selectedSessionId);
+          showSideChatTab(selectedSessionId);
           return;
         }
         if (selectedWorkspaceId) {

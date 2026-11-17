@@ -177,8 +177,7 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
         >
           <TextSentenceLine {...splitSentence(label)} mark={groupMark ? <ConnectorMark connector={groupMark} /> : null} tone={running && !current ? "running" : "normal"} />
           {waitingOn ? <RailMeta>Waiting on {waitingOn}</RailMeta> : null}
-          {failedCalls.length > 0 ? <RailMeta className="text-red-11">{failedCalls.length} failed</RailMeta> : null}
-          {/* Say why, in one line, instead of a bare red count (T2). */}
+          {failedCalls.length > 0 ? <RailMeta>{failedCalls.length} failed</RailMeta> : null}
           {groupReason ? <span data-code-mode-failure-reason className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{groupReason}</span> : null}
           {blockedCalls.length > 0 ? <RailMeta>{blockedCalls.length} blocked</RailMeta> : null}
           <TrailingChevron open={open} />

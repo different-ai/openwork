@@ -102,9 +102,11 @@ jobs:
           .github/scripts/require-quick-check.test.mjs
           .github/scripts/production-deploy.test.mjs
           .github/scripts/typecheck-shipped.test.mjs
+          .github/scripts/react-type-boundaries.test.mjs
           .github/scripts/docs-validation.test.mjs
           .github/scripts/ee-image-inputs.test.mjs
           .github/scripts/managed-stable-release.test.mjs
+          .github/scripts/managed-stable-release-smoke.test.mjs
           .github/scripts/render-build-filters.test.mjs
           .github/scripts/celld-fleet-health.test.mjs
           .github/scripts/runtime-scope.test.mjs

@@ -113,7 +113,7 @@ import { connectionFromChatToolPart } from "@/components/tools/error-attribution
 import { isReservedConnectionQuestion, type ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
 import { codeModeCallsWithResults, remoteThreadStartsInParts } from "@/lib/remote-thread-starts"
-import { dedupeRenderedTurnErrors } from "@/react-app/domains/session/sync/transcript-reconcile"
+import { dedupeRenderedTurnErrors, joinRecoveredReplies } from "@/react-app/domains/session/sync/transcript-reconcile"
 import { builtMcpAppId, hasPreservedMcpAppResult, isNativeConnectionAppLaunch, McpAppFrame } from "@/components/chat/mcp-app-frame"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
 import { SubagentRunLine } from "@/components/chat/subagent-run-line"
@@ -2013,7 +2013,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
   }, [activityActive, runStartedAt, syncDegraded, runWaits])
   const latestUserMessageId = React.useMemo(() => messages.findLast((message) => message.role === "user")?.id, [messages])
   // Steps that render nothing are removed before layout, so they leave no gap.
-  const visibleMessages = React.useMemo(() => dedupeRenderedTurnErrors(withoutSilentSteps(messages)), [messages]);
+  const visibleMessages = React.useMemo(() => dedupeRenderedTurnErrors(joinRecoveredReplies(withoutSilentSteps(messages))), [messages]);
   const items = React.useMemo(() => groupMessages(visibleMessages, status), [visibleMessages, status]);
   // groupMessages indexes the visible transcript. Comparing those positions
   // with the unfiltered transcript marks the live turn historical as soon as
