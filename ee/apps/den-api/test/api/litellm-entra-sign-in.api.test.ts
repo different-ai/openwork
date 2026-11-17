@@ -44,6 +44,7 @@ const tokenRequests: URLSearchParams[] = []
 /** The `state` of the sign-in each test is completing, so the stand-in can answer with the nonce OpenWork expects. */
 let signInState = ""
 let grantedScope = API_SCOPE
+let beforeTokenResponse: (() => Promise<void>) | undefined
 const realFetch = globalThis.fetch
 globalThis.fetch = async (input, init) => {
   const url = input instanceof Request ? input.url : String(input)
@@ -57,6 +58,7 @@ globalThis.fetch = async (input, init) => {
   if (url === TOKEN_URL) {
     const body = new URLSearchParams(String(init?.body))
     tokenRequests.push(body)
+    await beforeTokenResponse?.()
     const nonce = createHmac("sha256", body.get("code_verifier") ?? "").update(`gateway-microsoft-oidc-v1:${signInState}`).digest("base64url")
     const idToken = await new SignJWT({ tid: TENANT, oid: "object-id-fixture", nonce, preferred_username: "person@example.test" })
       .setProtectedHeader({ alg: "RS256", kid: "fixture-key" }).setIssuer(`https://login.microsoftonline.com/${TENANT}/v2.0`).setAudience(CLIENT)
@@ -333,6 +335,33 @@ test("turning the feature off stops new sign-ins and edits, and keeps what peopl
   const again = await browser(person, `/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(attempt)}`)
   assert.equal(again.status, 200, summary(again))
   assert.equal(new URL(text(field(again.body, "authUrl"), "authorize URL")).searchParams.get("scope"), `api://${CLIENT}/models offline_access openid profile`)
+})
+
+test("turning the feature off during the token exchange prevents storing the sign-in", async () => {
+  const connecting = await den.newMember(workspace.owner, workspace.orgId, "Connecting member")
+  const entered = Promise.withResolvers<void>()
+  const released = Promise.withResolvers<void>()
+  beforeTokenResponse = async () => { entered.resolve(); await released.promise }
+  grantedScope = `api://${CLIENT}/models`
+  const pending = signIn(connecting, entraProviderId)
+  try {
+    await entered.promise
+    assert.equal((await den.setFeature(workspace.orgId, FEATURE, false)).status, 200)
+  } finally {
+    released.resolve()
+  }
+  try {
+    const { callback } = await pending
+    assert.equal(callback.status, 400, summary(callback))
+    assert.match(callback.text, /Provider access changed/)
+    assert.equal((await usable(connecting, entraProviderId))?.credentialStatus, "member_auth_required")
+    const details = await owner("GET", `/v1/inference-providers/${entraProviderId}`)
+    assert.equal(list(field(details.body, "inferenceProvider", "credentials")).some((credential) => credential.orgMembershipId === connecting.memberId), false)
+  } finally {
+    beforeTokenResponse = undefined
+    grantedScope = API_SCOPE
+    assert.equal((await den.setFeature(workspace.orgId, FEATURE, true)).status, 200)
+  }
 })
 
 test("with the feature off, a person can still disconnect and an admin can still disable and remove the provider", async () => {

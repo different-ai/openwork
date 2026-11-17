@@ -475,6 +475,7 @@ async function storeMemberCredential(input: {
   const { provider, set, state } = input
   return db.transaction(async (tx) => {
     if (!await lockMemberOAuthAuthorization(tx, provider, set, state.org_membership_id, input.userId)) return false
+    if (providerMemberSignInScope(provider) !== null && !await organizationFeatureEnabled(provider.organization_id, LITELLM_ENTRA_FEATURE, { userId: input.userId, database: tx, lock: "share" })) return false
     const [liveSession] = await tx.select().from(AuthSessionTable).where(and(eq(AuthSessionTable.id, input.browserSession.id), eq(AuthSessionTable.token, input.browserSession.token), eq(AuthSessionTable.userId, input.browserSession.userId), gt(AuthSessionTable.expiresAt, new Date()))).for("update")
     if (!liveSession) return false
     const [current] = await tx.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.id, state.id)).for("update")
