@@ -9,6 +9,8 @@ This folder owns admin-only Den API surfaces.
 - `dashboard.ts`: gateway AI usage for the last 30 days (`GET /v1/admin/dashboard`) and on-demand platform active users (`GET /v1/admin/dashboard/active-users`)
 - `free-auto-usage.ts`: free Auto usage across all organizations (`GET /v1/admin/free-auto/usage`)
 - `security.ts`: threshold-based security signals across all organizations (`GET /v1/admin/security`) and the last 24 hours of refused, rate-limited and failed tenantless requests (`GET /v1/admin/security/requests`); the rules live in `security-findings.ts`
+- `opportunity-outreach.ts`, `outreach-plays.ts`: the accounts worth writing to, one row per organization under its strongest reason, with the person to write to (`GET /v1/admin/opportunities/outreach`); see "Outreach list" below
+- `opportunity-accounts.ts`: records what an admin did about an account (`POST /v1/admin/opportunities/accounts/:organizationId/actions`)
 - `opportunities.ts`: recent organization adoption, verified non-personal email signals, and active Cloud skill/MCP counts, stored plan, paid status and recorded outreach (`GET /v1/admin/opportunities`)
 - `opportunity-companies.ts`: signups grouped by verified company email domain across organizations, with plan, paid status and recorded outreach (`GET /v1/admin/opportunities/companies`)
 - `runner-fleet.ts`: the cloud runner's celld nodes, read live from each node's own state endpoint (`GET /v1/admin/runner-fleet`, `/history`, `/events`); see "Runner fleet" below
@@ -58,6 +60,29 @@ by hand. Each metric runs its queries one at a time, on a read replica when `DAT
 `DATABASE_READ_PASSWORD` are set. Queries read platform tables through indexed time windows
 (`telemetry_event_ts_window`, `invitation_created_at`, `created_at`/`bucket_start` indexes), select no credential or
 secret columns and read invitations only as counts and durations. Payloads are aggregates, apart from organization names.
+
+## Outreach list
+
+`/admin › Opportunities` opens on a list a person can work through: who to write to, at which account, and why.
+`outreach-plays.ts` holds the rules as pure functions; `opportunity-outreach.ts` reads the facts for them.
+
+Reasons, strongest first (an account is listed once, with its other reasons as notes):
+
+- `follow_up`: a follow-up date an admin set is due
+- `payment`: a subscription is past due, unpaid, or its last payment failed
+- `cancelling`: a subscription is set to end, or was canceled in the last 30 days
+- `team_no_plan`: two or more people ran tasks in the last 14 days and there is no Team plan
+- `seats_full`: every seat is in use
+- `company`: people at one verified company domain ran tasks from separate workspaces
+- `free_limit`: a member reached the free model limit in the last 7 days and there is no Models add-on
+- `quiet_paying`: a subscription older than 14 days and no tasks seen in 14 days
+
+"Ran tasks" is the Control Center's definition: a `task.*` telemetry event from the app. The activity query groups
+`telemetry_event` by member over the `telemetry_event_ts_window` index before it joins anything. Money questions
+name the workspace owner; usage questions name whoever ran tasks on the most days. Marking an account contacted
+sets a follow-up a week out, so it leaves the list and comes back once if no reply is recorded. Dismissed and
+closed accounts stay out. Telemetry can be off, so "no tasks seen" is never stated as inactivity, and an email
+domain is never treated as proof of employment.
 
 ## Feature outcomes
 
