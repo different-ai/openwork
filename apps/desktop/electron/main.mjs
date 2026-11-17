@@ -1,3 +1,4 @@
+import { startDesktopOperationalDiagnostics } from "./operational-diagnostics.mjs";
 import { processBlankSlateProfile, resolveBlankSlateLaunch } from "./blank-slate-profile.mjs";
 import { DESKTOP_POLICY_ENFORCEMENT_ENABLED } from "@openwork/types/den/desktop-policies-runtime";
 import { execFile, execFileSync, spawn } from "node:child_process";
@@ -462,6 +463,8 @@ const userDataPath = BLANK_SLATE_LAUNCH.userDataPath ?? resolveUserDataPath({
 app.setPath("userData", userDataPath);
 const desktopStartupLog = createStartupLog({ directory: path.join(userDataPath, "logs") });
 const endAppReady = startupPhase("app.ready");
+let stopOperationalDiagnostics = () => {};
+app.once("before-quit", () => stopOperationalDiagnostics());
 app.once("quit", () => desktopStartupLog.close());
 const linuxDesktopIntegration = createLinuxDesktopIntegration({
   app,
@@ -2101,6 +2104,17 @@ const desktopCommandHandlers = {
         openworkDevMode: process.env.OPENWORK_DEV_MODE === "1",
       };
   },
+  "operationalDiagnostics": async (event, enabled) => {
+      stopOperationalDiagnostics();
+      const config = workspaceStore.readDesktopBootstrapConfigSync().diagnostics;
+      stopOperationalDiagnostics = startDesktopOperationalDiagnostics({
+        config,
+        featureEnabled: enabled === true,
+        directory: path.join(userDataPath, "logs"),
+        version: app.getVersion(),
+        runtimeStatus: () => runtimeManager.runtimeStatus(),
+      });
+  },
   "startupTimings": async (event, ...args) => {
       return { ...startupTimings };
   },
@@ -2942,6 +2956,7 @@ async function createMainWindowInner() {
   mainWindow.on("session-end", () => holdInstallForSessionEnd());
 
   mainWindow.on("closed", () => {
+    stopOperationalDiagnostics();
     browserPanel.destroy();
     mainWindow = null;
   });
@@ -2959,6 +2974,7 @@ async function createMainWindowInner() {
     },
   });
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    stopOperationalDiagnostics();
     if (quitInProgress()) return;
     recoverRendererCrash(details);
   });

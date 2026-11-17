@@ -201,6 +201,7 @@ export type DesktopBootstrapOrgSkill = {
 };
 
 export type DesktopBootstrapConfig = {
+  diagnostics?: import("./operational-diagnostics.js").OperationalDiagnosticsConfig;
   baseUrl: string;
   apiBaseUrl?: string | null;
   requireSignin: boolean;
@@ -515,6 +516,7 @@ export type DesktopCommandMap = {
 
   // App / bridge info
   appBuildInfo: { args: []; result: AppBuildInfo };
+  operationalDiagnostics: { args: [enabled: boolean]; result: void };
   startupTimings: { args: []; result: DesktopStartupTimings };
   desktopNotificationShow: {
     args: [input: DesktopNotificationInput];

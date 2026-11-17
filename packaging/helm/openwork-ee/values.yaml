@@ -12,6 +12,10 @@ image:
 imagePullSecrets: []
 
 config:
+  diagnostics:
+    enabled: false
+    output: stdout
+    intervalMinutes: 60
   databaseMode: mysql
   openworkDevMode: "0"
   # Passed to the den-api Node.js process as NODE_OPTIONS at container startup.

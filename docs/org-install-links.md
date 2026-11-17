@@ -119,3 +119,21 @@ compatibility. When both files exist, the valid configuration with the newest
 | The install page asks to sign in | Expected. People sign in with their Den account; the page then offers their organization's installer. |
 | Mounted download fails | Verify the filename exactly matches the configured release tag and every Den replica mounts the same readable PVC path. |
 | Install page points at the wrong web host | Correct `BETTER_AUTH_URL` and `DEN_BETTER_AUTH_TRUSTED_ORIGINS`, then restart Den. |
+
+## Local operational snapshot
+
+Desktop operational diagnostics are off by default and never sent anywhere.
+Add this optional block to an existing `desktop-bootstrap.json` and restart:
+
+```json
+{"diagnostics":{"enabled":true,"output":"file","intervalMinutes":60}}
+```
+
+The active organization's resolved `operationalDiagnostics` flag must also be
+on (cloud and self-hosted, off by default). Signed-out or unresolved flags stay
+off. The interval is an integer from 5 to 1440 minutes. A single overwritten
+`operational-diagnostic.json` under the app's local `userData/logs` directory
+contains version, instance/deployment kinds, coarse uptime, minute time and a
+fixed list of component states. Unavailable checks are `unknown`. No identifiers,
+addresses, paths or error messages enter the snapshot. Nothing leaves the
+instance. See [the feature contract](features/operational-diagnostics/README.md).

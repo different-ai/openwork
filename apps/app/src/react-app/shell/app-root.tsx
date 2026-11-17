@@ -20,6 +20,7 @@ import {
 import { evalRelaunchDesktopApp, readDesktopDistributionInfo } from "../../app/lib/desktop";
 import { outboundEgressAllowed } from "../../app/lib/enterprise-activation";
 import { isDesktopRuntime, isElectronRuntime } from "../../app/lib/runtime-env";
+import { OperationalDiagnostics } from "./operational-diagnostics";
 import { DeviceReporter } from "../domains/devices/device-reporter";
 import { ComputerBridge } from "../domains/session/computer/computer-store";
 import { Button } from "../../components/ui/button";
@@ -546,6 +547,7 @@ export function AppRoot() {
                   {isElectronRuntime() ? <ComputerBridge /> : null}
                   {/* This desktop keeps itself in its organization's devices list while that feature is on. */}
                   {isElectronRuntime() ? <DeviceReporter /> : null}
+                  {isElectronRuntime() ? <OperationalDiagnostics /> : null}
                   <Routes>
               <Route
                 path="/signin"

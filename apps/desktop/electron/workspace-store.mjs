@@ -1,3 +1,4 @@
+import { desktopDiagnosticsConfigSchema } from "./operational-diagnostics.mjs";
 // Desktop workspace persistence and bootstrap configuration. This module owns
 // on-disk workspace state, per-workspace openwork.json files, and the
 // workspace-facing command operations.
@@ -280,6 +281,7 @@ export function createWorkspaceStore({
       : null;
     return {
       baseUrl,
+      ...(input?.diagnostics === undefined ? {} : { diagnostics: desktopDiagnosticsConfigSchema.parse(input.diagnostics) }),
       ...(apiBaseUrl ? { apiBaseUrl } : {}),
       requireSignin: forceRequireSignin || input?.requireSignin === true,
       // Only an explicit policy is carried. The artifact default is never

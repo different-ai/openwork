@@ -638,6 +638,14 @@
       },
       "development": "./src/browser-demonstration.ts",
       "default": "./dist/browser-demonstration.js"
+    },
+    "./operational-diagnostics": {
+      "types": {
+        "openwork-build": "./dist/types/src/operational-diagnostics.d.ts",
+        "default": "./src/operational-diagnostics.ts"
+      },
+      "development": "./src/operational-diagnostics.ts",
+      "default": "./dist/operational-diagnostics.js"
     }
   },
   "files": [
