@@ -6,7 +6,7 @@ import { ChevronRight, ExternalLink, LoaderCircle, Lock, RefreshCcw } from "luci
 
 import { useCreatedSkills } from "@/components/chat/created-skill-card"
 import { useOptionalMessageList } from "@/components/chat/message-list-provider"
-import { describeChatToolFailure } from "@/components/tools/error-attribution"
+import { describeChatToolFailure, toolErrorMessage } from "@/components/tools/error-attribution"
 import {
   useChatToolReconnect,
   type ChatToolReconnectCallbacks,
@@ -167,7 +167,7 @@ function formatTechnicalValue(value: unknown): string {
 /** One human sentence explaining what to do about a failed call. */
 /** First sentence of a raw tool error, short enough for the row. */
 function shortError(text: string | undefined): string | null {
-  const first = (text ?? "").replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s/)[0] ?? ""
+  const first = toolErrorMessage(text ?? "").message.replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s/)[0] ?? ""
   if (!first) return null
   return first.length > 90 ? `${first.slice(0, 89)}…` : first
 }

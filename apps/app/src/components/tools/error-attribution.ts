@@ -93,6 +93,20 @@ function stringValue(record: Record<string, unknown> | null, key: string): strin
   return typeof value === "string" && value.trim() ? value : undefined
 }
 
+/**
+ * A tool failure's own words. Den and MCP servers often fail with a JSON body
+ * such as {"error":"duplicate_plugin","message":"…"}, sometimes behind an
+ * engine prefix; people should read the message, not the JSON.
+ */
+export function toolErrorMessage(errorText: string): { code?: string; message: string } {
+  const parsed = parseResultRecord(errorText)
+  const nested = isRecord(parsed?.error) ? parsed.error : null
+  const message = stringValue(parsed, "message") ?? stringValue(nested, "message")
+  if (!message) return { message: errorText }
+  const code = stringValue(parsed, "error") ?? stringValue(parsed, "code") ?? stringValue(nested, "code")
+  return code ? { code, message } : { message }
+}
+
 function numberValue(record: Record<string, unknown> | null, key: string): number | undefined {
   const value = record?.[key]
   return typeof value === "number" && Number.isFinite(value) ? value : undefined

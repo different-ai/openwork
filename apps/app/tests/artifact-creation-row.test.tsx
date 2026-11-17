@@ -131,6 +131,18 @@ test("build rejection remains visible with recovery direction and full error in 
   expect(host.querySelector("[data-checklist-state=failed]")).not.toBeNull();
 });
 
+test("a JSON error body reads as plain words, with the raw body kept in details", async () => {
+  const errorText = JSON.stringify({ error: "duplicate_plugin", message: "You already have an active plugin named \"Revenue pulse\" (plg_1). Update it instead of creating a duplicate." });
+  await render(run({ ...build("input-available"), state: "output-error", errorText }));
+  expect(host.textContent).toContain("An artifact with this name already exists. Review details before retrying.");
+  expect(host.textContent).not.toContain("{\"error\"");
+  await toggleDetails();
+  expect(host.textContent).toContain("duplicate_plugin");
+
+  await render(run({ ...build("input-available"), state: "output-error", errorText: `MCP error -32602: ${JSON.stringify({ error: "mcp_app_too_large", message: "The App must fit within 4 MiB. Reduce its size." })}` }));
+  expect(host.textContent).toContain("The App must fit within 4 MiB. Review details before retrying.");
+});
+
 function completed(toolName = "create_app"): DynamicToolUIPart {
   const appId = `cob_0${"0".repeat(25)}`;
   const revisionId = `cov_0${"0".repeat(25)}`;
