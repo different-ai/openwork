@@ -4,6 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./den/error-reference": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/error-reference.d.ts",
+        "default": "./src/den/error-reference.ts"
+      },
+      "development": "./src/den/error-reference.ts",
+      "default": "./src/den/error-reference.ts"
+    },
     "./connector-brand": {
       "types": {
         "openwork-build": "./dist/types/src/connector-brand.d.ts",

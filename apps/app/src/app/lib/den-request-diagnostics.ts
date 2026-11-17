@@ -1,6 +1,6 @@
 import { connectionDiagnosticHistory } from "./connection-diagnostic-history";
 
-export async function observeDenRequest<T extends { ok: boolean; status: number }>(
+export async function observeDenRequest<T extends { ok: boolean; status: number; referenceId?: string }>(
   request: (onTimeout: () => void) => Promise<T>,
 ): Promise<T> {
   const startedAt = Date.now();
@@ -10,6 +10,7 @@ export async function observeDenRequest<T extends { ok: boolean; status: number 
     if (!result.ok) {
       connectionDiagnosticHistory.record("den_request_http_failure", "failure", {
         httpStatus: result.status,
+        referenceId: result.referenceId,
         durationMs: Date.now() - startedAt,
       });
     }

@@ -1,4 +1,5 @@
 import { workflowRunPreviewSchema, type WorkflowRunPreview } from "@openwork/types/workflows";
+import { denErrorReferenceId } from "@openwork/types/den/error-reference";
 import { seatPlanQuoteSchema, type SeatPlanQuote } from "@openwork/types/den/billing-plans";
 import { denApiCredentials, denBrowserEndpoint, isSameOriginBrowserRequest } from "./den-api-origin";
 import { getAuthResumeUrl } from "./auth-resume";
@@ -371,9 +372,13 @@ export function getRequestError(payload: unknown, response: Response, fallback: 
     response.status === 409 && isRecord(payload) && payload.error === "sso_session_required"
     && typeof payload.signInPath === "string" && /^\/sso\/[a-zA-Z0-9_%.-]+$/.test(payload.signInPath)
   ) {
-    return new SsoSessionRequiredError(getErrorMessage(payload, fallback), payload.signInPath);
+    return Object.assign(new SsoSessionRequiredError(getErrorMessage(payload, fallback), payload.signInPath), {
+      referenceId: denErrorReferenceId(payload),
+    });
   }
-  return getReauthRequiredError(payload, response) ?? new Error(getErrorMessage(payload, fallback));
+  return Object.assign(getReauthRequiredError(payload, response) ?? new Error(getErrorMessage(payload, fallback)), {
+    referenceId: denErrorReferenceId(payload),
+  });
 }
 
 export function isReauthRequiredError(error: unknown): error is ReauthRequiredError {

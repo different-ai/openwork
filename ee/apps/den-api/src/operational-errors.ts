@@ -30,12 +30,13 @@ function withReferenceId(body: unknown, requestId: string, path: string) {
     }
     if (typeof base.error_description !== "string") base.error_description = "The OAuth request failed."
     base.reference_id = requestId
+    base.referenceId = requestId
     return base
   }
 
   if (isRecord(body)) {
     const bodyError = body.error
-    if (isRecord(bodyError)) {
+    if (isRecord(bodyError) && (isMcpOperationalPath(path) || body.jsonrpc === "2.0")) {
       const data = isRecord(bodyError.data) ? { ...bodyError.data } : {}
       data.referenceId = requestId
       return {
@@ -99,8 +100,10 @@ async function readOperationalJsonBody(path: string, response: Response, headers
     return readJsonBody(response)
   }
 
-  if (isOAuthOperationalPath(path) && isMislabeledPlainTextJsonContentType(headers)) {
-    return readTextJsonObjectBody(response)
+  if (isMislabeledPlainTextJsonContentType(headers)) {
+    const json = await readTextJsonObjectBody(response)
+    if (json !== null || isOperationalErrorPath(path)) return json
+    return { error: await response.clone().text() }
   }
 
   return null
@@ -125,8 +128,8 @@ function normalizeJsonOperationalHeaders(headers: Headers) {
   headers.set("content-type", "application/json")
 }
 
-export async function normalizeOperationalErrorResponse(path: string, response: Response, requestId: string) {
-  if (!isOperationalErrorPath(path) || response.status < 400) {
+export async function normalizeErrorResponse(path: string, response: Response, requestId: string) {
+  if (response.status < 400) {
     return response
   }
 
@@ -158,15 +161,8 @@ export async function operationalErrorResponse(error: Error, c: Context, request
   }
 
   if (error instanceof HTTPException) {
-    return normalizeOperationalErrorResponse(path, error.getResponse(), requestId)
+    return normalizeErrorResponse(path, error.getResponse(), requestId)
   }
-
-  console.error("[operational_error]", {
-    category: "operational_route_exception",
-    referenceId: requestId,
-    method: c.req.method,
-    path,
-  })
 
   const headers = new Headers({
     "content-type": "application/json",
@@ -177,7 +173,7 @@ export async function operationalErrorResponse(error: Error, c: Context, request
   }
 
   const body = isOAuthOperationalPath(path)
-    ? { error: "server_error", error_description: "An unexpected server error occurred.", reference_id: requestId }
-    : { error: "internal_server_error", message: "An unexpected server error occurred.", referenceId: requestId }
-  return new Response(JSON.stringify(body), { status: 500, headers })
+    ? { error: "server_error", error_description: "An unexpected server error occurred." }
+    : { error: "internal_server_error", message: "An unexpected server error occurred." }
+  return new Response(JSON.stringify(withReferenceId(body, requestId, path)), { status: 500, headers })
 }

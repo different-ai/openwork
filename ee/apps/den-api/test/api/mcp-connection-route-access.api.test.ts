@@ -7,7 +7,7 @@ import type { ExternalMcpConnectionRow } from "../../src/capability-sources/exte
 import type { McpPrincipal } from "../../src/mcp/auth.js"
 import type { ConnectionServerRouteDeps } from "../../src/mcp/connection-server.js"
 import type { ExternalConnectionProxyRouteDeps } from "../../src/mcp/external-connection-proxy.js"
-import { bootDen, field } from "./harness.js"
+import { bootDen, field, isRecord } from "./harness.js"
 
 /**
  * The two routes that serve one connection on its own answer the same access
@@ -168,7 +168,14 @@ test("a malformed connection id is refused like an unknown one", async () => {
   assert.equal(malformed.status, 403, malformed.text)
   assert.equal(field(malformed.body, "error"), "connection_not_available")
   assert.equal(unknown.status, 403, unknown.text)
-  assert.deepEqual(malformed.body, unknown.body)
+  assert.ok(isRecord(malformed.body))
+  assert.ok(isRecord(unknown.body))
+  const { referenceId: malformedReference, ...malformedError } = malformed.body
+  const { referenceId: unknownReference, ...unknownError } = unknown.body
+  assert.deepEqual(malformedError, unknownError)
+  assert.match(String(malformedReference), /^req_[0-9a-hjkmnp-tv-z]{26}$/)
+  assert.match(String(unknownReference), /^req_[0-9a-hjkmnp-tv-z]{26}$/)
+  assert.notEqual(malformedReference, unknownReference)
 })
 
 /** The connection's own MCP server route, with the connection connected and one tool. */

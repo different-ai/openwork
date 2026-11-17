@@ -11,6 +11,7 @@ const APP_VERSION = String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").trim
 export type CrashDetails = {
   message: string;
   stack: string;
+  referenceId?: string;
 };
 
 export type CrashContext = {
@@ -27,14 +28,15 @@ export { redactCrashText } from "@/app/lib/crash-diagnostics";
 
 /** React may throw any value, including one that cannot safely be inspected. */
 export function describeCrash(thrown: unknown): CrashDetails {
-  const { message, stack } = formatCrashDiagnostic(thrown);
-  return { message, stack };
+  const { message, stack, referenceId } = formatCrashDiagnostic(thrown);
+  return { message, stack, ...(referenceId ? { referenceId } : {}) };
 }
 
 /** Clipboard payload: message, stack, app version and distribution flavor. */
 export function buildCrashReport(crash: CrashDetails, context: CrashContext): string {
   const header = `OpenWork ${context.version} (${context.deployment}, ${context.flavor})`;
-  return [header, crash.message, crash.stack].filter((line) => line.length > 0).join("\n\n");
+  const reference = crash.referenceId ? JSON.stringify({ referenceId: crash.referenceId }) : "";
+  return [header, crash.message, crash.stack, reference].filter((line) => line.length > 0).join("\n\n");
 }
 
 function readCrashContext(): CrashContext {

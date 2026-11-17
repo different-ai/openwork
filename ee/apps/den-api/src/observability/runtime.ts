@@ -1,5 +1,7 @@
 import type { Context, Env, Hono, MiddlewareHandler } from "hono"
 import type { JsonObject, ObservabilityBackend, ObservabilityConfig, StructuredLogLevel } from "@openwork-ee/utils/observability"
+import type { Span } from "@opentelemetry/sdk-trace-node"
+import { currentRequestId } from "./request-context.js"
 import { observabilityConfig } from "./config.js"
 import { normalizedHonoRoute } from "./hono-route.js"
 import { sanitizeExceptionForTelemetry, sanitizeFields, sanitizeText, stripUrlQuery } from "./safe-fields.js"
@@ -260,11 +262,18 @@ async function startOtel(state: RuntimeState) {
     }
   })()
 
+  class RequestSpanProcessor extends sdkTrace.NoopSpanProcessor {
+    override onStart(span: Span) {
+      const requestId = currentRequestId()
+      if (requestId) span.setAttribute("request.id", requestId)
+    }
+  }
+
   const sdk = new sdkNode.NodeSDK({
     serviceName: observabilityConfig.serviceName,
     sampler,
     instrumentations: [],
-    spanProcessors,
+    spanProcessors: [new RequestSpanProcessor(), ...spanProcessors],
     metricReaders,
     logRecordProcessors,
   })
@@ -603,6 +612,11 @@ async function startSentry(state: RuntimeState) {
         }),
       ]
     },
+  })
+
+  Sentry.getClient()?.on("spanStart", (span) => {
+    const requestId = currentRequestId()
+    if (requestId) span.setAttribute("request.id", requestId)
   })
 
   state.honoMiddlewareFactory = (app) => {
