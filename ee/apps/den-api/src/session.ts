@@ -471,7 +471,8 @@ export function shouldSkipRequestSession(request: Request) {
   const path = new URL(request.url).pathname
   // Browser readiness reads its signed cookie and live session directly. Polling
   // must not renew sessions or accept a bearer in place of browser authentication.
-  return (method === "POST" && path === "/api/auth/sign-out")
+  return (method === "POST" && path === "/v1/diagnostics/process-timing")
+    || (method === "POST" && path === "/api/auth/sign-out")
     || (method === "GET" && path === "/v1/inference-providers/oauth/browser-status")
 }
 

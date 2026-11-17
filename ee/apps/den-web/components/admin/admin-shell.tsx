@@ -22,6 +22,7 @@ const SECTIONS = [
   { label: "Free Auto usage", href: "/admin/free-auto", icon: ChartNoAxesCombined },
   { label: "Security", href: "/admin/security", icon: ShieldAlert },
   { label: "Services", href: "/admin/services", icon: Server },
+  { label: "Process timing", href: "/admin/process-timing", icon: Activity },
 ];
 
 export function AdminShell({ hasSessionCookie, children }: { hasSessionCookie: boolean; children: ReactNode }) {

@@ -53,6 +53,8 @@ function operational(path: string, action: string): AuditRouteDeclaration {
 const ADMIN = "adminRoute(): platform admin acting across tenants; no single tenant."
 
 export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
+  platform("POST", "/v1/diagnostics/process-timing", "diagnostics.process_timing.report", "platform.diagnostics", "process_timing_run", null),
+  readOnly("/v1/admin/process-timing", "platform.process_timing.read", "platform.admin", "process_timing_run", null),
   // app.use middleware entries (not endpoints)
   support("ALL", "/*", "request.pipeline", "Global middleware stack (observability, request id, headers, access log, CORS, sessionMiddleware, audit request capture, config token confinement)."),
   support("ALL", "/v1/*", "request.preclaim_scope", "preclaimScopeMiddleware: denies provisional agent users outside their bootstrap scope."),

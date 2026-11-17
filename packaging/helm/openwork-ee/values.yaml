@@ -233,6 +233,7 @@ secret:
     initialAdminBootstrapCode: DEN_INITIAL_ADMIN_BOOTSTRAP_CODE
     maintenanceToken: DEN_MAINTENANCE_TOKEN
     typesafeApiKey: TYPESAFE_API_KEY
+    processTimingIngestKey: PROCESS_TIMING_INGEST_KEY
   values:
     databaseUrl: mysql://openwork:change-me@mysql:3306/openwork_den
     databaseHost: ""
@@ -262,6 +263,7 @@ secret:
     # (AI Gateway Smart Model Router). Only rendered when set; without it
     # Smart is off.
     typesafeApiKey: ""
+    processTimingIngestKey: ""
 
 installerArtifacts:
   enabled: false

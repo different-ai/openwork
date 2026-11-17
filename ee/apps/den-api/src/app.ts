@@ -56,6 +56,7 @@ import { registerTelemetryRoutes } from "./routes/telemetry/index.js"
 import { registerVersionRoutes } from "./routes/version/index.js"
 import { registerFeatureRoutes } from "./routes/features/index.js"
 import { registerWebhookRoutes } from "./routes/webhooks/index.js"
+import { registerProcessTimingRoutes } from "./routes/process-timing.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
@@ -316,6 +317,7 @@ registerHeadlessRunnerRoutes(app)
 registerVersionRoutes(app)
 registerFeatureRoutes(app)
 registerWebhookRoutes(app)
+registerProcessTimingRoutes(app)
 registerInternalRoutes(app)
 registerWorkerRoutes(app)
 registerMcpTokenRoutes(app)
