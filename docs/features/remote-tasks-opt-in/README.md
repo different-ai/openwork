@@ -34,6 +34,27 @@ whose owner has not chosen keeps taking tasks started remotely, as before.
 Either way the owner can turn a computer off, and an organization owner can
 turn remote access off for everyone.
 
+## The desktop asks once
+
+With the opt-in on, a signed-in desktop whose owner has not chosen shows one
+card above the composer: "Let Workbot and your other devices work on this
+computer?"
+
+- **Allow all tasks**, the button's first choice, saves **Also open sessions I
+  started here**. The arrow beside it switches the button to **Allow starting
+  tasks**, which saves **Start tasks here**.
+- **Keep it off** saves **Nothing**.
+
+Either answer is the owner's choice, so the card does not come back. It can be
+changed in Settings → Devices at any time. Where the organization allows only
+tasks started remotely, or the app cannot take the wider choice yet, **Allow
+all tasks** is listed locked with the reason and the button starts on **Allow
+starting tasks**. No card is shown while the organization has remote access
+off, on a computer that is not connected to an organization, or without the
+opt-in.
+
+![The ask above the composer](desktop-ask.png)
+
 ![My Computers under the opt-in](den-my-computers-opt-in.png)
 
 ![The organization turned remote access off](den-organization-off.png)
@@ -73,6 +94,8 @@ limit of Off keeps applying.
 
 ## Verification
 
+- `apps/app/tests/remote-access-ask.test.tsx`: when the desktop asks, which
+  choice the button starts on, and that either answer is saved and ends the ask.
 - `packages/remote-sessions/test/off.test.ts`: while off the adapter is never
   called and nothing is reported.
 - `apps/desktop/test/remote-access-off.test.mjs` and `session-access.test.mjs`:

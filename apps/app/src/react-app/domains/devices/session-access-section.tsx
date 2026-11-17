@@ -9,7 +9,8 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
 import { LayoutSection, LayoutSectionHeader, LayoutSectionTitle } from "../settings/settings-layout";
 
-const sessionAccessQueryKey = ["desktop", "remote-session-access"] as const;
+/** Shared with the ask above the composer, so a choice made in either place shows in both at once. */
+export const sessionAccessQueryKey = ["desktop", "remote-session-access"] as const;
 /** The organization's limit arrives when this computer next checks in, so an open page keeps reading. */
 const SESSION_ACCESS_REFRESH_MS = 5_000;
 const HEADING = "What other devices can do on this computer";
@@ -22,7 +23,7 @@ const CHOICES: ReadonlyArray<{ mode: RemoteSessionAccessMode; title: string; des
 ];
 
 /** Why a choice cannot apply right now, or null when it can. */
-function lockedReason(mode: RemoteSessionAccessMode, state: RemoteSessionAccessState): string | null {
+export function lockedReason(mode: RemoteSessionAccessMode, state: RemoteSessionAccessState): string | null {
   // A choice is kept for an organization: without one there is nowhere to keep it.
   if (!state.connected) return NOT_CONNECTED;
   if (mode === "off") return null;
