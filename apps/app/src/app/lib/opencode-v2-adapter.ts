@@ -3225,6 +3225,20 @@ export function createClientV2(
     return text === undefined ? failedResult(result) : successfulResult(result, { text });
   };
 
+  const generateFromSession = async (
+    parameters: { sessionID: string; prompt: string },
+    options?: RequestOptions,
+  ): Promise<FieldsResult<{ text: string }>> => {
+    const result = await request(
+      "POST",
+      `/api/session/${encodeURIComponent(parameters.sessionID)}/generate`,
+      { prompt: parameters.prompt },
+      options?.signal,
+    );
+    const text = result.response.ok ? readString(responseData(result.payload), "text") : undefined;
+    return text === undefined ? failedResult(result) : successfulResult(result, { text });
+  };
+
   const adapter = {
     global: {
       health: async (options?: RequestOptions): Promise<FieldsResult<{ healthy: boolean; version: string }>> => {
@@ -3381,6 +3395,7 @@ export function createClientV2(
     listRunningShells,
     removeBackgroundShell,
     generateWithSmallModel,
+    generateFromSession,
     sessionRunEnd,
     sessionLastTurn,
     addSessionNote,

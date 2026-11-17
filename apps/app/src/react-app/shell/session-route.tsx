@@ -27,7 +27,7 @@ import { downloadTextAsFile } from "@/app/lib/download";
 import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
 import { createClient, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { sendWithModelUnavailableRetry } from "@/react-app/domains/session/sync/model-unavailable-retry";
-import { createClientV2, isOpencodeV2BaseUrl, v2AcknowledgementText } from "@/app/lib/opencode-v2-adapter";
+import { createClientV2, isOpencodeV2BaseUrl, isOpencodeV2Client, v2AcknowledgementText } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe, forkSession, listCommands, revertSession, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
 import { composeNativeSessionHistory } from "@/app/lib/opencode-session-native";
 import { prefetchOpeningSessionHistory, sessionHistoryIdentity, sessionHistoryRuntimeOwner, useSessionHistoryRuntimeOwners } from "@/react-app/domains/session/surface/session-history";
@@ -166,7 +166,9 @@ import { getSessionModelSelection, useSessionModelStore } from "@/react-app/doma
 import { getSessionAgentSelection, useSessionAgentSelection, useSessionAgentStore } from "@/react-app/domains/session/surface/session-mode-memory";
 import { isSameWorkbenchSession, useWorkbenchStore, workbenchSessionKey } from "@/react-app/domains/session/chat/workbench-store";
 import { setPendingChatSeed } from "@/react-app/domains/session/chat/pending-chat-seed";
-import { appendQuoteToDraft } from "@/react-app/domains/session/links/selection-quote";
+import { appendQuoteToDraft, quoteForDraft } from "@/react-app/domains/session/links/selection-quote";
+import { SIDE_QUESTION_COMMAND } from "@/react-app/domains/session/links/side-question";
+import { useSideQuestionStore } from "@/react-app/domains/session/links/side-question-store";
 import { withSideChatActivity } from "@/react-app/domains/session/sidebar/side-chat-status";
 import { resolveWorkbenchPaneEndpoint } from "@/react-app/domains/session/chat/pane-runtime";
 import {
@@ -938,6 +940,7 @@ export function SessionRoute() {
   const remoteAttentionKey = useRemoteThreadAttentionKey();
   const sideChats = useWorkbenchStore((state) => state.sideChats);
   const sessionTreeEnabled = useDesktopFeature("sessionTree");
+  const sideQuestionsEnabled = useDesktopFeature("sideQuestions");
   // A side chat records the session it was opened from, so it is listed under it everywhere.
   const sideChatLinkFor = useCallback((parent: { workspaceId: string; sessionId: string } | null | undefined, workspaceId: string): SessionLink | undefined => {
     if (!sessionTreeEnabled || !parent || parent.workspaceId !== workspaceId) return undefined;
@@ -1657,8 +1660,10 @@ export function SessionRoute() {
     // and causes it to re-fetch (picking up newly created skills).
     void engineReloadVersion;
     if (!opencodeClient) return [];
-    return listCommands(opencodeClient, selectedWorkspaceRoot || undefined);
-  }, [engineReloadVersion, opencodeClient, selectedWorkspaceRoot]);
+    const commands = await listCommands(opencodeClient, selectedWorkspaceRoot || undefined);
+    if (!sideQuestionsEnabled || !isOpencodeV2Client(opencodeClient) || commands.some((command) => command.name === SIDE_QUESTION_COMMAND)) return commands;
+    return [{ id: "openwork:side-question", name: SIDE_QUESTION_COMMAND, description: t("side_question.command_description"), source: "command" }, ...commands];
+  }, [engineReloadVersion, opencodeClient, selectedWorkspaceRoot, sideQuestionsEnabled]);
 
   // Shared by the composer (plug menu, @ mentions) and the command palette.
   // Hidden and subagent-only entries are excluded — those are task-tool
@@ -2857,6 +2862,10 @@ export function SessionRoute() {
     const workbench = useWorkbenchStore.getState();
     const parent = workbench.primary;
     if (!parent) return;
+    if (sideQuestionsEnabled) {
+      useSideQuestionStore.getState().open(parent.sessionId, quoteForDraft(text));
+      return;
+    }
     const groupId = sessionManagementStore.getState().groupsByWorkspace[parent.workspaceId]?.assignments[parent.sessionId];
     const destination = { workspaceId: parent.workspaceId, groupId, parent };
     const ownerKey = newSessionDraftOwnerKey(sessionDraftScope, destination);
@@ -2879,7 +2888,7 @@ export function SessionRoute() {
     }
     markFeatureUsed("sessionTree");
     focusPromptSoon();
-  }, [sessionDraftScope]);
+  }, [sessionDraftScope, sideQuestionsEnabled]);
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
@@ -4074,7 +4083,7 @@ export function SessionRoute() {
       primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation || remoteTaskRouteActive)}
       primaryHeader={remoteTaskRouteActive && remoteThreadKey ? <RemoteSessionHeader key={remoteThreadKey} threadKey={remoteThreadKey} navigation={remoteHelperNavigation} /> : undefined}
       onOpenRemoteTask={openRemoteTask}
-      onStartSideChatWithQuote={sessionTreeEnabled ? handleStartSideChatWithQuote : undefined}
+      onStartSideChatWithQuote={sessionTreeEnabled || sideQuestionsEnabled ? handleStartSideChatWithQuote : undefined}
       retainedArtifactSlot={retainedArtifactsScope ? {
         scope: retainedArtifactsScope,
         active: dashboardRouteActive && !appsRouteActive,
@@ -4358,6 +4367,10 @@ export function SessionRoute() {
       developerMode={developerMode}
       onCreateNewSession={createNewSessionInSelectedWorkspace}
       onCreateNewSplitSession={() => {
+        if (sideQuestionsEnabled && selectedSessionId) {
+          useSideQuestionStore.getState().open(selectedSessionId);
+          return;
+        }
         if (selectedWorkspaceId) {
           void handleCreateSplitTaskInWorkspace(selectedWorkspaceId);
         }
