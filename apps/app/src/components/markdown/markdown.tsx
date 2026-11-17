@@ -454,10 +454,11 @@ function MarkdownBlockInner({
 
     const handleContextMenu = (event: MouseEvent) => {
       if (!(event.target instanceof Element) || !onOpenTarget) return;
-      const link = event.target.closest("[data-openwork-link-href], [data-openwork-link-chevron]");
+      const link = event.target.closest("[data-openwork-link-href], [data-openwork-link-chevron], [data-openwork-inline-code-path]");
       if (!(link instanceof HTMLElement)) return;
-      const href = link.dataset.openworkLinkHref ?? link.dataset.openworkLinkChevron ?? "";
-      const target = targetAt(href, link);
+      const codePath = link.dataset.openworkInlineCodePath;
+      const href = codePath ?? link.dataset.openworkLinkHref ?? link.dataset.openworkLinkChevron ?? "";
+      const target = targetAt(href, link, codePath === undefined || link.dataset.openworkPathDecode === "true");
       if (target?.kind !== "file") return;
       event.preventDefault();
       event.stopPropagation();
