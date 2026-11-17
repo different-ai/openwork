@@ -52,6 +52,87 @@ published release and approved customer-project install pass. Design and contrac
    `DEN_INITIAL_ADMIN_BOOTSTRAP_CODE`. OpenWork never receives this code.
    Configure SMTP and SSO after setup.
 
+## Gateway-backed AWS runtime
+
+With `managedDeployments` and `managedDeploymentAssistants` enabled for the
+organization (cloud only, off), new AWS installations include the complete
+Gateway-backed runtime. Only computers are optional. Existing core/legacy
+installations keep their topology until an explicit newer approved Update
+selects the Gateway profile. GCP keeps its existing profile.
+
+- **AI/model Gateway**: included at `https://models.<address>`. After first
+  sign-in, configure upstream provider credentials, model grants and the default
+  model inside the installed Den. Model traffic uses existing Gateway
+  authorization; no shared upstream model key is injected into the runner.
+- **Headless runner**: one private Fargate task with conversation history/files
+  on encrypted EFS. Existing networks need exactly one private service subnet per
+  availability zone for EFS mount targets. No external runner URL is offered.
+- **Workbot**: included browser chat at `https://chat.<address>`. Gateway and
+  Workbot add DNS records and expand the HTTPS certificate.
+- **Slack and Automations**: execution is included on that runner. Slack still
+  needs its real app, connection, OAuth and workspace policy configured inside
+  the installed Den. Installed services alone do not complete that setup.
+- **Computers (optional)**: **Off** by default. Daytona is preferred when a
+  conversation needs a sandbox; Freestyle is also supported. Daytona requires a
+  chosen snapshot. These are not required for chat, Slack replies or
+  connector-based headless Automations. Freestyle also needs the prepared
+  computer snapshot matching the pinned runner release in that provider account;
+  the installer does not build it. Provider configuration does not grant members
+  computer-use permission: enable it for intended members through the installed
+  Den's normal operator controls, without overriding kill switches or locks.
+  **Computers run in the selected provider's cloud, outside the customer's AWS account.**
+
+Only an enabled computer provider needs its API-key secret in the target AWS
+account/region's Secrets Manager. Supply the full ARN, never the value. ECS reads
+it directly; hosted OpenWork, Terraform and the installer do not receive its
+plaintext. The reference uses the AWS-managed Secrets Manager encryption key;
+custom KMS grants need separate review. Keep it available through updates.
+Model credentials belong in the installed Den's encrypted Gateway provider
+workflow, never the hosted deployment form, Terraform inputs, approval command
+or chat. Legacy direct-model inputs remain compatible for legacy installs but
+are ignored by the Gateway profile. Generated application/runner secrets remain
+in the customer's encrypted Terraform state.
+
+The core-only cost estimate above excludes the extra Gateway, runner and Workbot
+Fargate tasks, EFS, backups and computer/model-provider charges. Daily EFS recovery points
+are kept for seven days. A recovery point is not an application-consistent SQLite
+export or proof that a restore has succeeded. The health panel reports runner,
+Workbot, EFS and completed-backup checks without reading conversation content.
+A newly installed disk is not reported as backed up before a recovery point
+exists.
+
+**Updates need a maintenance window.** The single runner stops before its
+replacement starts to prevent two tasks opening the same SQLite database.
+Active turns and headless Automations can be interrupted; there is no automatic
+turn drain. Stop new work and let known active runs finish before approval.
+Inspect the actual outcome before retrying an interrupted action. Extra EFS and
+Backup IAM grants require customer re-approval of the new CloudFormation template
+**before** its Terraform payload runs. See the installer README for ordering,
+certificate handover, secret preservation and retained-resource cleanup.
+
+This optional profile is **unqualified until its real managed-install and
+approved-Update proof is recorded**. Offline tests alone do not establish that
+Workbot chat, Slack thread delivery, headless Automations or Freestyle commands
+work on a live install. Do not enable production installer publication based on
+an available form or a green plan.
+
+The 17 November 2026 isolated qualification observed a real fresh managed install,
+then an approved Update enabling the optional services on that same install. Its
+certificate cutover, encrypted EFS/backup and secret-preservation checks passed.
+**The application qualification failed:** Workbot Send returned HTTP 403
+`gateway_not_configured`, and a real scheduled headless Automation failed
+`provider_unavailable` at the current runtime's Gateway-only model-selection
+policy. This was tested with fixed OpenWork `0.18.67` application digests and
+isolated test-only installer versions, not production release coordinates.
+Those failures are retained for the legacy/direct configuration. The selected
+architecture now includes the native Gateway and keeps runtime authorization
+unchanged. The direct-model runtime proposal was cancelled before any code or
+images were created. A new approved Gateway-profile Update and complete model
+checks remain required; infrastructure health is not a successful model turn.
+The actual scheduled daily EFS backup has since completed encrypted with its
+configured plan/role; restore remains untested. The installer README keeps each
+`Passed`, `Failed` and `NotRun` result distinct.
+
 ## From an agent (MCP)
 
 With `managedDeployments` on for the organization (cloud only, off by
@@ -85,7 +166,10 @@ certificate. The deployment reads **Operational**, **Degraded** (warnings or a
 non-critical failure), **Down** (API, web, database connection or services
 failing) or **Not reporting** (no report for 16 minutes; the last known checks
 stay visible). Reports are authenticated by the agent's AWS role identity and
-bound to the exact report body; replays are rejected.
+bound to the exact report body; replays are rejected. The existing 30-per-hour
+burst limit uses fixed windows so normal five-minute reports do not accumulate
+into a later lockout. Existing counters expire normally; deployment does not
+clear them or bypass throttling.
 
 ## Updates and recovery (approval required)
 
@@ -119,7 +203,8 @@ bound to the exact report body; replays are rejected.
    pair. That is a real version-increasing Update, not Retry or a fictitious image
    tag. Never point production Den at those test-only artifacts.
 2. Publish from a dedicated release account into a versioned, encrypted S3
-   bucket whose `releases/*` objects are publicly readable and nothing else:
+   bucket whose `releases/*` objects and pinned versions are publicly readable
+   (`s3:GetObject` and `s3:GetObjectVersion`, not public listing) and nothing else:
    `node infra/managed-deployments/tools/publish-release.mjs <dir> <bucket> <account-id> <region>`.
    It refuses the wrong account and overwrites, and prints URLs pinned to
    immutable object versions.

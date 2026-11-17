@@ -206,6 +206,64 @@ coverage NotRun and failed steps Failed. Later offline hardening is not a new
 live run; fixture-established desktop authentication is not proof of an OS-level
 OAuth/protocol-handler handoff. Screenshots illustrate results, not decide them.
 
+## Gateway-backed AWS managed runtime qualification
+
+AWS's explicit `gateway` managed profile includes Den API/web, native AI Gateway,
+runner, Workbot, Slack processing and Automations. It does not alter the core C7
+conformance verdict or direct-module defaults. Existing records remain `legacy`
+until an approved version-increasing profile Update. Hosted runtime controls are
+behind `managedDeploymentAssistants`; GCP behavior is unchanged.
+
+All agent inference uses existing scoped Gateway authorization. Upstream model
+credentials and grants are configured inside the installed Den, not hosted
+installer configuration. Gateway-profile runners receive no global upstream key.
+Only computers are optional/off by default: Daytona is preferred, Freestyle is
+supported. They execute outside the customer's AWS account. The customer must
+also configure the real Slack app and connection inside Den.
+
+Only enabled computers require a same-account/region Secrets Manager reference;
+ECS injects it without a Terraform secret-value read. Legacy direct-model inputs
+remain compatible only for legacy profiles. Generated core/runner credentials
+and historical state remain state-backed; protect them. Customer-managed KMS
+keys need separately reviewed grants.
+
+A managed runner adds encrypted EFS and daily encrypted AWS Backup recovery
+points with seven-day retention. Keep backup resources protected alongside the
+conversation disk. Report the latest completed recovery point, not just an
+existing backup plan. These are filesystem backups, not a validated live SQLite
+export/restore. Application-consistent restore proof remains a separate check.
+
+The runner is a single SQLite owner: each task-definition rollout stops it before
+starting its replacement. No turn-drain protocol is provided; active turns and
+Automations may be interrupted and need outcome inspection before any deliberate
+retry. The installer documents a maintenance window. Core TLS redeployment must
+never force a second runner restart. Adding Workbot must preserve existing runner
+credentials/disk and validate the expanded ACM certificate before listener cutover;
+it must not bypass protected-resource checks.
+
+Qualification must use the **managed CloudFormation/CodeBuild path**, an isolated
+release channel and a disposable authorized test account. Native tests, direct
+module conformance, local product tests and plans do not satisfy it. Record:
+
+- A managed baseline, then a version-increasing Update enabling Workbot with
+  customer IAM re-approval and live HTTPS continuity observations.
+- Actual Workbot chat output, installed Slack assistant thread delivery, a
+  completed headless Automation, and a Freestyle command from Workbot.
+- Another approved Update on the same install, with preserved conversations/core
+  secret fingerprints and the same behaviours rechecked.
+- Redacted evidence, followed by destroy and independent retained/soft-deleted
+  resource inventory. Never publish secret material, state or customer identity.
+
+Until that candidate-specific sequence has been observed, mark the profile
+**unqualified** and retain each missing (`NotRun`) or failed (`Failed`) result.
+The November 2026 legacy/direct test passed cloud install/enable-Update,
+certificate continuity and both triggered/scheduled encrypted EFS backups, but
+failed Workbot and scheduled Automation model access because no Gateway was
+installed. Those failures remain recorded. The selected Gateway-backed profile
+requires a new approved Update and independent application proof; no direct-model
+runtime change was implemented. See the installer README for exact live status.
+Production release publication or hosted release changes remain separate actions.
+
 ## Known per-cloud limitations
 
 - **Azure migration waiter:** job start is native AzAPI, but terminal waiting is a
