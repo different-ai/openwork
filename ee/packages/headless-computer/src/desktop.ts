@@ -41,10 +41,25 @@ export type CarriedState = "profile" | "workspace"
  * Why a desktop could not start, as a stable code the runner reports and Workbot turns into its own words.
  * `desktop_outdated`: the computer's image can't serve this runner, so the computer has to be replaced.
  * `desktop_updating`: it is being replaced, or will be once the work running on it finishes.
+ * `desktop_replacing`: its desktop wouldn't start, and it is being replaced right now.
+ * `stage`: for a desktop that didn't start, how far the start got, for the runner's log.
  */
 export class DesktopError extends Error {
-  constructor(readonly desktopCode: "desktop_outdated" | "desktop_unresponsive" | "desktop_updating", message: string) { super(message) }
+  constructor(readonly desktopCode: "desktop_outdated" | "desktop_unresponsive" | "desktop_updating" | "desktop_replacing", message: string, readonly stage?: string) { super(message) }
 }
+
+/**
+ * One look inside a computer whose desktop won't start: seconds since it booted, load, memory and disk left, how many
+ * of the desktop's processes exist (a start still running, displays, browser, guest), and how many seconds ago a start
+ * last began, last launched the guest, and the guest last wrote to its log (-1: never). Printed as `name=number`.
+ */
+const EXAMINE = [
+  "s=/var/lib/openwork-desktop",
+  `age() { m=$(stat -c %Y "$1" 2>/dev/null) && echo $(( $(date +%s) - m )) || echo -1; }`,
+  // The brackets keep a pattern from matching the shell that runs it.
+  `echo "up=$(cut -d. -f1 /proc/uptime) load=$(cut -d' ' -f1 /proc/loadavg) memFreeMb=$(awk '/^MemAvailable/{printf "%d", $2/1024}' /proc/meminfo) diskFreeMb=$(df -Pm / | awk 'NR==2{print $4}') starting=$(pgrep -fc 'openwork-desktop-bridge[ ]start' || true) displays=$(pgrep -c Xvfb || true) browsers=$(pgrep -c chrom || true) guests=$(pgrep -fc 'openwork-desktop/guest[.]mjs' || true) startAge=$(age $s/start.lock) guestAge=$(age $s/guest.pid) logAge=$(age $s/guest.log)"`,
+].join("; ")
+const EXAMINED: ReadonlySet<string> = new Set(["up", "load", "memFreeMb", "diskFreeMb", "starting", "displays", "browsers", "guests", "startAge", "guestAge", "logAge"])
 
 /** The existing conversation computer owns the desktop too; it never provisions a second machine. */
 export class Desktop {
@@ -94,7 +109,7 @@ export class Desktop {
     /** What a step may take: its own limit, or what is left of the start's time. */
     const within = (limit: number) => {
       const left = deadline - Date.now()
-      if (left < 1_000) throw new DesktopError("desktop_unresponsive", "The computer's desktop didn't start. Try reconnecting.")
+      if (left < 1_000) throw new DesktopError("desktop_unresponsive", "The computer's desktop didn't start. Try reconnecting.", "out of time")
       return Math.min(limit, left)
     }
     const { health: ready, built } = await this.look(box)
@@ -123,7 +138,8 @@ export class Desktop {
         if (started.missingHelper) {
           throw new Error(`The computer needs a desktop snapshot built for this runner, including its restricted desktop helper. ${started.detail}`)
         }
-        throw new DesktopError("desktop_unresponsive", `The computer's desktop didn't start. Try reconnecting.${started.detail ? ` ${started.detail}` : ""}`)
+        throw new DesktopError("desktop_unresponsive", `The computer's desktop didn't start. Try reconnecting.${started.detail ? ` ${started.detail}` : ""}`,
+          `${started.timedOut ? "start timed out" : "start failed"}${started.detail ? `: ${started.detail}` : ""}`)
       }
       refusal = started.detail
     }
@@ -170,7 +186,7 @@ export class Desktop {
       const detail = error instanceof Error ? error.message : String(error)
       return { ok: false, health: null, detail: detail.slice(0, 300), timedOut: (isSandboxError(error) && error.code === "timeout") || /timed?\s*out|timeout/i.test(detail), missingHelper: false }
     }
-    if (result.exitCode === STARTED_SILENT) throw new DesktopError("desktop_unresponsive", "The desktop didn't respond. Try reconnecting.")
+    if (result.exitCode === STARTED_SILENT) throw new DesktopError("desktop_unresponsive", "The desktop didn't respond. Try reconnecting.", "started, then never answered")
     const detail = result.stderr.trim()
     const health = result.exitCode === 0 ? healthSchema.safeParse(safeJson(result.stdout.trim().split("\n").at(-1) ?? "")) : null
     return {
@@ -180,6 +196,20 @@ export class Desktop {
       timedOut: /timed?\s*out|timeout/i.test(detail),
       missingHelper: detail.includes(BRIDGE) && /command not found|no such file or directory|not found/i.test(detail),
     }
+  }
+
+  /**
+   * What a computer whose desktop won't start looks like from inside (EXAMINE), for the runner's log: replacing it
+   * deletes it, and with it any way to tell why. Numbers only, so nothing a person typed or opened can be in it; null
+   * when the computer doesn't answer in time.
+   */
+  async examine(box: SandboxHandle, timeoutMs: number) {
+    const result = await this.provider.blocks?.run?.(box, { command: EXAMINE, activity: "maintenance", timeoutMs }).catch(() => null)
+    const found: Record<string, number> = {}
+    for (const [, name = "", value] of (result?.stdout ?? "").matchAll(/(?:^|\s)([A-Za-z]+)=(-?\d+(?:\.\d+)?)(?=\s|$)/g)) {
+      if (EXAMINED.has(name)) found[name] = Number(value)
+    }
+    return Object.keys(found).length ? found : null
   }
 
   /** The image and guest this computer was built with, or null from a helper that predates in-place updates. */
