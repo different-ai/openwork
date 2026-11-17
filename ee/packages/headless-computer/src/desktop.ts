@@ -18,9 +18,15 @@ const REPLACED_NOTE = `${UPLOADS}/.openwork-replaced-on-older-image`
 const MAX_CARRIED_BYTES = 100 * 1024 * 1024
 /**
  * How long a desktop gets to start, across every step. The steps' own limits add up to minutes, and a computer that
- * needs them all isn't going to start: the sooner that is known, the sooner it can be replaced.
+ * needs them all isn't going to start: the sooner that is known, the sooner it can be replaced. Starts that worked
+ * took 17 seconds at most, with a guest install and a second start; the ones that didn't used all the time they got.
  */
-const START_BUDGET_MS = 40_000
+const START_BUDGET_MS = 25_000
+/**
+ * How long one look at the desktop may take. A desktop that is up answers in a second or two; one that hasn't by now
+ * is treated as not running, and the time goes to starting it.
+ */
+const LOOK_MS = 6_000
 /** One look at the desktop, run inside the computer. */
 const HEALTH = `printf %s '{}' | sudo -n ${BRIDGE} call '/health'`
 /** What a start command exits with when the desktop started and then never answered. */
@@ -163,7 +169,7 @@ export class Desktop {
   private async look(box: SandboxHandle) {
     const result = await this.provider.blocks?.run?.(box, {
       command: `health=$(${HEALTH}); printf '%s\\n' "$health"; case "$health" in *${this.version}*) ;; *) sudo -n ${BRIDGE} versions ;; esac`,
-      timeoutMs: 12_000,
+      timeoutMs: LOOK_MS,
     }).catch(() => null)
     const [answered = "", versions = ""] = (result?.stdout ?? "").split("\n")
     const health = healthSchema.safeParse(safeJson(answered))

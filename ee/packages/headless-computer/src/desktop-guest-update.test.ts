@@ -202,8 +202,8 @@ test("the start command waits inside the computer for the desktop to answer, and
         onRun: ({ command }: RunSpec) => new Promise(resolve => {
           commands.push(command)
           // Most of the start's time is gone once the desktop has been looked at, so one that never answers is given up
-          // on in a second or two rather than in forty.
-          if (hurried && command.startsWith("health=")) t.mock.timers.tick(35_500)
+          // on in a second or two rather than in twenty-five.
+          if (hurried && command.startsWith("health=")) t.mock.timers.tick(20_500)
           execFile(shell, ["-c", command], { env }, (error, stdout, stderr) => resolve({ exitCode: error ? Number(error.code) : 0, stdout, stderr }))
         }),
       })
