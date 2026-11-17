@@ -24,8 +24,8 @@ own files, built on OpenCode. This repo is public.
   `@/components`; end users are non-technical.
 * **Fix the root cause.** A workaround you find is debt to remove, not a
   pattern to copy. Never write a comment or doc that justifies a shortcut.
-* Den API and the Gateway load TypeScript source in plain Node: after changing
-  what they import, run `pnpm check:node-source-imports`.
+* **Checks.** Run `pnpm check` before you say you are done. It is the
+  required PR checks, and the pre-push hook runs it too.
 
 ## Prove it works
 
