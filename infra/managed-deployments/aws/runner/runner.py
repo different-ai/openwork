@@ -7,10 +7,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
 import urllib.request
+from urllib.parse import urlsplit
 import zipfile
 
 # No third-party Python packages: AWS calls go through the AWS CLI that ships
@@ -32,7 +34,7 @@ STEPS = [(3, "account_verified", "runner_failed"), (4, "infrastructure_applied",
 PROTECTED_TYPES = {
     "aws_db_instance", "aws_db_subnet_group", "aws_secretsmanager_secret", "aws_secretsmanager_secret_version",
     "aws_elasticache_replication_group", "aws_efs_file_system", "aws_s3_bucket", "aws_kms_key", "aws_vpc",
-    "random_password",
+    "random_password", "aws_backup_vault", "aws_backup_plan", "aws_backup_selection",
 }
 
 
@@ -80,7 +82,80 @@ def terraform_inputs():
         "region": os.environ["AWS_REGION"], "account_id": os.environ["EXPECTED_ACCOUNT_ID"],
         "route53_zone_id": os.environ["ROUTE53_ZONE_ID"],
         **network_inputs(),
+        **assistant_inputs(),
     }
+
+
+def boolean_input(name):
+    value = os.environ.get(name, "false")
+    if value not in ("true", "false"):
+        raise ValueError("invalid installer boolean: " + name)
+    return value == "true"
+
+
+def customer_secret_arn(name, required=False):
+    """Accept a reference only. Neither Terraform nor this process reads its value."""
+    value = os.environ.get(name, "")
+    prefix = f'arn:aws:secretsmanager:{os.environ["AWS_REGION"]}:{os.environ["EXPECTED_ACCOUNT_ID"]}:secret:'
+    if (required and not value) or (value and (
+            not value.startswith(prefix) or not re.fullmatch(r"[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6}", value[len(prefix):]))):
+        raise ValueError("a same-account, same-region Secrets Manager ARN is required: " + name)
+    return value
+
+
+def assistant_inputs():
+    enabled = boolean_input("HEADLESS_RUNNER_ENABLED")
+    workbot = boolean_input("WORKBOT_ENABLED")
+    slack = boolean_input("SLACK_ASSISTANT_ENABLED")
+    provider = os.environ.get("HEADLESS_COMPUTER_PROVIDER", "off")
+    if provider not in ("off", "freestyle"):
+        raise ValueError("unsupported managed computer provider")
+    if not enabled:
+        if workbot or slack or provider != "off":
+            raise ValueError("Workbot, Slack and computers require the managed runner")
+        return {}
+    protocol = os.environ.get("HEADLESS_MODEL_PROTOCOL", "anthropic")
+    if protocol not in ("anthropic", "openai", "openai-responses"):
+        raise ValueError("unsupported direct model protocol")
+    base_url = os.environ.get("HEADLESS_MODEL_BASE_URL", "")
+    parsed = urlsplit(base_url)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
+            or parsed.password is not None or parsed.query or parsed.fragment):
+        raise ValueError("the direct model endpoint must be an HTTPS URL without credentials or a query")
+    model = os.environ.get("HEADLESS_MODEL", "")
+    if not model or len(model) > 200 or any(ord(c) < 32 for c in model):
+        raise ValueError("a direct model id is required")
+    return {
+        "headless_runner": {"enabled": True, "model_protocol": protocol, "model_base_url": base_url, "model": model},
+        "workbot": {"enabled": workbot},
+        "slack_assistant_enabled": slack,
+        "headless_computer": {"provider": provider},
+        "headless_model_secret_arn": customer_secret_arn("HEADLESS_MODEL_SECRET_ARN", required=True),
+        "headless_computer_secret_arn": customer_secret_arn("HEADLESS_COMPUTER_SECRET_ARN", required=provider == "freestyle"),
+    }
+
+
+AWS_IMAGE_REPOSITORIES = {
+    "den_api": "ghcr.io/different-ai/openwork-den-api",
+    "den_web": "ghcr.io/different-ai/openwork-den-web",
+    "headless_runner": "ghcr.io/different-ai/openwork-headless-runner",
+    "workbot": "ghcr.io/different-ai/openwork-workbot",
+}
+
+
+def release_images(release, assistants_enabled=False):
+    """Keep legacy core-only releases valid, but never enable unpinned assistants."""
+    images = release.get("images", {})
+    core = {"den_api", "den_web"}
+    complete = set(AWS_IMAGE_REPOSITORIES)
+    if not isinstance(images, dict) or (images and set(images) not in (core, complete)):
+        raise ValueError("invalid AWS release image inventory")
+    if assistants_enabled and set(images) != complete:
+        raise ValueError("this release does not pin the runner and Workbot images")
+    for kind, image in images.items():
+        if not isinstance(image, str) or not re.fullmatch(re.escape(AWS_IMAGE_REPOSITORIES[kind]) + r"@sha256:[a-f0-9]{64}", image):
+            raise ValueError("invalid AWS release image pin: " + kind)
+    return {kind + "_image": image for kind, image in images.items()}
 
 
 def id_list(name):
@@ -352,12 +427,11 @@ def apply(root, tf_root):
     inputs = tf_root / "managed.auto.tfvars.json"
     values = terraform_inputs()
     release = root / "release.json"
+    assistants_enabled = values.get("headless_runner", {}).get("enabled", False)
     if release.exists():
-        images = json.loads(release.read_text()).get("images", {})
-        if images:
-            if set(images) != {"den_api", "den_web"}:
-                raise ValueError("invalid AWS release image inventory")
-            values.update(den_api_image=images["den_api"], den_web_image=images["den_web"])
+        values.update(release_images(json.loads(release.read_text()), assistants_enabled))
+    elif assistants_enabled:
+        raise ValueError("the managed runner requires a pinned release inventory")
     inputs.write_text(json.dumps(values))
     inputs.chmod(0o600)
     subprocess.run([binary, "init", "-input=false", "-lockfile=readonly",
@@ -391,7 +465,10 @@ def apply(root, tf_root):
         raise
     raw = subprocess.check_output([binary, "output", "-json"], cwd=tf_root)
     outputs = {key: value["value"] for key, value in json.loads(raw).items()}
-    expected = {name: outputs["task_definition_arns"][key] for key, name in outputs["service_names"].items()}
+    # TLS adoption concerns only Den API/web, never restart the single SQLite
+    # runner a second time after Terraform has already rolled it out.
+    expected = {name: outputs["task_definition_arns"][key] for key, name in outputs["service_names"].items()
+                if key in ("den_api", "den_web")}
     tls_redeploy(cluster=outputs["cluster_name"], expected=expected)
     return outputs
 
@@ -470,9 +547,22 @@ def verify_services(outputs):
     status = aws("ecs", "describe-services", "--cluster", outputs["cluster_name"], "--services", *services)
     if status.get("failures") or len(status["services"]) != len(services):
         raise ValueError("services unavailable")
+    if {service.get("serviceName") for service in status["services"]} != set(services):
+        raise ValueError("unexpected service inventory")
+    optional = {name: outputs.get("task_definition_arns", {}).get(key)
+                for key, name in outputs["service_names"].items() if key in ("headless_runner", "workbot")}
     for service in status["services"]:
         if service["runningCount"] < service["desiredCount"] or service["desiredCount"] < 1:
             raise ValueError("services not running")
+        if service["serviceName"] in optional:
+            intended = optional[service["serviceName"]]
+            deployments = service.get("deployments", [])
+            if (not intended or service.get("taskDefinition") != intended
+                    or service.get("pendingCount") != 0 or len(deployments) != 1
+                    or deployments[0].get("status") != "PRIMARY"
+                    or deployments[0].get("taskDefinition") != intended
+                    or deployments[0].get("rolloutState") != "COMPLETED"):
+                raise ValueError("assistant service has not completed its intended rollout")
 
 
 def fetch_json(url):
@@ -485,6 +575,9 @@ def verify_health(outputs, attempts=20, delay=15):
     expected_api = "https://api." + os.environ["DOMAIN_NAME"]
     if outputs["web_url"] != expected_web or outputs["api_url"] != expected_api:
         raise ValueError("unexpected service origin")
+    workbot_url = outputs.get("workbot_url")
+    if workbot_url is not None and workbot_url != "https://chat." + os.environ["DOMAIN_NAME"]:
+        raise ValueError("unexpected Workbot origin")
     # New DNS records and certificates can take a few minutes to become visible.
     for attempt in range(attempts):
         try:
@@ -492,7 +585,11 @@ def verify_health(outputs, attempts=20, delay=15):
             ready = fetch_json(expected_api + "/ready")
             with urllib.request.urlopen(expected_web + "/setup", timeout=30) as response:
                 web_ok = response.status == 200
-            if health.get("ok") is True and health.get("service") == "den-api" and ready.get("ok") is True and web_ok:
+            workbot_ok = True
+            if workbot_url:
+                with urllib.request.urlopen(workbot_url + "/healthz", timeout=30) as response:
+                    workbot_ok = response.status == 200
+            if health.get("ok") is True and health.get("service") == "den-api" and ready.get("ok") is True and web_ok and workbot_ok:
                 return
         except Exception:
             pass
