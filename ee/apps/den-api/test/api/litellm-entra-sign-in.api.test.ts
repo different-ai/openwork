@@ -307,6 +307,53 @@ test("an admin edits the model list and the sign-in settings; changing the scope
   assert.equal((await usable(person, entraProviderId))?.credentialStatus, "ready")
 })
 
+test("sign-in cannot be transferred between members or redirected to an untrusted site", async () => {
+  const attempt = await startConnect(person, entraProviderId)
+  const mismatch = await browser(workspace.owner, `/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(attempt)}`)
+  assert.equal(mismatch.status, 403, summary(mismatch))
+  assert.equal(field(mismatch.body, "error"), "browser_account_mismatch")
+  const redirected = await asPerson("GET", `/v1/inference-providers/${entraProviderId}/oauth/start?redirectTo=${encodeURIComponent("https://untrusted.example.test/return")}`)
+  assert.equal(redirected.status, 400, summary(redirected))
+  assert.equal(field(redirected.body, "error"), "invalid_redirect")
+  assert.equal((await asPerson("POST", "/v1/inference-providers/litellm", entraProvider())).status, 403)
+  assert.equal((await asPerson("PATCH", `/v1/inference-providers/${entraProviderId}/litellm`, { oauthClientSecret: "unauthorized-secret-fixture" })).status, 403)
+})
+
+test("changing each app registration setting revokes tokens and cancels an in-flight exchange", async () => {
+  const changes = [
+    { oauthTenantId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" },
+    { oauthClientId: "aaaaaaaa-bbbb-4ccc-8ddd-ffffffffffff" },
+    { oauthClientSecret: "rotated-client-secret-fixture" },
+    { oauthScope: `api://${CLIENT}/revised` },
+  ]
+  for (const change of changes) {
+    const created = await owner("POST", "/v1/inference-providers/litellm", entraProvider())
+    assert.equal(created.status, 201, summary(created))
+    const providerId = text(field(created.body, "inferenceProvider", "id"), "provider id")
+    grantedScope = API_SCOPE
+    assert.equal((await signIn(person, providerId)).callback.status, 200)
+    const entered = Promise.withResolvers<void>()
+    const released = Promise.withResolvers<void>()
+    beforeTokenResponse = async () => { entered.resolve(); await released.promise }
+    const pending = signIn(person, providerId)
+    try {
+      await entered.promise
+      const changed = await owner("PATCH", `/v1/inference-providers/${providerId}/litellm`, change)
+      assert.equal(changed.status, 200, summary(changed))
+      assert.deepEqual(list(field(changed.body, "inferenceProvider", "credentials")).map((credential) => credential.status), ["revoked"])
+    } finally {
+      released.resolve()
+    }
+    try {
+      const { callback } = await pending
+      assert.equal(callback.status, 400, summary(callback))
+      assert.equal((await usable(person, providerId))?.credentialStatus, "member_auth_required")
+    } finally {
+      beforeTokenResponse = undefined
+    }
+  }
+})
+
 test("turning the feature off stops new sign-ins and edits, and keeps what people already have", async () => {
   const attempt = await startConnect(person, entraProviderId)
   assert.equal((await den.setFeature(workspace.orgId, FEATURE, false)).status, 200)
