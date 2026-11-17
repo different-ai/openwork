@@ -106,6 +106,7 @@ jobs:
           .github/scripts/ee-image-inputs.test.mjs
           .github/scripts/managed-stable-release.test.mjs
           .github/scripts/render-build-filters.test.mjs
+          .github/scripts/celld-fleet-health.test.mjs
           .github/scripts/runtime-scope.test.mjs
           .github/scripts/build-boundaries-native.test.mjs
           .github/scripts/build-boundaries-codeql.test.mjs
