@@ -24,9 +24,10 @@ chat: no attachments, notifications or background task controls.
   sealed Workbot session it sends as a bearer token; it never holds Den
   tokens. Details: [Workbot's README](../../../ee/apps/workbot/README.md#the-phone-app).
 - iOS only hands the return address to the app once Workbot serves the
-  app's identity: set `WORKBOT_IOS_TEAM_ID`. Unset, the iPhone app can't
-  finish signing in. `WORKBOT_ANDROID_CERT_SHA256` does the same for an
-  Android app, which does not exist yet.
+  app's identity: set `WORKBOT_IOS_TEAM_ID`. `WORKBOT_ANDROID_CERT_SHA256`
+  does the same for an Android app, which does not exist yet. While both are
+  unset, phone sign-in is off for the whole deployment: its routes refuse
+  without asking Den.
 
 ## How to try it
 

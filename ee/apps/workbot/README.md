@@ -101,7 +101,7 @@ so an Android app can use the same return address.
 | `WORKBOT_DEN_WEB_URL` | sign-in origin | Den's web app, for the link back and app logos |
 | `WORKBOT_RUNNER_URL`, `WORKBOT_RUNNER_TOKEN` | required | The headless runner and its service token (`HEADLESS_API_TOKEN`) |
 | `WORKBOT_SESSION_SECRET` | required | ≥ 32 characters; encrypts the sign-in cookies. Changing it signs everyone out |
-| `WORKBOT_IOS_TEAM_ID` | unset | The OpenWork app's Apple team ID, served in `apple-app-site-association` so iOS returns sign-in to the app. Unset: the iPhone app can't finish signing in |
+| `WORKBOT_IOS_TEAM_ID` | unset | The OpenWork app's Apple team ID, served in `apple-app-site-association` so iOS returns sign-in to the app. While this and `WORKBOT_ANDROID_CERT_SHA256` are both unset, phone sign-in is off: `/auth/app/login` and `/auth/app/token` refuse without asking Den |
 | `WORKBOT_ANDROID_CERT_SHA256` | unset | SHA-256 fingerprints of an Android app's signing certificates, comma-separated, served in `assetlinks.json`. Unset: nothing is served; no Android app exists yet |
 | `PORT` / `WORKBOT_PORT` | `3020` | |
 | `WORKBOT_SENTRY_DSN` | unset | Optional Sentry error reports from the server: route errors, sign-in and token refresh failures, `den_unavailable`, runner unreachable or 5xx, live-event relay failures. Stable codes only, never messages, tokens or cookies. Unset sends nothing |

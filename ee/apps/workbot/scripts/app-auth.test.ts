@@ -18,7 +18,10 @@ const environment = {
   WORKBOT_RUNNER_URL: "http://runner",
   WORKBOT_RUNNER_TOKEN: "runner-token-runner-token-runner-0001",
   WORKBOT_SESSION_SECRET: SECRET,
+  // Naming the app is what turns phone sign-in on for a deployment.
+  WORKBOT_IOS_TEAM_ID: "ABCDE12345",
 }
+const { WORKBOT_IOS_TEAM_ID: _named, ...unnamed } = environment
 const config = loadConfig(environment)
 const person = (overrides: Record<string, unknown> = {}): DenSession =>
   denSessionSchema.parse({
@@ -273,9 +276,16 @@ test("only an HTTPS Workbot has a phone return address, and only a configured on
     createAuth({ config: loadConfig({ ...environment, ...settings }), den: unusedDen, report: () => {} }).register(app)
     return app
   }
-  const unset = served({})
+  // A deployment that has not named its app: nothing is served, and phone sign-in is off without asking Den.
+  assert.deepEqual(loadConfig(unnamed).appRedirectUris, [])
+  const unset = new Hono<AppEnv>()
+  createAuth({ config: loadConfig(unnamed), den: unusedDen, report: () => {} }).register(unset)
   assert.equal((await unset.request("/.well-known/apple-app-site-association")).status, 404)
   assert.equal((await unset.request("/.well-known/assetlinks.json")).status, 404)
+  assert.equal((await unset.request(`/auth/app/login?${new URLSearchParams({ code_challenge: "c".repeat(43), code_challenge_method: "S256", state: "app-state-0123456789", redirect_uri: APP_REDIRECT })}`)).status, 400)
+  const refused = await trade(unset, { code: "den-code", codeVerifier: "v".repeat(43), redirectUri: APP_REDIRECT })
+  assert.equal(refused.status, 400)
+  assert.deepEqual(await refused.json(), { error: "invalid_request" })
 
   const fingerprint = Array.from({ length: 32 }, () => "AB").join(":")
   const set = served({ WORKBOT_IOS_TEAM_ID: "ABCDE12345", WORKBOT_ANDROID_CERT_SHA256: fingerprint.toLowerCase() })
