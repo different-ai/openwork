@@ -28,6 +28,31 @@ offers a fourth choice, **Microsoft sign-in**:
 Nothing changes for Microsoft Foundry sign-in or for the three key-based
 LiteLLM modes, with the feature on or off.
 
+## How it is built
+
+- **No database migration.** The app registration lives in the provider's one
+  member credential set (the `oauth_tenant_id`, `oauth_client_id` and encrypted
+  `oauth_client_secret` columns Microsoft Foundry sets use). The mode
+  (`keySource: "entra"`), the API scope (`entraScope`) and the model list
+  (`catalog`) live in `gateway_providers.settings.litellm`.
+- **One sign-in flow.** `oauth/start`, `browser-status`, `browser-start` and
+  `oauth/callback` are the routes Microsoft Foundry sign-in uses. The API
+  scope is a parameter: none means Azure Cognitive Services (Foundry), a
+  LiteLLM provider passes its own. It is part of the attempt binding, is
+  stored with the token (`microsoftIdentity.scope`), and is checked before a
+  token is renewed or forwarded.
+- **API.** `POST /v1/inference-providers/litellm` with `mode: "entra"`,
+  `oauthTenantId`, `oauthClientId`, `oauthClientSecret`, `oauthScope` and
+  `modelIds`. `PATCH /v1/inference-providers/{id}/litellm` changes those.
+  Changing the tenant, application, scope or client secret revokes every
+  member's token. `POST …/litellm/sync` answers `409 litellm_sync_unavailable`.
+- **Refused scopes.** Microsoft Graph (including bare names such as
+  `User.Read`) and Azure Cognitive Services, because LiteLLM cannot validate
+  those tokens.
+- **Desktop.** No change: it already shows **Connect** for
+  `member_auth_required` providers and opens the connect page that
+  `oauth/start` returns.
+
 ## Who it is for
 
 Organizations whose LiteLLM proxy accepts identity-provider tokens instead of
@@ -49,12 +74,16 @@ LiteLLM keys, with Microsoft Entra ID as the identity provider.
 ## What turning it off does
 
 - No new LiteLLM provider can be added in this mode, and an existing one's
-  sign-in settings and model list cannot be changed (`404 feature_disabled`).
+  sign-in settings and model list cannot be changed (`403 feature_disabled`).
+  Its page shows the settings read only, with the reason.
 - **Connect** stops: the connect page says Microsoft sign-in for this provider
-  is turned off and that an admin can turn it back on.
-- People who already signed in keep their models. AI Gateway keeps renewing
-  and forwarding their token until it is revoked. To cut access immediately,
-  disable or remove the provider on its page; both work with the feature off.
+  is turned off and that an admin can turn it back on. A sign-in already in
+  the browser is refused at the callback and nothing is stored.
+- People who already signed in keep their models. AI Gateway does not read
+  feature state, so it keeps renewing and forwarding their token until it is
+  revoked. To cut access immediately, disable or remove the provider, or
+  remove its access grants; all of these work with the feature off, and
+  people can still sign out.
 - Stored tokens and settings are kept, so turning the feature back on restores
   everything without anyone signing in again.
 
@@ -73,7 +102,22 @@ LiteLLM keys, with Microsoft Entra ID as the identity provider.
 
 Tokens and the client secret are never logged and never returned by any API.
 
-## Not covered by automated tests
+## Tests
 
-The flow is unit and API tested against fakes. It has not been run against a
-real Entra tenant or a real LiteLLM proxy.
+- `ee/apps/gateway/test/litellm-entra-sign-in.test.ts`: scope strings, token
+  response checks, the credential and refresh allowlists, renewal with the
+  configured scope, and the bearer LiteLLM receives.
+- `ee/apps/den-api/test/api/litellm-entra-sign-in.api.test.ts`: create, edit,
+  the whole Connect flow, the feature turned off, and Foundry and key-based
+  LiteLLM providers behaving the same with the feature on and off.
+- `ee/apps/den-web/app/(den)/dashboard/_components/litellm-provider-data.test.ts`:
+  what the admin screens send and refuse.
+
+## Not verified
+
+- Entra ID and LiteLLM are stand-ins in every test. The flow has not been run
+  against a real Entra tenant or a real LiteLLM proxy, so the token Entra
+  issues for a custom scope and LiteLLM's validation of it are unproven here.
+- The admin screens were typechecked, linted and unit tested, not opened in a
+  browser. This doc has no screenshots yet; add them from a running Den before
+  the feature is turned on for anyone.
