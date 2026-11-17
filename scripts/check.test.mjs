@@ -22,6 +22,8 @@ test("the checks CI requires are the commands pnpm check runs", () => {
     "node scripts/check-node-source-imports.mjs",
     "pnpm features:check",
     "node .github/scripts/typecheck-shipped.mjs --all",
+    "node scripts/check-app-structure.mjs",
+    "node scripts/check-code-habits.mjs",
   ]) {
     assert.ok(workflow.includes(command), `quick-check.yml no longer runs: ${command}`);
     assert.ok(CHECKS.some((check) => check.command.join(" ") === command), `pnpm check does not run: ${command}`);

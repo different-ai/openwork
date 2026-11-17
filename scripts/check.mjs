@@ -40,6 +40,16 @@ export const CHECKS = [
     fix: "Add the missing key to apps/app/src/i18n/locales/en.ts, or remove the unused one.",
   },
   {
+    name: "app-structure",
+    command: ["node", "scripts/check-app-structure.mjs"],
+    fix: "Move the code to the folder the message names. Do not add the violation to the baseline.",
+  },
+  {
+    name: "code-habits",
+    command: ["node", "scripts/check-code-habits.mjs"],
+    fix: "Remove the comment or the effect as the message says. Do not add it to the baseline.",
+  },
+  {
     name: "spec-lint",
     command: ["pnpm", "--dir", "evals", "lint:specs"],
     requires: "evals/node_modules",

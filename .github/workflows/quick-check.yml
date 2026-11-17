@@ -136,6 +136,20 @@ jobs:
         run: |
           node --test scripts/check-node-source-imports.test.mjs
           node scripts/check-node-source-imports.mjs
+      # The app's layering and habits, frozen where they stand: no new
+      # wrong-direction imports, legacy-folder files, comments or effects.
+      - name: Check the app's structure and code habits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          node --test scripts/check-app-structure.test.mjs scripts/check-code-habits.test.mjs
+          node scripts/check-app-structure.mjs
+          if [ -n "${BASE_SHA:-}" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+            node scripts/check-code-habits.mjs --base "$BASE_SHA"
+          else
+            node scripts/check-code-habits.mjs
+          fi
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
       - name: Test the feature resolver
