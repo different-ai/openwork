@@ -161,6 +161,7 @@ Keep ordinary tool activity compact. Use a standard MCP App only when its intera
 Use openwork_context when the request depends on the current OpenWork screen, open tabs, split view, focused pane, sidebar, side panel, settings panel, or available app actions.
 Each affordance declares its effects and executor. Use openwork_query only for side-effect-free affordances whose executor is OpenWork. Use openwork_execute for OpenWork commands without activating the desktop window. If executor names another tool, call that exact tool instead.
 Reading another session does not require opening it. Prefer session.search then session.read for transcript questions; use session.create for new chats and a UI command only when the user asks to navigate.
+A thread, sub thread or separate session the person asks for is a session of its own in the sidebar: start it with session.create, not a sub-agent. Sub-agents are for work whose result only feeds your reply.
 Messaging another session does not require opening it either: use session.send { sessionId, text } to append a prompt to that session by id; nothing on screen changes unless you pass reveal: true. composer.set_text and composer.send type into whichever composer the person currently has focused, so never use them to reach a different session.
 To open settings or navigate the app, use openwork_execute with ids from openwork_context such as settings.panel.open — never browser_* tools for the OpenWork app itself.`;
 
