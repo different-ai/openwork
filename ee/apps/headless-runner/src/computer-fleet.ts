@@ -55,6 +55,8 @@ export type ComputerFleetSandbox = {
   slotReleased: boolean | null
   /** Gateway only: `private` or `external`. */
   trust: string | null
+  /** Seconds it has spent running over its whole life, where the provider counts them. */
+  runSeconds: number | null
 }
 /** How this runner treats one source's computers: what new ones are built from, and when it pauses and deletes them. */
 export type ComputerFleetSettings = { image: string | null; idlePauseSeconds: number; keepDays: number; persistent: boolean }
@@ -286,6 +288,7 @@ function fromGateway(value: GatewaySandbox, gateway: Gateway): ComputerFleetSand
     resumeRequestedAt: orNull(value.resumeRequestedAt),
     slotReleased: orNull(value.slotReleased),
     trust: orNull(value.trust),
+    runSeconds: null,
   }
 }
 
@@ -323,6 +326,7 @@ function fromFreestyle(value: FreestyleVm, computer: Direct): ComputerFleetSandb
     resumeRequestedAt: null,
     slotReleased: null,
     trust: null,
+    runSeconds: typeof value.totalRunSeconds === "number" && value.totalRunSeconds >= 0 ? value.totalRunSeconds : null,
   }
 }
 

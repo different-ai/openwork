@@ -16,7 +16,7 @@ const ago = (minutes: number) => new Date(NOW.getTime() - minutes * 60_000).toIS
 const computer = (id: string, extra: Partial<RunnerComputer> = {}): RunnerComputer => ({
   id, key: `hc-${id}`, source: "gateway", provider: "differently", status: "running", statusReason: null, pool: "opensandbox-microvm", backend: "opensandbox", region: "eastus",
   cpu: 2, memoryMb: 4096, diskGb: 8, createdAt: ago(600), updatedAt: ago(30), startedAt: ago(599), pausedAt: null, lastActivityAt: ago(1), expiresAt: null, endedAt: null, attempts: 1,
-  image: "workbot-computer", imageCurrent: true, idleTimeoutSeconds: null, idledAt: null, resumeRequestedAt: null, slotReleased: null, trust: "private",
+  image: "workbot-computer", imageCurrent: true, idleTimeoutSeconds: null, idledAt: null, resumeRequestedAt: null, slotReleased: null, trust: "private", runSeconds: null,
   ...extra,
 })
 /** The runner pauses a computer five minutes after its last use, and keeps it two weeks. */
@@ -175,10 +175,29 @@ test("a computer left running with nothing using it is flagged, once the runner 
   ]), noOwners, NOW)
   assert.deepEqual(Object.fromEntries(fleet.sandboxes.map((sandbox) => [sandbox.id, sandbox.attention])), { left: "idle_running", overdue: "idle_running", used: null, woken: null, waiting: null, silent: null, asleep: null })
   // Worth a look, not an outage.
-  assert.deepEqual([fleet.status, fleet.totals.attention, fleet.attentionCounts], ["warning", 2, { failed: 0, stuck_starting: 0, stuck_pausing: 0, stuck_stopping: 0, expired: 0, idle_running: 2 }])
+  assert.deepEqual([fleet.status, fleet.totals.attention, fleet.attentionCounts], ["warning", 2, { failed: 0, stuck_starting: 0, stuck_pausing: 0, stuck_stopping: 0, expired: 0, idle_running: 2, long_running: 0 }])
   // A slower runner (20 minutes before it pauses) gives a computer three of its waits.
   const slow = computerFleetFrom(listed([computer("a", { lastActivityAt: ago(45), updatedAt: ago(400) }), computer("b", { lastActivityAt: ago(61), updatedAt: ago(400) })], [gateway({ settings: { ...settings, idlePauseSeconds: 1200 } })]), noOwners, NOW)
   assert.deepEqual(slow.sandboxes.map((sandbox) => [sandbox.id, sandbox.attention]), [["b", "idle_running"], ["a", null]])
+})
+
+test("a computer awake for most of its life is flagged, even though its provider sees it in use", () => {
+  const vm = { source: "direct" as const, provider: "freestyle", pool: null, backend: null, region: null, lastActivityAt: ago(1), updatedAt: ago(1) }
+  const days = (value: number) => Math.round(value * 86_400)
+  const fleet = computerFleetFrom(listed([
+    // Created 11 days ago and running for 10.7 of them: nothing ever let it sleep.
+    computer("awake", { ...vm, createdAt: ago(11 * 1440), runSeconds: days(10.7) }),
+    // Used on and off: about one day in six.
+    computer("normal", { ...vm, createdAt: ago(6 * 1440), runSeconds: days(0.9) }),
+    // A busy first day says nothing yet.
+    computer("new", { ...vm, createdAt: ago(22 * 60), runSeconds: days(0.6) }),
+    // Asleep now, however much it ran before.
+    computer("resting", { ...vm, status: "paused", createdAt: ago(11 * 1440), runSeconds: days(10) }),
+    // A provider that does not count run time is never guessed at.
+    computer("uncounted", { createdAt: ago(11 * 1440), runSeconds: null }),
+  ]), noOwners, NOW)
+  assert.deepEqual(Object.fromEntries(fleet.sandboxes.map((sandbox) => [sandbox.id, sandbox.attention])), { awake: "long_running", normal: null, new: null, resting: null, uncounted: null })
+  assert.deepEqual([fleet.status, fleet.attentionCounts?.long_running, fleet.sandboxes[0]?.id, fleet.sandboxes[0]?.runSeconds], ["warning", 1, "awake", days(10.7)])
 })
 
 test("the list can be narrowed to one organization, and the page is told which organizations have computers", () => {
@@ -202,7 +221,7 @@ test("each computer says what it was built from, and a runner from before that s
   assert.deepEqual(fleet.sandboxes.map((sandbox) => [sandbox.id, sandbox.image, sandbox.imageCurrent]).sort(), [["a", "workbot-computer", true], ["b", "workbot-computer-old", false], ["c", null, null]])
   assert.deepEqual(fleet.sources.map((source) => source.settings?.idlePauseSeconds), [300, 300])
   // What the first runner with a list sent: no image, no settings. It parses, and reads as "not known".
-  const { image: _image, imageCurrent: _current, idleTimeoutSeconds: _idle, idledAt: _idled, resumeRequestedAt: _resume, slotReleased: _slot, trust: _trust, ...older } = computer("a")
+  const { image: _image, imageCurrent: _current, idleTimeoutSeconds: _idle, idledAt: _idled, resumeRequestedAt: _resume, slotReleased: _slot, trust: _trust, runSeconds: _run, ...older } = computer("a")
   const { settings: _settings, ...olderSource } = gateway()
   const parsed = runnerComputerFleetSchema.parse({ version: 1, generatedAt: NOW.toISOString(), sources: [olderSource], sandboxes: [older] })
   const read = computerFleetFrom(parsed, noOwners, NOW)

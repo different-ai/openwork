@@ -4,6 +4,7 @@ import {
   COMPUTER_FLEET_FAILURE_HOURS,
   COMPUTER_FLEET_IDLE_RUNNING_MINUTES,
   COMPUTER_FLEET_LIST_LIMIT,
+  COMPUTER_FLEET_LONG_RUNNING,
   COMPUTER_FLEET_ORGANIZATION_LIMIT,
   COMPUTER_FLEET_STUCK_MINUTES,
   COMPUTER_FLEET_UNKNOWN_ORGANIZATION,
@@ -85,6 +86,12 @@ function attentionOf(sandbox: ComputerFleetSandbox, now: number, idleRunningAfte
   // The last sign of use: activity, or the start that put it in this state. Never guessed when the provider gives none.
   const used = ms(sandbox.lastActivityAt)
   if (sandbox.state === "running" && used !== null && now - Math.max(used, ms(sandbox.lastChangedAt) ?? 0) > idleRunningAfter) return "idle_running"
+  // In use as far as its provider can tell, yet awake most of its life: something never lets it sleep.
+  const created = ms(sandbox.createdAt)
+  if (sandbox.state === "running" && sandbox.runSeconds !== null && created !== null) {
+    const life = now - created
+    if (life >= COMPUTER_FLEET_LONG_RUNNING.minAgeHours * 60 * MINUTE_MS && sandbox.runSeconds * 1000 > life * COMPUTER_FLEET_LONG_RUNNING.share) return "long_running"
+  }
   return null
 }
 
@@ -114,6 +121,7 @@ function sandboxOf(raw: RunnerComputer, owners: ReadonlyMap<string, ComputerOwne
     organization: raw.key ? (owners.get(raw.key) ?? null) : null,
     image: raw.image?.slice(0, 200) || null,
     imageCurrent: raw.imageCurrent,
+    runSeconds: whole(raw.runSeconds),
   }
   if (state === "failed" && !keepOldFailure) {
     // A failure ends a sandbox, and providers keep ended ones: only the last day's are news.
@@ -142,7 +150,7 @@ function byUrgency(a: ComputerFleetSandbox, b: ComputerFleetSandbox) {
 }
 
 const emptyTotals = (): ComputerFleetTotals => ({ total: 0, running: 0, starting: 0, pausing: 0, paused: 0, stopped: 0, stopping: 0, failed: 0, attention: 0 })
-const noAttention = (): ComputerFleetAttentionCounts => ({ failed: 0, stuck_starting: 0, stuck_pausing: 0, stuck_stopping: 0, expired: 0, idle_running: 0 })
+const noAttention = (): ComputerFleetAttentionCounts => ({ failed: 0, stuck_starting: 0, stuck_pausing: 0, stuck_stopping: 0, expired: 0, idle_running: 0, long_running: 0 })
 
 function statusOf(sources: ComputerFleetSource[], sandboxes: ComputerFleetSandbox[], listTruncated: boolean): ComputerFleetStatus {
   const readable = sources.filter((source) => source.status !== "unsupported")
@@ -287,7 +295,7 @@ export function computerDetailFrom(detail: RunnerComputerDetail, owner: Computer
       maxRunSeconds: whole(detail.limits.maxRunSeconds),
       maxPausedSeconds: whole(detail.limits.maxPausedSeconds),
       autoDeleteSeconds: whole(detail.limits.autoDeleteSeconds),
-      totalRunSeconds: whole(detail.limits.totalRunSeconds),
+      totalRunSeconds: whole(detail.limits.totalRunSeconds) ?? whole(raw.runSeconds),
     },
     profile: detail.limits.profile?.slice(0, 200) ?? null,
     classification: detail.limits.classification?.slice(0, 200) ?? null,

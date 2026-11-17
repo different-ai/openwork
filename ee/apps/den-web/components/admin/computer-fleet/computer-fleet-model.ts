@@ -35,6 +35,7 @@ export const ATTENTION_LABEL: Record<ComputerFleetAttention, string> = {
   stuck_stopping: "Stuck stopping",
   expired: "Past its expiry",
   idle_running: "Running unused",
+  long_running: "Awake most of its life",
 };
 
 const count = (value: number) => value.toLocaleString("en-US");
@@ -76,8 +77,12 @@ export function formatSpan(seconds: number): string {
   return unit(Math.round(seconds / 86_400), "day");
 }
 
-/** How long a computer has been in its state: since its provider last changed it. Null when it does not say. */
-export function stateDuration(sandbox: Pick<ComputerFleetSandbox, "lastChangedAt" | "state" | "pausedAt">, now: number): string | null {
+/**
+ * How long a computer has been in its state: since its provider last changed it. Null when it does not say. The
+ * direct provider moves that time with every use, so for a running computer there it says nothing about the state.
+ */
+export function stateDuration(sandbox: Pick<ComputerFleetSandbox, "lastChangedAt" | "state" | "pausedAt" | "source">, now: number): string | null {
+  if (sandbox.source === "direct" && sandbox.state === "running") return null;
   const since = Date.parse((sandbox.state === "paused" ? sandbox.pausedAt : null) ?? sandbox.lastChangedAt ?? "");
   return Number.isFinite(since) && now >= since ? formatDuration(now - since) : null;
 }
@@ -235,6 +240,7 @@ export function fleetNotice(fleet: AdminComputerFleet): FleetNotice | null {
   if (stuck > 0) return { tone: "error", message: `${stuck === 1 ? "1 computer has" : `${count(stuck)} computers have`} been starting, pausing or stopping far longer than that takes. The person waiting on ${stuck === 1 ? "it" : "them"} sees a computer that does not come back.` };
   if (kinds.failed > 0) return { tone: "warning", message: `${kinds.failed === 1 ? "1 computer" : `${count(kinds.failed)} computers`} failed in the last day. Each one's reason is in the list.` };
   if (kinds.idle_running > 0) return { tone: "warning", message: `${kinds.idle_running === 1 ? "1 computer is" : `${count(kinds.idle_running)} computers are`} running with nothing using ${kinds.idle_running === 1 ? "it" : "them"}, long after the runner should have paused ${kinds.idle_running === 1 ? "it" : "them"}.` };
+  if (kinds.long_running > 0) return { tone: "warning", message: `${kinds.long_running === 1 ? "1 computer has" : `${count(kinds.long_running)} computers have`} been awake for most of ${kinds.long_running === 1 ? "its" : "their"} life. Something never lets ${kinds.long_running === 1 ? "it" : "them"} sleep.` };
   if (kinds.expired > 0) return { tone: "warning", message: `${kinds.expired === 1 ? "1 computer is" : `${count(kinds.expired)} computers are`} past ${kinds.expired === 1 ? "its" : "their"} expiry and still held by the provider.` };
   if (fleet.listTruncated || fleet.sources.some((source) => source.truncated)) return { tone: "warning", message: "There are more computers than this page lists. The totals count the ones the runner read." };
   return null;
@@ -244,7 +250,7 @@ type AttentionCounts = Record<ComputerFleetAttention, number>;
 /** How many computers in the whole fleet need a look, by why; counted from the list when the server does not say. */
 export function attentionCounts(fleet: Pick<AdminComputerFleet, "attentionCounts" | "sandboxes">): AttentionCounts {
   if (fleet.attentionCounts) return fleet.attentionCounts;
-  const counts: AttentionCounts = { failed: 0, stuck_starting: 0, stuck_pausing: 0, stuck_stopping: 0, expired: 0, idle_running: 0 };
+  const counts: AttentionCounts = { failed: 0, stuck_starting: 0, stuck_pausing: 0, stuck_stopping: 0, expired: 0, idle_running: 0, long_running: 0 };
   for (const sandbox of fleet.sandboxes) if (sandbox.attention) counts[sandbox.attention] += 1;
   return counts;
 }
@@ -318,7 +324,14 @@ export function explainComputer(detail: AdminComputerDetail, now: number): Expla
     const idle = since(computer.lastActivityAt);
     const idleMs = computer.lastActivityAt ? now - Date.parse(computer.lastActivityAt) : null;
     const turn = since(conversation?.activeTurnSince ?? null);
-    if (turn !== null) {
+    const life = since(computer.createdAt);
+    if (computer.attention === "long_running" && computer.runSeconds !== null) {
+      tone = "warning";
+      headline = `Running, and awake for ${formatDuration(computer.runSeconds * 1000)} of the ${life ?? "time"} since it was made.`;
+      points.push("A computer sleeps between uses. One awake most of its life is being kept awake: a background job that never ends, a view left open in a browser, turns that arrive faster than it can pause, or a pause the runner never made.");
+      if (turn !== null) points.push(`Its conversation has had a turn under way for ${turn}.`);
+      else if (idle !== null) points.push(`Its provider last saw activity ${idle} ago. A desktop is never quite silent, so that alone does not mean someone is using it.`);
+    } else if (turn !== null) {
       tone = "good";
       headline = `Running: its conversation has had a turn under way for ${turn}.`;
     } else if (computer.attention === "idle_running") {

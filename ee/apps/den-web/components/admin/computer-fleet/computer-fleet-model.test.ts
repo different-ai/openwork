@@ -10,10 +10,10 @@ const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
 
 const sandbox = (id: string, extra: Partial<ComputerFleetSandbox> = {}): ComputerFleetSandbox => ({
   id, source: "gateway", provider: "differently", pool: "opensandbox-microvm", backend: "opensandbox", region: "eastus", state: "running", status: "running", statusReason: null, attention: null,
-  cpu: 2, memoryMb: 4096, diskGb: 8, createdAt: ago(600), lastChangedAt: ago(30), startedAt: ago(599), pausedAt: null, lastActivityAt: ago(3), expiresAt: null, endedAt: null, organization: null, image: "workbot-computer", imageCurrent: true, ...extra,
+  cpu: 2, memoryMb: 4096, diskGb: 8, createdAt: ago(600), lastChangedAt: ago(30), startedAt: ago(599), pausedAt: null, lastActivityAt: ago(3), expiresAt: null, endedAt: null, organization: null, image: "workbot-computer", imageCurrent: true, runSeconds: null, ...extra,
 });
 const settings = { image: "workbot-computer", idlePauseSeconds: 300, keepDays: 14, persistent: false };
-const noAttention = { failed: 0, stuck_starting: 0, stuck_pausing: 0, stuck_stopping: 0, expired: 0, idle_running: 0 };
+const noAttention = { failed: 0, stuck_starting: 0, stuck_pausing: 0, stuck_stopping: 0, expired: 0, idle_running: 0, long_running: 0 };
 const source = (extra: Partial<ComputerFleetSource> = {}): ComputerFleetSource => ({
   source: "gateway", provider: "differently", status: "ok", error: null, truncated: false, pools: [{ name: "opensandbox-microvm", backend: "opensandbox", region: "eastus", enabled: true, health: "healthy" }],
   counts: { total: 1, running: 1, paused: 0, attention: 0 }, settings, ...extra,
@@ -68,6 +68,7 @@ test("the notice says the most serious thing first", () => {
   assert.deepEqual([failed?.tone, failed?.message], ["warning", "2 computers failed in the last day. Each one's reason is in the list."]);
   assert.match(fleetNotice(fleet({ status: "warning", attentionCounts: { ...noAttention, idle_running: 3 } }))?.message ?? "", /^3 computers are running with nothing using them, long after the runner should have paused them\.$/);
   assert.match(fleetNotice(fleet({ status: "warning", attentionCounts: { ...noAttention, expired: 1 } }))?.message ?? "", /1 computer is past its expiry/);
+  assert.equal(fleetNotice(fleet({ status: "warning", attentionCounts: { ...noAttention, long_running: 3, expired: 1 } }))?.message, "3 computers have been awake for most of their life. Something never lets them sleep.");
   // A server from before it counted them: the page counts what is listed.
   assert.match(fleetNotice(fleet({ status: "warning", attentionCounts: null, sandboxes: [sandbox("i", { attention: "idle_running" })] }))?.message ?? "", /^1 computer is running with nothing using it/);
 });
@@ -106,6 +107,9 @@ test("lengths of time read in their two largest units, and rules in whole ones",
   // A paused computer has been paused since it paused, whatever changed its record after.
   assert.equal(stateDuration(sandbox("a", { state: "paused", pausedAt: ago(60 * 30), lastChangedAt: ago(5) }), NOW), "30 h");
   assert.equal(stateDuration(sandbox("a", { lastChangedAt: null }), NOW), null);
+  // The direct provider moves that time with every use: for a running computer it is not when it started running.
+  assert.equal(stateDuration(sandbox("a", { source: "direct", provider: "freestyle", lastChangedAt: ago(1) }), NOW), null);
+  assert.equal(stateDuration(sandbox("a", { source: "direct", provider: "freestyle", state: "paused", lastChangedAt: ago(120) }), NOW), "2 h");
 });
 
 test("the organization menu lists who has computers, and a computer links to its own page", () => {
@@ -143,6 +147,10 @@ test("a running computer says what is using it, or that nothing is", () => {
   assert.deepEqual([left.tone, left.headline], ["warning", "Running with nothing using it for 3 h 20 min."]);
   assert.match(left.points[0] ?? "", /Most likely a pause that failed, or a runner that lost track of it/);
   assert.equal(explainComputer(detail({}, { lastActivityAt: null }), NOW).headline, "Running. Its provider does not say when it was last used.");
+  const awake = explainComputer(detail({}, { source: "direct", provider: "freestyle", attention: "long_running", createdAt: ago(11 * 1440), runSeconds: Math.round(10.5 * 86_400), lastActivityAt: ago(1) }), NOW);
+  assert.deepEqual([awake.tone, awake.headline], ["warning", "Running, and awake for 10 d 12 h of the 11 d since it was made."]);
+  assert.match(awake.points[0] ?? "", /a background job that never ends, a view left open in a browser, turns that arrive faster than it can pause, or a pause the runner never made/);
+  assert.match(awake.points[1] ?? "", /^Its provider last saw activity 1 min ago\. A desktop is never quite silent/);
   assert.equal(explainComputer(detail({ limits: { ...detail().limits, idleTimeoutSeconds: 3600 } }), NOW).points.includes("Its provider stops it by itself after 1 hour idle."), true);
 });
 

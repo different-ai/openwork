@@ -146,7 +146,7 @@ function Detail({ detail, now }: { detail: AdminComputerDetail; now: number }) {
       <DenCard className={`flex flex-col gap-3 !rounded-lg border ${EXPLANATION_STYLE[explanation.tone]}`} data-testid="computer-explanation" data-tone={explanation.tone}>
         <div className="flex flex-wrap items-center gap-2">
           <DenBadge tone={STATE_TONE[computer.state]}>{STATE_LABEL[computer.state]}</DenBadge>
-          {computer.attention ? <DenBadge tone={computer.attention === "idle_running" || computer.attention === "expired" ? "warning" : "danger"}>{ATTENTION_LABEL[computer.attention]}</DenBadge> : null}
+          {computer.attention ? <DenBadge tone={computer.attention === "idle_running" || computer.attention === "long_running" || computer.attention === "expired" ? "warning" : "danger"}>{ATTENTION_LABEL[computer.attention]}</DenBadge> : null}
           {computer.status.toLowerCase() === STATE_LABEL[computer.state].toLowerCase() ? null : <span className="text-[12px] text-gray-600">Its provider calls this &quot;{computer.status}&quot;.</span>}
         </div>
         <p className="text-[16px] font-medium leading-6 text-gray-950">{explanation.headline}</p>
@@ -193,7 +193,7 @@ function Detail({ detail, now }: { detail: AdminComputerDetail; now: number }) {
         <Facts title="Times" testId="computer-times">
           <Fact name="Created"><Moment iso={computer.createdAt} now={now} /></Fact>
           <Fact name="First started">{computer.startedAt ? <Moment iso={computer.startedAt} now={now} /> : null}</Fact>
-          <Fact name="In this state since"><Moment iso={computer.lastChangedAt} now={now} /></Fact>
+          <Fact name={computer.source === "direct" ? "Record last changed" : "In this state since"}><Moment iso={computer.lastChangedAt} now={now} /></Fact>
           <Fact name="Last active"><Moment iso={computer.lastActivityAt} now={now} /></Fact>
           <Fact name="Paused">{computer.pausedAt ? <Moment iso={computer.pausedAt} now={now} /> : null}</Fact>
           <Fact name="Put to rest for idling">{detail.idledAt ? <Moment iso={detail.idledAt} now={now} /> : null}</Fact>

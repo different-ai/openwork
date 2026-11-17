@@ -21,6 +21,12 @@ export const COMPUTER_FLEET_STUCK_MINUTES = { starting: 10, pausing: 15, stoppin
  * wait is longer where the runner's own pause, or the provider's idle rule for that computer, is longer.
  */
 export const COMPUTER_FLEET_IDLE_RUNNING_MINUTES = 30
+/**
+ * A computer at least this old that has spent more than this share of its life running is flagged. One normally
+ * sleeps between uses; one awake most of the time is being kept awake, or the runner never paused it. Only where
+ * the provider counts run time.
+ */
+export const COMPUTER_FLEET_LONG_RUNNING = { minAgeHours: 48, share: 0.5 } as const
 /** Events shown for one computer, newest first. */
 export const COMPUTER_FLEET_EVENT_LIMIT = 100
 
@@ -36,8 +42,9 @@ export type ComputerFleetState = z.infer<typeof computerFleetStateSchema>
  * Why a computer needs a look. `failed`: it failed in the last day. `stuck_starting`, `stuck_pausing`,
  * `stuck_stopping`: it has been in that step far longer than the step takes. `expired`: it outlived its expiry.
  * `idle_running`: it is running and nothing has used it for far longer than the runner waits before pausing one.
+ * `long_running`: it is running and has been for most of its life, though its provider sees it in use.
  */
-export const computerFleetAttentionSchema = z.enum(["failed", "stuck_starting", "stuck_pausing", "stuck_stopping", "expired", "idle_running"])
+export const computerFleetAttentionSchema = z.enum(["failed", "stuck_starting", "stuck_pausing", "stuck_stopping", "expired", "idle_running", "long_running"])
 export type ComputerFleetAttention = z.infer<typeof computerFleetAttentionSchema>
 
 /** `gateway`: placed by the sandbox gateway. `direct`: created straight at the runner's own provider. */
@@ -75,6 +82,8 @@ export const computerFleetSandboxSchema = z.object({
   image: text(200).default(null),
   /** Whether that is what the runner builds new computers from now; null when either is not known. */
   imageCurrent: z.boolean().nullable().default(null),
+  /** Seconds it has spent running over its whole life, where the provider counts them. */
+  runSeconds: count.nullable().default(null),
 })
 export type ComputerFleetSandbox = z.infer<typeof computerFleetSandboxSchema>
 
@@ -132,6 +141,7 @@ export const computerFleetAttentionCountsSchema = z.object({
   stuck_stopping: count.default(0),
   expired: count.default(0),
   idle_running: count.default(0),
+  long_running: count.default(0),
 })
 export type ComputerFleetAttentionCounts = z.infer<typeof computerFleetAttentionCountsSchema>
 

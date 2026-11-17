@@ -254,6 +254,7 @@ export const runnerComputerSchema = z.object({
   resumeRequestedAt: fleetText.default(null),
   slotReleased: z.boolean().nullable().default(null),
   trust: fleetText.default(null),
+  runSeconds: fleetCount.default(null),
 })
 export type RunnerComputer = z.infer<typeof runnerComputerSchema>
 /** How the runner treats one source's computers: what new ones are built from, and when it pauses and deletes them. */

@@ -77,13 +77,13 @@ test("lists the gateway's and the direct provider's computers, each with what it
     id: "sbx_1", key: "hc-sbx_1", source: "gateway", provider: "differently", status: "paused", statusReason: null, pool: "opensandbox-microvm", backend: "opensandbox", region: "eastus",
     cpu: 2, memoryMb: 4096, diskGb: 8, createdAt: "2026-10-29T22:36:41.964Z", updatedAt: "2026-11-09T18:48:16.987Z", startedAt: "2026-10-29T22:36:43.684Z", pausedAt: "2026-11-09T18:48:16.987Z", lastActivityAt: "2026-11-09T18:13:26.314Z",
     expiresAt: "2026-11-23T18:13:26.654Z", endedAt: null, attempts: 1,
-    image: "workbot-computer", imageCurrent: true, idleTimeoutSeconds: null, idledAt: null, resumeRequestedAt: null, slotReleased: true, trust: "private",
+    image: "workbot-computer", imageCurrent: true, idleTimeoutSeconds: null, idledAt: null, resumeRequestedAt: null, slotReleased: true, trust: "private", runSeconds: null,
   })
   assert.equal(fleet.sandboxes[1]?.statusReason, "backend rejected the sandbox")
   assert.deepEqual(fleet.sandboxes[2], {
     id: "vm_1", key: "hc-vm_1", source: "direct", provider: "freestyle", status: "running", statusReason: null, pool: null, backend: null, region: null,
     cpu: 2, memoryMb: 4096, diskGb: 8, createdAt: "2026-11-17T20:00:00.000Z", updatedAt: "2026-11-17T21:00:00.000Z", startedAt: null, pausedAt: null, lastActivityAt: "2026-11-17T21:59:00.000Z", expiresAt: null, endedAt: null, attempts: null,
-    image: null, imageCurrent: null, idleTimeoutSeconds: null, idledAt: null, resumeRequestedAt: null, slotReleased: null, trust: null,
+    image: null, imageCurrent: null, idleTimeoutSeconds: null, idledAt: null, resumeRequestedAt: null, slotReleased: null, trust: null, runSeconds: null,
   })
   // How the runner treats each source's computers rides along, so a reader can tell an older image and a late pause.
   assert.deepEqual(fleet.sources.map((source) => source.settings), [
@@ -218,6 +218,7 @@ test("one direct computer in full, with the snapshot it was built from", async (
   assert.deepEqual([result.detail.computer.source, result.detail.computer.image, result.detail.computer.idleTimeoutSeconds, result.detail.computer.lastActivityAt], ["direct", "workbot-desktop-freestyle-aaaa-bbbb", 3600, "2026-11-17T21:59:00.000Z"])
   // Built from another snapshot than the runner's `snap`: an older image. The runner's setting may name the snapshot by id or by name.
   assert.equal(result.detail.computer.imageCurrent, false)
+  assert.equal(result.detail.computer.runSeconds, 5400)
   const current = await readComputer({ computer: { ...freestyle, snapshot: "snp_8f2" } }, { fetch: web.fetch, now }, "direct", "vm_1")
   assert.equal(current.ok && current.detail.computer.imageCurrent, true)
   assert.deepEqual(result.detail.limits, { profile: null, classification: null, capabilities: [], preemptible: null, ttlSeconds: null, maxRunSeconds: null, maxPausedSeconds: null, autoDeleteSeconds: 1_209_600, totalRunSeconds: 5400 })

@@ -130,7 +130,7 @@ function ComputerList({ sandboxes, now, emptyLabel }: { sandboxes: readonly Comp
       render: (sandbox) => (
         <div className="flex flex-col items-start gap-1">
           <DenBadge size="sm" tone={STATE_TONE[sandbox.state]}>{STATE_LABEL[sandbox.state]}</DenBadge>
-          {sandbox.attention ? <span className={`text-[12px] font-medium ${sandbox.attention === "idle_running" || sandbox.attention === "expired" ? "text-amber-800" : "text-red-700"}`}>{ATTENTION_LABEL[sandbox.attention]}</span> : null}
+          {sandbox.attention ? <span className={`text-[12px] font-medium ${sandbox.attention === "idle_running" || sandbox.attention === "long_running" || sandbox.attention === "expired" ? "text-amber-800" : "text-red-700"}`}>{ATTENTION_LABEL[sandbox.attention]}</span> : null}
         </div>
       ),
     },
@@ -324,7 +324,7 @@ export function ComputerFleetPage() {
           </section>
 
           <p className="text-[12px] leading-5 text-gray-600">
-            Read through the headless runner every 15 seconds while this page is open: the runner asks the sandbox gateway and its own provider with its keys, so Den holds none. A computer is flagged as stuck after 10 minutes starting or 15 minutes pausing or stopping, as running unused after 30 minutes with no use, and a failure is shown for a day.
+            Read through the headless runner every 15 seconds while this page is open: the runner asks the sandbox gateway and its own provider with its keys, so Den holds none. A computer is flagged as stuck after 10 minutes starting or 15 minutes pausing or stopping, as running unused after 30 minutes with no use, as awake most of its life when it is two days old and has run for more than half of them, and a failure is shown for a day.
           </p>
         </>
       ) : null}
