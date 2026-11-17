@@ -11,6 +11,7 @@ This folder owns admin-only Den API surfaces.
 - `security.ts`: threshold-based security signals across all organizations (`GET /v1/admin/security`) and the last 24 hours of refused, rate-limited and failed tenantless requests (`GET /v1/admin/security/requests`); the rules live in `security-findings.ts`
 - `opportunities.ts`: recent organization adoption, verified non-personal email signals, and active Cloud skill/MCP counts, stored plan, paid status and recorded outreach (`GET /v1/admin/opportunities`)
 - `opportunity-companies.ts`: signups grouped by verified company email domain across organizations, with plan, paid status and recorded outreach (`GET /v1/admin/opportunities/companies`)
+- `runner-fleet.ts`: the cloud runner's celld nodes, read live from each node's own state endpoint (`GET /v1/admin/runner-fleet`, `/history`, `/events`); see "Runner fleet" below
 - `feature-usage.ts`: per feature across organizations, whether it is used and working (`GET /v1/admin/feature-usage`, `GET /v1/admin/feature-usage/:key`), and who uses each feature in one organization (`GET /v1/admin/organizations/:organizationId/feature-usage`); see "Feature outcomes" below
 
 ## Current routes
@@ -24,6 +25,10 @@ This folder owns admin-only Den API surfaces.
 - `GET /v1/admin/security/requests`: hourly refused, rate-limited and failed requests for the last 24 hours
 - `GET /v1/admin/feature-usage?range=7d|30d`: every feature with organizations on, members using it, last use, a health state and, for background features, run outcomes and a per-day series
 - `GET /v1/admin/feature-usage/:key?range=7d|30d`: one feature with failed and skipped runs by reason and one row per organization
+
+- `GET /v1/admin/runner-fleet`: every runner node now (open or closed to new cells, memory, cells in memory and owned, cells waiting for room); `status` is `not_configured` without `DEN_HEADLESS_FLEET_STATE_HOST`
+- `GET /v1/admin/runner-fleet/history?range=24h|7d|30d`: per node, the worst reading in each 10 minutes (24h) or hour (7d, 30d)
+- `GET /v1/admin/runner-fleet/events`: the same reading as a server-sent event stream, every five seconds; ends itself after two and a half minutes, and the page reconnects
 
 ## Expectations
 
@@ -73,3 +78,21 @@ needed, follow `capability_usage_event` / `capability_usage_rollups` rather than
 ## Notes
 
 This area is intentionally small for now, but it is its own folder so future admin/reporting endpoints have a clear home.
+
+## Runner fleet
+
+`/admin › Runner fleet` reads the cloud runner's celld nodes directly (`src/runner-fleet/`):
+
+- `config.ts`: where the nodes answer, from `DEN_HEADLESS_FLEET_STATE_HOST` (a name that resolves to every node),
+  `DEN_HEADLESS_FLEET_STATE_PORT` (default 8081) and `DEN_HEADLESS_FLEET_NODE_MEMORY_MB`. Unset, nothing is contacted.
+- `reader.ts`, `state.ts`: resolve the name, ask each node `GET /state` on celld's internal listener (2.5 s each, in
+  parallel, never anything but `/state`), and read the report into a node. celld's own flags decide whether a node is
+  closed; memory against its default lines is only the fallback.
+- `service.ts`: readers within four seconds share one read. A background sampler records the fleet once a minute
+  into `admin_metric_snapshot` (metric `runner_fleet_history`, one row per UTC hour, 31 days kept); one replica
+  samples at a time through the `runner_fleet_sampler` lease.
+- `history.ts`: folds readings into 10-minute buckets that keep the worst of each figure.
+- `events.ts`: the live stream.
+
+celld's internal listener is its operator API and has no authentication, so it must only be reachable on a private
+network. Payloads are counts, byte sizes and the first 12 characters of cell ids: no conversation content or owners.
