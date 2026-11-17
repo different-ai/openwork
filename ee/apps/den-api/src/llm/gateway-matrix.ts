@@ -445,8 +445,8 @@ export async function writeGatewaySet(
   const method = providerMemberSignInMethod(provider)
   const signInScope = providerMemberSignInScope(provider)
   // That mode's tenant, app registration and API scope are one configuration, changed together by the LiteLLM route.
-  if (signInScope !== null && !options.liteLlmEntraSignIn && (input.credentialMode !== undefined && input.credentialMode !== existing?.credential_mode
-    || input.oauthClientId !== undefined || input.oauthClientSecret !== undefined || input.oauthTenantId !== undefined || !existing)) {
+  if (signInScope !== null && !options.liteLlmEntraSignIn && (!existing || (input.credentialMode !== undefined && input.credentialMode !== existing.credential_mode)
+    || input.oauthClientId !== undefined || input.oauthClientSecret !== undefined || input.oauthTenantId !== undefined)) {
     throw new GatewayWriteError(400, "litellm_entra_managed", "Change this provider's Microsoft sign-in settings with PATCH /v1/inference-providers/{inferenceProviderId}/litellm.")
   }
   if (mode === "member" && ((!method && !litellm) || input.credential !== undefined || input.apiKeys !== undefined)) {

@@ -268,7 +268,7 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
   // Microsoft sign-in: what is saved, and the admin's unsaved edits to it (the client secret is never read back).
   const savedEntra: LiteLlmEntraInput = {
     tenantId: set?.oauthTenantId ?? "", clientId: set?.oauthClientId ?? "", clientSecret: "", scope: status?.entraScope ?? "",
-    models: (provider.modelGroups.find((group) => group.id === accessGroupId)?.modelIds ?? []).join("\n"),
+    models: provider.catalogModels.map((model) => model.id).join("\n"),
   };
   const [entraDraft, setEntraDraft] = useState<LiteLlmEntraInput | null>(null);
   const [signOutAcknowledged, setSignOutAcknowledged] = useState(false);
