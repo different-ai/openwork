@@ -94,7 +94,10 @@ output "log_groups" {
 
 output "target_group_arns" {
   description = "Load balancer target groups for health monitoring. Null with alb_listener_arn-only setups is not applicable; groups are always created."
-  value       = { den_api = aws_lb_target_group.api.arn, den_web = aws_lb_target_group.web.arn }
+  value = merge(
+    { den_api = aws_lb_target_group.api.arn, den_web = aws_lb_target_group.web.arn },
+    local.workbot_count > 0 ? { workbot = aws_lb_target_group.workbot[0].arn } : {},
+  )
 }
 
 output "database_identifier" {
@@ -108,13 +111,32 @@ output "migration_step_identifier" {
 }
 
 output "task_definition_arns" {
-  description = "Intended API-only and web revisions, for completed rollout verification."
-  value       = { den_api = aws_ecs_task_definition.api_v1.arn, den_web = aws_ecs_task_definition.web_v1.arn }
+  description = "Intended service revisions, for completed rollout verification. Only den_api and den_web participate in the database TLS redeployment fence."
+  value = merge(
+    { den_api = aws_ecs_task_definition.api_v1.arn, den_web = aws_ecs_task_definition.web_v1.arn },
+    local.runner_count > 0 ? { headless_runner = aws_ecs_task_definition.runner[0].arn } : {},
+    local.workbot_count > 0 ? { workbot = aws_ecs_task_definition.workbot[0].arn } : {},
+  )
 }
 
 output "migration_result" {
   description = "Migration task ARN, intended image and terminal exit result."
   value       = jsondecode(aws_lambda_invocation.migrate.result)
+}
+
+output "efs_file_system_id" {
+  description = "Runner EFS filesystem ID for metadata-only health checks. Null without a managed runner."
+  value       = one(aws_efs_file_system.agents[*].id)
+}
+
+output "runner_secret_version_id" {
+  description = "Opaque runner credential version identifier for preservation checks; never the token or credential value. Null without a runner."
+  value       = one(aws_secretsmanager_secret_version.runner[*].version_id)
+}
+
+output "runner_backup_vault_name" {
+  description = "Encrypted daily runner backup vault, retaining seven days. Null without a managed runner."
+  value       = one(aws_backup_vault.runner[*].name)
 }
 
 output "certificate_arn" {

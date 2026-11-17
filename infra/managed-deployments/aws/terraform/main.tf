@@ -172,6 +172,16 @@ module "platform" {
 
   den_api = local.profile.den_api
   den_web = local.profile.den_web
+
+  headless_runner              = var.headless_runner
+  headless_runner_image        = var.headless_runner_image
+  headless_model_secret_arn    = var.headless_model_secret_arn
+  headless_computer            = var.headless_computer
+  daytona                      = var.daytona
+  headless_computer_secret_arn = var.headless_computer_secret_arn
+  workbot                      = var.workbot
+  workbot_image                = var.workbot_image
+  slack_assistant_enabled      = var.slack_assistant_enabled
   extra_environment = {
     OPENWORK_MANAGED_TASK_REVISION = var.tls_task_revision
   }
@@ -184,20 +194,23 @@ module "platform" {
 }
 
 module "health_agent" {
-  source               = "./modules/health-agent"
-  name                 = module.contract.name
-  compact_id           = module.contract.compact_id
-  deployment_id        = var.deployment_id
-  control_plane_origin = var.control_plane_origin
-  interval_minutes     = module.contract.health_interval_minutes
-  web_url              = module.platform.web_url
-  api_url              = module.platform.api_url
-  cluster_name         = module.platform.cluster_name
-  cluster_arn          = module.platform.cluster_arn
-  service_names        = module.platform.service_names
-  target_group_arns    = module.platform.target_group_arns
-  database_identifier  = module.platform.database_identifier
-  certificate_arn      = module.platform.certificate_arn
+  source                   = "./modules/health-agent"
+  name                     = module.contract.name
+  compact_id               = module.contract.compact_id
+  deployment_id            = var.deployment_id
+  control_plane_origin     = var.control_plane_origin
+  interval_minutes         = module.contract.health_interval_minutes
+  web_url                  = module.platform.web_url
+  api_url                  = module.platform.api_url
+  cluster_name             = module.platform.cluster_name
+  cluster_arn              = module.platform.cluster_arn
+  service_names            = module.platform.service_names
+  target_group_arns        = { for key, arn in module.platform.target_group_arns : key => arn if contains(["den_api", "den_web"], key) }
+  database_identifier      = module.platform.database_identifier
+  certificate_arn          = module.platform.certificate_arn
+  workbot_url              = module.platform.workbot_url
+  efs_file_system_id       = module.platform.efs_file_system_id
+  runner_backup_vault_name = module.platform.runner_backup_vault_name
 }
 
 # ---- Contract outputs (identical on every cloud) ----

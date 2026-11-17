@@ -417,6 +417,7 @@ concepts use the common names below. AWS uses `tags` rather than GCP `labels`.
 | `provisioner_mode`, `daytona`, `daytona_api_key` | Auto stub/Daytona; hosted API with empty snapshot/target; empty key |
 | `headless_runner`, `headless_runner_image`, `headless_runner_token` | Off; 512 CPU / 1024 MiB; digest override if managed; empty external token |
 | `headless_model_api_key`, `headless_computer`, `headless_computer_api_key` | Empty key; computer off; empty key |
+| `headless_model_secret_arn`, `headless_computer_secret_arn` | Empty; optional external plain-string secret references, mutually exclusive with the matching raw keys |
 | `workbot`, `workbot_image`, `workbot_listener_rule_priority` | Off; 256 CPU / 512 MiB / one; digest override if enabled; `40` |
 
 ## Outputs
@@ -428,10 +429,12 @@ concepts use the common names below. AWS uses `tags` rather than GCP `labels`.
 | `migration_step_identifier`, `migration_result` | Common migration task definition; terminal task/image/exit result |
 | `setup_url`, `bootstrap_code` | First administrator URL; sensitive legacy code (null in write-only mode) |
 | `secret_arn`, `database_endpoint` | Secret reference; managed RDS endpoint |
-| `cluster_name`, `cluster_arn`, `service_names` | ECS identities |
+| `cluster_name`, `cluster_arn`, `service_names`, `task_definition_arns` | ECS identities and intended core/optional service revisions |
 | `alb_arn`, `alb_dns_name`, `alb_zone_id`, `alb_security_group_id` | ALB/DNS integration |
 | `task_security_group_id`, `target_group_arns`, `log_groups`, `certificate_arn` | Network and observation references |
 | `openwork_web_url`, `workbot_url` | Optional app endpoints, null while disabled |
+| `efs_file_system_id`, `runner_backup_vault_name` | Optional runner filesystem and encrypted seven-day backup vault; null without a managed runner |
+| `runner_secret_version_id` | Opaque runner credential version ID for preservation checks; never a credential value |
 
 ## Slack, headless Automations and Workbot
 
@@ -446,7 +449,7 @@ keep `service_subnet_ids` in different availability zones).
 ```hcl
   automations_enabled     = true # headless cloud Automations
   slack_assistant_enabled = true
-  headless_model_api_key  = var.anthropic_api_key
+  headless_model_secret_arn = var.model_secret_arn # existing plain-string API key secret
   headless_runner = {
     enabled = true
     model   = "claude-sonnet-4-5" # any model at model_base_url
@@ -463,6 +466,34 @@ Workbot stores sign-in state in encrypted cookies using one shared
 `WORKBOT_DB_PATH`; replicas use rolling deployments (100% minimum healthy,
 200% maximum). The managed Node runner still needs EFS and remains a single
 writer, regardless of Workbot's replica count.
+
+For credentials already stored in Secrets Manager, prefer
+`headless_model_secret_arn` and `headless_computer_secret_arn` to raw-key inputs.
+Each accepts a **full plain-string secret ARN**, without a JSON-key/version
+suffix, encrypted with the AWS-managed Secrets Manager key. ECS injects the
+secret directly; Terraform never reads the secret value or copies it into a
+SecretVersion. Only the task execution role receives `GetSecretValue` on the
+selected ARNs, and unused references grant no access while the runner/computers
+are off. Customer-managed KMS keys need separately reviewed decrypt permissions
+and are not supported by these inputs alone. Raw-key inputs remain supported
+for existing direct deployments and retain their state-backed behavior.
+
+The managed installer uses a separate Workbot session secret. Enabling Workbot
+later therefore does not change its existing runner credential SecretVersion.
+Direct callers retain their existing combined secret layout; do not switch an
+existing direct deployment into `managed_legacy_secrets` mode. Credential
+rotation is not part of enabling Workbot.
+
+Every module-managed runner now gets an AWS Backup plan: daily at 05:00 UTC,
+seven-day retention, in the encrypted `${name}-runner` vault. The
+`${name}-runner-backup` role can back up only this runner's EFS filesystem and
+use its encryption keys; it has no restore or deletion rights and no broad
+AWS-managed backup policy. Existing direct runner deployments will see these
+**additional backup resources** in their next plan; disabled runners and
+external fleets create none. The vault cannot be force-deleted with recovery
+points. Restoring a backup is a separate customer-approved recovery operation;
+file-level snapshots do not prove SQLite application-consistent recovery.
+Backup creation, restore, and Workbot enablement remain **NotRun live** here.
 
 ### Existing celld/S3 fleet
 
@@ -532,18 +563,24 @@ fresh managed runner.
 ### Optional Workbot computer (Daytona or Freestyle)
 
 The runner's `bash` and `look` tools can use either provider, off by default.
-Daytona shares this deployment's Daytona connection, but **not the Web snapshot**:
+The runner, Workbot and Slack can install and run without computers: provider
+credentials and snapshots are required only when that provider is selected.
+Terraform configures the runner's tools; it does not provision a Daytona or
+Freestyle sandbox during installation. Daytona uses `daytona.api_url` (default
+`https://app.daytona.io/api`) and `daytona.target` (default empty), but **not the
+OpenWork Web snapshot**:
 
 ```hcl
   headless_computer = {
     provider = "daytona"
     snapshot = "<snapshot from snapshot:build:daytona>"
   }
-  daytona_api_key = var.daytona_api_key
+  headless_computer_secret_arn = var.computer_secret_arn
 ```
 
 Build it with `DAYTONA_API_KEY=… pnpm --filter @openwork-ee/headless-computer snapshot:build:daytona`.
-For Freestyle, set `provider = "freestyle"` and `headless_computer_api_key`;
+For Freestyle, set `provider = "freestyle"` and `headless_computer_secret_arn`
+(or the legacy state-backed `headless_computer_api_key`);
 its snapshot defaults to the existing prepared computer image. The backend
 setting changes where tools run, not organization feature access. Turning it
 off stops new computer use; existing computers retain their provider's idle

@@ -21,10 +21,37 @@ locals {
     HEADLESS_MODEL_API_KEY = local.runner_managed ? var.headless_model_api_key : ""
     DAYTONA_API_KEY        = local.runner_managed && var.headless_computer.provider == "daytona" ? var.daytona_api_key : ""
     FREESTYLE_API_KEY      = local.runner_managed && var.headless_computer.provider == "freestyle" ? var.headless_computer_api_key : ""
-    WORKBOT_SESSION_SECRET = try(random_password.workbot_session[0].result, "")
+    # Managed installs isolate the session key so enabling Workbot cannot replace
+    # the protected runner token version. Direct callers retain their old layout.
+    WORKBOT_SESSION_SECRET = var.managed_legacy_secrets ? "" : try(random_password.workbot_session[0].result, "")
   } : k => v if v != "" } : {}
 
   runner_secret_ref = local.runner_enabled ? "${aws_secretsmanager_secret.runner[0].arn}:HEADLESS_API_TOKEN::" : ""
+  runner_external_secrets = local.runner_managed ? merge(
+    var.headless_model_secret_arn != "" ? { HEADLESS_MODEL_API_KEY = var.headless_model_secret_arn } : {},
+    var.headless_computer_secret_arn != "" && var.headless_computer.provider != "off" ? {
+      (var.headless_computer.provider == "daytona" ? "DAYTONA_API_KEY" : "FREESTYLE_API_KEY") = var.headless_computer_secret_arn
+    } : {},
+  ) : {}
+  workbot_session_secret_ref = local.workbot_count == 0 ? "" : (
+    var.managed_legacy_secrets ? "${aws_secretsmanager_secret.workbot[0].arn}:WORKBOT_SESSION_SECRET::" : "${aws_secretsmanager_secret.runner[0].arn}:WORKBOT_SESSION_SECRET::"
+  )
+}
+
+resource "aws_secretsmanager_secret" "workbot" {
+  count = var.managed_legacy_secrets ? local.workbot_count : 0
+
+  name_prefix             = "${var.name}-workbot-"
+  description             = "OpenWork Workbot cookie signing secret (${var.name})"
+  recovery_window_in_days = var.secret_recovery_window_days
+  tags                    = var.tags
+}
+
+resource "aws_secretsmanager_secret_version" "workbot" {
+  count = var.managed_legacy_secrets ? local.workbot_count : 0
+
+  secret_id     = aws_secretsmanager_secret.workbot[0].id
+  secret_string = jsonencode({ WORKBOT_SESSION_SECRET = random_password.workbot_session[0].result })
 }
 
 # Secrets only the runner and Workbot use, kept out of the shared app secret so
@@ -201,7 +228,10 @@ resource "aws_ecs_task_definition" "runner" {
         # Uploads and files the agent hands back live next to the database.
         { name = "HEADLESS_FILES", value = "disk" },
       ] : e if e.value != ""]
-      secrets = [for k in keys(local.runner_secret_values) : { name = k, valueFrom = "${aws_secretsmanager_secret.runner[0].arn}:${k}::" } if k != "WORKBOT_SESSION_SECRET"]
+      secrets = concat(
+        [for k in keys(local.runner_secret_values) : { name = k, valueFrom = "${aws_secretsmanager_secret.runner[0].arn}:${k}::" } if k != "WORKBOT_SESSION_SECRET"],
+        [for k, arn in local.runner_external_secrets : { name = k, valueFrom = arn }],
+      )
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -219,12 +249,12 @@ resource "aws_ecs_task_definition" "runner" {
       error_message = "headless_runner.enabled needs headless_runner.model (a model id at headless_runner.model_base_url)."
     }
     precondition {
-      condition     = var.headless_computer.provider != "daytona" || (var.daytona_api_key != "" && var.headless_computer.snapshot != "")
-      error_message = "Daytona computers need daytona_api_key and headless_computer.snapshot (a computer image, not the Web image)."
+      condition     = var.headless_computer.provider != "daytona" || ((var.daytona_api_key != "" || var.headless_computer_secret_arn != "") && var.headless_computer.snapshot != "")
+      error_message = "Daytona computers need daytona_api_key or headless_computer_secret_arn, and headless_computer.snapshot (a computer image, not the Web image)."
     }
     precondition {
-      condition     = var.headless_computer.provider != "freestyle" || var.headless_computer_api_key != ""
-      error_message = "Freestyle computers need headless_computer_api_key."
+      condition     = var.headless_computer.provider != "freestyle" || var.headless_computer_api_key != "" || var.headless_computer_secret_arn != ""
+      error_message = "Freestyle computers need headless_computer_api_key or headless_computer_secret_arn."
     }
   }
 }
@@ -365,7 +395,7 @@ resource "aws_ecs_task_definition" "workbot" {
       ]
       secrets = [
         { name = "WORKBOT_RUNNER_TOKEN", valueFrom = local.runner_secret_ref },
-        { name = "WORKBOT_SESSION_SECRET", valueFrom = "${one(aws_secretsmanager_secret.runner[*].arn)}:WORKBOT_SESSION_SECRET::" },
+        { name = "WORKBOT_SESSION_SECRET", valueFrom = local.workbot_session_secret_ref },
       ]
       logConfiguration = {
         logDriver = "awslogs"
@@ -421,5 +451,5 @@ resource "aws_ecs_service" "workbot" {
     rollback = true
   }
 
-  depends_on = [aws_lb_listener_rule.workbot_host, aws_secretsmanager_secret_version.runner, aws_ecs_service.runner]
+  depends_on = [aws_lb_listener_rule.workbot_host, aws_secretsmanager_secret_version.runner, aws_secretsmanager_secret_version.workbot, aws_ecs_service.runner]
 }
