@@ -34,7 +34,7 @@ import { SLACK_SEND_AS_BOT_ARGUMENTS_SCHEMA, SLACK_SEND_AS_BOT_CAPABILITY, SLACK
 // The same bounds capability search gives one provider probe.
 const LIST_LIFECYCLE_TIMEOUT_MS = 8_000
 const LIST_REQUEST_TIMEOUT_MS = 5_000
-const READ_ONLY_REMOTE_SESSION_ACTIONS = new Set(["read", "list", "targets", "status"])
+export const READ_ONLY_REMOTE_SESSION_ACTIONS = new Set(["read", "list", "targets", "status"])
 
 /**
  * What a full-view request needs: the whole list (`tools/list`), some

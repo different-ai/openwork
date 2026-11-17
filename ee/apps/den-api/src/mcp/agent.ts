@@ -32,6 +32,7 @@ import { getCatalog, protectedResourceMetadata, protectedResourceMetadataRoute }
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { createScopedAgentMcpHttpHandlers, type AgentMcpAudience } from "./agent-http.js"
 import { connectToolView, connectToolViewOverride, isOpenWorkEngineClient, requestClientInfo, type ConnectClientInfo } from "./connect-tool-view.js"
+import { remoteSessionDirectTools } from "./remote-session-tools.js"
 import { CONNECTION_STATUS_TOOL_NAME, registerConnectFullTools, registerConnectionStatusTool, type CapabilityCall } from "./connect-full-tools.js"
 import { connectFullToolNamespace, loadConnectFullTools, loadConnectServices, type ConnectFullToolScope } from "./connect-full-tool-sources.js"
 import { engineToolName, withRelatedWords } from "./engine-tool-view.js"
@@ -768,6 +769,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       toolView,
       toolShapes,
       remoteSessionStatus: Boolean(memberIdentity),
+      remoteSessionEvents: organizationFeatures.mcpThreads && organizationFeatures.nativeMcpEvents,
       canSendSlackMessages: slackSendAsBotAvailable(capabilityContext),
       myAgent: Boolean(memberIdentity && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
       myAgentBrief: organizationFeatures.workbotAgentBrief,
@@ -777,7 +779,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       engine: engineTools,
       services: engineTools && advertisesInstructions ? await loadConnectServices(capabilityContext) : undefined,
     })
-    if (auditPrincipal && organizationFeatures.nativeMcpEvents) registerNativeMcpEvents(server, auditPrincipal, c.req.raw, principal.scopes.has(DEN_MCP_WRITE_SCOPE))
+    if (auditPrincipal && organizationFeatures.nativeMcpEvents) registerNativeMcpEvents(server, auditPrincipal, c.req.raw, principal.scopes.has(DEN_MCP_WRITE_SCOPE), { poll: organizationFeatures.mcpThreads })
     if (skillsExtension) registerSkillsExtension(server, loadResolvedSkills)
     // Your agent's own background check (workbotAgentBrief) may ask for one extra check; no other caller sees it.
     if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true, workbotAgentBrief: organizationFeatures.workbotAgentBrief })) {
@@ -1014,6 +1016,15 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         // Only the list and its own call load what is not ready yet.
         if (typeof scope !== "object") registerConnectionStatusTool({ server, pending: full.pending, show: full.showPending })
       }
+    }
+
+    // The full view already lists these; OpenWork's own chats keep capability search (remote-session-tools.ts).
+    if (!fullView && organizationFeatures.mcpThreads && memberIdentity && !firstPartyToken && (method === "tools/list" || method === "tools/call")) {
+      registerConnectFullTools({
+        server,
+        tools: remoteSessionDirectTools({ answer: capabilityContext.remoteSessionAnswersAllowed, attach: capabilityContext.remoteSessionAttachAllowed }),
+        execute: executeCapabilityTool,
+      })
     }
 
     registerAgentSkillCatalogTools({

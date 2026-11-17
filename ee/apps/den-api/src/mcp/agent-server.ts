@@ -117,6 +117,9 @@ export const LEGACY_AGENT_MCP_INSTRUCTIONS = agentMcpInstructions(false)
 /** Rolled out with `remote-session:status`; one rule, the details live in its description. */
 const REMOTE_SESSION_STATUS_INSTRUCTIONS = "To follow remote sessions, call remote-session:status with all of their commandIds or Cloud sessionIds and waitMs instead of calling remote-session:read repeatedly; read only for the transcript or the full answer."
 
+/** `mcpThreads`: a started session says how its changes arrive; see remote-session-events.ts. */
+const REMOTE_SESSION_EVENT_INSTRUCTIONS = "After remote-session create or send, follow the result's note: when this chat is watched, end your turn; otherwise subscribe to its event where your client supports MCP Events, or use status with waitMs."
+
 /** For callers who may write; who a Slack message comes from decides the tool. */
 function slackSendAsBotInstructions(toolView: InstructionView = "search"): string {
   const tool = toolView === "full" ? "openwork-bot.slack_send_as_bot" : toolView === "engine" ? "openwork-bot_slack_send_as_bot" : "slack_send_as_bot"
@@ -145,6 +148,8 @@ const FULL_TOOL_VIEW_CACHE_HINTS = { "tools/list": { ttlMs: 60_000, cacheScope: 
 export function createAgentMcpServer(options: {
   appServers?: boolean
   remoteSessionStatus?: boolean
+  /** Sessions report their changes through MCP Events (`mcpThreads` with `nativeMcpEvents`). */
+  remoteSessionEvents?: boolean
   /** slack_send_as_bot is available to this caller (feature on, a member, and the write scope). */
   canSendSlackMessages?: boolean
   /** My agent is on for this member and they may change it (`workbotProactive`, a member, and the write scope). */
@@ -168,6 +173,7 @@ export function createAgentMcpServer(options: {
   const view: InstructionView = options.toolView === "full" && options.engine ? "engine" : options.toolView ?? "search"
   const rules = [agentMcpInstructions(options.appServers !== false, view, options.toolShapes),
     ...(options.remoteSessionStatus ? [REMOTE_SESSION_STATUS_INSTRUCTIONS] : []),
+    ...(options.remoteSessionStatus && options.remoteSessionEvents ? [REMOTE_SESSION_EVENT_INSTRUCTIONS] : []),
     ...(options.canSendSlackMessages ? [slackSendAsBotInstructions(view)] : []),
     ...(options.myAgent ? [options.myAgentBrief ? MY_AGENT_BRIEF_INSTRUCTIONS : MY_AGENT_INSTRUCTIONS] : [])].join("\n")
   const directory = view === "engine" && options.services

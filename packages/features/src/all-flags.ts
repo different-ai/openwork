@@ -15,6 +15,7 @@ export { default as lowStorageWarning } from "@openwork/features/flags/low-stora
 export { default as managedDeploymentAssistants } from "@openwork/features/flags/managed-deployment-assistants"
 export { default as managedDeployments } from "@openwork/features/flags/managed-deployments"
 export { default as mcpThreadEvents } from "@openwork/features/flags/mcp-thread-events"
+export { default as mcpThreads } from "@openwork/features/flags/mcp-threads"
 export { default as nativeMcpEvents } from "@openwork/features/flags/native-mcp-events"
 export { default as opencodeV2Only } from "@openwork/features/flags/opencode-v2-only"
 export { default as providerFilterSyncFix } from "@openwork/features/flags/provider-filter-sync-fix"
