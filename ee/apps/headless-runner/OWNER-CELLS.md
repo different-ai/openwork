@@ -233,7 +233,8 @@ receive it instead of timing out first. With `HEADLESS_SENTRY_DSN`, these are re
 1. Confirm which node: Den's `/admin › Runner fleet` shows every node live (open or closed, memory against the
    ceiling, cells in memory and owned, cells waiting for room) once `DEN_HEADLESS_FLEET_STATE_HOST` names the nodes,
    and keeps a month of history. `.github/workflows/celld-fleet-health.yml` also runs every 15 minutes and names it
-   (run it by hand for a fresh reading). It alerts in Slack when a node passes 75% of its memory, when celld reports a node under
+   in Slack (its public run log only counts findings; run `.github/scripts/celld-fleet-health.mjs` by hand for a
+   fresh reading). It alerts in Slack when a node passes 75% of its memory, when celld reports a node under
    pressure, when requests were refused, or when only one node is left.
 2. Before restarting, record what is using the memory, on that node: `curl -s 127.0.0.1:8081/state` (celld's
    internal listener). `node_load` has `resident_cells`, `rss_bytes` and `in_use_bytes`; `allocator`, `libc_malloc`
@@ -284,7 +285,8 @@ Rehearse a restore into a throwaway bucket prefix before relying on it.
 Each cell's ownership record, `fleet/cells/<cell>/own.json`, must stay in the bucket for the life of the cell; celld
 never deletes it. If it is gone while the cell's LTX remains, celld ≥ 0.6.3 refuses the cell (requests for it fail and
 nodes log `celld ownership record lost`) instead of starting it with an empty database. The daily backup fails with
-"celld ownership record lost" and lists such cells. Find what deleted the record (a lifecycle rule, a script) and stop
+"celld ownership record lost" and saves the list of such cells to the backup bucket under `reports/` (its public
+run log only counts them). Find what deleted the record (a lifecycle rule, a script) and stop
 it first. Then restore each cell as celld's guarantees describe ("The ownership record"):
 
 1. Stop every node that served the cell with SIGTERM (restart the service), never `POST /shutdown?handoff=preserve`.

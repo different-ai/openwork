@@ -9,7 +9,10 @@ name: Check the runner fleet
 #
 # It only reads. The run fails when something needs action now (a node near or past its ceiling, refused requests,
 # a single node) and says so in Slack: on the first failing run, then once an hour while it lasts. Warnings (settings
-# that drifted, a node that stopped for a lost lease) are in the run summary only.
+# that drifted, a node that stopped for a lost lease) go to Slack once a day.
+#
+# This repository is public, and so are these logs and summaries: they say only how many alerts and warnings there
+# are. Node names, memory and settings go to Slack, or to the terminal of whoever runs the script by hand.
 #
 # Needs, on the celld-production environment: RENDER_API_KEY. Optional: CELLD_R2_ACCESS_KEY_ID and
 # CELLD_R2_SECRET_ACCESS_KEY (celld's own per-node load, from the fleet bucket), and CELLD_ALERT_SLACK_WEBHOOK_URL
@@ -99,6 +102,8 @@ jobs:
           previous="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow celld-fleet-health.yml --status completed --limit 1 --json conclusion --jq '.[0].conclusion // ""' || echo "")"
           minute="$(date -u +%-M)"
           if [ "$previous" != "failure" ] || [ "$minute" -lt 15 ]; then echo "notify=true" >> "$GITHUB_OUTPUT"; else echo "notify=false" >> "$GITHUB_OUTPUT"; fi
+          # Warnings stand for days: once a day is enough (the first run after 09:00 UTC).
+          if [ "$(date -u +%-H)" = "9" ] && [ "$minute" -lt 15 ]; then echo "warnings=true" >> "$GITHUB_OUTPUT"; else echo "warnings=false" >> "$GITHUB_OUTPUT"; fi
 
       - name: Check each node
         if: steps.configured.outputs.ready == 'true'
@@ -107,6 +112,7 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.CELLD_ALERT_SLACK_WEBHOOK_URL || secrets.CELLD_DEPLOY_SLACK_WEBHOOK_URL }}
           FLEET_SAMPLE_FILE: ${{ steps.sample.outputs.file }}
           NOTIFY: ${{ steps.notify.outputs.notify }}
+          NOTIFY_WARNINGS: ${{ steps.notify.outputs.warnings }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
