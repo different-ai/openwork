@@ -1,4 +1,6 @@
 #!/bin/sh
 # Optional, deterministic contract generation; no commits or pushes.
+# `pnpm hooks:install` turns it on for this clone.
+[ "$(git config --bool openwork.contractHook)" = true ] || exit 0
 cd "$(git rev-parse --show-toplevel)" || exit 1
 exec node scripts/den-contract-hook.mjs
