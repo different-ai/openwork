@@ -85,8 +85,20 @@ export function codeModeSummary(
 
 /** The first sentence of why a script or call failed, short enough for one rail line. */
 export function shortFailureReason(part: DynamicToolUIPart): string | null {
-  const text = codeModeScriptError(part) ?? (part.state === "output-error" ? part.errorText : null);
+  return shortFailureText(codeModeScriptError(part) ?? (part.state === "output-error" ? part.errorText : null));
+}
+
+const DROPPED_CONNECTION = /\bECONNRESET\b|socket connection was closed unexpectedly|\bsocket hang up\b/i;
+
+export const DROPPED_CONNECTION_REASON = "The connection dropped. Trying again usually works.";
+
+export function isDroppedConnection(errorText: string): boolean {
+  return DROPPED_CONNECTION.test(errorText);
+}
+
+export function shortFailureText(text: string | null | undefined): string | null {
   if (!text) return null;
+  if (isDroppedConnection(text)) return DROPPED_CONNECTION_REASON;
   const first = text.replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s/)[0] ?? "";
   return first.length > 90 ? `${first.slice(0, 89)}…` : first || null;
 }
