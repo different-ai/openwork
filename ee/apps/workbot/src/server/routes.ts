@@ -337,6 +337,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     if (code === "desktop_outdated") return c.json({ error: code, message: rebuilt ? "Your computer still needs an update after rebuilding. Ask your workspace admin for help." : "Your computer needs an update before it can connect. Rebuild it, or ask your workspace admin if that doesn't help." }, 409)
     // The runner moves the computer to the new version itself once the work running on it finishes.
     if (code === "desktop_updating") return c.json({ error: code, message: "Your computer is updating. It will be ready when its current work finishes." }, 409)
+    // Its desktop wouldn't start, so the runner is replacing it. The view says so and asks again, which waits for the new one.
+    if (code === "desktop_replacing") return c.json({ error: code, message: "Your computer's desktop didn't start, so it is being replaced. This usually takes about a minute." }, 409)
     return c.json({ error: "desktop_unavailable", message: "Your computer is unavailable. Try reconnecting." }, 409)
   }
   /** One automatic rebuild per computer at a time: the Browser view and the chat's live glimpse can both find it outdated. */
@@ -366,7 +368,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     /** The chat's computer, once this request knows which runner session it is. */
     let computer: { sessionId: string; chat: WorkbotChat } | null = null
     const failed = (code: string, rebuilt = false) => {
-      if (computer) report(computer, { event: "failed", code })
+      // A computer being replaced hasn't failed: the runner is already bringing up the new one.
+      if (computer && code !== "desktop_replacing") report(computer, { event: "failed", code })
       return desktopFailure(c, operation, code, rebuilt)
     }
     /** The views Den allows right now, or null when this request isn't allowed. The runner is told only these. */
