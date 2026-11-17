@@ -189,6 +189,10 @@ Names and defaults are from [celld's docs](https://celld.dev/docs) (v0.6.3):
   bucket data grows on every wake. Needs every node on ≥ 0.6.1 and a bucket with list-after-write consistency (R2
   and S3 have it).
 - `CELLD_IDLE_EVICT_S` set, so idle cells leave memory. Unset, only memory pressure or the residency cap evicts them.
+- `CELLD_ALARM_RESIDENT_MS` set low (for example 60000). The name and its default of one hour are from celld's
+  source (`crates/celld/wake.rs`, v0.6.2 and v0.6.3), not its docs: a cell whose alarm is due within this long is
+  not put to sleep, and the idle sweep stops at the first such cell it meets, so one of them can hold every idle cell
+  on the node in memory until its alarm fires ([What keeps a cell in memory](#what-keeps-a-cell-in-memory)).
 - `CELLD_DEPLOY_MAX_AGE_S` left at its default (60 s): how long a busy cell may stay on the old runner after a deploy
   before celld cancels its work.
 - Platform shutdown grace above `CELLD_SHUTDOWN_TOTAL_MS` (default 40 s), or SIGKILL cuts the cell handoff.
@@ -243,6 +247,22 @@ receive it instead of timing out first. With `HEADLESS_SENTRY_DSN`, these are re
 4. If nodes fill up regularly, close them earlier and more gently with `CELLD_MAX_RESIDENT_CELLS`: at that cap a
    node sheds its least recently used idle cell to admit the next one, instead of refusing until memory falls. Size
    it from step 2: the cap times the memory per resident cell must stay under the ceiling.
+
+### What keeps a cell in memory
+
+A node's memory is its cells in memory: about 190 MB plus 1.5 to 2 MB per cell (measured on production, 2026-11-17).
+A cell leaves memory after `CELLD_IDLE_EVICT_S` without a request or an alarm run, unless:
+
+- a request is still open on it (a live-event stream over SSE counts; the hibernatable WebSocket does not);
+- its alarm is due within `CELLD_ALARM_RESIDENT_MS` (default one hour), or the idle sweep is stuck behind another
+  cell whose alarm is.
+
+So a cell must not keep an alarm it has no work for. The runner sets a cell's alarm from three things only
+(`armResume` in `src/worker/index.ts`): turns running or waiting to resume, a step-mode step that is due, and
+background jobs that have work. A job's `nextAt()` returns a time only while it has something to do; one that always
+returns a time (a daily check, a periodic clean-up) wakes every conversation's cell on that schedule for ever, and
+with the hold above those cells stay in memory. `scripts/idle-upkeep.test.ts` holds the rule: a conversation with
+nothing to do asks for no alarm.
 
 ## Step mode: turns that outlast a deploy
 

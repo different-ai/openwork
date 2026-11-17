@@ -8,6 +8,7 @@ import {
   enqueueIndexUpdate,
   INDEX_SIZE_STEP_BYTES,
   indexSnapshotAll,
+  indexSnapshotAt,
   nextIndexUpdateAt,
   pendingIndexUpdates,
   setIndexCapability,
@@ -1463,6 +1464,10 @@ export class Store {
 
   indexSnapshotAll(now: number): void {
     this.transaction(() => indexSnapshotAll(this.db, now))
+  }
+
+  indexSnapshotAt(): number | null {
+    return indexSnapshotAt(this.db)
   }
 
   /** Queues a fresh index snapshot of one session (same transaction as the caller's change). */

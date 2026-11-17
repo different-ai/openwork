@@ -72,6 +72,7 @@ export async function createRuntime(config: Config, store: Store, stepHost?: Ste
           ackIndexUpdate: (sessionId, version) => store.ackIndexUpdate(sessionId, version),
           deferIndexUpdate: (sessionId, version, retryAt) => store.deferIndexUpdate(sessionId, version, retryAt),
           dropIndexUpdatesBefore: (createdBefore) => store.dropIndexUpdatesBefore(createdBefore),
+          indexSnapshotAt: () => store.indexSnapshotAt(),
           indexSnapshotAll: (now) => store.indexSnapshotAll(now),
         }
       : store
