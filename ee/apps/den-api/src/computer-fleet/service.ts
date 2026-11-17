@@ -1,13 +1,13 @@
-import { and, eq, gte, inArray, isNull, lt, lte } from "@openwork-ee/den-db/drizzle"
-import { AdminMetricSnapshotTable, HeadlessSessionIndexTable, OrganizationTable, RemoteDeviceTable } from "@openwork-ee/den-db/schema"
-import type { AdminComputerFleet, AdminComputerFleetHistory, ComputerFleetHistoryRange } from "@openwork/types/den/admin-computer-fleet"
+import { and, desc, eq, gte, inArray, isNull, lt, lte } from "@openwork-ee/den-db/drizzle"
+import { AdminMetricSnapshotTable, AuthUserTable, HeadlessSessionIndexTable, MemberTable, OrganizationTable, RemoteDeviceEventTable, RemoteDeviceTable } from "@openwork-ee/den-db/schema"
+import type { AdminComputerFleet, AdminComputerFleetHistory, ComputerFleetHistoryRange, ComputerFleetSourceKind } from "@openwork/types/den/admin-computer-fleet"
 import { dbSnapshotStore, defaultOwner } from "../admin-metrics/snapshots.js"
 import { db } from "../db.js"
 import { createHeadlessRunnerClient, defaultHeadlessRunnerDeps, type RunnerComputerFleet, type RunnerResult } from "../headless-runner/client.js"
 import { appLogger } from "../observability/logger.js"
 import { foldFleet, historyFromHours, historyHourKeys, hourKey, mergeHours, storedHour } from "./history.js"
-import { readComputerFleet, type ComputerFleetClient } from "./reader.js"
-import { computerKey, notConfiguredComputerFleet, type ComputerOwner } from "./state.js"
+import { readComputerDetail, readComputerFleet, type ComputerDetailRead, type ComputerFleetClient } from "./reader.js"
+import { computerKey, notConfiguredComputerFleet, type ComputerConversation, type ComputerOwner, type ComputerReports } from "./state.js"
 
 /**
  * The computer fleet for the admin page, and the background job that records its history.
@@ -33,13 +33,18 @@ const SHARE_MS = 15_000
 const OWNERS_SHARE_MS = 5 * 60_000
 const OWNER_ROWS_LIMIT = 100_000
 const ORGANIZATION_CHUNK = 200
+/** A computer's page shows this many of the events Den was told about. */
+const DETAIL_EVENTS = 60
+/** A conversation newer than the shared index is looked for again, but not more often than this. */
+const OWNERS_REFRESH_MS = 30_000
 
 type OrganizationId = (typeof OrganizationTable.$inferSelect)["id"]
-let ownerIndex: { at: number; byKey: Promise<Map<string, OrganizationId>> } | null = null
+type Conversation = { organizationId: OrganizationId; sessionId: string }
+let ownerIndex: { at: number; byKey: Promise<Map<string, Conversation>> } | null = null
 
 /** Every conversation that can have a computer, as its computer's key, with its organization. Workbot alone gives one. */
-function organizationByKey(now: number): Promise<Map<string, OrganizationId>> {
-  if (ownerIndex && now - ownerIndex.at < OWNERS_SHARE_MS) return ownerIndex.byKey
+function conversationByKey(now: number, maxAgeMs = OWNERS_SHARE_MS): Promise<Map<string, Conversation>> {
+  if (ownerIndex && now - ownerIndex.at < maxAgeMs) return ownerIndex.byKey
   const byKey = (async () => {
     const [sessions, devices] = await Promise.all([
       db.select({ sessionId: HeadlessSessionIndexTable.sessionId, organizationId: HeadlessSessionIndexTable.organizationId }).from(HeadlessSessionIndexTable)
@@ -48,8 +53,8 @@ function organizationByKey(now: number): Promise<Map<string, OrganizationId>> {
       db.select({ sessionId: RemoteDeviceTable.externalId, organizationId: RemoteDeviceTable.organizationId }).from(RemoteDeviceTable)
         .where(and(eq(RemoteDeviceTable.provider, "workbot"), isNull(RemoteDeviceTable.removedAt))).limit(OWNER_ROWS_LIMIT),
     ])
-    const keys = new Map<string, OrganizationId>()
-    for (const row of [...sessions, ...devices]) keys.set(computerKey(row.sessionId), row.organizationId)
+    const keys = new Map<string, Conversation>()
+    for (const row of [...sessions, ...devices]) keys.set(computerKey(row.sessionId), { organizationId: row.organizationId, sessionId: row.sessionId })
     return keys
   })()
   ownerIndex = { at: now, byKey }
@@ -60,10 +65,10 @@ function organizationByKey(now: number): Promise<Map<string, OrganizationId>> {
 async function loadComputerOwners(keys: readonly string[]): Promise<ReadonlyMap<string, ComputerOwner>> {
   const owners = new Map<string, ComputerOwner>()
   if (keys.length === 0) return owners
-  const byKey = await organizationByKey(Date.now())
+  const byKey = await conversationByKey(Date.now())
   const wanted = new Map<string, OrganizationId>()
   for (const key of keys) {
-    const organizationId = byKey.get(key)
+    const organizationId = byKey.get(key)?.organizationId
     if (organizationId) wanted.set(key, organizationId)
   }
   const ids = [...new Set(wanted.values())]
@@ -76,7 +81,50 @@ async function loadComputerOwners(keys: readonly string[]): Promise<ReadonlyMap<
   return owners
 }
 
-function defaultClient(): ComputerFleetClient | null {
+/**
+ * What Den knows of the computer with this key, read now: whose it is, its conversation's member and activity, what
+ * Workbot's server last reported about it and what it saw happen to it. Never the conversation's name or content.
+ */
+async function loadKnownComputer(key: string): Promise<{ owner: ComputerOwner | null; conversation: ComputerConversation | null; reports: ComputerReports } | null> {
+  const now = Date.now()
+  // A conversation started since the shared index was read is not in it yet: look once more before giving up.
+  const found = (await conversationByKey(now)).get(key) ?? (await conversationByKey(now, OWNERS_REFRESH_MS)).get(key)
+  if (!found) return null
+  const [[organization], [session], [device]] = await Promise.all([
+    db.select({ name: OrganizationTable.name }).from(OrganizationTable).where(eq(OrganizationTable.id, found.organizationId)).limit(1),
+    db.select({ memberId: HeadlessSessionIndexTable.memberId, createdAt: HeadlessSessionIndexTable.createdAt, updatedAt: HeadlessSessionIndexTable.updatedAt, activeTurnSince: HeadlessSessionIndexTable.activeTurnSince })
+      .from(HeadlessSessionIndexTable).where(and(eq(HeadlessSessionIndexTable.sessionId, found.sessionId), eq(HeadlessSessionIndexTable.organizationId, found.organizationId), isNull(HeadlessSessionIndexTable.deletedAt))).limit(1),
+    db.select({ id: RemoteDeviceTable.id, ownerMemberId: RemoteDeviceTable.ownerMemberId, state: RemoteDeviceTable.state, statusDetail: RemoteDeviceTable.statusDetail, lastSeenAt: RemoteDeviceTable.lastSeenAt, workbotChat: RemoteDeviceTable.workbotChat })
+      .from(RemoteDeviceTable).where(and(eq(RemoteDeviceTable.organizationId, found.organizationId), eq(RemoteDeviceTable.provider, "workbot"), eq(RemoteDeviceTable.externalId, found.sessionId))).limit(1),
+  ])
+  const memberId = session?.memberId ?? device?.ownerMemberId ?? null
+  const [[member], events] = await Promise.all([
+    memberId
+      ? db.select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email }).from(MemberTable).innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId)).where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, found.organizationId))).limit(1)
+      : Promise.resolve([]),
+    device
+      ? db.select({ at: RemoteDeviceEventTable.createdAt, type: RemoteDeviceEventTable.type, level: RemoteDeviceEventTable.level, message: RemoteDeviceEventTable.message }).from(RemoteDeviceEventTable)
+        .where(eq(RemoteDeviceEventTable.deviceId, device.id)).orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(DETAIL_EVENTS)
+      : Promise.resolve([]),
+  ])
+  return {
+    owner: { id: found.organizationId, name: (organization?.name ?? "").slice(0, 200) },
+    conversation: {
+      sessionId: found.sessionId,
+      chat: device?.workbotChat ? (device.workbotChat === "main" ? "main" : "side") : null,
+      member: member ? { id: member.id, name: member.name.slice(0, 255), email: member.email.slice(0, 320) } : null,
+      createdAt: session?.createdAt ?? null,
+      lastActiveAt: session?.updatedAt ?? null,
+      activeTurnSince: session?.activeTurnSince ?? null,
+    },
+    reports: {
+      reported: device ? { state: device.state, detail: device.statusDetail, at: device.lastSeenAt } : null,
+      events,
+    },
+  }
+}
+
+function defaultClient(): (ComputerFleetClient & Pick<ReturnType<typeof createHeadlessRunnerClient>, "readComputer">) | null {
   const deps = defaultHeadlessRunnerDeps()
   return deps ? createHeadlessRunnerClient(deps) : null
 }
@@ -91,8 +139,8 @@ function sharedList(client: ComputerFleetClient, now: number) {
   return list
 }
 
-/** The fleet now, with whose each computer is. */
-export async function currentComputerFleet(): Promise<AdminComputerFleet> {
+/** The fleet now, with whose each computer is; `organization` lists one organization's computers, or `unknown`. */
+export async function currentComputerFleet(organization: string | null = null): Promise<AdminComputerFleet> {
   const client = defaultClient()
   const now = () => new Date()
   if (!client) return notConfiguredComputerFleet(now())
@@ -100,7 +148,16 @@ export async function currentComputerFleet(): Promise<AdminComputerFleet> {
     logger.warn("computer fleet owners unavailable", { error })
     return new Map<string, ComputerOwner>()
   })
-  return readComputerFleet({ client, owners, now }, await sharedList(client, Date.now()))
+  return readComputerFleet({ client, owners, now }, await sharedList(client, Date.now()), organization)
+}
+
+/** One computer in full, read now from its provider through the runner, with what Den knows about it. */
+export async function currentComputer(source: ComputerFleetSourceKind, id: string): Promise<ComputerDetailRead> {
+  const known = (key: string) => loadKnownComputer(key).catch((error: unknown) => {
+    logger.warn("computer fleet conversation unavailable", { error })
+    return null
+  })
+  return readComputerDetail({ client: defaultClient(), known, now: () => new Date() }, source, id)
 }
 
 export async function readComputerFleetHistory(range: ComputerFleetHistoryRange, now = Date.now()): Promise<AdminComputerFleetHistory> {

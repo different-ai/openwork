@@ -15,7 +15,7 @@ import { CellsStore } from "../cells-store.js"
 import { CellCallError, INTERNAL_PATHS, SESSION_CELL_ID, SessionCells, sessionCellName, type CellIdentity, type InternalPath } from "../cells.js"
 import { localMemory } from "../memory.js"
 import { serviceHealthResponse } from "../service-health.js"
-import { computerFleetResponse } from "../computer-fleet.js"
+import { computerDetailResponse, computerFleetResponse } from "../computer-fleet.js"
 import { durableObjectSql } from "./sql.js"
 import { CELL_UNAVAILABLE, CELL_UNAVAILABLE_RETRY_SECONDS, cellRouteFailure, type CellRouteFailure } from "./route-failure.js"
 
@@ -478,6 +478,7 @@ router.onError((error, c) => {
 router.get("/v1/health", (c) => serviceHealthResponse(c.req.raw, configFor(c.env)))
 // The providers' list of this runner's computers: asked of the providers from here, so no cell wakes for it.
 router.get("/v1/computers", (c) => computerFleetResponse(configFor(c.env), { fetch: (url, init) => fetch(url, init) }))
+router.get("/v1/computers/:source/:id", (c) => computerDetailResponse(configFor(c.env), { fetch: (url, init) => fetch(url, init) }, c.req.param("source"), c.req.param("id")))
 const catalogs = new WeakMap<Config, ReturnType<typeof gatewayModelCatalog>>()
 router.get("/v1/models", async (c) => {
   const config = configFor(c.env)

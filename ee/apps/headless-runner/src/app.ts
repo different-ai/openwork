@@ -6,7 +6,7 @@ import { streamSSE } from "hono/streaming"
 import type { ErrorReporter } from "./error-reporting.js"
 import type { SessionEvents } from "./events.js"
 import { serviceHealthResponse, type ServiceHealthConfig } from "./service-health.js"
-import { computerFleetResponse, type ComputerFleetConfig } from "./computer-fleet.js"
+import { computerDetailResponse, computerFleetResponse, type ComputerFleetConfig } from "./computer-fleet.js"
 import { SavedFileLimitError, type SavedFiles } from "./saved-files.js"
 import { formatBytes } from "./tool-files.js"
 import { z } from "zod"
@@ -230,6 +230,8 @@ export function createApp(input: {
   app.get("/v1/health", (c) => serviceHealthResponse(c.req.raw, input.healthConfig))
   // Every computer the providers hold for this runner, for Den's admin page. Reads the providers; touches no conversation.
   app.get("/v1/computers", () => computerFleetResponse(input.computerFleet, { fetch: (url, init) => fetch(url, init) }))
+  // One of them in full: the provider's record, where it was placed and why, and its lifecycle events.
+  app.get("/v1/computers/:source/:id", (c) => computerDetailResponse(input.computerFleet, { fetch: (url, init) => fetch(url, init) }, c.req.param("source"), c.req.param("id")))
   app.get("/v1/models", async (c) => c.json(input.models ? await input.models() : { defaultModel: "", models: [] }))
   app.post("/v1/models", bodyLimit({ maxSize: 8192 }), (c) => scopedCatalogResponse(c.req.raw, input.models))
   app.post("/v1/model-probe", bodyLimit({ maxSize: 8192 }), (c) => modelProbeResponse(c.req.raw, input.modelProbe))
