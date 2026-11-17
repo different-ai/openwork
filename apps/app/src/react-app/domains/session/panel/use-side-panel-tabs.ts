@@ -3,6 +3,7 @@ import { activeBrowserTabIdForSession, browserTabsForSession } from "@openwork/b
 
 import type { BrowserStatePayload } from "@/app/lib/desktop";
 import { toast } from "@/components/ui/sonner";
+import { featureAnalytics } from "@/app/lib/analytics";
 
 import {
   type PanelTab,
@@ -104,7 +105,10 @@ export function useOpenBrowserRailPane(
 export function useCreateTab() {
   return React.useCallback(async (url?: string, sessionId?: string | null) => {
     try {
-      await getElectronBrowser()?.createTab?.(url, sessionId);
+      const browser = getElectronBrowser();
+      if (!browser?.createTab) return;
+      await browser.createTab(url, sessionId);
+      featureAnalytics.browserOpened();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     }

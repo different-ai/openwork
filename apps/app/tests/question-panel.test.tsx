@@ -113,6 +113,27 @@ describe("question panel dismissal", () => {
   });
 });
 
+describe("a long question leaves room for the chat", () => {
+  const long: QuestionInfo[] = [{
+    header: "Plan",
+    question: "Which plan should I follow? ".repeat(200),
+    options: Array.from({ length: 30 }, (_, index) => ({ label: `Plan ${index + 1}`, description: "Details ".repeat(40) })),
+  }];
+
+  for (const collapsible of [false, true]) {
+    test(`the question text and the options each scroll in a bounded area (minimize ${collapsible ? "on" : "off"})`, async () => {
+      await render(<QuestionPanel questions={long} busy={false} collapsible={collapsible} requestId="long" onReply={() => {}} />, ({ container }) => {
+        const text = container.querySelector("[data-question-text]");
+        const body = container.querySelector("[data-question-body]");
+        expect(text?.className).toContain("max-h-[min(9rem,22vh)]");
+        expect(text?.className).toContain("overflow-y-auto");
+        expect(body?.className).toContain("max-h-[min(18rem,40vh)]");
+        expect(body?.className).toContain("overflow-auto");
+      });
+    });
+  }
+});
+
 describe("minimizing a pending question (questionMinimize)", () => {
   beforeEach(() => clearQuestionDrafts());
 

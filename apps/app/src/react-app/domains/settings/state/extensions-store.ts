@@ -1,4 +1,5 @@
 import * as React from "react";
+import { featureAnalytics } from "@/app/lib/analytics";
 
 import { desktopRestrictionNotice, type DesktopAppRestrictionChecker } from "../../../../app/cloud/desktop-app-restrictions";
 
@@ -1240,6 +1241,7 @@ export function createExtensionsStore(options: {
       if (!result.ok) {
         setStateField("skillsStatus", result.stderr || result.stdout || t("skills.import_failed").replace("{status}", String(result.status)));
       } else {
+        featureAnalytics.skillInstalled({ skill_source: "local" });
         setStateField("skillsStatus", result.stdout || t("skills.imported"));
         options.markReloadRequired?.("skills", { type: "skill", name: inferredName, action: "added" });
       }
@@ -1267,6 +1269,7 @@ export function createExtensionsStore(options: {
       setStateField("skillsStatus", t("skills.installing_skill_creator"));
       try {
         await openworkClient.upsertSkill(openworkWorkspaceId, { name: "skill-creator", content: skillCreatorTemplate });
+        featureAnalytics.skillInstalled({ skill_source: "builtin", skill_id: "skill-creator" });
         const message = t("skills.skill_creator_installed");
         setStateField("skillsStatus", message);
         options.markReloadRequired?.("skills", { type: "skill", name: "skill-creator", action: "added" });
@@ -1325,6 +1328,7 @@ export function createExtensionsStore(options: {
         await refreshSkills({ force: true });
         return { ok: false, message };
       }
+      featureAnalytics.skillInstalled({ skill_source: "builtin", skill_id: "skill-creator" });
       const message = result.stdout || t("skills.skill_creator_installed");
       setStateField("skillsStatus", message);
       options.markReloadRequired?.("skills", { type: "skill", name: "skill-creator", action: "added" });
@@ -1564,6 +1568,8 @@ export function createExtensionsStore(options: {
     try {
       await client.setActiveOrganization({ organizationId: orgId });
       const pluginId = await client.createOrgPlugin(orgId, body);
+      if (kind === "skill") featureAnalytics.skillCreated({ skill_source: "organization" });
+      if (kind === "mcp") featureAnalytics.connectionAdded({ connector_kind: "custom" });
       await waitForListedLibraryPlugin(
         () => client.listMeLibraryPlugins(orgId),
         pluginId,

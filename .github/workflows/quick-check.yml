@@ -102,6 +102,7 @@ jobs:
           .github/scripts/require-quick-check.test.mjs
           .github/scripts/production-deploy.test.mjs
           .github/scripts/typecheck-shipped.test.mjs
+          .github/scripts/react-type-boundaries.test.mjs
           .github/scripts/docs-validation.test.mjs
           .github/scripts/ee-image-inputs.test.mjs
           .github/scripts/managed-stable-release.test.mjs

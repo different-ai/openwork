@@ -134,6 +134,10 @@ export function clearQuestionDrafts() {
   questionDrafts.clear();
 }
 
+const QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE =
+  "mt-1 max-h-[min(9rem,22vh)] overflow-y-auto wrap-anywhere text-sm leading-6 text-gray-11";
+const QUESTION_OPTIONS_SCROLL_IN_WINDOW_SHARE = "max-h-[min(18rem,40vh)] space-y-3 overflow-auto px-4 py-3";
+
 export function QuestionPanel(props: QuestionPanelProps) {
   const draftKey = props.collapsible ? props.requestId : undefined;
   const [state, dispatch] = useReducer(
@@ -251,7 +255,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
   if (!currentQuestion) return null;
 
   const body = (
-      <div className="max-h-72 space-y-3 overflow-auto px-4 py-3">
+      <div className={QUESTION_OPTIONS_SCROLL_IN_WINDOW_SHARE} data-question-body="">
         {options.length > 0 ? (
           <div className="space-y-2">
             {options.map((opt, idx) => {
@@ -387,7 +391,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
                     })}
                   </div>
                 </div>
-                <div className="mt-1 text-sm leading-6 text-gray-11">{currentQuestion.question}</div>
+                <div className={QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE} data-question-text="">{currentQuestion.question}</div>
               </div>
             )}
             <CollapsibleTrigger
@@ -443,9 +447,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
                 })}
               </div>
             </div>
-            <div className="mt-1 text-sm leading-6 text-gray-11">
-              {currentQuestion.question}
-            </div>
+            <div className={QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE} data-question-text="">{currentQuestion.question}</div>
           </div>
           {props.onDismiss ? (
             <Button

@@ -10,6 +10,7 @@ import { useQuery } from "@tanstack/react-query"
 import { automationProposalSchema, type AutomationProposal } from "@openwork/types/automations"
 
 import { createDenClient, readDenSettings } from "@/app/lib/den"
+import { featureAnalytics } from "@/app/lib/analytics"
 import { Button } from "@/components/ui/button"
 import { Tool } from "@/components/ui/tool"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
@@ -186,6 +187,7 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
             // of following whichever workspace is active at run time.
             ...(pinnedWorkspaceId ? { workspaceId: pinnedWorkspaceId } : {}),
           })
+      featureAnalytics.automationCreated(placement)
       setCreated(detail.automation.id)
       toast.success("Automation created and active")
     } catch (error) {

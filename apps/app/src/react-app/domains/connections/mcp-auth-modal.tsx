@@ -13,6 +13,8 @@ import {
 } from "@/components/ui/dialog";
 import type { McpDirectoryInfo } from "@/app/constants";
 import { opencodeMcpAuth } from "@/app/lib/desktop";
+import { featureAnalytics } from "@/app/lib/analytics";
+import { connectorAnalyticsIdentity } from "@/react-app/domains/connections/analytics-feature-identities";
 import { unwrap } from "@/app/lib/opencode";
 import { getMcpIdentityKey, validateMcpServerName } from "@/app/mcp";
 import type { Client } from "@/app/types";
@@ -160,6 +162,8 @@ export function McpAuthModal(props: McpAuthModalProps) {
     setReloadNotice(null);
     setLoading(true);
     setAuthInProgress(true);
+    let authAttempted = false;
+    let authSucceeded = false;
 
     try {
       const directory = await resolveDirectory();
@@ -188,6 +192,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
         return;
       }
 
+      authAttempted = true;
       const result = await props.client.mcp.auth.authenticate({
         name: slug,
         directory,
@@ -195,6 +200,8 @@ export function McpAuthModal(props: McpAuthModalProps) {
       const status = unwrap(result) as McpStatusEntry;
 
       if (status.status === "connected") {
+        authSucceeded = true;
+        featureAnalytics.connectionSignInSucceeded(connectorAnalyticsIdentity(props.entry));
         markAuthenticated(slug);
         await props.onComplete();
         return;
@@ -205,11 +212,13 @@ export function McpAuthModal(props: McpAuthModalProps) {
       } else if (status.status === "disabled") {
         setError(t("mcp.auth.server_disabled"));
       } else if (status.status === "failed") {
+        featureAnalytics.connectionSignInFailed(connectorAnalyticsIdentity(props.entry));
         setError(status.error ?? t("mcp.auth.oauth_failed"));
       } else {
         setError(t("mcp.auth.authorization_still_required"));
       }
     } catch (err) {
+      if (authAttempted && !authSucceeded) featureAnalytics.connectionSignInFailed(connectorAnalyticsIdentity(props.entry));
       const message = err instanceof Error ? err.message : t("mcp.auth.failed_to_start_oauth");
 
       if (isSlackMcpEntry(props.entry, slug) && isDynamicClientRegistrationError(message)) {
@@ -269,13 +278,16 @@ export function McpAuthModal(props: McpAuthModalProps) {
     try {
       const result = await opencodeMcpAuth(props.projectDir, props.entry.name) as { ok: boolean; stderr?: string; stdout?: string };
       if (result.ok) {
+        featureAnalytics.connectionSignInSucceeded(connectorAnalyticsIdentity(props.entry));
         setError(null);
         setNeedsReload(true);
         setReloadNotice(t("mcp.auth.oauth_completed_reload"));
       } else {
+        featureAnalytics.connectionSignInFailed(connectorAnalyticsIdentity(props.entry));
         setCliAuthResult(result.stderr || result.stdout || t("mcp.auth.reauth_failed"));
       }
     } catch (err) {
+      featureAnalytics.connectionSignInFailed(connectorAnalyticsIdentity(props.entry));
       const message = err instanceof Error ? err.message : t("mcp.auth.reauth_failed");
       setCliAuthResult(message);
     } finally {

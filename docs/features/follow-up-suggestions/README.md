@@ -12,15 +12,18 @@ hint. **Tab** puts the suggestion in the message box to edit or send. Typing,
 pasting or attaching anything ignores it.
 
 Suggestions predict what the person is likely to type, matching their language,
-tone and brevity. A short confirmation, correction or question can be enough;
-the model should not invent a detailed task or automatically accept an optional
-next step offered by the assistant. It prefers 2–8 words, with a 12-word maximum
+tone and brevity, written as the person and never as the assistant. A short
+confirmation, correction, request or question of their own can be enough; the
+model should not invent a detailed task, automatically accept an optional next
+step offered by the assistant, or ask the person something. It prefers 2–8 words, with a 12-word maximum
 in the prompt.
 
 Nothing shows when the next message is unclear, several directions are equally
 plausible, or the conversation is finished. The model is told to answer `NONE`
 in those cases, and the app also drops answers that are empty, longer than 120
-characters or more than one line.
+characters, more than one line, or that open the way an assistant's offer does
+(such as "Want me to run the tests?" or "Would you like…"). The person's own
+questions, such as "Why did it fail?", are shown.
 
 A suggestion is asked for only:
 
@@ -74,5 +77,5 @@ natural continuation to see a suggestion, and something closed (for example
 after asking for two casual outlines: any suggestion should still fit that
 original intent, even if the assistant offers an unrelated detailed calendar.
 
-`apps/app/tests/follow-up-suggestion.test.ts` covers which replies are asked
-about, the prompt, which answers are shown, and the model choice.
+`apps/app/tests/follow-up-suggestion.test.ts` covers the prompt and which
+answers are shown.

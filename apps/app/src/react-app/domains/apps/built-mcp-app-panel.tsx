@@ -1,3 +1,5 @@
+import { useRef } from "react";
+import { featureAnalytics } from "@/app/lib/analytics";
 import { McpAppFrame } from "@/components/chat/mcp-app-frame";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { X } from "lucide-react";
@@ -15,6 +17,7 @@ export function BuiltMcpAppPanel({
   onClose: () => void;
 }) {
   const summary = builtAppSummary(tab.part);
+  const opened = useRef(false);
   return (
     <section
       className="min-h-0 flex-1 overflow-y-auto"
@@ -50,7 +53,11 @@ export function BuiltMcpAppPanel({
         </div>
       </header>
       <div className={`p-3 ${tab.updating ? "opacity-60" : ""}`} aria-busy={tab.updating || undefined}>
-        <McpAppFrame part={tab.part} origin={tab.origin} />
+        <McpAppFrame part={tab.part} origin={tab.origin} onReady={() => {
+          if (opened.current) return;
+          opened.current = true;
+          featureAnalytics.artifactOpened();
+        }} />
       </div>
     </section>
   );

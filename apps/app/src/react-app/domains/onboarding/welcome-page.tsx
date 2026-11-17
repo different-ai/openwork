@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect } from "react";
+import { useEffect, type Ref } from "react";
 
 import { t } from "../../../i18n";
 import { useBootState } from "../../shell/boot-state";
@@ -14,6 +14,7 @@ import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { useShellConfig } from "../../shell/shell-config";
 
 type WelcomePageProps = {
+  ref?: Ref<HTMLDivElement>;
   onGetStarted: () => void;
   getStartedLabel?: string;
   busy?: boolean;
@@ -27,6 +28,7 @@ type WelcomePageProps = {
 };
 
 export function WelcomePage({
+  ref,
   onGetStarted,
   getStartedLabel,
   busy,
@@ -50,7 +52,7 @@ export function WelcomePage({
   }, [markRouteReady]);
 
   return (
-    <Page className="min-h-dvh">
+    <Page ref={ref} className="min-h-dvh">
       <PageTitlebarRegion />
 
       <ScrollArea className="relative z-10">

@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { featureAnalytics } from "@/app/lib/analytics";
 import { providerCredentialScope, useProviderCredentialHealth } from "./credential-health";
 import { liveProviderSyncStatusQueryKey, usesLiveProviderSync, type LiveProviderSyncStatus } from "./live-provider-sync";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
@@ -417,6 +418,12 @@ export function forgetDeliveredDenSession() {
 
 export function createProviderAuthStore(options: CreateProviderAuthStoreOptions) {
   const listeners = new Set<() => void>();
+  const reportedOAuthConnections = new Set<string>();
+  const reportOAuthConnected = (providerId: string) => {
+    if (reportedOAuthConnections.has(providerId)) return;
+    reportedOAuthConnections.add(providerId);
+    featureAnalytics.providerConnected(providerId, "oauth");
+  };
 
   let snapshot: ProviderAuthStoreSnapshot;
   let disposed = false;
@@ -2094,6 +2101,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         throw new Error(`${t("providers.not_oauth_flow_prefix")} ${resolved}.`);
       }
 
+      reportedOAuthConnections.delete(resolved);
       const auth = unwrap(
         await c.provider.oauth.authorize({ providerID: resolved, method: oauthIndex }),
       );
@@ -2308,10 +2316,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       const updated = await refreshProviders({ dispose: true });
       const connectedNow = Array.isArray(updated?.connected) && updated.connected.includes(resolved);
       if (connectedNow) {
+        reportOAuthConnected(resolved);
         return { connected: true, message: `${t("status.connected")} ${resolved}` };
       }
       const connected = await waitForProviderConnection();
       if (connected) {
+        reportOAuthConnected(resolved);
         return { connected: true, message: `${t("status.connected")} ${resolved}` };
       }
       return { connected: false, pending: true };
@@ -2319,10 +2329,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       if (isPendingOauthError(error)) {
         const updated = await refreshProviders({ dispose: true });
         if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
+          reportOAuthConnected(resolved);
           return { connected: true, message: `${t("status.connected")} ${resolved}` };
         }
         const connected = await waitForProviderConnection();
         if (connected) {
+          reportOAuthConnected(resolved);
           return { connected: true, message: `${t("status.connected")} ${resolved}` };
         }
         return { connected: false, pending: true };
@@ -2354,6 +2366,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
       const workspaceId = options.runtimeWorkspaceId();
       assertNoClientError(await c.auth.set({ providerID: providerId, auth: { type: "api", key: trimmed } }));
+      featureAnalytics.providerConnected(providerId, "api_key");
       if (workspaceId) useProviderCredentialHealth.getState().changed(workspaceId, providerId);
       await refreshProviders({ dispose: true });
       // A configured provider can already be listed before a key is saved.
@@ -2473,6 +2486,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
       refreshSnapshot();
       emitChange();
+      if (!optionsArg?.silent) featureAnalytics.providerConnected(provider.providerId, "organization");
       return `${t("status.connected")} ${provider.name}`;
     } catch (error) {
       const message = describeProviderError(error, "Failed to connect organization provider.");

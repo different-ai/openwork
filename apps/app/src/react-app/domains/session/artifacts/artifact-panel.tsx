@@ -2,6 +2,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Ellipsis, ExternalLink, FolderOpen, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
+import { featureAnalytics } from "@/app/lib/analytics";
 
 import type { OpenworkServerClient, OpenworkWorkspaceCatalogEntry } from "@/app/lib/openwork-server";
 import type { OpenTargetOptions } from "@/lib/target-provider";
@@ -147,6 +148,14 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
     gcTime: 0,
   });
 
+  const previewedOwner = useRef<string | null>(null);
+  const recordPreview = (node: HTMLDivElement | null) => {
+    if (!node || !data || previewedOwner.current === owner) return;
+    if (data.kind === "binary" && !["image", "pdf", "html", "sheet"].includes(target.preview)) return;
+    previewedOwner.current = owner;
+    featureAnalytics.filePreviewed(target.preview);
+  };
+
   const [binaryObjectUrl, setBinaryObjectUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -179,7 +188,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
   }, [data]);
 
   const { mutate, mutateAsync, isPending: isSaving } = useMutation({
-    onMutate: () => ({ owner }),
+    onMutate: () => ({ owner, fileType: target.preview }),
     mutationFn: async (input: SaveArtifactInput) => {
       if (target.kind !== "file") {
         throw new Error("Cannot save non-file artifact.");
@@ -192,6 +201,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
       return client.writeWorkspaceBinaryFile(workspaceId, { path: target.value, data: input.data, baseUpdatedAt: input.baseUpdatedAt, sessionId, fileScope: target.fileScope });
     },
     onSuccess: (result, input, context) => {
+      featureAnalytics.fileEdited(context?.fileType ?? target.preview);
       if (context?.owner !== owner) return;
       setFailure((current) => current?.owner === owner ? null : current);
       queryClient.setQueryData<ArtifactQueryState>(
@@ -224,6 +234,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
     anchor.href = url;
     anchor.download = name;
     anchor.click();
+    featureAnalytics.fileDownloaded();
 
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
@@ -296,7 +307,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <div ref={recordPreview} className="flex h-full min-h-0 flex-col bg-background">
       {failure?.owner === owner ? <div className="shrink-0 px-3 py-2"><TaskRecovery compact title={failure.title} technicalDetails={failure.details}
         actions={<Button variant="ghost" size="xs" onClick={() => setFailure(null)}>Dismiss</Button>} /></div> : null}
       <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">

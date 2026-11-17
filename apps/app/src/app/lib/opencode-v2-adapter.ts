@@ -19,6 +19,8 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, createDesktopFetch, type FieldsResult } from "./opencode";
+import { featureAnalytics } from "./analytics";
+import { nativeSkillAnalyticsIdentity } from "@openwork/product-analytics";
 import { AUTO_ROUTER_SESSION_ROUTES_KEY, autoRouterReplyRoutes } from "@openwork/types/den/auto-router";
 import { SESSION_LINK_METADATA_KEY, SESSION_PROMPT_SENDER_KEY, readSessionLink, sessionLinkMetadata, type SessionLink } from "@openwork/types/session-link";
 import type { OpenworkSessionHistory } from "./openwork-server";
@@ -2972,6 +2974,9 @@ export function createClientV2(
         },
         options?.signal,
       );
+      if (promptResult.response.ok) {
+        for (const skill of skills) featureAnalytics.skillInvoked(nativeSkillAnalyticsIdentity(skill.id));
+      }
       return promptResult.response.ok ? successfulResult(promptResult, {}) : failedResult(promptResult);
     },
     abort: async (
@@ -3225,6 +3230,20 @@ export function createClientV2(
     return text === undefined ? failedResult(result) : successfulResult(result, { text });
   };
 
+  const generateFromSession = async (
+    parameters: { sessionID: string; prompt: string },
+    options?: RequestOptions,
+  ): Promise<FieldsResult<{ text: string }>> => {
+    const result = await request(
+      "POST",
+      `/api/session/${encodeURIComponent(parameters.sessionID)}/generate`,
+      { prompt: parameters.prompt },
+      options?.signal,
+    );
+    const text = result.response.ok ? readString(responseData(result.payload), "text") : undefined;
+    return text === undefined ? failedResult(result) : successfulResult(result, { text });
+  };
+
   const adapter = {
     global: {
       health: async (options?: RequestOptions): Promise<FieldsResult<{ healthy: boolean; version: string }>> => {
@@ -3381,6 +3400,7 @@ export function createClientV2(
     listRunningShells,
     removeBackgroundShell,
     generateWithSmallModel,
+    generateFromSession,
     sessionRunEnd,
     sessionLastTurn,
     addSessionNote,
