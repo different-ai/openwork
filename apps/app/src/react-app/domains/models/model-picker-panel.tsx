@@ -66,6 +66,9 @@ export type ModelPickerPanelProps = {
   onReloadWorkspace?: () => void | Promise<unknown>;
   /** Rows under the footer that only one surface offers. */
   footerExtra?: React.ReactNode;
+  startOnEffort?: boolean;
+  onEffortChosen?: () => void;
+  effortFocusRef?: React.Ref<HTMLButtonElement>;
 };
 
 /**
@@ -76,7 +79,8 @@ export type ModelPickerPanelProps = {
 export function ModelPickerPanel(props: ModelPickerPanelProps) {
   const { options, current, behaviorValue, onBehaviorChange } = props;
   const [query, setQuery] = React.useState("");
-  const [effort, setEffort] = React.useState(false);
+  const [effort, setEffort] = React.useState(props.startOnEffort === true);
+  const levels = React.useRef<HTMLDivElement>(null);
   const effortButtonRef = React.useRef<HTMLButtonElement>(null);
   const backButtonRef = React.useRef<HTMLButtonElement>(null);
   const previousEffort = React.useRef(effort);
@@ -97,13 +101,22 @@ export function ModelPickerPanel(props: ModelPickerPanelProps) {
   const effortValueLabel = autoSelected ? (isAutoRouterModel(current) ? "Managed by Smart Router" : "Managed by OpenWork") : hasEffort ? controls.options.find((option) => option.value === behaviorValue)?.label ?? selectedBehavior.label : "Unavailable";
 
   if (effort && selected) {
-    return <div data-slot="model-thinking-submenu" className="overflow-y-auto p-2">
+    const chosen = controls.options.some((option) => option.value === behaviorValue);
+    const moveLevel = (event: React.KeyboardEvent) => {
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const buttons = [...(levels.current?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+      const next = buttons[buttons.indexOf(document.activeElement as HTMLButtonElement) + (event.key === "ArrowDown" ? 1 : -1)];
+      event.preventDefault();
+      next?.focus({ preventScroll: true });
+    };
+    return <div ref={levels} data-slot="model-thinking-submenu" className="overflow-y-auto p-2" onKeyDown={moveLevel}>
       <button ref={backButtonRef} type="button" aria-label="Back to models" className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setEffort(false)}>
         <ChevronLeft className="size-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0"><span className="block truncate text-sm font-medium">Effort</span><span className="block truncate text-xs text-muted-foreground">{selected.title}</span></span>
       </button>
       <p role="status" className="px-2 py-2 text-xs text-muted-foreground">{getModelBehaviorSelection(selectedBehavior.options, controls.fast ? controls.toggleValue ?? null : behaviorValue).description}</p>
-      {controls.options.map((option) => <Button key={option.value ?? "default"} variant="ghost" className="h-11 w-full justify-between" aria-pressed={option.value === behaviorValue} onClick={() => { onBehaviorChange?.(option.value); setEffort(false); }}>
+      {controls.options.map((option, index) => <Button key={option.value ?? "default"} ref={(chosen ? option.value === behaviorValue : index === 0) ? props.effortFocusRef : undefined} variant="ghost" className="h-11 w-full justify-between" aria-pressed={option.value === behaviorValue}
+        onClick={() => { onBehaviorChange?.(option.value); if (props.startOnEffort && props.onEffortChosen) props.onEffortChosen(); else setEffort(false); }}>
         {option.label}{option.value === behaviorValue ? <Check className="size-4" /> : null}
       </Button>)}
     </div>;

@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { useEffect, useRef, useState } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 
@@ -137,6 +138,7 @@ const FALLBACK_MODEL: ModelRef = { providerID: "", modelID: "" };
  * created session, where the normal send path uploads them into the workspace.
  */
 export function NewTaskComposer(props: NewTaskComposerProps) {
+  const effortQuickPick = useDesktopFeature("effortQuickPick");
   const context = props.context;
   const draftOwnerKey = context?.draftOwnerKey ?? "legacy";
   const [initialState] = useState(() => context?.draftOwnerKey ? useComposerStateStore.getState().sessions[draftOwnerKey] : undefined);
@@ -572,6 +574,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       attachmentsEnabled
       attachmentsDisabledReason={null}
       modelVariantLabel={context?.modelVariantLabel ?? ""}
+      effortQuickPick={effortQuickPick}
       modelVariant={context?.modelVariant ?? null}
       modelBehaviorOptions={context?.modelBehaviorOptions}
       onModelVariantChange={context?.onModelVariantChange ?? noop}

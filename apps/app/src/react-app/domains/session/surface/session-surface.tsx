@@ -2289,6 +2289,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
   const followUpSuggestionsEnabled = useDesktopFeature("followUpSuggestions");
   const questionMinimizeEnabled = useDesktopFeature("questionMinimize");
+  const effortQuickPickEnabled = useDesktopFeature("effortQuickPick");
   const followUpSuggestion = useFollowUpSuggestion({
     enabled: followUpSuggestionsEnabled && !archived && !snapshot?.session.parentID,
     client: opencodeClient,
@@ -4143,6 +4144,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         attachmentsEnabled={props.attachmentsEnabled}
         attachmentsDisabledReason={props.attachmentsDisabledReason}
         modelVariantLabel={sessionModel.modelVariantLabel}
+        effortQuickPick={effortQuickPickEnabled}
         modelVariant={sessionModel.modelVariant}
         modelBehaviorOptions={sessionModel.modelBehaviorOptions}
         onModelVariantChange={handleModelVariantChange}

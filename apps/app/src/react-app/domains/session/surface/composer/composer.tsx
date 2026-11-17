@@ -118,6 +118,7 @@ type ComposerProps = {
   attachmentsUploading?: boolean;
   attachmentsDisabledReason: string | null;
   modelVariantLabel: string;
+  effortQuickPick?: boolean;
   modelVariant: string | null;
   modelBehaviorOptions?: { value: string | null; label: string }[];
   onModelVariantChange: (value: string | null) => void;
@@ -1670,6 +1671,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   fallbackOptions={props.modelOptions}
                   behaviorValue={props.modelVariant}
                   behaviorLabel={props.modelVariantLabel}
+                  effortQuickPick={props.effortQuickPick}
                   behaviorOptions={props.modelBehaviorOptions}
                   onBehaviorChange={(value) => {
                     if (!props.steering && !props.modelSelectionPending) props.onModelVariantChange(value);

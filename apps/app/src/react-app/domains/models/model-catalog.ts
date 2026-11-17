@@ -43,15 +43,18 @@ export function modelTriggerSettings(input: {
   verified: boolean;
   options: readonly { value: string | null; label: string; description?: string }[];
   value: string | null;
+  always?: boolean;
 }): { summary: string | null; fast: boolean } {
   if (!input.named || managesOwnBehavior(input.model)) return { summary: null, fast: false };
   const selection = getModelBehaviorSelection(input.options, input.value);
   const controls = getModelBehaviorControls(selection.options, selection.value);
   if (controls.fast) {
-    return { fast: true, summary: input.value === FAST_DEFAULT_VARIANT ? null : controls.options.find((option) => option.value === input.value)?.label ?? null };
+    return { fast: true, summary: input.value === FAST_DEFAULT_VARIANT && !input.always ? null : controls.options.find((option) => option.value === input.value)?.label ?? null };
   }
   const listed = selection.options.some((option) => option.value === input.value);
-  return { fast: false, summary: listed || input.verified ? nonDefaultModelSummary(input.model, input.value, selection.label) : null };
+  if (!listed && !input.verified) return { fast: false, summary: null };
+  const namesItsDefault = input.always && selection.options.some((option) => option.value !== null);
+  return { fast: false, summary: namesItsDefault ? selection.label : nonDefaultModelSummary(input.model, input.value, selection.label) };
 }
 
 // "OpenWork Free": the free model every desktop gets. Its ids (and the `Auto`

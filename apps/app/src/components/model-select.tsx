@@ -15,6 +15,7 @@ import { openProviderAuthEvent } from "@/react-app/shell/new-providers-listener"
 import { openComposerModelPickerEvent } from "@/app/lib/inference-access";
 import { fixedModelTitle, managesOwnBehavior, modelTitle, modelTriggerSettings, type RetainedModelSelection } from "@/react-app/domains/models/model-catalog";
 import { useModelPickerCatalogStore } from "@/react-app/domains/session/models/model-collections-store";
+import { markFeatureUsed } from "@/app/lib/den";
 
 export { ModelPickerFooter } from "@/react-app/domains/models/model-picker-panel";
 
@@ -36,14 +37,26 @@ interface ModelSelectProps {
   onSetWorkspaceDefault?: (model: ModelRef, variant?: string | null) => void | boolean | Promise<void | boolean>;
   onReloadWorkspace?: () => void | Promise<unknown>;
   retainedSelection?: RetainedModelSelection;
+  effortQuickPick?: boolean;
 }
 
 export function ModelSelect({ open, value, hideValue = false, onOpenChange, onChange, disabled = false, sessionId,
-  openWorkModelsSyncing = false, fallbackOptions = [], behaviorValue = null, behaviorOptions = [], onBehaviorChange, onSetWorkspaceDefault, onReloadWorkspace, retainedSelection: savedSelection }: ModelSelectProps) {
+  openWorkModelsSyncing = false, fallbackOptions = [], behaviorValue = null, behaviorOptions = [], onBehaviorChange, onSetWorkspaceDefault, onReloadWorkspace, retainedSelection: savedSelection, effortQuickPick = false }: ModelSelectProps) {
   const [focusAlternative, setFocusAlternative] = React.useState(false);
   const isMobile = useIsMobile();
   const popupRef = React.useRef<HTMLDivElement>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const effortFocusRef = React.useRef<HTMLButtonElement>(null);
+  const [effortFirst, setEffortFirst] = React.useState(false);
+  const [clickedView, setClickedView] = React.useState<boolean | null>(null);
+  const [seenOpen, setSeenOpen] = React.useState(open);
+  const showView = (effort: boolean) => { setClickedView(effort); setEffortFirst(effort); };
+  if (seenOpen !== open) {
+    setSeenOpen(open);
+    const openedWithoutAClickHere = open && clickedView === null;
+    if (openedWithoutAClickHere) setEffortFirst(false);
+    setClickedView(null);
+  }
   const workspace = useWorkspace();
   const setWorkspaceDefault = useSetWorkspaceDefaultModel();
   const checkRestriction = useCheckDesktopRestriction();
@@ -76,7 +89,10 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
   // setting the list does not show is only called out once the list is the engine's answer for a verified sign-in.
   const { summary, fast: fastOn } = modelTriggerSettings({ model: value, named: name !== undefined,
     verified: catalogState.state === "ready" && !catalog.restoring,
-    options: selected?.behaviorOptions ?? catalog.currentOption?.behaviorOptions ?? behaviorOptions, value: behaviorValue });
+    options: selected?.behaviorOptions ?? catalog.currentOption?.behaviorOptions ?? behaviorOptions, value: behaviorValue, always: effortQuickPick });
+  const effortButton = effortQuickPick && summary !== null && Boolean(selected && !selected.disabled && onBehaviorChange);
+  const triggerClass = "inline-flex h-9 min-w-0 items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground focus-visible:rounded focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
+  const fastMark = fastOn ? <span data-testid="model-fast-indicator" className="text-xs font-medium"> · Fast</span> : null;
   const select = (option: ModelOption, behavior?: { variant: string | null }) => choice.choose(option, () => {
     onChange({ providerID: option.providerID, modelID: option.modelID }, behavior?.variant);
     // Setting the model keeps the variant when the model is unchanged, so apply it directly too.
@@ -90,12 +106,20 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
     if (!next && choice.loginOpen) return;
     setFocusAlternative(false); onOpenChange(next);
   }}>
-    <PopoverTrigger type="button" disabled={disabled} aria-label="Change model"
-      className="inline-flex h-9 min-w-0 items-center gap-1.5 px-2.5 text-sm text-muted-foreground hover:text-foreground focus-visible:rounded focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
-      <span className="max-w-56 truncate">{name ?? "Select model"}{summary ? ` · ${summary}` : ""}{fastOn ? <span data-testid="model-fast-indicator" className="text-xs font-medium"> · Fast</span> : null}</span><ChevronDown className="size-3" />
-    </PopoverTrigger>
-    <PopoverContent ref={popupRef} tabIndex={-1} align="start" initialFocus={() => isMobile || focusAlternative ? popupRef.current : searchInputRef.current} data-testid="composer-model-picker" className="flex max-h-[min(var(--available-height),36rem)] w-90 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl p-0">
-      <ModelPickerPanel searchInputRef={searchInputRef} options={options} current={value} behaviorValue={behaviorValue} fallbackBehaviorOptions={behaviorOptions}
+    {effortButton ? <span className="inline-flex min-w-0 items-center">
+      <PopoverTrigger type="button" disabled={disabled} aria-label="Change model" onClick={() => showView(false)} className={`${triggerClass} pl-2.5 pr-1`}>
+        <span className="max-w-44 truncate">{name}</span>
+      </PopoverTrigger>
+      <span aria-hidden="true" className="text-sm text-muted-foreground">·</span>
+      <PopoverTrigger type="button" disabled={disabled} aria-label={`Change effort, now ${summary}${fastOn ? ", Fast" : ""}`} title="Change effort" data-testid="composer-effort-trigger"
+        onClick={() => { showView(true); markFeatureUsed("effortQuickPick"); }} className={`${triggerClass} shrink-0 pl-1 pr-2.5`}>
+        <span>{summary}{fastMark}</span><ChevronDown className="size-3" />
+      </PopoverTrigger>
+    </span> : <PopoverTrigger type="button" disabled={disabled} aria-label="Change model" className={`${triggerClass} px-2.5`}>
+      <span className="max-w-56 truncate">{name ?? "Select model"}{summary ? ` · ${summary}` : ""}{fastMark}</span><ChevronDown className="size-3" />
+    </PopoverTrigger>}
+    <PopoverContent ref={popupRef} tabIndex={-1} align="start" initialFocus={() => effortFirst ? effortFocusRef.current ?? popupRef.current : isMobile || focusAlternative ? popupRef.current : searchInputRef.current} data-testid="composer-model-picker" className="flex max-h-[min(var(--available-height),36rem)] w-90 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl p-0">
+      <ModelPickerPanel key={effortFirst ? "effort" : "models"} startOnEffort={effortFirst} onEffortChosen={() => onOpenChange(false)} effortFocusRef={effortFocusRef} searchInputRef={searchInputRef} options={options} current={value} behaviorValue={behaviorValue} fallbackBehaviorOptions={behaviorOptions}
         onSelect={select} onBehaviorChange={onBehaviorChange} focusAlternative={focusAlternative} catalogState={catalogState} retainedSelection={retainedSelection}
         onConnectProvider={!restrictToCloud ? openProvider : undefined} onOpenProviderSettings={!checkRestriction({ restriction: "allowControlSettings" }) ? openSettings : undefined}
         onSetWorkspaceDefault={onSetWorkspaceDefault ?? setWorkspaceDefault} openWorkModelsSyncing={openWorkModelsSyncing} autoVisible={autoVisible} onReloadWorkspace={onReloadWorkspace} />

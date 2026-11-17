@@ -61,3 +61,12 @@ test("listed settings read the same whether or not the list is verified", () => 
     expect(settings("__openwork_fast_v1/variant/high")).toEqual({ summary: "High", fast: true });
   }
 });
+
+test("asked to always name the effort, the trigger names the default too", () => {
+  const settings = (value: string | null, options = behaviorOptions) => modelTriggerSettings({ model: current, named: true, verified: true, options, value, always: true });
+  expect(settings(null)).toEqual({ summary: "Default", fast: false });
+  expect(settings("high")).toEqual({ summary: "High", fast: false });
+  expect(settings(FAST_DEFAULT_VARIANT)).toEqual({ summary: "Default", fast: true });
+  // A model with nothing to choose has no effort to name.
+  expect(settings(null, [])).toEqual({ summary: null, fast: false });
+});
