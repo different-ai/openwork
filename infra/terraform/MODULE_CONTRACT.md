@@ -206,23 +206,26 @@ coverage NotRun and failed steps Failed. Later offline hardening is not a new
 live run; fixture-established desktop authentication is not proof of an OS-level
 OAuth/protocol-handler handoff. Screenshots illustrate results, not decide them.
 
-## Optional AWS managed assistant qualification
+## Gateway-backed AWS managed runtime qualification
 
-The AWS managed installer may opt into the shared module's runner, Workbot,
-Slack assistant and optional Daytona/Freestyle computers. They remain off by
-default and are not part of the core C7 conformance verdict. Daytona is preferred
-when a sandbox is needed; sandbox provisioning is never a required installation,
-Workbot, Slack or Automation dependency. The managed runner calls its model
-endpoint directly with `anthropic`, `openai` or `openai-responses`; there is no AI
-Gateway on this install path. Daytona and Freestyle execute in their providers'
-clouds outside the customer's AWS account, and the customer configures their
-Slack app in Den connector settings.
+AWS's explicit `gateway` managed profile includes Den API/web, native AI Gateway,
+runner, Workbot, Slack processing and Automations. It does not alter the core C7
+conformance verdict or direct-module defaults. Existing records remain `legacy`
+until an approved version-increasing profile Update. Hosted runtime controls are
+behind `managedDeploymentAssistants`; GCP behavior is unchanged.
 
-The installer accepts only customer-owned, same-account/region Secrets Manager
-ARNs for model and optional Daytona/Freestyle API keys. ECS injects those values without a Terraform
-secret-value data source. This avoids new plaintext key copies in hosted OpenWork
-or Terraform state; it does not erase existing state-backed core/generated runner
-credentials or historical state. Customer-managed KMS keys need separate grants.
+All agent inference uses existing scoped Gateway authorization. Upstream model
+credentials and grants are configured inside the installed Den, not hosted
+installer configuration. Gateway-profile runners receive no global upstream key.
+Only computers are optional/off by default: Daytona is preferred, Freestyle is
+supported. They execute outside the customer's AWS account. The customer must
+also configure the real Slack app and connection inside Den.
+
+Only enabled computers require a same-account/region Secrets Manager reference;
+ECS injects it without a Terraform secret-value read. Legacy direct-model inputs
+remain compatible only for legacy profiles. Generated core/runner credentials
+and historical state remain state-backed; protect them. Customer-managed KMS
+keys need separately reviewed grants.
 
 A managed runner adds encrypted EFS and daily encrypted AWS Backup recovery
 points with seven-day retention. Keep backup resources protected alongside the
@@ -251,15 +254,15 @@ module conformance, local product tests and plans do not satisfy it. Record:
 - Redacted evidence, followed by destroy and independent retained/soft-deleted
   resource inventory. Never publish secret material, state or customer identity.
 
-Until that candidate-specific sequence has been observed, mark the optional
-profile **unqualified** and keep each missing (`NotRun`) or failed (`Failed`)
-observation distinct. The November 2026 isolated managed test passed its cloud
-install/enable-Update, certificate and EFS backup checks, but failed Workbot and
-scheduled headless Automation model access with the published `0.18.67` runtime's
-Gateway-only policy. No gatewayless readiness or post-Update application parity
-is established by that run. See the managed installer README for the exact
-qualification boundary. Publishing a production managed release or changing
-hosted release configuration requires a separate operator action.
+Until that candidate-specific sequence has been observed, mark the profile
+**unqualified** and retain each missing (`NotRun`) or failed (`Failed`) result.
+The November 2026 legacy/direct test passed cloud install/enable-Update,
+certificate continuity and both triggered/scheduled encrypted EFS backups, but
+failed Workbot and scheduled Automation model access because no Gateway was
+installed. Those failures remain recorded. The selected Gateway-backed profile
+requires a new approved Update and independent application proof; no direct-model
+runtime change was implemented. See the installer README for exact live status.
+Production release publication or hosted release changes remain separate actions.
 
 ## Known per-cloud limitations
 

@@ -51,6 +51,34 @@ class AssistantHealthTests(unittest.TestCase):
                 ecs.describe_services.return_value = {"services": [{**ready_service(), **update}]}
                 self.assertEqual(health.assistant_service_check(ecs, "cluster", "private-service", "runner_service")["status"], "failing")
 
+    def test_gateway_health_and_readiness_require_gateway_identity_without_credentials(self):
+        ecs = MagicMock()
+        ecs.describe_services.return_value = {"services": [ready_service()]}
+        with patch.object(health, "http_check", side_effect=[
+                (health.check("ai_gateway_available", "ok", value=10), {"service": "gateway"}),
+                (health.check("ai_gateway_available", "ok", value=20), {"service": "gateway"})]) as http:
+            result = health.ai_gateway_check(ecs, "cluster", "private-service", "https://models.example.test")
+        self.assertEqual(result, {"id": "ai_gateway_available", "status": "ok", "value": 10})
+        self.assertEqual([call.args for call in http.call_args_list], [
+            ("ai_gateway_available", "https://models.example.test/health"),
+            ("ai_gateway_available", "https://models.example.test/ready")])
+        self.assertTrue(all(call.kwargs == {"expect_service": "gateway"} for call in http.call_args_list))
+        self.assertNotIn("private", json.dumps(result))
+
+    def test_gateway_fails_closed_without_readiness_or_configuration(self):
+        ecs = MagicMock()
+        ecs.describe_services.return_value = {"services": [ready_service()]}
+        with patch.object(health, "http_check") as http:
+            result = health.ai_gateway_check(ecs, "cluster", "private-service", None)
+            self.assertEqual(result["status"], "unknown")
+            http.assert_not_called()
+        with patch.object(health, "http_check", side_effect=[
+                (health.check("ai_gateway_available", "ok"), {"service": "gateway"}),
+                (health.check("ai_gateway_available", "failing", code="http_error"), {"private": "provider details"})]):
+            result = health.ai_gateway_check(ecs, "cluster", "private-service", "https://models.example.test")
+        self.assertEqual(result, {"id": "ai_gateway_available", "status": "failing", "code": "http_error"})
+        self.assertNotIn("private", json.dumps(result))
+
     def test_storage_reads_metadata_only_and_fails_closed(self):
         efs = MagicMock()
         metadata = {"LifeCycleState": "available", "Encrypted": True, "NumberOfMountTargets": 2}
@@ -125,6 +153,19 @@ class AssistantHealthTests(unittest.TestCase):
         service.assert_not_called()
         storage.assert_not_called()
         backups.assert_not_called()
+
+    def test_gateway_profile_adds_only_gateway_availability_metadata(self):
+        report, http, service, storage, backups, _ = self.collect({
+            "services": {"ai_gateway": "private-gateway"},
+            "environment": {"AI_GATEWAY_URL": "https://models.example.test"},
+        })
+        self.assertEqual(report["checks"][-1], {"id": "ai_gateway_available", "status": "ok"})
+        self.assertEqual(http.call_args.args, ("ai_gateway_available", "https://models.example.test/ready"))
+        self.assertEqual(http.call_args.kwargs, {"expect_service": "gateway"})
+        self.assertEqual(service.call_args.args[-1], "ai_gateway_available")
+        storage.assert_not_called()
+        backups.assert_not_called()
+        self.assertNotIn("private", json.dumps(report))
 
     def test_optional_profile_reports_only_allowlisted_content_free_checks(self):
         report, http, _, storage, backups, targets = self.collect({

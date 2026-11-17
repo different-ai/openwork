@@ -15,6 +15,7 @@ mock_provider "aws" {
         { domain_name = "openwork.example.com", resource_record_name = "_a.openwork.example.com.", resource_record_type = "CNAME", resource_record_value = "_a.acm-validations.aws." },
         { domain_name = "api.openwork.example.com", resource_record_name = "_b.api.openwork.example.com.", resource_record_type = "CNAME", resource_record_value = "_b.acm-validations.aws." },
         { domain_name = "chat.openwork.example.com", resource_record_name = "_c.chat.openwork.example.com.", resource_record_type = "CNAME", resource_record_value = "_c.acm-validations.aws." },
+        { domain_name = "models.openwork.example.com", resource_record_name = "_d.models.openwork.example.com.", resource_record_type = "CNAME", resource_record_value = "_d.acm-validations.aws." },
       ]
     }
   }
@@ -42,7 +43,7 @@ variables {
 run "assistants_off_keeps_core_only_profile" {
   command = plan
   assert {
-    condition     = !var.headless_runner.enabled && !var.workbot.enabled && !var.slack_assistant_enabled && var.headless_computer.provider == "off"
+    condition     = var.managed_runtime_profile == "legacy" && !local.gateway_profile && output.ai_gateway_url == null && !var.headless_runner.enabled && !var.workbot.enabled && !var.slack_assistant_enabled && var.headless_computer.provider == "off"
     error_message = "All assistant services and computers must remain off by default."
   }
   assert {
@@ -96,6 +97,77 @@ run "daytona_computer_is_optional_and_uses_external_reference" {
     condition     = var.headless_computer.provider == "daytona" && var.headless_computer.snapshot == "computer-image" && toset(keys(output.service_names)) == toset(["den_api", "den_web", "headless_runner"])
     error_message = "Daytona configures optional runner tools without requiring OpenWork Web or a separate sandbox service."
   }
+}
+
+run "gateway_profile_requires_full_runtime_and_ignores_legacy_model_inputs" {
+  command = plan
+  variables {
+    managed_runtime_profile   = "gateway"
+    ai_gateway_image          = "ghcr.io/different-ai/openwork-inference@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    headless_runner_image     = "example.test/runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    workbot_image             = "example.test/workbot@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    headless_runner           = { enabled = false, model_protocol = "anthropic", model_base_url = "https://old-provider.example.test/v1", model = "legacy-model" }
+    headless_model_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:unused-model-key-abcdef"
+    workbot                   = { enabled = false, desired_count = 4 }
+    slack_assistant_enabled   = false
+  }
+  assert {
+    condition = alltrue([
+      local.managed_headless_runner.enabled && local.managed_workbot.enabled && local.managed_slack_assistant_enabled,
+      local.managed_workbot.desired_count == 1,
+      local.managed_headless_runner.model_protocol == "openai",
+      local.managed_headless_runner.model_base_url == "https://models.openwork.example.com",
+      local.managed_headless_runner.model == "openai/gpt-6-luna",
+      local.managed_model_secret_arn == "",
+      output.ai_gateway_url == "https://models.openwork.example.com",
+      toset(keys(output.service_names)) == toset(["den_api", "den_web", "ai_gateway", "headless_runner", "workbot"]),
+      toset(keys(output.task_definition_arns)) == toset(["den_api", "den_web", "ai_gateway", "headless_runner", "workbot"]),
+      var.headless_computer.provider == "off" && var.headless_computer_secret_arn == "" && var.headless_computer.snapshot == "",
+    ])
+    error_message = "The explicit Gateway profile requires five services, routes models through native Gateway configuration, ignores old direct credentials/endpoints, and needs no sandbox."
+  }
+}
+
+run "gateway_profile_daytona_is_optional" {
+  command = plan
+  variables {
+    managed_runtime_profile      = "gateway"
+    ai_gateway_image             = "ghcr.io/different-ai/openwork-inference@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    headless_runner_image        = "example.test/runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    workbot_image                = "example.test/workbot@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    headless_computer            = { provider = "daytona", snapshot = "computer-image" }
+    headless_computer_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:computer-key-abcdef"
+  }
+  assert {
+    condition     = local.managed_model_secret_arn == "" && local.managed_headless_runner.enabled && length(output.service_names) == 5 && var.headless_computer.provider == "daytona" && var.daytona.api_url == "https://app.daytona.io/api"
+    error_message = "Daytona configures optional computer tools without a global model key or another service."
+  }
+}
+
+run "gateway_profile_freestyle_is_optional" {
+  command = plan
+  variables {
+    managed_runtime_profile      = "gateway"
+    ai_gateway_image             = "ghcr.io/different-ai/openwork-inference@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    headless_runner_image        = "example.test/runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    workbot_image                = "example.test/workbot@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    headless_computer            = { provider = "freestyle" }
+    headless_computer_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:computer-key-abcdef"
+  }
+  assert {
+    condition     = local.managed_model_secret_arn == "" && length(output.service_names) == 5 && var.headless_computer.provider == "freestyle" && var.headless_computer.snapshot == ""
+    error_message = "Freestyle remains optional and needs no Daytona snapshot or global model key."
+  }
+}
+
+run "gateway_profile_requires_reviewed_gateway_digest" {
+  command = plan
+  variables {
+    managed_runtime_profile = "gateway"
+    headless_runner_image   = "example.test/runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    workbot_image           = "example.test/workbot@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+  expect_failures = [var.ai_gateway_image]
 }
 
 run "external_runner_is_not_an_installer_option" {

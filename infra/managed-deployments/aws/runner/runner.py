@@ -81,6 +81,7 @@ def terraform_inputs():
         "control_plane_origin": os.environ["CONTROL_PLANE_ORIGIN"], "size": os.environ.get("SIZE", "small"),
         "region": os.environ["AWS_REGION"], "account_id": os.environ["EXPECTED_ACCOUNT_ID"],
         "route53_zone_id": os.environ["ROUTE53_ZONE_ID"],
+        "managed_runtime_profile": managed_runtime_profile(),
         **network_inputs(),
         **assistant_inputs(),
     }
@@ -103,10 +104,18 @@ def customer_secret_arn(name, required=False):
     return value
 
 
+def managed_runtime_profile():
+    profile = os.environ.get("MANAGED_RUNTIME_PROFILE", "legacy")
+    if profile not in ("legacy", "gateway"):
+        raise ValueError("unsupported managed runtime profile")
+    return profile
+
+
 def assistant_inputs():
-    enabled = boolean_input("HEADLESS_RUNNER_ENABLED")
-    workbot = boolean_input("WORKBOT_ENABLED")
-    slack = boolean_input("SLACK_ASSISTANT_ENABLED")
+    gateway = managed_runtime_profile() == "gateway"
+    enabled = gateway or boolean_input("HEADLESS_RUNNER_ENABLED")
+    workbot = gateway or boolean_input("WORKBOT_ENABLED")
+    slack = gateway or boolean_input("SLACK_ASSISTANT_ENABLED")
     provider = os.environ.get("HEADLESS_COMPUTER_PROVIDER", "off")
     if provider not in ("off", "daytona", "freestyle"):
         raise ValueError("unsupported managed computer provider")
@@ -114,25 +123,32 @@ def assistant_inputs():
         if workbot or slack or provider != "off":
             raise ValueError("Workbot, Slack and computers require the managed runner")
         return {}
-    protocol = os.environ.get("HEADLESS_MODEL_PROTOCOL", "anthropic")
-    if protocol not in ("anthropic", "openai", "openai-responses"):
-        raise ValueError("unsupported direct model protocol")
-    base_url = os.environ.get("HEADLESS_MODEL_BASE_URL", "")
-    parsed = urlsplit(base_url)
-    if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
-            or parsed.password is not None or parsed.query or parsed.fragment):
-        raise ValueError("the direct model endpoint must be an HTTPS URL without credentials or a query")
-    model = os.environ.get("HEADLESS_MODEL", "")
-    if not model or len(model) > 200 or any(ord(c) < 32 for c in model):
-        raise ValueError("a direct model id is required")
+    computer_secret = customer_secret_arn("HEADLESS_COMPUTER_SECRET_ARN", required=provider != "off") if provider != "off" or not gateway else ""
     values = {
-        "headless_runner": {"enabled": True, "model_protocol": protocol, "model_base_url": base_url, "model": model},
+        "headless_runner": {"enabled": True},
         "workbot": {"enabled": workbot},
         "slack_assistant_enabled": slack,
         "headless_computer": {"provider": provider},
-        "headless_model_secret_arn": customer_secret_arn("HEADLESS_MODEL_SECRET_ARN", required=True),
-        "headless_computer_secret_arn": customer_secret_arn("HEADLESS_COMPUTER_SECRET_ARN", required=provider != "off"),
+        "headless_computer_secret_arn": computer_secret,
     }
+    if gateway:
+        # Providers and member model access are configured in the customer's Den.
+        # Legacy upstream fields never cross into Gateway-profile Terraform inputs.
+        values["managed_runtime_profile"] = "gateway"
+    else:
+        protocol = os.environ.get("HEADLESS_MODEL_PROTOCOL", "anthropic")
+        if protocol not in ("anthropic", "openai", "openai-responses"):
+            raise ValueError("unsupported direct model protocol")
+        base_url = os.environ.get("HEADLESS_MODEL_BASE_URL", "")
+        parsed = urlsplit(base_url)
+        if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.query or parsed.fragment):
+            raise ValueError("the direct model endpoint must be an HTTPS URL without credentials or a query")
+        model = os.environ.get("HEADLESS_MODEL", "")
+        if not model or len(model) > 200 or any(ord(c) < 32 for c in model):
+            raise ValueError("a direct model id is required")
+        values["headless_runner"].update({"model_protocol": protocol, "model_base_url": base_url, "model": model})
+        values["headless_model_secret_arn"] = customer_secret_arn("HEADLESS_MODEL_SECRET_ARN", required=True)
     if provider == "daytona":
         snapshot = os.environ.get("HEADLESS_COMPUTER_SNAPSHOT", "")
         if not snapshot or len(snapshot) > 512 or any(ord(c) < 32 for c in snapshot):
@@ -155,17 +171,26 @@ AWS_IMAGE_REPOSITORIES = {
     "den_web": "ghcr.io/different-ai/openwork-den-web",
     "headless_runner": "ghcr.io/different-ai/openwork-headless-runner",
     "workbot": "ghcr.io/different-ai/openwork-workbot",
+    "ai_gateway": "ghcr.io/different-ai/openwork-inference",
 }
 
 
-def release_images(release, assistants_enabled=False):
-    """Keep legacy core-only releases valid, but never enable unpinned assistants."""
+def release_images(release, assistants_enabled=False, runtime_profile="legacy"):
+    """Retain legacy inventories; Gateway requires the complete five pinned images."""
+    if isinstance(assistants_enabled, str):
+        runtime_profile = assistants_enabled
+        assistants_enabled = runtime_profile == "gateway"
+    if runtime_profile not in ("legacy", "gateway") or not isinstance(assistants_enabled, bool):
+        raise ValueError("invalid AWS release runtime profile")
     images = release.get("images", {})
     core = {"den_api", "den_web"}
+    legacy_assistants = core | {"headless_runner", "workbot"}
     complete = set(AWS_IMAGE_REPOSITORIES)
-    if not isinstance(images, dict) or (images and set(images) not in (core, complete)):
+    if not isinstance(images, dict) or (images and set(images) not in (core, legacy_assistants, complete)):
         raise ValueError("invalid AWS release image inventory")
-    if assistants_enabled and set(images) != complete:
+    if runtime_profile == "gateway" and set(images) != complete:
+        raise ValueError("the Gateway runtime profile requires all five pinned images")
+    if assistants_enabled and set(images) not in (legacy_assistants, complete):
         raise ValueError("this release does not pin the runner and Workbot images")
     for kind, image in images.items():
         if not isinstance(image, str) or not re.fullmatch(re.escape(AWS_IMAGE_REPOSITORIES[kind]) + r"@sha256:[a-f0-9]{64}", image):
@@ -253,7 +278,7 @@ def verify_network():
         clusters = aws("ecs", "describe-clusters", "--clusters", inputs["ecs_cluster_arn"]).get("clusters", [])
         cluster = clusters[0] if clusters else None
     problems = network_problems(vpcs[0] if vpcs else None, dns, subnets, tables, cluster, inputs)
-    if boolean_input("HEADLESS_RUNNER_ENABLED"):
+    if managed_runtime_profile() == "gateway" or boolean_input("HEADLESS_RUNNER_ENABLED"):
         service_zones = [subnet.get("AvailabilityZone") for subnet in subnets if subnet.get("SubnetId") in inputs["service_subnet_ids"]]
         if len(set(service_zones)) != len(inputs["service_subnet_ids"]):
             problems.append("the runner needs exactly one private service subnet per availability zone for EFS mount targets")
@@ -446,9 +471,10 @@ def apply(root, tf_root):
     inputs = tf_root / "managed.auto.tfvars.json"
     values = terraform_inputs()
     release = root / "release.json"
-    assistants_enabled = values.get("headless_runner", {}).get("enabled", False)
+    profile = values.get("managed_runtime_profile", "legacy")
+    assistants_enabled = profile == "gateway" or values.get("headless_runner", {}).get("enabled", False)
     if release.exists():
-        values.update(release_images(json.loads(release.read_text()), assistants_enabled))
+        values.update(release_images(json.loads(release.read_text()), assistants_enabled, profile))
     elif assistants_enabled:
         raise ValueError("the managed runner requires a pinned release inventory")
     inputs.write_text(json.dumps(values))
@@ -556,6 +582,8 @@ def tls_redeploy(force=True, cluster=None, expected=None):
 
 
 def verify_services(outputs):
+    if managed_runtime_profile() == "gateway" and set(outputs["service_names"]) != set(AWS_IMAGE_REPOSITORIES):
+        raise ValueError("the Gateway runtime profile requires all five services")
     services = list(outputs["service_names"].values())
     for _ in range(2):  # each CLI wait polls for up to 10 minutes
         try:
@@ -569,7 +597,7 @@ def verify_services(outputs):
     if {service.get("serviceName") for service in status["services"]} != set(services):
         raise ValueError("unexpected service inventory")
     optional = {name: outputs.get("task_definition_arns", {}).get(key)
-                for key, name in outputs["service_names"].items() if key in ("headless_runner", "workbot")}
+                for key, name in outputs["service_names"].items() if key in ("headless_runner", "workbot", "ai_gateway")}
     for service in status["services"]:
         if service["runningCount"] < service["desiredCount"] or service["desiredCount"] < 1:
             raise ValueError("services not running")
@@ -577,6 +605,7 @@ def verify_services(outputs):
             intended = optional[service["serviceName"]]
             deployments = service.get("deployments", [])
             if (not intended or service.get("taskDefinition") != intended
+                    or service["runningCount"] != service["desiredCount"]
                     or service.get("pendingCount") != 0 or len(deployments) != 1
                     or deployments[0].get("status") != "PRIMARY"
                     or deployments[0].get("taskDefinition") != intended
@@ -594,9 +623,15 @@ def verify_health(outputs, attempts=20, delay=15):
     expected_api = "https://api." + os.environ["DOMAIN_NAME"]
     if outputs["web_url"] != expected_web or outputs["api_url"] != expected_api:
         raise ValueError("unexpected service origin")
+    gateway = managed_runtime_profile() == "gateway"
     workbot_url = outputs.get("workbot_url")
-    if workbot_url is not None and workbot_url != "https://chat." + os.environ["DOMAIN_NAME"]:
+    expected_workbot = "https://chat." + os.environ["DOMAIN_NAME"]
+    if (gateway and workbot_url != expected_workbot) or (workbot_url is not None and workbot_url != expected_workbot):
         raise ValueError("unexpected Workbot origin")
+    gateway_url = outputs.get("ai_gateway_url")
+    expected_gateway = "https://models." + os.environ["DOMAIN_NAME"]
+    if (gateway and gateway_url != expected_gateway) or (gateway_url is not None and gateway_url != expected_gateway):
+        raise ValueError("unexpected AI Gateway origin")
     # New DNS records and certificates can take a few minutes to become visible.
     for attempt in range(attempts):
         try:
@@ -608,7 +643,11 @@ def verify_health(outputs, attempts=20, delay=15):
             if workbot_url:
                 with urllib.request.urlopen(workbot_url + "/healthz", timeout=30) as response:
                     workbot_ok = response.status == 200
-            if health.get("ok") is True and health.get("service") == "den-api" and ready.get("ok") is True and web_ok and workbot_ok:
+            gateway_ok = True
+            if gateway_url:
+                gateway_health = fetch_json(gateway_url + "/health")
+                gateway_ok = gateway_health.get("ok") is True and gateway_health.get("service") == "gateway"
+            if health.get("ok") is True and health.get("service") == "den-api" and ready.get("ok") is True and web_ok and workbot_ok and gateway_ok:
                 return
         except Exception:
             pass

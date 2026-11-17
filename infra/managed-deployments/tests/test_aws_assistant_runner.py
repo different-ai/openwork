@@ -115,8 +115,8 @@ class AssistantReleaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.release_images({"images": images}, assistants_enabled=True)
 
-    def test_all_four_digest_pins_are_passed_without_registry_resolution(self):
-        images = self.pins()
+    def test_legacy_four_digest_pins_are_passed_without_registry_resolution(self):
+        images = {kind: pin for kind, pin in self.pins().items() if kind != "ai_gateway"}
         with patch.object(runner, "aws") as aws:
             self.assertEqual(runner.release_images({"images": images}, True), {key + "_image": value for key, value in images.items()})
         aws.assert_not_called()

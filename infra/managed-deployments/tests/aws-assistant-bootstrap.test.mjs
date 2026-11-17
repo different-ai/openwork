@@ -92,7 +92,12 @@ test("bootstrap forwards only non-secret model/computer settings and secret refe
     HEADLESS_COMPUTER_SNAPSHOT: "HeadlessComputerSnapshot", DAYTONA_API_URL: "DaytonaApiUrl", DAYTONA_TARGET: "DaytonaTarget",
   };
   const environment = Object.fromEntries(template.Resources.Runner.Properties.Environment.EnvironmentVariables.map((entry) => [entry.Name, entry.Value]));
-  for (const [key, parameter] of Object.entries(expected)) assert.deepEqual(environment[key], { Ref: parameter });
+  for (const [key, parameter] of Object.entries(expected)) {
+    if (["HEADLESS_RUNNER_ENABLED", "WORKBOT_ENABLED", "SLACK_ASSISTANT_ENABLED"].includes(key)) {
+      assert.deepEqual(environment[key], { "Fn::If": ["IsGatewayRuntime", "true", { Ref: parameter }] });
+    } else assert.deepEqual(environment[key], { Ref: parameter });
+  }
+  assert.deepEqual(environment.MANAGED_RUNTIME_PROFILE, { Ref: "ManagedRuntimeProfile" });
   assert.deepEqual(template.Parameters.HeadlessModelProtocol.AllowedValues, ["anthropic", "openai", "openai-responses"]);
   assert.deepEqual(template.Parameters.HeadlessComputerProvider.AllowedValues, ["off", "daytona", "freestyle"]);
   assert.equal(template.Parameters.HeadlessComputerProvider.Default, "off");
@@ -118,6 +123,36 @@ test("assistant dependencies and model/computer secret requirements fail before 
     { ...enabled, HeadlessComputerProvider: "freestyle" },
   ]) assert.equal(resolveTemplate(overrides).valid, false);
   assert.equal(resolveTemplate({ ...enabled, HeadlessComputerProvider: "freestyle", HeadlessComputerSecretArn: enabled.HeadlessModelSecretArn }).valid, true);
+});
+
+test("Gateway explicitly enables all runtime features without legacy model or computer credentials", () => {
+  assert.equal(template.Parameters.ManagedRuntimeProfile.Default, "legacy");
+  assert.deepEqual(template.Parameters.ManagedRuntimeProfile.AllowedValues, ["legacy", "gateway"]);
+  const gateway = { ManagedRuntimeProfile: "gateway", HeadlessModel: "", HeadlessModelBaseUrl: "", HeadlessModelSecretArn: "", HeadlessComputerSecretArn: "" };
+  const { resources, valid } = resolveTemplate(gateway);
+  assert.equal(valid, true);
+  const environment = Object.fromEntries(resources.Runner.Properties.Environment.EnvironmentVariables.map((entry) => [entry.Name, entry.Value]));
+  assert.equal(environment.MANAGED_RUNTIME_PROFILE, "gateway");
+  for (const key of ["HEADLESS_RUNNER_ENABLED", "WORKBOT_ENABLED", "SLACK_ASSISTANT_ENABLED"]) assert.equal(environment[key], "true");
+  assert.equal(environment.HEADLESS_COMPUTER_PROVIDER, "off");
+  assert.ok(resources.RunnerSupplementalPolicy);
+  for (const key of ["HeadlessModelProtocol", "HeadlessModelBaseUrl", "HeadlessModel", "HeadlessModelSecretArn"]) assert.match(template.Parameters[key].Description, /Legacy.*ignored by Gateway/);
+  for (const overrides of [{ HeadlessComputerProvider: "freestyle" }, { HeadlessComputerProvider: "daytona" }, { HeadlessComputerProvider: "daytona", HeadlessComputerSecretArn: enabled.HeadlessModelSecretArn }]) {
+    assert.equal(resolveTemplate({ ...gateway, ...overrides }).valid, false);
+  }
+  assert.equal(resolveTemplate({ ...gateway, HeadlessComputerProvider: "daytona", HeadlessComputerSecretArn: enabled.HeadlessModelSecretArn, HeadlessComputerSnapshot: "computer-fixture" }).valid, true);
+  assert.match(template.Description, /five required services: Den API, Den web, headless runner, Workbot and AI Gateway/);
+});
+
+test("native AI Gateway resources stay inside existing deployment IAM scopes", () => {
+  const { resources } = resolveTemplate({ ManagedRuntimeProfile: "gateway", NetworkMode: "existing" });
+  const bySid = Object.fromEntries(policies(resources).flatMap((policy) => policy.Statement).map((statement) => [statement.Sid, statement]));
+  assert.ok(bySid.OwnServices.Resource.includes(`/${name}-*`));
+  assert.ok(bySid.OwnTaskDefinitions.Resource.includes(`task-definition/${name}-*:`));
+  assert.ok(bySid.OwnLoadBalancer.Resource.every((arn) => arn.includes(`/${name}-*`)));
+  assert.ok(bySid.Logs.Resource.some((arn) => arn.endsWith(`/ecs/${name}/*`)));
+  assert.ok(actions(bySid.NewServiceDiscovery).includes("servicediscovery:CreateService"));
+  assert.ok(actions(bySid.OwnSecurityGroupRules).includes("ec2:AuthorizeSecurityGroupIngress"));
 });
 
 test("Daytona is optional and requires a provider key plus snapshot only when selected", () => {
@@ -255,8 +290,8 @@ test("KMS ViaService retains the documented .amazonaws.com suffix in every parti
 
 test("every resolved role respects the aggregate inline IAM limit and each managed policy its own limit", (context) => {
   const maximums = new Map();
-  for (const NetworkMode of ["dedicated", "existing"]) for (const runner of [false, true]) for (const partition of ["aws", "aws-us-gov", "aws-cn"]) {
-    const { resources } = resolveTemplate({ NetworkMode, "AWS::Partition": partition, ...(runner ? enabled : {}) });
+  for (const NetworkMode of ["dedicated", "existing"]) for (const runner of [false, true]) for (const partition of ["aws", "aws-us-gov", "aws-cn"]) for (const ManagedRuntimeProfile of ["legacy", "gateway"]) {
+    const { resources } = resolveTemplate({ NetworkMode, ManagedRuntimeProfile, "AWS::Partition": partition, ...(runner ? enabled : {}) });
     for (const [key, resource] of Object.entries(resources)) {
       if (resource.Type === "AWS::IAM::Role") {
         const bytes = resource.Properties.Policies.reduce((total, policy) => total + Buffer.byteLength(JSON.stringify(policy.PolicyDocument)), 0);

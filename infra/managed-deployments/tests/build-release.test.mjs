@@ -138,10 +138,11 @@ test("AWS tag resolution verifies both unique Linux/amd64 manifests", () => {
   assert.deepEqual(resolveAwsImages("0.18.65", pins, inspect), pins);
 });
 
-const assistantPins = { ...pins,
+const legacyAssistantPins = { ...pins,
   headless_runner: AWS_REPOSITORIES.headless_runner + "@" + digest("e"),
   workbot: AWS_REPOSITORIES.workbot + "@" + digest("f"),
 };
+const assistantPins = { ...legacyAssistantPins, ai_gateway: AWS_REPOSITORIES.ai_gateway + "@" + digest("c") };
 const inspectAssistants = (source) => source.includes("openwork-headless-runner") ? metadata("e")
   : source.includes("openwork-workbot") ? metadata("f") : inspect(source);
 
@@ -154,12 +155,19 @@ test("AWS explicitly opts into resolving the complete assistant image set", () =
   assert.deepEqual(calls, Object.entries(AWS_REPOSITORIES).flatMap(([kind, repository]) => [repository + ":0.18.65", assistantPins[kind]]));
   assert.deepEqual(resolveAwsImages(assistantPins, inspectAssistants), assistantPins);
   assert.deepEqual(resolveAwsImages("0.18.65", assistantPins, inspectAssistants), assistantPins);
+  assert.deepEqual(resolveAwsImages(legacyAssistantPins, inspectAssistants), legacyAssistantPins);
+  assert.deepEqual(resolveAwsImages("0.18.65", legacyAssistantPins, inspectAssistants), legacyAssistantPins);
+  assert.throws(() => resolveAwsImages("0.18.65", legacyAssistantPins, inspectAssistants, true), /five/);
 });
 
 test("AWS refuses partial assistant inventories and validates every fixed repository before registry access", () => {
   for (const candidate of [
     { ...pins, headless_runner: assistantPins.headless_runner }, { ...pins, workbot: assistantPins.workbot },
+    { ...pins, ai_gateway: assistantPins.ai_gateway },
+    { ...pins, headless_runner: assistantPins.headless_runner, ai_gateway: assistantPins.ai_gateway },
     { ...assistantPins, extra: pins.den_api }, { ...assistantPins, health: HEALTH_SOURCE },
+    { ...assistantPins, ai_gateway: AWS_REPOSITORIES.ai_gateway + ":0.18.67" },
+    { ...assistantPins, ai_gateway: "ghcr.io/other/inference@" + digest("c") },
     { ...assistantPins, headless_runner: AWS_REPOSITORIES.headless_runner + ":0.18.65" },
     { ...assistantPins, workbot: "ghcr.io/other/workbot@" + digest("f") },
     { ...assistantPins, workbot: assistantPins.headless_runner }, { ...assistantPins, workbot: assistantPins.workbot + "\n" },
@@ -195,6 +203,11 @@ test("AWS builder packages opt-in tag and explicit-pin inventories without chang
     assert.deepEqual(baseline.images, pins);
     assert.equal(Object.hasOwn(baseline.images, "headless_runner"), false);
     assert.equal(Object.hasOwn(baseline.images, "workbot"), false);
+    assert.equal(Object.hasOwn(baseline.images, "ai_gateway"), false);
+    writeFileSync(approved, JSON.stringify(legacyAssistantPins));
+    buildRelease(["aws", "0.18.65", output, "--image-pins", approved], inspectAssistants);
+    const legacy = JSON.parse(execFileSync("tar", ["-xOf", join(output, "bundle.tar.gz"), "release.json"], { encoding: "utf8" }));
+    assert.deepEqual(legacy.images, legacyAssistantPins);
   } finally { rmSync(output, { force: true, recursive: true }); }
 });
 

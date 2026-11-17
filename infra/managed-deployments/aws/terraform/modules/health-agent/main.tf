@@ -16,6 +16,10 @@ variable "service_names" { type = map(string) }
 variable "target_group_arns" { type = map(string) }
 variable "database_identifier" { type = string }
 variable "certificate_arn" { type = string }
+variable "ai_gateway_url" {
+  type    = string
+  default = null
+}
 variable "workbot_url" {
   type    = string
   default = null
@@ -39,7 +43,7 @@ locals {
   arn_prefix         = "arn:${data.aws_partition.current.partition}"
   account            = data.aws_caller_identity.current.account_id
   region             = data.aws_region.current.name
-  assistants_enabled = contains(keys(var.service_names), "headless_runner") || contains(keys(var.service_names), "workbot")
+  assistants_enabled = anytrue([for service in ["headless_runner", "workbot", "ai_gateway"] : contains(keys(var.service_names), service)])
 }
 
 data "archive_file" "agent" {
@@ -139,7 +143,7 @@ resource "aws_lambda_function" "agent" {
   handler          = local.assistants_enabled ? "assistant_health_agent.handler" : "health_agent.handler"
   filename         = data.archive_file.agent.output_path
   source_code_hash = data.archive_file.agent.output_base64sha256
-  timeout          = 60
+  timeout          = var.ai_gateway_url != null ? 120 : 60
   memory_size      = 256
   architectures    = ["arm64"]
   environment {
@@ -155,6 +159,7 @@ resource "aws_lambda_function" "agent" {
       CERTIFICATE_ARN      = var.certificate_arn
       },
       var.workbot_url != null ? { WORKBOT_URL = var.workbot_url } : {},
+      var.ai_gateway_url != null ? { AI_GATEWAY_URL = var.ai_gateway_url } : {},
       var.efs_file_system_id != null ? {
         EFS_FILE_SYSTEM_ID  = var.efs_file_system_id
         EFS_FILE_SYSTEM_ARN = "${local.arn_prefix}:elasticfilesystem:${local.region}:${local.account}:file-system/${var.efs_file_system_id}"

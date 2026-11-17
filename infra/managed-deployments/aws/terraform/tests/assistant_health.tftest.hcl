@@ -48,12 +48,32 @@ run "disabled_profile_preserves_health_environment_and_permissions" {
     error_message = "With assistants off, the health Lambda retains exactly its original environment keys."
   }
   assert {
-    condition     = aws_lambda_function.agent.handler == "health_agent.handler" && endswith(data.archive_file.agent.source_file, "/health/health_agent.py") && length(data.archive_file.agent.source) == 0
+    condition     = aws_lambda_function.agent.handler == "health_agent.handler" && aws_lambda_function.agent.timeout == 60 && endswith(data.archive_file.agent.source_file, "/health/health_agent.py") && length(data.archive_file.agent.source) == 0
     error_message = "Disabled assistants retain the original one-file health payload and handler, so its code hash does not change."
   }
   assert {
     condition     = length(data.aws_iam_policy_document.agent.statement) == 5 && alltrue([for statement in data.aws_iam_policy_document.agent.statement : !contains(statement.actions, "elasticfilesystem:DescribeFileSystems") && !contains(statement.actions, "backup:ListRecoveryPointsByBackupVault")])
     error_message = "With assistants off, the health agent gets no new read permissions."
+  }
+}
+
+run "gateway_health_uses_public_origin_and_scoped_service_metadata" {
+  command = apply
+  module { source = "./modules/health-agent" }
+  variables {
+    ai_gateway_url = "https://models.openwork.example.com"
+    service_names  = { den_api = "den-api", den_web = "den-web", ai_gateway = "ai-gateway" }
+  }
+  assert {
+    condition = alltrue([
+      aws_lambda_function.agent.handler == "assistant_health_agent.handler",
+      aws_lambda_function.agent.timeout == 120,
+      one(aws_lambda_function.agent.environment).variables.AI_GATEWAY_URL == "https://models.openwork.example.com",
+      length(data.aws_iam_policy_document.agent.statement) == 5,
+      length([for statement in data.aws_iam_policy_document.agent.statement : statement if statement.sid == "ReadServices" && contains(statement.resources, "arn:aws:ecs:us-east-1:123456789012:service/test/ai-gateway")]) == 1,
+      alltrue([for statement in data.aws_iam_policy_document.agent.statement : !contains(statement.actions, "secretsmanager:GetSecretValue")]),
+    ])
+    error_message = "Gateway health must use unauthenticated HTTPS and the owned service's metadata, never provider keys or additional content permissions."
   }
 }
 

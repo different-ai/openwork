@@ -173,15 +173,20 @@ module "platform" {
   den_api = local.profile.den_api
   den_web = local.profile.den_web
 
-  headless_runner              = var.headless_runner
+  ai_gateway_enabled     = local.gateway_profile
+  ai_gateway_domain_name = local.gateway_profile ? local.managed_gateway_host : ""
+  ai_gateway_image       = var.ai_gateway_image
+
+  headless_runner              = local.managed_headless_runner
   headless_runner_image        = var.headless_runner_image
-  headless_model_secret_arn    = var.headless_model_secret_arn
+  headless_model_secret_arn    = local.managed_model_secret_arn
   headless_computer            = var.headless_computer
   daytona                      = var.daytona
   headless_computer_secret_arn = var.headless_computer_secret_arn
-  workbot                      = var.workbot
+  workbot                      = local.managed_workbot
   workbot_image                = var.workbot_image
-  slack_assistant_enabled      = var.slack_assistant_enabled
+  slack_assistant_enabled      = local.managed_slack_assistant_enabled
+  automations_enabled          = true
   extra_environment = {
     OPENWORK_MANAGED_TASK_REVISION = var.tls_task_revision
   }
@@ -209,6 +214,7 @@ module "health_agent" {
   database_identifier      = module.platform.database_identifier
   certificate_arn          = module.platform.certificate_arn
   workbot_url              = module.platform.workbot_url
+  ai_gateway_url           = module.platform.ai_gateway_url
   efs_file_system_id       = module.platform.efs_file_system_id
   runner_backup_vault_name = module.platform.runner_backup_vault_name
 }

@@ -14,6 +14,7 @@ export const AWS_REPOSITORIES = Object.freeze({
   den_web: "ghcr.io/different-ai/openwork-den-web",
   headless_runner: "ghcr.io/different-ai/openwork-headless-runner",
   workbot: "ghcr.io/different-ai/openwork-workbot",
+  ai_gateway: "ghcr.io/different-ai/openwork-inference",
 });
 export const GCP_REPOSITORIES = Object.freeze({
   den_api: AWS_REPOSITORIES.den_api,
@@ -21,7 +22,9 @@ export const GCP_REPOSITORIES = Object.freeze({
   health: "docker.io/library/python",
 });
 const coreAwsImages = ["den_api", "den_web"];
-const completeAwsImages = Object.keys(AWS_REPOSITORIES);
+const legacyAssistantImages = [...coreAwsImages, "headless_runner", "workbot"];
+const completeAwsImages = [...legacyAssistantImages, "ai_gateway"];
+const inventoryKey = (kinds) => kinds.toSorted().join(",");
 export const HEALTH_SOURCE = GCP_REPOSITORIES.health + "@sha256:a1165e272e578941b84abc79e4ab38a0305cd12803a5c4247979ac7655f4d641";
 const digestPattern = /^sha256:[a-f0-9]{64}$/;
 
@@ -77,11 +80,10 @@ export function resolveAwsImages(versionOrPins, approvedPinsOrInspect, inspect, 
   }
   const inventory = approvedPins && !Array.isArray(approvedPins) && typeof approvedPins === "object"
     ? Object.keys(approvedPins).sort().join(",") : "";
-  if (![coreAwsImages.join(","), completeAwsImages.join(",")].includes(inventory)
-      || (includeAssistants && inventory !== completeAwsImages.join(","))) {
-    throw new Error("Approved AWS image pins must contain exactly den_api and den_web, or the complete den_api, den_web, headless_runner and workbot set.");
+  const kinds = [coreAwsImages, legacyAssistantImages, completeAwsImages].find((candidate) => inventoryKey(candidate) === inventory);
+  if (!kinds || (includeAssistants && inventory !== inventoryKey(completeAwsImages))) {
+    throw new Error("Approved AWS image pins must contain the exact legacy core pair, legacy four-image set, or complete five-image Gateway runtime set; --include-assistants requires all five.");
   }
-  const kinds = inventory === coreAwsImages.join(",") ? coreAwsImages : completeAwsImages;
   // Validate the whole inventory before contacting the registry.
   for (const kind of kinds) {
     const repository = AWS_REPOSITORIES[kind];

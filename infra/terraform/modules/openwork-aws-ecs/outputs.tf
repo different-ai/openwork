@@ -63,6 +63,7 @@ output "service_names" {
     den_api         = aws_ecs_service.api.name
     den_web         = aws_ecs_service.web.name
     den_gateway     = one(aws_ecs_service.gateway[*].name)
+    ai_gateway      = one(aws_ecs_service.ai_gateway[*].name)
     headless_runner = one(aws_ecs_service.runner[*].name)
     workbot         = one(aws_ecs_service.workbot[*].name)
   } : k => v if v != null }
@@ -87,6 +88,7 @@ output "log_groups" {
     den_api         = aws_cloudwatch_log_group.api.name
     den_web         = aws_cloudwatch_log_group.web.name
     den_gateway     = one(aws_cloudwatch_log_group.gateway[*].name)
+    ai_gateway      = one(aws_cloudwatch_log_group.ai_gateway[*].name)
     headless_runner = one(aws_cloudwatch_log_group.runner[*].name)
     workbot         = one(aws_cloudwatch_log_group.workbot[*].name)
   } : k => v if v != null }
@@ -97,6 +99,7 @@ output "target_group_arns" {
   value = merge(
     { den_api = aws_lb_target_group.api.arn, den_web = aws_lb_target_group.web.arn },
     local.workbot_count > 0 ? { workbot = aws_lb_target_group.workbot[0].arn } : {},
+    var.ai_gateway_enabled ? { ai_gateway = aws_lb_target_group.ai_gateway[0].arn } : {},
   )
 }
 
@@ -116,6 +119,7 @@ output "task_definition_arns" {
     { den_api = aws_ecs_task_definition.api_v1.arn, den_web = aws_ecs_task_definition.web_v1.arn },
     local.runner_count > 0 ? { headless_runner = aws_ecs_task_definition.runner[0].arn } : {},
     local.workbot_count > 0 ? { workbot = aws_ecs_task_definition.workbot[0].arn } : {},
+    var.ai_gateway_enabled ? { ai_gateway = aws_ecs_task_definition.ai_gateway[0].arn } : {},
   )
 }
 

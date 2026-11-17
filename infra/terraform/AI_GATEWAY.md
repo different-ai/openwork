@@ -120,14 +120,20 @@ and keys. The wrapper remains a draft without live-cluster qualification.
 
 ## Managed-install boundary
 
-The AWS and Google Cloud managed installers call the **native modules directly**;
-they do not use Helm or `openwork-self-host`. These module capabilities alone do
-not change a managed install. Their root calls keep the Gateway **off** in this
-change. There are no bootstrap IAM, installer publication, feature rollout or
-managed-default changes. Enabling support in a managed installer requires a
-separately reviewed root/image/DNS/certificate/permission change, any required
-customer re-approval, and a fresh live managed-install receipt. Module mock plans
-are not proof that managed installation or upgrades work live.
+The AWS and Google Cloud managed installers call **native modules directly**;
+they do not use Helm or `openwork-self-host`. AWS's explicit `gateway` runtime
+profile includes this Gateway, Den, runner and Workbot; only computers are
+optional. Its public origin defaults to `https://models.<domain_name>` and its
+fifth image pin is `ai_gateway` from `openwork-inference`. The managed root's
+`legacy` default preserves older records until an explicit customer-approved,
+version-increasing profile Update. Native module defaults and GCP behavior
+remain unchanged. See [the installer contract](../managed-deployments/README.md).
+
+Upstream provider credentials and member model grants are configured inside the
+installed Den. The Gateway-profile runner receives no global upstream key and
+uses existing scoped Gateway authorization unchanged. Bootstrap re-approval,
+image/DNS/certificate review and a fresh live managed receipt are required.
+Module mock plans or a healthy service are not proof of authorized model use.
 
 ## Verification boundary
 

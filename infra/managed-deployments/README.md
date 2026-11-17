@@ -27,17 +27,20 @@ tools/               Release build and publication (provider argument)
 tests/               Installer, runner and health agent tests
 ```
 
-## Optional AI Gateway module support
+## Included AI Gateway in the AWS managed runtime
 
-AWS and Google Cloud roots consume the native Terraform modules **directly**, not
-Helm. The modules' new `ai_gateway_*` inputs are documented in
-[the AI Gateway guide](../terraform/AI_GATEWAY.md); these managed roots do not set
-them, so the AI Gateway remains **off**. This does not change installer payload
-publication, bootstrap permissions, managed defaults or rollout state. Enabling a
-managed install needs a separately reviewed root/image/DNS/certificate/permission
-change, required re-approval and fresh live install/upgrade proof. Mock module
-plans are not a managed-readiness receipt. The AI Gateway is distinct from
-OpenWork Web's den-gateway and Den API's MCP gateway.
+AWS and Google Cloud roots consume native Terraform modules **directly**, not
+Helm. The AWS `gateway` runtime profile includes the existing native AI/model
+Gateway with Den, the headless runner and Workbot. Only computers are optional.
+Its HTTPS hostname defaults to `models.<domain_name>`. This is the
+`openwork-inference` service, not OpenWork Web's `den-gateway` or Den API's MCP
+gateway. See [the AI Gateway guide](../terraform/AI_GATEWAY.md).
+
+The root's default `legacy` profile preserves previous installations and image
+inventories. Moving an existing installation to `gateway` requires an explicit,
+version-increasing, customer-approved Update with the new template and complete
+image inventory. GCP keeps its legacy behavior. Offline plans are not live
+qualification; Gateway infrastructure health alone does not prove model access.
 
 ## AWS shared-module adoption
 
@@ -143,57 +146,60 @@ it feeds `OPENWORK_MANAGED_TASK_REVISION`. For a controlled second-update fixtur
 copy `tests/second-update_override.tf` into `aws/terraform/` before ordinary build.
 Never ship that fixture in production or use administrator ECS mutation as proof.
 
-## Optional AWS assistants (qualification required)
+## Gateway-backed AWS runtime (qualification required)
 
-The managed AWS root can opt into the shared module's single headless runner,
-Workbot at `https://chat.<domain_name>`, Slack assistant and optional cloud computers.
-All are **off by default**. Existing core-only installations and release image
-pairs remain supported. GCP does not receive these options. The hosted creation
-and approved-Update controls additionally require `managedDeploymentAssistants`
-(cloud only, off), as well as `managedDeployments`. Turning either flag off blocks
-new approvals, not running services or authenticated health reports.
+The `gateway` profile includes Den API/web, AI Gateway, one headless runner,
+Workbot at `https://chat.<domain_name>`, Slack processing and Automations.
+All agent model requests use the existing member-authorized Gateway path; the
+runner receives no global upstream model key. Configure upstream providers,
+model grants and the organization default inside the installed Den after setup.
+Gateway availability is not proof that a provider or member model grant exists.
+
+The hosted creation and approved-Update controls require
+`managedDeploymentAssistants` (cloud only, off), as well as `managedDeployments`.
+With the runtime flag enabled, new UI installations use `gateway`. Existing
+records with no profile remain `legacy` until an explicit approved upgrade;
+turning either flag off blocks new approvals, not running services or
+authenticated health reports. GCP does not receive the new runtime profile.
 
 The installer supports the module-managed runner, not its `external_url` fleet
-mode. Workbot, Slack and computers require that runner. Configure a direct model
-ID, HTTPS endpoint and `anthropic`, `openai` or `openai-responses` protocol. There
-is **no AI Gateway** in this path. Sandbox provisioning is **optional**, not an
-installation dependency: Workbot, Slack replies and Automations can run with
-computer provider `off`. Daytona is the preferred opt-in sandbox provider;
-Freestyle remains available. Daytona additionally requires an explicit computer
-snapshot; its API URL and target can be configured. **Daytona and Freestyle
-computers execute in their provider's cloud, outside the customer's AWS account.**
-Enabling the Slack assistant does not create or configure a Slack app:
-the customer still creates the app in the installed Den's connector settings.
+mode. Sandbox provisioning alone is **optional**: Workbot, Slack replies and
+connector-based Automations can run with computer provider `off`, the default.
+Daytona is preferred when enabled; Freestyle remains supported. Daytona requires
+an explicit snapshot and allows API URL/target configuration. **Both providers
+execute computers in their cloud, outside the customer's AWS account.**
+Slack processing does not create a Slack app or complete OAuth: the customer
+still configures the app and connection in the installed Den.
 
 ### Customer-owned key references
 
-Before approval, the customer creates two plain-string Secrets Manager secrets
-in the target account and region: the direct model API key, and (only when using
-a cloud computer) that provider's API key. Supply their full secret ARNs, never
-the values.
-Use AWS's console or a customer-controlled secret provisioning process; never put
-keys in shell history, URLs, Den, CloudFormation parameters or installer logs.
-This profile supports the default Secrets Manager AWS-managed encryption key;
-a customer-managed KMS key requires a separately reviewed key policy/grant.
+For the Gateway profile, upstream model credentials belong in the installed
+Den's existing encrypted provider workflow—not hosted Den, Terraform inputs,
+CloudFormation, URLs or logs. Existing Gateway authorization is unchanged.
 
-Hosted Den stores only these references. The installer validates account/region,
-passes `headless_model_secret_arn` / `headless_computer_secret_arn` through the
-managed root, and ECS injects them directly into the runner. Terraform and the
-installer do not read their values or copy them into state. The module's existing
-generated runner/Workbot credentials remain state-backed, as do managed core
-secrets; protect encrypted customer-owned state and its retained history. Keep
-customer key secrets through updates. Updating a key's current version requires
-an approved task rollout before an ECS task consumes it; key rotation is not an
-automatic installer action.
+Only an enabled computer provider needs a customer-owned plain-string Secrets
+Manager secret in the target account and region. Supply its full ARN, never the
+value. The supported reference uses the AWS-managed Secrets Manager encryption
+key; customer-managed KMS keys need separately reviewed decrypt grants. Hosted
+Den stores only the reference. ECS injects the value; Terraform and the installer
+do not read or copy it into state. Provider `off` requires no computer secret or
+snapshot. Legacy model-reference inputs remain compatible only with `legacy`;
+they are ignored and not injected in the Gateway profile.
+
+Generated runner, Workbot and core secrets remain state-backed. Protect encrypted
+customer state and all retained versions. Preserve customer computer secrets
+through updates; changing a secret's current version requires an approved task
+rollout before running tasks consume it. Rotation is not automatic.
 
 ### Images, approval and update behaviour
 
-Build AWS assistant releases with `--include-assistants`, or pass
-`--image-pins <approved-json-file>` containing all four fixed-repository
-Linux/amd64 digest pins: `den_api`, `den_web`, `headless_runner`, `workbot`.
-Core-only image pin files remain valid when assistants are off. Partial optional
-inventories, mutable image tags and enabling assistants with a core-only release
-are refused. GCP retains its existing core pair plus health image inventory.
+Build complete AWS runtime releases with `--include-assistants`, or pass
+`--image-pins <approved-json-file>` containing all five fixed-repository
+Linux/amd64 digest pins: `den_api`, `den_web`, `headless_runner`, `workbot`,
+`ai_gateway` (published as `openwork-inference`). Gateway requires all five.
+Explicit legacy core-pair/four-image inventories remain accepted for legacy
+rebuilds only. Partial inventories and mutable tags are refused. GCP retains its
+existing core pair plus health image inventory.
 
 **Re-approve the regenerated CloudFormation template before enabling or updating
 these services.** The additional grants cover deployment-scoped EFS, runner
@@ -279,14 +285,17 @@ production release coordinates. The overall application qualification **failed**
 | Scheduled headless Automation | Failed: scheduled Cloud/headless dispatch returned `provider_unavailable` at model selection |
 | Slack assistant and Freestyle command | NotRun: no successful model turn yet; Slack app setup also remains required |
 | Further forced runner/core Update and post-Update behaviours | NotRun |
-| Scheduled daily backup occurrence and restore | NotRun; the observed backup was explicitly started with the configured role |
+| Scheduled daily backup occurrence | Passed: the actual configured daily plan completed an encrypted recovery point using its configured role |
+| Restore | NotRun |
+| Gateway-profile approved Update and model checks | NotRun |
 
-Process/HTTPS/backup health is not an inference-completion check. The published
-runtime currently routes these agent surfaces through Gateway model policy,
-which is incompatible with this installer's direct model endpoint. Do not enable
-an AI Gateway as a workaround or publish/promote this profile as ready. A
-separately reviewed, authorization-preserving runtime option and new isolated
-proof are required; installer wiring alone does not resolve that boundary.
+These failures belong to the earlier legacy/direct configuration. The chosen
+architecture is now the included Gateway profile, reusing existing runtime
+policy unchanged. The proposed direct-model runtime change was cancelled before
+implementation: no runtime PR or application images were created. A new immutable
+test installer and an approved Gateway-profile Update on the same installation
+must establish its own infrastructure and application evidence. Do not overwrite
+these failures or count process/HTTPS/backup health as an inference completion.
 
 ## The contract every cloud implements
 

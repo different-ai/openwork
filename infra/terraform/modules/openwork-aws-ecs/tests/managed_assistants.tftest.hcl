@@ -52,6 +52,7 @@ mock_provider "aws" {
         { domain_name = "openwork.example.com", resource_record_name = "_a.openwork.example.com.", resource_record_type = "CNAME", resource_record_value = "_a.acm-validations.aws." },
         { domain_name = "api.openwork.example.com", resource_record_name = "_b.api.openwork.example.com.", resource_record_type = "CNAME", resource_record_value = "_b.acm-validations.aws." },
         { domain_name = "chat.openwork.example.com", resource_record_name = "_c.chat.openwork.example.com.", resource_record_type = "CNAME", resource_record_value = "_c.acm-validations.aws." },
+        { domain_name = "models.openwork.example.com", resource_record_name = "_d.models.openwork.example.com.", resource_record_type = "CNAME", resource_record_value = "_d.acm-validations.aws." },
       ]
     }
   }
@@ -157,6 +158,103 @@ run "workbot_certificate_replacement_has_valid_dependency_graph" {
   assert {
     condition     = contains(aws_acm_certificate.this[0].subject_alternative_names, "chat.openwork.example.com") && output.runner_secret_version_id == var.tags.expected_runner_version
     error_message = "Replacing the certificate retains the runner version and covers Workbot."
+  }
+}
+
+run "gateway_runtime_uses_five_native_services_without_global_model_key" {
+  command = apply
+  plan_options { replace = [aws_acm_certificate.this[0]] }
+  variables {
+    ai_gateway_enabled           = true
+    ai_gateway_domain_name       = "models.openwork.example.com"
+    ai_gateway_image             = "ghcr.io/different-ai/openwork-inference@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    headless_runner              = { enabled = true, model_protocol = "openai", model_base_url = "https://models.openwork.example.com", model = "openai/gpt-6-luna" }
+    headless_model_secret_arn    = ""
+    headless_computer            = {}
+    headless_computer_secret_arn = ""
+    workbot                      = { enabled = true }
+    slack_assistant_enabled      = true
+    automations_enabled          = true
+    tags = {
+      expected_runner_version = run.enable_workbot_preserves_runner_and_core.runner_secret_version_id
+      expected_filesystem     = run.enable_workbot_preserves_runner_and_core.efs_file_system_id
+      expected_core_secret    = run.enable_workbot_preserves_runner_and_core.secret_arn
+      expected_database       = run.enable_workbot_preserves_runner_and_core.database_identifier
+    }
+  }
+  assert {
+    condition     = output.runner_secret_version_id == var.tags.expected_runner_version && output.efs_file_system_id == var.tags.expected_filesystem && output.secret_arn == var.tags.expected_core_secret && output.database_identifier == var.tags.expected_database
+    error_message = "Gateway adoption must preserve runner credentials, EFS and core data identities."
+  }
+  assert {
+    condition = alltrue([
+      toset(keys(output.service_names)) == toset(["den_api", "den_web", "ai_gateway", "headless_runner", "workbot"]),
+      toset(keys(output.task_definition_arns)) == toset(["den_api", "den_web", "ai_gateway", "headless_runner", "workbot"]),
+      toset(keys(output.log_groups)) == toset(["den_api", "den_web", "ai_gateway", "headless_runner", "workbot"]),
+      toset(keys(output.target_group_arns)) == toset(["den_api", "den_web", "ai_gateway", "workbot"]),
+      aws_ecs_service.ai_gateway[0].desired_count == 1 && aws_ecs_service.runner[0].desired_count == 1 && aws_ecs_service.workbot[0].desired_count == 1,
+      aws_ecs_task_definition.ai_gateway[0].cpu == "1024" && aws_ecs_task_definition.ai_gateway[0].memory == "2048",
+    ])
+    error_message = "Gateway runtime verification must include all five intended native services and the Gateway's measured resource floor."
+  }
+  assert {
+    condition = alltrue([
+      toset([for secret in jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].secrets : secret.name]) == toset(["HEADLESS_API_TOKEN"]),
+      toset(keys(local.runner_secret_values)) == toset(["HEADLESS_API_TOKEN"]),
+      length(local.runner_external_secrets) == 0,
+      contains(jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment, { name = "HEADLESS_MODEL_BASE_URL", value = "https://models.openwork.example.com" }),
+      contains(jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment, { name = "HEADLESS_MODEL", value = "openai/gpt-6-luna" }),
+      var.headless_computer.provider == "off" && var.headless_computer.snapshot == "",
+      toset([for secret in jsondecode(aws_ecs_task_definition.ai_gateway[0].container_definitions)[0].secrets : secret.name]) == toset(["DATABASE_URL", "DEN_DB_ENCRYPTION_KEY"]),
+    ])
+    error_message = "Member-scoped Gateway turns need no shared upstream model credential, and computers off needs no key or snapshot."
+  }
+  assert {
+    condition = alltrue([
+      local.environment.GATEWAY_ENABLED == "true",
+      local.environment.GATEWAY_PUBLIC_BASE_URL == "https://models.openwork.example.com",
+      local.environment.DEN_SLACK_ASSISTANT_WORKER_ENABLED == "true",
+      local.environment.DEN_AUTOMATIONS_ENABLED == "true",
+      contains(aws_acm_certificate.this[0].subject_alternative_names, "models.openwork.example.com"),
+      length(aws_route53_record.this) == 4,
+    ])
+    error_message = "The native module alone supplies canonical Gateway settings, Slack/Automations enablement, and the fourth TLS/DNS host."
+  }
+}
+
+run "gateway_runtime_daytona_receives_only_computer_credential" {
+  command = plan
+  variables {
+    ai_gateway_enabled        = true
+    ai_gateway_domain_name    = "models.openwork.example.com"
+    ai_gateway_image          = "ghcr.io/different-ai/openwork-inference@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    headless_runner           = { enabled = true, model_protocol = "openai", model_base_url = "https://models.openwork.example.com", model = "openai/gpt-6-luna" }
+    headless_model_secret_arn = ""
+    headless_computer         = { provider = "daytona", snapshot = "computer-image" }
+    workbot                   = { enabled = true }
+    slack_assistant_enabled   = true
+  }
+  assert {
+    condition     = toset([for secret in jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].secrets : secret.name]) == toset(["HEADLESS_API_TOKEN", "DAYTONA_API_KEY"]) && length(output.service_names) == 5
+    error_message = "Optional Daytona injects its computer credential, never a model key or another service."
+  }
+}
+
+run "gateway_runtime_freestyle_receives_only_computer_credential" {
+  command = plan
+  variables {
+    ai_gateway_enabled        = true
+    ai_gateway_domain_name    = "models.openwork.example.com"
+    ai_gateway_image          = "ghcr.io/different-ai/openwork-inference@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    headless_runner           = { enabled = true, model_protocol = "openai", model_base_url = "https://models.openwork.example.com", model = "openai/gpt-6-luna" }
+    headless_model_secret_arn = ""
+    headless_computer         = { provider = "freestyle" }
+    workbot                   = { enabled = true }
+    slack_assistant_enabled   = true
+  }
+  assert {
+    condition     = toset([for secret in jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].secrets : secret.name]) == toset(["HEADLESS_API_TOKEN", "FREESTYLE_API_KEY"]) && var.headless_computer.snapshot == "" && length(output.service_names) == 5
+    error_message = "Optional Freestyle injects only its computer credential and needs no Daytona snapshot."
   }
 }
 

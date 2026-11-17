@@ -38,6 +38,19 @@ def assistant_service_check(ecs, cluster, service_name, check_id):
     return guarded(check_id, run)
 
 
+def ai_gateway_check(ecs, cluster, service_name, url):
+    result = assistant_service_check(ecs, cluster, service_name, "ai_gateway_available")
+    if result["status"] != "ok":
+        return result
+    if not url:
+        return check("ai_gateway_available", "unknown", code="unavailable")
+    health, _ = http_check("ai_gateway_available", url.rstrip("/") + "/health", expect_service="gateway")
+    if health["status"] not in ("ok", "warning"):
+        return health
+    ready, _ = http_check("ai_gateway_available", url.rstrip("/") + "/ready", expect_service="gateway")
+    return ready if ready["status"] != "ok" else health
+
+
 def runner_storage_check(efs, identifier):
     def run():
         filesystems = efs.describe_file_systems(FileSystemId=identifier).get("FileSystems", [])
@@ -100,6 +113,8 @@ def collect():
             else:
                 workbot = check("workbot_available", "unknown", code="unavailable")
         checks.append(workbot)
+    if "ai_gateway" in services:
+        checks.append(ai_gateway_check(ecs, os.environ["CLUSTER_NAME"], services["ai_gateway"], os.environ.get("AI_GATEWAY_URL")))
     if "headless_runner" in services:
         checks.append(runner_storage_check(boto3.client("efs", region_name=region), os.environ["EFS_FILE_SYSTEM_ID"])
                       if os.environ.get("EFS_FILE_SYSTEM_ID") else check("runner_storage", "unknown", code="unavailable"))

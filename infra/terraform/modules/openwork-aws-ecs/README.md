@@ -495,13 +495,14 @@ external fleets create none. The vault cannot be force-deleted with recovery
 points. Restoring a backup is a separate customer-approved recovery operation;
 file-level snapshots do not prove SQLite application-consistent recovery.
 The 17 November 2026 isolated **managed-installer** test observed encrypted
-backup creation with this role/vault and Workbot DNS/certificate/service
-enablement on an existing install. It did **not** qualify the application:
-Workbot chat and a scheduled headless Automation failed at the published
-`0.18.67` Den runtime's Gateway-only model policy. Do not add a Gateway to mask
-this direct-model incompatibility. Scheduled daily backup execution and restore
-remain **NotRun**. Full results and the separate runtime qualification boundary
-are in [the managed installer README](../../../managed-deployments/README.md).
+triggered and scheduled daily backups with this role/vault, plus Workbot
+DNS/certificate/service enablement. It did **not** qualify application use:
+Workbot and a scheduled headless Automation failed because the legacy/direct
+configuration lacked the Gateway expected by the published `0.18.67` runtime.
+The selected managed `gateway` profile now includes this module's native Gateway,
+with existing scoped authorization unchanged; it needs its own approved Update
+and application proof. No direct-model runtime change was implemented. Restore
+remains **NotRun**. See [the managed installer README](../../../managed-deployments/README.md).
 
 ### Existing celld/S3 fleet
 
