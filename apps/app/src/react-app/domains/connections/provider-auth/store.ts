@@ -6,6 +6,7 @@ import { CLAUDE_AGENT_HOST_PROVIDER_ID, CLAUDE_AGENT_PROVIDER_ID, CLAUDE_CODE_CH
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { fetchProviderCatalog, providerListQueryKey, refreshProviderListQueries } from "../../../infra/provider-list-query";
 import { CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
+import { confirmSharedGatewayProvider, type SharedDeviceProviderArrival } from "./shared-provider-sync";
 
 import { applyEdits, modify, parse } from "jsonc-parser";
 import type {
@@ -145,6 +146,7 @@ let lastGlobalProviderDisposeRefreshAt = 0;
 let activeGlobalCloudProviderSync: GlobalCloudProviderSyncBatch | null = null;
 let trailingGlobalCloudProviderSync: GlobalCloudProviderSyncBatch | null = null;
 let loggedGatewayCloudProviderSyncSkip = false;
+let freshCloudProviderSyncGeneration = 0;
 
 async function enqueueGlobalCloudProviderSync(
   contextKey: string,
@@ -338,6 +340,7 @@ type CreateProviderAuthStoreOptions = {
   claudeCheckTiming?: { pollMs?: number; settleMs?: number; timeoutMs?: number; followUpMs?: number; signInPollMs?: number };
   /** Test seam. By default OpenWork runs Claude Code's sign-in only from the desktop app, on a workspace on this computer whose server it started. */
   claudeSignInAvailable?: () => boolean;
+  providerFilterSyncFixEnabled?: () => boolean;
   nativeOpenworkClient?: () => OpenworkServerClient | null;
   nativeWorkspaceId?: () => string | null;
   client: () => Client | null;
@@ -2873,14 +2876,53 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       throw new Error("The active account or organization changed, or its session could not be delivered. Nothing was shared.");
     }
     const result = await client.shareDeviceProvider(providerId, orgId, verifiedToken);
-    // The share stands whatever happens next; bring the new provider into this app too.
-    if (isCurrent()) {
+    // The guided flow confirms arrival separately, so a committed share is never
+    // mistaken for a failed write (and never needs to be sent again).
+    if (isCurrent() && !options.providerFilterSyncFixEnabled?.()) {
       await Promise.allSettled([refreshCloudOrgProviders({ force: true }), runCloudProviderSync("manual")]);
     }
     return result;
   }
 
-  async function runCloudProviderSync(reason: CloudProviderSyncReason): Promise<void | { outcome: "handled_server_side" | "handled_live" }> {
+  async function syncSharedDeviceProvider(providerId: string, shared: { inferenceProviderId: string; name: string }): Promise<SharedDeviceProviderArrival> {
+    if (!options.providerFilterSyncFixEnabled?.()) return { status: "pending" };
+    const contextKey = getCloudProviderSyncContextKey();
+    const settings = readDenSettings();
+    const orgId = settings.activeOrgId?.trim();
+    const token = settings.authToken?.trim();
+    const isCurrent = () => !disposed && options.providerFilterSyncFixEnabled?.() === true
+      && contextKey === getCloudProviderSyncContextKey();
+    if (!orgId || !token || !isCurrent() || !isProviderAllowedByDesktopPolicy({
+      providerId: shared.inferenceProviderId,
+      restrictToCloud: options.checkDesktopAppRestriction({ restriction: "allowCustomProviders" }),
+      checkRestriction: options.checkDesktopAppRestriction,
+    })) return { status: "pending" };
+    try {
+      await runCloudProviderSync("manual", { fresh: true, throwOnError: true });
+      if (!isCurrent()) return { status: "pending" };
+      const den = createDenClient({ baseUrl: settings.baseUrl, token });
+      return await confirmSharedGatewayProvider({
+        providerId, inferenceProviderId: shared.inferenceProviderId, isCurrent,
+        isListed: () => state.liveGatewayProviders !== null
+          ? state.liveGatewayProviders.some((provider) => provider.id === shared.inferenceProviderId)
+          : Boolean(state.importedCloudProviders[shared.inferenceProviderId])
+            && state.cloudProviderServerSync?.lastRun?.status !== "failed"
+            && state.cloudProviderServerSync?.reloadPending !== true,
+        readGatewayProviders: async () => {
+          const providers = await den.listOrgUsableGatewayProviders(orgId);
+          if (isCurrent() && state.liveGatewayProviders !== null) setStateField("liveGatewayProviders", providers);
+          return providers;
+        },
+        readEngineProviders: () => refreshProviders({ force: true }, isCurrent),
+        wait: () => new Promise((resolve) => setTimeout(resolve, 500)),
+      });
+    } catch {
+      // The write already committed. The dialog offers Check again, never Share again.
+      return { status: "pending" };
+    }
+  }
+
+  async function runCloudProviderSync(reason: CloudProviderSyncReason, syncOptions?: { fresh?: boolean; throwOnError?: boolean }): Promise<void | { outcome: "handled_server_side" | "handled_live" }> {
     if (disposed) return;
     const delivery = syncDenSessionDelivery();
     const contextKey = getCloudProviderSyncContextKey();
@@ -2932,7 +2974,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         && contextKey === getCloudProviderSyncContextKey();
       try {
         const result = await enqueueGlobalCloudProviderSync(
-          `server:${contextKey}`,
+          `server:${contextKey}${syncOptions?.fresh ? `:fresh:${++freshCloudProviderSyncGeneration}` : ""}`,
           async () => {
             if (!isCurrent()) return;
             const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
@@ -2951,6 +2993,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
               const previouslyLive = usesLiveProviderSync({ baseUrl, status: queryClient.getQueryData<LiveProviderSyncStatus>(key) });
               if (status) queryClient.setQueryData(key, status);
               if (usesLiveProviderSync({ baseUrl, status })) {
+                if (syncOptions?.fresh && options.providerFilterSyncFixEnabled?.()) {
+                  await openworkClient.refreshGatewayProviderCatalog(delivery?.controller.signal);
+                  if (!isCurrent()) return;
+                }
                 // Registration may have emitted native events before the app
                 // knew who owned sync. Reconcile once when ownership is learned.
                 if (!previouslyLive) dispatchProviderCatalogChanged({
@@ -3004,6 +3050,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             new Error(result.message ?? "Cloud provider sync failed."),
           );
           publishSettingsCloudProviderSyncError(reason, message);
+          if (syncOptions?.throwOnError) throw new Error(message);
           return;
         }
         // The server may already be synchronized while this route still holds
@@ -3017,12 +3064,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         if (!isCurrent()) return;
         const message = logCloudProviderSyncError(reason, error);
         publishSettingsCloudProviderSyncError(reason, message);
+        if (syncOptions?.throwOnError) throw error;
         return;
       }
     }
 
     await enqueueGlobalCloudProviderSync(
-      `client:${contextKey}`,
+      `client:${contextKey}${syncOptions?.fresh ? `:fresh:${++freshCloudProviderSyncGeneration}` : ""}`,
       async () => {
         try {
           await performCloudProviderSync(reason);
@@ -3035,6 +3083,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       if (!isCurrent()) return;
       const message = logCloudProviderSyncError(reason, error);
       publishSettingsCloudProviderSyncError(reason, message);
+      if (syncOptions?.throwOnError) throw error;
     });
   }
 
@@ -3551,6 +3600,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     runCloudProviderSync,
     startGatewayProviderOAuth,
     shareDeviceProvider,
+    syncSharedDeviceProvider,
     isGatewayModelAvailable,
     startProviderAuth,
     connectClaudeAgent: () => runClaudeAction("connect"),

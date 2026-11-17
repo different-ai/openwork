@@ -752,6 +752,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     (scope: "project" | "global") => connectionsStore.readMcpConfigFile(scope),
     [connectionsStore],
   );
+  const providerFilterSyncFixEnabled = useDesktopFeature("providerFilterSyncFix");
+  const providerFilterSyncFixRef = useRef(providerFilterSyncFixEnabled);
+  providerFilterSyncFixRef.current = providerFilterSyncFixEnabled;
   const providerAuthStore = useMemo(
     () =>
       createProviderAuthStore({
@@ -772,6 +775,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           routeStateRef.current.selectedWorkspaceId.trim() ||
           null,
         openworkServer: openworkServerStore,
+        providerFilterSyncFixEnabled: () => providerFilterSyncFixRef.current,
         setProviders,
         setProviderDefaults,
         setProviderConnectedIds,
@@ -2001,6 +2005,24 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     runtimeWorkspaceId,
     organizationName: cloudSession.activeOrgName,
     share: providerAuthStore.shareDeviceProvider,
+    guided: providerFilterSyncFixEnabled ? {
+      confirmArrival: providerAuthStore.syncSharedDeviceProvider,
+      removeDeviceKey: async (providerId, organizationProviderId) => {
+        // A default model on the key being removed moves to the same model from the organization.
+        const current = local.prefs.defaultModel;
+        if (current?.providerID === providerId) {
+          const name = providers.find((provider) => provider.id === providerId)?.models?.[current.modelID]?.name?.trim().toLowerCase();
+          const organizationModels = providers.find((provider) => provider.id === organizationProviderId)?.models ?? {};
+          const match = name ? Object.values(organizationModels).find((model) => model.name?.trim().toLowerCase() === name) : undefined;
+          if (match) local.setPrefs((previous) => ({ ...previous, defaultModel: { providerID: organizationProviderId, modelID: match.id } }));
+        }
+        // The closing toast reports the removal; the status line would repeat it.
+        await providerAuthStore.disconnectProvider(providerId);
+      },
+      showOrganizationProviders: () => {
+        document.querySelector('[data-provider-scope="organization"]')?.scrollIntoView({ block: "center", behavior: "smooth" });
+      },
+    } : undefined,
   });
   // Someone who cannot manage AI Gateway already has "My model connections";
   // a second link to an admin-only page would only bounce them (DESIGN P4).

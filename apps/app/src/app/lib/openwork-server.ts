@@ -1741,6 +1741,11 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       if (!shared.success) throw new OpenworkServerError(502, "share_unconfirmed", "OpenWork did not confirm the share. Check AI Providers before trying again.");
       return shared.data;
     },
+    refreshGatewayProviderCatalog: async (signal?: AbortSignal): Promise<void> => {
+      await requestJson<unknown>(baseUrl, "/cloud-provider-sync/gateway/refresh", {
+        hostToken, method: "POST", body: {}, signal, timeoutMs: timeouts.config,
+      });
+    },
     runCloudProviderSyncNow: async (reason?: string, signal?: AbortSignal) =>
       parseCloudProviderSyncRun(await requestJson<unknown>(baseUrl, "/cloud-provider-sync/run", {
         hostToken,
