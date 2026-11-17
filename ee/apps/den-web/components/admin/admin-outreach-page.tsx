@@ -71,7 +71,7 @@ function Row({ item, busy, onOutcome }: { item: OutreachItem; busy: boolean; onO
       <Link href={orgHref} prefetch={false} className="min-w-0 truncate font-medium hover:underline">{item.organizationName}</Link>
       {item.company ? <span className="text-xs text-[var(--dls-text-secondary)]">{item.company}</span> : null}
       <span className="ml-auto flex flex-wrap items-center gap-2 text-xs text-[var(--dls-text-secondary)]">
-        <span>{count(item.people.active)} of {count(item.people.members)} active</span>
+        <span>{item.people.active === 0 && item.lastActiveAt ? `Last task ${shortDate(item.lastActiveAt)}` : `${count(item.people.active)} of ${count(item.people.members)} active`}</span>
         <DenBadge size="sm" tone={item.billing.paying ? "success" : "neutral"}>{planLabel(item.billing)}</DenBadge>
       </span>
     </div>
@@ -112,11 +112,28 @@ function Row({ item, busy, onOutcome }: { item: OutreachItem; busy: boolean; onO
   </li>;
 }
 
+const WIN_BACK: OutreachPlay[] = ["shrinking", "quiet_paying", "lapsed_failed", "lapsed_limit", "lapsed"];
+
+/** What is waiting to be won back, and what happened to the accounts already contacted. */
+function Results({ data }: { data: AdminOutreach }) {
+  const winBack = WIN_BACK.reduce((sum, play) => sum + data.totals[play], 0);
+  const { results } = data;
+  const figure = "text-lg font-semibold tabular-nums";
+  const label = "text-xs text-[var(--dls-text-secondary)]";
+  return <dl aria-label="Reactivation" className="grid grid-cols-2 gap-4 border-b border-[var(--dls-border)] py-4 md:grid-cols-4">
+    <div><dt className={label}>To win back</dt><dd className={figure}>{count(winBack)}</dd><dd className={label}>stopped or slowing down</dd></div>
+    <div><dt className={label}>Contacted, last {results.days} days</dt><dd className={figure}>{count(results.contacted)}</dd><dd className={label}>{results.contacted ? `${count(data.waiting.length)} waiting on a reply` : "Mark accounts contacted to track them"}</dd></div>
+    <div><dt className={label}>Replied</dt><dd className={figure}>{count(results.replied)}</dd><dd className={label}>{results.contacted ? `of ${count(results.contacted)} contacted` : "none recorded yet"}</dd></div>
+    <div><dt className={label}>Active again</dt><dd className={figure}>{count(results.cameBack)}</dd><dd className={label}>{results.quietWhenContacted ? `of ${count(results.quietWhenContacted)} that were quiet when contacted` : "no quiet account contacted yet"}</dd></div>
+  </dl>;
+}
+
 export function OutreachList({ data, busy, onOutcome }: { data: AdminOutreach; busy: string | null; onOutcome: (organizationId: string, organizationName: string, outcome: Outcome, contact: Person | null, note: string) => void }) {
   const [filter, setFilter] = useState<OutreachPlay | "all">("all");
   const rows = filter === "all" ? data.items : data.items.filter(item => item.play === filter);
   const total = OUTREACH_PLAYS.reduce((sum, play) => sum + data.totals[play], 0);
   return <>
+    <Results data={data} />
     <div className="flex flex-wrap items-center justify-between gap-3 py-4">
       <div role="group" aria-label="Filter by reason" className="flex flex-wrap gap-2">
         {(["all", ...OUTREACH_PLAYS] as const).map(play => {
@@ -139,7 +156,8 @@ export function OutreachList({ data, busy, onOutcome }: { data: AdminOutreach; b
       <h2 className="mb-2 text-sm font-semibold">Waiting on a reply <span className="font-normal text-[var(--dls-text-secondary)]">· {count(data.waiting.length)}</span></h2>
       <ul className="rounded-lg border border-[var(--dls-border)] bg-[var(--dls-surface)]">{data.waiting.map(entry => <li key={entry.organizationId} className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--dls-border)] px-4 py-3 text-sm last:border-0">
         <span className="min-w-0"><Link href={`/admin/organizations/${encodeURIComponent(entry.organizationId)}`} prefetch={false} className="font-medium hover:underline">{entry.organizationName}</Link>
-          <span className="block text-xs text-[var(--dls-text-secondary)]">Contacted {shortDate(entry.contactedAt)}{entry.ownerName ? ` by ${entry.ownerName}` : ""}{entry.followUpAt ? ` · back on the list ${shortDate(entry.followUpAt)}` : ""}</span></span>
+          <span className="block text-xs text-[var(--dls-text-secondary)]">Contacted {shortDate(entry.contactedAt)}{entry.ownerName ? ` by ${entry.ownerName}` : ""}{entry.followUpAt ? ` · back on the list ${shortDate(entry.followUpAt)}` : ""}</span>
+          {entry.activeAgainAt ? <span className="mt-1 block text-xs text-[var(--ow-success)]">Running tasks again since {shortDate(entry.activeAgainAt)}</span> : null}</span>
         <span className="flex gap-2">
           <DenButton size="sm" variant="secondary" disabled={busy === entry.organizationId} onClick={() => onOutcome(entry.organizationId, entry.organizationName, "replied", null, "")}>Got a reply</DenButton>
           <DenButton size="sm" variant="ghost" disabled={busy === entry.organizationId} onClick={() => onOutcome(entry.organizationId, entry.organizationName, "dismissed", null, "")}>Close</DenButton>
@@ -149,7 +167,9 @@ export function OutreachList({ data, busy, onOutcome }: { data: AdminOutreach; b
     <details className="mt-6 border-t border-[var(--dls-border)] py-4 text-xs text-[var(--dls-text-secondary)]">
       <summary className="cursor-pointer font-medium">How this list is built</summary>
       <ul className="mt-3 grid max-w-3xl list-disc gap-2 pl-5">
-        <li>Each account is listed once, under its strongest reason: a follow-up that is due, a failed payment, a plan ending or canceled in the last 30 days, a team without a plan, full seats, colleagues in separate workspaces, the free model limit, then a quiet paid plan.</li>
+        <li>Each account is listed once, under its strongest reason: a follow-up that is due, a failed payment, a plan ending or canceled in the last 30 days, a team without a plan, full seats, colleagues in separate workspaces, a shrinking team, the free model limit, a quiet paid plan, then accounts that went quiet.</li>
+        <li>Went quiet means tasks on three or more days earlier in the last 60 days and none in the last {data.windowDays}. Left after failures means at least 30% of those tasks failed; left at the limit means the free model limit was reached in their last week. The most recently lapsed come first.</li>
+        <li>Active again counts contacted accounts that were quiet for two weeks before the contact and ran a task afterwards. It shows what happened, not that the message caused it.</li>
         <li>Active means the person ran a task in the app in the last {data.windowDays} days. Telemetry can be turned off, so no tasks seen is not proof that nobody uses it.</li>
         <li>Same company means verified addresses on one domain that is not a personal email provider. A domain is not proof of employment; check before you mention colleagues.</li>
         <li>Mark contacted takes the account off the list for a week. It comes back once as a follow-up if no reply is recorded. Not a fit hides it{data.hidden ? `; ${count(data.hidden)} hidden now` : ""}.</li>
