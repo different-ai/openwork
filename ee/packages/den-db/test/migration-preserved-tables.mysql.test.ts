@@ -43,7 +43,7 @@ test("preserved-table startup on disposable MySQL", { skip: !databaseUrl, timeou
       for (const sql of entry.sql) if (sql.trim()) await executor.query(sql)
       await executor.query(`INSERT INTO \`${journalTable}\` (hash, created_at) VALUES (?, ?)`, [entry.hash, entry.folderMillis])
     }
-    await ensureSchemaRepairs(executor)
+    if (count === plan.length) await ensureSchemaRepairs(executor)
   }
   async function receipts(executor: Executor) {
     return executor.query(`SELECT hash, created_at FROM \`${journalTable}\` ORDER BY id`)
@@ -79,6 +79,23 @@ test("preserved-table startup on disposable MySQL", { skip: !databaseUrl, timeou
       assert.equal(historyPrefix(plan, await receipts(executor)), plan.length)
     }))
 
+    await t.test("fresh replay cannot silently switch to bootstrap if both preserved tables disappear before final verification", async () => database(async (_quarantine, quarantineUrl) => database(async (executor) => {
+      const quarantine = new URL(quarantineUrl).pathname.slice(1)
+      let moved = false
+      await assert.rejects(migrateLocalDatabase({ query: async (sql, args) => {
+        const rows = await executor.query(sql, args)
+        if (sql === `UPDATE \`${stateTable}\` SET step='schema-repairs' WHERE id=1`) {
+          await executor.query(`RENAME TABLE dashboard TO \`${quarantine}\`.dashboard, dashboard_access_grant TO \`${quarantine}\`.dashboard_access_grant`)
+          moved = true
+        }
+        return rows
+      } }, plan), /Replay schema differs from the final snapshot/)
+      assert.equal(moved, true)
+      assert.equal(historyPrefix(plan, await receipts(executor)), plan.length)
+      assert.deepEqual(await executor.query(`SELECT * FROM \`${stateTable}\``), [{ id: 1, step: "schema-repairs" }])
+      t.diagnostic("fresh-layout witness: both tables moved intact to disposable quarantine before final inspection; replay refused and kept its interruption marker")
+    })))
+
     await t.test("the authentic compiled current-schema bootstrap without either table still checks", async () => database(async (executor, url) => {
       try {
         await run(process.execPath, [new URL("../dist/scripts/bootstrap.js", import.meta.url).pathname], {
@@ -90,10 +107,25 @@ test("preserved-table startup on disposable MySQL", { skip: !databaseUrl, timeou
       assert.equal(shape.has("table:dashboard"), false)
       assert.equal(shape.has("table:dashboard_access_grant"), false)
       const before = await receipts(executor)
+      await migrateLocalDatabase(executor, plan)
       await migrateLocalDatabase(executor, plan, true)
       assert.equal(historyPrefix(plan, before), plan.length)
       assert.deepEqual(await receipts(executor), before)
       t.diagnostic(`compiled bootstrap: ${before.length} exact receipts; neither preserved table; checked startup accepted`)
+    }))
+
+    await t.test("0097 still refuses a nonempty source before writes", async () => database(async (executor) => {
+      await replay(executor, 96)
+      await executor.query("INSERT INTO inference_providers (id, organization_id, created_by_org_membership_id, provider_id, name, provider_config, settings) VALUES ('fixture', 'fixture', 'fixture', 'fixture', 'preserve', JSON_OBJECT(), JSON_OBJECT())")
+      const before = await receipts(executor)
+      const statements: string[] = []
+      await assert.rejects(migrateLocalDatabase({ query: async (sql, args) => {
+        statements.push(sql)
+        return executor.query(sql, args)
+      } }, plan), /Preflight rejected nonempty inference_providers/)
+      assert.equal(statements.some((sql) => /^\s*(CREATE|ALTER|INSERT|UPDATE|DELETE|DROP|RENAME)\b/i.test(sql)), false)
+      assert.deepEqual(await receipts(executor), before)
+      assert.equal((await executor.query("SELECT name FROM inference_providers WHERE id='fixture'"))[0]?.name, "preserve")
     }))
 
     await database(async (executor) => {
