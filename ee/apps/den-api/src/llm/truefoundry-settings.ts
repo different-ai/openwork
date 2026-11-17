@@ -19,7 +19,12 @@ const settingsSchema = z.object({
   credentialSetId: z.string().min(1),
   /** Add allowed people missing from TrueFoundry as TrueFoundry users before creating their token. */
   createMissingUsers: z.boolean().default(false),
+  /** Models served to people: the upstream chat models, narrowed to selectedModelIds when an admin picked some. */
   catalog: z.array(storedModelSchema).max(500),
+  /** Every chat model the admin key saw at the last sync. Missing on providers synced before models could be picked: catalog was all of them. */
+  upstream: z.array(storedModelSchema).max(500).optional(),
+  /** Models an admin picked ("Only the ones I pick"), or null for every upstream model. Picked models that leave TrueFoundry are kept and served again if they return. */
+  selectedModelIds: z.array(z.string().min(1).max(255)).max(500).nullable().default(null),
   /** Stable key -> model group id: "signin" is the access group, "models:<hash>" one group per model set. */
   groups: z.record(z.string(), z.string()),
   lastSyncedAt: z.string().nullable(),
@@ -30,6 +35,18 @@ export type TrueFoundrySettings = z.infer<typeof settingsSchema>
 export function readTrueFoundrySettings(settings: Record<string, unknown>): TrueFoundrySettings | null {
   const parsed = settingsSchema.safeParse(settings.truefoundry)
   return parsed.success ? parsed.data : null
+}
+
+/** Every chat model TrueFoundry listed at the last sync, picked or not. */
+export function trueFoundryUpstreamModels(settings: Pick<TrueFoundrySettings, "catalog" | "upstream">): TrueFoundrySettings["catalog"] {
+  return settings.upstream ?? settings.catalog
+}
+
+/** The models people are served: all upstream models, or only the picked ones that TrueFoundry still lists. */
+export function selectTrueFoundryModels<T extends { id: string }>(upstream: readonly T[], selectedModelIds: readonly string[] | null): T[] {
+  if (selectedModelIds === null) return [...upstream]
+  const picked = new Set(selectedModelIds)
+  return upstream.filter((model) => picked.has(model.id))
 }
 
 /** Catalog provider for the gateway matrix, from the last successful sync. */
@@ -67,6 +84,8 @@ export async function trueFoundryStatus(provider: { id: typeof GatewayTrueFoundr
     lastSyncedAt: settings.lastSyncedAt,
     lastSyncError: settings.lastSyncError,
     modelCount: settings.catalog.length,
+    availableModels: trueFoundryUpstreamModels(settings).map((model) => ({ id: model.id, name: model.name })),
+    selectedModelIds: settings.selectedModelIds,
     activeMemberCount: rows.filter((row) => row.status === "active").length,
     createdUserCount: rows.filter((row) => row.created !== null && row.status !== "revoked").length,
     attentionCount: attentionRows.length,
