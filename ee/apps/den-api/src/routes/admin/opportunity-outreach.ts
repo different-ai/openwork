@@ -13,7 +13,7 @@ import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata } from "../.
 import type { AuthContextVariables } from "../../session.js"
 import { companyDomainSql } from "./opportunity-signals.js"
 import {
-  CANCELED_DAYS, FREE_LIMIT_DAYS, OUTREACH_WINDOW_DAYS, buildOutreach, companyClusters,
+  CANCELED_DAYS, FREE_LIMIT_DAYS, HISTORY_DAYS, OUTREACH_WINDOW_DAYS, RESULT_DAYS, buildOutreach, companyClusters,
   type CompanyCluster, type OutreachFacts, type OutreachPerson,
 } from "./outreach-plays.js"
 
@@ -55,16 +55,24 @@ export async function readFollowUps(ids: OrganizationId[]) {
  */
 export async function readAdminOutreach(now = new Date()) {
   const from = new Date(now.getTime() - OUTREACH_WINDOW_DAYS * DAY)
-  // One pass over the time index, grouped by member, before any join.
+  const history = new Date(now.getTime() - HISTORY_DAYS * DAY)
+  const at = TelemetryEventTable.event_timestamp
+  // One pass over the time index, grouped by member, before any join. "Before" is history up to the window.
   const recent = db.select({
     memberId: TelemetryEventTable.member_id,
-    days: sql<number>`count(distinct date(${TelemetryEventTable.event_timestamp}))`.as("active_days"),
+    days: sql<number>`count(distinct case when ${at} >= ${from} then date(${at}) end)`.as("active_days"),
+    beforeDays: sql<number>`count(distinct case when ${at} < ${from} then date(${at}) end)`.as("before_days"),
+    startedBefore: sql<number>`coalesce(sum(${TelemetryEventTable.event_type} = 'task.started' and ${at} < ${from}), 0)`.as("started_before"),
+    failedBefore: sql<number>`coalesce(sum(${TelemetryEventTable.event_type} = 'task.failed' and ${at} < ${from}), 0)`.as("failed_before"),
+    lastMs: sql<number>`unix_timestamp(max(${at})) * 1000`.as("last_ms"),
   }).from(TelemetryEventTable).where(and(
-    gte(TelemetryEventTable.event_timestamp, from), lt(TelemetryEventTable.event_timestamp, now),
-    sql`${TelemetryEventTable.event_type} like 'task.%'`, eq(TelemetryEventTable.source, "app"),
+    gte(at, history), lt(at, now), sql`${TelemetryEventTable.event_type} like 'task.%'`, eq(TelemetryEventTable.source, "app"),
   )).groupBy(TelemetryEventTable.member_id).as("recent_activity")
   const [activity, subscriptions, limits, followUpIds] = await Promise.all([
-    db.select({ organizationId: MemberTable.organizationId, userId: MemberTable.userId, days: recent.days, companyDomain: companyDomainSql() })
+    db.select({
+      organizationId: MemberTable.organizationId, userId: MemberTable.userId, companyDomain: companyDomainSql(),
+      days: recent.days, beforeDays: recent.beforeDays, startedBefore: recent.startedBefore, failedBefore: recent.failedBefore, lastMs: recent.lastMs,
+    })
       .from(recent).innerJoin(MemberTable, eq(MemberTable.id, recent.memberId)).innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId)).where(humanMember),
     db.select({
       organizationId: OrgSubscriptionTable.organization_id, type: OrgSubscriptionTable.type, status: OrgSubscriptionTable.status,
@@ -74,26 +82,50 @@ export async function readAdminOutreach(now = new Date()) {
       inArray(OrgSubscriptionTable.status, ["active", "trialing", "past_due", "unpaid"]),
       gte(OrgSubscriptionTable.canceled_at, new Date(now.getTime() - CANCELED_DAYS * DAY)),
     )),
-    db.select({ organizationId: FreeAutoLimitEventTable.organization_id, userId: FreeAutoLimitEventTable.user_id, hits: sql<number>`count(*)` })
+    db.select({
+      organizationId: FreeAutoLimitEventTable.organization_id, userId: FreeAutoLimitEventTable.user_id,
+      hits: sql<number>`coalesce(sum(${FreeAutoLimitEventTable.exhausted_at} >= ${new Date(now.getTime() - FREE_LIMIT_DAYS * DAY)}), 0)`,
+      lastMs: sql<number>`unix_timestamp(max(${FreeAutoLimitEventTable.exhausted_at})) * 1000`,
+    })
       .from(FreeAutoLimitEventTable).where(and(
         eq(FreeAutoLimitEventTable.audience, "member"), isNotNull(FreeAutoLimitEventTable.organization_id), isNotNull(FreeAutoLimitEventTable.user_id),
-        gte(FreeAutoLimitEventTable.exhausted_at, new Date(now.getTime() - FREE_LIMIT_DAYS * DAY)), lt(FreeAutoLimitEventTable.exhausted_at, now),
+        gte(FreeAutoLimitEventTable.exhausted_at, history), lt(FreeAutoLimitEventTable.exhausted_at, now),
       )).groupBy(FreeAutoLimitEventTable.organization_id, FreeAutoLimitEventTable.user_id),
-    db.select({ id: AccountFollowUpTable.organizationId }).from(AccountFollowUpTable).where(or(
-      isNotNull(AccountFollowUpTable.nextFollowUpAt), gte(AccountFollowUpTable.lastContactedAt, from),
+    db.select({ id: AccountFollowUpTable.organizationId, contactedAt: AccountFollowUpTable.lastContactedAt }).from(AccountFollowUpTable).where(or(
+      isNotNull(AccountFollowUpTable.nextFollowUpAt), gte(AccountFollowUpTable.lastContactedAt, new Date(now.getTime() - (RESULT_DAYS + OUTREACH_WINDOW_DAYS) * DAY)),
       inArray(AccountFollowUpTable.stage, ["closed", "dismissed"]),
     )),
   ])
 
-  const rows = activity.flatMap(row => row.userId ? [{ organizationId: row.organizationId, userId: row.userId, activeDays: Number(row.days), companyDomain: row.companyDomain }] : [])
+  const rows = activity.flatMap(row => row.userId ? [{
+    organizationId: row.organizationId, userId: row.userId, companyDomain: row.companyDomain, activeDays: Number(row.days), beforeDays: Number(row.beforeDays),
+    startedBefore: Number(row.startedBefore), failedBefore: Number(row.failedBefore), lastActiveAt: new Date(Number(row.lastMs)),
+  }] : [])
   const activeByOrganization = new Map<string, number>()
-  for (const row of rows) activeByOrganization.set(row.organizationId, (activeByOrganization.get(row.organizationId) ?? 0) + 1)
+  // Accounts where people ran tasks before the window: how many, how regularly, and whether a work address is among them.
+  const earlier = new Map<string, { people: number, stopped: number, regular: boolean, work: boolean, started: number, failed: number }>()
+  for (const row of rows) {
+    if (row.activeDays > 0) activeByOrganization.set(row.organizationId, (activeByOrganization.get(row.organizationId) ?? 0) + 1)
+    if (row.beforeDays === 0) continue
+    const entry = earlier.get(row.organizationId) ?? { people: 0, stopped: 0, regular: false, work: false, started: 0, failed: 0 }
+    earlier.set(row.organizationId, {
+      people: entry.people + 1, stopped: entry.stopped + (row.activeDays === 0 && row.beforeDays >= 3 ? 1 : 0), regular: entry.regular || row.beforeDays >= 3,
+      work: entry.work || Boolean(row.companyDomain), started: entry.started + row.startedBefore, failed: entry.failed + row.failedBefore,
+    })
+  }
   const seeds = companyClusters(rows)
   const hasModels = new Set(subscriptions.filter(row => row.type === "inference" && (row.status === "active" || row.status === "trialing")).map(row => row.organizationId))
   const candidates = new Set<OrganizationId>()
   for (const [id, active] of activeByOrganization) if (active >= 2) candidates.add(id as OrganizationId)
+  const limited = new Set(limits.map(row => row.organizationId))
+  for (const [id, entry] of earlier) {
+    const active = activeByOrganization.get(id) ?? 0
+    // Lapsed: regular use, then nobody. Kept to accounts with a team, a work address, failures or the free limit behind them.
+    const lapsed = active === 0 && entry.regular && (entry.people >= 2 || entry.work || limited.has(id as OrganizationId) || (entry.started >= 5 && entry.failed / entry.started >= 0.3))
+    if (lapsed || (active > 0 && entry.people >= 2 && entry.stopped > 0)) candidates.add(id as OrganizationId)
+  }
   for (const row of subscriptions) candidates.add(row.organizationId)
-  for (const row of limits) if (row.organizationId && !hasModels.has(row.organizationId)) candidates.add(row.organizationId)
+  for (const row of limits) if (row.organizationId && Number(row.hits) > 0 && !hasModels.has(row.organizationId)) candidates.add(row.organizationId)
   for (const seed of seeds) candidates.add(seed.homeOrganizationId as OrganizationId)
   for (const row of followUpIds) candidates.add(row.id)
   const ids = [...candidates].slice(0, MAX_ACCOUNTS)
@@ -102,20 +134,31 @@ export async function readAdminOutreach(now = new Date()) {
   // People in the listed workspaces, plus colleagues in other workspaces named by a company reason.
   const colleagues = [...new Set(seeds.flatMap(seed => seed.others.map(other => other.userId)))] as NonNullable<typeof MemberTable.$inferSelect.userId>[]
   const person = { organizationId: MemberTable.organizationId, userId: MemberTable.userId, role: MemberTable.role, name: AuthUserTable.name, email: AuthUserTable.email, companyDomain: companyDomainSql() }
-  const [organizations, members, others, followUps] = await Promise.all([
+  const contactedIds = followUpIds.flatMap(row => row.contactedAt ? [row.id] : [])
+  const [organizations, members, others, followUps, activeDays] = await Promise.all([
     db.select({ id: OrganizationTable.id, name: OrganizationTable.name, metadata: OrganizationTable.metadata }).from(OrganizationTable).where(inArray(OrganizationTable.id, ids)),
     db.select(person).from(MemberTable).innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
       .where(and(humanMember, inArray(MemberTable.organizationId, ids))).limit(MAX_PEOPLE),
     colleagues.length ? db.select(person).from(MemberTable).innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
       .where(and(humanMember, inArray(MemberTable.userId, colleagues))).limit(MAX_PEOPLE) : [],
     readFollowUps(ids),
+    // Days with a task, only for accounts someone recorded contacting: did they come back afterwards?
+    contactedIds.length ? db.select({ organizationId: TelemetryEventTable.org_id, date: sql<string>`date_format(${at}, '%Y-%m-%d')`.as("active_date") })
+      .from(TelemetryEventTable).where(and(inArray(TelemetryEventTable.org_id, contactedIds), gte(at, new Date(now.getTime() - (RESULT_DAYS + 2 * OUTREACH_WINDOW_DAYS) * DAY)), lt(at, now),
+        sql`${TelemetryEventTable.event_type} like 'task.%'`, eq(TelemetryEventTable.source, "app")))
+      .groupBy(TelemetryEventTable.org_id, sql`active_date`) : [],
   ])
-  const daysOf = new Map(rows.map(row => [`${row.organizationId}:${row.userId}`, row.activeDays]))
-  const hitsOf = new Map(limits.map(row => [`${row.organizationId}:${row.userId}`, Number(row.hits)]))
-  const toPerson = (row: (typeof members)[number]): OutreachPerson | null => row.userId && row.email ? {
-    userId: row.userId, name: row.name, email: row.email, role: row.role, companyDomain: row.companyDomain,
-    activeDays: daysOf.get(`${row.organizationId}:${row.userId}`) ?? 0, limitHits: hitsOf.get(`${row.organizationId}:${row.userId}`) ?? 0,
-  } : null
+  const activityOf = new Map(rows.map(row => [`${row.organizationId}:${row.userId}`, row]))
+  const limitOf = new Map(limits.map(row => [`${row.organizationId}:${row.userId}`, row]))
+  const toPerson = (row: (typeof members)[number]): OutreachPerson | null => {
+    if (!row.userId || !row.email) return null
+    const activity = activityOf.get(`${row.organizationId}:${row.userId}`), limit = limitOf.get(`${row.organizationId}:${row.userId}`)
+    return {
+      userId: row.userId, name: row.name, email: row.email, role: row.role, companyDomain: row.companyDomain,
+      activeDays: activity?.activeDays ?? 0, beforeDays: activity?.beforeDays ?? 0, startedBefore: activity?.startedBefore ?? 0, failedBefore: activity?.failedBefore ?? 0,
+      lastActiveAt: activity?.lastActiveAt ?? null, limitHits: Number(limit?.hits ?? 0), lastLimitAt: limit ? new Date(Number(limit.lastMs)) : null,
+    }
+  }
 
   const facts: OutreachFacts[] = organizations.map(organization => {
     const people = members.filter(row => row.organizationId === organization.id)
@@ -125,6 +168,7 @@ export async function readAdminOutreach(now = new Date()) {
       people: people.flatMap(row => toPerson(row) ?? []),
       subscriptions: subscriptions.filter(row => row.organizationId === organization.id).map(({ organizationId: _, ...row }) => row),
       followUp: followUps.get(organization.id) ?? null,
+      activeDates: activeDays.filter(row => row.organizationId === organization.id).map(row => row.date),
     }
   })
   const clusters: CompanyCluster[] = seeds.map(seed => ({
@@ -140,7 +184,7 @@ export async function readAdminOutreach(now = new Date()) {
 export function registerAdminOutreachRoute<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   app.get("/v1/admin/opportunities/outreach", describeRoute({
     tags: ["Admin"], summary: "List the accounts worth writing to, with who and why",
-    description: "Platform-admin-only. One row per organization under its strongest reason: a follow-up that is due, a failed payment, a plan ending or canceled in the last 30 days, two or more people running tasks without a Team plan, every seat in use, colleagues at one verified company domain running tasks from separate workspaces, a member reaching the free model limit in the last 7 days, or a paid plan with no tasks seen in 14 days. Each row names the person to write to with their name, email and role, and up to five other people. Accounts an admin dismissed or closed are left out; accounts contacted in the last 14 days are returned as waiting. At most 50 rows per reason; totals count every match. Missing telemetry is not inactivity and an email domain is not proof of employment. No content, credentials, Stripe calls or external enrichment, and nothing is sent.",
+    description: "Platform-admin-only. One row per organization under its strongest reason: a follow-up that is due, a failed payment, a plan ending or canceled in the last 30 days, two or more people running tasks without a Team plan, every seat in use, colleagues at one verified company domain running tasks from separate workspaces, part of a team that stopped, a member reaching the free model limit in the last 7 days, a paid plan with no tasks seen in 14 days, or an account that ran tasks regularly in the last 60 days and then stopped (after failed tasks, after the free model limit, or without a recorded cause). Results count, for accounts contacted in the last 30 days, replies recorded and quiet accounts where someone ran a task afterwards; that is observed, not attributed to the contact. Each row names the person to write to with their name, email and role, and up to five other people. Accounts an admin dismissed or closed are left out; accounts contacted in the last 14 days are returned as waiting. At most 50 rows per reason; totals count every match. Missing telemetry is not inactivity and an email domain is not proof of employment. No content, credentials, Stripe calls or external enrichment, and nothing is sent.",
     responses: { 200: jsonResponse("Outreach list returned.", adminOutreachSchema),
       401: jsonResponse("Authentication required.", unauthorizedSchema), 403: jsonResponse("Platform admin access required.", forbiddenSchema) },
   }), adminRoute(), async c => {

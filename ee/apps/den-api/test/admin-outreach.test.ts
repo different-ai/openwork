@@ -9,13 +9,13 @@ const NOW = new Date("2026-11-17T12:00:00.000Z")
 const daysAgo = (days: number) => new Date(NOW.getTime() - days * 86_400_000)
 
 function person(userId: string, overrides: Partial<OutreachPerson> = {}): OutreachPerson {
-  return { userId, name: `${userId} Example`, email: `${userId}@example.test`, role: "member", activeDays: 0, companyDomain: null, limitHits: 0, ...overrides }
+  return { userId, name: `${userId} Example`, email: `${userId}@example.test`, role: "member", activeDays: 0, companyDomain: null, limitHits: 0, beforeDays: 0, startedBefore: 0, failedBefore: 0, lastActiveAt: null, lastLimitAt: null, ...overrides }
 }
 function subscription(overrides: Partial<OutreachSubscription> = {}): OutreachSubscription {
   return { type: "seat", status: "active", paymentFailed: false, cancelAtPeriodEnd: false, currentPeriodEnd: daysAgo(-20), canceledAt: null, createdAt: daysAgo(90), ...overrides }
 }
 function account(id: string, overrides: Partial<OutreachFacts> = {}): OutreachFacts {
-  return { id, name: `${id} workspace`, plan: "free", members: 1, seatLimit: 5, people: [person(`${id}-owner`, { role: "owner" })], subscriptions: [], followUp: null, ...overrides }
+  return { id, name: `${id} workspace`, plan: "free", members: 1, seatLimit: 5, people: [person(`${id}-owner`, { role: "owner" })], subscriptions: [], followUp: null, activeDates: [], ...overrides }
 }
 function followUp(overrides: Partial<NonNullable<OutreachFacts["followUp"]>> = {}): NonNullable<OutreachFacts["followUp"]> {
   return {
@@ -113,6 +113,58 @@ test("a contacted account waits, comes back when its follow-up is due, and stays
   const dismissed = list([account("no", { ...team, followUp: followUp({ stage: "dismissed" }) }), account("idle", { followUp: followUp({ stage: "dismissed" }) })])
   assert.equal(dismissed.items.length, 0)
   assert.equal(dismissed.hidden, 1)
+})
+
+test("an account that used it regularly and stopped is listed by what happened just before", () => {
+  const was = (overrides: Partial<OutreachPerson> = {}) => person("kim", { name: "Kim Lee", role: "owner", beforeDays: 6, startedBefore: 10, failedBefore: 1, lastActiveAt: daysAgo(20), companyDomain: "acme.test", ...overrides })
+  const quiet = list([account("quiet", { people: [was()] })]).items[0]
+  assert.equal(quiet?.play, "lapsed")
+  assert.equal(quiet?.reason, "Kim used it on 6 days, then nobody for 20 days")
+  assert.equal(quiet?.contact?.userId, "kim")
+  assert.equal(quiet?.lastActiveAt, daysAgo(20).toISOString())
+
+  assert.equal(list([account("broken", { people: [was({ failedBefore: 4 })] })]).items[0]?.reason, "Stopped 20 days ago after 4 of 10 tasks failed")
+  const limit = list([account("limit", { people: [was({ lastLimitAt: daysAgo(22) })] })]).items[0]
+  assert.equal(limit?.play, "lapsed_limit")
+  assert.equal(limit?.reason, "Stopped 20 days ago, right after reaching the free model limit")
+
+  // One or two days of use, a personal address with no other signal, or use in the window is not a lapse.
+  assert.equal(list([account("tried", { people: [was({ beforeDays: 2 })] })]).items.length, 0)
+  assert.equal(list([account("personal", { people: [was({ companyDomain: null })] })]).items.length, 0)
+  assert.equal(list([account("here", { people: [was({ activeDays: 1 })] })]).items.length, 0)
+  // The most recently lapsed come first.
+  const order = list([account("older", { people: [was({ lastActiveAt: daysAgo(40) })] }), account("fresh", { people: [was({ lastActiveAt: daysAgo(15) })] })])
+  assert.deepEqual(order.items.map(item => item.organizationId), ["fresh", "older"])
+})
+
+test("a team where some people stopped is listed with the people who stopped", () => {
+  const { items } = list([account("team", { members: 3, subscriptions: [subscription()], people: [
+    person("ava", { activeDays: 6, beforeDays: 9 }), person("ben", { beforeDays: 5 }), person("cy", { beforeDays: 1 }),
+  ] })])
+  assert.equal(items[0]?.play, "shrinking")
+  assert.equal(items[0]?.reason, "1 of the 3 people who used it stopped in the last 14 days")
+  assert.equal(items[0]?.contact?.userId, "ava")
+  assert.equal(items[0]?.others[0]?.userId, "ben")
+})
+
+test("results count replies and quiet accounts that ran tasks after the contact", () => {
+  const contactedOn = daysAgo(6)
+  const dates = (...days: number[]) => days.map(value => daysAgo(value).toISOString().slice(0, 10))
+  const contacted = (id: string, activeDates: string[], stage: "contacted" | "engaged" = "contacted") =>
+    account(id, { activeDates, followUp: followUp({ stage, lastContactedAt: contactedOn.toISOString(), nextFollowUpAt: daysAgo(-1).toISOString() }) })
+  const result = list([
+    contacted("back", dates(30, 2)),            // quiet before, a task four days after
+    contacted("still", dates(30)),              // quiet before and after
+    contacted("never-left", dates(8, 2)),       // was active the week before the contact
+    contacted("replied", dates(30), "engaged"),
+    account("old", { followUp: followUp({ lastContactedAt: daysAgo(40).toISOString() }) }),
+  ])
+  assert.deepEqual(result.results, { days: 30, contacted: 4, replied: 1, quietWhenContacted: 3, cameBack: 1 })
+  assert.equal(result.waiting.find(entry => entry.organizationId === "back")?.activeAgainAt, `${dates(2)[0]}T00:00:00.000Z`)
+  assert.equal(result.waiting.find(entry => entry.organizationId === "still")?.activeAgainAt, null)
+
+  const due = list([account("due", { activeDates: dates(30, 2), followUp: followUp({ lastContactedAt: contactedOn.toISOString(), nextFollowUpAt: NOW.toISOString() }) })])
+  assert.equal(due.items[0]?.reason, "Running tasks again since Nov 15, after you wrote on Nov 11")
 })
 
 test("rows are ordered by reason, then by how many people use it, and the result matches the API schema", () => {

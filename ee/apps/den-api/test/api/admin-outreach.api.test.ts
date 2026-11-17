@@ -6,7 +6,7 @@
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { after, test } from "node:test"
-import { adminOutreachSchema } from "@openwork/types/den/admin-organization"
+import { OUTREACH_PLAYS, adminOutreachSchema } from "@openwork/types/den/admin-organization"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { bootDen, summary, type Call, type Member } from "./harness.js"
 
@@ -21,10 +21,10 @@ const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000)
 const admin = await den.signUp("Platform Admin", process.env.DEN_BOOTSTRAP_ADMIN_EMAILS)
 const person = await den.signUp("Regular Person")
 
-async function ranTasks(orgId: string, member: Member, days: number[], source = "app") {
+async function ranTasks(orgId: string, member: Member, days: number[], source = "app", type = "task.started") {
   for (const day of days) {
-    await query("INSERT INTO telemetry_event (id, org_id, member_id, event_type, event_timestamp, source, session_id) VALUES (?, ?, ?, 'task.started', ?, ?, ?)",
-      [createDenTypeId("telemetryEvent"), orgId, member.memberId, utc(daysAgo(day)), source, randomUUID()])
+    await query("INSERT INTO telemetry_event (id, org_id, member_id, event_type, event_timestamp, source, session_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [createDenTypeId("telemetryEvent"), orgId, member.memberId, type, utc(daysAgo(day)), source, randomUUID()])
   }
 }
 async function subscribe(orgId: string, type: string, status: string, createdDaysAgo = 60) {
@@ -65,6 +65,12 @@ for (const hours of [3, 30]) {
   await query("INSERT INTO free_auto_limit_events (id, audience, subject_hash, user_id, organization_id, window_start_at, exhausted_at) VALUES (?, 'member', ?, ?, ?, ?, ?)",
     [randomUUID(), randomUUID().replaceAll("-", ""), kim.owner.userId, kim.orgId, utc(daysAgo(7)), utc(new Date(Date.now() - hours * 3_600_000))])
 }
+
+// Someone with a work address who used it for a week, saw half the tasks fail, and stopped three weeks ago.
+const quill = await den.createOrg(await den.signUp("Quill Gone"), "Quill Partners")
+await workAddress(quill.owner, `quill@quill-${den.stamp}.test`.toLowerCase())
+await ranTasks(quill.orgId, quill.owner, [21, 22, 22, 23, 24, 25])
+await ranTasks(quill.orgId, quill.owner, [22, 23, 24], "app", "task.failed")
 
 async function outreach() {
   const response: Call = await den.request(admin.token, "GET", "/v1/admin/opportunities/outreach")
@@ -108,14 +114,22 @@ test("each account is listed under its strongest reason with the person to write
   assert.equal(limited?.play, "free_limit")
   assert.equal(limited?.reason, "Kim reached the free model limit 2 times in the last 7 days")
 
+  const gone = row(quill.orgId)
+  assert.equal(gone?.play, "lapsed_failed")
+  assert.equal(gone?.reason, "Stopped 21 days ago after 3 of 6 tasks failed")
+  assert.deepEqual(gone?.people, { members: 1, active: 0 })
+  assert.equal(gone?.lastActiveAt?.slice(0, 10), daysAgo(21).toISOString().slice(0, 10))
+  assert.deepEqual(list.results, { days: 30, contacted: 0, replied: 0, quietWhenContacted: 0, cameBack: 0 })
+
   assert.deepEqual(list.items.map(item => item.play), [...list.items].map(item => item.play).sort((a, b) => order(a) - order(b)), "strongest reasons first")
 })
-const order = (play: string) => ["follow_up", "payment", "cancelling", "team_no_plan", "seats_full", "company", "free_limit", "quiet_paying"].indexOf(play)
+const order = (play: string) => (OUTREACH_PLAYS as readonly string[]).indexOf(play)
 
 test("marking an account contacted moves it to waiting, and not a fit hides it", async () => {
   const followUpOn = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10)
   const contacted = await record(team.orgId, { kind: "contacted", contactUserId: ava.userId, followUpOn, assignToMe: true })
   assert.equal(contacted.status, 200, summary(contacted))
+  assert.equal((await record(quill.orgId, { kind: "contacted", followUpOn })).status, 200)
   const dismissed = await record(late.orgId, { kind: "dismissed" })
   assert.equal(dismissed.status, 200, summary(dismissed))
 
@@ -125,6 +139,8 @@ test("marking an account contacted moves it to waiting, and not a fit hides it",
   assert.equal(waiting?.ownerName, "Platform Admin")
   assert.equal(waiting?.followUpAt?.slice(0, 10), followUpOn)
   assert.equal(list.hidden >= 1, true)
+  // The team ran tasks this week; Quill had been quiet for three weeks when it was contacted.
+  assert.deepEqual(list.results, { days: 30, contacted: 2, replied: 0, quietWhenContacted: 1, cameBack: 0 })
 
   assert.equal((await record(late.orgId, { kind: "reopened" })).status, 200)
   assert.equal((await outreach()).items.find(item => item.organizationId === late.orgId)?.play, "payment")

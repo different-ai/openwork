@@ -74,8 +74,16 @@ Reasons, strongest first (an account is listed once, with its other reasons as n
 - `team_no_plan`: two or more people ran tasks in the last 14 days and there is no Team plan
 - `seats_full`: every seat is in use
 - `company`: people at one verified company domain ran tasks from separate workspaces
+- `shrinking`: people still run tasks, but someone who ran them on three or more days earlier has stopped
 - `free_limit`: a member reached the free model limit in the last 7 days and there is no Models add-on
 - `quiet_paying`: a subscription older than 14 days and no tasks seen in 14 days
+- `lapsed_failed`, `lapsed_limit`, `lapsed`: tasks on three or more days earlier in the last 60 days and none in the
+  last 14, split by what came just before: at least 30% of tasks failed, the free model limit was reached in the
+  last week of use, or neither (listed only with a team or a work address). The most recently lapsed come first.
+
+`results` tracks what happened to accounts an admin recorded contacting in the last 30 days: how many replied, how
+many were quiet for the two weeks before the contact, and how many of those ran a task afterwards. It is what was
+observed, never attributed to the message. Days with a task are read per contacted account only.
 
 "Ran tasks" is the Control Center's definition: a `task.*` telemetry event from the app. The activity query groups
 `telemetry_event` by member over the `telemetry_event_ts_window` index before it joins anything. Money questions

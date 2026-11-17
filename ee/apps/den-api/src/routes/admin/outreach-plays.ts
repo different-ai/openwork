@@ -5,6 +5,11 @@ const DAY = 86_400_000
 export const OUTREACH_WINDOW_DAYS = 14
 export const FREE_LIMIT_DAYS = 7
 export const CANCELED_DAYS = 30
+/** How far back "used to run tasks" looks, and how long results of recorded contacts are counted. */
+export const HISTORY_DAYS = 60
+export const RESULT_DAYS = 30
+/** A lapsed account must have run tasks on this many days before it went quiet. */
+const REGULAR_DAYS = 3
 const PER_PLAY = 50
 
 type FollowUp = NonNullable<OutreachItem["followUp"]>
@@ -18,6 +23,11 @@ export type OutreachPerson = {
   companyDomain: string | null,
   /** Times this person reached the free model limit in the last week. */
   limitHits: number,
+  /** Days with a task between the start of history and the start of the window. */
+  beforeDays: number,
+  /** Tasks started and failed in that earlier period. */
+  startedBefore: number, failedBefore: number,
+  lastActiveAt: Date | null, lastLimitAt: Date | null,
 }
 
 export type OutreachSubscription = {
@@ -28,6 +38,8 @@ export type OutreachSubscription = {
 export type OutreachFacts = {
   id: string, name: string, plan: Billing["plan"], members: number, seatLimit: number,
   people: OutreachPerson[], subscriptions: OutreachSubscription[], followUp: FollowUp | null,
+  /** UTC days (YYYY-MM-DD) with a task, loaded only for accounts with a recorded contact. */
+  activeDates: string[],
 }
 
 /** People at one verified company domain who ran tasks in the window from separate workspaces. */
@@ -40,7 +52,7 @@ const current = (subscription: OutreachSubscription) => subscription.status === 
 const isOwner = (person: OutreachPerson) => person.role.includes("owner")
 const byActivity = (a: OutreachPerson, b: OutreachPerson) => b.activeDays - a.activeDays || Number(isOwner(b)) - Number(isOwner(a)) || a.userId.localeCompare(b.userId)
 
-type Reason = { play: OutreachPlay, text: string, endsAt: Date | null, company: string | null, contact: OutreachPerson | null, others: OutreachPerson[] }
+type Reason = { play: OutreachPlay, text: string, endsAt: Date | null, company: string | null, contact: OutreachPerson | null, others: OutreachPerson[], weight?: number }
 
 /** Every reason to write to one account, strongest first. Plain rules over dated facts; no score. */
 export function reasonsFor(facts: OutreachFacts, cluster: CompanyCluster | null, now: Date): Reason[] {
@@ -59,7 +71,9 @@ export function reasonsFor(facts: OutreachFacts, cluster: CompanyCluster | null,
   const due = facts.followUp?.nextFollowUpAt ? new Date(facts.followUp.nextFollowUpAt) : null
   if (due && due.getTime() < tomorrow) {
     const contacted = facts.followUp?.lastContactedAt ? new Date(facts.followUp.lastContactedAt) : null
-    add("follow_up", contacted ? `No reply recorded since you wrote on ${day(contacted)}` : `Follow-up due ${day(due)}${facts.followUp?.nextAction ? `: ${facts.followUp.nextAction}` : ""}`, user)
+    const back = contacted ? contactResult(facts, contacted).activeAgainAt : null
+    add("follow_up", contacted && back ? `Running tasks again since ${day(back)}, after you wrote on ${day(contacted)}`
+      : contacted ? `No reply recorded since you wrote on ${day(contacted)}` : `Follow-up due ${day(due)}${facts.followUp?.nextAction ? `: ${facts.followUp.nextAction}` : ""}`, user)
   }
 
   for (const subscription of facts.subscriptions) {
@@ -87,6 +101,14 @@ export function reasonsFor(facts: OutreachFacts, cluster: CompanyCluster | null,
     })
   }
   const models = facts.subscriptions.some(subscription => current(subscription) && subscription.type === "inference")
+  const earlier = facts.people.filter(person => person.beforeDays > 0).sort((a, b) => b.beforeDays - a.beforeDays || a.userId.localeCompare(b.userId))
+  const stopped = earlier.filter(person => person.activeDays === 0 && person.beforeDays >= REGULAR_DAYS)
+  if (active.length > 0 && earlier.length >= 2 && stopped.length > 0) {
+    reasons.push({
+      play: "shrinking", text: `${stopped.length} of the ${people(earlier.length)} who used it stopped in the last ${OUTREACH_WINDOW_DAYS} days`,
+      endsAt: null, company: null, contact: user, others: [...stopped, ...active].filter(person => person.userId !== user?.userId).slice(0, 5),
+    })
+  }
   const limited = facts.people.filter(person => person.limitHits > 0).sort((a, b) => b.limitHits - a.limitHits || byActivity(a, b))[0]
   if (limited && !models) {
     const who = limited.name?.trim().split(/\s+/)[0] || "A member"
@@ -96,7 +118,31 @@ export function reasonsFor(facts: OutreachFacts, cluster: CompanyCluster | null,
   if (paid.length && active.length === 0) {
     add("quiet_paying", `Paying for the ${paid.map(subscription => PRODUCT[subscription.type]).join(" and ")}, no tasks seen in ${OUTREACH_WINDOW_DAYS} days`, payer)
   }
+  const champion = earlier[0]
+  if (active.length === 0 && champion && champion.beforeDays >= REGULAR_DAYS) {
+    const last = Math.max(...earlier.map(person => person.lastActiveAt?.getTime() ?? 0))
+    const ago = Math.max(OUTREACH_WINDOW_DAYS, Math.floor((now.getTime() - last) / DAY))
+    const started = earlier.reduce((sum, person) => sum + person.startedBefore, 0)
+    const failed = earlier.reduce((sum, person) => sum + person.failedBefore, 0)
+    const limitAt = Math.max(0, ...facts.people.map(person => person.lastLimitAt?.getTime() ?? 0))
+    // The most recently lapsed come first: they are the likeliest to come back.
+    const lapsed = (play: OutreachPlay, text: string) => reasons.push({
+      play, text, endsAt: null, company: null, contact: champion, others: rest(champion), weight: earlier.length * 100 + champion.beforeDays - ago * 3,
+    })
+    const who = earlier.length >= 2 ? `${people(earlier.length)} used it` : `${champion.name?.trim().split(/\s+/)[0] || "One person"} used it on ${champion.beforeDays} days`
+    if (started >= 5 && failed / started >= 0.3) lapsed("lapsed_failed", `Stopped ${ago} days ago after ${failed} of ${started} tasks failed`)
+    else if (!models && limitAt && limitAt >= last - 7 * DAY) lapsed("lapsed_limit", `Stopped ${ago} days ago, right after reaching the free model limit`)
+    else if (earlier.length >= 2 || champion.companyDomain) lapsed("lapsed", `${who}, then nobody for ${ago} days`)
+  }
   return reasons.sort((a, b) => OUTREACH_PLAYS.indexOf(a.play) - OUTREACH_PLAYS.indexOf(b.play))
+}
+
+const utcDay = (value: Date) => value.toISOString().slice(0, 10)
+/** Whether an account was quiet when it was contacted, and the first day someone ran a task afterwards. */
+export function contactResult(facts: Pick<OutreachFacts, "activeDates">, contacted: Date) {
+  const on = utcDay(contacted), from = utcDay(new Date(contacted.getTime() - OUTREACH_WINDOW_DAYS * DAY))
+  const after = facts.activeDates.filter(date => date > on).sort()[0]
+  return { quiet: !facts.activeDates.some(date => date >= from && date <= on), activeAgainAt: after ? new Date(`${after}T00:00:00.000Z`) : null }
 }
 
 function billingOf(facts: OutreachFacts): Billing {
@@ -109,35 +155,45 @@ function billingOf(facts: OutreachFacts): Billing {
  * with the person to write to. Dismissed and closed accounts are left out, and an
  * account written to in the last two weeks waits for its follow-up date instead.
  */
-export function buildOutreach(all: OutreachFacts[], clusters: CompanyCluster[], now: Date): Pick<AdminOutreach, "items" | "totals" | "waiting" | "hidden"> {
+export function buildOutreach(all: OutreachFacts[], clusters: CompanyCluster[], now: Date): Pick<AdminOutreach, "items" | "totals" | "waiting" | "hidden" | "results"> {
   const clusterOf = new Map(clusters.map(cluster => [cluster.homeOrganizationId, cluster]))
   const ranked: { item: OutreachItem, weight: number }[] = []
   const waiting: AdminOutreach["waiting"] = []
   let hidden = 0
+  const results = { days: RESULT_DAYS, contacted: 0, replied: 0, quietWhenContacted: 0, cameBack: 0 }
   const tomorrow = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) + DAY
   for (const facts of all) {
     const reasons = reasonsFor(facts, clusterOf.get(facts.id) ?? null, now)
     const followUp = facts.followUp
     const contacted = followUp?.lastContactedAt ? new Date(followUp.lastContactedAt) : null
     const due = followUp?.nextFollowUpAt ? new Date(followUp.nextFollowUpAt) : null
+    const result = contacted ? contactResult(facts, contacted) : null
+    if (contacted && result && now.getTime() - contacted.getTime() <= RESULT_DAYS * DAY) {
+      results.contacted += 1
+      if (followUp?.stage === "engaged") results.replied += 1
+      if (result.quiet) results.quietWhenContacted += 1
+      if (result.quiet && result.activeAgainAt) results.cameBack += 1
+    }
     if (followUp?.stage === "closed" || followUp?.stage === "dismissed") { if (reasons.length) hidden += 1; continue }
     const recent = contacted !== null && now.getTime() - contacted.getTime() < OUTREACH_WINDOW_DAYS * DAY
     if ((recent || due) && !(due && due.getTime() < tomorrow)) {
-      waiting.push({ organizationId: facts.id, organizationName: facts.name, contactedAt: (contacted ?? new Date(followUp?.updatedAt ?? now)).toISOString(), ownerName: followUp?.ownerName ?? null, followUpAt: due?.toISOString() ?? null })
+      waiting.push({ organizationId: facts.id, organizationName: facts.name, contactedAt: (contacted ?? new Date(followUp?.updatedAt ?? now)).toISOString(), ownerName: followUp?.ownerName ?? null, followUpAt: due?.toISOString() ?? null, activeAgainAt: result?.activeAgainAt?.toISOString() ?? null })
       continue
     }
     const [first, ...rest] = reasons
     if (!first) continue
     const active = facts.people.filter(person => person.activeDays > 0).length
+    const lastActive = Math.max(0, ...facts.people.map(person => person.lastActiveAt?.getTime() ?? 0))
     const strip = ({ userId, name, email, role, activeDays }: OutreachPerson) => ({ userId, name, email, role, activeDays })
     ranked.push({
       // Within a reason: more people using it first, then a work address, then how often the contact uses it.
-      weight: (first.play === "company" ? clusterOf.get(facts.id)?.users ?? 0 : active) * 100 + (first.contact?.companyDomain ? 50 : 0) + (first.contact?.activeDays ?? 0),
+      weight: first.weight ?? (first.play === "company" ? clusterOf.get(facts.id)?.users ?? 0 : active) * 100 + (first.contact?.companyDomain ? 50 : 0) + (first.contact?.activeDays ?? 0),
       item: {
         organizationId: facts.id, organizationName: facts.name, play: first.play, reason: first.text,
         also: rest.map(reason => reason.text).slice(0, 6), company: first.company ?? first.contact?.companyDomain ?? null,
         contact: first.contact ? strip(first.contact) : null, others: first.others.map(strip),
-        people: { members: facts.members, active }, billing: billingOf(facts), endsAt: first.endsAt?.toISOString() ?? null, followUp,
+        people: { members: facts.members, active }, billing: billingOf(facts), endsAt: first.endsAt?.toISOString() ?? null,
+        lastActiveAt: lastActive ? new Date(lastActive).toISOString() : null, followUp,
       },
     })
   }
@@ -149,7 +205,7 @@ export function buildOutreach(all: OutreachFacts[], clusters: CompanyCluster[], 
     if (totals[item.play] <= PER_PLAY) items.push(item)
   }
   waiting.sort((a, b) => (a.followUpAt ?? a.contactedAt).localeCompare(b.followUpAt ?? b.contactedAt))
-  return { items, totals, waiting: waiting.slice(0, 50), hidden }
+  return { items, totals, waiting: waiting.slice(0, 50), hidden, results }
 }
 
 type ActivityRow = { organizationId: string, userId: string, activeDays: number, companyDomain: string | null }
