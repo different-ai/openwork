@@ -109,15 +109,12 @@ locals {
     DAYTONA_SHARED_VOLUME_NAME  = local.provisioner_mode == "daytona" ? "${local.daytona_prefix}-workers" : ""
   }
 
-  # Runner and Workbot service configuration. Slack retains its opt-in feature lock.
+  # Runner and Workbot service configuration; Slack processing is a separate opt-in.
   agent_environment = {
     # With the runner set, Automations on plans that include it run there.
-    DEN_HEADLESS_RUNNER_URL = local.runner_enabled ? local.runner_url : ""
-    # Slack replies run on the headless runner; without it, Slack setup says the runner is needed.
-    DEN_FEATURE_SLACK_ASSISTANT = var.slack_assistant_enabled ? "true" : ""
-    # Work a Slack reply hands to a member's desktop needs the automations runtime.
-    DEN_AUTOMATIONS_RUNTIME_ENABLED = var.slack_assistant_enabled ? "true" : ""
-    DEN_WORKBOT_URL                 = local.workbot_enabled ? local.workbot_url : ""
+    DEN_HEADLESS_RUNNER_URL            = local.runner_enabled ? local.runner_url : ""
+    DEN_SLACK_ASSISTANT_WORKER_ENABLED = local.runner_enabled ? local.bool[var.slack_assistant_enabled] : ""
+    DEN_WORKBOT_URL                    = local.workbot_enabled ? local.workbot_url : ""
   }
 
   environment_list = [for k, v in local.environment : { name = k, value = v } if v != ""]

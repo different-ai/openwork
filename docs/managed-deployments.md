@@ -177,7 +177,8 @@ bound to the exact report body; replays are rejected.
    pair. That is a real version-increasing Update, not Retry or a fictitious image
    tag. Never point production Den at those test-only artifacts.
 2. Publish from a dedicated release account into a versioned, encrypted S3
-   bucket whose `releases/*` objects are publicly readable and nothing else:
+   bucket whose `releases/*` objects and pinned versions are publicly readable
+   (`s3:GetObject` and `s3:GetObjectVersion`, not public listing) and nothing else:
    `node infra/managed-deployments/tools/publish-release.mjs <dir> <bucket> <account-id> <region>`.
    It refuses the wrong account and overwrites, and prints URLs pinned to
    immutable object versions.

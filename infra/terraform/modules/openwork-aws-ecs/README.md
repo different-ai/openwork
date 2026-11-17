@@ -407,7 +407,8 @@ concepts use the common names below. AWS uses `tags` rather than GCP `labels`.
 | `api_listener_rule_priority`, `web_listener_rule_priority`, `attach_listener_certificate` | `10`, `20`, `false` |
 | `internal_alb`, `assign_public_ip`, `allowed_ingress_cidrs` | `false`, `false`, public ALB ingress |
 | `allow_public_signup`, `require_email_verification` | Both `false` |
-| `automations_enabled`, `dashboards_enabled`, `slack_assistant_enabled` | All `false` |
+| `automations_enabled` | `true`; independent of runner, Slack and computer selection |
+| `dashboards_enabled`, `slack_assistant_enabled` | Both `false` |
 | `email_from`, `smtp`, `resend_api_key` | Empty / disabled; SMTP port 587, nonimplicit TLS |
 | `extra_environment`, `extra_secrets` | Empty maps; nonsecret settings / secret references |
 | `create_redis`, `redis_node_type` | `false`, `cache.t4g.micro` |
@@ -551,14 +552,21 @@ fresh managed runner.
 - **Workbot** is a chat app at `workbot.domain_name` (default
   `chat.<domain_name>`; covered by a module-created certificate and Route 53).
   Members sign in with their OpenWork account; the dashboard links to it.
-- **Slack**: `slack_assistant_enabled` turns the Slack assistant on. Replies
-  run on the headless runner when it is enabled (and work a reply hands to a
-  member's desktop is posted back to the thread), otherwise on OpenWork Web.
-  Then, in Den, add the Slack connector and follow its Slack assistant setup:
+- **Slack**: with a runner configured, `slack_assistant_enabled` sets the
+  supported `DEN_SLACK_ASSISTANT_WORKER_ENABLED` setting explicitly: `true`
+  enables Slack turn processing and desktop-handoff delivery; `false` stops
+  those workers. Slack is generally available; no feature lock is emitted.
+  Without a runner, the module emits no Slack worker override and Den's setup
+  reports the missing runner; OpenWork Web is not a fallback for Slack turns.
+  In Den, add the Slack connector and follow its separate assistant opt-in:
   it generates the Slack app manifest with this deployment's URLs. See
   [Set up the Slack app](https://openworklabs.com/docs/slack/set-up-the-slack-app).
 - **Headless Automations**: with `automations_enabled` and the runner,
-  scheduled cloud Automations run on the runner.
+  scheduled cloud Automations run on the runner. Automations default to on;
+  `automations_enabled` remains independent of runner, Slack and computer
+  selection. The module emits no `DEN_AUTOMATIONS_RUNTIME_ENABLED` override,
+  preserving Den's runtime default and an explicit Automations setting.
+  Turning Slack off does not turn Automations or the model off.
 
 ### Optional Workbot computer (Daytona or Freestyle)
 

@@ -70,7 +70,7 @@ run "agents_off_by_default" {
     error_message = "No runner, Workbot or EFS while they are off."
   }
   assert {
-    condition     = alltrue([for k in ["DEN_HEADLESS_RUNNER_URL", "DEN_FEATURE_SLACK_ASSISTANT", "DEN_WORKBOT_URL", "DEN_AUTOMATIONS_RUNTIME_ENABLED"] : !contains([for e in local.environment_list : e.name], k)])
+    condition     = alltrue([for k in ["DEN_HEADLESS_RUNNER_URL", "DEN_SLACK_ASSISTANT_WORKER_ENABLED", "DEN_FEATURE_SLACK_ASSISTANT", "DEN_WORKBOT_URL", "DEN_AUTOMATIONS_RUNTIME_ENABLED"] : !contains([for e in local.environment_list : e.name], k)])
     error_message = "No runner, Slack or Workbot settings while they are off."
   }
   assert {
@@ -109,13 +109,15 @@ run "runner_workbot_and_slack" {
       local.environment.DEN_HEADLESS_RUNNER_URL == "http://headless-runner:8795",
       # headlessAutomations is retired; den-api would warn and ignore the lock.
       !contains(keys(local.environment), "DEN_FEATURE_HEADLESS_AUTOMATIONS"),
-      local.environment.DEN_FEATURE_SLACK_ASSISTANT == "true",
-      local.environment.DEN_AUTOMATIONS_RUNTIME_ENABLED == "true",
+      !contains(keys(local.environment), "DEN_FEATURE_SLACK_ASSISTANT"),
+      contains(jsondecode(aws_ecs_task_definition.api_v1.container_definitions)[0].environment, { name = "DEN_SLACK_ASSISTANT_WORKER_ENABLED", value = "true" }),
+      !contains(keys(local.environment), "DEN_AUTOMATIONS_RUNTIME_ENABLED"),
+      local.environment.DEN_AUTOMATIONS_ENABLED == "true",
       local.environment.DEN_WORKBOT_URL == "https://chat.openwork.example.com",
       # Workbot is generally available; service configuration is still required.
       !contains(keys(local.environment), "DEN_FEATURE_WORKBOT"),
     ])
-    error_message = "Den must be pointed at the runner and Workbot, with their features on."
+    error_message = "Den must use the runner and Workbot with Slack processing enabled through its supported worker setting."
   }
   assert {
     condition = alltrue([
@@ -154,6 +156,61 @@ run "runner_workbot_and_slack" {
   }
 }
 
+run "runner_without_slack_keeps_automations_and_model" {
+  command = apply
+
+  variables {
+    automations_enabled    = true
+    headless_model_api_key = "test-model-key"
+    headless_runner = {
+      enabled        = true
+      model_protocol = "openai-responses"
+      model_base_url = "https://models.example.test/v1"
+      model          = "test-model"
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      contains(jsondecode(aws_ecs_task_definition.api_v1.container_definitions)[0].environment, { name = "DEN_SLACK_ASSISTANT_WORKER_ENABLED", value = "false" }),
+      !contains(keys(local.environment), "DEN_AUTOMATIONS_RUNTIME_ENABLED"),
+      local.environment.DEN_AUTOMATIONS_ENABLED == "true",
+      !contains(keys(local.environment), "DEN_FEATURE_SLACK_ASSISTANT"),
+    ])
+    error_message = "Turning Slack off with a runner must disable only its worker, not Automations or runner execution."
+  }
+  assert {
+    condition = alltrue([
+      var.headless_computer.provider == "off",
+      contains(jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment, { name = "HEADLESS_MODEL_PROTOCOL", value = "openai-responses" }),
+      contains(jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment, { name = "HEADLESS_MODEL_BASE_URL", value = "https://models.example.test/v1" }),
+      contains(jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment, { name = "HEADLESS_MODEL", value = "test-model" }),
+      contains([for secret in jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].secrets : secret.name], "HEADLESS_MODEL_API_KEY"),
+    ])
+    error_message = "Direct model execution and Automations must need neither Slack nor a computer provider."
+  }
+}
+
+run "slack_does_not_change_automations_opt_in" {
+  command = apply
+
+  variables {
+    headless_runner         = { enabled = true, model = "test-model" }
+    slack_assistant_enabled = true
+    automations_enabled     = false
+  }
+
+  assert {
+    condition = alltrue([
+      local.environment.DEN_SLACK_ASSISTANT_WORKER_ENABLED == "true",
+      !contains(keys(local.environment), "DEN_AUTOMATIONS_RUNTIME_ENABLED"),
+      local.environment.DEN_AUTOMATIONS_ENABLED == "false",
+      var.headless_computer.provider == "off",
+    ])
+    error_message = "Slack must use the shared execution runtime without changing the separate Automations opt-in or requiring computers."
+  }
+}
+
 run "slack_without_runner" {
   command = apply
 
@@ -162,8 +219,8 @@ run "slack_without_runner" {
   }
 
   assert {
-    condition     = local.environment.DEN_FEATURE_SLACK_ASSISTANT == "true" && local.environment.DEN_HEADLESS_RUNNER_URL == ""
-    error_message = "Without the runner, the Slack assistant stays on and Den reports that the runner is missing."
+    condition     = local.environment.DEN_HEADLESS_RUNNER_URL == "" && alltrue([for key in ["DEN_SLACK_ASSISTANT_WORKER_ENABLED", "DEN_FEATURE_SLACK_ASSISTANT", "DEN_AUTOMATIONS_RUNTIME_ENABLED"] : !contains([for entry in local.environment_list : entry.name], key)])
+    error_message = "Without the runner, Slack cannot process turns and its toggle must not alter worker/runtime settings in the core profile."
   }
 }
 
