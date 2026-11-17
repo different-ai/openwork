@@ -234,9 +234,11 @@ receive it instead of timing out first. With `HEADLESS_SENTRY_DSN`, these are re
 
 **What to do.**
 
-1. Confirm which node: `.github/workflows/celld-fleet-health.yml` runs every 15 minutes and names it in Slack (its
-   public run log only counts findings; run `.github/scripts/celld-fleet-health.mjs` by hand for a fresh reading). It
-   alerts in Slack when a node passes 75% of its memory, when celld reports a node under
+1. Confirm which node: Den's `/admin › Runner fleet` shows every node live (open or closed, memory against the
+   ceiling, cells in memory and owned, cells waiting for room) once `DEN_HEADLESS_FLEET_STATE_HOST` names the nodes,
+   and keeps a month of history. `.github/workflows/celld-fleet-health.yml` also runs every 15 minutes and names it
+   in Slack (its public run log only counts findings; run `.github/scripts/celld-fleet-health.mjs` by hand for a
+   fresh reading). It alerts in Slack when a node passes 75% of its memory, when celld reports a node under
    pressure, when requests were refused, or when only one node is left.
 2. Before restarting, record what is using the memory, on that node: `curl -s 127.0.0.1:8081/state` (celld's
    internal listener). `node_load` has `resident_cells`, `rss_bytes` and `in_use_bytes`; `allocator`, `libc_malloc`
