@@ -1415,6 +1415,13 @@
       "when": 1794896889574,
       "tag": "0202_process_timing",
       "breakpoints": true
+    },
+    {
+      "idx": 203,
+      "version": "5",
+      "when": 1794904815587,
+      "tag": "0203_client_failures",
+      "breakpoints": true
     }
   ]
 }

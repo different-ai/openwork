@@ -23,6 +23,7 @@ const SECTIONS = [
   { label: "Security", href: "/admin/security", icon: ShieldAlert },
   { label: "Services", href: "/admin/services", icon: Server },
   { label: "Process timing", href: "/admin/process-timing", icon: Activity },
+  { label: "Client failures", href: "/admin/client-failures", icon: ShieldAlert },
 ];
 
 export function AdminShell({ hasSessionCookie, children }: { hasSessionCookie: boolean; children: ReactNode }) {

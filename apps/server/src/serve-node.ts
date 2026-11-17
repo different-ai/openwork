@@ -7,6 +7,7 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
+import { reportClientFailure } from "./telemetry.js";
 
 export type ServeOptions = {
   hostname: string;
@@ -254,6 +255,11 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
   server.requestTimeout = REQUEST_BODY_TIMEOUT_MS;
 
   let boundPort = port;
+  let bound = false;
+  let stopping = false;
+  server.once("close", () => {
+    if (bound && !stopping) reportClientFailure({ component: "local_server", phase: "run", reason: "unknown" });
+  });
 
   return new Promise<ServeResult>((resolve, reject) => {
     // The caller probes port availability before calling us, but that
@@ -267,6 +273,7 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
         server.listen(0, hostname);
         return;
       }
+      if (bound) reportClientFailure({ component: "local_server", phase: "run", reason: error.code === "EACCES" ? "permission" : "unknown" });
       reject(error);
     });
     // A standing "listening" listener, not the listen() callback: Node keeps
@@ -274,6 +281,7 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
     // EADDRINUSE retry, but Bun does not — under Bun the fallback re-bind
     // succeeded while this promise hung forever.
     server.on("listening", () => {
+      bound = true;
       const addr = server.address();
       if (addr && typeof addr === "object") {
         boundPort = addr.port;
@@ -283,6 +291,7 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
         port: boundPort,
         stop: () => {
           if (stopPromise) return stopPromise;
+          stopping = true;
           stopPromise = new Promise<void>((stopResolve, stopReject) => {
             server.close((error) => {
               if (error) {

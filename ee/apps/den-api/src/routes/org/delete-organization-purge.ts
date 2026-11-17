@@ -9,6 +9,7 @@ import {
   CapabilityUsageRollupTable,
   ConnectorSyncEventTable,
   DesktopStartupReportTable,
+  ClientFailureReportTable,
   FeatureUsageTable,
   GatewayRequestLogTable,
   GatewayUsageAuditTable,
@@ -136,6 +137,7 @@ export async function purgeOrganizationHistory(organizationId: OrganizationId): 
   await deleteInBatches((limit) => db.delete(ConnectorSyncEventTable).where(eq(ConnectorSyncEventTable.organizationId, organizationId)).limit(limit))
   await deleteInBatches((limit) => db.delete(ScimSyncEventTable).where(eq(ScimSyncEventTable.organizationId, organizationId)).limit(limit))
   await deleteInBatches((limit) => db.delete(DesktopStartupReportTable).where(eq(DesktopStartupReportTable.organizationId, organizationId)).limit(limit))
+  await deleteInBatches((limit) => db.delete(ClientFailureReportTable).where(eq(ClientFailureReportTable.organizationId, organizationId)).limit(limit))
   await unlessTableMissing(() => deleteInBatches((limit) => db.delete(ModelsAnalyticsEventTable).where(eq(ModelsAnalyticsEventTable.org_id, organizationId)).limit(limit)))
   await unlessTableMissing(() => deleteInBatches((limit) => db.delete(HeadlessSessionIndexTable).where(eq(HeadlessSessionIndexTable.organizationId, organizationId)).limit(limit)))
 }

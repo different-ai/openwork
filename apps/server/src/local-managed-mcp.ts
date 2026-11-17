@@ -1,3 +1,4 @@
+import { reportClientFailure } from "./telemetry.js";
 import {
   createCipheriv,
   createDecipheriv,
@@ -1163,6 +1164,7 @@ export async function startLocalManagedMcpAuthorization(config: ServerConfig, wo
     await updateConnectionStatus(config, workspaceId, name, "needs_auth");
     return { status: "needs_auth" as const, authorizeUrl: result.authorizeUrl };
   } catch (error) {
+    reportClientFailure({ component: "mcp_connection", phase: "connect", reason: "unknown" });
     return rethrowConnectionFailure(config, workspaceId, name, error, diagnostics, "Connection failed");
   }
 }
@@ -1191,6 +1193,7 @@ export async function completeLocalManagedMcpAuthorization(
       workspaceId: payload.workspaceId,
     };
   } catch (error) {
+    reportClientFailure({ component: "mcp_connection", phase: "auth", reason: "unknown" });
     return rethrowConnectionFailure(config, payload.workspaceId, payload.name, error, diagnostics, "Authorization failed");
   }
 }

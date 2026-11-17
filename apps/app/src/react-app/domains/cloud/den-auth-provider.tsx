@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { ClientFailureReporter } from "./client-failure-reporter";
 import {
   createContext,
   useCallback,
@@ -599,6 +600,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
 
   return (
     <DenAuthContext.Provider value={value}>
+      <ClientFailureReporter />
       {children}
       <AlertDialog
         open={Boolean(pendingServerSwitch)}

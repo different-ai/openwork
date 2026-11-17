@@ -11,7 +11,7 @@ import {
 } from "@openwork/types/automations";
 import type { GatewayAuthorizationRequest, GatewayProviderSummary } from "@openwork/types/den/gateway";
 import { parseGatewayUsableModel } from "./gateway-usable-model";
-import type { DesktopStartupReport } from "@openwork/types/den/diagnostics";
+import type { ClientFailureReport, DesktopStartupReport } from "@openwork/types/den/diagnostics";
 import {
   parseModelRemovalInventory,
   type ModelRemovalInventory,
@@ -3047,7 +3047,11 @@ async function requestJsonRaw<T>(
     const retryAfter = response.ok ? "" : response.headers?.get("Retry-After")?.trim() ?? "";
     return { ok: response.ok, status: response.status, json, ...(/^\d{1,6}$/.test(retryAfter) ? { retryAfterSeconds: Number(retryAfter) } : {}) };
   };
-  return options.unobserved ? send() : observeDenRequest(send);
+  if (options.unobserved) return send();
+  const settings = readDenSettings();
+  const sameSession = settings.authToken?.trim() === token && resolveDenBaseUrls(settings).apiBaseUrl === baseUrls.apiBaseUrl;
+  const reportingOrgId = organizationId || (sameSession ? settings.activeOrgId?.trim() ?? "" : "");
+  return observeDenRequest(send, { baseUrl: baseUrls.apiBaseUrl, token, organizationId: reportingOrgId }, options.signal);
 }
 
 async function requestJson<T>(
@@ -3819,6 +3823,13 @@ export function createDenClient(options: {
     },
 
     /** Effective feature switches for the active organization (`GET /v1/org` `features`); missing keys are off. */
+    async reportClientFailures(orgId: string, reports: ClientFailureReport[]): Promise<boolean> {
+      const response = await requestJsonRaw<unknown>(baseUrls, "/v1/diagnostics/client-failures", {
+        method: "POST", token, organizationId: orgId, body: { reports }, timeoutMs: 5_000, unobserved: true,
+      });
+      return response.ok;
+    },
+
     async getOrgFeatures(orgId: string): Promise<Record<string, boolean>> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/org", { method: "GET", token, organizationId: orgId });
       const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};

@@ -1,4 +1,5 @@
 import { envKey, setEnv } from "@openwork/paths";
+import { reportEngineProcessFailure } from "./telemetry.js";
 import { startupPhase } from "./startup-phase.js";
 import type { EnginePermissionRule } from "./managed-policy-rules.js";
 import { agentPermissionEngineV2Rules, type AgentPermissionRule, type EngineV2PermissionRule } from "./agent-permission-engine.js";
@@ -199,9 +200,9 @@ async function readBoundedText(response: Response, limit: number): Promise<strin
 function diagnostics(exitCode: number | null, stdout: string, stderr: string, signal?: NodeJS.Signals | null): Error {
   const tail = (value: string) => value.slice(-4_000);
   const reason = signal ? `signal ${signal}` : `code ${String(exitCode)}`;
-  return new Error(
+  return Object.assign(new Error(
     `OpenCode v2 server exited with ${reason}\nstdout:\n${tail(stdout)}\nstderr:\n${tail(stderr)}`,
-  );
+  ), { exitCode, signal });
 }
 
 function passesModelFilters(provider: OpencodeV2ProviderSpec, model: OpencodeV2ModelSpec): boolean {
@@ -406,7 +407,12 @@ export function inheritedEngineEnv(
 export async function createManagedOpencodeV2Server(
   options: ManagedOpencodeV2ServerOptions,
 ): Promise<ManagedOpencodeV2Server> {
-  return startupPhase("engine.v2.serve", () => createManagedOpencodeV2ServerInner(options));
+  try {
+    return await startupPhase("engine.v2.serve", () => createManagedOpencodeV2ServerInner(options));
+  } catch (error) {
+    reportEngineProcessFailure("start", error);
+    throw error;
+  }
 }
 
 async function createManagedOpencodeV2ServerInner(
@@ -532,7 +538,11 @@ async function createManagedOpencodeV2ServerInner(
   child.once("close", (code, signal) => {
     closed = true;
     lines.stop();
-    if (ready && !closing) options.onExit?.(diagnostics(code, stdout, stderr, signal));
+    if (ready && !closing) {
+      const error = diagnostics(code, stdout, stderr, signal);
+      reportEngineProcessFailure("run", error);
+      options.onExit?.(error);
+    }
   });
   child.stdout?.on("data", (chunk) => {
     const text = String(chunk);
