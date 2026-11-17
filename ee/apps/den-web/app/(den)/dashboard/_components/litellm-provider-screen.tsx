@@ -25,7 +25,7 @@ import type { DenInferenceProviderDetails } from "./inference-provider-request";
 import {
   EMPTY_LITELLM_ENTRA, LITELLM_DOC_URL, LITELLM_ENTRA_DOC_URL, LITELLM_ENTRA_FEATURE, buildLiteLlmEntraUpdateBody, createLiteLlmProvider, liteLlmAccessGroupId, liteLlmAccessTitle,
   liteLlmAttentionLabel, liteLlmCreateError, liteLlmEntraError, liteLlmEntraUpdateSignsPeopleOut, liteLlmIssueStrategyLabel, liteLlmKeyLabel,
-  liteLlmMirrorFallbackLabel, liteLlmModeLabel, liteLlmSpendLabel, liteLlmStatusMode, liteLlmSyncSummary, liteLlmSyncedLabel, replaceLiteLlmKey, syncLiteLlmProvider,
+  liteLlmMirrorFallbackLabel, liteLlmModeLabel, liteLlmModeOptions, liteLlmSpendLabel, liteLlmStatusMode, liteLlmSyncSummary, liteLlmSyncedLabel, replaceLiteLlmKey, syncLiteLlmProvider,
   updateLiteLlmEntra, updateLiteLlmIssue, type LiteLlmEntraInput, type LiteLlmIssueStrategy, type LiteLlmMirrorFallback, type LiteLlmMode,
 } from "./litellm-provider-data";
 
@@ -144,8 +144,7 @@ export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean })
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
   const { orgSlug, orgContext, runReauthableAction } = useOrgDashboard();
-  // Microsoft sign-in is offered only where the feature is on; the three key modes are always there.
-  const modes: LiteLlmMode[] = orgFeatureEnabled(orgContext, LITELLM_ENTRA_FEATURE) ? ["org", "member", "issued", "entra"] : ["org", "member", "issued"];
+  const entraAvailable = orgFeatureEnabled(orgContext, LITELLM_ENTRA_FEATURE);
   const [baseUrl, setBaseUrl] = useState("");
   const [mode, setMode] = useState<LiteLlmMode>("org");
   const [entra, setEntra] = useState<LiteLlmEntraInput>(EMPTY_LITELLM_ENTRA);
@@ -191,8 +190,9 @@ export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean })
         <label className={LABEL}>Proxy URL
           <DenInput className="mt-1.5 font-mono text-[12px]" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://litellm.example.com" data-testid="litellm-base-url" autoComplete="off" />
         </label>
-        <DenSegmented<LiteLlmMode> className="mt-3" aria-label="Keys" value={mode} options={modes.map((value) => ({ value, label: liteLlmModeLabel(value) }))}
+        <DenSegmented<LiteLlmMode> className="mt-3" aria-label="Authentication" value={mode} options={liteLlmModeOptions(entraAvailable)}
           onChange={(next) => { setMode(next); setApiKey(""); }} />
+        {entraAvailable ? null : <DenNotice className="mt-3" tone="neutral" icon={LockKeyhole} message="Microsoft sign-in for LiteLLM is turned off for your account. Ask your deployment administrator to turn it on." />}
         {mode === "issued" ? (
           <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
             <span className="flex items-center gap-2 text-[12px] text-gray-700">Keys
@@ -414,7 +414,7 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
       {entraMode ? (
         <section className={`${CARD} mt-3`} aria-labelledby="litellm-entra-heading">
           <h2 id="litellm-entra-heading" className={CARD_TITLE}>Microsoft sign-in</h2>
-          {entraAvailable ? null : <DenNotice className="mt-3" tone="neutral" icon={LockKeyhole} message="Read only. Microsoft sign-in for LiteLLM is turned off for this organization." />}
+          {entraAvailable ? null : <DenNotice className="mt-3" tone="neutral" icon={LockKeyhole} message="Read only. Microsoft sign-in for LiteLLM is turned off for your account. Ask your deployment administrator to turn it on." />}
           {provider.oauthCallbackUrl ? (
             <div className={`${ROW} mt-1 border-b border-gray-100`}>
               <span className="flex min-w-0 flex-1 flex-col gap-0.5"><span className="text-[12px] font-medium text-gray-700">Redirect URI</span><code className="break-all font-mono text-[12px] text-gray-900" data-testid="litellm-entra-redirect-uri">{provider.oauthCallbackUrl}</code></span>

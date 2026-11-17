@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { signInBrand } from "./library-models";
+import type { GatewayLiteLlmStatus, GatewayModelGroup } from "@openwork/types/den/gateway";
+import { signInBrand, type LibraryModelProvider } from "./library-models";
 import {
   EMPTY_LITELLM_ENTRA, buildLiteLlmCreateBody, buildLiteLlmEntraUpdateBody, liteLlmAccessGroupId, liteLlmAccessTitle, liteLlmCreateError, liteLlmEntraError,
-  liteLlmEntraUpdateSignsPeopleOut, liteLlmModeLabel, liteLlmSpendLabel, liteLlmStatusMode, parseLiteLlmModelList, type LiteLlmCreateInput, type LiteLlmEntraInput,
+  liteLlmEntraUpdateSignsPeopleOut, liteLlmModeLabel, liteLlmModeOptions, liteLlmSpendLabel, liteLlmStatusMode, parseLiteLlmModelList, type LiteLlmCreateInput, type LiteLlmEntraInput, type LiteLlmMode,
 } from "./litellm-provider-data";
 
 const TENANT = "11111111-2222-4333-8444-555555555555";
@@ -14,6 +15,15 @@ const everyone = { allMembers: true, memberIds: [], teamIds: [] };
 function keyInput(mode: "org" | "member" | "issued"): LiteLlmCreateInput {
   return { name: "LiteLLM", baseUrl: " https://litellm.example.com ", mode, apiKey: " sk-fixture ", access: everyone, issueStrategy: "mirror", mirrorFallback: "error" };
 }
+
+test("turning Microsoft sign-in off keeps a locked choice and leaves every key mode available", () => {
+  const off = liteLlmModeOptions(false);
+  const on = liteLlmModeOptions(true);
+  assert.deepEqual(off.map((option) => option.value), ["org", "member", "issued", "entra"]);
+  assert.deepEqual(off.filter((option) => !option.disabled), on.filter((option) => option.value !== "entra"));
+  assert.deepEqual(off.find((option) => option.value === "entra"), { value: "entra", label: "Microsoft sign-in", disabled: true });
+  assert.equal(on.every((option) => !option.disabled), true);
+});
 
 test("the three key modes send exactly what they sent before Microsoft sign-in existed", () => {
   assert.deepEqual(buildLiteLlmCreateBody(keyInput("org")), { name: "LiteLLM", baseUrl: "https://litellm.example.com", mode: "org", apiKey: "sk-fixture", allMembers: true });
@@ -90,8 +100,9 @@ test("a saved provider is shown in the mode it was added with", () => {
   assert.equal(liteLlmStatusMode({ mode: "member", keySource: "issued" }), "issued");
   assert.equal(liteLlmStatusMode({ mode: "member", keySource: "entra" }), "entra");
 
-  assert.deepEqual((["org", "member", "issued", "entra"] as const).map(liteLlmModeLabel), ["One organization key", "Each person's own key", "OpenWork creates keys", "Microsoft sign-in"]);
-  assert.deepEqual((["org", "member", "issued", "entra"] as const).map(liteLlmAccessTitle), ["Who can use it", "Who can connect a key", "Who gets a key", "Who can sign in"]);
+  const modes: LiteLlmMode[] = ["org", "member", "issued", "entra"];
+  assert.deepEqual(modes.map(liteLlmModeLabel), ["One organization key", "Each person's own key", "OpenWork creates keys", "Microsoft sign-in"]);
+  assert.deepEqual(modes.map(liteLlmAccessTitle), ["Who can use it", "Who can connect a key", "Who gets a key", "Who can sign in"]);
   assert.equal(liteLlmSpendLabel({ spendTracking: true }), "Tracked, priced from LiteLLM");
   assert.equal(liteLlmSpendLabel({ spendTracking: false }), "Not tracked, LiteLLM budgets each key");
   assert.equal(liteLlmSpendLabel({ spendTracking: false, keySource: "personal" }), "Not tracked, LiteLLM budgets each key");
@@ -99,14 +110,14 @@ test("a saved provider is shown in the mode it was added with", () => {
 });
 
 test("access to a Microsoft sign-in provider is the group that holds its model list", () => {
-  const status = { mode: "member" as const, keySource: "entra" as const, issueStrategy: null, mirrorFallback: null, issuedMemberCount: 0, attentionCount: 0, attention: [], baseUrl: null, spendTracking: false,
+  const status: GatewayLiteLlmStatus = { mode: "member", keySource: "entra", issueStrategy: null, mirrorFallback: null, issuedMemberCount: 0, attentionCount: 0, attention: [], baseUrl: null, spendTracking: false,
     hasSyncKey: false, lastSyncedAt: null, lastSyncError: null, modelCount: 2, teamCount: 0, connectedMemberCount: 0 };
-  const modelGroups = [{ id: "gmg_all", name: "All LiteLLM models", description: null, status: "active" as const, modelIds: ["gpt-fixture", "claude-fixture"] }];
+  const modelGroups: GatewayModelGroup[] = [{ id: "gmg_all", name: "All LiteLLM models", description: null, status: "active", modelIds: ["gpt-fixture", "claude-fixture"] }];
   assert.equal(liteLlmAccessGroupId({ litellm: status, modelGroups }), "gmg_all");
 });
 
 test("the library names the account a person signs in with", () => {
-  const microsoft = { providerId: "ipr_1", signInMethod: "microsoft" as const, credentialSetId: "gcs_1", providerName: "LiteLLM", name: "Microsoft sign-in", ready: false, hasAccess: true, hasCredential: false,
+  const microsoft: LibraryModelProvider["memberSets"][number] = { providerId: "ipr_1", signInMethod: "microsoft", credentialSetId: "gcs_1", providerName: "LiteLLM", name: "Microsoft sign-in", ready: false, hasAccess: true, hasCredential: false,
     configurationRequired: false, authorizationRevision: null, accountEmail: null };
   assert.equal(signInBrand({ providerKey: "litellm", memberSets: [microsoft] }), "Microsoft");
   assert.equal(signInBrand({ providerKey: "litellm", memberSets: [] }), "your account");
