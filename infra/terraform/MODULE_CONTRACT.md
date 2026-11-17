@@ -252,8 +252,14 @@ module conformance, local product tests and plans do not satisfy it. Record:
   resource inventory. Never publish secret material, state or customer identity.
 
 Until that candidate-specific sequence has been observed, mark the optional
-profile **NotRun / unqualified**. Publishing a production managed release or
-changing hosted release configuration requires a separate operator action.
+profile **unqualified** and keep each missing (`NotRun`) or failed (`Failed`)
+observation distinct. The November 2026 isolated managed test passed its cloud
+install/enable-Update, certificate and EFS backup checks, but failed Workbot and
+scheduled headless Automation model access with the published `0.18.67` runtime's
+Gateway-only policy. No gatewayless readiness or post-Update application parity
+is established by that run. See the managed installer README for the exact
+qualification boundary. Publishing a production managed release or changing
+hosted release configuration requires a separate operator action.
 
 ## Known per-cloud limitations
 

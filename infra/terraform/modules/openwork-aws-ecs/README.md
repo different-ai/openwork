@@ -494,7 +494,14 @@ AWS-managed backup policy. Existing direct runner deployments will see these
 external fleets create none. The vault cannot be force-deleted with recovery
 points. Restoring a backup is a separate customer-approved recovery operation;
 file-level snapshots do not prove SQLite application-consistent recovery.
-Backup creation, restore, and Workbot enablement remain **NotRun live** here.
+The 17 November 2026 isolated **managed-installer** test observed encrypted
+backup creation with this role/vault and Workbot DNS/certificate/service
+enablement on an existing install. It did **not** qualify the application:
+Workbot chat and a scheduled headless Automation failed at the published
+`0.18.67` Den runtime's Gateway-only model policy. Do not add a Gateway to mask
+this direct-model incompatibility. Scheduled daily backup execution and restore
+remain **NotRun**. Full results and the separate runtime qualification boundary
+are in [the managed installer README](../../../managed-deployments/README.md).
 
 ### Existing celld/S3 fleet
 

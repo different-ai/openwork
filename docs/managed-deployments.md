@@ -110,6 +110,19 @@ Workbot chat, Slack thread delivery, headless Automations or Freestyle commands
 work on a live install. Do not enable production installer publication based on
 an available form or a green plan.
 
+The 17 November 2026 isolated qualification observed a real fresh managed install,
+then an approved Update enabling the optional services on that same install. Its
+certificate cutover, encrypted EFS/backup and secret-preservation checks passed.
+**The application qualification failed:** Workbot Send returned HTTP 403
+`gateway_not_configured`, and a real scheduled headless Automation failed
+`provider_unavailable` at the current runtime's Gateway-only model-selection
+policy. This was tested with fixed OpenWork `0.18.67` application digests and
+isolated test-only installer versions, not production release coordinates.
+Do not add a Gateway to mask this mismatch or treat infrastructure health as a
+successful model turn. A separately reviewed direct-model runtime option and
+complete new proof are required. The installer README records individual
+`Passed`, `Failed` and `NotRun` results.
+
 ## From an agent (MCP)
 
 With `managedDeployments` on for the organization (cloud only, off by

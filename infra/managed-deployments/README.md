@@ -257,9 +257,36 @@ observations for:
 4. Saved, redacted evidence followed by destroy and an independent absence
    inventory, including retained state, recovery points and soft-deleted assets.
 
-Until those observations exist for the candidate under review, the live verdict
-is **NotRun / unqualified**, not ready. Production installer promotion and hosted
-configuration are separate operator actions and are not part of this change.
+Until every required observation exists for the candidate under review, it is
+**unqualified**, not ready. Keep individual `Passed`, `Failed` and `NotRun`
+results distinct. Production installer promotion and hosted configuration are
+separate operator actions and are not part of this change.
+
+### Observed isolated qualification: 17 November 2026
+
+An isolated test account used registry-verified OpenWork `0.18.67` application
+digests and test-only installer versions `0.18.71` → `0.18.72`. These are not
+production release coordinates. The overall application qualification **failed**:
+
+| Observation | Result |
+| --- | --- |
+| Managed CloudFormation/CodeBuild fresh core install | Passed: six real milestones and successful customer CodeBuild |
+| IAM-approved Update adding runner, Workbot and EFS/Backup | Passed: four intended services completed; core-secret fingerprints unchanged |
+| Workbot certificate expansion on the already-live install | Passed: one listener certificate cutover, both certificates issued, zero API/database/web failures across 370 HTTPS samples |
+| EFS encryption and backup | Passed: encrypted EFS; an encrypted recovery point completed with the configured backup role/vault; daily seven-day plan verified |
+| Customer model/computer keys in Terraform state | Passed: the actual external key values were absent from raw state |
+| Workbot chat | Failed: real UI login succeeded, but Send returned HTTP 403 `gateway_not_configured`; no turn was accepted |
+| Scheduled headless Automation | Failed: scheduled Cloud/headless dispatch returned `provider_unavailable` at model selection |
+| Slack assistant and Freestyle command | NotRun: no successful model turn yet; Slack app setup also remains required |
+| Further forced runner/core Update and post-Update behaviours | NotRun |
+| Scheduled daily backup occurrence and restore | NotRun; the observed backup was explicitly started with the configured role |
+
+Process/HTTPS/backup health is not an inference-completion check. The published
+runtime currently routes these agent surfaces through Gateway model policy,
+which is incompatible with this installer's direct model endpoint. Do not enable
+an AI Gateway as a workaround or publish/promote this profile as ready. A
+separately reviewed, authorization-preserving runtime option and new isolated
+proof are required; installer wiring alone does not resolve that boundary.
 
 ## The contract every cloud implements
 

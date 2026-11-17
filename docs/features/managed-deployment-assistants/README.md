@@ -134,6 +134,24 @@ it is not represented as remotely stopped.
 
 ![Killed feature preserves settings and blocks assistant approvals](./assistants-killed.png)
 
+## Observed managed AWS runtime boundary
+
+On 17 November 2026, a real isolated managed install and IAM-approved enablement
+Update completed with fixed `0.18.67` application digests. Its certificate,
+service, EFS backup and secret-preservation checks passed. **The model path did
+not:** actual Workbot UI sign-in succeeded, but Send returned HTTP 403
+`gateway_not_configured`; the thread remained idle with zero turns. A scheduled
+headless Automation likewise failed `provider_unavailable` at model selection.
+No AI Gateway was added to disguise that incompatibility.
+
+![Actual managed Workbot model-access failure, not a successful chat](./live-model-blocked.png)
+
+The infrastructure health panel cannot substitute for a completed model turn.
+Full gatewayless qualification remains blocked on a separately reviewed runtime
+option and new real application checks. The migration-validator correction is
+also a separate change; this installer test's controller used official production
+bootstrap followed by its unchanged strict verifier.
+
 ## Verification and rollout
 
 Local schema/handoff tests and real Den API tests cover default-off behavior,
