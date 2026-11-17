@@ -258,7 +258,7 @@ export function GatewayLimitRow({ policy, orgSlug, teams, members, providers, ca
   const provider = providerRemoved ? <>
     <DenBadge tone="warning" size="sm">Provider removed</DenBadge>
     <span className="text-[12px] text-[color:var(--dls-text-secondary)]">Not applied</span>
-  </> : <span className={variant === "row" ? "truncate" : "text-[12px] text-gray-700"}>{providerLimitLabel(policy.providerId, providers)}</span>;
+  </> : <span className={variant === "row" ? "line-clamp-2 max-w-full break-words" : "text-[12px] text-gray-700"} title={variant === "row" ? providerLimitLabel(policy.providerId, providers) : undefined}>{providerLimitLabel(policy.providerId, providers)}</span>;
   const edit = canEdit ? providerRemoved
     ? <Link href={getAiGatewayLimitRoute(orgSlug, policy.id)} aria-label={`Choose a provider for ${policy.name}`} data-testid="gateway-limit-choose-provider" className={buttonVariants({ variant: "secondary", size: "sm" })}>Choose provider</Link>
     : <Link href={getAiGatewayLimitRoute(orgSlug, policy.id)} aria-label={`Edit ${policy.name}`} data-testid="gateway-limit-edit" className={buttonVariants({ variant: "secondary", size: "sm" })}>Edit</Link> : null;
@@ -274,7 +274,7 @@ export function GatewayLimitRow({ policy, orgSlug, teams, members, providers, ca
           <RowLane lane={`${GATEWAY_LANE.limitProvider} items-center`}>
             <span className="flex min-w-0 flex-col items-start gap-0.5" data-testid="gateway-limit-provider-label">{provider}</span>
           </RowLane>
-          <RowLane lane={`${GATEWAY_LANE.limitAmount} truncate tabular-nums`}>{describeLimitAmounts(policy)} each</RowLane>
+          <RowLane lane={`${GATEWAY_LANE.limitAmount} truncate tabular-nums`} title={`${describeLimitAmounts(policy)} each`}>{describeLimitAmounts(policy)} each</RowLane>
           <RowLane lane={`${GATEWAY_LANE.limitAction} text-[color:var(--dls-text-secondary)]`}>{policy.hardLimit ? "Pauses them" : "Only warns"}</RowLane>
           {canEdit ? <RowLane lane={GATEWAY_LANE.limitEdit}>{edit}</RowLane> : null}
         </>}
