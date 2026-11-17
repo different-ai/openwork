@@ -1,18 +1,36 @@
 /**
- * Microsoft Entra ID for per-member Microsoft Foundry credentials. Den runs the
+ * Microsoft Entra ID for per-member credentials. Den runs the
  * authorization-code flow (PKCE + the organization's own confidential app
  * registration) and the Gateway renews the access token with the stored
- * refresh token. Tokens are issued for Azure Cognitive Services, the audience
- * every Foundry resource accepts. The only host reached is login.microsoftonline.com.
+ * refresh token. The access token is issued for one API scope:
+ *
+ *   Microsoft Foundry   Azure Cognitive Services, the audience every Foundry resource accepts
+ *   LiteLLM (JWT auth)  an API scope of the organization's own app registration, which its proxy validates
+ *
+ * The only host reached is login.microsoftonline.com.
  */
 
 export const MICROSOFT_LOGIN_ORIGIN = "https://login.microsoftonline.com"
 /** Microsoft Foundry (and Azure OpenAI) accept tokens for this resource. */
 export const MICROSOFT_COGNITIVE_SERVICES_SCOPE = "https://cognitiveservices.azure.com/.default"
-/** Requested at sign-in: the resource plus a refresh token and an ID token naming the person. */
-export const MICROSOFT_SIGN_IN_SCOPES = `${MICROSOFT_COGNITIVE_SERVICES_SCOPE} offline_access openid profile email`
-/** Requested when renewing: the resource and a new refresh token. */
-export const MICROSOFT_REFRESH_SCOPES = `${MICROSOFT_COGNITIVE_SERVICES_SCOPE} offline_access`
+
+/**
+ * Requested at sign-in: the API scope plus a refresh token and an ID token naming the person.
+ * `apiScope` null is Azure Cognitive Services (Microsoft Foundry).
+ */
+export function microsoftSignInScopes(apiScope: string | null = null) {
+  return apiScope === null ? `${MICROSOFT_COGNITIVE_SERVICES_SCOPE} offline_access openid profile email` : `${apiScope} offline_access openid profile`
+}
+
+/** Requested when renewing: the same API scope and a new refresh token. */
+export function microsoftRefreshScopes(apiScope: string | null = null) {
+  return `${apiScope ?? MICROSOFT_COGNITIVE_SERVICES_SCOPE} offline_access`
+}
+
+/** The API a scope belongs to, as the prefix every scope of that API starts with: `api://app/` for `api://app/access`. */
+function microsoftScopeResource(apiScope: string) {
+  return apiScope.slice(0, apiScope.lastIndexOf("/") + 1).toLowerCase()
+}
 /** Entra access tokens last 60-90 minutes; anything far longer is not a token we asked for. */
 export const MICROSOFT_MAX_EXPIRES_IN_SECONDS = 86_400
 
@@ -60,7 +78,12 @@ export function classifyMicrosoftTokenError(status: number, body: unknown): Micr
 
 export type MicrosoftTokens = { accessToken: string; refreshToken: string | null; expiresIn: number; idToken: string | null; scope: string | null }
 
-export function readMicrosoftTokens(body: unknown): MicrosoftTokens | null {
+/**
+ * A token response for `apiScope` (null: Azure Cognitive Services). When Entra names the granted
+ * scopes, one of them must belong to that API: a `/.default` request is answered with the API's
+ * individual scopes, so the API is compared, not the scope name.
+ */
+export function readMicrosoftTokens(body: unknown, apiScope: string | null = null): MicrosoftTokens | null {
   if (typeof body !== "object" || body === null) return null
   const record: Record<string, unknown> = { ...body }
   const accessToken = isMicrosoftTokenMaterial(record.access_token) && /^[A-Za-z0-9._~+/-]+=*$/.test(record.access_token) ? record.access_token : null
@@ -70,6 +93,7 @@ export function readMicrosoftTokens(body: unknown): MicrosoftTokens | null {
   const tokenType = record.token_type
   if (!accessToken || refreshToken === undefined || idToken === undefined || expiresIn === null || !Number.isInteger(expiresIn)
     || expiresIn <= 0 || expiresIn > MICROSOFT_MAX_EXPIRES_IN_SECONDS || typeof tokenType !== "string" || tokenType.toLowerCase() !== "bearer") return null
-  if (record.scope !== undefined && (typeof record.scope !== "string" || !record.scope.split(/\s+/).some((scope) => scope.toLowerCase().startsWith("https://cognitiveservices.azure.com/")))) return null
+  const resource = microsoftScopeResource(apiScope ?? MICROSOFT_COGNITIVE_SERVICES_SCOPE)
+  if (record.scope !== undefined && (typeof record.scope !== "string" || !record.scope.split(/\s+/).some((scope) => scope.toLowerCase().startsWith(resource)))) return null
   return { accessToken, refreshToken, expiresIn, idToken, scope: typeof record.scope === "string" ? record.scope : null }
 }

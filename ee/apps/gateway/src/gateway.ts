@@ -9,7 +9,7 @@ import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, i
 import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
 import { isMicrosoftFoundryOverrideAllowed } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
-import { isLiteLlmProviderId, liteLlmSpendTrackingEnabled } from "@openwork-ee/utils/litellm-catalog"
+import { isLiteLlmProviderId, liteLlmEntraScope, liteLlmSpendTrackingEnabled } from "@openwork-ee/utils/litellm-catalog"
 import { isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
 import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { fixedModelPricing, readModelPrice, type PricingCatalog } from "./pricing.js"
@@ -1047,7 +1047,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
           return reject(response, "member_auth_required", "Member credential required")
         }
         case "configuration_required": {
-          const client = resolved.family === "microsoft_foundry" ? "Microsoft Entra ID app registration (check that its client secret has not expired)" : "Google OAuth client"
+          const client = resolved.family === "microsoft_foundry" || liteLlmEntraScope(provider) !== null ? "Microsoft Entra ID app registration (check that its client secret has not expired)" : "Google OAuth client"
           return reject(
             gatewayError(502, "provider_misconfigured", `The ${client} requires administrator repair. Contact your organization administrator.`, { provider_id: provider.id }),
             "provider_misconfigured",
