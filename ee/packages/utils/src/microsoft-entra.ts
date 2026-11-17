@@ -27,9 +27,24 @@ export function microsoftRefreshScopes(apiScope: string | null = null) {
   return `${apiScope ?? MICROSOFT_COGNITIVE_SERVICES_SCOPE} offline_access`
 }
 
-/** The API a scope belongs to, as the prefix every scope of that API starts with: `api://app/` for `api://app/access`. */
-function microsoftScopeResource(apiScope: string) {
-  return apiScope.slice(0, apiScope.lastIndexOf("/") + 1).toLowerCase()
+/** Normalize URI scheme/authority or a GUID, never a resource path or permission name. */
+function canonicalMicrosoftScope(scope: string) {
+  const separator = scope.lastIndexOf("/")
+  const resource = scope.slice(0, separator)
+  const normalizedResource = guid.test(resource) ? resource.toLowerCase() : resource.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, (authority) => authority.toLowerCase())
+  return normalizedResource + scope.slice(separator)
+}
+
+function matchesMicrosoftScope(returnedScope: string, apiScope: string | null) {
+  // Keep Foundry's resource-wide check: /.default returns individual delegated scopes.
+  if (apiScope === null) return returnedScope.toLowerCase().startsWith("https://cognitiveservices.azure.com/")
+  const expected = canonicalMicrosoftScope(apiScope)
+  const granted = canonicalMicrosoftScope(returnedScope)
+  const separator = expected.lastIndexOf("/")
+  if (separator <= 0 || separator === expected.length - 1) return false
+  if (!expected.endsWith("/.default")) return granted === expected
+  // Compare the complete resource, not an arbitrary prefix (which would accept nested APIs).
+  return granted.lastIndexOf("/") === separator && granted.slice(0, separator) === expected.slice(0, separator) && granted.length > separator + 1
 }
 /** Entra access tokens last 60-90 minutes; anything far longer is not a token we asked for. */
 export const MICROSOFT_MAX_EXPIRES_IN_SECONDS = 86_400
@@ -80,8 +95,9 @@ export type MicrosoftTokens = { accessToken: string; refreshToken: string | null
 
 /**
  * A token response for `apiScope` (null: Azure Cognitive Services). When Entra names the granted
- * scopes, one of them must belong to that API: a `/.default` request is answered with the API's
- * individual scopes, so the API is compared, not the scope name.
+ * scopes, require the requested delegated scope, or a scope of the exact API for `/.default`.
+ * Match the configured resource spelling: do not infer aliases between API URIs and GUIDs.
+ * This is response metadata, not JWT validation: the receiving API validates the access token.
  */
 export function readMicrosoftTokens(body: unknown, apiScope: string | null = null): MicrosoftTokens | null {
   if (typeof body !== "object" || body === null) return null
@@ -93,7 +109,6 @@ export function readMicrosoftTokens(body: unknown, apiScope: string | null = nul
   const tokenType = record.token_type
   if (!accessToken || refreshToken === undefined || idToken === undefined || expiresIn === null || !Number.isInteger(expiresIn)
     || expiresIn <= 0 || expiresIn > MICROSOFT_MAX_EXPIRES_IN_SECONDS || typeof tokenType !== "string" || tokenType.toLowerCase() !== "bearer") return null
-  const resource = microsoftScopeResource(apiScope ?? MICROSOFT_COGNITIVE_SERVICES_SCOPE)
-  if (record.scope !== undefined && (typeof record.scope !== "string" || !record.scope.split(/\s+/).some((scope) => scope.toLowerCase().startsWith(resource)))) return null
+  if (record.scope !== undefined && (typeof record.scope !== "string" || !record.scope.split(/\s+/).some((scope) => matchesMicrosoftScope(scope, apiScope)))) return null
   return { accessToken, refreshToken, expiresIn, idToken, scope: typeof record.scope === "string" ? record.scope : null }
 }
