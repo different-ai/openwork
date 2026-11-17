@@ -75,8 +75,12 @@ selects the Gateway profile. GCP keeps its existing profile.
 - **Computers (optional)**: **Off** by default. Daytona is preferred when a
   conversation needs a sandbox; Freestyle is also supported. Daytona requires a
   chosen snapshot. These are not required for chat, Slack replies or
-  connector-based headless Automations. **Computers run in the selected
-  provider's cloud, outside the customer's AWS account.**
+  connector-based headless Automations. Freestyle also needs the prepared
+  computer snapshot matching the pinned runner release in that provider account;
+  the installer does not build it. Provider configuration does not grant members
+  computer-use permission: enable it for intended members through the installed
+  Den's normal operator controls, without overriding kill switches or locks.
+  **Computers run in the selected provider's cloud, outside the customer's AWS account.**
 
 Only an enabled computer provider needs its API-key secret in the target AWS
 account/region's Secrets Manager. Supply the full ARN, never the value. ECS reads

@@ -140,11 +140,18 @@ application qualification **failed**:
 | Workbot chat | Failed: real UI login succeeded, but Send returned HTTP 403 `gateway_not_configured`; no turn was accepted |
 | Scheduled headless Automation | Failed: scheduled Cloud/headless dispatch returned `provider_unavailable` at model selection |
 | Slack assistant and Freestyle command | NotRun: no successful model turn yet; Slack app setup also remains required |
-| Further forced runner/core Update and post-Update behaviours | NotRun |
+| Further `.77` forced runner/core Update | Passed: real matching CodeBuild/six milestones and intended revisions; core secrets/EFS preserved; issued certificate unchanged with zero failures across 296 core HTTPS samples |
+| Post-Update product rechecks | Passed: fresh same-chat history/continuation 43, real scheduled headless run, and new independently verified Freestyle bash/exit 0 on the same provider VM; Slack remains NotRun |
 | Scheduled daily backup occurrence | Passed: the actual configured daily plan completed an encrypted recovery point using its configured role |
 | Restore | NotRun |
 | Gateway-profile `.74` approved Update | Failed: Terraform attempted to deregister the old runner task definition; scoped IAM correctly refused wildcard deregistration |
-| Gateway-profile model checks | NotRun: the failed apply left the runner on its prior revision |
+| Gateway-profile `.76` recovery Update | Passed: real matching CodeBuild/six milestones; all five intended revisions and running image digests independently verified; no global runner upstream key |
+| `.76` certificate preservation | Passed: one issued certificate preserved; zero failures across 257 core HTTPS samples |
+| Owner-scoped Gateway native completion | Passed: normal encrypted provider workflow and owner-only grant; actual bounded completion reported the selected upstream model, with matching Gateway usage |
+| Gateway Workbot chat | Passed: real browser Send HTTP 202, matching completed turn/model step and rendered nonce answer 42 |
+| Gateway scheduled headless Automation | Passed: scheduled cloud/headless engine, linked execution thread, nonce/42, nonzero model usage and successful terminal event; fresh public read confirmed |
+| Freestyle command | Initial turn failed because the account lacked the pinned release's prepared snapshot. After normal test-owner computer opt-in and exact source-matched snapshot setup, a fresh UI command passed with authenticated raw bash/exit-0 evidence and actual provider VM identity; original failure retained |
+| Slack assistant thread | NotRun: developer sign-in/app setup still required |
 
 ![Actual historical managed Workbot model-access failure, not a successful chat](./live-model-blocked.png)
 
@@ -157,8 +164,37 @@ retirement, despite all five services being present and Gateway HTTPS returning
 zero failures across 139 core HTTPS samples. The runner was still on its prior
 revision, so this is not a successful rollout or inference proof. Recovery must
 retain old definitions declaratively rather than add wildcard deregistration
-permission. New model checks remain **NotRun**; neither these failures nor the
-historical ones are overwritten by local UI proof.
+permission. The `.76` recovery has since completed the actual managed rollout
+with retained-definition adoption and no IAM broadening. Its normal owner-only
+Gateway setup/native completion passed, followed by real Workbot, scheduled
+headless Automation and Freestyle command proof. Those three flows passed again
+after the real `.77` Update. The full profile remains **unqualified pending Slack
+thread proof**: developer sign-in/app setup never completed. Neither failed run
+is overwritten by recovery or local UI proof. Cleanup/independent absence is
+recorded separately; a completed model turn is not a teardown receipt.
+
+## Real managed runtime evidence
+
+These are the actual isolated AWS installation, not local UI fixtures. Screenshots
+illustrate the UI; structured HTTP/turn, scheduler, raw tool and provider identity
+receipts independently decide the results. Originals and redacted structured
+receipts are retained privately; review images below use a 24-hour host.
+
+![Actual Gateway Workbot chat: accepted turn and nonce answer 42](https://litter.catbox.moe/hat5gj.png)
+
+![Original computer failure preserved beside a fresh successful command](https://litter.catbox.moe/29k388.png)
+
+![Fresh post-Update history and same-chat continuation 43](https://litter.catbox.moe/roeciv.png)
+
+![New post-Update computer command; exit and VM identity verified independently](https://litter.catbox.moe/19igf1.png)
+
+The computer proof requires a matching authenticated owner/session-bound raw
+runner tool call/result, adapter-generated exit 0, and the actual provider VM's
+identity/metadata—not the model's description. The same VM was independently
+observed after the Update. Identity correlation uses the runtime's stable session
+slug; no provider per-command execution receipt is claimed. Computer permission
+was enabled through the installed Den's normal operator controls for only the
+synthetic owner, with no kill-switch, lock or Gateway-authorization bypass.
 
 ## Local UI proof and qualification boundary
 

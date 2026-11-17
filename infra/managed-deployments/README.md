@@ -171,6 +171,16 @@ execute computers in their cloud, outside the customer's AWS account.**
 Slack processing does not create a Slack app or complete OAuth: the customer
 still configures the app and connection in the installed Den.
 
+Enabling a provider is infrastructure configuration, not a member permission
+grant. Use the installed Den's normal operator controls for intended members'
+computer use; kill switches and operator locks still win. Freestyle expects the
+prepared computer snapshot matching the pinned runner release in that provider
+account. Build that release's normal computer recipe before first use; the AWS
+installer does not build external images. Provider `off` requires neither a
+computer snapshot nor a provider key. The isolated proof found this missing
+Freestyle prerequisite, retained the failed turn, prepared the exact `.67` recipe
+in a new private test snapshot, deleted its builder, then used a fresh UI command.
+
 ### Customer-owned key references
 
 For the Gateway profile, upstream model credentials belong in the installed
@@ -293,11 +303,18 @@ production release coordinates. The overall application qualification **failed**
 | Workbot chat | Failed: real UI login succeeded, but Send returned HTTP 403 `gateway_not_configured`; no turn was accepted |
 | Scheduled headless Automation | Failed: scheduled Cloud/headless dispatch returned `provider_unavailable` at model selection |
 | Slack assistant and Freestyle command | NotRun: no successful model turn yet; Slack app setup also remains required |
-| Further forced runner/core Update and post-Update behaviours | NotRun |
+| Further `.77` forced runner/core Update | Passed: real matching CodeBuild/six milestones, intended revisions, preserved core secrets/EFS and certificate; 296 core HTTPS samples without failure |
+| Post-`.77` rechecks | Passed: same-chat history/43, scheduled headless execution and new raw exit-0 Freestyle proof on the same verified VM; Slack remains NotRun |
 | Scheduled daily backup occurrence | Passed: the actual configured daily plan completed an encrypted recovery point using its configured role |
 | Restore | NotRun |
 | Gateway-profile `.74` approved Update | Failed: replacing the old runner task definition attempted deregistration that scoped installer IAM deliberately does not authorize |
-| Gateway-profile model checks | NotRun: partial service creation is not a successful approved Update |
+| Gateway-profile `.76` recovery Update | Passed: matching CodeBuild/six milestones, five intended revisions and actual pinned running-image digests; no global runner upstream key |
+| `.76` certificate preservation | Passed: issued certificate unchanged, zero core HTTPS failures across 257 samples |
+| Owner-scoped Gateway native completion | Passed: actual selected upstream model answered through its owner-only scoped Gateway alias; Gateway usage independently recorded |
+| Gateway Workbot chat | Passed: real browser HTTP 202, completed model turn, matching rendered nonce/42 |
+| Gateway scheduled headless Automation | Passed: actual scheduler trigger, cloud/headless engine, linked thread, nonce/42, model token usage and successful terminal event |
+| Freestyle command | Passed after normal computer permission/snapshot setup: fresh actual UI request, matching raw bash/exit 0 and verified provider VM, repeated after `.77`; original failed turn retained |
+| Slack thread | NotRun: developer sign-in/app setup was not completed; no placeholder connector/app created |
 
 These failures belong to the earlier legacy/direct configuration. The chosen
 architecture is now the included Gateway profile, reusing existing runtime
