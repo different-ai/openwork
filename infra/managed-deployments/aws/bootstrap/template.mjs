@@ -29,7 +29,8 @@ const environment = {
   SLACK_ASSISTANT_ENABLED: ref("SlackAssistantEnabled"), HEADLESS_MODEL_PROTOCOL: ref("HeadlessModelProtocol"),
   HEADLESS_MODEL_BASE_URL: ref("HeadlessModelBaseUrl"), HEADLESS_MODEL: ref("HeadlessModel"),
   HEADLESS_MODEL_SECRET_ARN: ref("HeadlessModelSecretArn"), HEADLESS_COMPUTER_PROVIDER: ref("HeadlessComputerProvider"),
-  HEADLESS_COMPUTER_SECRET_ARN: ref("HeadlessComputerSecretArn"),
+  HEADLESS_COMPUTER_SECRET_ARN: ref("HeadlessComputerSecretArn"), HEADLESS_COMPUTER_SNAPSHOT: ref("HeadlessComputerSnapshot"),
+  DAYTONA_API_URL: ref("DaytonaApiUrl"), DAYTONA_TARGET: ref("DaytonaTarget"),
 };
 // Pass only the names a pattern uses, keeping the template small and readable.
 const names = (text) => Object.fromEntries([["Name", tfName], ["Health", healthName]].filter(([key]) => text.includes(`\${${key}}`)));
@@ -103,7 +104,7 @@ const policy = {
     { Sid: "HealthAgent", Effect: "Allow", Action: ["lambda:CreateFunction", "lambda:GetFunction", "lambda:GetFunctionConfiguration", "lambda:UpdateFunctionCode", "lambda:UpdateFunctionConfiguration", "lambda:ListVersionsByFunction", "lambda:GetFunctionCodeSigningConfig", "lambda:AddPermission", "lambda:GetPolicy", "lambda:TagResource", "lambda:ListTags", "lambda:InvokeFunction"], Resource: arn("lambda", "function:${Health}") },
     { Sid: "HealthSchedule", Effect: "Allow", Action: ["events:PutRule", "events:PutTargets", "events:TagResource"], Resource: arn("events", "rule/${Health}") },
     { Sid: "Logs", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams", "logs:PutRetentionPolicy", "logs:ListTagsLogGroup", "logs:ListTagsForResource", "logs:TagResource", "logs:TagLogGroup"], Resource: [arn("logs", "log-group:/ecs/${Name}/*"), arn("logs", "log-group:/aws/lambda/${Health}"), arn("logs", "log-group:/aws/lambda/${Health}:*"), arn("logs", "log-group:/aws/lambda/${Name}-migrate"), arn("logs", "log-group:/aws/lambda/${Name}-migrate:*"), sub("arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}*")] },
-    { Sid: "AppSecrets", Effect: "Allow", Action: ["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:UpdateSecret", "secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue", "secretsmanager:ListSecretVersionIds", "secretsmanager:GetResourcePolicy", "secretsmanager:TagResource"], Resource: arn("secretsmanager", "secret:${Name}-den-*") },
+    { Sid: "AppSecrets", Effect: "Allow", Action: ["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:UpdateSecret", "secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue", "secretsmanager:ListSecretVersionIds", "secretsmanager:GetResourcePolicy", "secretsmanager:TagResource"], Resource: { "Fn::If": ["HasHeadlessRunner", [arn("secretsmanager", "secret:${Name}-den-*"), arn("secretsmanager", "secret:${Name}-runner-*"), arn("secretsmanager", "secret:${Name}-workbot-*")], arn("secretsmanager", "secret:${Name}-den-*")] } },
     { Sid: "NoNestedBuilds", Effect: "Deny", Action: ["codebuild:StartBuild", "codebuild:UpdateProject", "codebuild:CreateProject"], Resource: "*" },
     { Sid: "StateBucket", Effect: "Allow", Action: ["s3:ListBucket", "s3:GetBucketLocation"], Resource: get("StateBucket", "Arn") },
     // State and its S3-native lock file, for this deployment only.
@@ -173,7 +174,6 @@ const assistantPolicy = {
     }),
     allow("RunnerBackupRole", ["iam:CreateRole", "iam:GetRole", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:ListInstanceProfilesForRole", "iam:PutRolePolicy", "iam:GetRolePolicy", "iam:TagRole", "iam:UpdateAssumeRolePolicy"], iamRole("${Name}-runner-backup")),
     allow("PassRunnerBackupRole", "iam:PassRole", iamRole("${Name}-runner-backup"), { StringEquals: { "iam:PassedToService": "backup.amazonaws.com" } }),
-    allow("RunnerSecrets", ["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:UpdateSecret", "secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue", "secretsmanager:ListSecretVersionIds", "secretsmanager:GetResourcePolicy", "secretsmanager:TagResource"], arn("secretsmanager", "secret:${Name}-runner-*")),
   ],
 };
 const launcherCode = `import boto3, json, urllib.request
@@ -218,8 +218,11 @@ const template = {
     HeadlessModelBaseUrl: { Type: "String", Default: "https://api.anthropic.com/v1", MaxLength: 2048, AllowedPattern: "https://[^/?#@\\s]+(/[^?#@\\s]*)?" },
     HeadlessModel: { Type: "String", Default: "", MaxLength: 200 },
     HeadlessModelSecretArn: { Type: "String", Default: "", AllowedPattern: "(arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6})?" },
-    HeadlessComputerProvider: { Type: "String", AllowedValues: ["off", "freestyle"], Default: "off" },
-    HeadlessComputerSecretArn: { Type: "String", Default: "", AllowedPattern: "(arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6})?" },
+    HeadlessComputerProvider: { Type: "String", AllowedValues: ["off", "daytona", "freestyle"], Default: "off" },
+    HeadlessComputerSecretArn: { Type: "String", Default: "", Description: "Existing plain-string Secrets Manager key ARN for the selected computer provider (Daytona or Freestyle).", AllowedPattern: "(arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6})?" },
+    HeadlessComputerSnapshot: { Type: "String", Default: "", MaxLength: 255, Description: "Computer snapshot in the Daytona account; required only when the computer provider is Daytona." },
+    DaytonaApiUrl: { Type: "String", Default: "https://app.daytona.io/api", MaxLength: 2048, AllowedPattern: "https://[^/?#@\\s]+(/[^?#@\\s]*)?" },
+    DaytonaTarget: { Type: "String", Default: "us", MaxLength: 80, AllowedPattern: "[a-z0-9][a-z0-9-]{0,79}" },
   },
   Conditions: {
     HasHeadlessRunner: { "Fn::Equals": [ref("HeadlessRunnerEnabled"), "true"] },
@@ -236,9 +239,13 @@ const template = {
       RuleCondition: { "Fn::Equals": [ref("HeadlessRunnerEnabled"), "true"] },
       Assertions: [{ Assert: { "Fn::And": [{ "Fn::Not": [{ "Fn::Equals": [ref("HeadlessModel"), ""] }] }, { "Fn::Not": [{ "Fn::Equals": [ref("HeadlessModelSecretArn"), ""] }] }] }, AssertDescription: "The runner needs a model id and the ARN of an existing model API key secret." }],
     },
-    FreestyleSecret: {
-      RuleCondition: { "Fn::Equals": [ref("HeadlessComputerProvider"), "freestyle"] },
-      Assertions: [{ Assert: { "Fn::And": [{ "Fn::Equals": [ref("HeadlessRunnerEnabled"), "true"] }, { "Fn::Not": [{ "Fn::Equals": [ref("HeadlessComputerSecretArn"), ""] }] }] }, AssertDescription: "Freestyle needs the headless runner and an existing computer API key secret ARN." }],
+    ComputerSecret: {
+      RuleCondition: { "Fn::Not": [{ "Fn::Equals": [ref("HeadlessComputerProvider"), "off"] }] },
+      Assertions: [{ Assert: { "Fn::And": [{ "Fn::Equals": [ref("HeadlessRunnerEnabled"), "true"] }, { "Fn::Not": [{ "Fn::Equals": [ref("HeadlessComputerSecretArn"), ""] }] }] }, AssertDescription: "Computer tools need the headless runner and an existing API key secret ARN for the selected provider." }],
+    },
+    DaytonaSnapshot: {
+      RuleCondition: { "Fn::Equals": [ref("HeadlessComputerProvider"), "daytona"] },
+      Assertions: [{ Assert: { "Fn::Not": [{ "Fn::Equals": [ref("HeadlessComputerSnapshot"), ""] }] }, AssertDescription: "Daytona computer tools need a computer snapshot in the Daytona account." }],
     },
     ExistingNetwork: {
       RuleCondition: { "Fn::Equals": [ref("NetworkMode"), "existing"] },
@@ -253,7 +260,7 @@ const template = {
     } },
     StateBucketPolicy: { Type: "AWS::S3::BucketPolicy", Properties: { Bucket: ref("StateBucket"), PolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Deny", Principal: "*", Action: "s3:*", Resource: [get("StateBucket", "Arn"), join([get("StateBucket", "Arn"), "/*"])], Condition: { Bool: { "aws:SecureTransport": false } } }] } } },
     RunnerCoreSupportPolicy: { Type: "AWS::IAM::ManagedPolicy", Properties: { Description: "Scoped core DNS, log discovery and task execution policy attachment.", PolicyDocument: coreSupportPolicy } },
-    RunnerSupplementalPolicy: { Type: "AWS::IAM::ManagedPolicy", Condition: "HasHeadlessRunner", Properties: { Description: "Opt-in deployment-owned runner storage, backups and secret provisioning.", PolicyDocument: assistantPolicy } },
+    RunnerSupplementalPolicy: { Type: "AWS::IAM::ManagedPolicy", Condition: "HasHeadlessRunner", Properties: { Description: "Opt-in deployment-owned runner storage and backups.", PolicyDocument: assistantPolicy } },
     // Only this stack's runner project may assume the role (no other CodeBuild
     // project in the account can borrow it).
     RunnerRole: { Type: "AWS::IAM::Role", Properties: { RoleName: runnerRoleName, ManagedPolicyArns: [ref("RunnerCoreSupportPolicy"), when("HasHeadlessRunner", ref("RunnerSupplementalPolicy"))], AssumeRolePolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Principal: { Service: "codebuild.amazonaws.com" }, Action: "sts:AssumeRole", Condition: { StringEquals: { "aws:SourceAccount": ref("AWS::AccountId") }, ArnLike: { "aws:SourceArn": sub("arn:${AWS::Partition}:codebuild:${AWS::Region}:${AWS::AccountId}:project/${AWS::StackName}-runner") } } }] }, Policies: [{ PolicyName: "ProvisionOpenWork", PolicyDocument: policy }] } },

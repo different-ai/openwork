@@ -69,12 +69,15 @@ owner explicitly selects them. GCP keeps its existing profile.
 - **Slack assistant**: replies run on that runner. The customer still creates
   the Slack app in the installed Den's connector settings and authorizes it in
   the intended Slack workspace; this option does not do that setup.
-- **Freestyle computers**: optional tools used from runner conversations.
-  **They execute in Freestyle's cloud, outside the customer's AWS account.**
-  Review that boundary before enabling them. Other direct-module backends and
-  an external runner URL are not offered by this installer profile.
+- **Cloud computers (optional)**: keep these **Off** unless a conversation needs
+  a sandbox. Daytona is the preferred provider; Freestyle is also available.
+  They are not required for installation, Workbot, Slack or headless Automations.
+  Daytona requires a chosen computer snapshot. **Daytona computers execute in
+  Daytona's cloud, and Freestyle computers execute in Freestyle's cloud, outside
+  the customer's AWS account.** Review that boundary before enabling either.
+  An external runner URL is not offered by this installer profile.
 
-Create the model and optional Freestyle API-key secrets directly in the target
+Create the model and optional Daytona/Freestyle API-key secrets directly in the target
 AWS account/region's Secrets Manager before approval. Supply only the full
 secret ARNs to OpenWork; never paste the key values into the deployment form,
 MCP request, approval command or chat. ECS reads these customer-owned secrets

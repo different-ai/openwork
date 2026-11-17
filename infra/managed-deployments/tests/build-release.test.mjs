@@ -85,6 +85,12 @@ test("default AWS release resolves current image tags without adding GCP invento
     assert.equal(release.provider, "aws");
     assert.deepEqual(release.images, pins);
     assert.ok(release.files["infra/managed-deployments/aws/runner/runner.py"]);
+    for (const healthFile of ["health_agent.py", "assistant_health_agent.py"]) {
+      const path = "infra/managed-deployments/aws/health/" + healthFile;
+      const archived = execFileSync("tar", ["-xOf", join(output, "bundle.tar.gz"), path]);
+      assert.equal(createHash("sha256").update(archived).digest("hex"), release.files[path]);
+      assert.deepEqual(archived, readFileSync(resolve(root, path)));
+    }
     assert.equal(Object.keys(release.files).some((file) => file.includes("/gcp/")), false);
   } finally {
     rmSync(output, { recursive: true, force: true });

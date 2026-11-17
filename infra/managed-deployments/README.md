@@ -146,7 +146,7 @@ Never ship that fixture in production or use administrator ECS mutation as proof
 ## Optional AWS assistants (qualification required)
 
 The managed AWS root can opt into the shared module's single headless runner,
-Workbot at `https://chat.<domain_name>`, Slack assistant and Freestyle computers.
+Workbot at `https://chat.<domain_name>`, Slack assistant and optional cloud computers.
 All are **off by default**. Existing core-only installations and release image
 pairs remain supported. GCP does not receive these options. The hosted creation
 and approved-Update controls additionally require `managedDeploymentAssistants`
@@ -156,17 +156,21 @@ new approvals, not running services or authenticated health reports.
 The installer supports the module-managed runner, not its `external_url` fleet
 mode. Workbot, Slack and computers require that runner. Configure a direct model
 ID, HTTPS endpoint and `anthropic`, `openai` or `openai-responses` protocol. There
-is **no AI Gateway** in this path. Freestyle is the installer's only opt-in
-computer provider in this profile; direct-module Daytona support is unchanged.
-**Freestyle computers execute in Freestyle's cloud, outside the customer's AWS
-account.** Enabling the Slack assistant does not create or configure a Slack app:
+is **no AI Gateway** in this path. Sandbox provisioning is **optional**, not an
+installation dependency: Workbot, Slack replies and Automations can run with
+computer provider `off`. Daytona is the preferred opt-in sandbox provider;
+Freestyle remains available. Daytona additionally requires an explicit computer
+snapshot; its API URL and target can be configured. **Daytona and Freestyle
+computers execute in their provider's cloud, outside the customer's AWS account.**
+Enabling the Slack assistant does not create or configure a Slack app:
 the customer still creates the app in the installed Den's connector settings.
 
 ### Customer-owned key references
 
 Before approval, the customer creates two plain-string Secrets Manager secrets
 in the target account and region: the direct model API key, and (only when using
-Freestyle) the Freestyle API key. Supply their full secret ARNs, never the values.
+a cloud computer) that provider's API key. Supply their full secret ARNs, never
+the values.
 Use AWS's console or a customer-controlled secret provisioning process; never put
 keys in shell history, URLs, Den, CloudFormation parameters or installer logs.
 This profile supports the default Secrets Manager AWS-managed encryption key;

@@ -209,14 +209,17 @@ OAuth/protocol-handler handoff. Screenshots illustrate results, not decide them.
 ## Optional AWS managed assistant qualification
 
 The AWS managed installer may opt into the shared module's runner, Workbot,
-Slack assistant and Freestyle computers. They remain off by default and are not
-part of the core C7 conformance verdict. The managed runner calls its model
+Slack assistant and optional Daytona/Freestyle computers. They remain off by
+default and are not part of the core C7 conformance verdict. Daytona is preferred
+when a sandbox is needed; sandbox provisioning is never a required installation,
+Workbot, Slack or Automation dependency. The managed runner calls its model
 endpoint directly with `anthropic`, `openai` or `openai-responses`; there is no AI
-Gateway on this install path. Freestyle executes outside the customer's AWS
-account, and the customer configures their Slack app in Den connector settings.
+Gateway on this install path. Daytona and Freestyle execute in their providers'
+clouds outside the customer's AWS account, and the customer configures their
+Slack app in Den connector settings.
 
 The installer accepts only customer-owned, same-account/region Secrets Manager
-ARNs for model and Freestyle API keys. ECS injects those values without a Terraform
+ARNs for model and optional Daytona/Freestyle API keys. ECS injects those values without a Terraform
 secret-value data source. This avoids new plaintext key copies in hosted OpenWork
 or Terraform state; it does not erase existing state-backed core/generated runner
 credentials or historical state. Customer-managed KMS keys need separate grants.

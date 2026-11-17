@@ -165,6 +165,7 @@ export function buildRelease(argv = process.argv.slice(2), inspect) {
     ...(provider === "aws" ? [
       "infra/managed-deployments/aws/runner/runner.py",
       "infra/managed-deployments/aws/health/health_agent.py",
+      "infra/managed-deployments/aws/health/assistant_health_agent.py",
        ...files("infra/managed-deployments/aws/terraform", terraform).filter((path) => !path.includes("/examples/") && !path.includes("/tests/") && !path.includes("/modules/openwork-aws-ecs/")),
        ...files("infra/terraform/modules/openwork-aws-ecs", (name) => name.endsWith(".tf") || name === "migration.py")
          .filter((path) => !path.includes("/examples/") && !path.includes("/tests/")),

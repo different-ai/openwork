@@ -70,14 +70,14 @@ test("generated bootstrap matches the generator and fits CloudFormation's inline
   } finally { rmSync(directory, { force: true, recursive: true }); }
 });
 
-test("baseline has no optional storage, backup or runner-secret provisioning grants", () => {
+test("baseline has no optional storage, backup, runner-secret or Workbot-secret provisioning grants", () => {
   const { resources, valid } = resolveTemplate();
   assert.equal(valid, true);
   assert.equal(resources.RunnerSupplementalPolicy, undefined);
   assert.deepEqual(resources.RunnerCoreSupportPolicy.Properties.PolicyDocument.Statement.map((statement) => statement.Sid), ["ExecutionPolicy", "ListLogs", "DeploymentDns", "DnsChanges", "ServiceDiscoveryZone"]);
   assert.deepEqual(resources.RunnerRole.Properties.ManagedPolicyArns, ["RunnerCoreSupportPolicy"]);
   const policyText = JSON.stringify(policies(resources));
-  assert.doesNotMatch(policyText, /elasticfilesystem:|backup:|backup-storage:|runner-backup|secret:ow-[a-f0-9]+-runner-/);
+  assert.doesNotMatch(policyText, /elasticfilesystem:|backup:|backup-storage:|runner-backup|secret:ow-[a-f0-9]+-(?:runner|workbot)-/);
   for (const parameter of ["HeadlessRunnerEnabled", "WorkbotEnabled", "SlackAssistantEnabled"]) {
     assert.equal(template.Parameters[parameter].Default, "false");
     assert.deepEqual(template.Parameters[parameter].AllowedValues, ["true", "false"]);
@@ -89,14 +89,18 @@ test("bootstrap forwards only non-secret model/computer settings and secret refe
     HEADLESS_RUNNER_ENABLED: "HeadlessRunnerEnabled", WORKBOT_ENABLED: "WorkbotEnabled", SLACK_ASSISTANT_ENABLED: "SlackAssistantEnabled",
     HEADLESS_MODEL_PROTOCOL: "HeadlessModelProtocol", HEADLESS_MODEL_BASE_URL: "HeadlessModelBaseUrl", HEADLESS_MODEL: "HeadlessModel",
     HEADLESS_MODEL_SECRET_ARN: "HeadlessModelSecretArn", HEADLESS_COMPUTER_PROVIDER: "HeadlessComputerProvider", HEADLESS_COMPUTER_SECRET_ARN: "HeadlessComputerSecretArn",
+    HEADLESS_COMPUTER_SNAPSHOT: "HeadlessComputerSnapshot", DAYTONA_API_URL: "DaytonaApiUrl", DAYTONA_TARGET: "DaytonaTarget",
   };
   const environment = Object.fromEntries(template.Resources.Runner.Properties.Environment.EnvironmentVariables.map((entry) => [entry.Name, entry.Value]));
   for (const [key, parameter] of Object.entries(expected)) assert.deepEqual(environment[key], { Ref: parameter });
   assert.deepEqual(template.Parameters.HeadlessModelProtocol.AllowedValues, ["anthropic", "openai", "openai-responses"]);
-  assert.deepEqual(template.Parameters.HeadlessComputerProvider.AllowedValues, ["off", "freestyle"]);
+  assert.deepEqual(template.Parameters.HeadlessComputerProvider.AllowedValues, ["off", "daytona", "freestyle"]);
   assert.equal(template.Parameters.HeadlessComputerProvider.Default, "off");
+  assert.equal(template.Parameters.HeadlessComputerSnapshot.Default, "");
+  assert.equal(template.Parameters.DaytonaApiUrl.Default, "https://app.daytona.io/api");
+  assert.equal(template.Parameters.DaytonaTarget.Default, "us");
   assert.doesNotMatch(Object.keys(template.Parameters).join(","), /ApiKey|Password|Token/);
-  assert.doesNotMatch(Object.keys(environment).join(","), /HEADLESS_MODEL_API_KEY|FREESTYLE_API_KEY/);
+  assert.doesNotMatch(Object.keys(environment).join(","), /HEADLESS_MODEL_API_KEY|FREESTYLE_API_KEY|DAYTONA_API_KEY/);
   for (const key of ["HeadlessModelSecretArn", "HeadlessComputerSecretArn"]) {
     const pattern = new RegExp(`^(?:${template.Parameters[key].AllowedPattern})$`);
     assert.ok(pattern.test(enabled.HeadlessModelSecretArn));
@@ -114,6 +118,36 @@ test("assistant dependencies and model/computer secret requirements fail before 
     { ...enabled, HeadlessComputerProvider: "freestyle" },
   ]) assert.equal(resolveTemplate(overrides).valid, false);
   assert.equal(resolveTemplate({ ...enabled, HeadlessComputerProvider: "freestyle", HeadlessComputerSecretArn: enabled.HeadlessModelSecretArn }).valid, true);
+});
+
+test("Daytona is optional and requires a provider key plus snapshot only when selected", () => {
+  assert.equal(resolveTemplate().valid, true);
+  assert.equal(resolveTemplate(enabled).valid, true);
+  const daytona = { ...enabled, HeadlessComputerProvider: "daytona", HeadlessComputerSnapshot: "computer-fixture", HeadlessComputerSecretArn: enabled.HeadlessModelSecretArn };
+  assert.equal(resolveTemplate(daytona).valid, true);
+  for (const overrides of [
+    { ...daytona, HeadlessRunnerEnabled: "false" },
+    { ...daytona, HeadlessComputerSecretArn: "" },
+    { ...daytona, HeadlessComputerSnapshot: "" },
+  ]) assert.equal(resolveTemplate(overrides).valid, false);
+  assert.equal(resolveTemplate({ ...daytona, HeadlessComputerProvider: "freestyle", HeadlessComputerSnapshot: "" }).valid, true);
+  assert.equal(resolveTemplate({ ...daytona, HeadlessComputerProvider: "off", HeadlessComputerSnapshot: "", HeadlessComputerSecretArn: "" }).valid, true);
+  const baselinePolicies = policies(resolveTemplate(enabled).resources);
+  assert.deepEqual(policies(resolveTemplate(daytona).resources), baselinePolicies);
+  assert.deepEqual(policies(resolveTemplate({ ...daytona, HeadlessComputerProvider: "freestyle" }).resources), baselinePolicies);
+  // The installer passes only settings/references. Remote computer SDKs and
+  // provider key injection belong to the runner service, not CodeBuild.
+  assert.doesNotMatch(template.Resources.Runner.Properties.Source.BuildSpec, /daytona|freestyle/i);
+});
+
+test("Daytona API URL accepts HTTPS endpoints without credentials, query secrets or fragments", () => {
+  const pattern = new RegExp(`^(?:${template.Parameters.DaytonaApiUrl.AllowedPattern})$`);
+  for (const url of ["https://app.daytona.io/api", "https://sandbox.example.com:8443/api/v1"]) assert.ok(pattern.test(url));
+  for (const url of ["http://app.daytona.io/api", "https://key@app.daytona.io/api", "https://user:password@app.daytona.io/api", "https://app.daytona.io/api?key=secret", "https://app.daytona.io/api#secret", "https://app.daytona.io/ api", ""]) assert.equal(pattern.test(url), false);
+  const module = readFileSync(new URL("../../terraform/modules/openwork-aws-ecs/variables.tf", import.meta.url), "utf8");
+  assert.match(module, /api_url\s*=\s*optional\(string, "https:\/\/app\.daytona\.io\/api"\)/);
+  assert.match(module, /variable "headless_computer"\s*\{[\s\S]*?provider\s*=\s*optional\(string, "off"\)/);
+  assert.match(module, /variable "headless_computer"\s*\{[\s\S]*?snapshot\s*=\s*optional\(string, ""\)/);
 });
 
 test("optional grants scope EFS creation, owned mount/access-point updates, backups and secret access", () => {
@@ -136,7 +170,7 @@ test("optional grants scope EFS creation, owned mount/access-point updates, back
   assert.equal(bySid.RunnerBackupRole.Resource, `arn:aws:iam::123456789012:role/${name}-runner-backup`);
   assert.equal(bySid.PassRunnerBackupRole.Resource, bySid.RunnerBackupRole.Resource);
   assert.deepEqual(bySid.PassRunnerBackupRole.Condition, { StringEquals: { "iam:PassedToService": "backup.amazonaws.com" } });
-  assert.equal(bySid.RunnerSecrets.Resource, `arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:${name}-runner-*`);
+  assert.equal(bySid.RunnerSecrets, undefined);
   for (const statement of statements) {
     assert.equal(actions(statement).some((action) => /:(Delete|Terminate|Remove|Detach|Restore)/.test(action)), false, statement.Sid);
     assert.equal(actions(statement).some((action) => action.endsWith(":*")), false, statement.Sid);
@@ -155,6 +189,24 @@ test("optional grants scope EFS creation, owned mount/access-point updates, back
       assert.doesNotMatch(JSON.stringify(statement.Resource), /model-key|HeadlessModelSecretArn|HeadlessComputerSecretArn/);
     }
     if (statement.Effect === "Allow" && actions(statement).includes("ecs:DeregisterTaskDefinition")) assert.notEqual(statement.Resource, "*");
+  }
+});
+
+test("installer secret access is exactly app-only by default or the three deployment-owned prefixes when enabled", () => {
+  const expectedActions = ["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:UpdateSecret", "secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue", "secretsmanager:ListSecretVersionIds", "secretsmanager:GetResourcePolicy", "secretsmanager:TagResource"];
+  for (const runnerEnabled of [false, true]) {
+    const { resources } = resolveTemplate({ ...(runnerEnabled ? enabled : {}),
+      HeadlessModelSecretArn: "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:external-model-abcdef",
+      HeadlessComputerSecretArn: "arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:external-computer-abcdef",
+    });
+    const grants = policies(resources).flatMap((policy) => policy.Statement).filter((statement) => statement.Effect === "Allow"
+      && actions(statement).some((action) => action.startsWith("secretsmanager:")));
+    assert.equal(grants.length, 1, "Owned secret grants share one action inventory, without duplicate statements");
+    assert.equal(grants[0].Sid, "AppSecrets");
+    assert.deepEqual(actions(grants[0]), expectedActions);
+    assert.deepEqual([grants[0].Resource].flat(), (runnerEnabled ? ["den", "runner", "workbot"] : ["den"])
+      .map((prefix) => `arn:aws:secretsmanager:ap-southeast-2:123456789012:secret:${name}-${prefix}-*`));
+    assert.doesNotMatch(JSON.stringify(grants), /external-model|external-computer|HeadlessModelSecretArn|HeadlessComputerSecretArn/);
   }
 });
 

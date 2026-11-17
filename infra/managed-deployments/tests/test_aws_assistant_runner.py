@@ -47,7 +47,7 @@ class AssistantInputTests(unittest.TestCase):
         for overrides in [
             {"HEADLESS_RUNNER_ENABLED": "false"}, {"HEADLESS_RUNNER_ENABLED": "yes"},
             {"WORKBOT_ENABLED": "1"}, {"SLACK_ASSISTANT_ENABLED": "enabled"},
-            {"HEADLESS_COMPUTER_PROVIDER": "daytona"},
+            {"HEADLESS_COMPUTER_PROVIDER": "unsupported"},
         ]:
             with self.subTest(overrides=overrides), patch.dict(os.environ, {**self.ENV, **overrides}, clear=True):
                 with self.assertRaises(ValueError):
@@ -71,6 +71,23 @@ class AssistantInputTests(unittest.TestCase):
             with self.subTest(fields=list(overrides)), patch.dict(os.environ, {**self.ENV, **overrides}, clear=True):
                 with self.assertRaises(ValueError):
                     runner.assistant_inputs()
+
+    def test_sandboxes_are_optional_and_daytona_uses_only_a_key_reference(self):
+        with patch.dict(os.environ, {**self.ENV, "HEADLESS_COMPUTER_PROVIDER": "off", "HEADLESS_COMPUTER_SECRET_ARN": ""}, clear=True):
+            self.assertEqual(runner.assistant_inputs()["headless_computer"], {"provider": "off"})
+        daytona = {**self.ENV, "HEADLESS_COMPUTER_PROVIDER": "daytona", "HEADLESS_COMPUTER_SNAPSHOT": "test-computer"}
+        with patch.dict(os.environ, daytona, clear=True), patch.object(runner, "aws") as aws:
+            values = runner.assistant_inputs()
+        self.assertEqual(values["headless_computer"], {"provider": "daytona", "snapshot": "test-computer"})
+        self.assertEqual(values["daytona"], {"api_url": "https://app.daytona.io/api", "target": "us"})
+        self.assertEqual(values["headless_computer_secret_arn"], self.ENV["HEADLESS_COMPUTER_SECRET_ARN"])
+        self.assertNotIn("daytona_api_key", values)
+        aws.assert_not_called()
+        for overrides in [{"HEADLESS_COMPUTER_SNAPSHOT": ""}, {"HEADLESS_COMPUTER_SECRET_ARN": ""},
+                          {"DAYTONA_API_URL": "https://key@api.example.test"}, {"DAYTONA_API_URL": "http://api.example.test"},
+                          {"DAYTONA_TARGET": "invalid\n"}]:
+            with self.subTest(fields=list(overrides)), patch.dict(os.environ, {**daytona, **overrides}, clear=True), self.assertRaises(ValueError):
+                runner.assistant_inputs()
 
     def test_runner_rejects_duplicate_mount_target_zones_before_apply(self):
         inputs = {"network_mode": "existing", "vpc_id": "vpc-test", "service_subnet_ids": ["private-a", "private-b"],

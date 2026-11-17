@@ -108,7 +108,7 @@ def assistant_inputs():
     workbot = boolean_input("WORKBOT_ENABLED")
     slack = boolean_input("SLACK_ASSISTANT_ENABLED")
     provider = os.environ.get("HEADLESS_COMPUTER_PROVIDER", "off")
-    if provider not in ("off", "freestyle"):
+    if provider not in ("off", "daytona", "freestyle"):
         raise ValueError("unsupported managed computer provider")
     if not enabled:
         if workbot or slack or provider != "off":
@@ -125,14 +125,29 @@ def assistant_inputs():
     model = os.environ.get("HEADLESS_MODEL", "")
     if not model or len(model) > 200 or any(ord(c) < 32 for c in model):
         raise ValueError("a direct model id is required")
-    return {
+    values = {
         "headless_runner": {"enabled": True, "model_protocol": protocol, "model_base_url": base_url, "model": model},
         "workbot": {"enabled": workbot},
         "slack_assistant_enabled": slack,
         "headless_computer": {"provider": provider},
         "headless_model_secret_arn": customer_secret_arn("HEADLESS_MODEL_SECRET_ARN", required=True),
-        "headless_computer_secret_arn": customer_secret_arn("HEADLESS_COMPUTER_SECRET_ARN", required=provider == "freestyle"),
+        "headless_computer_secret_arn": customer_secret_arn("HEADLESS_COMPUTER_SECRET_ARN", required=provider != "off"),
     }
+    if provider == "daytona":
+        snapshot = os.environ.get("HEADLESS_COMPUTER_SNAPSHOT", "")
+        if not snapshot or len(snapshot) > 512 or any(ord(c) < 32 for c in snapshot):
+            raise ValueError("Daytona computers require a snapshot")
+        api_url = os.environ.get("DAYTONA_API_URL", "https://app.daytona.io/api")
+        parsed_api = urlsplit(api_url)
+        if (parsed_api.scheme != "https" or not parsed_api.hostname or parsed_api.username is not None
+                or parsed_api.password is not None or parsed_api.query or parsed_api.fragment):
+            raise ValueError("the Daytona API endpoint must use HTTPS without credentials or a query")
+        target = os.environ.get("DAYTONA_TARGET", "us")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", target):
+            raise ValueError("invalid Daytona target")
+        values["headless_computer"]["snapshot"] = snapshot
+        values["daytona"] = {"api_url": api_url, "target": target}
+    return values
 
 
 AWS_IMAGE_REPOSITORIES = {
