@@ -10,6 +10,7 @@ const healthySettings = {
   expectedCelldVersion: "v0.6.3",
   builtCelldVersion: "v0.6.3",
   env: { CELLD_DURABILITY: "bucket", CELLD_TTL_MS: "60000", CELLD_IDLE_EVICT_S: "900", CELLD_LTX_RETENTION_SECS: "259200" },
+  healthCheckSupported: true,
   healthCheckPath: "/.well-known/celld/health",
   shutdownGraceSeconds: 90,
 }
@@ -64,12 +65,16 @@ test("settings that drifted from the runner's operations notes are warnings", ()
     expectedCelldVersion: "v0.6.3",
     builtCelldVersion: builtCelldVersion("mkdir -p bin && curl -fsSL https://github.com/denoland/celld/releases/download/v0.6.2/celld-x86_64-unknown-linux-gnu.gz | gunzip > bin/celld"),
     env: { CELLD_DURABILITY: "bucket", CELLD_TTL_MS: "30000", CELLD_IDLE_EVICT_S: "900", CELLD_LTX_RETENTION_SECS: "259200", CELLD_SHUTDOWN_TOTAL_MS: "60000" },
+    // A Render private service has no HTTP health check to set.
+    healthCheckSupported: false,
     healthCheckPath: null,
     shutdownGraceSeconds: 90,
   }
   const result = assessFleet({ instances: [node("a", 500), node("b", 400)], memoryLimitBytes: LIMIT, settings })
   assert.equal(result.level, "warn")
-  assert.deepEqual(codes(result), ["celld_version", "setting_ttl", "setting_health_path"])
+  assert.deepEqual(codes(result), ["celld_version", "setting_ttl"])
+  // A host that does have one is told when it is not set.
+  assert.deepEqual(codes(assessFleet({ instances: [node("a", 500), node("b", 400)], memoryLimitBytes: LIMIT, settings: { ...healthySettings, healthCheckPath: null } })), ["setting_health_path"])
   assert.match(result.findings[0].text, /built from celld v0\.6\.2; the repo deploys with v0\.6\.3/)
   assert.deepEqual(codes(assessFleet({ instances: [node("a", 500), node("b", 400)], memoryLimitBytes: LIMIT, settings: { ...healthySettings, env: {}, shutdownGraceSeconds: 30 } })), ["setting_durability", "setting_ttl", "setting_idle_evict", "setting_retention", "setting_shutdown_grace"])
 })
