@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { assessFleet, builtCelldVersion, highestPerInstance, liveLeases, renderSummary, slackText } from "./celld-fleet-health.mjs"
+import { assessFleet, builtCelldVersion, highestPerInstance, liveLeases, publicSummary, renderSummary, slackText, slackWarningsText } from "./celld-fleet-health.mjs"
 
 const MB = 1024 * 1024
 const LIMIT = 4096 * MB
@@ -25,6 +25,12 @@ test("one full node alerts while the fleet average looks fine", () => {
   assert.match(slackText(result, "https://example.test/run"), /xkcfv[\s\S]*100\+ requests were refused/)
   assert.doesNotMatch(slackText(result, null), /lost lease/)
   assert.match(renderSummary(result, { instances, memoryLimitBytes: LIMIT }), /\| xkcfv \| 3,540 \| 86% \|/)
+  // The public run log says how many findings there are and nothing a finding names.
+  const shown = publicSummary(result)
+  assert.match(shown, /^Runner fleet check: \d+ alerts?(, \d+ warnings?)?\./)
+  assert.doesNotMatch(shown, /xkcfv|3,540|86%|refused|lease|CELLD_/)
+  assert.match(slackWarningsText(result), /lost lease/)
+  assert.equal(publicSummary({ level: "ok", findings: [] }), "Runner fleet check: healthy.")
 })
 
 test("a node is flagged before it closes", () => {
