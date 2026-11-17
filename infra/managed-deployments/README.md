@@ -220,6 +220,15 @@ replacement runner is ready. Plan a maintenance window, stop sending new turns
 and let known active runs finish before approving an update. The installer does
 not force an additional runner restart during the core Den strict-TLS redeploy.
 
+Runner, Workbot and AI Gateway task definitions use retained revisions, like the
+core services. Legacy task-definition addresses are declaratively forgotten with
+`destroy=false`, then adopted at versioned addresses with `skip_destroy=true`.
+Merely changing `skip_destroy` during a replacement does not protect an old
+false-valued state. Physical families, service addresses and data identities are
+unchanged. No wildcard task-definition deregistration permission is added.
+Retained revisions must be inventoried and explicitly cleaned up when the
+installation is decommissioned; they are not proof of an active running task.
+
 Enabling Workbot expands the ACM certificate with `chat.<domain_name>`; the
 Gateway profile also adds `models.<domain_name>`. The module validates the replacement certificate before
 switching the HTTPS listener, then retires the old certificate. An already-issued
@@ -287,7 +296,8 @@ production release coordinates. The overall application qualification **failed**
 | Further forced runner/core Update and post-Update behaviours | NotRun |
 | Scheduled daily backup occurrence | Passed: the actual configured daily plan completed an encrypted recovery point using its configured role |
 | Restore | NotRun |
-| Gateway-profile approved Update and model checks | NotRun |
+| Gateway-profile `.74` approved Update | Failed: replacing the old runner task definition attempted deregistration that scoped installer IAM deliberately does not authorize |
+| Gateway-profile model checks | NotRun: partial service creation is not a successful approved Update |
 
 These failures belong to the earlier legacy/direct configuration. The chosen
 architecture is now the included Gateway profile, reusing existing runtime

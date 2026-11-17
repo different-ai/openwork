@@ -174,8 +174,15 @@ resource "aws_cloudwatch_log_group" "runner" {
   tags              = var.tags
 }
 
-resource "aws_ecs_task_definition" "runner" {
-  count = local.runner_count
+# Legacy state may contain skip_destroy=false; forget it without provider Delete.
+removed {
+  from = aws_ecs_task_definition.runner
+  lifecycle { destroy = false }
+}
+
+resource "aws_ecs_task_definition" "runner_v1" {
+  count        = local.runner_count
+  skip_destroy = true
 
   family                   = "${var.name}-headless-runner"
   requires_compatibilities = ["FARGATE"]
@@ -264,7 +271,7 @@ resource "aws_ecs_service" "runner" {
 
   name                  = "${var.service_name_prefix}headless-runner"
   cluster               = local.cluster_arn
-  task_definition       = aws_ecs_task_definition.runner[0].arn
+  task_definition       = aws_ecs_task_definition.runner_v1[0].arn
   desired_count         = 1
   launch_type           = "FARGATE"
   wait_for_steady_state = var.wait_for_steady_state
@@ -361,8 +368,14 @@ resource "aws_vpc_security_group_ingress_rule" "tasks_from_alb_workbot" {
   referenced_security_group_id = local.alb_security_group_id
 }
 
-resource "aws_ecs_task_definition" "workbot" {
-  count = local.workbot_count
+removed {
+  from = aws_ecs_task_definition.workbot
+  lifecycle { destroy = false }
+}
+
+resource "aws_ecs_task_definition" "workbot_v1" {
+  count        = local.workbot_count
+  skip_destroy = true
 
   family                   = "${var.name}-workbot"
   requires_compatibilities = ["FARGATE"]
@@ -414,7 +427,7 @@ resource "aws_ecs_service" "workbot" {
 
   name                  = "${var.service_name_prefix}workbot"
   cluster               = local.cluster_arn
-  task_definition       = aws_ecs_task_definition.workbot[0].arn
+  task_definition       = aws_ecs_task_definition.workbot_v1[0].arn
   desired_count         = var.workbot.desired_count
   launch_type           = "FARGATE"
   wait_for_steady_state = var.wait_for_steady_state

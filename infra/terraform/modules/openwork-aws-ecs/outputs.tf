@@ -117,9 +117,9 @@ output "task_definition_arns" {
   description = "Intended service revisions, for completed rollout verification. Only den_api and den_web participate in the database TLS redeployment fence."
   value = merge(
     { den_api = aws_ecs_task_definition.api_v1.arn, den_web = aws_ecs_task_definition.web_v1.arn },
-    local.runner_count > 0 ? { headless_runner = aws_ecs_task_definition.runner[0].arn } : {},
-    local.workbot_count > 0 ? { workbot = aws_ecs_task_definition.workbot[0].arn } : {},
-    var.ai_gateway_enabled ? { ai_gateway = aws_ecs_task_definition.ai_gateway[0].arn } : {},
+    local.runner_count > 0 ? { headless_runner = aws_ecs_task_definition.runner_v1[0].arn } : {},
+    local.workbot_count > 0 ? { workbot = aws_ecs_task_definition.workbot_v1[0].arn } : {},
+    var.ai_gateway_enabled ? { ai_gateway = aws_ecs_task_definition.ai_gateway_v1[0].arn } : {},
   )
 }
 

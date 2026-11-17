@@ -143,17 +143,22 @@ application qualification **failed**:
 | Further forced runner/core Update and post-Update behaviours | NotRun |
 | Scheduled daily backup occurrence | Passed: the actual configured daily plan completed an encrypted recovery point using its configured role |
 | Restore | NotRun |
-| Gateway-profile approved Update and model checks | NotRun |
+| Gateway-profile `.74` approved Update | Failed: Terraform attempted to deregister the old runner task definition; scoped IAM correctly refused wildcard deregistration |
+| Gateway-profile model checks | NotRun: the failed apply left the runner on its prior revision |
 
 ![Actual historical managed Workbot model-access failure, not a successful chat](./live-model-blocked.png)
 
 These failures belong to the earlier legacy/direct configuration. The proposed
 direct-model runtime change was **cancelled before implementation**: no runtime
 PR or application images were created. The chosen architecture is now the
-included Gateway profile, reusing existing runtime policy unchanged. Its approved
-Update and real model checks are **NotRun** until the main installer owners
-complete and record them. Process/HTTPS/backup health is not inference evidence;
-the historical failures are not overwritten by the local proof below.
+included Gateway profile, reusing existing runtime policy unchanged. Its first approved `.74` Update **failed** at old runner task-definition
+retirement, despite all five services being present and Gateway HTTPS returning
+200. Core-secret fingerprints remained unchanged; the certificate cutover had
+zero failures across 139 core HTTPS samples. The runner was still on its prior
+revision, so this is not a successful rollout or inference proof. Recovery must
+retain old definitions declaratively rather than add wildcard deregistration
+permission. New model checks remain **NotRun**; neither these failures nor the
+historical ones are overwritten by local UI proof.
 
 ## Local UI proof and qualification boundary
 

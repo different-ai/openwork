@@ -162,7 +162,10 @@ certificate. The deployment reads **Operational**, **Degraded** (warnings or a
 non-critical failure), **Down** (API, web, database connection or services
 failing) or **Not reporting** (no report for 16 minutes; the last known checks
 stay visible). Reports are authenticated by the agent's AWS role identity and
-bound to the exact report body; replays are rejected.
+bound to the exact report body; replays are rejected. The existing 30-per-hour
+burst limit uses fixed windows so normal five-minute reports do not accumulate
+into a later lockout. Existing counters expire normally; deployment does not
+clear them or bypass throttling.
 
 ## Updates and recovery (approval required)
 

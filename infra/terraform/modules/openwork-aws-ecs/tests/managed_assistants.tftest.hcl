@@ -93,13 +93,13 @@ run "runner_without_workbot" {
   }
   assert {
     condition = alltrue([
-      contains(jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].secrets, { name = "HEADLESS_MODEL_API_KEY", valueFrom = var.headless_model_secret_arn }),
-      contains(jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].secrets, { name = "DAYTONA_API_KEY", valueFrom = var.headless_computer_secret_arn }),
+      contains(jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].secrets, { name = "HEADLESS_MODEL_API_KEY", valueFrom = var.headless_model_secret_arn }),
+      contains(jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].secrets, { name = "DAYTONA_API_KEY", valueFrom = var.headless_computer_secret_arn }),
       !strcontains(aws_ecs_task_definition.api_v1.container_definitions, var.headless_model_secret_arn),
       !strcontains(aws_ecs_task_definition.web_v1.container_definitions, var.headless_computer_secret_arn),
-      contains(jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment, { name = "DAYTONA_API_URL", value = var.daytona.api_url }),
-      contains(jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment, { name = "DAYTONA_TARGET", value = var.daytona.target }),
-      contains(jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment, { name = "HEADLESS_COMPUTER_SNAPSHOT", value = var.headless_computer.snapshot }),
+      contains(jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].environment, { name = "DAYTONA_API_URL", value = var.daytona.api_url }),
+      contains(jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].environment, { name = "DAYTONA_TARGET", value = var.daytona.target }),
+      contains(jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].environment, { name = "HEADLESS_COMPUTER_SNAPSHOT", value = var.headless_computer.snapshot }),
     ])
     error_message = "Only the runner receives direct external secret references."
   }
@@ -193,19 +193,19 @@ run "gateway_runtime_uses_five_native_services_without_global_model_key" {
       toset(keys(output.log_groups)) == toset(["den_api", "den_web", "ai_gateway", "headless_runner", "workbot"]),
       toset(keys(output.target_group_arns)) == toset(["den_api", "den_web", "ai_gateway", "workbot"]),
       aws_ecs_service.ai_gateway[0].desired_count == 1 && aws_ecs_service.runner[0].desired_count == 1 && aws_ecs_service.workbot[0].desired_count == 1,
-      aws_ecs_task_definition.ai_gateway[0].cpu == "1024" && aws_ecs_task_definition.ai_gateway[0].memory == "2048",
+      aws_ecs_task_definition.ai_gateway_v1[0].cpu == "1024" && aws_ecs_task_definition.ai_gateway_v1[0].memory == "2048",
     ])
     error_message = "Gateway runtime verification must include all five intended native services and the Gateway's measured resource floor."
   }
   assert {
     condition = alltrue([
-      toset([for secret in jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].secrets : secret.name]) == toset(["HEADLESS_API_TOKEN"]),
+      toset([for secret in jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].secrets : secret.name]) == toset(["HEADLESS_API_TOKEN"]),
       toset(keys(local.runner_secret_values)) == toset(["HEADLESS_API_TOKEN"]),
       length(local.runner_external_secrets) == 0,
-      contains(jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment, { name = "HEADLESS_MODEL_BASE_URL", value = "https://models.openwork.example.com" }),
-      contains(jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment, { name = "HEADLESS_MODEL", value = "openai/gpt-6-luna" }),
+      contains(jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].environment, { name = "HEADLESS_MODEL_BASE_URL", value = "https://models.openwork.example.com" }),
+      contains(jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].environment, { name = "HEADLESS_MODEL", value = "openai/gpt-6-luna" }),
       var.headless_computer.provider == "off" && var.headless_computer.snapshot == "",
-      toset([for secret in jsondecode(aws_ecs_task_definition.ai_gateway[0].container_definitions)[0].secrets : secret.name]) == toset(["DATABASE_URL", "DEN_DB_ENCRYPTION_KEY"]),
+      toset([for secret in jsondecode(aws_ecs_task_definition.ai_gateway_v1[0].container_definitions)[0].secrets : secret.name]) == toset(["DATABASE_URL", "DEN_DB_ENCRYPTION_KEY"]),
     ])
     error_message = "Member-scoped Gateway turns need no shared upstream model credential, and computers off needs no key or snapshot."
   }
@@ -235,7 +235,7 @@ run "gateway_runtime_daytona_receives_only_computer_credential" {
     slack_assistant_enabled   = true
   }
   assert {
-    condition     = toset([for secret in jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].secrets : secret.name]) == toset(["HEADLESS_API_TOKEN", "DAYTONA_API_KEY"]) && length(output.service_names) == 5
+    condition     = toset([for secret in jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].secrets : secret.name]) == toset(["HEADLESS_API_TOKEN", "DAYTONA_API_KEY"]) && length(output.service_names) == 5
     error_message = "Optional Daytona injects its computer credential, never a model key or another service."
   }
 }
@@ -253,7 +253,7 @@ run "gateway_runtime_freestyle_receives_only_computer_credential" {
     slack_assistant_enabled   = true
   }
   assert {
-    condition     = toset([for secret in jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].secrets : secret.name]) == toset(["HEADLESS_API_TOKEN", "FREESTYLE_API_KEY"]) && var.headless_computer.snapshot == "" && length(output.service_names) == 5
+    condition     = toset([for secret in jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].secrets : secret.name]) == toset(["HEADLESS_API_TOKEN", "FREESTYLE_API_KEY"]) && var.headless_computer.snapshot == "" && length(output.service_names) == 5
     error_message = "Optional Freestyle injects only its computer credential and needs no Daytona snapshot."
   }
 }

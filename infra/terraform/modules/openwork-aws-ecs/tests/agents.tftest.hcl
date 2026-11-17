@@ -129,15 +129,15 @@ run "runner_workbot_and_slack" {
   }
   assert {
     condition = alltrue([
-      contains([for e in jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment : "${e.name}=${e.value}"], "HEADLESS_MCP_URL=https://api.openwork.example.com/mcp/agent"),
-      contains([for e in jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].secrets : e.name], "HEADLESS_MODEL_API_KEY"),
-      contains([for e in jsondecode(aws_ecs_task_definition.workbot[0].container_definitions)[0].environment : "${e.name}=${e.value}"], "WORKBOT_RUNNER_URL=http://headless-runner:8795"),
+      contains([for e in jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].environment : "${e.name}=${e.value}"], "HEADLESS_MCP_URL=https://api.openwork.example.com/mcp/agent"),
+      contains([for e in jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].secrets : e.name], "HEADLESS_MODEL_API_KEY"),
+      contains([for e in jsondecode(aws_ecs_task_definition.workbot_v1[0].container_definitions)[0].environment : "${e.name}=${e.value}"], "WORKBOT_RUNNER_URL=http://headless-runner:8795"),
     ])
     error_message = "The runner reaches Den's public MCP endpoint with its model key; Workbot reaches the runner."
   }
   assert {
-    condition     = length(aws_efs_mount_target.agents) == 2 && aws_ecs_service.runner[0].deployment_maximum_percent == 100
-    error_message = "One EFS mount target per service subnet, and never two runner tasks on one database."
+    condition     = length(aws_efs_mount_target.agents) == 2 && aws_ecs_service.runner[0].deployment_maximum_percent == 100 && aws_ecs_task_definition.runner_v1[0].skip_destroy && aws_ecs_task_definition.workbot_v1[0].skip_destroy
+    error_message = "Retain runner/Workbot revisions, with one EFS mount target per subnet and never two runner tasks on one database."
   }
   assert {
     condition     = output.workbot_url == "https://chat.openwork.example.com" && contains(keys(aws_route53_record.this), "chat.openwork.example.com")
@@ -145,9 +145,9 @@ run "runner_workbot_and_slack" {
   }
   assert {
     condition = alltrue([
-      length(aws_ecs_task_definition.workbot[0].volume) == 0,
-      !contains([for e in jsondecode(aws_ecs_task_definition.workbot[0].container_definitions)[0].environment : e.name], "WORKBOT_DB_PATH"),
-      !contains(keys(jsondecode(aws_ecs_task_definition.workbot[0].container_definitions)[0]), "mountPoints"),
+      length(aws_ecs_task_definition.workbot_v1[0].volume) == 0,
+      !contains([for e in jsondecode(aws_ecs_task_definition.workbot_v1[0].container_definitions)[0].environment : e.name], "WORKBOT_DB_PATH"),
+      !contains(keys(jsondecode(aws_ecs_task_definition.workbot_v1[0].container_definitions)[0]), "mountPoints"),
       aws_ecs_service.workbot[0].desired_count == 2,
       aws_ecs_service.workbot[0].deployment_minimum_healthy_percent == 100,
       aws_ecs_service.workbot[0].deployment_maximum_percent == 200,
@@ -182,10 +182,10 @@ run "runner_without_slack_keeps_automations_and_model" {
   assert {
     condition = alltrue([
       var.headless_computer.provider == "off",
-      contains(jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment, { name = "HEADLESS_MODEL_PROTOCOL", value = "openai-responses" }),
-      contains(jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment, { name = "HEADLESS_MODEL_BASE_URL", value = "https://models.example.test/v1" }),
-      contains(jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment, { name = "HEADLESS_MODEL", value = "test-model" }),
-      contains([for secret in jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].secrets : secret.name], "HEADLESS_MODEL_API_KEY"),
+      contains(jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].environment, { name = "HEADLESS_MODEL_PROTOCOL", value = "openai-responses" }),
+      contains(jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].environment, { name = "HEADLESS_MODEL_BASE_URL", value = "https://models.example.test/v1" }),
+      contains(jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].environment, { name = "HEADLESS_MODEL", value = "test-model" }),
+      contains([for secret in jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].secrets : secret.name], "HEADLESS_MODEL_API_KEY"),
     ])
     error_message = "Direct model execution and Automations must need neither Slack nor a computer provider."
   }
@@ -245,7 +245,7 @@ run "runner_requires_model" {
     }
   }
 
-  expect_failures = [aws_ecs_task_definition.runner]
+  expect_failures = [aws_ecs_task_definition.runner_v1]
 }
 
 run "daytona_computer_uses_separate_image_and_runner_only_key" {
@@ -258,7 +258,7 @@ run "daytona_computer_uses_separate_image_and_runner_only_key" {
   }
 
   assert {
-    condition     = contains([for e in jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment : "${e.name}=${e.value}"], "HEADLESS_COMPUTER=daytona") && contains([for e in jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment : "${e.name}=${e.value}"], "HEADLESS_COMPUTER_SNAPSHOT=computer-image")
+    condition     = contains([for e in jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].environment : "${e.name}=${e.value}"], "HEADLESS_COMPUTER=daytona") && contains([for e in jsondecode(aws_ecs_task_definition.runner_v1[0].container_definitions)[0].environment : "${e.name}=${e.value}"], "HEADLESS_COMPUTER_SNAPSHOT=computer-image")
     error_message = "The runner should use Daytona and the computer snapshot, not the Web snapshot."
   }
   assert {
@@ -274,7 +274,7 @@ run "daytona_computer_requires_snapshot" {
     headless_computer = { provider = "daytona" }
     daytona_api_key   = "test-daytona-key"
   }
-  expect_failures = [aws_ecs_task_definition.runner]
+  expect_failures = [aws_ecs_task_definition.runner_v1]
 }
 
 run "external_cells_have_no_node_runner_or_efs" {
@@ -287,7 +287,7 @@ run "external_cells_have_no_node_runner_or_efs" {
   }
 
   assert {
-    condition     = length(aws_ecs_service.runner) == 0 && length(aws_ecs_task_definition.runner) == 0 && length(aws_efs_file_system.agents) == 0 && length(aws_efs_mount_target.agents) == 0
+    condition     = length(aws_ecs_service.runner) == 0 && length(aws_ecs_task_definition.runner_v1) == 0 && length(aws_efs_file_system.agents) == 0 && length(aws_efs_mount_target.agents) == 0
     error_message = "An external fleet must not provision a Node runner or persistent filesystem."
   }
   assert {
@@ -295,7 +295,7 @@ run "external_cells_have_no_node_runner_or_efs" {
     error_message = "External fleets do not use the module's Service Connect alias."
   }
   assert {
-    condition     = local.environment.DEN_HEADLESS_RUNNER_URL == "https://cells.example.com" && contains([for e in jsondecode(aws_ecs_task_definition.workbot[0].container_definitions)[0].environment : "${e.name}=${e.value}"], "WORKBOT_RUNNER_URL=https://cells.example.com")
+    condition     = local.environment.DEN_HEADLESS_RUNNER_URL == "https://cells.example.com" && contains([for e in jsondecode(aws_ecs_task_definition.workbot_v1[0].container_definitions)[0].environment : "${e.name}=${e.value}"], "WORKBOT_RUNNER_URL=https://cells.example.com")
     error_message = "Both callers must use the external fleet endpoint."
   }
   assert {
@@ -303,7 +303,7 @@ run "external_cells_have_no_node_runner_or_efs" {
     error_message = "Use the existing fleet token, not a new token or unused model credentials."
   }
   assert {
-    condition     = contains([for s in jsondecode(aws_ecs_task_definition.api_v1.container_definitions)[0].secrets : s.name], "DEN_HEADLESS_RUNNER_TOKEN") && contains([for s in jsondecode(aws_ecs_task_definition.workbot[0].container_definitions)[0].secrets : s.name], "WORKBOT_RUNNER_TOKEN") && !contains([for s in jsondecode(aws_ecs_task_definition.web_v1.container_definitions)[0].secrets : s.name], "DEN_HEADLESS_RUNNER_TOKEN")
+    condition     = contains([for s in jsondecode(aws_ecs_task_definition.api_v1.container_definitions)[0].secrets : s.name], "DEN_HEADLESS_RUNNER_TOKEN") && contains([for s in jsondecode(aws_ecs_task_definition.workbot_v1[0].container_definitions)[0].secrets : s.name], "WORKBOT_RUNNER_TOKEN") && !contains([for s in jsondecode(aws_ecs_task_definition.web_v1.container_definitions)[0].secrets : s.name], "DEN_HEADLESS_RUNNER_TOKEN")
     error_message = "The external token belongs to den-api and Workbot only."
   }
 }

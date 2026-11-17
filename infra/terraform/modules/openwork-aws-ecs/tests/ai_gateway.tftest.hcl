@@ -40,7 +40,7 @@ variables {
 run "off_by_default" {
   command = apply # Mock state only: no provisioning, Lambda execution or SQL.
   assert {
-    condition     = length(aws_ecs_task_definition.ai_gateway) == 0 && length(aws_ecs_service.ai_gateway) == 0 && length(aws_lb_target_group.ai_gateway) == 0 && length(aws_lb_listener_rule.ai_gateway) == 0 && length(aws_vpc_security_group_ingress_rule.ai_gateway) == 0 && length(aws_service_discovery_service.ai_gateway) == 0 && output.ai_gateway_url == null
+    condition     = length(aws_ecs_task_definition.ai_gateway_v1) == 0 && length(aws_ecs_service.ai_gateway) == 0 && length(aws_lb_target_group.ai_gateway) == 0 && length(aws_lb_listener_rule.ai_gateway) == 0 && length(aws_vpc_security_group_ingress_rule.ai_gateway) == 0 && length(aws_service_discovery_service.ai_gateway) == 0 && output.ai_gateway_url == null
     error_message = "Default: 0 AI Gateway tasks/services/routes/security rules/discovery; URL null."
   }
   assert {
@@ -55,15 +55,15 @@ run "enable_plan" {
     ai_gateway_domain_name = "models.example.com"
   }
   assert {
-    condition     = length(aws_ecs_service.ai_gateway) == 1 && aws_lb_target_group.ai_gateway[0].port == 8791 && aws_lb_target_group.ai_gateway[0].health_check[0].path == "/health" && aws_lb_listener_rule.ai_gateway[0].listener_arn == aws_lb_listener.https[0].arn && output.ai_gateway_url == "https://models.example.com"
+    condition     = length(aws_ecs_service.ai_gateway) == 1 && aws_ecs_task_definition.ai_gateway_v1[0].skip_destroy && aws_lb_target_group.ai_gateway[0].port == 8791 && aws_lb_target_group.ai_gateway[0].health_check[0].path == "/health" && aws_lb_listener_rule.ai_gateway[0].listener_arn == aws_lb_listener.https[0].arn && output.ai_gateway_url == "https://models.example.com"
     error_message = "Enabled: 0 -> 1 ECS service on 8791, /health, existing HTTPS listener, public models URL."
   }
   assert {
-    condition     = jsondecode(aws_ecs_task_definition.ai_gateway[0].container_definitions)[0].image == var.ai_gateway_image && jsondecode(aws_ecs_task_definition.ai_gateway[0].container_definitions)[0].portMappings[0].containerPort == 8791 && strcontains(jsondecode(aws_ecs_task_definition.ai_gateway[0].container_definitions)[0].command[0], "/app/ee/apps/gateway/dist/server.js")
+    condition     = jsondecode(aws_ecs_task_definition.ai_gateway_v1[0].container_definitions)[0].image == var.ai_gateway_image && jsondecode(aws_ecs_task_definition.ai_gateway_v1[0].container_definitions)[0].portMappings[0].containerPort == 8791 && strcontains(jsondecode(aws_ecs_task_definition.ai_gateway_v1[0].container_definitions)[0].command[0], "/app/ee/apps/gateway/dist/server.js")
     error_message = "Use the published inference image, correct server entrypoint and port, never the Web proxy or migrator."
   }
   assert {
-    condition = alltrue([for container in [jsondecode(aws_ecs_task_definition.api_v1.container_definitions)[0], jsondecode(aws_ecs_task_definition.ai_gateway[0].container_definitions)[0]] : alltrue([for k, v in {
+    condition = alltrue([for container in [jsondecode(aws_ecs_task_definition.api_v1.container_definitions)[0], jsondecode(aws_ecs_task_definition.ai_gateway_v1[0].container_definitions)[0]] : alltrue([for k, v in {
       GATEWAY_ENABLED = "true", GATEWAY_PROXY_BASE_URL = "http://ai-gateway.openwork.internal:8791", GATEWAY_PUBLIC_BASE_URL = "https://models.example.com", INFERENCE_PROXY_BASE_URL = "https://models.example.com", DB_MODE = "mysql", NODE_ENV = "production"
     } : contains([for e in container.environment : "${e.name}=${e.value}"], "${k}=${v}")]) && alltrue([for name in ["DATABASE_URL", "DEN_DB_ENCRYPTION_KEY"] : contains([for e in container.secrets : "${e.name}=${e.valueFrom}"], "${name}=${aws_secretsmanager_secret.app.arn}:${name}::")])])
     error_message = "Den and Gateway share managed env, the existing app database/encryption secret and separate private/public URLs."
