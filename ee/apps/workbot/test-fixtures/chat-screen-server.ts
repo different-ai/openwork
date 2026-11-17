@@ -277,7 +277,7 @@ const vite = await createServer({
         if (url === "/fixture/browser-witness") { json(response, 200, browserRequests); return }
         if (url.startsWith("/v1/workbot")) { void answer(request, response); return }
         if (url === "/" || url.startsWith("/?") || url.startsWith("/documents") || url.startsWith("/devices") || url.startsWith("/browser") || url.startsWith("/computer")) {
-          void server.transformIndexHtml(url, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" /><title>Workbot</title></head><body style="margin:0"><div id="root"></div><script type="module" src="/@fs/${entry}"></script></body></html>`)
+          void server.transformIndexHtml(url, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" /><title>Workbot</title></head><body style="margin:0"><div id="root"></div><script type="module" src="/@fs/${entry}"></script></body></html>`)
             .then((html) => { response.setHeader("Content-Type", "text/html"); response.end(html) })
           return
         }
