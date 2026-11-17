@@ -12,6 +12,7 @@ This folder owns admin-only Den API surfaces.
 - `opportunities.ts`: recent organization adoption, verified non-personal email signals, and active Cloud skill/MCP counts, stored plan, paid status and recorded outreach (`GET /v1/admin/opportunities`)
 - `opportunity-companies.ts`: signups grouped by verified company email domain across organizations, with plan, paid status and recorded outreach (`GET /v1/admin/opportunities/companies`)
 - `runner-fleet.ts`: the cloud runner's celld nodes, read live from each node's own state endpoint (`GET /v1/admin/runner-fleet`, `/history`, `/events`); see "Runner fleet" below
+- `computer-fleet.ts`: the sandboxes cloud conversations use as computers, as their providers report them, read through the headless runner (`GET /v1/admin/computer-fleet`, `/history`); see "Computer fleet" below
 - `feature-usage.ts`: per feature across organizations, whether it is used and working (`GET /v1/admin/feature-usage`, `GET /v1/admin/feature-usage/:key`), and who uses each feature in one organization (`GET /v1/admin/organizations/:organizationId/feature-usage`); see "Feature outcomes" below
 
 ## Current routes
@@ -29,6 +30,8 @@ This folder owns admin-only Den API surfaces.
 - `GET /v1/admin/runner-fleet`: every runner node now (open or closed to new cells, memory, cells in memory and owned, cells waiting for room); `status` is `not_configured` without `DEN_HEADLESS_FLEET_STATE_HOST`
 - `GET /v1/admin/runner-fleet/history?range=24h|7d|30d`: per node, the worst reading in each 10 minutes (24h) or hour (7d, 30d)
 - `GET /v1/admin/runner-fleet/events`: the same reading as a server-sent event stream, every five seconds; ends itself after two and a half minutes, and the page reconnects
+- `GET /v1/admin/computer-fleet`: every computer now (state, gateway pool or direct provider, size, times, what needs a look, whose it is); `status` is `not_configured` without a headless runner or when the runner has no computers
+- `GET /v1/admin/computer-fleet/history?range=24h|7d|30d`: the fleet's highest counts in each 10 minutes (24h) or hour (7d, 30d)
 
 ## Expectations
 
@@ -96,3 +99,23 @@ This area is intentionally small for now, but it is its own folder so future adm
 
 celld's internal listener is its operator API and has no authentication, so it must only be reachable on a private
 network. Payloads are counts, byte sizes and the first 12 characters of cell ids: no conversation content or owners.
+
+## Computer fleet
+
+`/admin › Computer fleet` shows the sandboxes cloud conversations use as computers (`src/computer-fleet/`). Nothing
+in OpenWork keeps a list of them: a conversation's computer is found again by its key at the provider, and only the
+headless runner holds the providers' keys. So the runner lists them (`GET /v1/computers`: the sandbox gateway's
+sandboxes and pools, and the direct provider's machines, whichever it is configured with) and Den reads that with
+the runner credentials it already has. The page needs no setting of its own and Den holds no provider key.
+
+- `state.ts`: one vocabulary of states for every provider, what needs a look (failed in the last day, stuck
+  starting, pausing or stopping, past its expiry), totals and the overall status. A computer's key is `hc-` and a
+  hash of its conversation's session id, which is how it is tied to an organization.
+- `service.ts`: readers within 15 seconds share one read of the runner's list. Organization names come from
+  `headless_session_index` (Workbot conversations) and `remote_device`, read at most every five minutes. A
+  background sampler records the fleet's counts every five minutes into `admin_metric_snapshot` (metric
+  `computer_fleet_history`, one row per UTC hour, 31 days kept) through the `computer_fleet_sampler` lease.
+- `history.ts`: folds readings into 10-minute buckets that keep the highest of each count.
+
+A runner from before `GET /v1/computers` answers 404: the page says the runner is too old, and nothing is recorded.
+Payloads are states, sizes, times, provider sandbox ids and organization names: nothing a computer holds.
