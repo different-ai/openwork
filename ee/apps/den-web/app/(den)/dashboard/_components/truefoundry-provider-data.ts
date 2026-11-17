@@ -91,7 +91,7 @@ export async function syncTrueFoundryProvider(providerId: string, auditContext?:
   return readResult(payload);
 }
 
-export async function updateTrueFoundryProvider(providerId: string, body: { apiKey?: string; createMissingUsers?: boolean }, auditContext?: AuditOperationContext) {
+export async function updateTrueFoundryProvider(providerId: string, body: { apiKey?: string; createMissingUsers?: boolean; modelIds?: string[] | null }, auditContext?: AuditOperationContext) {
   const { response, payload } = await requestJson(`/v1/inference-providers/${encodeURIComponent(providerId)}/truefoundry`, {
     method: "PATCH", body: JSON.stringify(body.apiKey === undefined ? body : { ...body, apiKey: body.apiKey.trim() }), headers: auditOperationHeaders(auditContext),
   }, 120000);
@@ -106,6 +106,27 @@ export function trueFoundrySyncSummary(sync: GatewayTrueFoundrySyncResult) {
   if (attention) parts.push(`${attention} need attention`);
   if (sync.removed) parts.push(`${sync.removed} removed`);
   return `Synced ${parts.join(", ")}.`;
+}
+
+/** `openai-main/gpt-5.5` -> `openai-main`: the TrueFoundry provider account a model is served through. */
+export function trueFoundryModelAccount(modelId: string): string {
+  const slash = modelId.indexOf("/");
+  return slash > 0 ? modelId.slice(0, slash) : "TrueFoundry";
+}
+
+/** Picked models that TrueFoundry still lists, in the order it lists them. */
+export function trueFoundryPickedModels(status: Pick<GatewayTrueFoundryStatus, "availableModels" | "selectedModelIds">): string[] {
+  const picked = new Set(status.selectedModelIds ?? status.availableModels.map((model) => model.id));
+  return status.availableModels.filter((model) => picked.has(model.id)).map((model) => model.id);
+}
+
+/** Whether the admin's draft differs from what is saved. Order does not matter. */
+export function trueFoundryModelPickChanged(status: Pick<GatewayTrueFoundryStatus, "availableModels" | "selectedModelIds">, draft: { allowAll: boolean; modelIds: string[] }): boolean {
+  if (draft.allowAll !== (status.selectedModelIds === null)) return true;
+  if (draft.allowAll) return false;
+  const saved = new Set(trueFoundryPickedModels(status));
+  const next = new Set(draft.modelIds);
+  return saved.size !== next.size || [...next].some((id) => !saved.has(id));
 }
 
 export function trueFoundryStatusSummary(status: Pick<GatewayTrueFoundryStatus, "activeMemberCount" | "modelCount">) {

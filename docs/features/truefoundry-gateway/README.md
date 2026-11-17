@@ -15,6 +15,12 @@ An admin connects their TrueFoundry AI Gateway in **AI Gateway › AI Providers 
 
 The catalog itself comes from `GET <gateway>/models` with the admin key. TrueFoundry lists ids only (`<provider account>/<model>`), so each model is matched to a models.dev model for its name, capabilities and limits (`ee/apps/den-api/src/llm/truefoundry-models.ts`). The search is prioritised: providers the account name points at (`azure-prod` → `azure`, `openai`; `my-claude` → `anthropic`), then the first-party vendors and OpenRouter, then the rest of the catalog. Within a provider: exact id, last path segment, case/punctuation-insensitive, then ignoring a trailing date; an ambiguous match inside a provider is skipped. Prices are never copied. Unmatched models keep their id as name and declare tool calling only. If models.dev can't be read during a sync, each model keeps the facts from the previous sync.
 
+### Choosing models
+
+The provider page has the same **Models** card as other providers: **All TrueFoundry models** (default; new TrueFoundry models arrive at the next sync) or **Only the ones I pick**. Settings keep `upstream` (every chat model the admin key listed at the last sync; providers synced before this have only `catalog`), `selectedModelIds` (the pick, `null` for all) and `catalog` (`upstream` narrowed to the pick, what people are served). Each person's models are already limited to `catalog`, so their groups follow at the same sync. A picked model that leaves TrueFoundry stays in the pick and is served again if it returns; new models are never added to a pick. `PATCH …/{id}/truefoundry` takes `modelIds` (ids from `truefoundry.availableModels`, or `null`) and syncs; unknown ids give `truefoundry_unknown_model`, an empty list `truefoundry_no_models_picked`. The card is the shared `gateway-model-scope-picker.tsx`, also used by the standard provider editor.
+
+![Two TrueFoundry models picked](truefoundry-models.png)
+
 Requests go app → AI Gateway (person's AI Gateway key) → TrueFoundry (`<control plane>/api/llm`, person's token). TrueFoundry's teams, budgets, rate limits and logs apply per person. OpenWork records tokens, not cost, and skips its own usage limits for these requests.
 
 ![Add TrueFoundry](truefoundry-setup.png)
@@ -73,4 +79,5 @@ The `truefoundryGateway` flag shipped off and was retired in 2026-11: TrueFoundr
 - `ee/apps/den-api/test/truefoundry-models.test.ts`: catalog matching order and rules.
 - `ee/apps/den-api/test/api/gateway-truefoundry.api.test.ts`: full flow against a fake tenant that follows TrueFoundry's rules (admin checks, token reuse, missing users, access loss, removal).
 - `ee/apps/den-web/app/(den)/dashboard/_components/truefoundry-provider-data.test.ts`.
+- `evals/proofs/truefoundry-model-selection.proof.test.ts` (world `evals/worlds/gateway-truefoundry-models.ts`, a fake tenant): picking, filtering, saving, syncing and going back to all models, checking what a member is given.
 - Verified manually end to end against a real TrueFoundry tenant: provider creation, token creation, user creation, and streamed and non-streamed chat completions through the AI Gateway.

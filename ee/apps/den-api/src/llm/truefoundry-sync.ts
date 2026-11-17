@@ -38,7 +38,7 @@ import { liteLlmModelSetKey } from "./litellm.js"
 import { getModelsDevCatalogProviders, type ModelsDevProvider } from "./models-dev.js"
 import { ensureGroup, loadProviderForUpdate, memberEligible, SIGN_IN_GROUP_KEY, upsertKeyRow } from "./litellm-sync.js"
 import { TrueFoundryError, createTrueFoundryClient, normalizeTrueFoundryEndpoints, trueFoundryCatalogModels, trueFoundryTokenName, type TrueFoundryClient, type TrueFoundryEndpoints, type TrueFoundryModel } from "./truefoundry.js"
-import { readTrueFoundrySettings, type TrueFoundrySettings } from "./truefoundry-settings.js"
+import { readTrueFoundrySettings, selectTrueFoundryModels, trueFoundryUpstreamModels, type TrueFoundrySettings } from "./truefoundry-settings.js"
 export { readTrueFoundrySettings, trueFoundryCatalogProvider, trueFoundryStatus, type TrueFoundrySettings } from "./truefoundry-settings.js"
 
 type Credential = typeof GatewayProviderCredentialTable.$inferSelect
@@ -75,7 +75,7 @@ export async function trueFoundryCall<T>(run: () => Promise<T>): Promise<T> {
 }
 
 export function emptyTrueFoundrySettings(controlPlaneUrl: string, credentialSetId: string, createMissingUsers: boolean): TrueFoundrySettings {
-  return { version: 1, controlPlaneUrl, credentialSetId, createMissingUsers, catalog: [], groups: {}, lastSyncedAt: null, lastSyncError: null }
+  return { version: 1, controlPlaneUrl, credentialSetId, createMissingUsers, catalog: [], upstream: [], selectedModelIds: null, groups: {}, lastSyncedAt: null, lastSyncError: null }
 }
 
 async function activeSet(database: GatewayTx | typeof db | typeof db.$primary, provider: GatewayProvider, settings: TrueFoundrySettings): Promise<GatewaySet> {
@@ -130,7 +130,7 @@ export async function planTrueFoundrySync(provider: GatewayProvider, client: Tru
   // Primary: syncs run right after the provider or its key was written.
   const set = await activeSet(db.$primary, provider, settings)
   const { credential, key } = await adminKeyRow(db.$primary, set)
-  const catalog = await planTrueFoundryCatalog(client, key, getModelsDevCatalogProviders, settings.catalog)
+  const catalog = await planTrueFoundryCatalog(client, key, getModelsDevCatalogProviders, trueFoundryUpstreamModels(settings))
   return { setId: set.id, adminCredential: { id: credential.id, secret: credential.secret }, catalog }
 }
 
@@ -142,8 +142,9 @@ export async function applyTrueFoundryCatalog(tx: GatewayTx, lockedProvider: Gat
   if (set.id !== plan.setId) throw new GatewayWriteError(409, "truefoundry_credential_set_changed", "The TrueFoundry configuration changed during sync. Sync again.")
   const { credential } = await adminKeyRow(tx, set)
   if (credential.id !== plan.adminCredential.id || credential.secret !== plan.adminCredential.secret) throw new GatewayWriteError(409, "truefoundry_key_changed", "The TrueFoundry key changed during sync. Sync again.")
-  settings.catalog = plan.catalog
-  await writeGatewayModels(tx, provider, plan.catalog)
+  settings.upstream = plan.catalog
+  settings.catalog = selectTrueFoundryModels(plan.catalog, settings.selectedModelIds)
+  await writeGatewayModels(tx, provider, settings.catalog)
   await ensureGroup(tx, provider, settings, SIGN_IN_GROUP_KEY, TRUEFOUNDRY_ACCESS_GROUP_NAME, "Grant this group to the people and teams OpenWork should create TrueFoundry keys for. It holds no models; each person's TrueFoundry access decides their models.", [])
   // Models that left the catalog drop out of every group with their rows; each
   // person's next reconcile moves them to the group matching their new set.
@@ -192,8 +193,22 @@ export async function createTrueFoundryProvider(tx: GatewayTx, provider: Gateway
   return { setId: set.id }
 }
 
-/** Replaces the admin key and/or the missing-users setting. Verify a new key first. Caller holds the provider lock. */
-export async function updateTrueFoundryProvider(tx: GatewayTx, lockedProvider: GatewayProvider, input: { adminKey?: string; createMissingUsers?: boolean }) {
+/**
+ * Checks a model pick against the models TrueFoundry listed at the last sync.
+ * null means every model. Returns the pick without duplicates.
+ */
+export function checkTrueFoundryModelPick(settings: TrueFoundrySettings, modelIds: readonly string[] | null): string[] | null {
+  if (modelIds === null) return null
+  const picked = [...new Set(modelIds)]
+  if (!picked.length) throw new GatewayWriteError(400, "truefoundry_no_models_picked", "Pick at least one model, or choose all TrueFoundry models.")
+  const available = new Set(trueFoundryUpstreamModels(settings).map((model) => model.id))
+  const unknown = picked.filter((id) => !available.has(id))
+  if (unknown.length) throw new GatewayWriteError(400, "truefoundry_unknown_model", `TrueFoundry doesn't list ${unknown.slice(0, 3).join(", ")}${unknown.length > 3 ? ` and ${unknown.length - 3} more` : ""}. Sync, then pick again.`)
+  return picked
+}
+
+/** Replaces the admin key, the missing-users setting and/or the model pick. Verify a new key first. Caller holds the provider lock. */
+export async function updateTrueFoundryProvider(tx: GatewayTx, lockedProvider: GatewayProvider, input: { adminKey?: string; createMissingUsers?: boolean; modelIds?: string[] | null }) {
   const provider = await loadProviderForUpdate(tx, lockedProvider)
   const settings = requireTrueFoundrySettings(provider)
   const set = await activeSet(tx, provider, settings)
@@ -201,7 +216,11 @@ export async function updateTrueFoundryProvider(tx: GatewayTx, lockedProvider: G
     await upsertKeyRow(tx, provider, set, TRUEFOUNDRY_ADMIN_CREDENTIAL_SUBJECT, null, input.adminKey)
     await tx.update(GatewayCredentialSetTable).set({ updated_at: new Date() }).where(eq(GatewayCredentialSetTable.id, set.id))
   }
-  if (input.createMissingUsers !== undefined) await saveSettings(tx, provider, { ...settings, createMissingUsers: input.createMissingUsers })
+  const next = { ...settings }
+  if (input.createMissingUsers !== undefined) next.createMissingUsers = input.createMissingUsers
+  // The served catalog follows at the sync the caller runs next.
+  if (input.modelIds !== undefined) next.selectedModelIds = checkTrueFoundryModelPick(settings, input.modelIds)
+  if (input.createMissingUsers !== undefined || input.modelIds !== undefined) await saveSettings(tx, provider, next)
   Object.assign(lockedProvider, provider)
 }
 

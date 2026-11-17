@@ -295,7 +295,12 @@ export interface GatewayTrueFoundryStatus {
   hasAdminKey: boolean;
   lastSyncedAt: string | null;
   lastSyncError: string | null;
+  /** Models people are served. */
   modelCount: number;
+  /** Every chat model TrueFoundry listed at the last sync, picked or not. */
+  availableModels: Array<{ id: string; name: string }>;
+  /** Models an admin picked, or null when people get every TrueFoundry model. */
+  selectedModelIds: string[] | null;
   /** People with a working token and at least one model. */
   activeMemberCount: number;
   /** TrueFoundry users OpenWork added because they were missing. */

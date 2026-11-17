@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Check, RefreshCw, User } from "lucide-react";
 import { createAuditOperationContext } from "@openwork/types/den/audit";
@@ -18,11 +18,13 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, useOrgInferenceProviders } from "./inference-provider-data";
 import { ProviderRemovalUsageLimits, useProviderRemovalUsageLimits } from "./provider-removal-usage-limits";
 import type { DenInferenceProviderDetails } from "./inference-provider-request";
+import type { GatewayTrueFoundryStatus } from "@openwork/types/den/gateway";
 import { AccessList, addAudience, removeAudience, type AccessValue, type Audience } from "./litellm-provider-screen";
 import { liteLlmSyncedLabel } from "./litellm-provider-data";
+import { GatewayModelScopePicker } from "./gateway-model-scope-picker";
 import {
   CREATE_MISSING_USERS_DESCRIPTION, CREATE_MISSING_USERS_LABEL, TRUEFOUNDRY_DOC_URL, createTrueFoundryProvider, syncTrueFoundryProvider, trueFoundryAccessGroupId,
-  trueFoundryAttentionLabel, trueFoundryCreateError, trueFoundryStatusSummary, trueFoundrySyncSummary, updateTrueFoundryProvider,
+  trueFoundryAttentionLabel, trueFoundryCreateError, trueFoundryModelAccount, trueFoundryModelPickChanged, trueFoundryPickedModels, trueFoundryStatusSummary, trueFoundrySyncSummary, updateTrueFoundryProvider,
 } from "./truefoundry-provider-data";
 
 const CARD = "rounded-[12px] border border-gray-100 bg-white p-4";
@@ -34,6 +36,38 @@ const SPEND_LABEL = "Not tracked, TrueFoundry budgets each person";
 
 function Mark() {
   return <DenBrandMark name="TrueFoundry" serviceUrl={TRUEFOUNDRY_DOC_URL} className="h-8 w-8 rounded-[8px]" imageClassName="h-4 w-4" />;
+}
+
+/** Which TrueFoundry models people get: all of them, or only the ones the admin picks. Saving syncs. Keyed by the saved pick, so a save or sync starts it again from what is saved. */
+function TrueFoundryModelsCard({ status, busy, saving, onSave }: { status: GatewayTrueFoundryStatus; busy: boolean; saving: boolean; onSave: (modelIds: string[] | null) => void }) {
+  const [allowAll, setAllowAll] = useState(status.selectedModelIds === null);
+  const [modelIds, setModelIds] = useState(() => trueFoundryPickedModels(status));
+  const [localError, setLocalError] = useState<string | null>(null);
+  const models = useMemo(() => status.availableModels.map((model) => ({ id: model.id, name: model.name, source: trueFoundryModelAccount(model.id) })), [status.availableModels]);
+  const changed = trueFoundryModelPickChanged(status, { allowAll, modelIds });
+
+  function save() {
+    if (!allowAll && !modelIds.length) return setLocalError("Pick at least one model, or choose all TrueFoundry models.");
+    setLocalError(null);
+    onSave(allowAll ? null : modelIds);
+  }
+
+  return (
+    <section className={`${CARD} mt-3`} aria-labelledby="truefoundry-models-heading" data-testid="truefoundry-models">
+      <h2 id="truefoundry-models-heading" className={CARD_TITLE}>Models</h2>
+      {!status.availableModels.length ? <DenNotice tone="neutral" presentation="inline" className="mt-3" message="No TrueFoundry models synced yet. Sync to load them." /> : null}
+      <GatewayModelScopePicker allLabel="All TrueFoundry models" allowAll={allowAll} onAllowAll={() => setAllowAll(true)} onPick={() => setAllowAll(false)}
+        models={models} selected={modelIds} onSelectedChange={setModelIds} disabled={busy}
+        icon={() => <DenBrandMark name="TrueFoundry" serviceUrl={TRUEFOUNDRY_DOC_URL} className="h-5 w-5 rounded-[5px]" imageClassName="h-3 w-3" />} />
+      {localError ? <DenNotice tone="error" presentation="inline" className="mt-3" message={localError} /> : null}
+      {changed ? (
+        <div className="mt-3 flex items-center justify-end gap-2">
+          <DenButton size="sm" variant="ghost" disabled={busy} onClick={() => { setAllowAll(status.selectedModelIds === null); setModelIds(trueFoundryPickedModels(status)); setLocalError(null); }}>Discard</DenButton>
+          <DenButton size="sm" loading={saving} disabled={busy && !saving} onClick={save} data-testid="truefoundry-save-models">Save models</DenButton>
+        </div>
+      ) : null}
+    </section>
+  );
 }
 
 /** The "Create missing users in TrueFoundry" setting, shared by setup and the saved provider. */
@@ -124,7 +158,7 @@ export function TrueFoundryProviderScreen({ provider, reload, embedded = false }
   const router = useRouter();
   const { orgId, orgSlug, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
   const status = provider.truefoundry;
-  const [busy, setBusy] = useState<"sync" | "key" | "access" | "missing" | "remove" | null>(null);
+  const [busy, setBusy] = useState<"sync" | "key" | "access" | "missing" | "models" | "remove" | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [replacing, setReplacing] = useState(false);
@@ -143,7 +177,7 @@ export function TrueFoundryProviderScreen({ provider, reload, embedded = false }
   };
   const modelGroups = provider.modelGroups.filter((group) => group.id !== accessGroupId);
 
-  async function run(kind: "sync" | "key" | "access" | "missing", label: string, action: () => Promise<string | null>) {
+  async function run(kind: "sync" | "key" | "access" | "missing" | "models", label: string, action: () => Promise<string | null>) {
     setBusy(kind);
     setError(null);
     setNotice(null);
@@ -172,6 +206,10 @@ export function TrueFoundryProviderScreen({ provider, reload, embedded = false }
   };
   const setMissingUsers = (createMissingUsers: boolean) => run("missing", "update-truefoundry-missing-users", async () =>
     `${createMissingUsers ? "OpenWork now adds missing people to TrueFoundry." : "OpenWork no longer adds missing people to TrueFoundry."} ${trueFoundrySyncSummary((await updateTrueFoundryProvider(provider.id, { createMissingUsers }, createAuditOperationContext())).sync)}`);
+  const saveModels = (modelIds: string[] | null) => run("models", "update-truefoundry-models", async () => {
+    const result = await updateTrueFoundryProvider(provider.id, { modelIds }, createAuditOperationContext());
+    return `${modelIds === null ? "People now get every TrueFoundry model." : `People now get only the ${modelIds.length} ${modelIds.length === 1 ? "model" : "models"} you picked.`} ${trueFoundrySyncSummary(result.sync)}`;
+  });
   const addGrant = (audience: Audience) => run("access", "add-truefoundry-access", async () => {
     if (!accessGroupId || !set) throw new Error("Sync TrueFoundry before granting access.");
     const context = createAuditOperationContext();
@@ -277,6 +315,8 @@ export function TrueFoundryProviderScreen({ provider, reload, embedded = false }
       <AccessList idPrefix="truefoundry" title={ACCESS_TITLE} value={access} busy={busy !== null}
         onEveryone={(checked) => void (checked ? addGrant({ type: "organization" }) : removeGrant({ type: "organization" }))}
         onAdd={(audience) => void addGrant(audience)} onRemove={(audience) => void removeGrant(audience)} />
+
+      {status ? <TrueFoundryModelsCard key={JSON.stringify([status.selectedModelIds, status.availableModels.map((model) => model.id)])} status={status} busy={busy !== null} saving={busy === "models"} onSave={(modelIds) => void saveModels(modelIds)} /> : null}
 
       <section className={`${CARD} mt-3`} aria-labelledby="truefoundry-groups-heading">
         <h2 id="truefoundry-groups-heading" className={CARD_TITLE}>Model groups</h2>

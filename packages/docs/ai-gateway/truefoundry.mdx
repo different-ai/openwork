@@ -99,6 +99,15 @@ To limit the risk of a tenant admin key:
 - When someone loses access or leaves the organization, OpenWork stops using their key at once and deletes it in TrueFoundry at the next sync. Removing the provider deletes every key OpenWork created. TrueFoundry users OpenWork added stay in TrueFoundry.
 - Deleting the whole OpenWork organization does not touch your TrueFoundry tenant.
 
+## Choose which models people get
+
+On the provider page, **Models** works like it does for other providers:
+
+- **All TrueFoundry models** (the default): people get every chat model on your gateway. Models you add in TrueFoundry later appear at the next sync.
+- **Only the ones I pick**: tick the models people should get, then select **Save models**. Use **Filter models** to find one by name. Models you add in TrueFoundry later are not added until you pick them.
+
+People still only get the picked models their own TrueFoundry access reaches.
+
 ## Keep it in sync
 
 Select **Sync** on the provider page after you change models, teams or access in TrueFoundry. A sync:
