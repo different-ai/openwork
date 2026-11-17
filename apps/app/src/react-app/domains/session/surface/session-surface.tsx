@@ -29,6 +29,9 @@ import { t } from "@/i18n";
 import type { ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import { type CloudImportedPlugin } from "@/app/cloud/import-state";
 import { createDenClient, markFeatureUsed, readDenSettings } from "@/app/lib/den";
+import type { ArchiveSessionOptions } from "../sidebar/use-session-archive";
+import { ArchivedComposerFeedback } from "./archived-composer-feedback";
+import { archivedComposerRestoreErrorMessage, captureArchivedSendSelection, confirmArchivedComposerRestore, isConfirmedUnarchivedSession, sameArchivedSendIdentity, type ArchivedSendIdentity } from "./archived-composer-send";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { hasMovedRejectedTurn, rejectedTurnOwner, useRejectedTurns, useSessionDraftState } from "@/react-app/domains/session/sync/draft-store";
 import { mergeRejectedTurns, retainRejectedTurn } from "@/react-app/domains/session/sync/rejected-turn";
@@ -778,7 +781,7 @@ export type SessionSurfaceProps = {
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef, variant?: string | null) => void;
   archived?: boolean;
-  onRestoreSession?: () => Promise<void>;
+  onRestoreSession?: (options?: ArchiveSessionOptions) => Promise<boolean>;
   onSendDraft: (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void, agent?: string | null) => Promise<CloudMcpSubmissionResult>;
   cloudMcpSubmissionState: CloudMcpSubmissionGateState;
   onOpenConnect: () => void;
@@ -1380,12 +1383,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [props.draftScope, props.opencodeBaseUrl, props.workspaceId, props.sessionId]);
   const activeSessionOwnerRef = useRef(sessionOwner);
   activeSessionOwnerRef.current = sessionOwner;
+  const archiveRestoreControllerRef = useRef<AbortController | null>(null);
   const autoSubmissionRef = useRef({ model: modelRefKey(sessionModel.selectedModel), client: props.client, mounted: true });
   autoSubmissionRef.current.model = modelRefKey(sessionModel.selectedModel);
   autoSubmissionRef.current.client = props.client;
   useEffect(() => {
     autoSubmissionRef.current.mounted = true;
-    return () => { autoSubmissionRef.current.mounted = false; };
+    return () => {
+      autoSubmissionRef.current.mounted = false;
+      archiveRestoreControllerRef.current?.abort();
+    };
   }, []);
   const snapshotTargetRef = useRef<NativeSessionSnapshotTarget>({
     owner: sessionOwner,
@@ -1553,6 +1560,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const archived = Boolean(props.archived || currentSnapshot?.session.time.archived);
   const archiveStateKnown = props.archived !== undefined || currentSnapshot !== null;
   const [restoringArchived, setRestoringArchived] = useState(false);
+  const [archiveComposeError, setArchiveComposeError] = useState<{ owner: string; message: string } | null>(null);
+  const archivedSessionCompose = useDesktopFeature("archivedSessionCompose");
   const inspectorOpencodeBaseUrl = useMemo(() => {
     try {
       const url = new URL(props.opencodeBaseUrl);
@@ -2442,13 +2451,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
   };
 
+  const archiveComposeContext = useMemo(() => ({}), [sessionOwner, props.client, props.openworkToken, props.workspaceRoot,
+    archivedSessionCompose, archiveStateKnown, sessionModelPending, sessionModelUnavailable,
+    sessionModel.selectedModel.providerID, sessionModel.selectedModel.modelID, sessionModel.modelVariant, model.transitionState]);
+  const archiveComposeContextRef = useRef(archiveComposeContext);
+  archiveComposeContextRef.current = archiveComposeContext;
+  const archivedSendRef = useRef(false);
+
   // Immediate sends interrupt foreground delegation, but otherwise steer the
   // running loop. Explicit queueing and automatic draining stay separate.
   const sendDraft = useCallback(async (
     nextDraft: ComposerDraft,
     itemId: string,
     onPrepared?: (text?: string) => void,
-    options: { consumeQueuedItem?: boolean; agent?: string | null } = {},
+    options: { consumeQueuedItem?: boolean; agent?: string | null; archiveConsent?: () => boolean; identity?: ArchivedSendIdentity } = {},
   ): Promise<CloudMcpSubmissionResult | AutoAccessBlock | { outcome: "unknown" }> => {
     // Capture before interruption/readiness waits; later selections affect only later sends.
     const agent = options.agent !== undefined ? options.agent : getSessionAgentSelection(props.sessionId, props.selectedAgent);
@@ -2468,9 +2484,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setPendingSendSessions([...pendingSendsRef.current.values()]);
     setError(null);
     try {
-      if (archived || !archiveStateKnown) throw new Error("This session is read-only. Restore it before sending.");
+      if ((archived && !options.archiveConsent?.()) || !archiveStateKnown) throw new Error("This session is read-only. Restore it before sending.");
+      if (options.archiveConsent && !options.archiveConsent()) throw new Error(MESSAGE_NOT_SENT);
       if (sessionModelPending) throw new Error("The conversation's model is still loading. Retry shortly.");
-      const identity = readDenSettings();
+      const identity = options.identity ?? readDenSettings();
       const freeBlock = nextDraft.mode === "shell" ? null : isAutoModel(sessionModel.selectedModel) && props.openWorkModelsSyncing
         ? { outcome: "blocked", reason: "auto-access", wall: { state: "sync" } } satisfies AutoAccessBlock
         : await preflightAutoSubmission({ model: sessionModel.selectedModel, client: props.client,
@@ -2479,7 +2496,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
           && autoSubmissionRef.current.client === props.client
           && autoSubmissionRef.current.model === modelRefKey(sessionModel.selectedModel)
           && readDenSettings().authToken === identity.authToken && readDenSettings().activeOrgId === identity.activeOrgId
-          && readDenSettings().baseUrl === identity.baseUrl,
+          && readDenSettings().baseUrl === identity.baseUrl
+          && (!options.archiveConsent || options.archiveConsent()),
       });
       if (freeBlock) {
         if (freeBlock.outcome === "blocked") await rememberRejection(freeBlock.wall);
@@ -2492,7 +2510,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       const sendMessages = await openingHistory.readSendHistory({ revealLatest: true });
       if (getQueuedSendGeneration(props.sessionId) !== generation) throw new Error("Send cancelled by Stop.");
       const submit = async () => {
-        if (getQueuedSendGeneration(props.sessionId) !== generation) return { outcome: "cancelled" as const, reason: "context_changed" as const };
+        if (getQueuedSendGeneration(props.sessionId) !== generation || (options.archiveConsent && !options.archiveConsent())) return { outcome: "cancelled" as const, reason: "context_changed" as const };
         return props.onSendDraft({ ...nextDraft, messageId }, props.sessionId, onPrepared, agent);
       };
       const result = snapshot?.session.parentID
@@ -2586,9 +2604,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     return true;
   }, [clearComposer, opencodeClient, props.sessionId, sideQuestionsEnabled]);
 
-  const handleSend = useCallback(async (sourceComposer?: ComposerSessionState) => {
+  const handleSend = useCallback(async (sourceComposer?: ComposerSessionState, humanArchiveConsent = false) => {
     if (!sourceComposer && askSideQuestionFromComposer()) return;
-    if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
+    const restoreForSend = archived && archivedSessionCompose && humanArchiveConsent;
+    if ((archived && !restoreForSend) || !archiveStateKnown || archivedSendRef.current
+      || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
+    if (restoreForSend && (!props.onRestoreSession || sessionModelPending || sessionModelUnavailable
+      || model.transitionState !== "idle" || pendingStopsRef.current.has(sessionOwner))) return;
     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
     const generation = getQueuedSendGeneration(props.sessionId);
     const composerCheckpoint = useComposerStateStore.getState().sessions[props.sessionId];
@@ -2598,6 +2620,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const text = originalDraft.trim();
     if (!text && sourceAttachments.length === 0) return;
     const focusedComposer = document.activeElement;
+    const { identity, agent } = captureArchivedSendSelection(
+      readDenSettings(), getSessionAgentSelection(props.sessionId, props.selectedAgent),
+    );
     const savedComposer = snapshotComposerSessionState(submittedComposer ?? {
       draft: originalDraft, attachments: sourceAttachments, mentions, pasteParts, revertMessageId: null,
     });
@@ -2609,6 +2634,50 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // Immediate sends and queued sends share the same slot across all panes.
     dispatchQueuedDrain(props.sessionId, { type: "user_retry" });
     if (!claimQueuedSend(props.sessionId, nextDraft.messageId, true)) return;
+    let archiveConsent: (() => boolean) | undefined;
+    if (humanArchiveConsent) setArchiveComposeError(null);
+    if (restoreForSend) {
+      archivedSendRef.current = true;
+      setRestoringArchived(true);
+      const controller = new AbortController();
+      archiveRestoreControllerRef.current = controller;
+      const isCurrent = () => !controller.signal.aborted && autoSubmissionRef.current.mounted
+        && archiveComposeContextRef.current === archiveComposeContext
+        && getQueuedSendGeneration(props.sessionId) === generation
+        && sameArchivedSendIdentity(identity, readDenSettings());
+      const verified = () => {
+        const cached = queryClient.getQueryData<OpenworkSessionHistory>(snapshotQueryKey);
+        return isConfirmedUnarchivedSession(props.sessionId, cached?.session);
+      };
+      try {
+        void markFeatureUsed("archivedSessionCompose");
+        const restored = await confirmArchivedComposerRestore({
+          lease: { baseUrl: props.opencodeBaseUrl, sessionId: props.sessionId, itemId: nextDraft.messageId },
+          signal: controller.signal,
+          restore: (signal) => props.onRestoreSession?.({ signal, silentRestore: true }) ?? Promise.resolve(false),
+          verify: async (signal) => {
+            const result = await snapshotQuery.refetch();
+            return !signal.aborted && !result.isError && verified();
+          },
+          isCurrent,
+        });
+        if (!restored) return;
+        archiveConsent = () => isCurrent() && verified() && !sessionWorkHeld(props.opencodeBaseUrl, props.sessionId);
+      } catch (error) {
+        if (isCurrent()) setArchiveComposeError({ owner: sessionOwner,
+          message: archivedComposerRestoreErrorMessage(error),
+        });
+        return;
+      } finally {
+        archivedSendRef.current = false;
+        setRestoringArchived(false);
+        if (archiveRestoreControllerRef.current === controller) archiveRestoreControllerRef.current = null;
+      }
+      if (!archiveConsent()) {
+        dispatchQueuedDrain(props.sessionId, { type: "send_error", itemId: nextDraft.messageId });
+        return;
+      }
+    }
     for (const attachment of sentAttachments) {
       if (attachment.kind === "image" && !attachment.previewUrl) attachment.previewUrl = URL.createObjectURL(attachment.file);
     }
@@ -2629,9 +2698,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
       },
     }));
     // A hero handoff owns the submitted snapshot, never a newer continuation.
-    if ((!sourceComposer || sourceComposer === composerCheckpoint)
+    const clearedSubmittedComposer = (!sourceComposer || sourceComposer === composerCheckpoint)
       && useComposerStateStore.getState().sessions[props.sessionId] === composerCheckpoint
-      && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey) clearComposer();
+      && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey;
+    if (clearedSubmittedComposer) clearComposer();
     const clearedComposer = useComposerStateStore.getState().sessions[props.sessionId];
     const markPrepared = (preparedText?: string) => {
       setAttachmentsUploading(false);
@@ -2652,7 +2722,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (getQueuedSendGeneration(props.sessionId) !== generation) return;
       const state = useComposerStateStore.getState();
       // Identity, not text equality: typing and then deleting is still a newer edit.
-      if (!composerSessionHasContent(clearedComposer) && state.sessions[props.sessionId] === clearedComposer
+      if ((!restoreForSend || clearedSubmittedComposer) && !composerSessionHasContent(clearedComposer) && state.sessions[props.sessionId] === clearedComposer
         && getComposerSessionDraftScope(props.sessionId) === persistedDraftKey) {
         useComposerStateStore.setState({ sessions: { ...state.sessions, [props.sessionId]: savedComposer } });
         props.onDraftChange(nextDraft);
@@ -2665,7 +2735,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
     if (sentAttachments.length) setAttachmentsUploading(true);
     try {
-      const result = await sendDraft(nextDraft, nextDraft.messageId, markPrepared);
+      const result = await sendDraft(nextDraft, nextDraft.messageId, markPrepared, {
+        archiveConsent,
+        ...(restoreForSend ? { agent, identity } : {}),
+      });
       if ((result.outcome === "sent" || result.outcome === "accepted")
         && !isDesktopRuntime() && window.matchMedia("(max-width: 1023px)").matches
         && focusedComposer instanceof HTMLElement
@@ -2702,7 +2775,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } finally {
       setAttachmentsUploading(false);
     }
-  }, [archived, archiveStateKnown, askSideQuestionFromComposer, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.opencodeBaseUrl, props.sessionId, sendDraft, sessionOwner, setError]);
+  }, [archived, archivedSessionCompose, archiveComposeContext, archiveStateKnown, askSideQuestionFromComposer, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.onRestoreSession, props.opencodeBaseUrl, props.sessionId, props.selectedAgent, sendDraft, sessionOwner, setError, sessionModelPending, sessionModelUnavailable, model.transitionState, queryClient, snapshotQuery.refetch, snapshotQueryKey]);
 
   // One-step run from the empty-state hero: the route keeps the continuation
   // in this session's composer and marks the submitted snapshot for auto-send.
@@ -4066,7 +4139,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
             onRetry={props.cloudMcpSubmissionState.issue?.retryable !== false ? handleRetryCloudSubmission : undefined}
             actions={<Button variant="ghost" size="xs" onClick={props.onOpenConnect}>Open Connect</Button>} />
         ) : null}
-        {archived ? (
+        {archived && !archivedSessionCompose ? (
           <Alert data-testid="archived-session">
             <AlertTitle>{t("session_management.archived_label")}</AlertTitle>
             <AlertDescription>
@@ -4080,6 +4153,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
             </AlertDescription>
           </Alert>
         ) : <>
+        <ArchivedComposerFeedback archived={archived} error={archiveComposeError?.owner === sessionOwner ? archiveComposeError.message : null} />
         {failedDraft ? (
           <div className="mx-3 mb-2 flex items-center gap-3 text-xs text-dls-secondary">
             <span>Your unsent message is saved. Clear the current draft to restore it.</span>
@@ -4102,22 +4176,24 @@ export function SessionSurface(props: SessionSurfaceProps) {
         <SignInHandoffNotice workspaceId={props.workspaceId} sessionId={props.sessionId} hasDraft={Boolean(persistableComposerDraftText(draft).trim())} />
         <ReactSessionComposer
           runModeControl={<WorkspaceRunModeMenu client={props.client} workspaceId={props.workspaceId} busy={composerBusy || preparingCloudTools || Boolean(props.activePermission || props.activeQuestion)} />}
-          draft={autoSendPayload ? draft : autoSending ? "" : draft}
+          draft={archived || autoSendPayload ? draft : autoSending ? "" : draft}
+          sendLabel={archived ? t("session_management.archived_compose_send") : undefined}
           mentions={mentions}
           onDraftChange={handleComposerDraftChange}
-        onSend={() => handleSend()}
+        onSend={() => handleSend(undefined, true)}
         onSteer={handleSteer}
         childConversation={Boolean(snapshot?.session.parentID)}
         onQueue={handleQueue}
         onStop={async () => { await handleAbort(); }}
-        busy={composerBusy}
+        busy={!archived && composerBusy}
         editing={editing}
         stopping={stopping}
         steering={steering}
         followUpDefault={local.prefs.followUpDefault}
-        submissionPreparing={preparingCloudTools || sending || autoSending}
+        submissionPreparing={restoringArchived || preparingCloudTools || sending || (!archived && autoSending)}
+        submissionPreparingLabel={restoringArchived ? t("session_management.archived_compose_send") : undefined}
         queuedCount={queuedItems.length}
-        disabled={!archiveStateKnown || archiveHeld || model.transitionState !== "idle" || sessionModelPending || sessionModelUnavailable || queuedDrainState.phase.kind === "admission_unknown"}
+        disabled={!archiveStateKnown || archiveHeld || restoringArchived || (archived && !props.onRestoreSession) || model.transitionState !== "idle" || sessionModelPending || sessionModelUnavailable || queuedDrainState.phase.kind === "admission_unknown"}
         disabledReasons={sessionComposerDiagnosticReasons({
           archiveStateKnown,
           archiveHeld,
@@ -4144,7 +4220,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onModelPickerOpenChange={handleModelPickerOpenChange}
         onModelChange={handleModelChange}
         sessionId={props.sessionId}
-        attachments={autoSending && !autoSendPayload ? [] : attachments}
+        attachments={!archived && autoSending && !autoSendPayload ? [] : attachments}
         onAttachFiles={handleAttachFiles}
         onRemoveAttachment={handleRemoveAttachment}
         attachmentsEnabled={props.attachmentsEnabled}

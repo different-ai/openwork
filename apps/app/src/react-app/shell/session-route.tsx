@@ -296,7 +296,7 @@ import {
 } from "./cloud-workspace-status";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
-import { useSessionArchive } from "@/react-app/domains/session/sidebar/use-session-archive";
+import { useSessionArchive, type ArchiveSessionOptions } from "@/react-app/domains/session/sidebar/use-session-archive";
 import { openComposerConfigure, isLibraryAgent, type ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import {
   globalExtensionsRoute,
@@ -3170,8 +3170,8 @@ export function SessionRoute() {
       });
     },
   });
-  const handleArchiveSession = async (sessionId: string, archived: boolean, workspaceId: string) => {
-    await archiveSessionInWorkspace(workspaceId, sessionId, archived);
+  const handleArchiveSession = async (sessionId: string, archived: boolean, workspaceId: string, options?: ArchiveSessionOptions) => {
+    return archiveSessionInWorkspace(workspaceId, sessionId, archived, options);
   };
   archiveSessionRef.current = handleArchiveSession;
 

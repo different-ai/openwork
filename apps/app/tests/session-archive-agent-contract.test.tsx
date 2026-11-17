@@ -10,7 +10,10 @@ import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../src/react-
 import type { RouteSession, RouteWorkspace } from "../src/react-app/shell/route-workspaces";
 import type { OpenworkControlAPI, OpenworkControlAction } from "../src/react-app/shell/control/control-provider";
 
-mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({ useCheckDesktopRestriction: () => () => false }));
+mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({
+  useCheckDesktopRestriction: () => () => false,
+  useDesktopRestriction: () => false,
+}));
 mock.module("../src/react-app/domains/cloud/den-auth-provider", () => ({ useDenAuth: () => ({ isSignedIn: false }) }));
 
 // The archive hook talks to a real (fake) engine over HTTP; happy-dom's fetch
@@ -231,6 +234,7 @@ describe("archiving a working session: the warning goes back through the request
     reloadWorkspaceSessions?: () => Promise<unknown>;
     onArchivedChange?: (workspaceId: string, sessionId: string, archived: boolean) => void;
     otherOwner?: { engine: Engine; sessions: RouteSession[] };
+    disconnected?: boolean;
   } = {}) {
     const workspace: RouteWorkspace = {
       id: "ws", name: "Client A / Production", displayNameResolved: "Client A / Production", path: directory, preset: "starter", workspaceType: "local",
@@ -252,7 +256,7 @@ describe("archiving a working session: the warning goes back through the request
       const archive = useSessionArchive({
         workspaces: hooks.otherOwner ? [workspace, { ...workspace, id: "other", name: "Other workspace" }] : [workspace],
         sessionsByWorkspaceId: { ws: sessions, ...(hooks.otherOwner ? { other: hooks.otherOwner.sessions } : {}) },
-        endpointForSessionWorkspace: (owner) => owner.id === "other" && hooks.otherOwner
+        endpointForSessionWorkspace: (owner) => hooks.disconnected ? null : owner.id === "other" && hooks.otherOwner
           ? { ...endpoint, workspaceId: "other", opencodeBaseUrl: hooks.otherOwner.engine.baseUrl } : endpoint,
         selectedWorkspaceId: "ws",
         selectedSessionId: null,
@@ -577,6 +581,60 @@ describe("archiving a working session: the warning goes back through the request
     if (stage === "patch") expect(result.error).toContain("outcome is unknown");
     expect(result).toMatchObject({ ok: false, code: stage === "patch" ? "archive_outcome_unknown" : "verification_failed" });
   });
+
+  test.each([true, false])("restore success is silent only when the composer requests it (silent=%s)", async (silentRestore) => {
+    const engine = startEngine();
+    const changes: boolean[] = [];
+    const archive = await mountArchive(engine, [session("ses_target", "Restore target", 1)], {
+      onArchivedChange: (_workspaceId, _sessionId, archived) => { changes.push(archived); },
+    });
+    const undo = spyOn(toast, "undo").mockImplementation(() => "");
+    cleanups.push(() => undo.mockRestore());
+    errors.mockClear();
+    let result: ArchiveSessionOutcome | undefined;
+    await act(async () => { result = await archive.inWorkspace("ws", "ses_target", false, silentRestore ? { silentRestore: true } : undefined); });
+    expect(result).toEqual({ kind: "done" });
+    expect(changes).toEqual([false]);
+    expect(errors).not.toHaveBeenCalled();
+    expect(undo).toHaveBeenCalledTimes(silentRestore ? 0 : 1);
+    if (!silentRestore) {
+      expect(undo.mock.calls[0]?.[0]).toMatchObject({ props: { title: "Session unarchived" } });
+      expect(undo.mock.calls[0]?.[1]).toMatchObject({
+        undo: { label: "Undo", onClick: expect.any(Function) },
+        view: { label: "View", onClick: expect.any(Function) },
+      });
+    }
+  });
+
+  test.each([true, false])("restore transport failure suppresses only composer feedback (silent=%s)", async (silentRestore) => {
+    const engine = startEngine();
+    const archive = await mountArchive(engine, [session("ses_target", "Restore target", 1)]);
+    stubFetch(engine, request => request.method === "PATCH"
+      ? NativeResponse.json({ message: "Engine unavailable for restore" }, { status: 503 }) : undefined);
+    errors.mockClear();
+    let result: ArchiveSessionOutcome | undefined;
+    await act(async () => { result = await archive.inWorkspace("ws", "ses_target", false, silentRestore ? { silentRestore: true } : undefined); });
+    expect(result).toEqual({ kind: "cancelled" });
+    expect(toast.undo).not.toHaveBeenCalled();
+    expect(errors).toHaveBeenCalledTimes(silentRestore ? 0 : 1);
+    if (!silentRestore) expect(errors.mock.calls[0]?.[0]).toBe("Couldn't unarchive session");
+  });
+
+  for (const failure of ["missing_session", "missing_workspace", "disconnected"]) {
+    test.each([true, false])(`restore ${failure} preserves ordinary feedback but stays silent for composer (silent=%s)`, async (silentRestore) => {
+      const engine = startEngine();
+      const archive = await mountArchive(engine, [session("ses_target", "Restore target", 1)], { disconnected: failure === "disconnected" });
+      const undo = spyOn(toast, "undo").mockImplementation(() => "");
+      cleanups.push(() => undo.mockRestore());
+      errors.mockClear();
+      const result = await archive.inWorkspace(failure === "missing_workspace" ? "unknown" : "ws", failure === "missing_session" ? "unknown" : "ses_target", false,
+        silentRestore ? { silentRestore: true } : undefined);
+      expect(result.kind).toBe("verification_failed");
+      expect(engine.requests).toEqual([]);
+      expect(undo).not.toHaveBeenCalled();
+      expect(errors).toHaveBeenCalledTimes(silentRestore ? 0 : 1);
+    });
+  }
 
   test.each([true, false])("explicit human owner and Undo never pick the first workspace with the same session id (archive=%s)", async (archived) => {
     const first = startEngine();
