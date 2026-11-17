@@ -57,11 +57,15 @@ process.exit(Number(process.env.BUILD_EXIT || 0));
   }
 });
 
-test("only the secret-free proof lane opts in; review servers prepare before starting", () => {
+test("only the proof lane opts into review builds, with timing-only credentials", () => {
   const workflow = readFileSync(join(root, ".github/workflows/pr-proof.yml"), "utf8");
   const normal = workflow.split("\n  proof:\n")[1].split("\n  # Packaged specs")[0];
   assert.match(normal, /OPENWORK_EVAL_BUILD_REVIEW_APP: "1"/);
-  assert.doesNotMatch(normal, /@openwork\/review-app build|secrets\./);
+  assert.doesNotMatch(normal, /@openwork\/review-app build/);
+  assert.deepEqual([...normal.matchAll(/secrets\.([A-Z_]+)/g)].map((match) => match[1]).sort(), [
+    "OPENWORK_PROCESS_TIMING_KEY",
+    "OPENWORK_PROCESS_TIMING_URL",
+  ]);
   assert.equal(workflow.match(/OPENWORK_EVAL_BUILD_REVIEW_APP:/g)?.length, 1);
 });
 

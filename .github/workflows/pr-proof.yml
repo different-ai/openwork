@@ -80,6 +80,9 @@ jobs:
     permissions:
       contents: read
     env:
+      OPENWORK_PROCESS_TIMING_URL: ${{ secrets.OPENWORK_PROCESS_TIMING_URL }}
+      OPENWORK_PROCESS_TIMING_KEY: ${{ secrets.OPENWORK_PROCESS_TIMING_KEY }}
+      OPENWORK_PROCESS_TIMING_HEAD_SHA: ${{ needs.select.outputs.head || github.event.pull_request.head.sha || github.sha }}
       # Sandbox provider for evidence worlds: a repository variable, Freestyle when unset.
       OPENWORK_EVIDENCE_PROVIDER: ${{ vars.OPENWORK_EVIDENCE_PROVIDER || 'freestyle' }}
       # Disposable Core PR worlds skip template saves; dev warm-up is unchanged.
@@ -150,6 +153,10 @@ jobs:
       fail-fast: false
       max-parallel: 12
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    env:
+      OPENWORK_PROCESS_TIMING_URL: ${{ secrets.OPENWORK_PROCESS_TIMING_URL }}
+      OPENWORK_PROCESS_TIMING_KEY: ${{ secrets.OPENWORK_PROCESS_TIMING_KEY }}
+      OPENWORK_PROCESS_TIMING_HEAD_SHA: ${{ needs.select.outputs.head || github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -286,6 +293,9 @@ jobs:
     permissions:
       contents: read
     env:
+      OPENWORK_PROCESS_TIMING_URL: ${{ secrets.OPENWORK_PROCESS_TIMING_URL }}
+      OPENWORK_PROCESS_TIMING_KEY: ${{ secrets.OPENWORK_PROCESS_TIMING_KEY }}
+      OPENWORK_PROCESS_TIMING_HEAD_SHA: ${{ needs.select.outputs.head || github.event.pull_request.head.sha || github.sha }}
       # Sandbox provider for evidence worlds: a repository variable, Freestyle when unset.
       OPENWORK_EVIDENCE_PROVIDER: ${{ vars.OPENWORK_EVIDENCE_PROVIDER || 'freestyle' }}
     strategy:

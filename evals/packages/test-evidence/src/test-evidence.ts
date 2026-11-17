@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { reportProcessTiming, type ProcessTiming } from "../../../../scripts/lib/process-timing.mjs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -117,6 +118,23 @@ export interface TestRunRecord {
   steps: StepRecord[];
   outcome: TestOutcome;
   failure?: string;
+}
+
+export function evalsProcessTiming(record: TestRunRecord): ProcessTiming {
+  const totalSeconds = (Date.parse(record.closedAt) - Date.parse(record.createdAt)) / 1000;
+  const outcome = record.outcome === "failed" || (record.outcome === "unknown" && !record.summary.ok) ? "fail" : "ok";
+  const spec = (record.specFile?.split("/").pop() ?? "").replace(/\.(e2e|proof)?\.?test\.[a-z]+$/, "").slice(0, 56) || "step";
+  return {
+    process: "evals",
+    startedAt: record.createdAt,
+    totalSeconds,
+    outcome,
+    steps: record.steps.length ? record.steps.map((step) => ({
+      step: `${spec}:${step.seq}`,
+      seconds: (step.ms ?? 0) / 1000,
+      outcome: step.ok === "not-reached" ? "skipped" : step.ok ? "ok" : "fail",
+    })) : [{ step: "run", seconds: totalSeconds, outcome: record.outcome === "skipped" ? "skipped" : outcome }],
+  };
 }
 
 interface StoredTestArtifact extends TestArtifact {
@@ -798,7 +816,11 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
         outcome,
         failure,
       };
-      await writeTestRun(record, dir);
+      try {
+        await writeTestRun(record, dir);
+      } finally {
+        await reportProcessTiming(evalsProcessTiming(record));
+      }
       return join(dir, "index.html");
     })();
     return closing;

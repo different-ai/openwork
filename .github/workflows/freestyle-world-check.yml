@@ -33,6 +33,10 @@ jobs:
     if: github.repository == 'different-ai/openwork'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 45
+    env:
+      OPENWORK_PROCESS_TIMING_URL: ${{ secrets.OPENWORK_PROCESS_TIMING_URL }}
+      OPENWORK_PROCESS_TIMING_KEY: ${{ secrets.OPENWORK_PROCESS_TIMING_KEY }}
+      OPENWORK_PROCESS_TIMING_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:

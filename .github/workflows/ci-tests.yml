@@ -24,6 +24,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [blacksmith-16vcpu-ubuntu-2204, blacksmith-12vcpu-macos-15]
+    env:
+      OPENWORK_PROCESS_TIMING_URL: ${{ secrets.OPENWORK_PROCESS_TIMING_URL }}
+      OPENWORK_PROCESS_TIMING_KEY: ${{ secrets.OPENWORK_PROCESS_TIMING_KEY }}
+      OPENWORK_PROCESS_TIMING_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
