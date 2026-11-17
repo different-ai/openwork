@@ -11,6 +11,7 @@ export { default as connectionSelectedScopesOnly } from "@openwork/features/flag
 export { default as denGreySidebar } from "@openwork/features/flags/den-grey-sidebar"
 export { default as followUpSuggestions } from "@openwork/features/flags/follow-up-suggestions"
 export { default as importOpencodeConnections } from "@openwork/features/flags/import-opencode-connections"
+export { default as litellmEntraMemberSignIn } from "@openwork/features/flags/litellm-entra-member-sign-in"
 export { default as lowStorageWarning } from "@openwork/features/flags/low-storage-warning"
 export { default as managedDeploymentAssistants } from "@openwork/features/flags/managed-deployment-assistants"
 export { default as managedDeployments } from "@openwork/features/flags/managed-deployments"
