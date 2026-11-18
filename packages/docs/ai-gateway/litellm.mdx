@@ -301,7 +301,7 @@ On the provider page, edit the model list at any time. Changing the tenant, appl
 
 People stay signed in as long as Entra ID keeps renewing their sign-in, following your Conditional Access policies. **Sign out** on the provider in **My Library → Models** erases the person's sign-in in OpenWork.
 
-During rollout, turning the feature off blocks new connections and new requests through this mode, including token renewal. Saved sign-ins remain encrypted so they can be reused if the feature is turned on again and Microsoft still accepts them. Requests already sent to the proxy are not cancelled. The three LiteLLM key modes are unaffected.
+During rollout, turning the feature off blocks new connections and new requests through this mode, including starting token renewal for a new request. Saved sign-ins remain encrypted so they can be reused if the feature is turned on again and Microsoft still accepts them. A refresh already in progress may finish storing its rotated token; feature state is checked again before sending inference. Requests already sent to the proxy are not cancelled. The three LiteLLM key modes are unaffected.
 
 ## Keep models in sync
 

@@ -85,8 +85,10 @@ LiteLLM keys, with Microsoft Entra ID as the identity provider.
 - People who already signed in cannot use this mode while the feature is off:
   their models are no longer advertised as ready, and AI Gateway refuses new
   requests before renewing or forwarding an Entra token. It checks again before
-  dispatch, so disabling the feature during request preparation also blocks it.
-  An upstream request already dispatched is not cancelled.
+  dispatch, so disabling the feature during request preparation also blocks it
+  once the check observes the new state. This is admission control, not atomic
+  cancellation: an already-admitted refresh may finish and store its rotated
+  token, and an upstream request already dispatched is not cancelled.
 - Stored encrypted tokens and settings are kept. Turning the feature back on
   lets people reuse their sign-in if Microsoft still accepts it; otherwise they
   connect again. Disabling or removing providers, changing access grants and
