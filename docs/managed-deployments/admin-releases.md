@@ -71,6 +71,17 @@ role, run Terraform, create cloud resources or manufacture qualification reports
 Existing protected publisher workflows remain separate. No AWS, Google, GitHub
 or Render credential is entered into this page.
 
+## Screenshots
+
+Before: the Admin route is absent on the base product.
+
+![The base product returns 404 for the managed-deployment Admin page.](admin-releases-before.png)
+
+The release controls show the inherited default and approval policy before any
+administrator changes the configuration. Data is from an isolated test fixture.
+
+![Managed deployments in Admin with its current release, approval policy and verification action.](admin-releases.png)
+
 ## Deployment and verification
 
 Apply the additive database migration before deploying the API, then deploy Den

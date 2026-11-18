@@ -25,9 +25,9 @@ test("a platform administrator verifies and pins an installer without changing a
   await step("the administrator explicitly configures single-administrator approval inside Admin", async () => {
     await person.click({ text: "Advanced" });
     await person.click({ role: "radio", text: "One administrator" });
-    await person.click({ role: "button", text: "Save approval policy" });
+    await person.click({ role: "button", label: "Save approval policy" });
     await person.see({ text: "Allow one platform administrator to verify and pin releases?" });
-    await person.click({ role: "button", text: "Confirm one administrator" });
+    await person.click({ role: "button", label: "Confirm one administrator" });
     await person.see({ text: /Saved approval policy/ });
     const report = await world.report();
     const changed = report.history.some(change => change.action === "approval_saved");
@@ -39,8 +39,8 @@ test("a platform administrator verifies and pins an installer without changing a
 
   await step("a corrupt published bundle is refused without changing the offered version", async () => {
     await person.type({ label: "Choose version" }, "1.2.4", { replace: true });
-    await person.click({ role: "button", text: "Verify release" });
-    await person.see({ role: "alert", text: /Verification failed/ }, { timeoutMs: 30_000 });
+    await person.click({ role: "button", label: "Verify release" });
+    await person.see({ text: /Verification failed/ }, { timeoutMs: 30_000 });
     const current = await world.readiness();
     const reads = await world.artifactReads();
     expect(current?.version).toBe("1.2.2");
@@ -50,9 +50,9 @@ test("a platform administrator verifies and pins an installer without changing a
   });
 
   await step("the latest stable candidate verifies all five services but cannot yet be pinned", async () => {
-    await person.click({ role: "button", text: "Use latest stable" });
+    await person.click({ role: "button", label: "Use latest stable" });
     await person.see({ label: "Choose version" }, { value: "1.2.3" });
-    await person.click({ role: "button", text: "Verify release" });
+    await person.click({ role: "button", label: "Verify release" });
     await person.see({ text: "Verified release 1.2.3" }, { timeoutMs: 30_000 });
     const page = await browser.text();
     for (const service of ["Den API", "Den web", "Managed runner", "Workbot", "Model gateway"]) expect(page).toContain(service);
@@ -67,7 +67,7 @@ test("a platform administrator verifies and pins an installer without changing a
   await step("after: the administrator records qualification and the new default survives a reload", async () => {
     await person.type({ label: "Successful fresh install report" }, "https://example.test/reports/fresh-install", { replace: true });
     await person.type({ label: "Approved update report" }, "https://example.test/reports/approved-update", { replace: true });
-    await person.click({ role: "button", text: "Pin 1.2.3" });
+    await person.click({ role: "button", label: "Pin 1.2.3" });
     await person.see({ testId: "managed-current-version", text: "1.2.3" }, { timeoutMs: 30_000 });
     await person.reload();
     await person.see({ testId: "managed-current-version", text: "1.2.3" }, { timeoutMs: 30_000 });
@@ -94,7 +94,7 @@ test("a platform administrator verifies and pins an installer without changing a
   await step("an ordinary member cannot see or change the platform release configuration", async () => {
     const member = user.on(world.member);
     await member.see({ text: /administrator|restricted|not authorized|access/i }, { timeoutMs: 90_000 });
-    await member.notSee({ role: "button", text: "Verify release" });
+    await member.notSee({ role: "button", label: "Verify release" });
     const access = await world.memberAccess();
     expect(access).toEqual({ read: 403, write: 403 });
     evidence.recordAssertionEvidence("Organization membership grants no platform release access", "Member UI is blocked; release read and pin-setting mutation both return 403", access.read === 403 && access.write === 403);
