@@ -308,6 +308,7 @@ test("an owner turns on the gateway runtime and cloud computers for an installed
     await person.click({ role: "button", label: "Review changes" });
     await person.see({ role: "button", label: "Save name" }, { timeoutMs: WITHIN });
     await person.click({ role: "button", label: "Save name" });
+    await page.eventually(() => page.dom(id("deployment-configuration-dialog")), { within: WITHIN, label: "the name is saved and the dialog closes", until: (found) => found.elements.length === 0 });
     await person.see({ text: "Production workspace" }, { timeoutMs: WITHIN });
     const saved = await world.deployment();
     expect(saved.name).toBe("Production workspace");
