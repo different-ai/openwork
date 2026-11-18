@@ -85,16 +85,20 @@ managed installer deliberately supplies `us` without changing that module defaul
 { "kind": "update", "runtimeProfile": "gateway" }
 ```
 
-An optional `assistants` object selects computers. `runtimeProfile` and computer
-changes are accepted only for AWS, only with a **version-increasing Update** and
-only while the feature is enabled. Install/Retry cannot change them. Omitting
-these fields on an existing legacy deployment keeps its old profile unchanged.
+An optional `assistants` object selects computers. On the launch route,
+`runtimeProfile` and computer changes are accepted only for AWS, only with a
+**version-increasing Update** and only while the feature is enabled.
+Install/Retry cannot change them. Omitting these fields on an existing legacy
+deployment keeps its old profile unchanged. With `managedDeploymentConfigUpdates`
+on, the same changes can also be requested at the installed version through a
+separate route and the same customer approval; see
+[managed-deployment-config-updates](../managed-deployment-config-updates/README.md).
 
 The deployment row is locked while checking features and atomically writing its
 new target and run. A live approval/provisioning run freezes both profile and
 settings. Changed pending input answers **409 `deployment_settings_frozen`**;
 unchanged input reopens the identical run and handoff, including under concurrent
-requests. There is no settings-only write. Superseded runs cannot enroll.
+requests. Launch has no settings-only write. Superseded runs cannot enroll.
 
 Gateway or explicitly selected profiles send `ManagedRuntimeProfile` with exactly
 `legacy` or `gateway`. Untouched historical legacy targets omit that new

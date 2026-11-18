@@ -20,6 +20,7 @@ import { db } from "../../db.js"
 import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { markFeaturesUsed } from "../../feature-usage.js"
 import { type ManagedDeploymentRelease } from "../../managed-deployments/config.js"
+import { appliedConfiguration, configurationChangeRecord, configurationView, withdrawConfigurationChange, type DeploymentRow, type RunRow } from "../../managed-deployments/configuration.js"
 import { effectiveInstallerReadiness, effectiveInstallerRelease } from "../../managed-deployments/releases.js"
 import { jsonValidator, orgPermissionRoute, paramValidator, tokenRoute } from "../../middleware/index.js"
 import { jsonResponse } from "../../openapi.js"
@@ -27,16 +28,13 @@ import { checkFixedWindowRateLimit, checkRateLimit } from "../../utils/rate-limi
 import type { OrgRouteVariables } from "./shared.js"
 
 const PATH = "/v1/managed-deployments"
-const RUN_LIFETIME_MS = 3 * 60 * 60 * 1000
+export const RUN_LIFETIME_MS = 3 * 60 * 60 * 1000
 const MAX_HEARTBEAT_BYTES = 16_384
-const deploymentParam = z.object({ deploymentId: z.string().uuid() })
+export const deploymentParam = z.object({ deploymentId: z.string().uuid() })
 const runParam = deploymentParam.extend({ runId: z.string().uuid() })
 const acceptedSchema = z.object({ ok: z.literal(true) })
 const enrollmentResponseSchema = z.object({ token: z.string(), expiresAt: z.string().datetime() })
 const errorSchema = z.object({ error: z.string() })
-
-type DeploymentRow = typeof ManagedDeploymentTable.$inferSelect
-type RunRow = typeof ManagedDeploymentRunTable.$inferSelect
 
 // Agents may read readiness and status, record a deployment and prepare its
 // cloud handoff. They never remove records or call installer/health endpoints.
@@ -46,18 +44,18 @@ type McpExposure = { mcp: boolean }
 type ManagedDeploymentRouteOptions = DescribeRouteOptions & { "x-mcp": boolean }
 const describeManagedDeploymentRoute = (options: ManagedDeploymentRouteOptions) => describeRoute(options)
 
-function operation(summary: string, description: string, response: z.ZodType, exposure: McpExposure, security?: Array<Record<string, string[]>>) {
+export function operation(summary: string, description: string, response: z.ZodType, exposure: McpExposure, security?: Array<Record<string, string[]>>, refusal: z.ZodType = errorSchema) {
   return describeManagedDeploymentRoute({
     tags: ["Managed deployments"], summary, description, "x-mcp": exposure.mcp, ...(security ? { security } : {}),
     responses: {
       200: jsonResponse(summary, response),
-      400: jsonResponse("Invalid input.", errorSchema),
+      400: jsonResponse("Invalid input.", refusal),
       401: jsonResponse("Authentication required.", errorSchema),
       403: jsonResponse("Owner or super-admin approval required.", errorSchema),
-      404: jsonResponse("Deployment or feature unavailable.", errorSchema),
-      409: jsonResponse("The deployment cannot accept this operation now.", errorSchema),
+      404: jsonResponse("Deployment or feature unavailable.", refusal),
+      409: jsonResponse("The deployment cannot accept this operation now.", refusal),
       429: jsonResponse("Too many attempts.", errorSchema),
-      503: jsonResponse("No installer release is configured.", errorSchema),
+      503: jsonResponse("No installer release is configured.", refusal),
     },
   })
 }
@@ -70,7 +68,7 @@ async function releaseFor(row: DeploymentRow): Promise<ManagedDeploymentRelease 
   return row.provider === "aws" || row.provider === "gcp" ? effectiveInstallerRelease(row.provider) : null
 }
 
-function launchDetails(row: DeploymentRow, run: RunRow) {
+export function launchDetails(row: DeploymentRow, run: RunRow) {
   const common = {
     deploymentId: row.id, runId: run.id, challenge: run.challenge, domainName: row.domain_name,
     ownerEmail: row.owner_email, size: row.size,
@@ -119,10 +117,13 @@ function awsCloudShellUrl(region: string) {
   return `https://${region}.console.aws.amazon.com/cloudshell/home?region=${region}`
 }
 
-async function deploymentViews(rows: DeploymentRow[], now = new Date(), database: typeof db | typeof db.$primary = db): Promise<ManagedDeployment[]> {
+/** `configuration` adds each deployment's configuration block, for callers who can change it after installation. */
+async function deploymentViews(rows: DeploymentRow[], now = new Date(), database: typeof db | typeof db.$primary = db, options: { configuration?: boolean } = {}): Promise<ManagedDeployment[]> {
   if (!rows.length) return []
   const runIds = rows.flatMap((row) => row.active_run_id ? [row.active_run_id] : [])
   const runs = runIds.length ? await database.select().from(ManagedDeploymentRunTable).where(inArray(ManagedDeploymentRunTable.id, runIds)) : []
+  // What can change depends on the deployment's whole run history, not only its active run.
+  const history = options.configuration ? await database.select().from(ManagedDeploymentRunTable).where(inArray(ManagedDeploymentRunTable.deployment_id, rows.map((row) => row.id))) : null
   const events = runIds.length ? await database.select().from(ManagedDeploymentEventTable).where(inArray(ManagedDeploymentEventTable.run_id, runIds)).orderBy(asc(ManagedDeploymentEventTable.sequence)) : []
   const health = await database.select().from(ManagedDeploymentHealthTable).where(inArray(ManagedDeploymentHealthTable.deployment_id, rows.map((row) => row.id)))
   const [aws, gcp] = await Promise.all([effectiveInstallerRelease("aws"), effectiveInstallerRelease("gcp")])
@@ -148,13 +149,14 @@ async function deploymentViews(rows: DeploymentRow[], now = new Date(), database
           ...(event.error_code ? { errorCode: event.error_code } : {}), receivedAt: event.received_at.toISOString(),
         })),
       } : null,
+      ...(history ? { configuration: configurationView(row, history.filter((entry) => entry.deployment_id === row.id), aws, now) } : {}),
     })
   })
 }
 
 /** `primary` when the caller just wrote the deployment's run. */
-async function oneView(row: DeploymentRow, options: { primary?: boolean } = {}) {
-  const [view] = await deploymentViews([row], new Date(), options.primary ? db.$primary : db)
+export async function oneView(row: DeploymentRow, options: { primary?: boolean; configuration?: boolean } = {}) {
+  const [view] = await deploymentViews([row], new Date(), options.primary ? db.$primary : db, { configuration: options.configuration })
   if (!view) throw new Error("deployment view missing")
   return view
 }
@@ -190,7 +192,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
       const rows = await db.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.org_id, org.organization.id)).limit(100)
-      return c.json({ deployments: await deploymentViews(rows) })
+      return c.json({ deployments: await deploymentViews(rows, new Date(), db, { configuration: org.features.managedDeploymentConfigUpdates }) })
     })
 
   app.post(PATH, operation("Create a managed deployment", "Records a new installation target; nothing is launched or billed until the owner approves it in their cloud. Confirm the account/project, address and billing first. When configuration.assistantsAvailable is true, new AWS targets default to runtimeProfile gateway: Den, the native model gateway, managed runner, Workbot and Slack/Automations are included. Use that profile for new managed runtimes; explicit legacy preserves the core-only profile. Configure upstream providers and credentials in Models inside the installed Den after first sign-in, and the customer's Slack app in its Connectors. Never request or send a hosted model key, upstream endpoint or raw provider credentials here. Only computers are optional (off by default): Daytona is preferred and needs a computer snapshot; Daytona/Freestyle require the customer's plain-string Secrets Manager key ARN in this account/region and execute outside AWS. GCP retains its existing legacy flow.", managedDeploymentSchema, { mcp: true }),
@@ -227,7 +229,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const [row] = await db.$primary.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, id)).limit(1)
       if (!row) return c.json({ error: "deployment_not_found" }, 404)
       if (row.provider === "aws" && awsTarget(row).runtimeProfile === "gateway") markFeaturesUsed({ organizationId: org.organization.id, memberId: org.currentMember.id, keys: ["managedDeploymentAssistants"] })
-      return c.json(await oneView(row))
+      return c.json(await oneView(row, { configuration: org.features.managedDeploymentConfigUpdates }))
     })
 
   app.delete(`${PATH}/:deploymentId`, operation("Remove a deployment that was never installed", "Deletes a deployment record that never reached the customer's cloud. Installed deployments stay tracked and answer 409.", acceptedSchema, { mcp: false }),
@@ -310,7 +312,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       if ("error" in result) return c.json({ error: result.error }, result.status)
       if (runtimeProfile || assistants || (result.row.provider === "aws" && (awsTarget(result.row).runtimeProfile === "gateway" || assistantsEnabled(awsTarget(result.row).assistants)))) markFeaturesUsed({ organizationId: org.organization.id, memberId: org.currentMember.id, keys: ["managedDeploymentAssistants"] })
       return c.json(managedDeploymentLaunchSchema.parse({
-        deployment: await oneView(result.row, { primary: true }), kind: result.run.kind,
+        deployment: await oneView(result.row, { primary: true, configuration: org.features.managedDeploymentConfigUpdates }), kind: result.run.kind,
         ...launchDetails(result.row, result.run),
         expiresAt: result.run.expires_at.toISOString(),
       }))
@@ -353,6 +355,12 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         if (!deployment || deployment.active_run_id !== runId) return false
         const [current] = await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, runId)).limit(1).for("update")
         if (!current || current.state !== "awaiting_approval" || current.expires_at < new Date()) return false
+        // The kill switch reaches a change that was prepared but has not started: it is withdrawn
+        // before the installer downloads anything. A change that already enrolled finishes.
+        if (current.kind === "configure" && !await organizationFeatureEnabled(deployment.org_id, "managedDeploymentConfigUpdates", { database: tx, lock: "share", userId: configurationChangeRecord(current).requestedBy.userId })) {
+          await withdrawConfigurationChange(tx, deployment, current)
+          return false
+        }
         await tx.update(ManagedDeploymentRunTable).set({ state: "provisioning", token_hash: hashToken(token), last_seen_at: new Date() }).where(eq(ManagedDeploymentRunTable.id, runId))
         return true
       })
@@ -375,6 +383,10 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       if (!audited.ok) return audited.response
       const body = c.req.valid("json")
       const outcome = await db.transaction(async (tx) => {
+        // Deployment, then run: the order launches, configuration changes and enrollment lock in. A run
+        // superseded or withdrawn since the read above records nothing and never marks anything installed.
+        const [deployment] = await tx.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, deploymentId)).limit(1).for("update")
+        if (!deployment || deployment.active_run_id !== runId) return "unauthorized"
         const [run] = await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, runId)).limit(1).for("update")
         if (!run || !tokenMatches(run.token_hash, token) || run.expires_at < new Date()) return "unauthorized"
         const [existing] = await tx.select().from(ManagedDeploymentEventTable).where(and(eq(ManagedDeploymentEventTable.run_id, runId), eq(ManagedDeploymentEventTable.sequence, body.sequence))).limit(1)
@@ -384,7 +396,8 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         const ready = body.outcome === "succeeded" && body.step === "health_verified"
         await tx.insert(ManagedDeploymentEventTable).values({ id: randomUUID(), run_id: runId, sequence: body.sequence, step: body.step, outcome: body.outcome, error_code: body.errorCode ?? null, received_at: now })
         await tx.update(ManagedDeploymentRunTable).set({ last_sequence: body.sequence, last_seen_at: now, state: body.outcome === "failed" ? "failed" : ready ? "ready" : "provisioning" }).where(eq(ManagedDeploymentRunTable.id, runId))
-        if (ready) await tx.update(ManagedDeploymentTable).set({ installed_version: run.version }).where(eq(ManagedDeploymentTable.id, deploymentId))
+        // A configuration change is recorded only here, once the customer-approved run has verified health.
+        if (ready) await tx.update(ManagedDeploymentTable).set({ installed_version: run.version, ...(run.kind === "configure" ? appliedConfiguration(run) : {}) }).where(eq(ManagedDeploymentTable.id, deploymentId))
         return "ok"
       })
       if (outcome === "unauthorized") return c.json({ error: "unauthorized" }, 401)

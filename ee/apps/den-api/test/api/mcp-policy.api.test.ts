@@ -37,6 +37,7 @@ test("MCP agents can plan, prepare and follow managed deployments but never remo
   assert.equal(mcpAllowed(document, "post", "/v1/managed-deployments/{deploymentId}/launch"), true)
 
   assert.equal(mcpAllowed(document, "delete", "/v1/managed-deployments/{deploymentId}"), false)
+  assert.equal(mcpAllowed(document, "post", "/v1/managed-deployments/{deploymentId}/configuration-changes"), false)
   assert.equal(mcpAllowed(document, "post", "/v1/managed-deployments/{deploymentId}/runs/{runId}/enroll"), false)
   assert.equal(mcpAllowed(document, "post", "/v1/managed-deployments/{deploymentId}/runs/{runId}/events"), false)
   assert.equal(mcpAllowed(document, "post", "/v1/managed-deployments/{deploymentId}/heartbeat"), false)

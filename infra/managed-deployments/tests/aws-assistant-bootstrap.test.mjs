@@ -144,6 +144,33 @@ test("Gateway explicitly enables all runtime features without legacy model or co
   assert.match(template.Description, /five required services: Den API, Den web, headless runner, Workbot and AI Gateway/);
 });
 
+test("a new run of the installed version restarts the installer, and adding the gateway attaches the runner's storage and backup grants", () => {
+  const runnerEnvironment = (resources) => Object.fromEntries(resources.Runner.Properties.Environment.EnvironmentVariables.map((entry) => [entry.Name, entry.Value]));
+  const installed = { OpenWorkVersion: "1.0.2", OwnerEmail: "admin@example.com", RunId: "00000000-0000-4000-8000-00000000000a" };
+  const before = resolveTemplate(installed);
+  const again = resolveTemplate({ ...installed, OwnerEmail: "first.admin@example.com", RunId: "00000000-0000-4000-8000-00000000000b" });
+  assert.equal(again.valid, true);
+  // The custom resource's RunId is what makes CloudFormation call the launcher again.
+  assert.deepEqual(template.Resources.StartRunner.Properties.RunId, { Ref: "RunId" });
+  assert.equal(before.resources.StartRunner.Properties.RunId, installed.RunId);
+  assert.equal(again.resources.StartRunner.Properties.RunId, "00000000-0000-4000-8000-00000000000b");
+  assert.match(template.Resources.Launcher.Properties.Code.ZipFile, /RequestType"\] in \("Create", "Update"\)/);
+  assert.equal(runnerEnvironment(again.resources).OPENWORK_VERSION, "1.0.2");
+  assert.equal(runnerEnvironment(again.resources).OWNER_EMAIL, "first.admin@example.com");
+  const changed = Object.keys(again.resources).filter((key) => JSON.stringify(again.resources[key]) !== JSON.stringify(before.resources[key]));
+  assert.deepEqual(changed.sort(), ["Runner", "StartRunner"]);
+  // Nothing the customer approves compares versions: only Den's launch route requires a newer one.
+  assert.doesNotMatch(JSON.stringify([template.Rules, template.Conditions]), /OpenWorkVersion/);
+
+  assert.deepEqual(before.resources.RunnerRole.Properties.ManagedPolicyArns, ["RunnerCoreSupportPolicy"]);
+  const gateway = resolveTemplate({ ...installed, RunId: "00000000-0000-4000-8000-00000000000c", ManagedRuntimeProfile: "gateway", HeadlessModel: "", HeadlessModelBaseUrl: "", HeadlessModelSecretArn: "", HeadlessComputerSecretArn: "" });
+  assert.equal(gateway.valid, true);
+  assert.equal(runnerEnvironment(gateway.resources).OPENWORK_VERSION, "1.0.2");
+  assert.equal(runnerEnvironment(gateway.resources).MANAGED_RUNTIME_PROFILE, "gateway");
+  assert.ok(gateway.resources.RunnerSupplementalPolicy);
+  assert.deepEqual(gateway.resources.RunnerRole.Properties.ManagedPolicyArns, ["RunnerCoreSupportPolicy", "RunnerSupplementalPolicy"]);
+});
+
 test("native AI Gateway resources stay inside existing deployment IAM scopes", () => {
   const { resources } = resolveTemplate({ ManagedRuntimeProfile: "gateway", NetworkMode: "existing" });
   const bySid = Object.fromEntries(policies(resources).flatMap((policy) => policy.Statement).map((statement) => [statement.Sid, statement]));
