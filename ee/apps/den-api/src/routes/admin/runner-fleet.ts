@@ -5,7 +5,7 @@ import { z } from "zod"
 import { adminRoute, queryValidator } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { runnerFleetEvents } from "../../runner-fleet/events.js"
-import { currentRunnerFleet, readRunnerFleetHistory } from "../../runner-fleet/service.js"
+import { describedRunnerFleet, readRunnerFleetHistory } from "../../runner-fleet/service.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const historyQuerySchema = z.object({ range: runnerFleetHistoryRangeSchema.default("24h") })
@@ -24,7 +24,7 @@ export function registerAdminRunnerFleetRoutes<T extends { Variables: AuthContex
     responses: { 200: jsonResponse("The fleet now.", adminRunnerFleetSchema), ...accessResponses },
   }), adminRoute(), async (c) => {
     c.header("Cache-Control", "no-store")
-    return c.json(await currentRunnerFleet())
+    return c.json(await describedRunnerFleet())
   })
 
   app.get("/v1/admin/runner-fleet/history", describeRoute({
@@ -51,7 +51,7 @@ export function registerAdminRunnerFleetRoutes<T extends { Variables: AuthContex
     streams.set(admin, open + 1)
     return runnerFleetEvents({
       request: c.req.raw,
-      read: currentRunnerFleet,
+      read: describedRunnerFleet,
       onClose: () => {
         const remaining = (streams.get(admin) ?? 1) - 1
         if (remaining > 0) streams.set(admin, remaining)

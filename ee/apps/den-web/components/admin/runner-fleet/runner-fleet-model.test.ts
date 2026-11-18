@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { RunnerFleetHistoryBucket, RunnerFleetNode } from "@openwork/types/den/admin-runner-fleet";
-import { bucketLevel, bucketTitle, createEventStreamParser, fleetBuckets, formatMegabytes, historyGrid, ownershipShares, type StreamEvent } from "./runner-fleet-model";
+import type { RunnerFleetCell, RunnerFleetHistoryBucket, RunnerFleetNode } from "@openwork/types/den/admin-runner-fleet";
+import { bucketLevel, bucketTitle, cellAge, cellFacts, cellName, cellNamesNotice, cellNote, cellSummary, createEventStreamParser, fleetBuckets, formatDuration, formatMegabytes, historyGrid, ownershipShares, type StreamEvent } from "./runner-fleet-model";
 
 const MB = 1024 * 1024;
 const HOUR = 60 * 60_000;
@@ -82,4 +82,47 @@ test("the live stream is split into events however the chunks fall", () => {
   push("et\r\ndata: {\"status\":");
   push("\"healthy\"}\r\n\r\n: heartbeat\n\nevent: end\ndata: {}\n\nevent: fleet\ndata: partial");
   assert.deepEqual(events, [{ event: "fleet", data: "{\"status\":\"healthy\"}" }, { event: "end", data: "{}" }]);
+});
+
+const NOW_MS = Date.parse("2026-11-18T01:00:00.000Z");
+const agoIso = (minutes: number) => new Date(NOW_MS - minutes * 60_000).toISOString();
+const inMemory = (extra: Partial<RunnerFleetCell> = {}): RunnerFleetCell => ({ id: "0624d0851a2b", since: agoIso(4), kind: "conversation", product: "workbot", organization: { id: "org_acme", name: "Acme Robotics" }, lastActiveAt: agoIso(1), turnRunning: false, ...extra });
+
+test("a cell is paler the newer it is in memory, and one nothing has timed yet is new", () => {
+  assert.deepEqual([0.5, 1.9, 2, 9, 10, 59, 60, 359, 360, 3 * 1440].map((minutes) => cellAge({ since: agoIso(minutes) }, NOW_MS)), [0, 0, 1, 1, 2, 2, 3, 3, 4, 4]);
+  assert.equal(cellAge({ since: null }, NOW_MS), 0);
+  assert.equal(cellAge({ since: "not a time" }, NOW_MS), 0);
+  assert.deepEqual([45_000, 12 * 60_000, 3 * 3_600_000 + 12 * 60_000, 50 * 3_600_000].map(formatDuration), ["45 s", "12 min", "3 h 12 min", "2 d 2 h"]);
+});
+
+test("a cell is named for what it holds, never for a person or a conversation's name", () => {
+  assert.equal(cellName(inMemory()), "A Workbot side chat");
+  assert.equal(cellName(inMemory({ kind: "person" })), "A person's Workbot cell");
+  assert.equal(cellName(inMemory({ product: "slack" })), "A Slack conversation");
+  assert.equal(cellName(inMemory({ product: "automation" })), "An Automation's conversation");
+  assert.equal(cellName(inMemory({ kind: "service", product: null })), "The runner's own cell");
+  assert.equal(cellName(inMemory({ kind: "unknown", product: null })), "A cell Den cannot name");
+  assert.equal(cellNote(inMemory()), null);
+  assert.match(cellNote(inMemory({ kind: "person" })) ?? "", /main chat, their memory and their list of chats/);
+  assert.match(cellNote(inMemory({ kind: "unknown" })) ?? "", /one deleted since, or one made in the last minute/);
+  // While the runner cannot say which cell a conversation has, an unnamed cell blames nothing.
+  assert.equal(cellNote(inMemory({ kind: "unknown" }), true), "Whose it is cannot be read right now.");
+});
+
+test("the popover says whose a cell is, how long it has been in memory and whether it is working", () => {
+  assert.deepEqual(cellFacts(inMemory(), NOW_MS), [
+    { name: "Organization", value: "Acme Robotics" },
+    { name: "In memory", value: "For 4 min" },
+    { name: "Last active", value: "1 min ago" },
+    { name: "Cell", value: "0624d0851a2b" },
+  ]);
+  const busy = cellFacts(inMemory({ kind: "person", since: agoIso(0.3), turnRunning: true, lastActiveAt: agoIso(0.2) }), NOW_MS);
+  assert.deepEqual(busy.map((fact) => fact.value), ["Acme Robotics", "Just arrived", "A turn is under way in one of their chats", "Just now", "0624d0851a2b"]);
+  // A cell Den cannot name still says how long it has been there; one nothing has timed says so.
+  assert.deepEqual(cellFacts(inMemory({ kind: "unknown", product: null, organization: null, lastActiveAt: null, since: agoIso(400) }), NOW_MS), [{ name: "In memory", value: "For 6 h 40 min" }, { name: "Cell", value: "0624d0851a2b" }]);
+  assert.equal(cellFacts(inMemory({ since: null }), NOW_MS)[1]?.value, "Just seen");
+  assert.equal(cellSummary(inMemory(), NOW_MS), "A Workbot side chat. Organization: Acme Robotics. In memory: For 4 min. Last active: 1 min ago. Cell: 0624d0851a2b.");
+  assert.equal(cellNamesNotice(null), null);
+  assert.match(cellNamesNotice("http_404") ?? "", /from before it could say which cell a conversation has/);
+  assert.match(cellNamesNotice("timeout") ?? "", /could not be read \(timeout\)/);
 });

@@ -1,6 +1,7 @@
 import {
   RUNNER_FLEET_CLOSE_RATIO,
   RUNNER_FLEET_REOPEN_RATIO,
+  type RunnerFleetCell,
   type RunnerFleetHistoryBucket,
   type RunnerFleetHistoryRange,
   type RunnerFleetNode,
@@ -171,4 +172,85 @@ export function createEventStreamParser(onEvent: (event: StreamEvent) => void) {
     // A stream that never ends an event is not one of ours.
     if (buffer.length > 4 * 1024 * 1024) buffer = "";
   };
+}
+
+const MINUTE_MS = 60_000;
+
+/** A length of time in its two largest units: "45 s", "12 min", "3 h 12 min", "2 d 4 h". */
+export function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return minutes % 60 === 0 ? `${hours} h` : `${hours} h ${minutes % 60} min`;
+  const days = Math.floor(hours / 24);
+  return hours % 24 === 0 ? `${days} d` : `${days} d ${hours % 24} h`;
+}
+
+/**
+ * How long a cell has been in memory, as a shade: 0 just arrived, 4 there for hours. A cell leaves memory about a
+ * minute after its last request, so most are new; one that stays is busy, or held by something.
+ */
+export type CellAge = 0 | 1 | 2 | 3 | 4;
+export const CELL_AGE_STEPS: ReadonlyArray<{ level: CellAge; underMinutes: number; label: string }> = [
+  { level: 0, underMinutes: 2, label: "Under 2 min" },
+  { level: 1, underMinutes: 10, label: "Under 10 min" },
+  { level: 2, underMinutes: 60, label: "Under 1 h" },
+  { level: 3, underMinutes: 6 * 60, label: "Under 6 h" },
+  { level: 4, underMinutes: Number.POSITIVE_INFINITY, label: "6 h or more" },
+];
+
+/** A cell nothing has timed yet has only just been seen: it is new. */
+export function cellAge(cell: Pick<RunnerFleetCell, "since">, now: number): CellAge {
+  const since = cell.since === null ? Number.NaN : Date.parse(cell.since);
+  if (!Number.isFinite(since)) return 0;
+  const minutes = (now - since) / MINUTE_MS;
+  return CELL_AGE_STEPS.find((step) => minutes < step.underMinutes)?.level ?? 4;
+}
+
+/** What a cell is, in a few words. */
+export function cellName(cell: Pick<RunnerFleetCell, "kind" | "product">): string {
+  if (cell.kind === "service") return "The runner's own cell";
+  if (cell.kind === "unknown") return "A cell Den cannot name";
+  if (cell.kind === "person") return "A person's Workbot cell";
+  if (cell.product === "slack") return "A Slack conversation";
+  if (cell.product === "automation") return "An Automation's conversation";
+  return "A Workbot side chat";
+}
+
+/** What a cell holds, said once under its name. `unnamed`: cells cannot be matched to conversations right now. */
+export function cellNote(cell: Pick<RunnerFleetCell, "kind" | "product">, unnamed = false): string | null {
+  if (cell.kind === "person") return "Their main chat, their memory and their list of chats.";
+  if (cell.kind === "unknown") return unnamed ? "Whose it is cannot be read right now." : "No conversation in Den's index has this cell: one deleted since, or one made in the last minute.";
+  if (cell.kind === "service") return "Shared by the whole runner, not one conversation's.";
+  return null;
+}
+
+export type CellFact = { name: string; value: string };
+
+/** What the popover says about a cell, as short facts. Never a conversation's name, a member or content. */
+export function cellFacts(cell: RunnerFleetCell, now: number): CellFact[] {
+  const facts: CellFact[] = [];
+  if (cell.organization) facts.push({ name: "Organization", value: cell.organization.name || cell.organization.id });
+  const since = cell.since === null ? Number.NaN : Date.parse(cell.since);
+  facts.push({ name: "In memory", value: Number.isFinite(since) ? (now - since < MINUTE_MS ? "Just arrived" : `For ${formatDuration(now - since)}`) : "Just seen" });
+  if (cell.turnRunning) facts.push({ name: "Now", value: cell.kind === "person" ? "A turn is under way in one of their chats" : "A turn is under way" });
+  const active = cell.lastActiveAt === null ? Number.NaN : Date.parse(cell.lastActiveAt);
+  if (Number.isFinite(active)) facts.push({ name: "Last active", value: now - active < MINUTE_MS ? "Just now" : `${formatDuration(now - active)} ago` });
+  facts.push({ name: "Cell", value: cell.id });
+  return facts;
+}
+
+/** One line for a screen reader, in place of the popover. */
+export function cellSummary(cell: RunnerFleetCell, now: number): string {
+  return `${cellName(cell)}. ${cellFacts(cell, now).map((fact) => `${fact.name}: ${fact.value}`).join(". ")}.`;
+}
+
+/** Why cells are listed without whose they are; null when they are named. */
+export function cellNamesNotice(error: string | null): string | null {
+  if (error === null) return null;
+  if (error === "http_404") return "The runner in use is from before it could say which cell a conversation has, so cells are shown without whose they are. That fills in once a current runner is deployed.";
+  if (error === "not_configured") return "This deployment's Den has no way to ask the runner, so cells are shown without whose they are.";
+  return `Whose each cell is could not be read (${error.replaceAll("_", " ")}), so cells are shown without it.`;
 }

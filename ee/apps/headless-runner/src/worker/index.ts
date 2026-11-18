@@ -15,6 +15,7 @@ import { CellsStore } from "../cells-store.js"
 import { CellCallError, INTERNAL_PATHS, SESSION_CELL_ID, SessionCells, sessionCellName, type CellIdentity, type InternalPath } from "../cells.js"
 import { localMemory } from "../memory.js"
 import { serviceHealthResponse } from "../service-health.js"
+import { cellIdsResponse } from "../cell-ids.js"
 import { computerDetailResponse, computerFleetResponse } from "../computer-fleet.js"
 import { durableObjectSql } from "./sql.js"
 import { CELL_UNAVAILABLE, CELL_UNAVAILABLE_RETRY_SECONDS, cellRouteFailure, type CellRouteFailure } from "./route-failure.js"
@@ -479,6 +480,8 @@ router.get("/v1/health", (c) => serviceHealthResponse(c.req.raw, configFor(c.env
 // The providers' list of this runner's computers: asked of the providers from here, so no cell wakes for it.
 router.get("/v1/computers", (c) => computerFleetResponse(configFor(c.env), { fetch: (url, init) => fetch(url, init) }))
 router.get("/v1/computers/:source/:id", (c) => computerDetailResponse(configFor(c.env), { fetch: (url, init) => fetch(url, init) }, c.req.param("source"), c.req.param("id")))
+// Which cell id each cell name has, for Den's admin page. Derived from the name: no cell is woken or touched.
+router.post("/v1/cells/ids", (c) => cellIdsResponse(c.req.raw, { valid: (name) => parseCell(name) !== null, id: (name) => c.env.HEADLESS_CELL.idFromName(name).toString() }))
 const catalogs = new WeakMap<Config, ReturnType<typeof gatewayModelCatalog>>()
 router.get("/v1/models", async (c) => {
   const config = configFor(c.env)

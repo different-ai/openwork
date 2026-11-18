@@ -319,6 +319,7 @@ export const runnerComputerDetailSchema = z.object({
   eventsError: z.string().max(40).nullable(),
 })
 export type RunnerComputerDetail = z.infer<typeof runnerComputerDetailSchema>
+const cellIdsSchema = z.object({ ids: z.record(z.string().max(220), z.string().regex(/^[0-9a-f]{16,128}$/)) })
 const computerRefusalSchema = z.object({ error: z.string().max(60), code: z.string().max(40).optional() })
 
 /**
@@ -946,6 +947,23 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       const result = modelProbeSchema.safeParse(payload)
       if (status !== 200 || !result.success || result.data.requestedModel !== model) return null
       return result.data
+    },
+
+    /**
+     * The cell host's id for each cell name (the runner's `POST /v1/cells/ids`, at most 2,000 names a call). A node's
+     * state report lists the cells it holds in memory by id alone; this is how a known conversation is matched to
+     * one. Derived from the names: no cell is woken. A 404 is a runner from before it, or one with no cell host.
+     */
+    async cellIds(names: readonly string[]): Promise<RunnerResult<Record<string, string>>> {
+      let answer: Awaited<ReturnType<typeof request>>
+      try {
+        answer = await request(deps, "POST", "/v1/cells/ids", { names }, COMPUTERS_TIMEOUT_MS)
+      } catch (error) {
+        return { ok: false, status: 503, error: error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "timeout" : "unreachable" }
+      }
+      if (answer.status !== 200) return { ok: false, status: answer.status, error: `http_${answer.status}` }
+      const parsed = cellIdsSchema.safeParse(answer.payload)
+      return parsed.success ? { ok: true, value: parsed.data.ids } : { ok: false, status: 502, error: "invalid_response" }
     },
 
     /**

@@ -2,8 +2,9 @@ import { z } from "zod"
 
 /**
  * The admin Runner fleet page: the cloud runner's celld nodes as each node reports itself on its own state
- * endpoint (see ee/apps/den-api/src/runner-fleet). Counts, byte sizes and opaque cell ids only: no conversation
- * content, owners or credentials.
+ * endpoint (see ee/apps/den-api/src/runner-fleet). Counts, byte sizes and opaque cell ids, and for each cell in
+ * memory the organization and kind of conversation it belongs to: never a conversation's name or content, a
+ * member, or credentials.
  */
 
 /** celld's defaults: a node closes to new cells at 80% of the machine's memory and reopens at 80% of that. */
@@ -12,6 +13,8 @@ export const RUNNER_FLEET_REOPEN_RATIO = 0.64
 /** At most this many of a node's cells in memory are listed; `residentsTruncated` says when there are more. */
 export const RUNNER_FLEET_RESIDENT_LIMIT = 600
 export const RUNNER_FLEET_NODE_LIMIT = 64
+/** At most this many of a node's cells in memory are described (whose they are, since when). */
+export const RUNNER_FLEET_CELL_LIMIT = 300
 
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const ratio = z.number().nonnegative().max(100)
@@ -23,6 +26,27 @@ const ratio = z.number().nonnegative().max(100)
  */
 export const runnerFleetNodeStateSchema = z.enum(["open", "no_headroom", "closed", "draining", "unreachable"])
 export type RunnerFleetNodeState = z.infer<typeof runnerFleetNodeStateSchema>
+
+/** One cell a node holds in memory. */
+export const runnerFleetCellSchema = z.object({
+  /** The first 12 characters of the cell's id: enough to tell cells apart, and opaque. */
+  id: z.string().min(1).max(16),
+  /** When it was first seen in memory on this node, to within a minute; null before anything has recorded it. */
+  since: z.string().datetime().nullable(),
+  /**
+   * `conversation`: one conversation's own cell. `person`: a person's cell (their Workbot main chat, their memory
+   * and their list of chats). `service`: the runner's own. `unknown`: no conversation Den knows has this cell.
+   */
+  kind: z.enum(["conversation", "person", "service", "unknown"]),
+  /** What the conversation is part of; null for the runner's own cell and for one Den cannot name. */
+  product: z.enum(["workbot", "slack", "automation"]).nullable(),
+  organization: z.object({ id: z.string().min(1).max(64), name: z.string().max(200) }).nullable(),
+  /** The conversation's last activity as Den's index has it (for a person's cell, the latest of theirs). */
+  lastActiveAt: z.string().datetime().nullable(),
+  /** A turn is under way in it (for a person's cell, in any of their conversations). */
+  turnRunning: z.boolean(),
+})
+export type RunnerFleetCell = z.infer<typeof runnerFleetCellSchema>
 
 export const runnerFleetNodeSchema = z.object({
   /** The node's private address: what it is known by between restarts. */
@@ -59,6 +83,8 @@ export const runnerFleetNodeSchema = z.object({
     /** Short ids of the cells in memory, for showing where each one lives. */
     residents: z.array(z.string().min(1).max(16)).max(RUNNER_FLEET_RESIDENT_LIMIT),
     residentsTruncated: z.boolean(),
+    /** The first of those cells, each with whose it is and since when it has been in memory. */
+    inMemory: z.array(runnerFleetCellSchema).max(RUNNER_FLEET_CELL_LIMIT).default([]),
   }),
   sockets: count,
   cpuPercent: z.number().nonnegative().max(100_000).nullable(),
@@ -93,6 +119,11 @@ export const adminRunnerFleetSchema = z.object({
   }),
   /** Why the nodes could not be listed (`dns_failed`); null when they were. */
   discoveryError: z.string().max(40).nullable(),
+  /**
+   * Why cells cannot be matched to conversations (`http_404`: a runner from before it could say which id a name
+   * has; `not_configured`); null when they can. Cells are then listed without whose they are.
+   */
+  cellNamesError: z.string().max(40).nullable().default(null),
 }).meta({ ref: "AdminRunnerFleet" })
 export type AdminRunnerFleet = z.infer<typeof adminRunnerFleetSchema>
 
