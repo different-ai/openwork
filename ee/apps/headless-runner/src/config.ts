@@ -272,6 +272,8 @@ function computerConfig(value: z.infer<typeof configSchema>): Config["computer"]
   if (!apiKey) throw new Error(`Invalid headless-runner configuration: HEADLESS_COMPUTER=${value.HEADLESS_COMPUTER} needs ${keyName}`)
   if (value.HEADLESS_COMPUTER === "daytona" && !value.HEADLESS_COMPUTER_SNAPSHOT) throw new Error("Daytona computers need HEADLESS_COMPUTER_SNAPSHOT (snapshot:build:daytona)")
   if (value.HEADLESS_COMPUTER === "instabox" && !value.HEADLESS_COMPUTER_SNAPSHOT) throw new Error("instabox computers need HEADLESS_COMPUTER_SNAPSHOT (snapshot:build:instabox)")
+  // instabox cannot delete a sandbox after a period unused, so its computers stay until the conversation is deleted.
+  if (value.HEADLESS_COMPUTER === "instabox" && value.HEADLESS_COMPUTER_PERSISTENT !== "true") throw new Error("instabox computers need HEADLESS_COMPUTER_PERSISTENT=true: instabox keeps a computer until it is removed")
   if (value.HEADLESS_COMPUTER === "daytona" && value.HEADLESS_COMPUTER_DESKTOP === "true" && value.HEADLESS_COMPUTER_CLASS !== "linux-vm") throw new Error("Daytona desktop computers require HEADLESS_COMPUTER_CLASS=linux-vm for memory-preserving pause and snapshots")
   if (value.HEADLESS_COMPUTER === "freestyle" && value.HEADLESS_COMPUTER_DESKTOP === "true" && !value.HEADLESS_COMPUTER_SNAPSHOT) throw new Error("Freestyle desktop computers need HEADLESS_COMPUTER_SNAPSHOT (snapshot:build:freestyle-desktop)")
   return {

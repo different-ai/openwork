@@ -240,6 +240,38 @@ with Chromium for Testing in place of Debian's package and patched Node 24.x
 (24.22.1 or newer). A runtime change is an image change: deploying it builds a
 new snapshot, and existing computers move to it as described above.
 
+### instabox instead of Daytona
+
+instabox runs the same desktop on its Debian base. Its snapshots keep disks, not
+memory, so a new computer boots and the runner starts its desktop on first open.
+Build the snapshot from a checkout whose guest matches the runner you deploy,
+then point the runner at the printed name:
+
+```bash
+pnpm --filter @openwork-ee/headless-computer build
+INSTABOX_API_KEY=... pnpm --filter @openwork-ee/headless-computer snapshot:build:instabox
+```
+
+```dotenv
+HEADLESS_COMPUTER=instabox
+HEADLESS_COMPUTER_DESKTOP=true
+HEADLESS_COMPUTER_SNAPSHOT=<printed workbot-desktop-instabox-… name>
+HEADLESS_COMPUTER_PERSISTENT=true
+```
+
+Keep `INSTABOX_API_KEY` in the runner's secrets. The builder installs the
+computer for the `ubuntu` user, removes the passwordless sudo and Docker access
+instabox gives that user, and then checks a fresh sandbox made from the
+snapshot before printing its name: `ubuntu` has no root, the desktop starts and
+the viewer port answers. It does not start the desktop before saving, because a
+browser that ran there would leave its profile locked to the build sandbox.
+
+instabox cannot delete a computer after a period unused, so the runner requires
+`HEADLESS_COMPUTER_PERSISTENT=true`. A conversation's computer stays, paused,
+until the conversation is deleted or its owner leaves the organization. instabox
+pauses an idle computer after at most 30 minutes, even when the runner asks for
+a longer backstop.
+
 ### Through a sandbox gateway
 
 The `sandboxGateway` feature flag moves one organization's Workbot computers onto
