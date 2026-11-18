@@ -16,6 +16,7 @@ import {
   ensureDenActiveOrganization,
   denOriginComparisonKey,
   isDenSessionRevokedError,
+  isSelfHostedControlPlane,
   readDenBootstrapConfig,
   readDenSettings,
   resolveDenBaseUrls,
@@ -244,6 +245,10 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     const userId = nextUser?.id?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!settings.authToken?.trim() || !userId || !orgId) return;
+    if (isSelfHostedControlPlane()) {
+      void desktopBridge.desktopSentryClearSession().catch(() => undefined);
+      return;
+    }
     void desktopBridge.desktopSentrySetSession({ userId, orgId }).catch(() => undefined);
   }, []);
 

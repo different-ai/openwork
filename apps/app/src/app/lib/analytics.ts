@@ -15,7 +15,9 @@
  *   assert instrumentation without any analytics backend.
  */
 import { denSessionUpdatedEvent, denSettingsChangedEvent, type DenSessionUpdatedDetail } from "./den-session-events";
-import { readDenSettings } from "./den";
+import { isSelfHostedControlPlane, readDenSettings } from "./den";
+import { readDesktopDistributionInfo } from "./desktop";
+import { externalTelemetryAllowed } from "./enterprise-activation";
 import { analyticsLaunchProperties, analyticsRuntimeProperties, recordAnalyticsLaunch, createRunQualityTracker, createFeatureAnalytics, createFeatureToolObserver, recordDesktopAutomationLifecycle, createUpdateAnalytics } from "@openwork/product-analytics";
 import { recordInspectorEvent } from "./app-inspector";
 import { resolvePosthogKey } from "./analytics-key";
@@ -50,8 +52,20 @@ let launch: ReturnType<typeof recordAnalyticsLaunch> | undefined;
 let sessionId: string | undefined;
 let signedIn = false;
 
+function telemetryAllowedForInstall(): boolean {
+  try {
+    return externalTelemetryAllowed({
+      flavor: readDesktopDistributionInfo().flavor,
+      selfHostedControlPlane: isSelfHostedControlPlane(),
+    });
+  } catch {
+    return false;
+  }
+}
+
 export function isAnalyticsEnabled(): boolean {
   if (typeof window === "undefined") return false;
+  if (!telemetryAllowedForInstall()) return false;
   try {
     const raw = window.localStorage.getItem(PREFS_STORAGE_KEY);
     if (!raw) return true;
@@ -133,6 +147,10 @@ function identify(denUserId: string) {
 
 export async function flushAnalytics(): Promise<void> {
   if (queue.length === 0 || !POSTHOG_KEY) return;
+  if (!isAnalyticsEnabled()) {
+    queue.length = 0;
+    return;
+  }
   const batch = queue.splice(0, MAX_BATCH);
   const distinctId = getAnalyticsDistinctId();
 
