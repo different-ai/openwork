@@ -520,11 +520,12 @@ export function SessionPage(props: SessionPageProps) {
   const splitPanelOpen = useUiStateStore((state) => (
     splitSession ? state.sidePanelState[getSidePanelSessionKey(splitSession.sessionId)] != null : false
   ));
+  const sideChatPanelEnabled = useDesktopFeature("sideChatPanel");
   const primarySidePanelSessionKey = getSidePanelSessionKey(props.selectedSessionId);
   const panelSessionId = panelSessionForWorkbench({
     primarySessionId: props.selectedSessionId ?? null,
     primaryWorkspaceId: props.selectedWorkspaceId,
-    split: splitSession,
+    split: sideChatPanelEnabled ? splitSession : null,
     splitPanelOpen,
     focusedPane: focusedWorkbenchPane,
   });
