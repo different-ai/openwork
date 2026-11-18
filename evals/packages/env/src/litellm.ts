@@ -413,6 +413,7 @@ function startWitness(
   upstreamTokenId: string,
   controlTokenId: string,
   state: WitnessState,
+  outputLimit?: number,
 ): Promise<{ server: Server; port: number }> {
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -460,6 +461,15 @@ function startWitness(
       state.requests.push({ sequence, model, tokenId: requestTokenId, bodyText });
       if (requestTokenId !== upstreamTokenId) {
         writeJson(response, 401, { error: { message: "unauthorized" } });
+        return;
+      }
+      // What the real provider does when a request asks for more output than the model can give.
+      const asked = isRecord(body) ? [["max_tokens", body.max_tokens], ["max_completion_tokens", body.max_completion_tokens]].find(([, value]) => typeof value === "number") : undefined;
+      if (outputLimit !== undefined && asked && Number(asked[1]) > outputLimit) {
+        writeJson(response, 400, { error: {
+          message: `${String(asked[0])} is too large: ${String(asked[1])}. This model supports at most ${outputLimit} completion tokens, whereas you provided ${String(asked[1])}.`,
+          type: "invalid_request_error", param: asked[0], code: null,
+        } });
         return;
       }
       const id = `chatcmpl-openwork-${sequence}`;
@@ -679,6 +689,7 @@ async function startLocalLiteLlm(
     jwt?: LiteLlmJwtAuth;
     maxInputTokens: number;
     maxOutputTokens: number;
+    enforceOutputLimit?: boolean;
   },
   secrets: LiteLlmSecrets,
 ): Promise<LiteLlmHandle> {
@@ -705,6 +716,7 @@ async function startLocalLiteLlm(
       tokenId(secrets.upstreamKey),
       tokenId(secrets.controlKey),
       state,
+      input.enforceOutputLimit ? input.maxOutputTokens : undefined,
     );
     await witnessStep.ok(String(startedWitness.port));
     witness = startedWitness.server;
@@ -1054,6 +1066,8 @@ export async function liteLlm(input: {
   jwt?: LiteLlmJwtAuth;
   maxInputTokens?: number;
   maxOutputTokens?: number;
+  /** The model behind the proxy answers 400, as OpenAI does, to a request asking for more than maxOutputTokens. Docker placement only. */
+  enforceOutputLimit?: boolean;
   daytonaExec?: DaytonaExec;
   fetchImpl?: typeof fetch;
 }): Promise<LiteLlmHandle> {
@@ -1064,6 +1078,9 @@ export async function liteLlm(input: {
   };
   if ((input.database || input.jwt) && input.place.kind === "daytona") {
     throw new SkipError("LiteLLM database mode currently requires docker placement");
+  }
+  if (input.enforceOutputLimit && input.place.kind === "daytona") {
+    throw new SkipError("enforcing the output limit currently requires docker placement");
   }
   if (input.jwt && !process.env[LICENSE_ENV]?.trim()) {
     throw new SkipError(`set ${LICENSE_ENV}: LiteLLM's JWT authentication is an Enterprise feature`);

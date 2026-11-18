@@ -12,6 +12,9 @@ import { seededOrganizationId } from "./organization-capabilities.ts";
 export const LITELLM_ENTRA_FEATURE = "litellmEntraMemberSignIn";
 /** The name the proxy's model_list gives its one model; the admin types it into OpenWork. */
 export const LITELLM_ENTRA_MODEL = "gpt-4o-mini";
+export const LITELLM_ENTRA_MODEL_OUTPUT_LIMIT = 16_384;
+/** What the desktop asks for when a model's catalog entry has no output limit. */
+const DESKTOP_DEFAULT_MAX_OUTPUT = 32_000;
 export const LITELLM_ENTRA_REPLY = "The LiteLLM proxy accepted your Microsoft sign-in.";
 
 /** What reached LiteLLM on its client-facing address, and what it answered. Claims are read, never the token. */
@@ -130,6 +133,8 @@ export async function liteLlmEntraSignInWorld(seed: Seed, { place }: { place: Pl
     }));
     const proxy = stack.use(await liteLlm({
       place, modelId: LITELLM_ENTRA_MODEL, reply: LITELLM_ENTRA_REPLY,
+      // gpt-4o-mini's real limit: the model refuses a request for more output, as OpenAI does.
+      maxOutputTokens: LITELLM_ENTRA_MODEL_OUTPUT_LIMIT, enforceOutputLimit: true,
       jwt: { issuer: entra.issuer, jwksUrl: entra.jwksUrl("host.docker.internal"), audience: entra.clientId },
     }));
     const proxyOrigin = new URL(proxy.baseUrl).origin;
@@ -243,16 +248,20 @@ export async function liteLlmEntraSignInWorld(seed: Seed, { place }: { place: Pl
         const connected = await seed.api(person === "member" ? member : teammate, `/v1/inference-providers/${id}/connect`);
         const connection = isRecord(connected.body) && isRecord(connected.body.inferenceProvider) ? connected.body.inferenceProvider : null;
         const apiKey = text(connection?.apiKey);
-        const model = text(records(connection?.models)[0]?.id) ?? LITELLM_ENTRA_MODEL;
+        const listed = records(connection?.models)[0];
+        const model = text(listed?.id) ?? LITELLM_ENTRA_MODEL;
+        // As the app does: it asks for the model's output limit from the list OpenWork gave it.
+        const limit = isRecord(listed?.config) && isRecord(listed.config.limit) ? listed.config.limit : {};
+        const maxTokens = typeof limit.output === "number" ? limit.output : DESKTOP_DEFAULT_MAX_OUTPUT;
         if (!apiKey) return { status: connected.response.status, reply: null, error: isRecord(connected.body) ? text(connected.body.error) : null, sentTo: "den" as const };
         const response = await fetch(`${gateway.baseUrl}/api/v1/providers/${id}/chat/completions`, {
           method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-          body: JSON.stringify({ model, messages: [{ role: "user", content: "Are you there?" }] }), signal: AbortSignal.timeout(60_000),
+          body: JSON.stringify({ model, max_tokens: maxTokens, messages: [{ role: "user", content: "Are you there?" }] }), signal: AbortSignal.timeout(60_000),
         });
         const body: unknown = await response.json().catch(() => null);
         const choice = isRecord(body) ? records(body.choices)[0] : undefined;
         const error = isRecord(body) && isRecord(body.error) ? text(body.error.code) ?? text(body.error.type) ?? text(body.error.message) : isRecord(body) ? text(body.error) : null;
-        return { status: response.status, reply: isRecord(choice?.message) ? text(choice.message.content) : null, error, sentTo: "gateway" as const };
+        return { status: response.status, reply: isRecord(choice?.message) ? text(choice.message.content) : null, error, maxTokens, sentTo: "gateway" as const };
       },
       /** Every request that reached LiteLLM's address, with the kind of credential and LiteLLM's answer. */
       proxyCalls: ingress.calls,

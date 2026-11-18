@@ -32,7 +32,7 @@ import { awsSsoFetch, pollAwsSsoSignIn, readAwsSsoAttempt, startAwsSsoSignIn } f
 import { AwsSsoError, logoutAwsSso } from "@openwork-ee/utils/aws-identity-center"
 import { effectiveGatewayGrants, lockMemberOAuthAuthorization, memberGatewayTeams, revokeUpstreamCredentials } from "../../llm/inference-provider-lifecycle.js"
 import { isMigrationSourceLockConflict } from "../../llm/inference-provider-migration.js"
-import { getModelsDevProvider } from "../../llm/models-dev.js"
+import { getModelsDevCatalogProviders, getModelsDevProvider } from "../../llm/models-dev.js"
 import { LiteLlmError, createLiteLlmClient, liteLlmStaticModels, normalizeLiteLlmBaseUrl } from "../../llm/litellm.js"
 import { isLiteLlmEntraSignIn, liteLlmCatalogProvider } from "../../llm/litellm-settings.js"
 import { liteLlmMemberIssueStatus, provisionLiteLlmMember, pruneLiteLlmIssuedKeys, reconcileLiteLlmIssuedKeys, scheduleLiteLlmProvisioning } from "../../llm/litellm-issued.js"
@@ -403,13 +403,15 @@ async function requireLiteLlmEntraSignIn(input: { organizationId: GatewayProvide
 }
 
 /** The admin's Microsoft sign-in settings and model list, checked before anything is stored. */
-function liteLlmEntraInput(input: { oauthTenantId?: string; oauthScope?: string; modelIds?: string[] }) {
+async function liteLlmEntraInput(input: { oauthTenantId?: string; oauthScope?: string; modelIds?: string[] }) {
   if (input.oauthTenantId !== undefined && !microsoftTenantIdSchema.safeParse(input.oauthTenantId).success) {
     throw new GatewayWriteError(400, "invalid_tenant_id", "Enter the Entra ID directory (tenant) ID, a GUID such as 00000000-0000-0000-0000-000000000000.")
   }
   const scopeError = input.oauthScope === undefined ? null : microsoftApiScopeError(input.oauthScope)
   if (scopeError) throw new GatewayWriteError(400, "invalid_scope", scopeError)
-  const models = input.modelIds === undefined ? undefined : liteLlmStaticModels(input.modelIds)
+  // Limits come from the public catalog; an unreachable catalog leaves names bare rather than blocking the save.
+  const catalog = input.modelIds === undefined ? [] : await getModelsDevCatalogProviders().catch(() => [])
+  const models = input.modelIds === undefined ? undefined : liteLlmStaticModels(input.modelIds, catalog)
   if (models && !models.length) throw new GatewayWriteError(400, "model_required", "Enter at least one LiteLLM model name. Wildcards such as openai/* are not model names.")
   return { tenantId: input.oauthTenantId?.toLowerCase(), scope: input.oauthScope, models }
 }
@@ -1246,7 +1248,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       if (input.mode === "entra") {
         // No LiteLLM key exists in this mode: nothing is read from the proxy, and each person signs in with Microsoft later.
         await requireLiteLlmEntraSignIn({ organizationId: actor.organization.id, userId: actor.currentMember.userId, memberId: actor.currentMember.id, audience: "admin" })
-        const entra = liteLlmEntraInput(input)
+        const entra = await liteLlmEntraInput(input)
         const now = new Date()
         const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: LITELLM_PROVIDER_ID, name: input.name, model_ids: [], pinned_model_ids: [], provider_config: buildProviderConfigSnapshot(liteLlmCatalogProvider({ settings: {} })), settings: { upstreamBaseUrl: endpoints.inferenceBaseUrl, litellm: emptyEntraSettings(input.oauthScope) }, credential_mode: "member", oauth_client_id: null, oauth_client_secret: null, status: "active", created_at: now, updated_at: now }
         const sync = await db.transaction(async (tx) => {
@@ -1304,7 +1306,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       if (isLiteLlmEntraSignIn(settings)) {
         if (input.apiKey !== undefined || input.issueStrategy !== undefined || input.mirrorFallback !== undefined) throw new GatewayWriteError(409, "litellm_microsoft_sign_in", "This provider uses Microsoft sign-in. It has no LiteLLM key or key creation settings.")
         await requireLiteLlmEntraSignIn({ organizationId: actor.organization.id, userId: actor.currentMember.userId, memberId: actor.currentMember.id, audience: "admin" })
-        const entra = liteLlmEntraInput(input)
+        const entra = await liteLlmEntraInput(input)
         const result = await providerTransaction(c, async (tx, provider) => ({ provider, ...await updateLiteLlmEntraProvider(tx, provider, { tenantId: entra.tenantId, clientId: input.oauthClientId, clientSecret: input.oauthClientSecret, scope: entra.scope, models: entra.models }) }), { liteLlmEntra: true })
         await revokeUpstreamCredentials(result.revoked)
         return c.json({ inferenceProvider: await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync: result.sync })

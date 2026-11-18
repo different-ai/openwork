@@ -1,7 +1,7 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { isRecord } from "../worlds/library.ts";
-import { LITELLM_ENTRA_REPLY, liteLlmEntraSignInWorld } from "../worlds/litellm-entra-sign-in.ts";
+import { LITELLM_ENTRA_MODEL_OUTPUT_LIMIT, LITELLM_ENTRA_REPLY, liteLlmEntraSignInWorld } from "../worlds/litellm-entra-sign-in.ts";
 
 // LiteLLM is the real Enterprise proxy (its JWT authentication needs the license); Entra ID is a stand-in.
 const test = spec.world(liteLlmEntraSignInWorld, {
@@ -113,6 +113,13 @@ test("an admin connects a LiteLLM proxy that only takes sign-in tokens, and a me
       `POST /api/v1/providers/<provider>/chat/completions with the member's OpenWork key → ${answered.status}; reply "${answered.reply}"`,
       answered.status === 200 && answered.reply === LITELLM_ENTRA_REPLY);
     expect(answered).toMatchObject({ status: 200, reply: LITELLM_ENTRA_REPLY, sentTo: "gateway" });
+    // The app asks for the output limit OpenWork lists for the model; the model behind LiteLLM refuses more, as OpenAI does.
+    const received = (await world.modelRequests()).map((entry) => { try { const body: unknown = JSON.parse(entry.bodyText); return isRecord(body) ? body.max_tokens : undefined; } catch { return undefined; } });
+    evidence.recordAssertionEvidence("The member's request asks for no more output than the model supports",
+      `OpenWork listed gpt-4o-mini with an output limit; the app asked for max_tokens ${answered.maxTokens}; the model received ${JSON.stringify(received)}; its limit is ${LITELLM_ENTRA_MODEL_OUTPUT_LIMIT}`,
+      answered.maxTokens !== undefined && answered.maxTokens <= LITELLM_ENTRA_MODEL_OUTPUT_LIMIT && received.every((value) => typeof value === "number" && value <= LITELLM_ENTRA_MODEL_OUTPUT_LIMIT));
+    expect(answered.maxTokens).toBeLessThanOrEqual(LITELLM_ENTRA_MODEL_OUTPUT_LIMIT);
+    expect(received).toEqual([answered.maxTokens]);
     await admin.reload();
     await admin.see({ testId: "litellm-entra-signed-in", text: "1" }, { timeoutMs: WITHIN });
     await admin.screenshot();
