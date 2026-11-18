@@ -16,6 +16,13 @@
       },
       "default": "./src/schema.ts"
     },
+    "./configuration": {
+      "types": {
+        "openwork-build": "./dist/types/src/configuration.d.ts",
+        "default": "./src/configuration.ts"
+      },
+      "default": "./src/configuration.ts"
+    },
     "./lifecycle": {
       "types": {
         "openwork-build": "./dist/types/src/lifecycle.d.ts",

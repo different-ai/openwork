@@ -1415,6 +1415,13 @@
       "when": 1794962802413,
       "tag": "0202_narrow_scarecrow",
       "breakpoints": true
+    },
+    {
+      "idx": 203,
+      "version": "5",
+      "when": 1794986184329,
+      "tag": "0203_opposite_omega_red",
+      "breakpoints": true
     }
   ]
 }

@@ -4,7 +4,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import {
   awsAssistantsSchema, awsTargetSchema, assistantsEnabled, gatewayAssistants, normalizeAwsTargetForCreate, awsRegionSchema, gcpRegionSchema, deploymentStepSchema, managedDeploymentConfigurationSchema, managedDeploymentInputSchema,
   managedDeploymentLaunchSchema, managedDeploymentListSchema, managedDeploymentSchema,
-  type AwsAssistants, type AwsRuntimeProfile, type ManagedDeployment,
+  type AwsAssistants, type AwsRuntimeProfile, type DeploymentLaunchKind, type ManagedDeployment,
 } from "@openwork/types/den/managed-deployments";
 import { AlertTriangle, CheckCircle2, CircleDashed, Copy, ExternalLink, LockKeyhole, X, XCircle } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -191,7 +191,7 @@ export function ManagedDeploymentsScreen() {
     setDeployments((previous) => previous.some((entry) => entry.id === item.id) ? previous.map((entry) => entry.id === item.id ? item : entry) : [...previous, item]);
   }
 
-  async function prepare(deployment: ManagedDeployment, kind: Launch["kind"], assistants?: AwsAssistants, runtimeProfile?: AwsRuntimeProfile) {
+  async function prepare(deployment: ManagedDeployment, kind: DeploymentLaunchKind, assistants?: AwsAssistants, runtimeProfile?: AwsRuntimeProfile) {
     if ((assistants || runtimeProfile) && deployment.provider === "aws") {
       const parsed = awsTargetSchema.safeParse({ ...deployment.target, ...(runtimeProfile ? { runtimeProfile } : {}), ...(assistants ? { assistants } : {}) });
       if (!parsed.success) { setActionError(parsed.error.issues[0]?.message ?? "Check the assistant settings."); return; }
@@ -318,7 +318,7 @@ export function ManagedDeploymentsScreen() {
 
 function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, assistantsAvailable, copied, actionError, onPrepare, onCopy, onRemove }: {
   deployment: ManagedDeployment; launch: Launch | null; busy: boolean; canManage: boolean; canPrepare: boolean; assistantsAvailable: boolean; copied: boolean;
-  actionError: string | null; onPrepare: (kind: Launch["kind"], assistants?: AwsAssistants, runtimeProfile?: AwsRuntimeProfile) => void; onCopy: (command: string) => void; onRemove: () => void;
+  actionError: string | null; onPrepare: (kind: DeploymentLaunchKind, assistants?: AwsAssistants, runtimeProfile?: AwsRuntimeProfile) => void; onCopy: (command: string) => void; onRemove: () => void;
 }) {
   const [assistantDraft, setAssistantDraft] = useState<AwsAssistants | null>(null);
   const [runtimeProfileDraft, setRuntimeProfileDraft] = useState<AwsRuntimeProfile | null>(null);

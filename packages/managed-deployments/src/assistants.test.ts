@@ -59,6 +59,7 @@ test("only an Update can carry changed assistant settings", () => {
   assert.equal(managedDeploymentLaunchInputSchema.safeParse({ kind: "update", assistants }).success, true)
   assert.equal(managedDeploymentLaunchInputSchema.safeParse({ kind: "install", assistants }).success, false)
   assert.equal(managedDeploymentLaunchInputSchema.safeParse({ kind: "retry", assistants }).success, false)
+  assert.equal(managedDeploymentLaunchInputSchema.safeParse({ kind: "configure", assistants }).success, false)
 })
 
 test("AWS install and update handoffs carry identical explicit assistant parameters", () => {
