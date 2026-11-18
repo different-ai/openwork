@@ -18,6 +18,9 @@ import type { Place } from "./place.ts";
 import type { DaytonaExec, DaytonaExecResult } from "@openwork/hosts";
 
 const IMAGE = "ghcr.io/berriai/litellm:v1.97.0@sha256:468c25f35f3e5ec4e414974f00deab93337b1b4d9953cabcfd3722e59415f834";
+// Issuer-bound JWT validation (litellm_jwtauth.issuers) needs a newer proxy than the key-based journeys pin.
+const JWT_IMAGE = "ghcr.io/berriai/litellm:main-stable@sha256:11175975a3093e05e92faee2fe2fe3412a3ae2fcaa849eb0fe25d5f0d8bcb2e9";
+const LICENSE_ENV = "LITELLM_LICENSE";
 const POSTGRES_IMAGE = "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685";
 const COMMAND_TIMEOUT_MS = 180_000;
 const STARTUP_TIMEOUT_MS = 90_000;
@@ -188,6 +191,18 @@ export interface LiteLlmUpstreamRequest {
   model: string;
   tokenId: string;
   bodyText: string;
+}
+
+/**
+ * LiteLLM's own JWT authentication for one identity provider issuer: the proxy checks each bearer token's
+ * signature against `jwksUrl`, its issuer and its audience, then maps `oid` to a LiteLLM user. This is an
+ * Enterprise feature, so the proxy starts with the license in LITELLM_LICENSE, and it needs a database.
+ */
+export interface LiteLlmJwtAuth {
+  issuer: string;
+  /** Signing keys, at an address the proxy itself can reach. */
+  jwksUrl: string;
+  audience: string;
 }
 
 export interface LiteLlmHandle extends AsyncDisposable {
@@ -489,6 +504,7 @@ function liteLlmConfig(
   upstreamKey: string,
   maxInputTokens: number,
   maxOutputTokens: number,
+  jwt?: LiteLlmJwtAuth,
 ): string {
   return JSON.stringify({
     model_list: [{
@@ -508,7 +524,13 @@ function liteLlmConfig(
         supported_openai_params: ["temperature", "tools", "response_format"],
       },
     }],
-    general_settings: { master_key: masterKey },
+    general_settings: {
+      master_key: masterKey,
+      ...(jwt ? {
+        enable_jwt_auth: true,
+        litellm_jwtauth: { issuers: [{ issuer: jwt.issuer, jwks_url: jwt.jwksUrl, audience: jwt.audience, user_id_jwt_field: "oid" }] },
+      } : {}),
+    },
   }, null, 2);
 }
 
@@ -609,6 +631,31 @@ async function waitForLocalDatabaseProxy(container: string, apiKey: string, mode
   throw new Error(`LiteLLM key management did not become ready within ${DATABASE_STARTUP_TIMEOUT_MS}ms (last observation: ${last}).`);
 }
 
+/** Models listed and the database connected: enough to map a token to a user. No key is created to find out. */
+async function waitForLocalJwtProxy(container: string, apiKey: string, modelId: string): Promise<number> {
+  const deadline = Date.now() + DATABASE_STARTUP_TIMEOUT_MS;
+  let port = 0;
+  let last = "proxy not queried";
+  while (Date.now() < deadline) {
+    try {
+      port ||= await mappedPort(container);
+      const headers = { authorization: `Bearer ${apiKey}` };
+      const models = await fetch(`http://127.0.0.1:${port}/v1/models`, { headers, signal: AbortSignal.timeout(3_000) });
+      const listed: unknown = await models.json();
+      if (models.ok && modelIds(listed).includes(modelId)) {
+        const readiness = await fetch(`http://127.0.0.1:${port}/health/readiness`, { headers, signal: AbortSignal.timeout(3_000) });
+        const body: unknown = await readiness.json();
+        if (readiness.ok && isRecord(body) && body.db === "connected") return port;
+        last = `readiness HTTP ${readiness.status}`;
+      } else last = `models HTTP ${models.status}`;
+    } catch (error) {
+      last = messageText(error);
+    }
+    await delay(1_000);
+  }
+  throw new Error(`LiteLLM with JWT authentication did not become ready within ${DATABASE_STARTUP_TIMEOUT_MS}ms (last observation: ${last}).`);
+}
+
 async function waitForPostgres(container: string): Promise<void> {
   const deadline = Date.now() + POSTGRES_STARTUP_TIMEOUT_MS;
   let last = "pg_isready not attempted";
@@ -625,15 +672,18 @@ async function waitForPostgres(container: string): Promise<void> {
 }
 
 async function startLocalLiteLlm(
-  input: {
+  options: {
     modelId: string;
     reply: string;
     database?: boolean;
+    jwt?: LiteLlmJwtAuth;
     maxInputTokens: number;
     maxOutputTokens: number;
   },
   secrets: LiteLlmSecrets,
 ): Promise<LiteLlmHandle> {
+  const input = { ...options, database: options.database === true || options.jwt !== undefined };
+  const license = input.jwt ? process.env[LICENSE_ENV]?.trim() ?? "" : "";
   try {
     await run("docker", ["info"], 15_000);
   } catch {
@@ -670,6 +720,7 @@ async function startLocalLiteLlm(
         secrets.upstreamKey,
         input.maxInputTokens,
         input.maxOutputTokens,
+        input.jwt,
       ),
       { mode: 0o600 },
     );
@@ -689,28 +740,26 @@ async function startLocalLiteLlm(
       await waitForPostgres(postgresContainer);
       await postgresStep.ok();
     }
-    const createArgs = input.database
-      ? [
-          "create", "--name", container,
-          "--add-host", "host.docker.internal:host-gateway",
-          "--publish", "127.0.0.1::4000",
-          "--env", `DATABASE_URL=postgresql://postgres:${postgresPassword}@host.docker.internal:${postgresPort}/litellm`,
-          IMAGE, "--config", "/app/config.json", "--port", "4000",
-        ]
-      : [
-          "create", "--name", container,
-          "--add-host", "host.docker.internal:host-gateway",
-          "--publish", "127.0.0.1::4000",
-          IMAGE, "--config", "/app/config.json", "--port", "4000",
-        ];
+    const createArgs = [
+      "create", "--name", container,
+      "--add-host", "host.docker.internal:host-gateway",
+      "--publish", "127.0.0.1::4000",
+      ...(input.database ? ["--env", `DATABASE_URL=postgresql://postgres:${postgresPassword}@host.docker.internal:${postgresPort}/litellm`] : []),
+      // Docker copies the license from this process's environment by name, so its value is never an argument.
+      // The JWT_* values are LiteLLM's fallback for a token whose issuer matches no configured entry.
+      ...(input.jwt ? ["--env", LICENSE_ENV, "--env", `JWT_PUBLIC_KEY_URL=${input.jwt.jwksUrl}`, "--env", `JWT_ISSUER=${input.jwt.issuer}`, "--env", `JWT_AUDIENCE=${input.jwt.audience}`] : []),
+      input.jwt ? JWT_IMAGE : IMAGE, "--config", "/app/config.json", "--port", "4000",
+    ];
     gatewayStep = steps.step("litellm", "LiteLLM gateway");
     await run("docker", createArgs);
     await trackResource({ kind: "docker", id: container, label: "litellm" });
     await run("docker", ["cp", configPath, `${container}:/app/config.json`], 30_000);
     await run("docker", ["start", container], 30_000);
-    const port = input.database
-      ? await waitForLocalDatabaseProxy(container, secrets.masterKey, input.modelId)
-      : await waitForLocalProxy(container, secrets.masterKey, input.modelId);
+    const port = input.jwt
+      ? await waitForLocalJwtProxy(container, secrets.masterKey, input.modelId)
+      : input.database
+        ? await waitForLocalDatabaseProxy(container, secrets.masterKey, input.modelId)
+        : await waitForLocalProxy(container, secrets.masterKey, input.modelId);
     const baseUrl = `http://127.0.0.1:${port}/v1`;
     await gatewayStep.ok(baseUrl);
     let placementDisposed = false;
@@ -719,7 +768,7 @@ async function startLocalLiteLlm(
       baseUrl,
       controlUrl: `http://127.0.0.1:${startedWitness.port}`,
       fetchImpl: fetch,
-      redactedSecrets: input.database ? [postgresPassword] : undefined,
+      redactedSecrets: [...(input.database ? [postgresPassword] : []), ...(license ? [license] : [])],
       async dispose(): Promise<void> {
         if (placementDisposed) return;
         await run("docker", ["rm", "--force", "--volumes", container], 20_000).catch(() => undefined);
@@ -747,7 +796,7 @@ async function startLocalLiteLlm(
     if (witness) await closeServer(witness).catch(() => undefined);
     throw redactedError(
       `${messageText(error)}${logs ? `\nDocker logs:\n${logs.slice(-4_000)}` : ""}${postgresLogs ? `\nPostgres logs:\n${postgresLogs.slice(-4_000)}` : ""}`,
-      [secrets.masterKey, secrets.upstreamKey, secrets.controlKey, ...(input.database ? [postgresPassword] : [])],
+      [secrets.masterKey, secrets.upstreamKey, secrets.controlKey, ...(input.database ? [postgresPassword] : []), ...(license ? [license] : [])],
     );
   }
 }
@@ -1001,6 +1050,8 @@ export async function liteLlm(input: {
   modelId: string;
   reply: string;
   database?: boolean;
+  /** Start the proxy with its own JWT authentication for this issuer. Needs LITELLM_LICENSE and docker placement. */
+  jwt?: LiteLlmJwtAuth;
   maxInputTokens?: number;
   maxOutputTokens?: number;
   daytonaExec?: DaytonaExec;
@@ -1011,8 +1062,11 @@ export async function liteLlm(input: {
     upstreamKey: `sk-openwork-upstream-${randomBytes(24).toString("hex")}`,
     controlKey: `sk-openwork-control-${randomBytes(24).toString("hex")}`,
   };
-  if (input.database && input.place.kind === "daytona") {
+  if ((input.database || input.jwt) && input.place.kind === "daytona") {
     throw new SkipError("LiteLLM database mode currently requires docker placement");
+  }
+  if (input.jwt && !process.env[LICENSE_ENV]?.trim()) {
+    throw new SkipError(`set ${LICENSE_ENV}: LiteLLM's JWT authentication is an Enterprise feature`);
   }
   const normalizedInput = {
     ...input,
