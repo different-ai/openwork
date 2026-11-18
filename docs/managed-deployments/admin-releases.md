@@ -71,6 +71,39 @@ role, run Terraform, create cloud resources or manufacture qualification reports
 Existing protected publisher workflows remain separate. No AWS, Google, GitHub
 or Render credential is entered into this page.
 
+### Recover an unavailable AWS candidate
+
+A latest application version is not evidence that its managed installer has been
+published. Storage HTTP 403 means that an object is missing **or** not publicly
+readable; it does not establish which. HTTP 404 means the requested object was not
+found. Neither failure changes the current default or grants pin approval.
+
+1. Dispatch `managed-stable-release.yml` on `dev` with `provider=aws` and
+   `promote=false`. Check that packaging, all five exact-image smoke checks and
+   artifact upload actually ran; an unrelated publisher completion can correctly
+   skip those steps while its overall workflow reports success.
+2. Download `managed-stable-aws` from that exact run. Verify `candidate.json`, the
+   manifest and both artifact hashes. Qualify those exact bytes with a real fresh
+   Gateway installation and a separately approved version-increasing Update.
+   Container smoke or an older candidate's report is not cloud qualification.
+3. With authenticated release-account access, inspect every object version and
+   delete marker under `releases/aws/<version>/`. Use the existing operator
+   publisher only for the reviewed candidate:
+
+   ```sh
+   node infra/managed-deployments/tools/publish-release.mjs \
+     <reviewed-artifact-directory> <release-bucket> <release-account-id> <region>
+   ```
+
+   The publisher checks the caller account, bucket owner, versioning, existing
+   bytes and unauthenticated downloads of each pinned object. It refuses immutable
+   collisions and does not change bucket permissions or installer defaults. If
+   access fails, investigate the exact release bucket's policy; do not weaken
+   unrelated storage access or overwrite a published version.
+4. Back in Admin, verify the published version, supply both qualification reports
+   and pin it under the configured approval policy. Keep pending approvals and
+   installed deployments unchanged. A successful upload alone is not a pin.
+
 ## Screenshots
 
 Before: the Admin route is absent on the base product.

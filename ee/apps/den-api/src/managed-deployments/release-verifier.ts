@@ -49,8 +49,20 @@ export function inferInstallerSource(provider: ManagedInstallerProvider, templat
 
 /** One deadline includes response headers and all streamed bodies. No redirects or ambient credentials. */
 export async function boundedReleaseGet(url: string, max: number, signal: AbortSignal, fetcher: typeof fetch = fetch, accept = "application/octet-stream") {
-  const response = await fetcher(url, { redirect: "error", signal, credentials: "omit", headers: { accept } })
-  if (!response.ok || !response.body || Number(response.headers.get("content-length")) > max) throw new InstallerReleaseError("artifact_unavailable", "A release object is unavailable or exceeds its size limit.", 502)
+  const name = new URL(url).pathname.split("/").at(-1) ?? "release object"
+  let response: Response
+  try { response = await fetcher(url, { redirect: "error", signal, credentials: "omit", headers: { accept } }) }
+  catch {
+    throw new InstallerReleaseError("artifact_unavailable", signal.aborted ? `Downloading ${name} exceeded the release verification deadline. Try again.` : `Could not download ${name}. Check public read access and publish the release without redirects.`, 502)
+  }
+  if (!response.ok) {
+    const action = response.status === 403 ? "The object may be unpublished or private. Check that this version is published and permits public reads."
+      : response.status === 404 ? "The object was not found. Publish this version's complete release before verifying."
+      : "Check that this version is published and permits public reads."
+    throw new InstallerReleaseError("artifact_unavailable", `Could not download ${name} (HTTP ${response.status}). ${action}`, response.status === 403 || response.status === 404 ? 400 : 502)
+  }
+  if (!response.body) throw new InstallerReleaseError("artifact_unavailable", `${name} returned no body. Publish the complete release object.`, 502)
+  if (Number(response.headers.get("content-length")) > max) throw new InstallerReleaseError("artifact_too_large", `${name} exceeds its size limit. Publish a smaller release object.`, 502)
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
   let size = 0
@@ -59,9 +71,12 @@ export async function boundedReleaseGet(url: string, max: number, signal: AbortS
       const next = await reader.read()
       if (next.done) break
       size += next.value.byteLength
-      if (size > max) throw new InstallerReleaseError("artifact_too_large", "A release object exceeds its size limit.", 502)
+      if (size > max) throw new InstallerReleaseError("artifact_too_large", `${name} exceeds its size limit. Publish a smaller release object.`, 502)
       chunks.push(next.value)
     }
+  } catch (error) {
+    if (error instanceof InstallerReleaseError) throw error
+    throw new InstallerReleaseError("artifact_unavailable", signal.aborted ? `Downloading ${name} exceeded the release verification deadline. Try again.` : `Downloading ${name} was interrupted. Check public read access and try again.`, 502)
   } finally { await reader.cancel().catch(() => {}) }
   return { body: Buffer.concat(chunks), headers: response.headers }
 }
@@ -114,15 +129,15 @@ export function inspectInstallerBundle(provider: ManagedInstallerProvider, versi
   }
   const release = z.object({ provider: z.literal(provider), version: z.literal(version), protocolVersion: z.literal(1), files: z.record(z.string(), hash), images: z.record(z.string(), z.string()) }).strict().parse(JSON.parse(files.get("release.json")?.toString() ?? "null"))
   const expected = provider === "aws" ? repositories : { den_api: repositories.den_api, den_web: repositories.den_web, health: "docker.io/library/python" }
-  if (Object.keys(release.images).sort().join() !== Object.keys(expected).sort().join()) throw new Error("Incomplete runtime inventory")
+  if (Object.keys(release.images).sort().join() !== Object.keys(expected).sort().join()) throw new InstallerReleaseError("runtime_inventory_mismatch", `bundle.tar.gz must include exactly these runtime images in release.json: ${Object.keys(expected).join(", ")}. Publish a new release with a complete inventory.`, 502)
   for (const [key, repository] of Object.entries(expected)) {
     const pin = release.images[key]
-    if (!pin?.startsWith(repository + "@sha256:") || !/^[a-f0-9]{64}$/.test(pin.slice(repository.length + 8))) throw new Error("Unpinned runtime image")
+    if (!pin?.startsWith(repository + "@sha256:") || !/^[a-f0-9]{64}$/.test(pin.slice(repository.length + 8))) throw new InstallerReleaseError("runtime_image_unpinned", `The ${key} image in bundle.tar.gz must use ${repository}@sha256: followed by a 64-character lowercase digest. Publish a new release with digest-pinned runtime images.`, 502)
   }
-  if (!Object.keys(release.files).length || Object.keys(release.files).length !== files.size - 1) throw new Error("Incomplete checksum inventory")
+  if (!Object.keys(release.files).length || Object.keys(release.files).length !== files.size - 1) throw new InstallerReleaseError("bundle_checksum_inventory_mismatch", "release.json must list a checksum for every packaged file in bundle.tar.gz. Publish a new release with a complete inventory.", 502)
   for (const [name, digest] of Object.entries(release.files)) {
     const file = files.get(name)
-    if (!file || sha256(file) !== digest) throw new Error("File checksum mismatch")
+    if (!file || sha256(file) !== digest) throw new InstallerReleaseError("bundle_checksum_mismatch", "A packaged file is missing or does not match its checksum in release.json. Publish a new release with bundle.tar.gz with matching file checksums.", 502)
   }
   return Object.keys(expected)
 }
@@ -133,14 +148,24 @@ export async function verifyInstallerRelease(provider: ManagedInstallerProvider,
   const signal = AbortSignal.timeout(5000)
   try {
     const manifest = await immutableGet(provider, `${base}${version}/manifest.json`, 32768, signal, fetcher)
-    const parsed = manifestSchema.parse(JSON.parse(manifest.body.toString()))
-    if (parsed.provider !== provider || parsed.version !== version) throw new Error("Manifest identity mismatch")
+    const parsed = (() => {
+      try { return manifestSchema.parse(JSON.parse(manifest.body.toString())) }
+      catch { throw new InstallerReleaseError("manifest_invalid", "manifest.json must be valid release metadata with protocolVersion 1 and SHA-256 bundle and template checksums. Publish a new compatible release.", 502) }
+    })()
+    if (parsed.provider !== provider || parsed.version !== version) throw new InstallerReleaseError("manifest_identity_mismatch", "manifest.json does not match the selected provider and version. Publish the matching release at this source.", 502)
     const [template, bundle] = await Promise.all([
       immutableGet(provider, `${base}${version}/${provider === "aws" ? "cloudformation.json" : "tutorial.md"}`, 1024 * 1024, signal, fetcher),
       immutableGet(provider, `${base}${version}/bundle.tar.gz`, 16 * 1024 * 1024, signal, fetcher),
     ])
-    if (sha256(template.body) !== parsed.templateSha256 || sha256(bundle.body) !== parsed.bundleSha256) throw new Error("Artifact checksum mismatch")
-    const services = inspectInstallerBundle(provider, version, bundle.body)
+    if (sha256(template.body) !== parsed.templateSha256) throw new InstallerReleaseError("artifact_checksum_mismatch", `${provider === "aws" ? "cloudformation.json" : "tutorial.md"} does not match templateSha256 in manifest.json. Publish a new release with matching checksums.`, 502)
+    if (sha256(bundle.body) !== parsed.bundleSha256) throw new InstallerReleaseError("artifact_checksum_mismatch", "bundle.tar.gz does not match bundleSha256 in manifest.json. Publish a new release with matching checksums.", 502)
+    const services = (() => {
+      try { return inspectInstallerBundle(provider, version, bundle.body) }
+      catch (error) {
+        if (error instanceof InstallerReleaseError) throw error
+        throw new InstallerReleaseError("bundle_invalid", "bundle.tar.gz must be a bounded regular-file archive with valid checksums and release.json matching this provider, version and protocolVersion 1. Publish a new compatible release.", 502)
+      }
+    })()
     return { release: { version, templateUrl: template.url, bundleUrl: bundle.url, bundleSha256: parsed.bundleSha256 }, services, manifestUrl: manifest.url, manifestSha256: sha256(manifest.body), templateSha256: parsed.templateSha256 }
   } catch (error) {
     if (error instanceof InstallerReleaseError) throw error
